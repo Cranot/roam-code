@@ -26,6 +26,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.formatter import WarningsOut, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -63,27 +64,63 @@ def _load_raw_config(
     silent-empty-dict behaviour so existing happy-path consumers keep
     emitting byte-identical envelopes when ``.roam-rules.yml`` is
     well-formed.
+
+    W1030-followup-C: thin wrapper over :func:`_load_raw_config_with_status`
+    that drops the closed-enum ``LoadStatus`` return so pre-W1030-followup-C
+    callers (the existing W1019d test suite + every consumer that doesn't
+    care about the on-disk state) stay byte-identical.
+    """
+    data, _status = _load_raw_config_with_status(config_path, warnings_out=warnings_out)
+    return data
+
+
+def _load_raw_config_with_status(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[dict, str]:
+    """W1030-followup-C: load ``.roam-rules.yml`` and return ``(data, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the check-rules command envelope
+    disambiguate "no .roam-rules.yml configured yet" (``missing`` -> use
+    baseline rules silently) from ".roam-rules.yml exists but is empty"
+    (``empty_file`` / ``empty_yaml`` -> use baseline rules + flag the
+    empty stub) from ".roam-rules.yml is broken" (``parse_error`` /
+    ``wrong_root_type`` -> ``partial_success=True``, warnings already
+    populated by the canonical loader).
+
+    Mirror of :func:`roam.commands.cmd_health._load_gate_config_with_status`
+    (W1030-followup-B reference impl). ``check-rules`` is a tier-2 gate
+    caller (``for_compliance`` composed recipes consume its verdict), so
+    the config-state disclosure rides on every governance envelope.
     """
     from roam.commands._yaml_loader import load_yaml_with_warnings
 
     resolved = _find_config_path(config_path)
     if resolved is None:
-        return {}
+        # Path arg explicitly None AND no default config on disk: "missing"
+        # is the file-absent state the helper short-circuits to.
+        return {}, "missing"
 
-    data = load_yaml_with_warnings(
+    data, status = load_yaml_with_warnings(
         Path(resolved),
         tiny_parser=_parse_simple_yaml_text,
         config_label="roam-rules",
         warnings_out=warnings_out,
+        return_status=True,
     )
     if data is None:
         # Missing file (helper short-circuits absence).
-        return {}
+        return {}, status
     # ``allow_list_root`` is False (default) so the helper guarantees a
     # mapping. The assert keeps the type checker honest on the
     # post-helper extraction logic below.
     assert isinstance(data, dict)
-    return data
+    return data, status
 
 
 def _load_user_config(
@@ -102,21 +139,49 @@ def _load_user_config(
     W1019d (Pattern 2 — silent fallback): mirrors :func:`_load_raw_config`.
     A non-list ``rules:`` value surfaces a structured warning when
     ``warnings_out`` is supplied; pre-W1019d callers stay byte-identical.
+
+    W1030-followup-C: thin wrapper over
+    :func:`_load_user_config_with_status` that drops the closed-enum
+    ``LoadStatus`` return so pre-W1030-followup-C callers stay byte-identical.
+    """
+    rules, _status = _load_user_config_with_status(config_path, warnings_out=warnings_out)
+    return rules
+
+
+def _load_user_config_with_status(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], str]:
+    """W1030-followup-C: load user rule overrides and return ``(rules, status)``.
+
+    ``status`` is forwarded verbatim from
+    :func:`_load_raw_config_with_status` — the closed-enum ``LoadStatus``
+    reflects the on-disk state of ``.roam-rules.yml``. The missing-``rules:``
+    key path collapses onto the same status that the raw load reported
+    (``ok`` when the file parsed cleanly but has no ``rules:`` key —
+    a profile-only config is legitimate so it stays ``ok``).
+
+    The W1030-followup-C empty-file / empty-yaml short-circuit suppresses
+    the spurious missing-key warning that the legacy branch would emit on
+    a stub file: an empty stub is its own disclosure surface
+    (``config_state=empty_file``), so the "no `rules:` key" warning
+    would just confuse agents reading the warnings_out list.
     """
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = _load_raw_config(config_path, warnings_out=warnings_out)
+    data, status = _load_raw_config_with_status(config_path, warnings_out=warnings_out)
     if not data:
-        return []
+        return [], status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper / raw-loader already explained the failure (read error /
         # malformed YAML / wrong root type). Propagate the empty result
         # without piling on a second warning that would confuse the caller.
-        return []
+        return [], status
 
     if "rules" not in data:
         # No `rules:` key — a profile-only config is legitimate, so this is
         # NOT a warning. Return empty overrides and let the caller decide.
-        return []
+        return [], status
     # W1038 — shared "load → check type → warn-or-default" extractor.
     from roam.commands._yaml_loader import extract_typed
 
@@ -131,7 +196,7 @@ def _load_user_config(
         context=f"roam-rules: {path_str!r}",
         expected_shape="a list of `{id, threshold?, severity?, enabled?}` entries",
     )
-    return rules
+    return rules, status
 
 
 def _load_config_profile(
@@ -147,17 +212,38 @@ def _load_config_profile(
     A non-string / empty ``profile:`` value surfaces a structured warning
     when ``warnings_out`` is supplied; pre-W1019d callers stay
     byte-identical.
+
+    W1030-followup-C: thin wrapper over
+    :func:`_load_config_profile_with_status` that drops the closed-enum
+    ``LoadStatus`` return so pre-W1030-followup-C callers stay byte-identical.
+    """
+    profile, _status = _load_config_profile_with_status(config_path, warnings_out=warnings_out)
+    return profile
+
+
+def _load_config_profile_with_status(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[str | None, str]:
+    """W1030-followup-C: load profile name and return ``(profile, status)``.
+
+    ``status`` is forwarded verbatim from
+    :func:`_load_raw_config_with_status`. ``profile`` is ``None`` when the
+    file is missing / empty / malformed / has no ``profile:`` key / has a
+    non-string profile value — the closed-enum status disambiguates these
+    paths for envelope-level disclosure.
     """
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = _load_raw_config(config_path, warnings_out=warnings_out)
+    data, status = _load_raw_config_with_status(config_path, warnings_out=warnings_out)
     if not data:
-        return None
+        return None, status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper already explained the file-level failure; don't pile on.
-        return None
+        return None, status
     if "profile" not in data:
         # Absence of a profile key is legitimate (rules-only configs).
-        return None
+        return None, status
     # W1038-followup — shared "load → check type → validate → warn-or-default"
     # extractor. The validator captures the non-empty-string sub-pattern
     # (``isinstance(v, str) and v.strip()``) the inline branch used to do.
@@ -176,8 +262,92 @@ def _load_config_profile(
         validator=lambda v: bool(v.strip()),
     )
     if profile:
-        return profile.strip()
-    return None
+        return profile.strip(), status
+    return None, status
+
+
+# ---------------------------------------------------------------------------
+# W1030-followup-C: worst-status rollup
+# ---------------------------------------------------------------------------
+
+# Severity rank for LoadStatus values. Higher rank = more degraded. Used to
+# roll up the three sub-loader statuses into a single ``summary.config_state``
+# field. The rule: degraded states override ``ok``; the most degraded state
+# wins (mirroring cmd_critique's max-aggregation style).
+#
+# - ok (0)               -- file parsed cleanly
+# - missing (1)          -- no config configured; legitimate default state
+# - empty_file (2)       -- stub on disk; user probably meant to configure
+# - empty_yaml (2)       -- comments-only file; same surface as empty_file
+# - read_error (3)       -- file unreadable; broken
+# - schema_invalid (3)   -- file parsed but failed validator
+# - wrong_root_type (3)  -- root is list/scalar, not mapping
+# - parse_error (3)      -- malformed YAML/JSON
+#
+# Note: all three sub-loaders read from the SAME ``.roam-rules.yml`` file,
+# so in practice they will all return the same status. The rollup is
+# defensive — if any of the three diverges (e.g. a future loader gains its
+# own file), the most-degraded state still surfaces.
+_STATUS_RANK: dict[str, int] = {
+    "ok": 0,
+    "missing": 1,
+    "empty_file": 2,
+    "empty_yaml": 2,
+    "read_error": 3,
+    "schema_invalid": 3,
+    "wrong_root_type": 3,
+    "parse_error": 3,
+}
+
+
+def _worst_status(*statuses: str) -> str:
+    """W1030-followup-C: roll up multiple ``LoadStatus`` values to the worst.
+
+    Degraded states override ``ok``; the most-degraded state wins. Returns
+    ``"ok"`` when every status is ``"ok"`` (or no statuses are supplied).
+    Unknown statuses (not in :data:`_STATUS_RANK`) sort below ``"ok"`` so
+    a future LoadStatus addition can't silently downgrade the rollup.
+    """
+    if not statuses:
+        return "ok"
+    worst = statuses[0]
+    worst_rank = _STATUS_RANK.get(worst, -1)
+    for s in statuses[1:]:
+        s_rank = _STATUS_RANK.get(s, -1)
+        if s_rank > worst_rank:
+            worst = s
+            worst_rank = s_rank
+    return worst
+
+
+# W1030-followup-C: closed-enum set of LoadStatus values that flip
+# ``partial_success=True`` even when no warning fired (e.g. empty stub on
+# disk doesn't warn, but ``schema_invalid`` does -- treat them uniformly
+# at the partial_success level). Mirrors cmd_alerts + cmd_budget +
+# cmd_health vocabularies.
+_DEGRADED_LOAD_STATUSES: frozenset[str] = frozenset({"parse_error", "wrong_root_type", "read_error", "schema_invalid"})
+
+
+def _build_config_state_facts(config_state: str) -> list[str]:
+    """W1030-followup-C: build ``agent_contract.facts`` for the ``config_state``.
+
+    LAW 4 anchored on the concrete-noun terminal ``"rules"`` (the
+    governance rules check-rules evaluates). Mirrors cmd_alerts (anchors
+    on ``"defaults"``) and cmd_health (anchors on ``"gates"``) by
+    using the command's own subject-noun.
+
+    Returns an empty list when ``config_state == "ok"`` -- no need to
+    disclose the happy path.
+    """
+    if config_state == "missing":
+        return ["no .roam-rules.yml configured; using baseline rules"]
+    if config_state == "empty_file":
+        return ["empty .roam-rules.yml stub on disk; using baseline rules"]
+    if config_state == "empty_yaml":
+        return ["comment-only .roam-rules.yml on disk; using baseline rules"]
+    if config_state in _DEGRADED_LOAD_STATUSES:
+        return [f"check-rules config rejected ({config_state}); using baseline rules"]
+    return []
 
 
 def _parse_simple_yaml_text(text: str) -> dict:
@@ -278,9 +448,15 @@ def _resolve_rules(
     if rule_filter:
         resolved = [r for r in resolved if r.id == rule_filter]
 
-    # Filter by severity
+    # Filter by severity. W1005-followup-C: route through the canonical
+    # ``severity_rank`` (higher = worse) instead of a string-equality match,
+    # so the widened Choice (critical/error/high/warning/medium/low/info)
+    # collapses CVSS-style inputs onto the rules' emitted 3-tier vocab via
+    # the canonical rank comparator — a single source of truth shared with
+    # cmd_smells / cmd_secrets / cmd_test_gaps.
     if severity_filter:
-        resolved = [r for r in resolved if r.severity == severity_filter]
+        floor = severity_rank(severity_filter.lower())
+        resolved = [r for r in resolved if severity_rank(r.severity) >= floor]
 
     return resolved
 
@@ -396,7 +572,10 @@ def _evaluate_custom_rules(
 
         if rule_filter and name != rule_filter:
             continue
-        if severity_filter and severity != severity_filter:
+        # W1005-followup-C: canonical-rank floor (same comparator as
+        # _resolve_rules above) keeps the custom-rule branch in lockstep
+        # with the built-in branch under the widened W547 7-tier Choice.
+        if severity_filter and severity_rank(severity) < severity_rank(severity_filter.lower()):
             continue
 
         violations = item.get("violations", [])
@@ -446,8 +625,31 @@ def _evaluate_custom_rules(
     "--severity",
     "severity_filter",
     default=None,
-    type=click.Choice(["error", "warning", "info"]),
-    help="Only show rules matching this severity.",
+    type=click.Choice(
+        # W1005-followup-C: widened from 3-tier {error, warning, info} to the W547
+        # canonical 7-tier so agents can pass any of {critical, error, high,
+        # warning, medium, low, info} and have the filter route through
+        # ``roam.output._severity.severity_rank`` for the canonical comparison.
+        # The built-in + custom rules currently EMIT only {error, warning, info}
+        # (the SARIF-aligned 3-tier alphabet), so input/emit asymmetry is
+        # intentional and documented at the filter site below: ``critical`` /
+        # ``high`` collapse onto rank 4-or-5 floors that match the emitted
+        # ``error`` rank; ``medium`` / ``low`` collapse onto floors that match
+        # the emitted ``warning`` / ``info`` ranks. This means
+        # ``--severity high`` keeps every ``error`` finding (rank 4 ==
+        # rank 4) — the same set ``--severity error`` would keep. Aliases
+        # like ``note`` / ``unknown`` are intentionally NOT in the Choice —
+        # they collapse to ``info`` / sort-below-info via ``severity_rank``,
+        # so a user-facing filter on them would be confusing.
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Only show rules at or above this severity (canonical W547 7-tier "
+        "ordering: critical > error == high > warning > medium > low > info). "
+        "Rules emit error/warning/info today; CVSS aliases route through "
+        "severity_rank() for the comparison."
+    ),
 )
 @click.option(
     "--config",
@@ -560,13 +762,33 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     # disclosure.
     check_rules_warnings: list[str] = []
 
-    # Load user config
-    user_overrides = _load_user_config(config_path, warnings_out=check_rules_warnings)
+    # W1030-followup-C: opt the three sub-loaders into ``return_status=True``
+    # so the on-disk state of ``.roam-rules.yml`` (missing / empty_file /
+    # empty_yaml / parse_error / wrong_root_type / read_error /
+    # schema_invalid / ok) surfaces on the envelope as a closed-enum
+    # ``summary.config_state`` field. All three sub-loaders read the SAME
+    # file (``.roam-rules.yml``); the worst-status rollup is defensive
+    # against future divergence + cleanly disambiguates the empty-stub
+    # state from the missing-state for downstream agents reading the
+    # envelope.
+    user_overrides, _user_status = _load_user_config_with_status(config_path, warnings_out=check_rules_warnings)
 
     # Resolve profile: CLI --profile takes precedence over config file profile:
     effective_profile = profile_name
+    # Profile sub-loader runs regardless of whether --profile was supplied
+    # so we always sample a third LoadStatus for the rollup. When
+    # --profile wins, the loaded value is discarded but the status feeds
+    # ``config_state``. The sub-loader is cheap (re-reads + re-parses the
+    # same path via the canonical helper; identical warnings collapse via
+    # the dedup pass at the bottom of this command).
+    _file_profile, _profile_status = _load_config_profile_with_status(config_path, warnings_out=check_rules_warnings)
     if effective_profile is None:
-        effective_profile = _load_config_profile(config_path, warnings_out=check_rules_warnings)
+        effective_profile = _file_profile
+    # Third sub-loader sample: the raw load. Today this returns the same
+    # status as the other two (single file, single load step), but keep
+    # the rollup honest if a future raw-loader migration diverges.
+    _, _raw_status = _load_raw_config_with_status(config_path, warnings_out=check_rules_warnings)
+    _config_state = _worst_status(_user_status, _profile_status, _raw_status)
 
     if effective_profile:
         from roam.rules.builtin import resolve_profile
@@ -642,18 +864,37 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         verdict = "no rules matched"
         if json_mode:
             empty_summary: dict = {"verdict": verdict, "passed": 0, "failed": 0, "total": 0}
+            # W1030-followup-C: closed-enum LoadStatus disclosure so agents
+            # can tell "no .roam-rules.yml configured yet" (missing -> use
+            # baseline rules silently) from ".roam-rules.yml exists but is
+            # empty" (empty_file / empty_yaml -> use baseline rules AND
+            # the user probably meant to configure something) from
+            # ".roam-rules.yml is broken" (parse_error / wrong_root_type
+            # / read_error / schema_invalid -- already accompanied by a
+            # warning in warnings_out).
+            empty_summary["config_state"] = _config_state
+            _empty_degraded = _config_state in _DEGRADED_LOAD_STATUSES
             if deduped_warnings:
                 empty_summary["partial_success"] = True
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "check-rules",
-                        summary=empty_summary,
-                        results=[],
-                        warnings_out=list(deduped_warnings),
-                    )
-                )
+            elif _empty_degraded:
+                # W1030-followup-C: a degraded config_state flips
+                # partial_success regardless of warning emission, mirroring
+                # cmd_alerts + cmd_budget + cmd_health. The user's
+                # rules config did not materialize -- agents must see the
+                # discard, not just the "no rules matched" verdict.
+                empty_summary["partial_success"] = True
+            _empty_facts = _build_config_state_facts(_config_state)
+            empty_envelope_kwargs: dict = dict(
+                summary=empty_summary,
+                results=[],
+                warnings_out=list(deduped_warnings),
             )
+            if _empty_facts:
+                empty_envelope_kwargs["agent_contract"] = {
+                    "facts": [verdict, *_empty_facts],
+                    "next_commands": ["roam check-rules"],
+                }
+            click.echo(to_json(json_envelope("check-rules", **empty_envelope_kwargs)))
         else:
             click.echo("VERDICT: {}".format(verdict))
             if deduped_warnings:
@@ -738,19 +979,47 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
             "errors": errors,
             "warnings": warnings,
         }
+        # W1030-followup-C: closed-enum LoadStatus disclosure on the
+        # envelope. Mirrors the cmd_alerts + cmd_budget + cmd_health
+        # vocabulary so the four W1030-followup-cohort emitters use a
+        # uniform field name (``summary.config_state``) and value space
+        # (LOAD_STATUSES). Lets agents disambiguate "no .roam-rules.yml
+        # configured yet" (missing -> use baseline rules silently) from
+        # ".roam-rules.yml exists but is empty" (empty_file / empty_yaml
+        # -> use baseline rules + flag the empty stub) from
+        # ".roam-rules.yml is broken" (parse_error / wrong_root_type /
+        # read_error / schema_invalid -- already accompanied by a
+        # warning in warnings_out).
+        summary["config_state"] = _config_state
         # W1019d: silent-fallback disclosure on the envelope. A consumer
         # reading only the summary still sees that the config file was
         # malformed via ``partial_success=True``.
-        if deduped_warnings:
+        # W1030-followup-C: a degraded config_state flips partial_success
+        # too -- even when no warning fired (e.g. empty stub on disk),
+        # agents must see that the user's intent did not materialize.
+        _config_degraded = _config_state in _DEGRADED_LOAD_STATUSES
+        if deduped_warnings or _config_degraded:
             summary["partial_success"] = True
 
-        envelope = json_envelope(
-            "check-rules",
+        # W1030-followup-C: surface the on-disk state via
+        # agent_contract.facts so consumers reading only the contract
+        # still see the silent-state disclosure. LAW 4 anchored on the
+        # concrete-noun terminal "rules" (the governance rules
+        # check-rules evaluates). LAW 6: every fact stands alone.
+        _state_facts = _build_config_state_facts(_config_state)
+        envelope_kwargs: dict = dict(
             budget=token_budget,
             summary=summary,
             results=results,
             warnings_out=list(deduped_warnings),
         )
+        if _state_facts:
+            envelope_kwargs["agent_contract"] = {
+                "facts": [verdict, *_state_facts],
+                "next_commands": ["roam check-rules"],
+            }
+
+        envelope = json_envelope("check-rules", **envelope_kwargs)
         click.echo(to_json(envelope))
         if exit_code != 0:
             ctx.exit(exit_code)

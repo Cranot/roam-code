@@ -55,8 +55,24 @@ _MATURITY: dict[str, str] = {
 
 
 def _build_surface() -> dict:
-    """Build the canonical surface manifest from cli.py + mcp_server.py."""
-    from roam.cli import _CATEGORIES, _COMMANDS
+    """Build the canonical surface manifest from cli.py + mcp_server.py.
+
+    W420: command headlines (``command_count`` / ``canonical_count`` /
+    ``category_count``) are sourced from the AST-parsed ``_COMMANDS``
+    dict via :func:`roam.surface_counts.cli_commands`, NOT from the
+    runtime ``roam.cli._COMMANDS`` dict. Plugin discovery mutates the
+    runtime dict in-place (see ``_ensure_plugin_commands_loaded`` at
+    ``cli.py:678``); reading runtime state here caused the headline to
+    bounce between 241 and 242 depending on whether a sibling Click
+    invocation in the same process tripped plugin loading first. The
+    AST source is env-independent and matches the W1290 discipline
+    already applied to ``mcp_tool_count``. Plugin commands surface at
+    runtime via ``roam plugins list``.
+    """
+    from roam.cli import _CATEGORIES
+    from roam.surface_counts import cli_commands as _cli_commands_ast
+
+    _commands = _cli_commands_ast()
 
     # Reverse-map: command name -> category
     name_to_category: dict[str, str] = {}
@@ -66,8 +82,8 @@ def _build_surface() -> dict:
 
     # Collect aliases: same (module, function) tuple under different names.
     target_to_names: dict[tuple, list[str]] = {}
-    for name, target in _COMMANDS.items():
-        target_to_names.setdefault(target, []).append(name)
+    for name, target in _commands.items():
+        target_to_names.setdefault(tuple(target), []).append(name)
 
     # MCP-exposed tools.
     #
@@ -114,8 +130,8 @@ def _build_surface() -> dict:
     from roam.cli import _deprecation_record
 
     commands = []
-    for name in sorted(_COMMANDS):
-        target = _COMMANDS[name]
+    for name in sorted(_commands):
+        target = tuple(_commands[name])
         aliases = sorted(n for n in target_to_names[target] if n != name)
         deprecation = _deprecation_record(name)
         commands.append(
@@ -138,8 +154,8 @@ def _build_surface() -> dict:
         by_maturity[c["maturity"]] = by_maturity.get(c["maturity"], 0) + 1
 
     result = {
-        "command_count": len(_COMMANDS),
-        "canonical_count": len({tuple(t) for t in _COMMANDS.values()}),
+        "command_count": len(_commands),
+        "canonical_count": len({tuple(t) for t in _commands.values()}),
         "category_count": len(_CATEGORIES),
         "mcp_tool_count": len(mcp_tools),
         "mcp_tool_count_by_preset": preset_counts,

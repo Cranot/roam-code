@@ -50,20 +50,49 @@ def _load_yaml(
     ``{"_error": "failed to parse <name>"}`` record for each
     unparseable file so ``evaluate_rule`` can surface the parse error
     inside the rules envelope.
+
+    W1030-followup-F: thin wrapper over :func:`_load_yaml_with_status`
+    that drops the closed-enum ``LoadStatus`` return so pre-W1030-followup-F
+    callers (every existing test in ``test_rules_engine_warnings_out.py``
+    plus the legacy :func:`load_rules` flow) stay byte-identical.
+    """
+    data, _status = _load_yaml_with_status(path, warnings_out=warnings_out)
+    return data
+
+
+def _load_yaml_with_status(
+    path: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[dict | list | None, str]:
+    """W1030-followup-F: load a single YAML rule file and return ``(data, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the directory-level
+    :func:`load_rules_with_status` aggregate per-file states into a
+    single envelope-level ``config_state`` via worst-status rollup.
+
+    Mirrors the cmd_check_rules / cmd_fitness pattern: this is the
+    library-side primitive; consumers (``cmd_rules``) wire the rollup
+    onto their envelope.
     """
     from roam.commands._yaml_loader import load_yaml_with_warnings
 
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = load_yaml_with_warnings(
+    data, status = load_yaml_with_warnings(
         path,
         tiny_parser=_parse_simple_yaml_text,
         allow_list_root=True,
         config_label="rules-yaml",
         warnings_out=warnings_out,
+        return_status=True,
     )
     if data is None:
         # Helper returns None only when the file is missing.
-        return None
+        return None, status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper recorded a parse failure (read error / malformed YAML /
         # tiny-parser fallback failure). Preserve the pre-W1036 contract:
@@ -71,7 +100,7 @@ def _load_yaml(
         # when ``_load_yaml`` returns None, and the rules envelope
         # surfaces the parse error per-rule. Returning the empty container
         # here would hide the placeholder.
-        return None
+        return None, status
     # PyYAML-without-warnings_out path: when the caller didn't pass an
     # accumulator AND PyYAML (or the tiny parser) raised, the helper
     # still returns the empty container (``[]`` because
@@ -79,8 +108,8 @@ def _load_yaml(
     # "file produced no useful data" so the historical
     # ``return None`` -> placeholder-_error flow holds.
     if warnings_out is None and isinstance(data, (dict, list)) and not data:
-        return None
-    return data
+        return None, status
+    return data, status
 
 
 def _coerce_scalar(val: str) -> object:
@@ -389,17 +418,106 @@ def load_rules(
     retain byte-identical silent-`_error` behaviour: each unparseable
     file still becomes a placeholder rule with ``_error`` so the
     envelope surfaces per-file parse failures via :func:`evaluate_rule`.
+
+    W1030-followup-F: thin wrapper over :func:`load_rules_with_status`
+    that drops the directory-level ``LoadStatus`` rollup so pre-W1030-followup-F
+    callers stay byte-identical.
+    """
+    rules, _status = load_rules_with_status(rules_dir, warnings_out=warnings_out)
+    return rules
+
+
+# W1030-followup-F: severity rank for the directory-level LoadStatus rollup.
+# Higher rank = more degraded. Used by :func:`load_rules_with_status` to
+# aggregate per-file states into a single ``config_state`` field on the
+# ``cmd_rules`` envelope.
+#
+# - ok (0)               -- at least one file parsed cleanly; no per-file errors
+# - missing (1)          -- no rules directory configured; legitimate default state
+# - empty_file (2)       -- directory exists but contains no .yaml/.yml files (stub),
+#                           OR a file on disk is zero-byte / whitespace-only
+# - empty_yaml (2)       -- a file on disk is comments-only
+# - read_error (3)       -- a file is unreadable; broken
+# - schema_invalid (3)   -- a file parsed but failed validator
+# - wrong_root_type (3)  -- a file's root is list/scalar, not mapping
+# - parse_error (3)      -- a file is malformed YAML/JSON
+#
+# Mirrors :data:`roam.commands.cmd_check_rules._STATUS_RANK` (W1030-followup-C)
+# and :data:`roam.commands.cmd_fitness._DEGRADED_LOAD_STATUSES` (W1030-followup-D).
+_RULES_STATUS_RANK: dict[str, int] = {
+    "ok": 0,
+    "missing": 1,
+    "empty_file": 2,
+    "empty_yaml": 2,
+    "read_error": 3,
+    "schema_invalid": 3,
+    "wrong_root_type": 3,
+    "parse_error": 3,
+}
+
+
+def _worst_rules_status(*statuses: str) -> str:
+    """W1030-followup-F: roll up per-file ``LoadStatus`` values to the worst.
+
+    Degraded states override ``ok``; the most-degraded state wins. Returns
+    ``"ok"`` when every status is ``"ok"``. Unknown statuses (not in
+    :data:`_RULES_STATUS_RANK`) sort below ``"ok"`` so a future LoadStatus
+    addition can't silently downgrade the rollup.
+    """
+    if not statuses:
+        return "ok"
+    worst = statuses[0]
+    worst_rank = _RULES_STATUS_RANK.get(worst, -1)
+    for s in statuses[1:]:
+        s_rank = _RULES_STATUS_RANK.get(s, -1)
+        if s_rank > worst_rank:
+            worst = s
+            worst_rank = s_rank
+    return worst
+
+
+def load_rules_with_status(
+    rules_dir: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], str]:
+    """W1030-followup-F: load all .yaml/.yml files and return ``(rules, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`. Because the rules
+    engine reads a *directory* of files rather than a single config, the
+    status is a worst-state rollup across the per-file ``LoadStatus``
+    values returned by :func:`_load_yaml_with_status`.
+
+    Status semantics:
+
+    * ``"missing"`` -- the rules directory does not exist (the consumer's
+      ``--init`` / "no rules directory" branch should fire on this path,
+      but we surface the status uniformly for envelope disclosure).
+    * ``"empty_file"`` -- the rules directory exists but contains no
+      ``.yaml`` / ``.yml`` files (an empty stub directory). Distinct from
+      ``"missing"`` so the agent can disambiguate "never configured" from
+      "configured but no rules written yet".
+    * ``"ok"`` -- at least one file parsed cleanly AND no file failed.
+    * ``"parse_error"`` / ``"wrong_root_type"`` / ``"read_error"`` /
+      ``"schema_invalid"`` -- the worst per-file state when any file
+      failed to parse cleanly (the canonical loader already emitted a
+      warning via ``warnings_out``).
     """
     if not rules_dir.is_dir():
-        return []
+        return [], "missing"
 
     rules: list[dict] = []
+    statuses: list[str] = []
+    saw_any_file = False
     for p in sorted(rules_dir.rglob("*")):
         if not p.is_file():
             continue
         if p.suffix not in (".yaml", ".yml"):
             continue
-        data = _load_yaml(p, warnings_out=warnings_out)
+        saw_any_file = True
+        data, file_status = _load_yaml_with_status(p, warnings_out=warnings_out)
+        statuses.append(file_status)
         if data is None or not isinstance(data, dict):
             # None = parse failure / missing file; list = top-level-list
             # is a wrong-root-type signal the engine cannot evaluate. Both
@@ -423,7 +541,13 @@ def load_rules(
         data["_file"] = str(p)
         rules.append(data)
 
-    return rules
+    if not saw_any_file:
+        # Directory exists but contains no .yaml/.yml files -- an empty
+        # stub. Distinct from missing so the agent can disambiguate
+        # "never configured" from "configured but no rules written yet".
+        return rules, "empty_file"
+
+    return rules, _worst_rules_status(*statuses)
 
 
 # ---------------------------------------------------------------------------
@@ -1462,9 +1586,39 @@ def evaluate_all(
     structured warning. Pre-W1036 callers (no accumulator) get
     byte-identical behaviour — every parse failure still surfaces via
     the existing ``_error`` placeholder rule.
+
+    W1030-followup-F: thin wrapper over :func:`evaluate_all_with_status`
+    that drops the directory-level ``LoadStatus`` rollup so pre-W1030-followup-F
+    callers stay byte-identical.
     """
-    rules = load_rules(rules_dir, warnings_out=warnings_out)
+    results, _status = evaluate_all_with_status(
+        rules_dir,
+        conn,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
+        warnings_out=warnings_out,
+    )
+    return results
+
+
+def evaluate_all_with_status(
+    rules_dir: Path,
+    conn,
+    *,
+    max_depth: int = 3,
+    max_nodes: int = 100,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], str]:
+    """W1030-followup-F: evaluate all rules and return ``(results, status)``.
+
+    Mirrors :func:`load_rules_with_status` but extends it with the
+    per-rule evaluation pass. Callers that need the on-disk state for
+    envelope disambiguation (``cmd_rules``) use this entry point; the
+    legacy :func:`evaluate_all` keeps the single-list return for
+    byte-identical pre-W1030-followup-F callers.
+    """
+    rules, status = load_rules_with_status(rules_dir, warnings_out=warnings_out)
     results: list[dict] = []
     for rule in rules:
         results.append(evaluate_rule(rule, conn, max_depth=max_depth, max_nodes=max_nodes))
-    return results
+    return results, status

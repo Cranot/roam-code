@@ -47,14 +47,25 @@ import sqlite3
 from typing import Optional
 
 from roam.catalog._shared import make_smell_finding
+from roam.db.edge_kinds import INHERITANCE_EDGE_KINDS as _CANONICAL_INHERITANCE_EDGE_KINDS
 
 # Closed enum of edge-kind values that represent class inheritance.
-# Singular ``inherits`` is the canonical writer form (see
-# ``src/roam/db/edge_kinds.py`` — relations.py emits singular kinds).
-# ``extends`` is a plugin-extractor variant carried for symmetry; today
-# the indexer collapses it to ``inherits`` but readers should still
-# accept either form so out-of-tree plugins are not surprised.
-INHERITANCE_EDGE_KINDS: tuple[str, ...] = ("inherits", "extends")
+#
+# W543-followup: plugin-defensive widening over the canonical set
+# (:data:`roam.db.edge_kinds.INHERITANCE_EDGE_KINDS` = ``("inherits",
+# "implements", "uses_trait")``). The canonical set is sourced from
+# the shared module so a future writer addition lands here for free.
+#
+# The extra ``'extends'`` literal is a *deliberate widening*, NOT a
+# canonical kind: no in-tree writer emits it (verified by the W543
+# drift-test in ``tests/test_w543_edge_kind_canonical.py``).
+# ``tests/test_w857_parallel_hierarchy.py::test_extends_edge_kind_also_recognized``
+# pins this detector to accept ``kind='extends'`` rows so plugin
+# extractors that diverge from the canonical writer convention
+# (see ``languages/extractor_schema.py:InheritancePattern.relationship``
+# default value ``"extends"``) still produce findings here. Removing
+# ``'extends'`` would break that contract — keep the widening local.
+INHERITANCE_EDGE_KINDS: tuple[str, ...] = _CANONICAL_INHERITANCE_EDGE_KINDS + ("extends",)
 
 # Detector identity constants (parallel the convention used by other
 # catalog detectors — version stamp lets findings-registry consumers

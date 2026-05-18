@@ -375,111 +375,180 @@ def _load_alerts_config(
     threshold rows with an invalid ``op`` are surfaced at parse time
     (tiny-parser path) or here (PyYAML path) so the user gets one signal
     per offending row regardless of which YAML backend resolved the file.
+
+    W1030-followup-A: legacy single-value return preserved for the existing
+    callers (resolver + tests). Callers that need the on-disk state for
+    envelope disambiguation use :func:`_load_alerts_config_with_status`
+    instead.
     """
+    cfg, _status = _load_alerts_config_with_status(project_root, warnings_out=warnings_out)
+    return cfg
+
+
+def _load_alerts_config_with_status(
+    project_root: Path | None = None,
+    warnings_out: WarningsOut = None,
+) -> tuple[dict[str, dict[str, Any]], str]:
+    """W1030-followup-A: load ``.roam/alerts.yaml`` and return ``(cfg, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the alerts command envelope disambiguate
+    "no alerts.yaml configured yet" (``missing`` -> use defaults silently)
+    from "alerts.yaml exists but is empty" (``empty_file`` -> use defaults
+    + flag the empty stub) from "alerts.yaml is broken" (``parse_error`` /
+    ``wrong_root_type`` -> partial_success, warnings already populated by
+    the canonical loader).
+
+    The per-threshold validator walks
+    (W962/W963/W964/W969/W972/W1025) run on the parsed mapping AFTER the
+    canonical loader, exactly like pre-W1030-followup-A — the
+    silent-fallback warning vocabulary is unchanged.
+    """
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+
     root = project_root or find_project_root()
     cfg_path = root / ".roam" / "alerts.yaml"
-    if not cfg_path.exists():
-        return {}
-    try:
-        text = cfg_path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    try:
-        import yaml  # type: ignore[import-not-found]
 
-        data = yaml.safe_load(text) or {}
-        # W962: PyYAML doesn't know about ``_VALID_OPS``. Walk the
-        # ``thresholds`` block here so the warning surfaces regardless
-        # of which YAML backend resolved the file.
-        # W969: same logic for ``level`` — PyYAML returns the raw string
-        # (or other shape), and the canonical-set validation must fire
-        # before the value reaches ``counts[a["level"]] += 1``.
-        if isinstance(data, dict):
-            # W1025 (Pattern 2 — silent fallback): a non-dict
-            # ``thresholds:`` section (scalar, list, etc.) used to flow
-            # straight through to ``_resolved_thresholds`` which then
-            # crashed on ``.items()`` (truthy non-dict) or silently
-            # collapsed to ``{}`` (falsy non-dict). Detect the shape
-            # mismatch HERE, surface an actionable warning, AND coerce
-            # the section to ``{}`` so the rest of the pipeline sees a
-            # well-formed value. Sibling fix in the tiny-parser path
-            # below covers ``thresholds: 42`` / ``thresholds: [a, b]``
-            # in the no-PyYAML environment.
-            raw_thresholds = data.get("thresholds")
-            if raw_thresholds is not None and not isinstance(raw_thresholds, dict):
-                if warnings_out is not None:
-                    warnings_out.append(
-                        f".roam/alerts.yaml 'thresholds:' section is a "
-                        f"{type(raw_thresholds).__name__}, expected a "
-                        f"mapping keyed by metric name; ignoring. Edit "
-                        f"the file to use "
-                        f"`thresholds:\\n  <metric>: {{op: ..., value: "
-                        f"..., level: ...}}` form."
-                    )
-                data["thresholds"] = {}
-            thresholds = data.get("thresholds") or {}
-            if isinstance(thresholds, dict):
-                for metric, rule in thresholds.items():
-                    if not isinstance(rule, dict):
-                        continue
-                    if warnings_out is not None and "op" in rule and rule["op"] not in _VALID_OPS:
-                        warnings_out.append(
-                            f"Metric {metric!r} has invalid op "
-                            f"{rule['op']!r} (must be one of "
-                            f"{sorted(_VALID_OPS)}); skipping this "
-                            f"threshold. Edit .roam/alerts.yaml to "
-                            f"use a valid comparator for {metric!r}."
-                        )
-                    # W969: normalise level in-place. Unknown level →
-                    # warning + safe default (``WARNING``) so downstream
-                    # ``counts[a["level"]]`` cannot KeyError.
-                    if "level" in rule:
-                        rule["level"] = _coerce_level(
-                            rule["level"],
-                            default=WARNING,
-                            field_name=f"thresholds.{metric}.level",
-                            warnings_out=warnings_out,
-                        )
-    except ImportError:
-        data = _parse_alerts_yaml(text, warnings_out=warnings_out)
-        # W1025 (Pattern 2 — silent fallback): tiny-parser sibling of the
-        # PyYAML check above. ``thresholds: 42`` reaches the tiny parser's
-        # flush-left scalar branch (W967) and lands as
-        # ``result['thresholds'] = 42``. Without this guard the downstream
-        # ``_resolved_thresholds`` either crashed on ``.items()`` (truthy
-        # non-dict scalar) or silently collapsed via ``or {}`` (falsy).
-        # Surface the shape mismatch with the SAME message shape as the
-        # PyYAML path so callers can rely on one wording regardless of
-        # backend.
-        if isinstance(data, dict):
-            raw_thresholds = data.get("thresholds")
-            if raw_thresholds is not None and not isinstance(raw_thresholds, dict):
-                if warnings_out is not None:
-                    warnings_out.append(
-                        f".roam/alerts.yaml 'thresholds:' section is a "
-                        f"{type(raw_thresholds).__name__}, expected a "
-                        f"mapping keyed by metric name; ignoring. Edit "
-                        f"the file to use "
-                        f"`thresholds:\\n  <metric>: {{op: ..., value: "
-                        f"..., level: ...}}` form."
-                    )
-                data["thresholds"] = {}
-    # W972 (Pattern 2 — silent fallback): when the YAML root parses to a
-    # non-dict (e.g. PyYAML returns a list because the user wrote
-    # ``- foo\n- bar`` at the top level, or a bare scalar), the pre-W972
-    # code silently fell back to ``{}`` with no signal to the user. The
-    # user's entire ``.roam/alerts.yaml`` was discarded. Surface this on
-    # ``warnings_out`` so the silent state is made explicit. Sibling of
-    # W962/W963/W964/W967/W969 — same Pattern 2 family.
-    if not isinstance(data, dict):
-        if warnings_out is not None and data is not None:
+    # W1030-followup-A: route I/O + parse through the canonical helper so
+    # the on-disk state is disambiguated for envelope-level disclosure.
+    # The helper handles missing-file / read-error / parse-error /
+    # wrong-root-type / empty-file / empty-yaml uniformly. The
+    # per-threshold validators (W962/W963/W964/W969/W1025) still run below
+    # on the parsed mapping because they need to walk the ``thresholds:``
+    # sub-mapping shape.
+    #
+    # W972 wording preservation: the canonical loader's parse_error /
+    # wrong_root_type diagnostics are more terse than the pre-W1030
+    # bespoke wording (no "Edit ..." imperative). To keep the existing
+    # W972 test contract intact (warning[0] must contain "Edit" + the
+    # root type), we drain canonical-loader warnings into a local buffer
+    # and re-emit a single W972-style warning that joins the loader's
+    # type-name with the historical imperative phrasing.
+    _canonical_warns: list[str] = []
+    data, status = load_yaml_with_warnings(
+        cfg_path,
+        tiny_parser=_parse_alerts_yaml_tiny,
+        config_label=".roam/alerts.yaml",
+        warnings_out=_canonical_warns,
+        return_status=True,
+    )
+    if data is None:
+        # status == "missing" -- absent file is the default state.
+        # No canonical-loader warning either (missing == not-an-error).
+        return {}, status
+    if not data:
+        # empty_file / empty_yaml / parse_error / wrong_root_type /
+        # schema_invalid -- collapse canonical loader's diagnostics
+        # into the per-status wording the existing tests pin on, so
+        # warning[0] keeps the W972 imperative shape.
+        if warnings_out is not None:
+            if status == "wrong_root_type":
+                # Pull the actual root-type name out of the canonical
+                # loader's diagnostic (``root is 'list'``) so the new
+                # wording can name the same offender, matching the W972
+                # test contract.
+                root_kind = _root_kind_from_canonical_warn(_canonical_warns)
+                warnings_out.append(
+                    f".roam/alerts.yaml root is a {root_kind}, not a "
+                    f"mapping; using empty config. Edit the file to use "
+                    f"top-level keys (thresholds:, delta_alerts:, etc)."
+                )
+            else:
+                # parse_error / read_error / empty_file / empty_yaml /
+                # schema_invalid -- forward the canonical-loader
+                # diagnostics verbatim (they are already actionable
+                # per the loader's "Treating as empty; fix..." pattern).
+                warnings_out.extend(_canonical_warns)
+        return {}, status
+    # Happy path: data parsed cleanly. Forward any non-fatal canonical-
+    # loader warnings (none today, but kept for forward-compat).
+    if warnings_out is not None and _canonical_warns:
+        warnings_out.extend(_canonical_warns)
+    assert isinstance(data, dict)
+
+    # W1025 (Pattern 2 — silent fallback): a non-dict ``thresholds:``
+    # section (scalar, list, etc.) used to flow straight through to
+    # ``_resolved_thresholds`` which then crashed on ``.items()`` (truthy
+    # non-dict) or silently collapsed to ``{}`` (falsy non-dict). Detect
+    # the shape mismatch HERE, surface an actionable warning, AND coerce
+    # the section to ``{}`` so the rest of the pipeline sees a well-formed
+    # value. Same wording across PyYAML and tiny-parser paths because the
+    # canonical loader homogenises the parse step (W1030-followup-A).
+    raw_thresholds = data.get("thresholds")
+    if raw_thresholds is not None and not isinstance(raw_thresholds, dict):
+        if warnings_out is not None:
             warnings_out.append(
-                f".roam/alerts.yaml root is a {type(data).__name__}, not a "
-                f"mapping; using empty config. Edit the file to use top-level "
-                f"keys (thresholds:, delta_alerts:, etc)."
+                f".roam/alerts.yaml 'thresholds:' section is a "
+                f"{type(raw_thresholds).__name__}, expected a "
+                f"mapping keyed by metric name; ignoring. Edit "
+                f"the file to use "
+                f"`thresholds:\\n  <metric>: {{op: ..., value: "
+                f"..., level: ...}}` form."
             )
-        return {}
-    return data
+        data["thresholds"] = {}
+    thresholds = data.get("thresholds") or {}
+    if isinstance(thresholds, dict):
+        # W962: validate ``op`` against the closed set _check_thresholds
+        # evaluates. W969: normalise ``level`` in-place so unknown level
+        # values default to WARNING and the canonical-set validation
+        # fires before ``counts[a["level"]] += 1`` can KeyError.
+        for metric, rule in thresholds.items():
+            if not isinstance(rule, dict):
+                continue
+            if warnings_out is not None and "op" in rule and rule["op"] not in _VALID_OPS:
+                warnings_out.append(
+                    f"Metric {metric!r} has invalid op "
+                    f"{rule['op']!r} (must be one of "
+                    f"{sorted(_VALID_OPS)}); skipping this "
+                    f"threshold. Edit .roam/alerts.yaml to "
+                    f"use a valid comparator for {metric!r}."
+                )
+            if "level" in rule:
+                rule["level"] = _coerce_level(
+                    rule["level"],
+                    default=WARNING,
+                    field_name=f"thresholds.{metric}.level",
+                    warnings_out=warnings_out,
+                )
+    return data, status
+
+
+def _parse_alerts_yaml_tiny(text: str) -> dict[str, dict[str, Any]]:
+    """W1030-followup-A: tiny-parser entrypoint for the canonical loader.
+
+    Thin shim around :func:`_parse_alerts_yaml` so the canonical loader's
+    ``tiny_parser=`` callback signature (``(text) -> Any``) matches the
+    legacy tiny parser's ``(text, warnings_out=...)`` signature. The
+    canonical loader handles ``warnings_out`` itself for parse-failure
+    paths; per-row ``op``/``level`` validators that need the accumulator
+    run AFTER the canonical loader returns (see
+    :func:`_load_alerts_config_with_status`).
+    """
+    return _parse_alerts_yaml(text)
+
+
+def _root_kind_from_canonical_warn(warns: list[str]) -> str:
+    """W1030-followup-A: extract the root type name from the canonical
+    loader's ``root is 'X', expected a mapping`` diagnostic so the W972
+    re-emitted warning can name the same offender.
+
+    Returns ``"list"`` / ``"str"`` / ``"int"`` / etc. when the diagnostic
+    is present; falls back to a neutral ``"non-mapping"`` token when the
+    canonical-loader output shape changes -- the W972 test only requires
+    the offender's type name when a mapping was expected, and a benign
+    fallback keeps the call site silent on shape drift.
+    """
+    import re as _re
+
+    for warn in warns:
+        # Canonical wording: "...: root is 'list', expected a mapping..."
+        match = _re.search(r"root is '([^']+)', expected a mapping", warn)
+        if match:
+            return match.group(1)
+    return "non-mapping"
 
 
 def _resolved_thresholds(
@@ -1003,6 +1072,8 @@ def _emit_alerts_json(
     counts: dict,
     snapshots_analyzed: int,
     warnings_out: WarningsOut = None,
+    config_state: str = "ok",
+    w607cx_warnings_out: list[str] | None = None,
 ) -> None:
     # LAW 4 (CLAUDE.md): supply explicit agent_contract.facts anchored on
     # the concrete subject ("alerts scan") with analytical verbs, instead of
@@ -1027,6 +1098,19 @@ def _emit_alerts_json(
     warnings_list = list(warnings_out) if warnings_out else []
     if warnings_list:
         facts.append(f"alerts config triggered {len(warnings_list)} silent-fallback warnings")
+    # W1030-followup-A: surface the alerts.yaml on-disk state as a fact so
+    # agents reading the envelope can distinguish "no alerts.yaml configured"
+    # from "alerts.yaml exists but is empty" from "alerts.yaml is broken".
+    # The fact terminates on a concrete-noun anchor ("defaults") to keep
+    # the LAW 4 lint happy.
+    if config_state == "missing":
+        facts.append("no .roam/alerts.yaml configured; using baseline defaults")
+    elif config_state == "empty_file":
+        facts.append("empty .roam/alerts.yaml stub on disk; using baseline defaults")
+    elif config_state == "empty_yaml":
+        facts.append("comment-only .roam/alerts.yaml on disk; using baseline defaults")
+    elif config_state in ("parse_error", "wrong_root_type", "schema_invalid", "read_error"):
+        facts.append(f"alerts config rejected ({config_state}); using baseline defaults")
     next_commands = [
         "roam health",
         "roam architecture-drift",
@@ -1039,12 +1123,38 @@ def _emit_alerts_json(
         "info": counts[INFO],
         "snapshots_analyzed": snapshots_analyzed,
     }
+    # W1030-followup-A: expose the on-disk state as a closed-enum string
+    # so agents can disambiguate "no alerts.yml configured yet" (defaults
+    # used silently) from "alerts.yml exists but is empty" (defaults used
+    # AND the user probably meant to configure something) from
+    # "alerts.yml is broken" (parse_error / wrong_root_type — already
+    # accompanied by a warning in ``warnings_out``).
+    summary["config_state"] = config_state
     # W918: ``partial_success`` makes the silent-fallback state machine
     # readable. When the alerts threshold path silently defaulted for an
     # unknown metric, the run is technically successful but the user's
     # config did not produce the alerts they configured for.
-    if warnings_list:
+    # W1030-followup-A: parse_error / wrong_root_type / read_error /
+    # schema_invalid also flip partial_success because the user's config
+    # was discarded — agents must see the discard, not just the verdict.
+    # W607-CX: a non-empty substrate-marker bucket ALSO flips
+    # partial_success so degraded substrate paths are NOT mistaken for
+    # clean runs (Pattern-2 silent-fallback guard).
+    config_degraded = config_state in ("parse_error", "wrong_root_type", "read_error", "schema_invalid")
+    cx_markers = list(w607cx_warnings_out) if w607cx_warnings_out else []
+    if warnings_list or config_degraded or cx_markers:
         summary["partial_success"] = True
+    # W607-CX: mirror substrate markers into BOTH the top-level
+    # envelope ``warnings_out`` AND ``summary.warnings_out`` so MCP
+    # consumers see disclosure regardless of which surface they read.
+    # Per-layer separation discipline: the user-facing config warnings
+    # (W918/W962/W964) flow through their existing ``warnings_out``
+    # field unchanged; the W607-CX bucket APPENDS substrate markers
+    # to that same surface, so a single consumer read covers both.
+    combined_top: list[str] = list(warnings_list)
+    if cx_markers:
+        combined_top.extend(cx_markers)
+        summary["warnings_out"] = cx_markers
     click.echo(
         to_json(
             json_envelope(
@@ -1057,7 +1167,9 @@ def _emit_alerts_json(
                 # CLI accumulates but does not raise on. Empty list
                 # when every override row was well-formed (Pattern 2
                 # — consumers can rely on the key being present).
-                warnings_out=warnings_list,
+                # W607-CX: substrate markers are appended to the same
+                # surface so consumers see one combined list.
+                warnings_out=combined_top,
                 agent_contract={
                     "facts": facts,
                     "next_commands": next_commands,
@@ -1132,9 +1244,91 @@ def alerts(ctx):
     # the envelope's ``warnings_out`` field (and prominently in text
     # mode). Empty list when every override row is well-formed.
     config_warnings: list[str] = []
+
+    # W607-CX -- substrate-boundary plumbing for cmd_alerts.
+    # ``_run_check_cx`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cx_warnings_out`` rather than
+    # crashing the alerts detector outright. Marker family
+    # ``alerts_<phase>_failed:<exc_class>:<detail>``.
+    #
+    # W607-CX COEXISTS WITH the mature Pattern-2 validators
+    # (W918 / W962 / W963 / W964 / W969 / W972 / W973 / W974 / W1025 /
+    # W1030-followup-A) that surface CONFIG-shape errors through
+    # ``config_warnings``. The two layers serve distinct purposes:
+    #
+    #   * ``config_warnings``  -- actionable, user-facing diagnostics
+    #                             for malformed ``.roam/alerts.yaml``
+    #                             rows (invalid op, unknown level,
+    #                             missing fields, non-dict thresholds).
+    #                             These flow through the existing
+    #                             ``warnings_out`` envelope field that
+    #                             the W918/W962/W964 tests pin on.
+    #
+    #   * ``_w607cx_warnings_out`` -- substrate-CALL markers for an
+    #                                  uncaught raise INSIDE one of the
+    #                                  helpers (``get_snapshots`` raising,
+    #                                  ``_check_thresholds`` raising,
+    #                                  ``_check_trends`` raising, etc.).
+    #                                  These mirror into BOTH top-level
+    #                                  ``warnings_out`` AND
+    #                                  ``summary.warnings_out`` so MCP
+    #                                  consumers see disclosure regardless
+    #                                  of which surface they read.
+    #
+    # Substrates wrapped:
+    #
+    #   * get_snapshots             -- DB-row ingest (newest-first)
+    #   * collect_metrics           -- live-metric collector (no-snapshot
+    #                                  fallback)
+    #   * build_snap_dicts          -- raw-row -> chronological dict
+    #                                  conversion
+    #   * load_alerts_config        -- ``.roam/alerts.yaml`` I/O + parse
+    #   * resolved_thresholds       -- defaults + overrides merge
+    #   * check_thresholds          -- W962/W963 op-validated checks
+    #   * coerce_delta_alerts       -- W964 bool coercion for the
+    #                                  ``delta_alerts`` flag
+    #   * delta_baseline_alerts     -- per-metric regression-vs-baseline
+    #                                  alerts
+    #   * check_trends              -- Mann-Kendall + Sen's slope trend
+    #                                  detection
+    #   * check_rate_of_change      -- per-snapshot rate-of-change alerts
+    #   * deduplicate               -- dedup + sort
+    #   * compose_verdict           -- LAW 6 single-line verdict
+    _w607cx_warnings_out: list[str] = []
+
+    def _run_check_cx(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CX marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``alerts_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607cx_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cx_warnings_out.append(f"alerts_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
-        snap_dicts = _build_snap_dicts(get_snapshots(conn))
-        current = snap_dicts[-1] if snap_dicts else collect_metrics(conn)
+        # W607-CX: ``get_snapshots`` substrate -- DB-row ingest.
+        snaps_raw = _run_check_cx("get_snapshots", get_snapshots, conn, default=[])
+        if snaps_raw is None:
+            snaps_raw = []
+        # W607-CX: ``build_snap_dicts`` substrate -- raw-row -> dict.
+        snap_dicts = _run_check_cx("build_snap_dicts", _build_snap_dicts, snaps_raw, default=[])
+        if snap_dicts is None:
+            snap_dicts = []
+        if snap_dicts:
+            current = snap_dicts[-1]
+        else:
+            # W607-CX: ``collect_metrics`` substrate -- live-metric
+            # fallback when no snapshots exist.
+            current = _run_check_cx("collect_metrics", collect_metrics, conn, default={})
+            if current is None:
+                current = {}
 
         # 1) Threshold checks (respect .roam/alerts.yaml overrides).
         # W962 + W963 + W964: ``_load_alerts_config`` /
@@ -1142,43 +1336,104 @@ def alerts(ctx):
         # the same ``config_warnings`` list so the envelope carries one
         # actionable warning per offending row, regardless of which
         # validator detected it.
-        cfg = _load_alerts_config(warnings_out=config_warnings)
-        thresholds = _resolved_thresholds(warnings_out=config_warnings)
-        all_alerts.extend(
-            _check_thresholds(
-                current,
-                thresholds,
-                warnings_out=config_warnings,
-            )
+        # W1030-followup-A: use the with-status variant so the on-disk
+        # state ("missing" / "empty_file" / "ok" / ...) reaches the
+        # envelope as a closed-enum field — agents reading the alerts
+        # envelope can disambiguate "no thresholds configured yet" from
+        # "thresholds file is broken / empty stub" without re-statting
+        # the file.
+        # W607-CX: ``load_alerts_config`` substrate -- the canonical
+        # YAML loader already catches parse_error / wrong_root_type /
+        # read_error via the closed-enum status. A raise here is
+        # therefore unusual (genuine bug in the loader, not a config
+        # shape issue) but we still wrap it so the alerts detector
+        # cannot crash on a loader regression.
+        _cfg_pair = _run_check_cx(
+            "load_alerts_config",
+            _load_alerts_config_with_status,
+            warnings_out=config_warnings,
+            default=({}, "missing"),
         )
+        if _cfg_pair is None:
+            _cfg_pair = ({}, "missing")
+        cfg, config_state = _cfg_pair
+        # W607-CX: ``resolved_thresholds`` substrate.
+        thresholds = _run_check_cx(
+            "resolved_thresholds",
+            _resolved_thresholds,
+            warnings_out=config_warnings,
+            default={},
+        )
+        if thresholds is None:
+            thresholds = {}
+        # W607-CX: ``check_thresholds`` substrate.
+        threshold_alerts = _run_check_cx(
+            "check_thresholds",
+            _check_thresholds,
+            current,
+            thresholds,
+            warnings_out=config_warnings,
+            default=[],
+        )
+        if threshold_alerts:
+            all_alerts.extend(threshold_alerts)
 
         # 2) Delta-vs-baseline alerts (need >= 2 snapshots, opt-out via config).
         # W964 (Pattern 2 — silent fallback): coerce ``delta_alerts``
         # through the bool helper so YAML strings (``"yes"`` / ``"no"``)
         # behave as the user intended AND any other shape surfaces an
         # actionable warning instead of silently disabling the feature.
-        delta_enabled = (
-            _coerce_bool(
+        if cfg:
+            delta_enabled = _run_check_cx(
+                "coerce_delta_alerts",
+                _coerce_bool,
                 cfg.get("delta_alerts", True),
                 True,
                 field_name="delta_alerts",
                 warnings_out=config_warnings,
+                default=True,
             )
-            if cfg
-            else True
-        )
+            if delta_enabled is None:
+                delta_enabled = True
+        else:
+            delta_enabled = True
         if delta_enabled and len(snap_dicts) >= 2:
-            all_alerts.extend(_delta_baseline_alerts(current, snap_dicts[-2]))
+            # W607-CX: ``delta_baseline_alerts`` substrate.
+            delta_alerts = _run_check_cx(
+                "delta_baseline_alerts",
+                _delta_baseline_alerts,
+                current,
+                snap_dicts[-2],
+                default=[],
+            )
+            if delta_alerts:
+                all_alerts.extend(delta_alerts)
 
         # 3) Trend detection (Mann-Kendall + Sen's slope, need >= 3 snapshots).
         if len(snap_dicts) >= 3:
-            all_alerts.extend(_check_trends(snap_dicts))
+            # W607-CX: ``check_trends`` substrate.
+            trend_alerts = _run_check_cx("check_trends", _check_trends, snap_dicts, default=[])
+            if trend_alerts:
+                all_alerts.extend(trend_alerts)
 
         # 4) Rate-of-change detection (need >= 2 snapshots).
         if len(snap_dicts) >= 2:
-            all_alerts.extend(_check_rate_of_change(snap_dicts))
+            # W607-CX: ``check_rate_of_change`` substrate.
+            rate_alerts = _run_check_cx(
+                "check_rate_of_change",
+                _check_rate_of_change,
+                snap_dicts,
+                default=[],
+            )
+            if rate_alerts:
+                all_alerts.extend(rate_alerts)
 
-    all_alerts = _deduplicate(all_alerts)
+    # W607-CX: ``deduplicate`` substrate -- a malformed alert row could
+    # KeyError on ``a["metric"]`` / ``a["level"]`` inside the sort key.
+    deduped = _run_check_cx("deduplicate", _deduplicate, all_alerts, default=[])
+    if deduped is None:
+        deduped = []
+    all_alerts = deduped
     # W969 (Pattern 2): derive ``counts`` from the canonical level set
     # so adding a new severity in ``_CANONICAL_LEVELS`` does not require
     # a manual edit here. Defensive against any level that escapes the
@@ -1191,7 +1446,16 @@ def alerts(ctx):
         if level not in counts:
             level = WARNING
         counts[level] += 1
-    verdict = _alerts_verdict(all_alerts, counts)
+    # W607-CX: ``compose_verdict`` substrate -- LAW 6 single-line verdict.
+    verdict = _run_check_cx(
+        "compose_verdict",
+        _alerts_verdict,
+        all_alerts,
+        counts,
+        default="no alerts — all metrics within normal ranges",
+    )
+    if not verdict:
+        verdict = "no alerts — all metrics within normal ranges"
 
     if json_mode:
         _emit_alerts_json(
@@ -1200,6 +1464,8 @@ def alerts(ctx):
             counts,
             len(snap_dicts),
             warnings_out=config_warnings,
+            config_state=config_state,
+            w607cx_warnings_out=_w607cx_warnings_out,
         )
         return
     _emit_alerts_text(verdict, all_alerts, counts, warnings_out=config_warnings)

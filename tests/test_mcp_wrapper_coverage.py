@@ -110,6 +110,21 @@ _KNOWN_LOCAL_STATE_COMMANDS: set[str] = {
     "permit",  # structural-permission verdict facade
     "intent-check",  # pre-flight on intended command (uses on-disk mode)
     "ws",  # workspace state (multi-repo grouping)
+    # W363 — pr-bundle is a 14-subcommand stateful tree
+    # (init / set intent / add affected|risk|test-required|test-run|
+    # non-goal|context-cmd|context-symbol|context-file /
+    # add-approval / add-accepted-risk / emit / validate). Bundle
+    # state persists at ``.roam/pr-bundles/<branch>.json`` and is
+    # mutated atomically across many invocations — same on-disk
+    # pattern as ``runs`` / ``lease`` / ``memory`` / ``mode``.
+    # Exposing 14 stateful subcommands as 14 MCP tools would invert
+    # the local-state contract: each MCP call is stateless, so the
+    # bundle round-trip would happen via disk anyway. Agents
+    # interact with bundles by invoking the CLI directly or reading
+    # the JSON file. A future wave (W366 elicitation hooks) may
+    # revisit ``validate`` as a read-only CI-gate tool, but the
+    # producer surface stays CLI-only by design.
+    "pr-bundle",
 }
 
 # 3) Daemon / long-running — incompatible with stateless MCP invocations.

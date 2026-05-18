@@ -1953,6 +1953,24 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   color: var(--muted);
   line-height: 1.4;
 }
+.honest-banner {
+  /* Inline disclosure inside a product card for "not built yet / early
+     access" honesty notes. Muted but more present than .replay-checkout-note
+     (which is a centred sub-footnote) — left border + soft background so it
+     reads as a callout, not body copy. Italic kept off so embedded <code>
+     and <strong> stay legible at 13px. */
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-60);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+.honest-banner code {
+  font-size: 12px;
+}
 .product-card .features {
   list-style: none;
   padding: 0;
@@ -3285,6 +3303,15 @@ footer a { color: #fff; }
      Border kept warm so the pill still reads as the gold tier. */
   color: #6e4f12;
   border-color: #e8d39a;
+}
+.tier-pill--planned {
+  /* Muted warm-grey for "planned / early access" — distinct from the four
+     shipped tiers (green/blue/purple/gold) so readers parse it as a state
+     marker, not a fifth price tier. Contrast ratio 7.4:1 against the
+     #f3eee3 background for WCAG AAA on 11px text. */
+  background: #f3eee3;
+  color: #6b5530;
+  border-color: #d9cdb3;
 }
 .tier-price {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;

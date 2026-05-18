@@ -13,36 +13,39 @@
 rules:
   # ---- Dangerous APIs ----
 
+  # WARN (not BLOCK) because unsafe.Pointer legitimately appears in
+  # performance-critical FFI bridges — the violation needs human review
+  # to confirm it isn't escaping into general application code.
   - id: go-no-unsafe
-    description: "unsafe.Pointer bypasses memory safety; only justified in performance-critical FFI."
+    description: "Remove unsafe imports outside FFI bridges; unsafe.Pointer bypasses Go memory safety."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: unsafe
     severity: WARN
 
   - id: go-no-cgo
-    description: "C interop adds a non-Go toolchain dependency; lock changes behind a clear ADR."
+    description: "Gate cgo imports behind an explicit ADR; C interop adds a non-Go toolchain dependency."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "C"
     severity: WARN
 
   - id: go-no-os-exec-shell
-    description: "os/exec usage often masks shell-injection; review inputs carefully."
+    description: "Audit os/exec call sites for shell-injection; review every external argument."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "os/exec"
     severity: WARN
 
   - id: go-no-md5-sha1
-    description: "crypto/md5 + crypto/sha1 are broken for security; use crypto/sha256 or crypto/sha512."
+    description: "Replace crypto/md5 + crypto/sha1 with crypto/sha256 or crypto/sha512; MD5 and SHA1 are broken for security."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "crypto/{md5,sha1}"
     severity: BLOCK
 
   - id: go-no-net-rpc
-    description: "net/rpc is deprecated for new services; use gRPC / connect-go / fiber."
+    description: "Replace net/rpc with gRPC, connect-go, or fiber; net/rpc is deprecated for new services."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "net/rpc*"
@@ -51,21 +54,21 @@ rules:
   # ---- Common AI-generated anti-patterns ----
 
   - id: go-no-panic
-    description: "panic() in library code propagates failure modes badly; return errors instead."
+    description: "Return an error instead of calling panic() in library code; panic propagates failure modes badly."
     pattern: function_call
     source_glob: "**/*.go"
     forbidden_target_glob: panic
     severity: WARN
 
   - id: go-no-fmt-println-in-prod
-    description: "fmt.Println in production code suggests forgotten debugging output."
+    description: "Remove fmt.Println from production code; stray println calls are forgotten debugging output."
     pattern: function_call
     source_glob: "**/*.go"
     forbidden_target_glob: fmt.Println
     severity: WARN
 
   - id: go-no-init-funcs-in-libs
-    description: "init() in libraries causes hidden ordering issues; prefer explicit constructors."
+    description: "Replace library init() with explicit constructors; init causes hidden ordering issues."
     pattern: function_call
     source_glob: "lib/**/*.go"
     forbidden_target_glob: init
@@ -73,15 +76,18 @@ rules:
 
   # ---- LLM-favourite hallucinated imports ----
 
+  # WHY: LLMs frequently hallucinate "v2" / numbered package paths when the
+  # real package already exists at a non-numbered path. Renaming forces the
+  # author to confirm the actual target.
   - id: go-no-numbered-modules
-    description: "Numbered modules (foo_v2, util1) often signal LLM hallucinations."
+    description: "Rename or remove numbered modules (foo_v2, util1); these names are typical LLM hallucinations."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "*_v[0-9]*"
     severity: WARN
 
   - id: go-no-helpers-helpers
-    description: "helpers/helpers and utils/utils paths are LLM placeholders; pick a real name."
+    description: "Rename helpers/helpers and utils/utils paths to a domain-specific package; these are LLM placeholders."
     pattern: import_from
     source_glob: "**/*.go"
     forbidden_target_glob: "*helpers/helpers*"
@@ -90,14 +96,14 @@ rules:
   # ---- Layer-violation rules ----
 
   - id: go-no-direct-db-from-handler
-    description: "HTTP handlers must not import db packages directly; go through service layer."
+    description: "Route HTTP handlers through the service layer; handlers must not import db packages directly."
     pattern: import_from
     source_glob: "internal/handlers/**/*.go"
     forbidden_target_glob: "*/db/*"
     severity: BLOCK
 
   - id: go-no-internal-from-public
-    description: "Public packages must not depend on internal/ — Go enforces this but custom layouts can drift."
+    description: "Public packages must not depend on internal/; Go enforces this but custom layouts can drift."
     pattern: import_from
     source_glob: "pkg/**/*.go"
     forbidden_target_glob: "*/internal/*"

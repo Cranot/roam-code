@@ -6,7 +6,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any
+from typing import Any, TypeAlias
 
 from roam.search.framework_packs import search_pack_symbols
 from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarity, tokenize
@@ -16,7 +16,20 @@ from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarit
 # underscore is preserved to avoid churning the 4 internal call-sites,
 # but ``__all__`` declares it intentionally exported so private-access
 # lints don't flag the cross-module import.
-__all__ = ["_camel_split"]
+__all__ = ["_camel_split", "WarningsOut"]
+
+# W605: Pattern-2 silent-fallback warnings accumulator type. Mirrors the
+# substrate-floor type contract in ``roam.db.connection`` (W603) and
+# ``roam.output.formatter`` (W1043). The alias is duplicated locally
+# rather than imported from ``roam.output.formatter`` because the
+# search substrate is on every command's hot read path (cmd_retrieve /
+# cmd_search / cmd_search_semantic / retrieve.seeds) and formatter.py
+# is ~50KB of import surface; the same hot-path-cost rationale that
+# justifies the W603 local duplication applies here. W907 verify-cycle
+# check: formatter.py has NO top-level roam imports (verified by grep
+# ``^from roam`` returning empty), so the duplication is a cost choice
+# not a false-cycle hedge.
+WarningsOut: TypeAlias = list[str] | None
 
 # ---------------------------------------------------------------------------
 # camelCase preprocessing for FTS5 tokenizer
@@ -51,41 +64,78 @@ def _camel_split(text: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def fts5_available(conn: sqlite3.Connection) -> bool:
-    """Check if the symbol_fts virtual table exists and is usable."""
+def fts5_available(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> bool:
+    """Check if the symbol_fts virtual table exists and is usable.
+
+    When ``warnings_out`` is threaded in, an unexpected substrate
+    failure (corrupted ``sqlite_master`` row, locked DB) emits the
+    ``semantic_fts_check_failed:symbol_fts:<exc_class>:<detail>``
+    marker before the silent ``return False`` so operators see WHY
+    BM25-ranked search is missing. ``warnings_out=None`` preserves the
+    legacy silent fallback (the substrate floor exposes this on every
+    command's read path).
+    """
     try:
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
         return row is not None
-    except Exception:
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_fts_check_failed:symbol_fts:{type(exc).__name__}:{exc}")
         return False
 
 
-def fts5_populated(conn: sqlite3.Connection) -> bool:
-    """Check if symbol_fts has data."""
-    if not fts5_available(conn):
+def fts5_populated(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> bool:
+    """Check if symbol_fts has data.
+
+    Plumbs ``warnings_out`` to ``fts5_available`` and emits its own
+    marker on a COUNT-query substrate failure (locked table, broken
+    virtual-table state). A legitimately-empty corpus (cold start
+    pre-index) returns ``False`` SILENTLY because that is the expected
+    path, not a substrate corruption signal.
+    """
+    if not fts5_available(conn, warnings_out=warnings_out):
         return False
     try:
         row = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()
         return row is not None and row[0] > 0
-    except Exception:
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_fts_check_failed:symbol_fts_count:{type(exc).__name__}:{exc}")
         return False
 
 
-def tfidf_populated(conn: sqlite3.Connection) -> bool:
-    """Check if symbol_tfidf has data."""
+def tfidf_populated(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> bool:
+    """Check if symbol_tfidf has data.
+
+    Plumbs ``warnings_out`` for substrate-corruption disclosure
+    (missing table, locked DB). A legitimately-empty TF-IDF table
+    (cold start, never indexed) returns ``False`` SILENTLY.
+    """
     try:
         row = conn.execute("SELECT COUNT(*) FROM symbol_tfidf").fetchone()
         return row is not None and row[0] > 0
-    except Exception:
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_tfidf_check_failed:symbol_tfidf:{type(exc).__name__}:{exc}")
         return False
 
 
-def onnx_populated(conn: sqlite3.Connection) -> bool:
-    """Check if ONNX embedding table has data."""
+def onnx_populated(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> bool:
+    """Check if ONNX embedding table has data.
+
+    Plumbs ``warnings_out`` for substrate-corruption disclosure
+    (missing table, locked DB). A legitimately-empty embeddings table
+    (ONNX backend not installed / not enabled) returns ``False``
+    SILENTLY — the fallback-contracts arc already discloses the
+    degraded-but-correct contract loudly at the backend-readiness
+    layer (``_onnx_ready``).
+    """
     try:
         row = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()
         return row is not None and row[0] > 0
-    except Exception:
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_onnx_check_failed:symbol_embeddings:{type(exc).__name__}:{exc}")
         return False
 
 
@@ -279,10 +329,30 @@ _FTS5_SEARCH_SQL = f"""
 """
 
 
-def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[dict]:
+def search_fts(
+    conn: sqlite3.Connection,
+    query: str,
+    top_k: int = 10,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Search using FTS5 BM25 ranking (fast, all in C).
 
     Returns top-k results: ``[{score, symbol_id, name, file_path, kind, line_start}]``.
+
+    When ``warnings_out`` is threaded in:
+
+    * The first-pass FTS5 query failure emits
+      ``semantic_fts_query_failed:<query>:<exc_class>:<detail>`` so a
+      malformed expression / locked-table / broken-FTS5 substrate is
+      disclosed even though the prefix-only fallback may rescue it.
+    * The second-pass prefix-only fallback failure emits
+      ``semantic_fts_query_failed:<prefix_query>:fallback:<exc>`` —
+      both passes failed, the caller sees an empty list AND a marker
+      explaining why.
+
+    An empty query / empty fts_query stays SILENT (legitimate filter,
+    not a substrate failure).
     """
     if not query or not query.strip():
         return []
@@ -294,7 +364,9 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[di
 
     try:
         rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
-    except Exception:
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_fts_query_failed:{fts_query}:{type(exc).__name__}:{exc}")
         # FTS5 query syntax error — fall back to prefix match
         try:
             fts_query = _build_fts_query(query, prefix_only=True)
@@ -302,7 +374,9 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[di
                 rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
             else:
                 return []
-        except Exception:
+        except Exception as exc2:
+            if warnings_out is not None:
+                warnings_out.append(f"semantic_fts_query_failed:{fts_query}:fallback:{type(exc2).__name__}:{exc2}")
             return []
 
     results = []
@@ -433,10 +507,19 @@ def search_stored(
     packs: list[str] | None = None,
     semantic_backend: str = "auto",
     project_root=None,
+    *,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Search using hybrid BM25+vector fusion with optional framework packs.
 
     Returns top-k results: ``[{score, symbol_id, name, file_path, kind, line_start}]``.
+
+    When ``warnings_out`` is threaded in, every sub-branch's silent-
+    pass disclosure (FTS5 corruption / vector decode / pack import
+    failure) surfaces on the caller's bucket without intermediate
+    loss. ``warnings_out=None`` preserves the legacy silent-empty
+    behaviour for ~3 callers (cmd_search_semantic, cmd_retrieve,
+    retrieve.seeds) that haven't opted in yet.
     """
     if not query or not query.strip():
         return []
@@ -452,21 +535,22 @@ def search_stored(
     tfidf_results: list[dict] = []
 
     # Fast lexical branch (FTS5/BM25).
-    if fts5_populated(conn):
-        lexical_results = search_fts(conn, query, top_k=candidate_k)
+    if fts5_populated(conn, warnings_out=warnings_out):
+        lexical_results = search_fts(conn, query, top_k=candidate_k, warnings_out=warnings_out)
 
     # Dense ONNX branch.
-    if backend in {"auto", "onnx", "hybrid"} and onnx_populated(conn):
+    if backend in {"auto", "onnx", "hybrid"} and onnx_populated(conn, warnings_out=warnings_out):
         onnx_results = _search_onnx_stored(
             conn,
             query,
             top_k=candidate_k,
             project_root=project_root,
+            warnings_out=warnings_out,
         )
 
     # Sparse TF-IDF branch.
-    if backend in {"auto", "tfidf", "hybrid"} and tfidf_populated(conn):
-        tfidf_results = _search_tfidf_stored(conn, query, top_k=candidate_k)
+    if backend in {"auto", "tfidf", "hybrid"} and tfidf_populated(conn, warnings_out=warnings_out):
+        tfidf_results = _search_tfidf_stored(conn, query, top_k=candidate_k, warnings_out=warnings_out)
 
     semantic_results = _merge_semantic_results(
         onnx_results,
@@ -478,7 +562,9 @@ def search_stored(
     if include_packs:
         try:
             pack_results = search_pack_symbols(query, top_k=candidate_k, packs=packs)
-        except Exception:
+        except Exception as exc:
+            if warnings_out is not None:
+                warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")
             pack_results = []
         if pack_results:
             semantic_results = sorted(
@@ -622,14 +708,25 @@ def build_and_store_onnx_embeddings(conn: sqlite3.Connection, project_root: str 
     }
 
 
-def load_onnx_vectors(conn: sqlite3.Connection) -> dict[int, list[float]]:
-    """Load stored ONNX vectors from DB."""
+def load_onnx_vectors(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> dict[int, list[float]]:
+    """Load stored ONNX vectors from DB.
+
+    Per-row JSON decode failures silently DROP the corrupt vector
+    from the result (preserving caller contract — search still
+    returns hits from the surviving vectors). When ``warnings_out``
+    is threaded in, every dropped row emits
+    ``semantic_vector_decode_failed:onnx:<symbol_id>:<exc_class>:<detail>``
+    so operators see the substrate-corruption signal that would
+    otherwise be invisible.
+    """
     rows = conn.execute("SELECT symbol_id, vector FROM symbol_embeddings WHERE provider='onnx'").fetchall()
     result: dict[int, list[float]] = {}
     for row in rows:
         try:
             vec = json.loads(row["vector"])
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            if warnings_out is not None:
+                warnings_out.append(f"semantic_vector_decode_failed:onnx:{row['symbol_id']}:{type(exc).__name__}:{exc}")
             continue
         if isinstance(vec, list) and vec:
             result[int(row["symbol_id"])] = [float(v) for v in vec]
@@ -656,8 +753,16 @@ def _search_onnx_stored(
     query: str,
     top_k: int = 10,
     project_root=None,
+    *,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
-    """Search using precomputed ONNX vectors + query embedding."""
+    """Search using precomputed ONNX vectors + query embedding.
+
+    Threads ``warnings_out`` into ``load_onnx_vectors`` so per-row
+    JSON-decode failures surface. The ONNX-not-ready / empty-vector
+    branches stay SILENT (legitimate degraded-but-correct fallback
+    per the fallback-contracts arc).
+    """
     settings = _load_semantic_settings(project_root=project_root)
     ready, _, settings = _onnx_ready(project_root=project_root, settings=settings)
     if not ready:
@@ -672,7 +777,7 @@ def _search_onnx_stored(
         return []
     query_vec = query_vecs[0]
 
-    vectors = load_onnx_vectors(conn)
+    vectors = load_onnx_vectors(conn, warnings_out=warnings_out)
     if not vectors:
         return []
 
@@ -745,8 +850,15 @@ def _merge_semantic_results(*branches: list[dict], top_k: int) -> list[dict]:
     return values[:top_k]
 
 
-def load_tfidf_vectors(conn: sqlite3.Connection) -> dict[int, dict[str, float]]:
-    """Load stored TF-IDF vectors from DB."""
+def load_tfidf_vectors(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> dict[int, dict[str, float]]:
+    """Load stored TF-IDF vectors from DB.
+
+    Per-row JSON decode failures silently DROP the corrupt vector
+    from the result (preserving caller contract). When
+    ``warnings_out`` is threaded in, every dropped row emits
+    ``semantic_vector_decode_failed:tfidf:<symbol_id>:<exc_class>:<detail>``
+    so the substrate-corruption signal surfaces.
+    """
     ensure_tfidf_table(conn)
     rows = conn.execute("SELECT symbol_id, terms FROM symbol_tfidf").fetchall()
 
@@ -755,13 +867,28 @@ def load_tfidf_vectors(conn: sqlite3.Connection) -> dict[int, dict[str, float]]:
         try:
             vec = json.loads(row["terms"])
             result[row["symbol_id"]] = vec
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            if warnings_out is not None:
+                warnings_out.append(
+                    f"semantic_vector_decode_failed:tfidf:{row['symbol_id']}:{type(exc).__name__}:{exc}"
+                )
             continue
     return result
 
 
-def _search_tfidf_stored(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[dict]:
-    """Search using pre-computed TF-IDF vectors (legacy fallback)."""
+def _search_tfidf_stored(
+    conn: sqlite3.Connection,
+    query: str,
+    top_k: int = 10,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
+    """Search using pre-computed TF-IDF vectors (legacy fallback).
+
+    Threads ``warnings_out`` into ``load_tfidf_vectors`` so per-row
+    JSON-decode failures surface. Empty-corpus / empty-tokens stays
+    SILENT (legitimate cold-start / filter, not substrate failure).
+    """
     query_tokens = tokenize(query)
     if not query_tokens:
         return []
@@ -770,7 +897,7 @@ def _search_tfidf_stored(conn: sqlite3.Connection, query: str, top_k: int = 10) 
     for t in query_tokens:
         query_vec[t] = query_vec.get(t, 0) + 1
 
-    vectors = load_tfidf_vectors(conn)
+    vectors = load_tfidf_vectors(conn, warnings_out=warnings_out)
     if not vectors:
         return []
 

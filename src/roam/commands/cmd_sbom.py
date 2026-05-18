@@ -507,9 +507,114 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    try:
-        project_root = find_project_root()
-    except Exception:
+    # W607-AM -- substrate-boundary plumbing for the SBOM EMIT producer leg
+    # of the W805 cross-artifact-consistency family. Prior to W607-AM a
+    # raise inside any of find_project_root / discover_and_parse /
+    # compute_graph_reachability / compute_filesystem_reachability /
+    # merge_reachability / generate_cyclonedx / generate_spdx /
+    # build_aibom_block / serialize_sbom / write_sbom crashed the whole
+    # SBOM emit wholesale. Each is wrapped via ``_run_check_am`` so a raise
+    # becomes a structured ``sbom_<phase>_failed:<exc_class>:<detail>``
+    # marker on ``_w607am_warnings_out`` -- the envelope still emits cleanly
+    # with whatever signal the remaining substrates produced.
+    #
+    # cmd_sbom is the SBOM EMIT producer on the W805 cross-artifact family
+    # (sibling of cmd_supply_chain W607-AK which is the consumer/projection
+    # side). cmd_sbom produces the CycloneDX/SPDX artifact downstream
+    # consumers use; the W805 6-artifact identity-coherence story would
+    # naturally extend to a 7th SBOM-with-content-hash-binding artifact and
+    # W607-AM gives the runtime-raise complement to that future pin.
+    #
+    # Marker prefix discipline: every W607-AM substrate marker uses the
+    # canonical ``sbom_<phase>_failed:<exc_class>:<detail>`` shape. cmd_sbom
+    # has NO pre-existing warnings_out channel -- W607-AM is FRESH: the
+    # accumulator-based markers become the canonical ``summary.warnings_out``
+    # field outright.
+    _w607am_warnings_out: list[str] = []
+
+    def _run_check_am(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AM marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``sbom_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607am_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607am_warnings_out.append(f"sbom_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CG -- ADDITIVE aggregation-phase plumbing on top of the W607-AM
+    # substrate-CALL markers. W607-AM already wrapped the substrate-helper
+    # boundaries on the EMIT path (find_project_root / discover_and_parse /
+    # compute_graph_reachability / compute_filesystem_reachability /
+    # merge_reachability / generate_cyclonedx / generate_spdx /
+    # build_aibom_block / serialize_sbom_json / write_sbom_to_disk);
+    # W607-CG extends marker coverage to the AGGREGATION-PHASE
+    # boundaries that W607-AM left unguarded:
+    #
+    #   - ``compute_predicate``    -- per-field extraction of the
+    #                                 reachability metric counts
+    #                                 (total_deps / reachable_count /
+    #                                 phantom_count / reachable_direct_count
+    #                                 / reachable_heuristic_count) used to
+    #                                 compose the verdict string + envelope.
+    #                                 A future ``reachability`` schema
+    #                                 refactor that drops/renames one of
+    #                                 these per-dep ``confidence`` /
+    #                                 ``reachable`` keys would otherwise
+    #                                 crash the envelope post-build.
+    #   - ``compute_verdict``      -- verdict string assembly based on
+    #                                 total_deps + reachability presence
+    #                                 (empty-deps / reachability-ran /
+    #                                 no-reachability branches). Floor to a
+    #                                 literal "SBOM analysis completed"
+    #                                 string per LAW 6 (standalone-parse)
+    #                                 + W978 first-hypothesis discipline
+    #                                 (no re-interpolation of the same
+    #                                 values that just raised).
+    #   - ``serialize_envelope``   -- ``json_envelope("sbom", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions). Mirror
+    #                                 of cmd_supply_chain W607-CD
+    #                                 serialize_envelope floor pattern.
+    #
+    # cmd_sbom is the SBOM EMIT producer leg of the W805 cross-artifact-
+    # consistency family. Closes the SBOM/VEX PROJECTION chain alongside
+    # the now-complete attestation quartet (cmd_attest W607-AD/BT,
+    # cmd_pr_bundle W607-AE/BW, cmd_cga W607-AF/BZ, cmd_supply_chain
+    # W607-AK/CD). The W607-CG markers fire AT RUNTIME when an
+    # aggregation-phase boundary raises, complementing the W805
+    # xfail-strict pins that catch structural inconsistency at the
+    # dataclass level.
+    #
+    # Marker family ``sbom_*`` -- same family as W607-AM (additive, not
+    # a separate prefix). Empty bucket -> byte-identical envelope on
+    # the success path.
+    #
+    # No ``auto_log`` phase: cmd_sbom has no active-run ledger write at
+    # present, so the W607-BZ 4-phase set drops to 3 phases here
+    # (compute_predicate / compute_verdict / serialize_envelope). Same
+    # marker shape contract, narrower phase set.
+    _w607cg_warnings_out: list[str] = []
+
+    def _run_check_cg(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CG marker emission.
+
+        Mirror of ``_run_check_am`` shape (same ``sbom_<phase>_failed:``
+        marker family) but writes into ``_w607cg_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cg_warnings_out.append(f"sbom_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    project_root = _run_check_am("find_project_root", find_project_root, default=None)
+    if project_root is None:
         project_root = Path.cwd()
 
     project_name = project_root.name
@@ -517,7 +622,7 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
     # Import supply-chain discovery (same data source as `roam supply-chain`)
     from roam.commands.cmd_supply_chain import discover_and_parse
 
-    deps = discover_and_parse(project_root)
+    deps = _run_check_am("discover_and_parse", discover_and_parse, project_root, default=[])
 
     # Reachability analysis
     # Graph-based check (symbol graph reachability) AND filesystem-based
@@ -533,45 +638,89 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
 
         dep_names = [d.name for d in deps]
 
-        # Graph-based reachability (may fail if index is unavailable)
+        # Graph-based reachability (may fail if index is unavailable).
+        # W607-AM wraps the inner _compute_reachability call so a raise
+        # there becomes a structured marker rather than crashing the SBOM
+        # build. ensure_index() and open_db() stay outside the wrap to
+        # preserve the existing degrade-on-no-index behaviour.
         graph_reach: dict[str, dict] = {}
         try:
             ensure_index()
             with open_db(readonly=True) as conn:
-                graph_reach = _compute_reachability(conn, dep_names)
+                graph_reach = _run_check_am(
+                    "compute_graph_reachability",
+                    _compute_reachability,
+                    conn,
+                    dep_names,
+                    default={},
+                )
         except Exception:
             graph_reach = {}
 
         # Filesystem-based reachability (cheap, independent of index)
-        try:
-            fs_reach = compute_filesystem_reachability(project_root, dep_names)
-        except Exception:
-            fs_reach = {}
+        fs_reach = _run_check_am(
+            "compute_filesystem_reachability",
+            compute_filesystem_reachability,
+            project_root,
+            dep_names,
+            default={},
+        )
 
-        reachability = merge_reachability(graph_reach, fs_reach)
-        # If both layers returned empty, fall back to None so callers can
-        # tell reachability wasn't actually computed.
+        reachability = _run_check_am(
+            "merge_reachability",
+            merge_reachability,
+            graph_reach,
+            fs_reach,
+            default={},
+        )
+        # If both layers returned empty (or merge raised), fall back to None
+        # so callers can tell reachability wasn't actually computed.
         if not reachability:
             reachability = None
 
     # Generate SBOM
     if fmt.lower() == "spdx":
-        sbom_data = _generate_spdx(project_name, deps, reachability)
+        sbom_data = _run_check_am(
+            "generate_spdx",
+            _generate_spdx,
+            project_name,
+            deps,
+            reachability,
+            default=None,
+        )
     else:
-        sbom_data = _generate_cyclonedx(project_name, deps, reachability)
+        sbom_data = _run_check_am(
+            "generate_cyclonedx",
+            _generate_cyclonedx,
+            project_name,
+            deps,
+            reachability,
+            default=None,
+        )
 
     # AIBOM extension (CycloneDX 1.7 only) — bind AI-authored commits to
     # indexed symbols. Required for EU AI Act Art. 50 disclosure.
-    if aibom and fmt.lower() == "cyclonedx":
-        try:
-            from roam.security.aibom_extension import build_aibom_block
+    if aibom and fmt.lower() == "cyclonedx" and sbom_data is not None:
+        from roam.security.aibom_extension import build_aibom_block
 
+        def _build_aibom_block(_project_root):
             ensure_index()
             with open_db(readonly=True) as conn:
-                aibom_block = build_aibom_block(project_root, conn)
+                return build_aibom_block(_project_root, conn)
+
+        aibom_block = _run_check_am(
+            "build_aibom_block",
+            _build_aibom_block,
+            project_root,
+            default=None,
+        )
+        if aibom_block is not None:
             sbom_data["aibom"] = aibom_block
-        except Exception as exc:
-            sbom_data["aibom"] = {"error": str(exc), "version": "0.1"}
+        else:
+            # Preserve pre-W607-AM error disclosure on the SBOM artifact
+            # (in addition to the W607-AM marker on warnings_out) so SBOM
+            # consumers that don't read warnings_out still see the gap.
+            sbom_data["aibom"] = {"error": "build_aibom_block_failed", "version": "0.1"}
 
     # Build summary for verdict / JSON envelope.
     #
@@ -587,32 +736,84 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
     #
     # ``reachable_count`` / ``phantom_count`` stay so pre-W18.2 consumers
     # keep working; the two new counts are additive.
-    total_deps = len(deps)
-    reachable_count = 0
-    phantom_count = 0
-    reachable_direct_count = 0
-    reachable_heuristic_count = 0
-    if reachability is not None:
-        for v in reachability.values():
-            if v.get("reachable"):
-                reachable_count += 1
-                if v.get("confidence") == "direct":
-                    reachable_direct_count += 1
-                else:
-                    reachable_heuristic_count += 1
-        phantom_count = total_deps - reachable_count
+    #
+    # W607-CG -- compute_predicate boundary. Wraps the per-field extraction
+    # of the reachability metric counts so a future ``reachability`` schema
+    # refactor that renames the per-dep ``confidence`` / ``reachable`` keys
+    # surfaces a marker rather than crashing the envelope. Floor to
+    # documented empty-shape ints matching the happy-path shape so
+    # downstream verdict/summary fields stay non-null. Mirror of
+    # cmd_supply_chain W607-CD compute_predicate pattern.
+    def _compute_predicate_fields(_deps, _reachability) -> dict:
+        _total = len(_deps)
+        _reach = 0
+        _phantom = 0
+        _direct = 0
+        _heuristic = 0
+        if _reachability is not None:
+            for v in _reachability.values():
+                if v.get("reachable"):
+                    _reach += 1
+                    if v.get("confidence") == "direct":
+                        _direct += 1
+                    else:
+                        _heuristic += 1
+            _phantom = _total - _reach
+        return {
+            "total_deps": _total,
+            "reachable_count": _reach,
+            "phantom_count": _phantom,
+            "reachable_direct_count": _direct,
+            "reachable_heuristic_count": _heuristic,
+        }
 
-    if total_deps == 0:
-        verdict = "No dependencies found -- empty SBOM generated"
-    elif reachability is not None:
-        verdict = (
-            f"{reachable_count} reachable "
-            f"({reachable_direct_count} direct, "
-            f"{reachable_heuristic_count} heuristic), "
-            f"{phantom_count} phantom"
-        )
-    else:
-        verdict = f"SBOM generated: {total_deps} dependencies (reachability not computed)"
+    _pred_fields = _run_check_cg(
+        "compute_predicate",
+        _compute_predicate_fields,
+        deps,
+        reachability,
+        default={
+            "total_deps": 0,
+            "reachable_count": 0,
+            "phantom_count": 0,
+            "reachable_direct_count": 0,
+            "reachable_heuristic_count": 0,
+        },
+    )
+    total_deps = _pred_fields["total_deps"]
+    reachable_count = _pred_fields["reachable_count"]
+    phantom_count = _pred_fields["phantom_count"]
+    reachable_direct_count = _pred_fields["reachable_direct_count"]
+    reachable_heuristic_count = _pred_fields["reachable_heuristic_count"]
+
+    # W607-CG -- compute_verdict boundary. Wraps the verdict-string assembly
+    # so a downstream f-string refactor (e.g. a __format__-raising sentinel
+    # injected into one of the count fields) surfaces a marker rather than
+    # crashing the envelope. Floor must NOT re-interpolate the same values
+    # that tripped the closure (W978 first-hypothesis discipline: an
+    # __index__-raising sentinel under test would re-raise inside the
+    # default f-string). Use a literal ``"SBOM analysis completed"`` floor
+    # instead (LAW 6 still holds: the line works standalone). Mirror of
+    # cmd_supply_chain W607-CD compute_verdict pattern.
+    def _build_verdict_str(fields: dict, reachability_present: bool) -> str:
+        _total = fields["total_deps"]
+        if _total == 0:
+            return "No dependencies found -- empty SBOM generated"
+        if reachability_present:
+            _r = fields["reachable_count"]
+            _d = fields["reachable_direct_count"]
+            _h = fields["reachable_heuristic_count"]
+            _p = fields["phantom_count"]
+            return f"{_r} reachable ({_d} direct, {_h} heuristic), {_p} phantom"
+        return f"SBOM generated: {_total} dependencies (reachability not computed)"
+
+    verdict = _run_check_cg(
+        "compute_verdict",
+        _build_verdict_str,
+        _pred_fields,
+        reachability is not None,
+        default="SBOM analysis completed",
+    )
 
     # Concrete-noun facts (LAW 4): each fact names the analytical subject
     # in the body so an agent reading only the facts list knows what the
@@ -629,30 +830,116 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
 
     # Output
     if json_mode:
+        _summary: dict = {
+            "verdict": verdict,
+            "format": fmt.lower(),
+            "total_dependencies": total_deps,
+            "reachable_count": reachable_count if reachability else None,
+            "phantom_count": phantom_count if reachability else None,
+            "reachable_direct_count": (reachable_direct_count if reachability else None),
+            "reachable_heuristic_count": (reachable_heuristic_count if reachability else None),
+            "reachability_computed": reachability is not None,
+        }
+        # W607-AM / W607-CG: surface substrate-CALL markers AND aggregation-
+        # phase markers on BOTH the canonical ``summary.warnings_out`` and
+        # the top-level ``warnings_out`` so an agent reading only one of the
+        # two fields still sees the failure. ``partial_success`` flips
+        # whenever ANY bucket is non-empty -- W805 invariant: SBOM emit
+        # never collapses to a silent SAFE verdict when any of the EMIT-side
+        # substrates raised. Both buckets share the canonical ``sbom_*``
+        # marker family; the additive W607-CG bucket stays distinguishable
+        # via its phase names (``compute_predicate`` / ``compute_verdict`` /
+        # ``serialize_envelope``).
+        _combined_warnings_out = list(_w607am_warnings_out) + list(_w607cg_warnings_out)
+        if _combined_warnings_out:
+            _summary["warnings_out"] = list(_combined_warnings_out)
+            _summary["partial_success"] = True
         envelope_kwargs: dict = {
-            "summary": {
-                "verdict": verdict,
-                "format": fmt.lower(),
-                "total_dependencies": total_deps,
-                "reachable_count": reachable_count if reachability else None,
-                "phantom_count": phantom_count if reachability else None,
-                "reachable_direct_count": (reachable_direct_count if reachability else None),
-                "reachable_heuristic_count": (reachable_heuristic_count if reachability else None),
-                "reachability_computed": reachability is not None,
-            },
+            "summary": _summary,
             "budget": token_budget,
             "sbom": sbom_data,
         }
         if explicit_facts is not None:
             envelope_kwargs["agent_contract"] = {"facts": explicit_facts}
-        envelope = json_envelope("sbom", **envelope_kwargs)
-        output_text = to_json(envelope)
+        if _combined_warnings_out:
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+
+        # W607-CG -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("sbom", ...)`` would otherwise crash AFTER
+        # all substrate + aggregation signals were already gathered. Floor
+        # to a minimal envelope stub so consumers still receive a parseable
+        # JSON object with the marker attached + the canonical command
+        # name. Mirror of cmd_supply_chain's W607-CD serialize_envelope
+        # floor pattern.
+        _envelope_floor: dict = {
+            "command": "sbom",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        envelope = _run_check_cg(
+            "serialize_envelope",
+            json_envelope,
+            "sbom",
+            default=_envelope_floor,
+            **envelope_kwargs,
+        )
+        # W607-CG -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``sbom_serialize_envelope_failed:`` marker was appended to
+        # ``_w607cg_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild
+        # needed.
+        if envelope is _envelope_floor and _w607cg_warnings_out:
+            _combined_warnings_out = list(_w607am_warnings_out) + list(_w607cg_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            envelope = _envelope_floor
+
+        output_text = _run_check_am(
+            "serialize_sbom_json",
+            to_json,
+            envelope,
+            default="{}",
+        )
+        # If serialize_sbom_json raised AFTER envelope build, the bucket gets
+        # a marker but the envelope itself was already produced. Re-serialize
+        # one more time so the disclosed marker rides on the output. This is
+        # the W805 / Pattern-1 variant-D safety net: the envelope's marker
+        # disclosure must reach the consumer rather than be swallowed by the
+        # serializer.
+        if output_text == "{}" and (_w607am_warnings_out or _w607cg_warnings_out):
+            _combined_warnings_out = list(_w607am_warnings_out) + list(_w607cg_warnings_out)
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            envelope_kwargs["summary"]["warnings_out"] = list(_combined_warnings_out)
+            envelope = json_envelope("sbom", **envelope_kwargs)
+            try:
+                output_text = to_json(envelope)
+            except Exception:
+                output_text = "{}"
     else:
-        output_text = to_json(sbom_data)
+        output_text = _run_check_am(
+            "serialize_sbom_json",
+            to_json,
+            sbom_data if sbom_data is not None else {},
+            default="{}",
+        )
 
     if output_path:
         out = Path(output_path)
-        out.write_text(output_text, encoding="utf-8")
+        _run_check_am(
+            "write_sbom_to_disk",
+            out.write_text,
+            output_text,
+            encoding="utf-8",
+        )
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"Written to {out}")
     else:

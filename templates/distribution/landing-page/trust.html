@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Trust &amp; Compliance Posture - Roam</title>
-  <meta name="description" content="Roam's trust posture: SOC 2 and ISO 42001 timelines, DPA, sub-processors, security contact, vulnerability disclosure, and data-flow diagram.">
+  <meta name="description" content="Roam's trust posture: current certification status, DPA, sub-processors, security contact, vulnerability disclosure, and data-flow diagram.">
   <link rel="canonical" href="https://roam-code.com/trust">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -25,7 +25,7 @@
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Trust &amp; Compliance Posture — Roam">
-  <meta name="twitter:description" content="Honest posture on SOC 2, ISO 42001, EU AI Act, NIST AI RMF — with named timelines and the artifacts procurement reviewers want.">
+  <meta name="twitter:description" content="Honest posture on SOC 2, ISO 42001, EU AI Act, and NIST AI RMF — with the artifacts procurement reviewers want and no current certification claim.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <script type="application/ld+json">
@@ -72,7 +72,7 @@
       <p class="eyebrow">Trust &amp; compliance posture</p>
       <h1 class="hero-headline">
         Honest status,<br>
-        <strong>named timelines.</strong>
+        <strong>no certification theater.</strong>
       </h1>
       <p class="hero-subhead">
         This page tells procurement reviewers exactly where Roam stands on
@@ -87,7 +87,7 @@
         <a class="btn-secondary" href="#artifacts">Procurement artifacts</a>
       </div>
       <p class="hero-trust-strip">
-        Built in Athens · Made in the EU · Evidence stays on your machine and hash-verifies offline · No analytics · No cookies
+        Built in Athens · Made in the EU · Apache 2.0 CLI · 100% local, no API key, no vendor cloud endpoint · Evidence hash-verifies offline · No analytics · No cookies
       </p>
     </div>
   </header>
@@ -100,28 +100,28 @@
       <h2>Where we are today</h2>
       <p class="lede">
         Four frameworks procurement teams ask about, with our actual
-        status and named timelines. No current independent attestation
-        against any of these; when that changes we will publish the
-        auditor or certification-body name and the report excerpts
-        directly on this page.
+        status and roadmap. No current independent attestation against
+        any of these; when that changes we will publish the auditor or
+        certification-body name and the report excerpts directly on
+        this page.
       </p>
       <div class="verbs-grid verbs-grid--3">
         <div class="verb-cell">
           <code>SOC 2 Type II — in design</code>
           <span>
-            Controls in design. Audit kickoff scheduled Q4 2026; Type II
-            report expected Q1 2027. No current independent attestation.
-            We will publish the auditor name and the report excerpts on
-            this page when the report is issued.
+            Controls in design. External audit timing is roadmapped but
+            not committed. No current independent attestation. We will
+            publish the auditor name and the report excerpts on this page
+            when the report is issued.
           </span>
         </div>
         <div class="verb-cell">
           <code>ISO/IEC 42001 — gap analysis underway</code>
           <span>
             AI management system gap assessment in progress against the
-            ISO/IEC 42001:2023 control set. Target certification-body
-            engagement Q2 2027; expected certificate Q3 2027. No current
-            certification.
+            ISO/IEC 42001:2023 control set. Certification-body engagement
+            is roadmapped, but no certificate date is committed. No
+            current certification.
           </span>
         </div>
         <div class="verb-cell">
@@ -162,28 +162,33 @@
     <div class="how-it-works-inner">
       <h2>What we have right now</h2>
       <p class="lede">
-        Artifacts a procurement reviewer can collect today, before the
-        Q1/Q3 2027 attestation milestones above. All five are public on
-        GitHub or this site; nothing is gated behind a sales conversation.
+        Artifacts a procurement reviewer can collect today, before
+        external attestations exist. All five are public on GitHub or
+        this site; nothing is gated behind a sales conversation.
       </p>
       <ol class="flow">
         <li>
           <span class="flow-num">1</span>
           <strong>Data Processing Addendum (DPA).</strong>
-          GDPR-aligned DPA template covering the customer-as-controller,
-          Roam-as-processor relationship for Roam Review engagements. Lists
-          processing categories, retention windows, sub-processor change
-          notice, and audit rights. Published at
-          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">templates/legal/dpa.md</a>.
+          GDPR Article 28 processor agreement covering the
+          customer-as-controller, Roam-as-processor relationship for PR
+          Replay and planned Roam Review engagements. Lists processing
+          categories, retention windows, sub-processor change notice, and
+          audit rights. Published at
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">templates/legal/dpa.md</a>;
+          the PR Replay SOW that incorporates this DPA by reference is at
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">templates/legal/sow-pr-replay.md</a>.
         </li>
         <li>
           <span class="flow-num">2</span>
           <strong>Sub-processor list.</strong>
-          Current sub-processors are listed in section 6 of the
-          <a href="/privacy#sub-processors">privacy policy</a> with their
-          purpose and EU/US location. Material additions trigger 30-day
-          advance notice per the DPA. The CLI has no runtime
-          sub-processors — it executes entirely on your machine.
+          PR Replay v1 sub-processors are Stripe (payment processing) and
+          GitHub (only when the buyer chooses GitHub repository access);
+          the full list with purpose and EU/US location is in section 6
+          of the <a href="/privacy#sub-processors">privacy policy</a>.
+          The DPA requires 14-day advance notice for material additions.
+          The CLI itself has no runtime sub-processors — it executes
+          entirely on your machine.
         </li>
         <li>
           <span class="flow-num">3</span>
@@ -201,7 +206,10 @@
           <a href="/security">security page</a>: scope, safe-harbor terms,
           remediation SLAs (high within 30 days, medium within 90, low at
           next scheduled release), and a default 90-day public-disclosure
-          window we extend on reporter request.
+          window we extend on reporter request. A formal monetary
+          bug-bounty program is <em>[TBD: bug-bounty policy and reward
+          tiers — pending live-payment setup]</em>; until then we offer
+          public acknowledgement in the security page hall-of-fame.
         </li>
         <li>
           <span class="flow-num">5</span>
@@ -209,10 +217,12 @@
           The CLI's data flow is short enough to inline: your source
           code is read from the local working tree, parsed and indexed
           into a local SQLite database under <code>.roam/</code>, and
-          analyzed by local processes. Nothing leaves the machine —
-          there is no telemetry, no analytics, no model-training upload,
-          and no inbound network listener. Roam Review and Roam Cloud
-          data flows are documented inside the
+          analyzed by local processes. <strong>100% local, no API key,
+          no vendor cloud endpoint</strong> — no telemetry, no analytics,
+          no model-training upload, and no inbound network listener. The
+          same local-only stance is contractually committed in
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6</a>.
+          Roam Review and Roam Cloud data flows are documented inside the
           <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md">procurement packet</a>.
         </li>
       </ol>
@@ -356,23 +366,47 @@
       <div class="trust-cell">
         <strong>Timeline candor</strong>
         <span>
-          The Q1 2027 SOC 2 and Q3 2027 ISO/IEC 42001 dates above are
-          plans, not commitments. If a kickoff slips we will update this
-          page rather than silently extend. Procurement reviewers who
-          need a binding date should email
+          The SOC 2 and ISO/IEC 42001 roadmap above is planning guidance,
+          not a commitment. Once external partners and dates are signed,
+          we will publish them here. Procurement reviewers who need a
+          binding date should email
           <a href="mailto:hello@roam-code.com?subject=Trust%20page%20timeline">hello@roam-code.com</a>
           for the current schedule and the named external partners.
+          Payment-side commitments — refund window, invoicing cadence,
+          and the distinction between Stripe receipt and the legal
+          tax invoice — live on the
+          <a href="/refund">refund policy</a> and the
+          <a href="/audit#tiers">PR Replay audit page</a>.
         </span>
       </div>
       <div class="trust-cell">
         <strong>EU-based, GDPR-native</strong>
         <span>
-          Built in Athens. Made in the EU. The CLI runs entirely on your
-          machine; nothing leaves the local environment unless you
-          explicitly upload a bundle. See the
+          EU provider, GDPR-native. Default PR Replay processing
+          location is disclosed per
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#11-cross-border-transfers">DPA §11</a>.
+          EU B2B buyers with a valid VAT-ID receive a separate
+          locally-compliant tax invoice (reverse-charge VAT) within
+          30 days of payment; the Stripe receipt is not the legal
+          invoice in the provider's billing jurisdiction. See the
           <a href="/security">security policy</a> and the
           <a href="https://github.com/Cranot/roam-code/tree/main/templates/legal">procurement packet</a>
-          for DPA, no-training commitment, and supply-chain posture.
+          for the DPA, no-training commitment, and supply-chain posture.
+        </span>
+      </div>
+      <div class="trust-cell">
+        <strong>Apache 2.0 open-source engine</strong>
+        <span>
+          The CLI that produces every evidence artifact is Apache 2.0 and
+          public on
+          <a href="https://github.com/Cranot/roam-code">GitHub</a> · the
+          same package distributed on
+          <a href="https://pypi.org/project/roam-code/">PyPI</a>. No
+          proprietary binary in the analysis pipeline; reviewers can
+          rebuild every bundle from source and verify the engine
+          themselves. The
+          <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">LICENSE</a>
+          file in the repo carries the canonical Apache-2.0 text.
         </span>
       </div>
     </div>

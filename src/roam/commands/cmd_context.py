@@ -1230,6 +1230,125 @@ def _resolve_file(conn, path):
 
 
 # ---------------------------------------------------------------------------
+# W607-BF render dispatcher — thread the warnings bucket through render
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_render(data, *, json_mode, budget, run_check, warnings_bucket, emit_envelope):
+    """W607-BF render substrate: text-mode and JSON-mode are separate
+    substrate boundaries.
+
+    On a render raise, surface a ``context_render_<text|json>_failed:...``
+    marker via the shared bucket and (for JSON mode) emit a minimal
+    envelope so the contract still holds. For text mode the marker is
+    surfaced on stderr.
+    """
+    if json_mode:
+        # JSON mode: wrap the renderer + thread combined warnings into
+        # BOTH summary.warnings_out and top-level warnings_out by
+        # patching the rendered envelope before serialization.
+        # The renderer calls ``click.echo(to_json(json_envelope(...)))``
+        # internally so we capture the rendered string by running the
+        # render and merging warnings_out via the public ``json_envelope``
+        # contract.
+        #
+        # Simpler approach: let _render_json render normally, then if
+        # the bucket is non-empty AFTER the render, append a follow-up
+        # disclosure marker. The renderer is stateless wrt our bucket so
+        # post-merge keeps the success path byte-identical.
+        rendered = run_check(
+            "render_json",
+            _wrap_render_json_with_warnings,
+            data,
+            budget,
+            warnings_bucket,
+            default=None,
+        )
+        if rendered is None:
+            # Render hard-failed. Emit a minimal envelope.
+            combined = list(warnings_bucket)
+            emit_envelope(
+                json_envelope(
+                    "context",
+                    summary={
+                        "verdict": "context render_json failed",
+                        "partial_success": True,
+                        "warnings_out": list(combined),
+                    },
+                    budget=budget,
+                    warnings_out=list(combined),
+                ),
+                budget=budget,
+            )
+            return
+        # render_json succeeded — emit the rendered text via the
+        # serialize-envelope wrapper for parity.
+        click.echo(rendered)
+        return
+
+    # Text mode
+    run_check("render_text", _render_text, data, default=None)
+    # text-mode disclosure: surface non-empty marker bucket on stderr
+    # so operators see substrate degradations even when running without
+    # ``--json``. The text-mode happy path stays byte-identical.
+    if warnings_bucket:
+        for marker in warnings_bucket:
+            click.echo(f"# warning: {marker}", err=True)
+
+
+def _wrap_render_json_with_warnings(data, budget, warnings_bucket):
+    """Render the JSON envelope and inject ``warnings_out`` when present.
+
+    The existing ``_render_*_json`` helpers emit a complete envelope via
+    ``click.echo(to_json(json_envelope(...)))``. To keep behaviour
+    byte-identical on the success path AND inject warnings on the
+    degraded path, we capture the envelope text, re-parse it, inject the
+    warnings_out, and return the re-serialized text.
+    """
+    import io
+    import json as _json
+
+    buf = io.StringIO()
+    old_echo = click.echo
+
+    def _capture(msg=None, *args, **kwargs):
+        # Strip stderr writes; only capture stdout-bound payload.
+        if kwargs.get("err"):
+            return
+        if msg is None:
+            buf.write("\n")
+        else:
+            buf.write(str(msg))
+            buf.write("\n")
+
+    click.echo = _capture
+    try:
+        _render_json(data, budget=budget)
+    finally:
+        click.echo = old_echo
+
+    rendered = buf.getvalue().strip()
+    if not rendered:
+        return ""
+    if not warnings_bucket:
+        return rendered
+
+    # Inject warnings_out into both summary and top-level
+    try:
+        envelope = _json.loads(rendered)
+    except Exception:
+        # If JSON parse fails, return the raw render — the W607-BF
+        # marker will surface via the outer dispatcher.
+        return rendered
+    combined = list(warnings_bucket)
+    envelope.setdefault("summary", {})
+    envelope["summary"]["warnings_out"] = list(combined)
+    envelope["summary"]["partial_success"] = True
+    envelope["warnings_out"] = list(combined)
+    return to_json(envelope)
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -1338,30 +1457,142 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
 
     use_propagation = not no_propagation
 
+    # W607-BF: per-phase substrate-CALL marker plumbing for the
+    # symbol-context drill-down aggregator. cmd_context is the natural
+    # companion agents invoke after ``roam understand`` / ``roam
+    # describe`` to focus on a specific symbol -- substrate boundaries
+    # are symbol-resolution (per name in ``names``), data-gathering
+    # (single / batch / file modes), token-budget allocation, and
+    # rendering (text / JSON / serialize_envelope). A raise in any one
+    # downstream substrate previously bubbled as a Click traceback and
+    # dropped the whole envelope. W607-BF surfaces each raise as a
+    # structured ``context_<phase>_failed:<exc_class>:<detail>`` marker
+    # and falls back to a safe default so the remaining substrates
+    # still emit. Closed-enum marker prefix ``context_*`` (mirrors
+    # ``understand_*`` W607-BC + ``describe_*`` W607-K + ``minimap_*``
+    # W607-L/AZ family discipline).
+    #
+    # Empty bucket on the success path produces a byte-identical
+    # envelope (no ``warnings_out`` key in either ``summary`` or
+    # top-level).
+    _w607bf_warnings_out: list[str] = []
+
+    def _run_check_bf(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BF marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``context_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bf_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bf_warnings_out.append(f"context_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    def _emit_envelope(envelope_dict, *, budget):
+        """W607-BF serialize_envelope substrate-CALL: wrap to_json itself.
+
+        On serialize raise, fall back to a minimal envelope so the
+        contract still holds.
+        """
+        text = _run_check_bf(
+            "serialize_envelope",
+            lambda: to_json(envelope_dict),
+            default=None,
+        )
+        if text is None:
+            combined = list(_w607bf_warnings_out)
+            text = to_json(
+                json_envelope(
+                    "context",
+                    summary={
+                        "verdict": "context serialize failed",
+                        "warnings_out": list(combined),
+                        "partial_success": True,
+                    },
+                    budget=budget,
+                    warnings_out=list(combined),
+                )
+            )
+        click.echo(text)
+
+    # W607-BF: allocate_token_budget substrate. Wrap the int() coercion
+    # so a non-coercible budget surfaces as a marker + fallback to 0,
+    # rather than crashing the entire context call wholesale.
+    def _allocate_budget(raw_budget):
+        return int(raw_budget) if raw_budget else 0
+
+    token_budget = _run_check_bf(
+        "allocate_token_budget",
+        _allocate_budget,
+        token_budget,
+        default=0,
+    )
+
     # --- File-level context mode ---
     if for_file:
         with open_db(readonly=True) as conn:
-            frow = _resolve_file(conn, for_file)
+            frow = _run_check_bf(
+                "resolve_file_path",
+                _resolve_file,
+                conn,
+                for_file,
+                default=None,
+            )
             if frow is None:
                 if json_mode:
-                    click.echo(
-                        to_json(
-                            json_envelope(
-                                "context",
-                                summary={
-                                    "verdict": f"file not found: '{for_file}'",
-                                    "error": "file_not_found",
-                                },
-                                file=for_file,
-                                hint=file_not_found_hint(for_file),
-                            )
-                        )
+                    not_found_summary = {
+                        "verdict": f"file not found: '{for_file}'",
+                        "error": "file_not_found",
+                    }
+                    combined = list(_w607bf_warnings_out)
+                    envelope_kwargs: dict[str, object] = {
+                        "file": for_file,
+                        "hint": file_not_found_hint(for_file),
+                    }
+                    if combined:
+                        not_found_summary["warnings_out"] = list(combined)
+                        not_found_summary["partial_success"] = True
+                        envelope_kwargs["warnings_out"] = list(combined)
+                    _emit_envelope(
+                        json_envelope(
+                            "context",
+                            summary=not_found_summary,
+                            **envelope_kwargs,
+                        ),
+                        budget=token_budget,
                     )
                     raise SystemExit(1)
                 click.echo(file_not_found_hint(for_file))
                 raise SystemExit(1)
-            data = _gather_file(conn, frow)
-        _render_json(data, budget=token_budget) if json_mode else _render_text(data)
+            data = _run_check_bf(
+                "gather_file",
+                _gather_file,
+                conn,
+                frow,
+                default={
+                    "mode": "file",
+                    "file_path": for_file,
+                    "language": None,
+                    "line_count": 0,
+                    "symbol_count": 0,
+                    "callers": [],
+                    "callees": [],
+                    "tests": [],
+                    "coupling": [],
+                    "complexity": None,
+                },
+            )
+        _dispatch_render(
+            data,
+            json_mode=json_mode,
+            budget=token_budget,
+            run_check=_run_check_bf,
+            warnings_bucket=_w607bf_warnings_out,
+            emit_envelope=_emit_envelope,
+        )
         return
 
     # Require at least one symbol name if --for-file is not used
@@ -1378,7 +1609,15 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
         # to fuzzy-LIKE matches.
         resolutions: list[dict] = []
         for name in names:
-            sym = find_symbol(conn, name)
+            # W607-BF: resolve_symbol substrate. A raise in
+            # find_symbol must NOT abort the entire context call.
+            sym = _run_check_bf(
+                "resolve_symbol",
+                find_symbol,
+                conn,
+                name,
+                default=None,
+            )
             if sym is None:
                 # W1272 — Pattern-2c Convention (c): unresolved exits 0
                 # with a resolution=unresolved + partial_success
@@ -1388,20 +1627,27 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
                 # suggestion list in text mode.
                 unresolved_block = resolution_disclosure("unresolved", target=name or "")
                 if json_mode:
-                    click.echo(
-                        to_json(
-                            json_envelope(
-                                "context",
-                                summary={
-                                    "verdict": f"Symbol '{name}' not found",
-                                    "partial_success": True,
-                                    "state": "not_found",
-                                    **unresolved_block,
-                                },
-                                symbol=name or "",
-                                **unresolved_block,
-                            )
-                        )
+                    unresolved_summary: dict[str, object] = {
+                        "verdict": f"Symbol '{name}' not found",
+                        "partial_success": True,
+                        "state": "not_found",
+                        **unresolved_block,
+                    }
+                    envelope_kwargs: dict[str, object] = {
+                        "symbol": name or "",
+                        **unresolved_block,
+                    }
+                    combined = list(_w607bf_warnings_out)
+                    if combined:
+                        unresolved_summary["warnings_out"] = list(combined)
+                        envelope_kwargs["warnings_out"] = list(combined)
+                    _emit_envelope(
+                        json_envelope(
+                            "context",
+                            summary=unresolved_summary,
+                            **envelope_kwargs,
+                        ),
+                        budget=token_budget,
                     )
                 else:
                     click.echo(symbol_not_found(conn, name, json_mode=False))
@@ -1423,10 +1669,63 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
                     "(multiple symbols). Ranking still uses task/session hints.",
                     err=True,
                 )
-            data = _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propagation)
+            data = _run_check_bf(
+                "gather_batch",
+                _gather_batch,
+                conn,
+                resolved,
+                task,
+                session_hint,
+                recent_symbols,
+                use_propagation,
+                default={
+                    "mode": "batch",
+                    "task": task,
+                    "contexts": [],
+                    "shared_callers": [],
+                    "shared_callees": [],
+                    "files_to_read": [],
+                },
+            )
         else:
             # Single symbol mode — always gather everything
-            data = _gather_single(conn, resolved[0], task, session_hint, recent_symbols, use_propagation)
+            data = _run_check_bf(
+                "gather_single",
+                _gather_single,
+                conn,
+                resolved[0],
+                task,
+                session_hint,
+                recent_symbols,
+                use_propagation,
+                default=None,
+            )
+            if data is None:
+                # W607-BF: a hard raise inside the single-symbol gatherer
+                # left no data. Emit a minimal envelope so the contract
+                # holds and the marker is surfaced.
+                if json_mode:
+                    combined = list(_w607bf_warnings_out)
+                    _emit_envelope(
+                        json_envelope(
+                            "context",
+                            summary={
+                                "verdict": f"context gather failed for {resolved[0]['name']}",
+                                "partial_success": True,
+                                "state": "gather_failed",
+                                "warnings_out": list(combined),
+                            },
+                            symbol=resolved[0]["name"],
+                            warnings_out=list(combined),
+                        ),
+                        budget=token_budget,
+                    )
+                else:
+                    click.echo(
+                        f"context gather failed for {resolved[0]['name']}",
+                        err=True,
+                    )
+                return
 
     # pass inline-mode flag through to the renderer.
     if inline_mode:
@@ -1438,4 +1737,11 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
     # ``data`` so ``_render_single_json`` / ``_render_batch_json`` can
     # merge the per-call tier into the envelope shape uniformly.
     data["_resolutions"] = resolutions
-    _render_json(data, budget=token_budget) if json_mode else _render_text(data)
+    _dispatch_render(
+        data,
+        json_mode=json_mode,
+        budget=token_budget,
+        run_check=_run_check_bf,
+        warnings_bucket=_w607bf_warnings_out,
+        emit_envelope=_emit_envelope,
+    )

@@ -37,7 +37,7 @@ from click.testing import CliRunner
 from roam.capability import roam_capability
 from roam.commands.git_helpers import detect_roam_version, git_metadata, utc_timestamp
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import WarningsOut, json_envelope, to_json
 
 DEFAULT_ENDPOINT = "https://api.roam.cloud/v1/metrics"
 USER_AGENT = "roam-code-metrics-push"
@@ -102,20 +102,70 @@ def _path_hash(path: str) -> str:
 # ----------------------------------------------------------- payload assembly ---
 
 
-def _load_last_pr_analysis(path: Path | None = None) -> dict | None:
+def _load_last_pr_analysis(
+    path: Path | None = None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict | None:
     """Load `.roam/last-pr-analysis.json` if it exists; return None on miss / read failure.
 
     The presence of a recent pr-analyze envelope means a Cloud Lite dashboard
     can show "last PR verdict" alongside the trend metrics — without needing
     a separate API call.
+
+    W602: mirrors the W598 ``_load_cache`` plumb — when *warnings_out* is
+    supplied, every silent-error site appends one structured closed-enum
+    marker so callers can tell "envelope file not on disk" (legitimate
+    no-pr-analyze-yet sentinel — does NOT warn, mirrors W597's
+    ``daemon_running`` missing-pidfile and W598's ``_load_cache``
+    cold-cache discipline) from "file on disk but unreadable" from "JSON
+    parsed but top-level not a dict". The ``None`` return on every drop
+    path is PRESERVED — None is the caller contract (it means "no last-PR
+    block, skip enrichment"). ``warnings_out=None`` (default) preserves
+    the pre-W602 silent-drop behaviour.
+
+    Intentional-absence decision (W978 + "Make fallback chains loud"):
+    a missing ``.roam/last-pr-analysis.json`` is the common, expected
+    path before ``roam pr-analyze`` has ever been run on the repo.
+    Warning on every cold call would train operators to ignore real
+    warnings — mirrors W598's ``_load_cache`` cold-cache discipline.
+
+    Emitted kinds (closed enum):
+
+      * ``metrics_push_last_pr_read_failed:<path>:<exc_class>:<detail>``
+        — ``Path.read_text`` raised ``OSError`` (typically
+        ``PermissionError`` / ``IsADirectoryError`` / generic
+        ``OSError``). The envelope file is on disk but unreadable.
+      * ``metrics_push_last_pr_corrupt:<path>:JSONDecodeError`` — the
+        bytes parsed as something other than JSON.
+      * ``metrics_push_last_pr_corrupt:<path>:NotAJsonObject`` — JSON
+        parsed cleanly but the top-level value was not a dict
+        (downstream ``_build_last_pr_block`` indexes ``.get("summary")``
+        / ``.get("_meta")`` / ``.get("audit_trail")`` — a non-dict
+        payload would crash there).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     p = path or DEFAULT_LAST_PR_PATH
     if not p.exists():
+        # Legitimate no-pr-analyze-yet sentinel — do NOT warn (mirrors
+        # W598 ``_load_cache`` cold-cache discipline).
         return None
     try:
-        return _json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, _json.JSONDecodeError):
+        raw = _json.loads(p.read_text(encoding="utf-8"))
+    except OSError as exc:
+        _emit(f"metrics_push_last_pr_read_failed:{p}:{type(exc).__name__}:{exc}")
         return None
+    except _json.JSONDecodeError:
+        _emit(f"metrics_push_last_pr_corrupt:{p}:JSONDecodeError")
+        return None
+    if not isinstance(raw, dict):
+        _emit(f"metrics_push_last_pr_corrupt:{p}:NotAJsonObject")
+        return None
+    return raw
 
 
 def _extract_metrics(audit_envelope: dict) -> dict:
@@ -181,7 +231,11 @@ def _extract_hotspots(audit_envelope: dict, *, anonymize: bool, limit: int = 10)
     return out
 
 
-def _build_last_pr_block(last_pr_envelope: dict) -> dict:
+def _build_last_pr_block(
+    last_pr_envelope: dict,
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict:
     """Compose the last_pr_analysis block from a saved pr-analyze envelope.
 
     Folds in only summary numerics + verdict + primary language + timestamp.
@@ -192,7 +246,25 @@ def _build_last_pr_block(last_pr_envelope: dict) -> dict:
     block (auto-attached when pr-analyze ran with --audit-trail), surface
     the score so Cloud Lite Growth-tier dashboards can show compliance
     posture alongside trends without a separate API call.
+
+    W602 bonus: the ``ts`` parse silent-skip (line ~214 pre-W602) used to
+    drop ``age_days`` / ``stale`` enrichment on a malformed timestamp
+    without disclosure. When ``warnings_out`` is supplied, this path
+    emits ``metrics_push_last_pr_timestamp_parse_failed:<ts>:<exc>``.
+    The block STILL renders without the age fields (caller contract
+    preserved); only the warning surfaces the silent enrichment-drop.
+
+    Emitted kinds (closed enum, bonus):
+
+      * ``metrics_push_last_pr_timestamp_parse_failed:<ts>:<exc_class>:<detail>``
+        — ``datetime.fromisoformat`` raised on a malformed timestamp.
+        The age_days / stale fields are absent from the block.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     pr_summary = last_pr_envelope.get("summary") or {}
     ai_section = last_pr_envelope.get("ai_likelihood") or {}
     ts = (last_pr_envelope.get("_meta") or {}).get("timestamp")
@@ -211,8 +283,8 @@ def _build_last_pr_block(last_pr_envelope: dict) -> dict:
             age_days = (_dt.datetime.now(_dt.timezone.utc) - pr_dt).days
             block["age_days"] = age_days
             block["stale"] = age_days > 7
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            _emit(f"metrics_push_last_pr_timestamp_parse_failed:{ts}:{type(exc).__name__}:{exc}")
     # A7 — fold in the auto-attached Article 12 conformance score when present.
     conf = (last_pr_envelope.get("audit_trail") or {}).get("conformance")
     if conf:
@@ -384,19 +456,146 @@ def metrics_push(
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    audit_envelope = _capture_audit()
+    # W607-DI -- substrate-boundary plumbing for cmd_metrics_push.
+    # ``_run_check_di`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607di_warnings_out`` rather than
+    # crashing the metrics-push command outright. cmd_metrics_push is
+    # the Cloud Lite metrics-only transmitter -- surfaces the unique
+    # ``danger_score`` aggregate metric and folds in
+    # ``.roam/last-pr-analysis.json`` enrichment. The command sits at
+    # the boundary between local audit + HTTP push, so substrates span
+    # audit-envelope ingest, git introspection, last-PR enrichment,
+    # payload assembly, HTTP push, verdict composition, and the JSON
+    # envelope serialization.
+    #
+    # Marker family ``metrics_push_<phase>_failed:<exc_class>:<detail>``.
+    # Substrates wrapped (10 phases):
+    #
+    #   * capture_audit               -- in-process ``roam audit`` invoke
+    #                                    (the audit_envelope.get("error")
+    #                                    silent-default path is preserved;
+    #                                    this layer adds disclosure on
+    #                                    an outright CliRunner crash)
+    #   * git_metadata                -- git_sha / git_branch / git_origin
+    #                                    introspection (subprocess.run
+    #                                    boundary; on a non-git checkout
+    #                                    helpers return empty dict)
+    #   * infer_repo_id               -- origin URL normalization
+    #   * load_last_pr_analysis       -- .roam/last-pr-analysis.json read
+    #                                    (already has W602 warnings_out
+    #                                    plumbing internally; W607-DI
+    #                                    wraps the call to disclose any
+    #                                    raise BEYOND the W602 silent-skip
+    #                                    contract on missing/corrupt file)
+    #   * build_payload               -- _extract_metrics + _extract_hotspots
+    #                                    + _build_last_pr_block coordinator
+    #   * serialize_payload           -- _json.dumps(payload) size calc +
+    #                                    dry-run printout (the bytes-count
+    #                                    in the dry-run VERDICT message
+    #                                    depends on this substrate)
+    #   * post_metrics                -- HTTP POST (the network boundary;
+    #                                    urlopen wrapper catches HTTPError
+    #                                    + URLError internally, but a
+    #                                    payload-encoding raise OR a
+    #                                    monkeypatched substrate failure
+    #                                    must NOT crash the command)
+    #   * compose_verdict             -- LAW 6 single-line verdict string
+    #   * serialize_envelope          -- to_json(json_envelope(...))
+    #                                    projection for the JSON path
+    #   * emit_text_output            -- text-path formatting (non-JSON
+    #                                    branch); a raise here used to
+    #                                    obliterate the operator-visible
+    #                                    summary, now degrades to a
+    #                                    minimal one-line VERDICT echo
+    _w607di_warnings_out: list[str] = []
+
+    def _run_check_di(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-DI marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``metrics_push_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607di_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607di_warnings_out.append(f"metrics_push_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DI: ``capture_audit`` substrate -- the in-process audit invoke.
+    # ``_capture_audit`` already returns an ``error``-stamped envelope on
+    # CliRunner failures, but an outright CliRunner crash (e.g. import
+    # error in click stack) used to torpedo the command. The W607-DI
+    # wrap degrades to a synthetic error envelope so the rest of the
+    # pipeline composes.
+    audit_envelope = _run_check_di(
+        "capture_audit",
+        _capture_audit,
+        default={"error": "audit capture substrate raised", "exit_code": -1},
+    )
+    if audit_envelope is None:
+        audit_envelope = {"error": "audit capture substrate raised", "exit_code": -1}
     audit_failed = isinstance(audit_envelope.get("error"), str)
-    git_meta = git_metadata()
-    repo_id = _infer_repo_id(git_meta, repo_override)
-    last_pr = _load_last_pr_analysis() if include_pr_analysis else None
-    payload = _build_payload(
+
+    # W607-DI: ``git_metadata`` substrate. The helper shells out to ``git``
+    # via subprocess; on a non-git checkout it returns ``{}`` (legitimate
+    # silent-absence path). The W607-DI wrap discloses outright raises.
+    git_meta = _run_check_di("git_metadata", git_metadata, default={})
+    if git_meta is None:
+        git_meta = {}
+
+    # W607-DI: ``infer_repo_id`` substrate.
+    repo_id = _run_check_di(
+        "infer_repo_id",
+        _infer_repo_id,
+        git_meta,
+        repo_override,
+        default="<unknown>",
+    )
+    if repo_id is None:
+        repo_id = "<unknown>"
+
+    # W607-DI: ``load_last_pr_analysis`` substrate. The helper has W602
+    # warnings_out plumbing internally for the corrupt-file path; the
+    # W607-DI wrap catches any raise that escapes that envelope (e.g.
+    # an inline raise in DEFAULT_LAST_PR_PATH resolution).
+    last_pr = None
+    if include_pr_analysis:
+        last_pr = _run_check_di(
+            "load_last_pr_analysis",
+            _load_last_pr_analysis,
+            default=None,
+        )
+
+    # W607-DI: ``build_payload`` substrate.
+    payload = _run_check_di(
+        "build_payload",
+        _build_payload,
         audit_envelope,
         repo_id=repo_id,
         git_meta=git_meta,
         anonymize=anonymize,
         include_hotspots=include_hotspots,
         last_pr_envelope=last_pr,
+        default={
+            "schema": "roam-metrics-v1",
+            "schema_version": "1.0.0",
+            "repo": repo_id,
+            "anonymized": bool(anonymize),
+            "metrics": {},
+        },
     )
+    if payload is None:
+        payload = {
+            "schema": "roam-metrics-v1",
+            "schema_version": "1.0.0",
+            "repo": repo_id,
+            "anonymized": bool(anonymize),
+            "metrics": {},
+        }
+
     # Pattern 2 + silent-metric-drop fix: when `roam audit` failed (returned an
     # error envelope), _extract_metrics() silently defaults everything to
     # None/0. Surface that explicitly on the payload so neither --dry-run
@@ -409,44 +608,118 @@ def metrics_push(
         payload["audit_exit_code"] = audit_envelope.get("exit_code")
 
     if dry_run:
-        dry_verdict = (
-            "dry-run — audit failed; payload would carry no real metrics"
-            if audit_failed
-            else "dry-run — payload not POSTed"
-        )
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "metrics-push",
-                        summary={
-                            "verdict": dry_verdict,
-                            "repo": repo_id,
-                            "git_sha": payload.get("git_sha"),
-                            "anonymized": anonymize,
-                            "endpoint": endpoint,
-                            "audit_status": "failed" if audit_failed else "ok",
-                            "partial_success": audit_failed,
-                        },
-                        payload=payload,
-                    )
-                )
+        # W607-DI: ``compose_verdict`` substrate on the dry-run path.
+        def _dry_verdict():
+            return (
+                "dry-run — audit failed; payload would carry no real metrics"
+                if audit_failed
+                else "dry-run — payload not POSTed"
             )
+
+        dry_verdict = _run_check_di(
+            "compose_verdict",
+            _dry_verdict,
+            default="dry-run — verdict substrate degraded",
+        )
+        if dry_verdict is None:
+            dry_verdict = "dry-run — verdict substrate degraded"
+
+        # W607-DI: ``serialize_payload`` substrate -- _json.dumps for the
+        # bytes count. A raise here used to crash the dry-run preview
+        # via the f-string ``{len(_json.dumps(payload))}`` evaluation.
+        # Bind via a substrate call so the dry-run still emits a
+        # well-formed VERDICT line even on a payload that's not
+        # JSON-serializable.
+        payload_serialized = _run_check_di(
+            "serialize_payload",
+            _json.dumps,
+            payload,
+            default=None,
+        )
+
+        if json_mode:
+            dry_summary: dict = {
+                "verdict": dry_verdict,
+                "repo": repo_id,
+                "git_sha": payload.get("git_sha"),
+                "anonymized": anonymize,
+                "endpoint": endpoint,
+                "audit_status": "failed" if audit_failed else "ok",
+                "partial_success": audit_failed or bool(_w607di_warnings_out),
+            }
+            envelope_kwargs = dict(summary=dry_summary, payload=payload)
+            # W607-DI: mirror substrate markers into BOTH top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. Flipping ``partial_success: True`` is the
+            # Pattern-2 silent-fallback guard -- a degraded substrate
+            # path must NOT be mistaken for a clean dry-run preview.
+            if _w607di_warnings_out:
+                dry_summary["warnings_out"] = list(_w607di_warnings_out)
+                envelope_kwargs["warnings_out"] = list(_w607di_warnings_out)
+
+            def _emit_dry_envelope():
+                click.echo(to_json(json_envelope("metrics-push", **envelope_kwargs)))
+
+            _run_check_di("serialize_envelope", _emit_dry_envelope, default=None)
         else:
-            click.echo(f"VERDICT: {dry_verdict}; would POST {len(_json.dumps(payload))} bytes to {endpoint}")
-            click.echo()
-            click.echo(_json.dumps(payload, indent=2))
+            # W607-DI: ``emit_text_output`` substrate -- dry-run text path.
+            def _emit_dry_text():
+                # Guard the bytes-count formatting: if serialize_payload
+                # degraded, surface "?" instead of a TypeError on len(None).
+                if payload_serialized is None:
+                    bytes_label = "?"
+                else:
+                    bytes_label = str(len(payload_serialized))
+                click.echo(f"VERDICT: {dry_verdict}; would POST {bytes_label} bytes to {endpoint}")
+                click.echo()
+                if payload_serialized is not None:
+                    # Pretty-print only when serialization succeeded.
+                    try:
+                        click.echo(_json.dumps(payload, indent=2))
+                    except (TypeError, ValueError):
+                        click.echo("<payload not JSON-serializable>")
+
+            _run_check_di("emit_text_output", _emit_dry_text, default=None)
         return
 
     if not token:
         ctx.fail("--token required (or set ROAM_CLOUD_TOKEN env var); use --dry-run to inspect without posting.")
 
-    ok, status, response_text = _post_metrics(endpoint, token, payload, timeout=timeout)
+    # W607-DI: ``post_metrics`` substrate -- the HTTP push boundary.
+    # ``_post_metrics`` catches HTTPError + URLError internally and
+    # returns (False, code, text). A raise outside those (e.g. a
+    # _json.dumps TypeError on a payload that contains a datetime,
+    # or a monkeypatched substrate failure) used to crash the
+    # command. The W607-DI wrap degrades to the canonical failed-push
+    # tuple so the verdict composer still emits a coherent
+    # ``push failed (0)`` line.
+    post_result = _run_check_di(
+        "post_metrics",
+        _post_metrics,
+        endpoint,
+        token,
+        payload,
+        timeout=timeout,
+        default=(False, 0, "post_metrics substrate degraded"),
+    )
+    if post_result is None:
+        post_result = (False, 0, "post_metrics substrate degraded")
+    ok, status, response_text = post_result
 
-    if audit_failed:
-        verdict = "metrics pushed (audit failed; payload empty)" if ok else f"push failed ({status})"
-    else:
-        verdict = "metrics pushed" if ok else f"push failed ({status})"
+    # W607-DI: ``compose_verdict`` substrate -- LAW 6 single-line verdict.
+    def _push_verdict():
+        if audit_failed:
+            return "metrics pushed (audit failed; payload empty)" if ok else f"push failed ({status})"
+        return "metrics pushed" if ok else f"push failed ({status})"
+
+    verdict = _run_check_di(
+        "compose_verdict",
+        _push_verdict,
+        default=f"push failed ({status})",
+    )
+    if verdict is None:
+        verdict = f"push failed ({status})"
 
     summary = {
         "verdict": verdict,
@@ -457,32 +730,44 @@ def metrics_push(
         "git_sha": payload.get("git_sha"),
         "anonymized": anonymize,
         "audit_status": "failed" if audit_failed else "ok",
-        "partial_success": audit_failed or not ok,
+        "partial_success": audit_failed or not ok or bool(_w607di_warnings_out),
     }
 
+    # W607-DI: mirror substrate markers into BOTH the top-level envelope
+    # ``warnings_out`` AND ``summary.warnings_out`` so MCP consumers see
+    # disclosure regardless of which surface they read.
+    envelope_kwargs = dict(
+        summary=summary,
+        payload=payload,
+        response_excerpt=response_text,
+    )
+    if _w607di_warnings_out:
+        summary["warnings_out"] = list(_w607di_warnings_out)
+        envelope_kwargs["warnings_out"] = list(_w607di_warnings_out)
+
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "metrics-push",
-                    summary=summary,
-                    payload=payload,
-                    response_excerpt=response_text,
-                )
-            )
-        )
+        # W607-DI: ``serialize_envelope`` substrate -- to_json + json_envelope
+        # projection on the JSON path.
+        def _emit_envelope():
+            click.echo(to_json(json_envelope("metrics-push", **envelope_kwargs)))
+
+        _run_check_di("serialize_envelope", _emit_envelope, default=None)
     else:
-        click.echo(f"VERDICT: {summary['verdict']}")
-        click.echo(f"  endpoint:  {endpoint}")
-        click.echo(f"  status:    {status}")
-        click.echo(f"  repo:      {repo_id}")
-        click.echo(f"  anonymize: {anonymize}")
-        if audit_failed:
-            click.echo(f"  audit:     failed (exit={payload.get('audit_exit_code')!r})")
-        if not ok and response_text:
-            click.echo()
-            click.echo("Response excerpt:")
-            click.echo(response_text[:200])
+        # W607-DI: ``emit_text_output`` substrate -- text path.
+        def _emit_text():
+            click.echo(f"VERDICT: {summary['verdict']}")
+            click.echo(f"  endpoint:  {endpoint}")
+            click.echo(f"  status:    {status}")
+            click.echo(f"  repo:      {repo_id}")
+            click.echo(f"  anonymize: {anonymize}")
+            if audit_failed:
+                click.echo(f"  audit:     failed (exit={payload.get('audit_exit_code')!r})")
+            if not ok and response_text:
+                click.echo()
+                click.echo("Response excerpt:")
+                click.echo(response_text[:200])
+
+        _run_check_di("emit_text_output", _emit_text, default=None)
 
     # Exit non-zero so CI consumers + shell pipelines see the failure.
     # The JSON envelope already carried ok:false; the text path used to

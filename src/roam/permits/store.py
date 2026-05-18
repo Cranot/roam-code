@@ -252,18 +252,73 @@ def _write_permit(repo_root: Path, permit: PermitRecord) -> Path:
     return path
 
 
-def read_permit(repo_root: Path, permit_id: str) -> Optional[PermitRecord]:
-    """Load a permit by id, or ``None`` if missing / unparseable."""
+def read_permit(
+    repo_root: Path,
+    permit_id: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> Optional[PermitRecord]:
+    """Load a permit by id, or ``None`` if missing / unparseable.
+
+    W595: mirrors the W448 ``read_lease`` plumb — when *warnings_out* is
+    supplied, every silent-error site appends one structured closed-enum
+    marker so callers can tell "permit not on disk" from "permit file is
+    on disk but unreadable" from "JSON parsed but schema rejected". The
+    ``None`` return on every drop path is PRESERVED — the None-return is
+    the caller contract. ``warnings_out=None`` (default) preserves the
+    pre-W595 silent-drop behaviour.
+
+    The marker shape DIVERGES from W448's free-form ``read_lease`` format
+    and mirrors W589's release-site closed-enum shape instead — consistent
+    with W593b's per-file ``permit_corrupt:`` prefix already in
+    ``list_permits``, so a caller threading the same bucket through any
+    permits-read site sees one uniform marker vocabulary.
+
+    Emitted kinds (closed enum):
+
+      * ``permit_not_found:<permit_id>.json`` — the on-disk path does
+        not exist. ``read_lease`` deliberately does NOT warn on this
+        case; ``read_permit`` does, because a missing permit during a
+        ``permit show`` lookup is an operational anomaly worth
+        surfacing (caller typo / GC race / wrong repo root).
+      * ``permit_read_failed:<permit_id>.json:<exc_class>:<detail>`` —
+        ``Path.read_text`` raised ``OSError`` (typically
+        ``PermissionError`` / ``IsADirectoryError`` / generic
+        ``OSError``). The file is on disk but unreadable.
+      * ``permit_corrupt:<permit_id>.json:JSONDecodeError`` — the
+        bytes parsed as something other than JSON. Same prefix shape
+        as ``list_permits`` W593b emits per-file.
+      * ``permit_corrupt:<permit_id>.json:NotAJsonObject`` — JSON
+        parsed cleanly but the top-level value was not a dict.
+      * ``permit_corrupt:<permit_id>.json:SchemaInvalid`` — dict
+        rejected by ``_permit_from_dict`` (missing required field /
+        ``__post_init__`` ``ValueError``).
+    """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     path = _permit_path(repo_root, permit_id)
     if not path.exists():
+        _emit(f"permit_not_found:{path.name}")
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError as exc:
+        _emit(f"permit_read_failed:{path.name}:{type(exc).__name__}:{exc}")
+        return None
+    except json.JSONDecodeError:
+        _emit(f"permit_corrupt:{path.name}:JSONDecodeError")
         return None
     if not isinstance(raw, dict):
+        _emit(f"permit_corrupt:{path.name}:NotAJsonObject")
         return None
-    return _permit_from_dict(raw)
+    record = _permit_from_dict(raw)
+    if record is None:
+        _emit(f"permit_corrupt:{path.name}:SchemaInvalid")
+        return None
+    return record
 
 
 def _permit_from_dict(raw: dict) -> Optional[PermitRecord]:
@@ -282,27 +337,59 @@ def _permit_from_dict(raw: dict) -> Optional[PermitRecord]:
         return None
 
 
-def list_permits(repo_root: Path) -> list[PermitRecord]:
+def list_permits(
+    repo_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[PermitRecord]:
     """Enumerate every parseable permit under ``.roam/permits/``.
 
     Sorted newest first by ``issued_at`` (ISO timestamps sort lexically).
     Empty list when the directory does not exist (Pattern 2: never raise
     on missing-state).
+
+    W593: when *warnings_out* is supplied, each silent-error site emits
+    one structured kind marker so callers can tell "permits dir clean"
+    from "permits dir is unreadable" from "one permit file is corrupt".
+    The ``[]`` return on iterdir failure is PRESERVED -- the empty-return
+    is the caller contract. The per-file ``continue`` semantic is also
+    preserved (best-effort iteration). ``None`` (default) preserves the
+    pre-W593 silent-drop behaviour. The closed-enum kinds diverge from
+    W383's ``load_permits_from_disk`` free-form format intentionally --
+    ``list_permits`` is the CLI-facing reader, marker prefixes let an
+    operator grep / filter without parsing free-form text.
+
+    Emitted kinds (closed enum):
+
+      * ``permits_root_unreadable:<exc_class>:<detail>`` -- the
+        ``.roam/permits/`` directory exists but ``iterdir()`` raised
+        ``OSError``. The reader returns ``[]``.
+      * ``permit_corrupt:<filename>.json:<exc_class>`` -- one permit
+        file is unreadable / unparseable JSON. ``<exc_class>`` names
+        the failure mode (``OSError`` / ``JSONDecodeError``). The
+        loop ``continue``s past this file (best-effort iteration).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     root = permits_root(repo_root)
     if not root.exists():
         return []
     out: list[PermitRecord] = []
     try:
         children = sorted(root.iterdir())
-    except OSError:
+    except OSError as exc:
+        _emit(f"permits_root_unreadable:{type(exc).__name__}:{exc}")
         return []
     for child in children:
         if child.suffix != ".json" or not child.is_file():
             continue
         try:
             raw = json.loads(child.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            _emit(f"permit_corrupt:{child.name}:{type(exc).__name__}")
             continue
         if not isinstance(raw, dict):
             continue
@@ -370,14 +457,22 @@ def load_permits_from_disk(
     permits_dir = permits_root(repo_root)
     if not permits_dir.is_dir():
         return []
-    try:
-        children = sorted(permits_dir.iterdir())
-    except OSError:
-        return []
 
     def _emit_warning(message: str) -> None:
         if warnings_out is not None:
             warnings_out.append(message)
+
+    try:
+        children = sorted(permits_dir.iterdir())
+    except OSError as exc:
+        # W593c: route through the EXISTING ``warnings_out`` channel
+        # (W383 already plumbed it for per-permit failures). Closed-enum
+        # marker so callers can distinguish "permits dir unreadable"
+        # from per-file W379/W380/W382 warnings without parsing the
+        # free-form text. The ``[]`` return is PRESERVED -- the empty-
+        # return is the caller contract; the marker just discloses WHY.
+        _emit_warning(f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
+        return []
 
     out: list[dict] = []
     seen_ids: dict[str, str] = {}  # permit_id -> first-seen file name

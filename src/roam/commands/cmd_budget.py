@@ -94,29 +94,70 @@ def _load_budgets(
     :func:`roam.commands._yaml_loader.load_yaml_with_warnings` — the
     helper owns the I/O + parser-fallback shape; the per-callsite
     ``budgets``-extraction and per-entry validation stays here.
+
+    W1030-followup-A: legacy single-value return preserved for the existing
+    callers. Callers that need the on-disk state for envelope
+    disambiguation use :func:`_load_budgets_with_status` instead.
+    """
+    budgets, _status = _load_budgets_with_status(config_path, warnings_out=warnings_out)
+    return budgets
+
+
+def _load_budgets_with_status(
+    config_path: Path | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], str]:
+    """W1030-followup-A: load budget rules and return ``(budgets, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the budget command envelope disambiguate
+    "no budget.yaml configured yet" (``missing`` -> use defaults silently)
+    from "budget.yaml exists but is empty" (``empty_file`` -> use defaults
+    + flag the empty stub) from "budget.yaml is broken" (``parse_error`` /
+    ``wrong_root_type`` -> partial_success, warnings already populated by
+    the canonical loader).
+
+    ``config_path is None`` returns ``([], "missing")`` -- the budget
+    command short-circuits this branch when no config arg is supplied.
     """
     if config_path is None:
-        return []
+        return [], "missing"
 
     from roam.commands._yaml_loader import load_yaml_with_warnings
 
     path_str = str(config_path)
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = load_yaml_with_warnings(
+    data, status = load_yaml_with_warnings(
         config_path,
         tiny_parser=_parse_simple_yaml_dict,
         config_label="budget",
         warnings_out=warnings_out,
+        return_status=True,
     )
     if data is None:
         # Missing file — default state, no warning emitted by the helper.
-        return []
+        return [], status
+    if status in ("empty_file", "empty_yaml"):
+        # W1030-followup-A: zero-byte / comments-only file is a distinct
+        # on-disk state from "non-empty file missing the ``budgets:``
+        # key" -- the user created a stub but did not write any rules.
+        # Suppress the "no `budgets:` key" warning that the legacy
+        # missing-key branch would emit so the empty-stub state surfaces
+        # cleanly as ``config_state=empty_file`` (or ``empty_yaml``) on
+        # the envelope, with no warning. Pattern 2 is preserved for the
+        # malformed cases — ``parse_error`` / ``wrong_root_type`` still
+        # emit the canonical loader's warning above.
+        return [], status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper already explained the failure (read error / malformed
         # YAML / wrong root type / tiny-parser fallback). Propagate the
         # empty result without piling on a second "no `budgets:` key"
         # warning that would just confuse the caller.
-        return []
+        return [], status
     # ``data`` is a Mapping when ``allow_list_root`` is left at False
     # (the default we want for budget.yaml). The helper's root-type check
     # guarantees this; the assert keeps the type checker happy on the
@@ -129,7 +170,7 @@ def _load_budgets(
                 f"Expected shape: `budgets:` followed by a list of "
                 f"`{{name, metric, max_increase|max_decrease|max_increase_pct}}` entries."
             )
-        return []
+        return [], status
     # W1038 — shared "load → check type → warn-or-default" extractor.
     from roam.commands._yaml_loader import extract_typed
 
@@ -153,7 +194,7 @@ def _load_budgets(
                 )
             continue
         out.append(b)
-    return out
+    return out, status
 
 
 def _parse_simple_yaml_dict(text: str) -> dict:
@@ -304,7 +345,18 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
             cfg = root / ".roam" / "budget.yml"
 
     _budget_warnings: list[str] = []
-    budgets = _load_budgets(cfg, warnings_out=_budget_warnings) if cfg.exists() else []
+    # W1030-followup-A: use the with-status variant so the on-disk state
+    # ("missing" / "empty_file" / "ok" / ...) reaches the envelope as a
+    # closed-enum field — agents reading the budget envelope can
+    # disambiguate "no budget.yaml configured yet" from "budget.yaml is
+    # broken / empty stub" without re-statting the file. ``cfg.exists()``
+    # is False when the helper has not yet been run on this project; we
+    # synthesize ``missing`` status for that path so the envelope field
+    # stays uniformly populated regardless of which branch ran.
+    if cfg.exists():
+        budgets, config_state = _load_budgets_with_status(cfg, warnings_out=_budget_warnings)
+    else:
+        budgets, config_state = [], "missing"
     if not budgets:
         budgets = list(_DEFAULT_BUDGETS)
 
@@ -362,8 +414,21 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
             "failed": failed,
             "skipped": skipped,
         }
+        # W1030-followup-A: expose the on-disk state as a closed-enum
+        # string so agents can disambiguate "no budget.yaml configured
+        # yet" (defaults used silently) from "budget.yaml exists but is
+        # empty" (defaults used AND the user probably meant to configure
+        # something) from "budget.yaml is broken" (parse_error /
+        # wrong_root_type — already accompanied by a warning in
+        # ``warnings_out``).
+        summary_payload["config_state"] = config_state
         if _budget_warnings:
             summary_payload["warnings_out"] = list(_budget_warnings)
+            summary_payload["partial_success"] = True
+        # W1030-followup-A: a degraded config_state flips partial_success
+        # too — even when no warning fired (e.g. empty stub on disk),
+        # agents must see that the user's intent did not materialize.
+        elif config_state in ("parse_error", "wrong_root_type", "read_error", "schema_invalid"):
             summary_payload["partial_success"] = True
         click.echo(
             to_json(

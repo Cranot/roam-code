@@ -540,6 +540,12 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
       roam ci-setup --platform azure --write  # write Azure template
       roam --json ci-setup --platform github  # JSON output
 
+    \b
+    Bundled GitHub co-deploy samples (drop-in copies, not auto-emitted):
+      agent-review.yml              roam pr-analyze on every PR
+      roam-sarif-with-codeql.yml    roam SARIF + CodeQL side-by-side (W391)
+    Source: src/roam/templates/ci/ (reachable via importlib.resources).
+
     See also ``mcp-setup`` (MCP server JSON for AI clients),
     ``hooks`` (git hook installer), and ``pr-risk`` (gate command CI
     pipelines call on every PR).
@@ -830,6 +836,10 @@ def _print_post_setup_instructions(platform: str, output_path: str) -> None:
             "  3. Check the PR comment for health score and SARIF findings",
             "",
             "Permissions required: contents:read, pull-requests:write, security-events:write",
+            "",
+            "Bundled co-deploy samples (drop-in copies under src/roam/templates/ci/):",
+            "  agent-review.yml              roam pr-analyze on every PR",
+            "  roam-sarif-with-codeql.yml    roam SARIF + CodeQL side-by-side (W391)",
         ],
         "gitlab": [
             "Next steps:",

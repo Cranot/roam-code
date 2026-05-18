@@ -36,7 +36,9 @@ COMPLEXITY_DETECTOR_VERSION: str = "1.0.0"
 
 # Registry-emit threshold: only symbols with cognitive_complexity >= 15
 # are emitted as findings. This mirrors the existing ``_severity``
-# cutoff: 15 is the floor for HIGH severity (refactor-target tier).
+# cutoff: 15 is the floor for ``high`` severity (refactor-target tier
+# in the canonical W547 lowercase vocabulary; W761 migrated this
+# helper off its pre-W761 UPPER-cased spelling).
 # Below that, the symbols are noise for an agent consuming the
 # cross-detector registry — they appear in the per-command rankings
 # but shouldn't pollute ``roam findings list``.
@@ -136,9 +138,15 @@ def _emit_complexity_findings(conn, rows) -> None:
 #   that empirically predicts maintainability pain — not whether the
 #   number is trustworthy (it always is).
 #
-#   severity CRITICAL or HIGH (score >= 15) → "high"  (refactor target)
-#   severity MEDIUM  (8 <= score < 15)       → "medium" (monitor)
-#   severity LOW     (score < 8)             → "low"    (no action)
+#   severity critical or high (score >= 15) → "high"  (refactor target)
+#   severity medium  (8 <= score < 15)       → "medium" (monitor)
+#   severity low     (score < 8)             → "low"    (no action)
+#
+# W761: ``_severity()`` now emits the canonical lowercase W547
+# vocabulary, so this mapping is direct (no case-fold pass needed in
+# ``severity_to_confidence_level``). The helper remains case-insensitive
+# for forward-compat with any UPPER label leaking in from external
+# sources.
 #
 # W565 — the per-site ``severity -> confidence-level`` table moved to
 # the canonical helper in :mod:`roam.output._severity`. The default
@@ -167,19 +175,97 @@ def _safe_metric(row, key, default=0.0):
         return default
 
 
+def _complexity_to_sarif_payload(symbols, *, threshold, warnings):
+    """Build the SARIF projection text + write the SARIF envelope.
+
+    Pulled out for the W607-BJ ``_run_check_bj`` wrap so a SARIF-layer
+    raise surfaces a single
+    ``complexity_serialize_to_sarif_failed:<exc>:<detail>`` marker and
+    the caller can fall back to the JSON envelope.
+    """
+    from roam.output.sarif import complexity_to_sarif, write_sarif
+
+    sarif = complexity_to_sarif(symbols, threshold=threshold, warnings=warnings)
+    return write_sarif(sarif)
+
+
+def _apply_role_filters(
+    rows,
+    *,
+    include_tooling: bool,
+    no_framework: bool,
+    no_imports: bool,
+):
+    """In-Python role-filter chain for the complexity ranking.
+
+    Pulled out of the click body so the W607-BJ ``_run_check_bj`` wrap
+    can surface a single ``complexity_apply_filters_failed:<exc>`` marker
+    if any of the three filter sub-passes raises (the three imports are
+    independent and degrade together -- a failure in one is a substrate-
+    layer failure for the whole filter stage).
+    """
+    out = list(rows)
+    if not include_tooling:
+        from roam.output.file_role_hints import is_excluded_path
+
+        out = [r for r in out if not is_excluded_path(r["file_path"])]
+    if no_framework:
+        from roam.commands.cmd_health import _FRAMEWORK_NAMES
+
+        out = [r for r in out if (r["name"] or "") not in _FRAMEWORK_NAMES]
+    if no_imports:
+        out = [
+            r for r in out if r["kind"] not in {"import", "module_import"} and "import" not in (r["name"] or "").lower()
+        ]
+    return out
+
+
 def _severity(score: float) -> str:
-    """Map cognitive complexity score to a severity label."""
+    """Map cognitive complexity score to a severity label.
+
+    W761 — emits the canonical lowercase W547 vocabulary
+    (``critical`` / ``high`` / ``medium`` / ``low``). Pre-W761 this
+    helper returned UPPER-case labels which then flowed into the
+    per-symbol envelope ``severity`` slot via the JSON-mode rankings
+    builder (the W762 drift-guard didn't fire because the dict literal
+    was ``{"severity": _severity(...)}`` — helper-indirected, not a
+    bare string Constant). Lowercasing here aligns the envelope slot
+    with W547 and the cmd_alerts (W649) precedent without changing
+    the score thresholds.
+    """
     if score >= 25:
-        return "CRITICAL"
+        return "critical"
     if score >= 15:
-        return "HIGH"
+        return "high"
     if score >= 8:
-        return "MEDIUM"
-    return "LOW"
+        return "medium"
+    return "low"
 
 
 def _severity_icon(sev: str) -> str:
-    icons = {"CRITICAL": "!!", "HIGH": "! ", "MEDIUM": "~ ", "LOW": "  "}
+    """Map a severity label to an ASCII display icon (W847 internal
+    vocabulary). The icon table keys are lowercase post-W761; callers
+    pass the canonical W547 spelling. UPPER-case keys are retained as
+    aliases for back-compat in case a stale per-row dict (e.g. ingested
+    from a pre-W761 findings registry row) flows back through this
+    helper.
+    """
+    icons = {
+        # W761: canonical W547 lowercase vocabulary.
+        "critical": "!!",
+        "high": "! ",
+        "medium": "~ ",
+        "low": "  ",
+        # W761/W847 retained UPPER-case aliases for back-compat with
+        # pre-W761 per-row severity strings (e.g. findings registry
+        # rows mirrored before the W761 lowercase migration). The
+        # display-icon table is internal vocabulary (text mode only,
+        # never an envelope slot), so the aliases are intentional.
+        "CRITICAL": "!!",
+        "HIGH": "! ",
+        "MEDIUM": "~ ",
+        "LOW": "  ",
+    }
     return icons.get(sev, "  ")
 
 
@@ -307,6 +393,51 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
     # pre-W1086). Unblocks future W1060 SARIF runtime-notifications plumb.
     warnings: list[str] = []
 
+    # W607-BJ -- substrate-CALL marker plumbing on the per-symbol complexity
+    # ranking surface. cmd_complexity is the third leg of the
+    # health/debt/complexity DB-substrate trio: cmd_health (W607-M + W607-BA,
+    # ``health_*``) scores the whole codebase, cmd_debt (W607-BG, ``debt_*``)
+    # ranks files by hotspot-weighted remediation cost, and cmd_complexity
+    # (W607-BJ, ``complexity_*``) ranks individual symbols by cognitive
+    # complexity. All three consume the same DB substrate (symbol_metrics,
+    # symbols, files); each owns a distinct marker prefix family for
+    # observability discipline.
+    #
+    # The substrate boundaries we wrap:
+    #
+    #   * query_symbol_metrics       -- main symbol_metrics JOIN with WHERE/
+    #                                   ORDER/LIMIT for the ranking
+    #   * apply_filters              -- in-Python role-filter chain (tooling,
+    #                                   framework, imports)
+    #   * compute_distribution_stats -- the full-table cognitive_complexity
+    #                                   scan used for avg/p90/critical/high
+    #   * classify_severity          -- the wrap_findings + confidence
+    #                                   distribution layer
+    #   * serialize_to_sarif         -- SARIF projection
+    #   * emit_findings              -- W93/W102 findings-registry mirror
+    #
+    # Marker family ``complexity_<phase>_failed:<exc_class>:<detail>``.
+    # Empty bucket -> no field added -> byte-identical envelope on the
+    # happy path. Threads into BOTH the top-level ``warnings_out`` (the
+    # existing W1086 accumulator -- preserved-list-field discipline) AND
+    # ``summary.partial_success=True`` on the degraded path.
+    _w607bj_warnings_out: list[str] = []
+
+    def _run_check_bj(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BJ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``complexity_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607bj_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bj_warnings_out.append(f"complexity_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # Check if symbol_metrics table has data
         try:
@@ -375,33 +506,35 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
         # so the displayed top-N still has the requested count after
         # filtering. 5x is comfortable for typical exclusion shares.
         fetch_limit = limit * 5 if not include_tooling else limit
-        rows = conn.execute(
-            f"""SELECT sm.*, s.name, s.qualified_name, s.kind,
-                       s.line_start, s.line_end, f.path as file_path
-                FROM symbol_metrics sm
-                JOIN symbols s ON sm.symbol_id = s.id
-                JOIN files f ON s.file_id = f.id
-                WHERE {where_clause}
-                ORDER BY sm.cognitive_complexity DESC
-                LIMIT ?""",
-            params + [fetch_limit],
-        ).fetchall()
-        if not include_tooling:
-            from roam.output.file_role_hints import is_excluded_path
+        rows = _run_check_bj(
+            "query_symbol_metrics",
+            lambda: conn.execute(
+                f"""SELECT sm.*, s.name, s.qualified_name, s.kind,
+                           s.line_start, s.line_end, f.path as file_path
+                    FROM symbol_metrics sm
+                    JOIN symbols s ON sm.symbol_id = s.id
+                    JOIN files f ON s.file_id = f.id
+                    WHERE {where_clause}
+                    ORDER BY sm.cognitive_complexity DESC
+                    LIMIT ?""",
+                params + [fetch_limit],
+            ).fetchall(),
+            default=[],
+        )
+        if rows is None:
+            rows = []
 
-            rows = [r for r in rows if not is_excluded_path(r["file_path"])]
-
-        if no_framework:
-            from roam.commands.cmd_health import _FRAMEWORK_NAMES
-
-            rows = [r for r in rows if (r["name"] or "") not in _FRAMEWORK_NAMES]
-
-        if no_imports:
-            rows = [
-                r
-                for r in rows
-                if r["kind"] not in {"import", "module_import"} and "import" not in (r["name"] or "").lower()
-            ]
+        rows = _run_check_bj(
+            "apply_filters",
+            _apply_role_filters,
+            rows,
+            include_tooling=include_tooling,
+            no_framework=no_framework,
+            no_imports=no_imports,
+            default=rows,
+        )
+        if rows is None:
+            rows = []
 
         # --- W93 follow-up: mirror hotspots into the central findings registry.
         # Runs ONLY with --persist. The persisted set is independent of the
@@ -410,6 +543,13 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
         # registry. The detector-specific output (text / JSON / SARIF) below
         # is unchanged.
         if persist:
+            # W607-BJ: surface unexpected emit_findings failures via the
+            # ``complexity_emit_findings_failed:<exc>:<detail>`` marker on
+            # the W607-BJ bucket. The pre-W89 schema path (sqlite3
+            # OperationalError on missing ``findings`` table) is the
+            # EXPECTED degraded path and is handled by the dedicated
+            # except branch below -- it does NOT surface via the
+            # complexity_* marker family.
             try:
                 _persist_complexity_findings(
                     conn,
@@ -424,15 +564,53 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 # actionable next step is to rebuild the index so the
                 # W89-era findings table gets created.
                 warnings.append("findings table missing; complexity findings not persisted (pre-W89 schema)")
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-BJ disclosure
+                _w607bj_warnings_out.append(f"complexity_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         rows = rows[:limit]
 
-        if not rows:
-            if sarif_mode:
-                from roam.output.sarif import complexity_to_sarif, write_sarif
+        # W607-BJ: merge substrate-CALL markers into the top-level
+        # ``warnings`` axis (preserved-list-field discipline). The W607-BJ
+        # bucket is a sub-stream of the same warnings_out field that W1086
+        # already populates -- consumers see ONE list, not two. Empty
+        # bucket -> no change -> byte-identical envelope on the happy
+        # path.
+        def _merged_warnings() -> list[str]:
+            """Compose ``warnings`` (W1086) ++ ``_w607bj_warnings_out``."""
+            return list(warnings) + list(_w607bj_warnings_out)
 
-                sarif = complexity_to_sarif([], threshold=threshold or 0, warnings=warnings)
-                click.echo(write_sarif(sarif))
+        if not rows:
+            _all_w = _merged_warnings()
+            if sarif_mode:
+                _sarif_payload = _run_check_bj(
+                    "serialize_to_sarif",
+                    _complexity_to_sarif_payload,
+                    [],
+                    threshold=threshold or 0,
+                    warnings=_all_w,
+                    default=None,
+                )
+                if _sarif_payload is not None:
+                    click.echo(_sarif_payload)
+                else:
+                    # Re-read merged warnings -- the wrap above may have
+                    # appended its own marker.
+                    _all_w = _merged_warnings()
+                    if json_mode:
+                        click.echo(
+                            to_json(
+                                json_envelope(
+                                    "complexity",
+                                    summary={
+                                        "verdict": "SARIF projection failed; falling back to JSON envelope",
+                                        "functions": 0,
+                                        "partial_success": True,
+                                    },
+                                    results=[],
+                                    **({"warnings_out": _all_w} if _all_w else {}),
+                                )
+                            )
+                        )
                 return
             verdict = "No matching symbols found."
             if json_mode:
@@ -440,7 +618,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 # "total" so the auto-derived fact terminal is in the
                 # accepted set (test_w806_complexity_empty_corpus pin).
                 summary_norows: dict = {"verdict": verdict, "functions": 0}
-                if warnings:
+                if _all_w:
                     summary_norows["partial_success"] = True
                 click.echo(
                     to_json(
@@ -448,20 +626,18 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                             "complexity",
                             summary=summary_norows,
                             results=[],
-                            **({"warnings_out": warnings} if warnings else {}),
+                            **({"warnings_out": _all_w} if _all_w else {}),
                         )
                     )
                 )
             else:
-                if warnings:
-                    for _w in warnings:
+                if _all_w:
+                    for _w in _all_w:
                         click.echo(f"WARNING: {_w}", err=True)
                 click.echo(verdict)
             return
 
         if sarif_mode:
-            from roam.output.sarif import complexity_to_sarif, write_sarif
-
             complex_symbols = [
                 {
                     "name": r["qualified_name"] or r["name"],
@@ -473,18 +649,53 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 }
                 for r in rows
             ]
-            sarif = complexity_to_sarif(complex_symbols, threshold=threshold or 0, warnings=warnings)
-            click.echo(write_sarif(sarif))
+            _all_w = _merged_warnings()
+            _sarif_payload = _run_check_bj(
+                "serialize_to_sarif",
+                _complexity_to_sarif_payload,
+                complex_symbols,
+                threshold=threshold or 0,
+                warnings=_all_w,
+                default=None,
+            )
+            if _sarif_payload is not None:
+                click.echo(_sarif_payload)
+            else:
+                # SARIF projection collapsed -> emit a degraded envelope
+                # surfacing the marker so the consumer sees the rankings
+                # produced but the SARIF projection failed.
+                _all_w = _merged_warnings()
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "complexity",
+                                summary={
+                                    "verdict": "SARIF projection failed; falling back to JSON envelope",
+                                    "functions": len(rows),
+                                    "partial_success": True,
+                                },
+                                results=[],
+                                **({"warnings_out": _all_w} if _all_w else {}),
+                            )
+                        )
+                    )
             return
 
         if by_file:
-            _by_file_output(conn, rows, json_mode, warnings=warnings)
+            _by_file_output(conn, rows, json_mode, warnings=_merged_warnings())
             return
 
-        # Compute distribution stats
-        all_scores = conn.execute(
-            "SELECT cognitive_complexity FROM symbol_metrics ORDER BY cognitive_complexity DESC"
-        ).fetchall()
+        # Compute distribution stats (W607-BJ: substrate boundary)
+        all_scores = _run_check_bj(
+            "compute_distribution_stats",
+            lambda: conn.execute(
+                "SELECT cognitive_complexity FROM symbol_metrics ORDER BY cognitive_complexity DESC"
+            ).fetchall(),
+            default=[],
+        )
+        if all_scores is None:
+            all_scores = []
         scores = [r[0] for r in all_scores]
         total = len(scores)
         avg = sum(scores) / total if total else 0
@@ -526,8 +737,23 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 }
                 for r in rows
             ]
-            symbol_triples = wrap_findings(symbol_values, classifier=_complexity_classify)
-            distribution = confidence_distribution(symbol_triples)
+            # W607-BJ: classify_severity substrate boundary. ``wrap_findings``
+            # + ``confidence_distribution`` are the canonical
+            # severity-classification layer (severity -> confidence tier
+            # bucketing). A raise here is a substrate failure: emit the
+            # marker and fall back to bare values without the {value,
+            # confidence, reason} triples.
+            _classified = _run_check_bj(
+                "classify_severity",
+                lambda: (wrap_findings(symbol_values, classifier=_complexity_classify),),
+                default=None,
+            )
+            if _classified is not None:
+                symbol_triples = _classified[0]
+                distribution = confidence_distribution(symbol_triples)
+            else:
+                symbol_triples = symbol_values
+                distribution = {}
             _cx_verdict = verdict_with_high_count(_cx_verdict, distribution)
             summary_main: dict = {
                 "verdict": _cx_verdict,
@@ -542,8 +768,13 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 # rankings use — cognitive (Sonar) not McCabe.
                 "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
             }
-            if warnings:
+            _all_w = _merged_warnings()
+            if _all_w:
                 summary_main["partial_success"] = True
+                # W607-BJ: mirror the marker stream onto summary.warnings_out
+                # so consumers reading the summary block alone see the
+                # degraded substrates (paired with the top-level mirror).
+                summary_main["warnings_out"] = list(_all_w)
             click.echo(
                 to_json(
                     json_envelope(
@@ -551,15 +782,16 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                         summary=summary_main,
                         budget=token_budget,
                         symbols=symbol_triples,
-                        **({"warnings_out": warnings} if warnings else {}),
+                        **({"warnings_out": _all_w} if _all_w else {}),
                     )
                 )
             )
             return
 
         # Text output
-        if warnings:
-            for _w in warnings:
+        _all_w = _merged_warnings()
+        if _all_w:
+            for _w in _all_w:
                 click.echo(f"WARNING: {_w}", err=True)
         _worst_name_txt = (rows[0]["qualified_name"] or rows[0]["name"]) if rows else "none"
         _worst_cc_txt = rows[0]["cognitive_complexity"] if rows else 0

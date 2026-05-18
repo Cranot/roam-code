@@ -1274,9 +1274,134 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         leaks_only = bool(ci_mode)
     ensure_index()
 
+    # W607-CE -- substrate-boundary plumbing for cmd_over_fetch.
+    # ``_run_check_ce`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607ce_warnings_out`` rather than
+    # crashing the over-fetch detector outright (W114 foundational
+    # detector; W809 sealed the empty-corpus smoke but did NOT install
+    # substrate isolation -- this wave adds it). Marker family
+    # ``over_fetch_<phase>_failed:<exc_class>:<detail>``. Substrates
+    # wrapped:
+    #
+    #   * analyze_over_fetch        -- core model-level detection
+    #   * analyze_endpoint_states   -- 3-state endpoint classification
+    #                                  (W84 BARE/GUARDED/UNGUARDED)
+    #   * find_model_files          -- empty-state model counter
+    #   * symbol_count_query        -- empty-state symbol-table COUNT
+    #   * emit_findings             -- W114 findings-registry mirror
+    #                                  (sqlite3.OperationalError silent
+    #                                  no-op preserved for pre-W89 DB)
+    #   * serialize_to_sarif        -- SARIF projection
+    #   * aggregate_by_confidence   -- model-level by-confidence histogram
+    #   * aggregate_by_state        -- endpoint 3-state tallies
+    #   * apply_leaks_only_filter   -- W21.6 --leaks-only filter
+    #   * compute_endpoint_verdict  -- endpoint-verdict composition
+    _w607ce_warnings_out: list[str] = []
+
+    def _run_check_ce(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CE marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an ``over_fetch_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ce_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ce_warnings_out.append(f"over_fetch_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DT -- additive aggregation-phase plumbing for cmd_over_fetch.
+    # Layered ON TOP of the W607-CE substrate-CALL plumbing above; both
+    # share the canonical ``over_fetch_*`` marker family and the
+    # ``over_fetch_<phase>_failed:<exc_class>:<detail>`` shape contract.
+    # The two bucket sources are merged at envelope-emit time into the
+    # single ``warnings_out`` mirror so consumers see the full degradation
+    # lineage. Aggregation phases wrapped (sibling pattern to cmd_n1's
+    # W607-DQ):
+    #
+    #   * score_classify     -- buckets the run by over-fetch + leak
+    #                          counts into NO_OVER_FETCH / OF_LIGHT /
+    #                          OF_MODERATE / OF_HEAVY / DEGRADED
+    #   * compute_predicate  -- rollup metrics dict (total_count, by_kind,
+    #                          files_affected, bare_count, real_leaks)
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor:
+    #                          "over_fetch completed")
+    #   * serialize_envelope -- json_envelope("over-fetch", ...) projection
+    #
+    # The 4 aggregation phase names DO NOT collide with the 10 W607-CE
+    # substrate phase names (analyze_over_fetch / analyze_endpoint_states
+    # / find_model_files / symbol_count_query / emit_findings /
+    # serialize_to_sarif / aggregate_by_confidence / aggregate_by_state /
+    # apply_leaks_only_filter / compute_endpoint_verdict).
+    # ``compute_verdict`` is deliberately distinct from CE's
+    # ``compute_endpoint_verdict`` so an agent can tell which layer raised.
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_dt(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder.
+    #   4. phase-name collision: verified above against CE's 10 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_dt(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    _w607dt_warnings_out: list[str] = []
+
+    def _run_check_dt(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DT marker emission.
+
+        Mirror of ``_run_check_ce`` shape (same
+        ``over_fetch_<phase>_failed:`` marker family) but writes into
+        ``_w607dt_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dt_warnings_out.append(f"over_fetch_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
-        findings = analyze_over_fetch(conn, threshold=threshold, limit=limit)
-        endpoint_findings = analyze_endpoint_states(conn, find_project_root())
+        # W607-CE: ``analyze_over_fetch`` is the core model-level
+        # detection. A raise inside per-model regex parsing or
+        # controller-direct-return analysis used to crash the over-fetch
+        # detector outright; now degrades to [] so the empty-state
+        # envelope still emits with the marker AND
+        # ``partial_success: True``.
+        findings = _run_check_ce(
+            "analyze_over_fetch",
+            analyze_over_fetch,
+            conn,
+            threshold,
+            limit,
+            default=[],
+        )
+        if findings is None:
+            findings = []
+
+        # W607-CE: ``analyze_endpoint_states`` is the 3-state endpoint
+        # classification (W84 BARE/GUARDED_RELATION/UNGUARDED_RELATION).
+        # A raise inside the method-body extractor or with(...) classifier
+        # used to crash the over-fetch detector; now degrades to [] with
+        # a marker so the model-level findings still surface.
+        endpoint_findings = _run_check_ce(
+            "analyze_endpoint_states",
+            analyze_endpoint_states,
+            conn,
+            find_project_root(),
+            default=[],
+        )
+        if endpoint_findings is None:
+            endpoint_findings = []
 
         # W805 (Pattern 2: silent fallbacks) — over-fetch only fires on
         # PHP/Laravel model files (path LIKE '%/Models/%'). On a
@@ -1286,8 +1411,18 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # "scan ran against a Laravel app and the models are clean".
         # Capture the empty-input state so the empty-corpus branch
         # below can name it explicitly.
-        _w805_model_files_count = len(_find_model_files(conn))
-        _w805_symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        # W607-CE: wrap both empty-state probes so a raise in
+        # _find_model_files / the symbols COUNT query degrades to 0 and
+        # surfaces a marker rather than crashing the envelope.
+        _model_files_result = _run_check_ce("find_model_files", _find_model_files, conn, default=[])
+        _w805_model_files_count = len(_model_files_result or [])
+
+        def _symbol_count():
+            return conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+        _w805_symbol_count = _run_check_ce("symbol_count_query", _symbol_count, default=0)
+        if _w805_symbol_count is None:
+            _w805_symbol_count = 0
 
         # --- W114: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is independent of
@@ -1296,6 +1431,12 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # comprehensive regardless of how a particular invocation slices
         # the view. Matches the W109 smells / W111 missing-index persist
         # discipline.
+        # W607-CE: ``_emit_over_fetch_findings`` substrate boundary. The
+        # pre-W89 schema path (sqlite3.OperationalError on missing
+        # ``findings`` table) is the EXPECTED degraded path -- the
+        # try/except below maintains the W114 silent no-op contract for
+        # that case. Generic exceptions surface via the
+        # ``over_fetch_emit_findings_failed:<exc>:<detail>`` marker.
         if persist:
             try:
                 _emit_over_fetch_findings(
@@ -1308,13 +1449,28 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CE disclosure
+                _w607ce_warnings_out.append(f"over_fetch_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
     # -------------------------------------------------------------------
     # Tally by confidence (model-level) and by state (endpoint-level)
     # -------------------------------------------------------------------
-    by_confidence: dict[str, int] = defaultdict(int)
-    for f in findings:
-        by_confidence[f["confidence"]] += 1
+    # W607-CE: ``aggregate_by_confidence`` substrate -- model-level
+    # by-confidence histogram. Degrades to an empty defaultdict on raise
+    # so the envelope still composes with conf_str="none".
+    def _aggregate_by_confidence():
+        agg: defaultdict[str, int] = defaultdict(int)
+        for f in findings:
+            agg[f["confidence"]] += 1
+        return agg
+
+    by_confidence = _run_check_ce(
+        "aggregate_by_confidence",
+        _aggregate_by_confidence,
+        default=defaultdict(int),
+    )
+    if by_confidence is None:
+        by_confidence = defaultdict(int)
 
     total = len(findings)
     high_count = by_confidence.get("high", 0)
@@ -1333,21 +1489,53 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     # 3-state endpoint tallies — computed from the FULL classification, not
     # the post-filter list. This is intentional: SUMMARY tells the truth;
     # the FINDINGS list is what gets filtered by --leaks-only.
-    bare_count = sum(1 for e in endpoint_findings if e["state"] == "BARE")
-    guarded_relation_count = sum(1 for e in endpoint_findings if e["state"] == "GUARDED_RELATION")
-    unguarded_relation_count = sum(1 for e in endpoint_findings if e["state"] == "UNGUARDED_RELATION")
+    # W607-CE: ``aggregate_by_state`` substrate -- 3-state endpoint
+    # tallies. Degrades to (0, 0, 0) on raise so the envelope still
+    # composes with empty endpoint counts. Hard distinction from the
+    # model-level confidence histogram: this substrate operates on the
+    # endpoint classification list, not the findings list.
+    def _aggregate_by_state():
+        bare = sum(1 for e in endpoint_findings if e["state"] == "BARE")
+        guarded = sum(1 for e in endpoint_findings if e["state"] == "GUARDED_RELATION")
+        unguarded = sum(1 for e in endpoint_findings if e["state"] == "UNGUARDED_RELATION")
+        return (bare, guarded, unguarded)
+
+    _state_tally = _run_check_ce("aggregate_by_state", _aggregate_by_state, default=(0, 0, 0))
+    if _state_tally is None:
+        _state_tally = (0, 0, 0)
+    bare_count, guarded_relation_count, unguarded_relation_count = _state_tally
     endpoint_total = bare_count + guarded_relation_count + unguarded_relation_count
 
     # Apply --leaks-only filter to the findings LIST only (summary counts
     # preserved above). The flag is a presentation filter; detection is
     # identical with or without it.
+    # W607-CE: ``apply_leaks_only_filter`` substrate -- W21.6 filter
+    # isolation. Degrades to the pre-filter endpoint list so a raise in
+    # the comprehension does NOT silently drop endpoint findings -- the
+    # marker fires and the envelope still surfaces the full classification.
     if leaks_only:
-        endpoint_findings = [e for e in endpoint_findings if e["state"] in {"BARE", "UNGUARDED_RELATION"}]
+
+        def _apply_leaks_only_filter():
+            return [e for e in endpoint_findings if e["state"] in {"BARE", "UNGUARDED_RELATION"}]
+
+        _filtered = _run_check_ce(
+            "apply_leaks_only_filter",
+            _apply_leaks_only_filter,
+            default=endpoint_findings,
+        )
+        if _filtered is not None:
+            endpoint_findings = _filtered
 
     # Endpoint verdict — concrete-noun anchored (LAW 4). Names the worst
     # endpoint by file:line where possible so agents see WHICH leak to fix.
+    # W607-CE: ``compute_endpoint_verdict`` substrate -- verdict
+    # composition. Degrades to "" on raise so the empty-endpoint branch
+    # below still composes a coherent envelope.
     real_leaks = bare_count + unguarded_relation_count
-    if endpoint_total:
+
+    def _compute_endpoint_verdict():
+        if not endpoint_total:
+            return ""
         ep_parts: list[str] = []
         if bare_count:
             ep_parts.append(f"{bare_count} BARE leak{'s' if bare_count != 1 else ''}")
@@ -1364,14 +1552,15 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
             # CONSTRAINT 7 — name what's surviving (real leaks), then state
             # the suppression as a closing clause.
             leak_clause = ", ".join(ep_parts) if ep_parts else "0 real leaks"
-            endpoint_verdict = (
+            return (
                 f"{real_leaks} real leak{'s' if real_leaks != 1 else ''} "
                 f"({leak_clause}) — {guarded_relation_count} guarded-relation "
                 f"finding{'s' if guarded_relation_count != 1 else ''} suppressed via --leaks-only"
             )
-        else:
-            endpoint_verdict = ", ".join(ep_parts)
-    else:
+        return ", ".join(ep_parts)
+
+    endpoint_verdict = _run_check_ce("compute_endpoint_verdict", _compute_endpoint_verdict, default="")
+    if endpoint_verdict is None:
         endpoint_verdict = ""
 
     # W805 (Pattern 2: silent fallbacks) — distinguish detector-ran-clean
@@ -1386,25 +1575,122 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         elif _w805_model_files_count == 0:
             w805_empty_state = "no_php_models"
 
-    if total or endpoint_total:
-        head_bits: list[str] = []
-        if total:
-            head_bits.append(f"{total} over-fetch pattern{'s' if total != 1 else ''} ({conf_str})")
-        if endpoint_verdict:
-            head_bits.append(endpoint_verdict)
-        verdict = "; ".join(head_bits)
-    elif w805_empty_state == "empty_corpus":
-        verdict = (
-            "no symbols to analyze (corpus empty; "
-            "run `roam index --force` to populate the graph before over-fetch detection)"
-        )
-    elif w805_empty_state == "no_php_models":
-        verdict = (
-            "no PHP/Laravel model files found (over-fetch detection requires "
-            "files under Models/ or Model/; detector ran but had no input to analyze)"
-        )
-    else:
-        verdict = "No over-fetch patterns detected"
+    # W607-DT -- score_classify boundary. Buckets the run by total
+    # over-fetch findings + real endpoint leaks into a state label:
+    #   * NO_OVER_FETCH  -- total == 0 AND real_leaks == 0
+    #   * OF_LIGHT       -- 0 < (total + real_leaks) <= 3
+    #   * OF_MODERATE    -- 3 < (total + real_leaks) <= 10
+    #   * OF_HEAVY       -- (total + real_leaks) > 10
+    #   * DEGRADED       -- floor on raise
+    # W978 5th-discipline: ``total`` / ``real_leaks`` passed as raw
+    # args; counting / iteration lives INSIDE the closure (no len() at
+    # kwarg-bind).
+    def _score_classify_run(_total, _real_leaks):
+        _combined = _total + _real_leaks
+        if _combined == 0:
+            _state = "NO_OVER_FETCH"
+        elif _combined <= 3:
+            _state = "OF_LIGHT"
+        elif _combined <= 10:
+            _state = "OF_MODERATE"
+        else:
+            _state = "OF_HEAVY"
+        return {"state": _state, "scanned": _combined}
+
+    _score_dict = _run_check_dt(
+        "score_classify",
+        _score_classify_run,
+        total,
+        real_leaks,
+        default={"state": "DEGRADED", "scanned": 0},
+    )
+
+    # W607-DT -- compute_predicate boundary. Rollup metrics dict
+    # surfacing aggregate dimensions (total_count / by_kind /
+    # files_affected / bare_count / real_leaks) so a downstream refactor
+    # of the rollup logic surfaces a marker rather than crashing. W978
+    # 5th-discipline: ``findings`` + ``endpoint_findings`` passed as
+    # raw args; counting / iteration lives INSIDE the closure.
+    def _compute_predicate_fields(_findings, _endpoint_findings):
+        _by_kind: dict[str, int] = {}
+        _files: set[str] = set()
+        for _f in _findings:
+            # Over-fetch model-level findings are classified by reason
+            # bucket ("missing_hidden" / "no_resource" / "direct_return"
+            # / "missing_select"); collapse to "model_level" if absent.
+            _k = _f.get("kind") or _f.get("io_type") or "model_level"
+            _by_kind[_k] = _by_kind.get(_k, 0) + 1
+            _loc = _f.get("model_location") or ""
+            if _loc:
+                _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
+                if _file:
+                    _files.add(_file)
+        for _ep in _endpoint_findings:
+            _state_key = _ep.get("state") or "unknown_state"
+            _by_kind[_state_key] = _by_kind.get(_state_key, 0) + 1
+            _loc = _ep.get("location") or ""
+            if _loc:
+                _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
+                if _file:
+                    _files.add(_file)
+        return {
+            "total_count": len(_findings),
+            "by_kind": dict(_by_kind),
+            "files_affected": len(_files),
+        }
+
+    _pred_fields = _run_check_dt(
+        "compute_predicate",
+        _compute_predicate_fields,
+        findings,
+        endpoint_findings,
+        default={
+            "total_count": 0,
+            "by_kind": {},
+            "files_affected": 0,
+        },
+    )
+
+    # W607-DT -- compute_verdict boundary. Wraps the verdict string
+    # assembly so a downstream f-string refactor (non-int totals from
+    # a vocabulary refactor, or a __format__-raising sentinel) surfaces
+    # a marker rather than crashing the envelope. Literal
+    # "over_fetch completed" floor (LAW 6 still holds: the line works
+    # standalone).
+    #
+    # W978 1st-discipline: the floor MUST NOT re-interpolate the same
+    # values that tripped the closure. W978 2nd-discipline: ``default=``
+    # is a literal constant.
+    def _build_verdict_str(_total, _endpoint_total, _conf_str, _endpoint_verdict, _empty_state):
+        if _total or _endpoint_total:
+            head_bits: list[str] = []
+            if _total:
+                head_bits.append(f"{_total} over-fetch pattern{'s' if _total != 1 else ''} ({_conf_str})")
+            if _endpoint_verdict:
+                head_bits.append(_endpoint_verdict)
+            return "; ".join(head_bits)
+        if _empty_state == "empty_corpus":
+            return (
+                "no symbols to analyze (corpus empty; "
+                "run `roam index --force` to populate the graph before over-fetch detection)"
+            )
+        if _empty_state == "no_php_models":
+            return (
+                "no PHP/Laravel model files found (over-fetch detection requires "
+                "files under Models/ or Model/; detector ran but had no input to analyze)"
+            )
+        return "No over-fetch patterns detected"
+
+    verdict = _run_check_dt(
+        "compute_verdict",
+        _build_verdict_str,
+        total,
+        endpoint_total,
+        conf_str,
+        endpoint_verdict,
+        w805_empty_state,
+        default="over_fetch completed",
+    )
 
     # -------------------------------------------------------------------
     # SARIF output (W1219)
@@ -1416,13 +1702,21 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     # are NOT subject to --leaks-only filtering (that flag scopes only
     # the 3-state endpoint classification per the W21.6 contract).
     if sarif_mode:
-        from roam.output.sarif import over_fetch_to_sarif, write_sarif
+        # W607-CE: SARIF projection substrate -- a raise in the SARIF
+        # writer used to crash the over-fetch command on the CI
+        # integration path; now degrades silently to None with a marker,
+        # and the function returns early (matches pre-W607-CE semantics
+        # that SARIF mode short-circuits).
+        def _emit_sarif():
+            from roam.output.sarif import over_fetch_to_sarif, write_sarif
 
-        # Combine model-level + endpoint-level findings into one list
-        # so the SARIF projector can branch on the ``state`` field
-        # (present on endpoint findings only).
-        combined: list[dict] = list(findings) + list(endpoint_findings)
-        click.echo(write_sarif(over_fetch_to_sarif(combined)))
+            # Combine model-level + endpoint-level findings into one list
+            # so the SARIF projector can branch on the ``state`` field
+            # (present on endpoint findings only).
+            combined: list[dict] = list(findings) + list(endpoint_findings)
+            click.echo(write_sarif(over_fetch_to_sarif(combined)))
+
+        _run_check_ce("serialize_to_sarif", _emit_sarif, default=None)
         return
 
     # -------------------------------------------------------------------
@@ -1441,36 +1735,96 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # healthy (W809 pins this contract: empty corpus → 0 real
         # leaks → partial_success MUST be False). The legacy `state`
         # ("ok"/"leak") is preserved unchanged.
-        partial_success = bare_count > 0 or unguarded_relation_count > 0
-        click.echo(
-            to_json(
-                json_envelope(
-                    "over-fetch",
-                    summary={
-                        "verdict": verdict,
-                        "total": total,
-                        "threshold": threshold,
-                        "by_confidence": dict(by_confidence),
-                        # 3-state endpoint classification counts — these
-                        # reflect the FULL classification regardless of
-                        # --leaks-only; the flag only filters the findings
-                        # list. Summary always tells the truth.
-                        "bare_count": bare_count,
-                        "guarded_relation_count": guarded_relation_count,
-                        "unguarded_relation_count": unguarded_relation_count,
-                        "endpoint_total": endpoint_total,
-                        "real_leak_count": real_leaks,
-                        "state": "ok" if real_leaks == 0 else "leak",
-                        "detector_state": w805_empty_state or "scanned",
-                        "partial_success": partial_success,
-                        "leaks_only": leaks_only,
-                        "model_files_scanned": _w805_model_files_count,
-                    },
-                    findings=findings,
-                    endpoint_findings=endpoint_findings,
-                )
-            )
+        # W607-CE + W607-DT: any substrate-CALL OR aggregation-phase
+        # marker flips partial_success: True so a degraded-empty
+        # envelope is NOT mistaken for a clean "no over-fetch patterns"
+        # verdict. The pre-W607-CE leak-or-no-leak semantics still
+        # drive partial_success on the happy path.
+        _combined_warnings = list(_w607ce_warnings_out) + list(_w607dt_warnings_out)
+        partial_success = bare_count > 0 or unguarded_relation_count > 0 or bool(_combined_warnings)
+        summary_block = {
+            "verdict": verdict,
+            "total": total,
+            "threshold": threshold,
+            "by_confidence": dict(by_confidence),
+            # 3-state endpoint classification counts — these
+            # reflect the FULL classification regardless of
+            # --leaks-only; the flag only filters the findings
+            # list. Summary always tells the truth.
+            "bare_count": bare_count,
+            "guarded_relation_count": guarded_relation_count,
+            "unguarded_relation_count": unguarded_relation_count,
+            "endpoint_total": endpoint_total,
+            "real_leak_count": real_leaks,
+            "state": "ok" if real_leaks == 0 else "leak",
+            "detector_state": w805_empty_state or "scanned",
+            "partial_success": partial_success,
+            "leaks_only": leaks_only,
+            "model_files_scanned": _w805_model_files_count,
+            # W607-DT: surface score_classify result on the envelope so
+            # consumers can read the run state without re-deriving from
+            # raw counts. W978 7th-discipline anchor: bare
+            # ``_score_dict["state"]`` lookup (floor dict guarantees the
+            # key) -- NOT ``.get("state", expensive_default)``.
+            "run_state": _score_dict["state"],
+            # W607-DT: surface compute_predicate rollup on the envelope
+            # so consumers can read the aggregate dimensions without
+            # rebuilding from the raw lists. W978 7th-discipline anchor:
+            # bare key lookups.
+            "by_kind": _pred_fields["by_kind"],
+            "files_affected": _pred_fields["files_affected"],
+        }
+        envelope_kwargs: dict = {
+            "summary": summary_block,
+            "findings": findings,
+            "endpoint_findings": endpoint_findings,
+        }
+        # W607-CE + W607-DT: mirror combined substrate-CALL + aggregation-
+        # phase markers into BOTH the top-level envelope ``warnings_out``
+        # AND ``summary.warnings_out`` so MCP consumers see disclosure
+        # regardless of which surface they read.
+        if _combined_warnings:
+            summary_block["warnings_out"] = list(_combined_warnings)
+            envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+        # W607-DT -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("over-fetch", ...)`` would otherwise
+        # crash AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name. W978 6th-discipline: floor is a
+        # concrete dict, not a sentinel that may __len__-raise downstream.
+        _envelope_floor: dict = {
+            "command": "over-fetch",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings),
+            },
+            "warnings_out": list(_combined_warnings),
+        }
+        envelope = _run_check_dt(
+            "serialize_envelope",
+            json_envelope,
+            "over-fetch",
+            default=_envelope_floor,
+            **envelope_kwargs,
         )
+        # W607-DT -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``over_fetch_serialize_envelope_failed:`` marker was appended
+        # to ``_w607dt_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild.
+        if envelope is _envelope_floor and _w607dt_warnings_out:
+            _combined_warnings = list(_w607ce_warnings_out) + list(_w607dt_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+            _envelope_floor["warnings_out"] = list(_combined_warnings)
+            envelope = _envelope_floor
+        click.echo(to_json(envelope))
         return
 
     # -------------------------------------------------------------------

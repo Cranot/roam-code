@@ -1,8 +1,11 @@
 """Comprehensive test suite for Roam.
 
 Covers:
-- All supported languages (Python, JS, TS, Java, Go, Rust, C, PHP, Ruby, C#, Kotlin)
-- All 18 CLI commands
+- Core supported languages (Python, JS, TS, Java, Go, Rust, C, PHP, Ruby, C#, Kotlin)
+- A baseline set of CLI commands shared across language fixtures (see
+  ``TestErrorHandling.test_help_all_commands`` for the explicit roster;
+  exhaustive coverage of the full 241-command surface lives in
+  ``test_commands_*.py`` modules and ``test_smoke.py``).
 - Inheritance/implements/trait edges across languages
 - Properties/fields across languages
 - Incremental indexing (add, modify, remove, no-change)
@@ -1696,7 +1699,7 @@ class TestCrossLanguage:
 
 
 # ============================================================================
-# NEW v3.6 COMMANDS
+# DESCRIBE / TEST-MAP / SKETCH COMMANDS
 # ============================================================================
 
 
@@ -1788,7 +1791,7 @@ class TestSketch:
 
 
 # ============================================================================
-# CONTEXT COMMAND (v4.1)
+# CONTEXT COMMAND
 # ============================================================================
 
 
@@ -1843,7 +1846,7 @@ class TestContext:
 
 
 # ============================================================================
-# SAFE-DELETE COMMAND (v4.1)
+# SAFE-DELETE COMMAND
 # ============================================================================
 
 
@@ -1906,7 +1909,7 @@ class TestSafeDelete:
 
 
 # ============================================================================
-# SPLIT COMMAND (v4.4)
+# SPLIT COMMAND
 # ============================================================================
 
 
@@ -1964,7 +1967,7 @@ class TestSplit:
 
 
 # ============================================================================
-# RISK COMMAND (v4.4)
+# RISK COMMAND
 # ============================================================================
 
 
@@ -2012,7 +2015,7 @@ class TestRisk:
 
 
 # ============================================================================
-# PR-RISK COMMAND (v4.1)
+# PR-RISK COMMAND
 # ============================================================================
 
 

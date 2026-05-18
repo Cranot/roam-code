@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from roam.output.formatter import WarningsOut
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -452,20 +454,68 @@ def _count_events(events_path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-def read_run_meta(repo_root: Path, run_id: str) -> Optional[RunMeta]:
+def read_run_meta(
+    repo_root: Path,
+    run_id: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> Optional[RunMeta]:
     """Load ``meta.json`` for *run_id*. Returns ``None`` if absent.
 
     Forward-compat fields (anything not on the dataclass) are preserved
     on the returned ``extra`` dict.
+
+    W596: mirrors the W448 ``read_lease`` / W595 ``read_permit`` plumb —
+    when *warnings_out* is supplied, every silent-error site appends one
+    structured closed-enum marker so callers can tell "run not on disk"
+    from "meta.json on disk but unreadable" from "JSON parsed but schema
+    rejected". The ``None`` return on every drop path is PRESERVED — the
+    None-return is the caller contract. ``warnings_out=None`` (default)
+    preserves the pre-W596 silent-drop behaviour.
+
+    The marker shape mirrors W595's ``read_permit`` 5-marker shape with
+    a ``run_meta_`` prefix so a caller threading the same bucket through
+    multiple substrate read sites sees a uniform marker vocabulary.
+
+    Emitted kinds (closed enum):
+
+      * ``run_meta_not_found:<run_id>/meta.json`` — the on-disk path does
+        not exist. Mirrors W595's ``read_permit`` warning-on-missing
+        choice: a missing meta.json during a ``runs show`` lookup is an
+        operational anomaly worth surfacing (caller typo / wrong repo
+        root / partially-written run directory).
+      * ``run_meta_read_failed:<run_id>/meta.json:<exc_class>:<detail>``
+        — ``Path.read_text`` raised ``OSError`` (typically
+        ``PermissionError`` / ``IsADirectoryError`` / generic
+        ``OSError``). The file is on disk but unreadable.
+      * ``run_meta_corrupt:<run_id>/meta.json:JSONDecodeError`` — the
+        bytes parsed as something other than JSON.
+      * ``run_meta_corrupt:<run_id>/meta.json:NotAJsonObject`` — JSON
+        parsed cleanly but the top-level value was not a dict.
+      * ``run_meta_corrupt:<run_id>/meta.json:SchemaInvalid`` — dict
+        rejected by the :class:`RunMeta` dataclass constructor (missing
+        required field / ``TypeError`` on unknown kwargs).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     path = _meta_path(repo_root, run_id)
+    file_token = f"{run_id}/{META_FILE}"
     if not path.exists():
+        _emit(f"run_meta_not_found:{file_token}")
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError as exc:
+        _emit(f"run_meta_read_failed:{file_token}:{type(exc).__name__}:{exc}")
+        return None
+    except json.JSONDecodeError:
+        _emit(f"run_meta_corrupt:{file_token}:JSONDecodeError")
         return None
     if not isinstance(raw, dict):
+        _emit(f"run_meta_corrupt:{file_token}:NotAJsonObject")
         return None
     known = {
         "run_id",
@@ -482,33 +532,76 @@ def read_run_meta(repo_root: Path, run_id: str) -> Optional[RunMeta]:
     try:
         meta = RunMeta(**kwargs)  # type: ignore[arg-type]
     except TypeError:
+        _emit(f"run_meta_corrupt:{file_token}:SchemaInvalid")
         return None
     meta.extra = extras
     return meta
 
 
-def read_run_events(repo_root: Path, run_id: str) -> Iterator[dict]:
+def read_run_events(
+    repo_root: Path,
+    run_id: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> Iterator[dict]:
     """Stream events for *run_id* in seq order.
 
     Yields raw dicts (not dataclasses) since event shape is open-ended.
     Corrupt JSON lines are skipped silently -- the ledger should keep
     streaming even if one event got mangled. Order on disk is already
     seq order because writes are append-only.
+
+    W596-bonus: mirrors the W593 ``list_permits`` per-file disclosure
+    pattern — when *warnings_out* is supplied, each silent-error site
+    emits one structured closed-enum marker so callers can tell "events
+    file absent" from "events file unreadable" from "one event line is
+    corrupt JSON" from "one event line is not a dict". The iteration
+    contract is PRESERVED — corrupt / non-dict lines are still skipped
+    so the rest of the chain streams through. ``warnings_out=None``
+    (default) preserves the pre-W596 silent-drop behaviour.
+
+    Emitted kinds (closed enum):
+
+      * ``run_events_not_found:<run_id>/events.jsonl`` — the on-disk
+        path does not exist. The iterator yields nothing.
+      * ``run_events_read_failed:<run_id>/events.jsonl:<exc_class>:<detail>``
+        — ``Path.open`` raised ``OSError`` (typically
+        ``PermissionError``). The iterator yields nothing.
+      * ``run_event_corrupt:<run_id>/events.jsonl:<seq>:JSONDecodeError``
+        — one line failed JSON parse; ``<seq>`` is the 1-indexed line
+        number (matches the on-disk seq convention).
+      * ``run_event_corrupt:<run_id>/events.jsonl:<seq>:NotAJsonObject``
+        — one line parsed but the top-level value was not a dict.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     path = _events_path(repo_root, run_id)
+    file_token = f"{run_id}/{EVENTS_FILE}"
     if not path.exists():
+        _emit(f"run_events_not_found:{file_token}")
         return
-    with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
+    try:
+        fh = path.open("r", encoding="utf-8")
+    except OSError as exc:
+        _emit(f"run_events_read_failed:{file_token}:{type(exc).__name__}:{exc}")
+        return
+    with fh:
+        for line_no, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 raw = json.loads(line)
             except json.JSONDecodeError:
+                _emit(f"run_event_corrupt:{file_token}:{line_no}:JSONDecodeError")
                 continue
-            if isinstance(raw, dict):
-                yield raw
+            if not isinstance(raw, dict):
+                _emit(f"run_event_corrupt:{file_token}:{line_no}:NotAJsonObject")
+                continue
+            yield raw
 
 
 def list_runs(

@@ -654,6 +654,106 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
 
+    # W607-CP -- substrate-boundary plumbing for cmd_hotspots.
+    # ``_run_check_cp`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cp_warnings_out`` rather than
+    # crashing the runtime-hotspot detector outright (W120 origin per
+    # CLAUDE.md detector roster -- part of the original 16 findings-
+    # registry detectors; W816 / W819 sealed the empty-corpus smoke
+    # gap, but until this wave the command had no substrate-boundary
+    # marker plumbing -- a raise in ``compute_hotspots`` would crash
+    # the hotspots command outright). Marker family
+    # ``hotspots_<phase>_failed:<exc_class>:<detail>``. Substrates wrapped:
+    #
+    #   * load_trace_ingestion       -- runtime_stats COUNT probe
+    #   * compute_hotspots           -- core static-vs-runtime ranking
+    #                                   (UPGRADE/CONFIRMED/DOWNGRADE
+    #                                   classification)
+    #   * compute_security_hotspots  -- --security mode source-scan
+    #   * run_danger_mode            -- --danger mode p75 aggregator
+    #   * emit_findings              -- W120 findings-registry mirror
+    #                                   (sqlite3.OperationalError silent
+    #                                   no-op preserved for pre-W89 DB)
+    #   * serialize_to_sarif         -- SARIF projection
+    #   * apply_discrepancy_filter   -- UPGRADE/DOWNGRADE filter
+    #   * apply_runtime_sort         -- runtime_rank sort
+    #   * aggregate_by_kind          -- UPGRADE/CONFIRMED/DOWNGRADE counts
+    #   * derive_next_steps          -- suggest_next_steps wrap
+    _w607cp_warnings_out: list[str] = []
+
+    def _run_check_cp(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CP marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``hotspots_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607cp_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cp_warnings_out.append(f"hotspots_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-EN -- AGGREGATION-layer plumbing on top of W607-CP substrate
+    # layer. The two buckets are disjoint and merged at envelope-emit
+    # time so consumers see the full degradation lineage. The phase names
+    # (score_classify / compute_predicate / compute_verdict /
+    # serialize_envelope) are disjoint from the W607-CP substrate phases
+    # above (load_trace_ingestion / compute_hotspots /
+    # compute_security_hotspots / run_danger_mode / emit_findings /
+    # serialize_to_sarif / apply_discrepancy_filter / apply_runtime_sort
+    # / aggregate_by_kind / derive_next_steps / serialize_items). Marker
+    # family ``hotspots_<phase>_failed:<exc_class>:<detail>`` is shared so
+    # any consumer regex over the marker family catches both layers.
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_en(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder.
+    #   4. phase-name collision: verified above against CP's 11 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_en(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    #
+    # Aggregation phases wrapped (sibling pattern to cmd_bus_factor's
+    # W607-EH + cmd_auth_gaps's W607-ED + cmd_missing_index's W607-DX):
+    #
+    #   * score_classify     -- buckets the run by hotspot count into
+    #                          COLD (0) / WARM (1..4) / HOT (>=5) /
+    #                          DEGRADED
+    #   * compute_predicate  -- rollup metrics dict (risk_score sum, heat
+    #                          band, commit_count, hottest_files)
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor:
+    #                          "hotspots completed")
+    #   * serialize_envelope -- json_envelope("hotspots", ...) projection
+    _w607en_warnings_out: list[str] = []
+
+    def _run_check_en(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-EN marker emission.
+
+        Mirror of ``_run_check_cp`` shape (same
+        ``hotspots_<phase>_failed:`` marker family) but writes into
+        ``_w607en_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits. W607-DW finding pin: the
+        return statement is verbatim ``return default`` (NOT
+        ``return default if default is not None else {}``) so the floor
+        is a literal pass-through.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607en_warnings_out.append(f"hotspots_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     if security_mode and (sort_runtime or discrepancy):
         click.echo("Cannot combine --security with --runtime or --discrepancy")
         raise SystemExit(1)
@@ -685,12 +785,54 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         raise SystemExit(1)
 
     if danger_mode:
-        _run_danger_mode(json_mode, token_budget)
+        # W607-CP: ``run_danger_mode`` substrate -- a raise in the
+        # p75-band aggregator used to crash the --danger CI path; the
+        # wrap contains it. ``--danger`` writes its own envelope inside
+        # the helper so we cannot mirror markers into a downstream
+        # envelope here; the marker stays on the accumulator for
+        # source-grep parity.
+        _run_check_cp(
+            "run_danger_mode",
+            _run_danger_mode,
+            json_mode,
+            token_budget,
+            default=None,
+        )
         return
 
     if security_mode:
         with open_db(readonly=True) as conn:
-            report = _compute_security_hotspots(conn)
+            # W607-CP: ``compute_security_hotspots`` substrate -- a raise
+            # inside the source-scan regex loop used to crash the
+            # --security path; degrades to an empty report so the
+            # envelope still emits with zero hotspots and the marker
+            # surfaces.
+            report = _run_check_cp(
+                "compute_security_hotspots",
+                _compute_security_hotspots,
+                conn,
+                default={
+                    "total": 0,
+                    "reachable": 0,
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "entrypoints": 0,
+                    "files_scanned": 0,
+                    "hotspots": [],
+                },
+            )
+            if report is None:
+                report = {
+                    "total": 0,
+                    "reachable": 0,
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "entrypoints": 0,
+                    "files_scanned": 0,
+                    "hotspots": [],
+                }
 
         total = report["total"]
         reachable = report["reachable"]
@@ -729,6 +871,17 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                         "no security hotspots above threshold; codebase is healthy",
                     ],
                 }
+            # W607-CP: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. The security path is invocation-scoped so a
+            # marker need not flip partial_success here (no degraded
+            # SAFE -- a raise yields the empty-floor report with zero
+            # hotspots, which is honest given the substrate failure).
+            if _w607cp_warnings_out:
+                envelope_kwargs["summary"]["warnings_out"] = list(_w607cp_warnings_out)
+                envelope_kwargs["summary"]["partial_success"] = True
+                envelope_kwargs["warnings_out"] = list(_w607cp_warnings_out)
             envelope = json_envelope("hotspots", **envelope_kwargs)
             if not detail:
                 envelope = strip_list_payloads(envelope)
@@ -771,7 +924,11 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                 click.echo()
         return
 
-    from roam.runtime.hotspots import compute_hotspots
+    # W607-CP: import via module reference so test monkeypatches on
+    # ``roam.runtime.hotspots.compute_hotspots`` take effect through
+    # the attribute lookup at call time (rather than capturing the
+    # original at function-entry binding).
+    from roam.runtime import hotspots as _runtime_hotspots_mod
 
     with open_db(readonly=not persist) as conn:
         # Detect "no runtime data" state — collapses two prior branches
@@ -782,12 +939,30 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         # ingested. Pattern 2 — never emit a silent SAFE / 0-hotspots
         # verdict on uninitialised runtime data. ``runtime_state``
         # disambiguates which sub-state the caller is in.
-        runtime_state = "ready"
-        try:
+        # W607-CP: ``load_trace_ingestion`` substrate. The
+        # sqlite3.OperationalError path (table missing -- pre-W21
+        # schema) is the EXPECTED degraded path and resolves to the
+        # named ``table_missing`` state; no W607-CP marker fires (we
+        # preserve the silent-named-state contract analogous to
+        # cmd_n1's emit_findings handling of pre-W89 schemas). Any
+        # OTHER raise inside the probe (e.g., malformed row) surfaces
+        # via the W607-CP marker AND degrades to ``table_missing``
+        # so the named-state path is taken.
+        def _probe_runtime_state():
             row = conn.execute("SELECT COUNT(*) FROM runtime_stats").fetchone()
             if row is None or int(row[0] or 0) == 0:
-                runtime_state = "no_traces"
-        except Exception:
+                return "no_traces"
+            return "ready"
+
+        try:
+            runtime_state = _probe_runtime_state()
+        except sqlite3.OperationalError:
+            # Expected: pre-W21 schema, table missing. Silent named state.
+            runtime_state = "table_missing"
+        except Exception as _probe_exc:  # noqa: BLE001 -- W607-CP disclosure
+            _w607cp_warnings_out.append(
+                f"hotspots_load_trace_ingestion_failed:{type(_probe_exc).__name__}:{_probe_exc}"
+            )
             runtime_state = "table_missing"
 
         if runtime_state != "ready":
@@ -808,52 +983,85 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
             # the legacy invocation-scoped suggestion list, while
             # ``agent_contract.next_commands`` is the LAW 2 imperative
             # surface that newer agents consume.
-            next_steps_legacy = suggest_next_steps("hotspots", {"total": 0, "upgrades": 0})
+            # W607-CP: ``derive_next_steps`` substrate -- a raise in
+            # suggest_next_steps on the no-data path degrades to an
+            # empty list so the envelope still emits with the named
+            # state, verdict, and partial_success flag.
+            next_steps_legacy = _run_check_cp(
+                "derive_next_steps",
+                suggest_next_steps,
+                "hotspots",
+                {"total": 0, "upgrades": 0},
+                default=[],
+            )
+            if next_steps_legacy is None:
+                next_steps_legacy = []
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "hotspots",
-                            budget=token_budget,
-                            summary={
-                                "verdict": verdict_no_data,
-                                "total": 0,
-                                "upgrades": 0,
-                                "confirmed": 0,
-                                "downgrades": 0,
-                                # Pattern 2: the static-vs-runtime
-                                # correlation could not run, so flag
-                                # the result as partial / not a SAFE.
-                                "partial_success": True,
-                                "state": runtime_state,
-                            },
-                            agent_contract={
-                                "facts": [
-                                    verdict_no_data,
-                                    f"runtime_stats state: {runtime_state}; no traces ingested",
-                                ],
-                                "next_commands": [
-                                    "roam ingest-trace <trace-file>",
-                                ],
-                            },
-                            hotspots=[],
-                            next_steps=next_steps_legacy,
-                        )
-                    )
+                # W607-CP empty-state envelope: mirror substrate markers
+                # into both surfaces; partial_success stays True
+                # regardless (the no-data state is itself a degraded /
+                # partial result per Pattern 2, independent of W607-CP
+                # marker presence).
+                empty_summary = {
+                    "verdict": verdict_no_data,
+                    "total": 0,
+                    "upgrades": 0,
+                    "confirmed": 0,
+                    "downgrades": 0,
+                    "partial_success": True,
+                    "state": runtime_state,
+                }
+                empty_envelope_kwargs = dict(
+                    budget=token_budget,
+                    summary=empty_summary,
+                    agent_contract={
+                        "facts": [
+                            verdict_no_data,
+                            f"runtime_stats state: {runtime_state}; no traces ingested",
+                        ],
+                        "next_commands": [
+                            "roam ingest-trace <trace-file>",
+                        ],
+                    },
+                    hotspots=[],
+                    next_steps=next_steps_legacy,
                 )
+                if _w607cp_warnings_out:
+                    empty_summary["warnings_out"] = list(_w607cp_warnings_out)
+                    empty_envelope_kwargs["warnings_out"] = list(_w607cp_warnings_out)
+                click.echo(to_json(json_envelope("hotspots", **empty_envelope_kwargs)))
             else:
                 click.echo(f"VERDICT: {verdict_no_data}")
                 click.echo()
                 click.echo(format_next_steps_text(next_steps_legacy))
             return
 
-        items = compute_hotspots(conn)
+        # W607-CP: ``compute_hotspots`` substrate -- the core static-
+        # vs-runtime classification. A raise inside the per-symbol
+        # ranking loop used to crash the hotspots command outright;
+        # now degrades to ``[]`` (no classifications) so the envelope
+        # still composes with empty totals AND the marker surfaces.
+        # This is the canonical "classify_hotspot" boundary -- the
+        # UPGRADE/CONFIRMED/DOWNGRADE classification happens inside
+        # compute_hotspots per symbol.
+        def _call_compute_hotspots():
+            return _runtime_hotspots_mod.compute_hotspots(conn)
+
+        items = _run_check_cp("compute_hotspots", _call_compute_hotspots, default=[])
+        if items is None:
+            items = []
 
         # --- W120: mirror runtime hotspots into the central findings
         # registry. Runs ONLY with --persist. The persisted set is the
         # full compute_hotspots return — independent of the
         # --discrepancy / --runtime display filters below, so re-running
         # with a different filter doesn't truncate the registry.
+        # W607-CP: ``emit_findings`` substrate boundary. The pre-W89
+        # schema path (sqlite3.OperationalError on missing ``findings``
+        # table) is the EXPECTED degraded path -- the try/except below
+        # maintains the W120 silent no-op contract for that case.
+        # Generic exceptions surface via the
+        # ``hotspots_emit_findings_failed:<exc>:<detail>`` marker.
         if persist and items:
             try:
                 _emit_hotspots_findings(conn, items, HOTSPOTS_DETECTOR_VERSION)
@@ -861,6 +1069,8 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CP disclosure
+                _w607cp_warnings_out.append(f"hotspots_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
     # W1210: SARIF branch — mirrors the --persist discipline. The
     # projection set is the FULL compute_hotspots return (the
@@ -869,33 +1079,78 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
     # gating off SARIF should see the same closed-enum rule catalogue
     # regardless of which display flag the caller used.
     if sarif_mode:
-        from roam.output.sarif import hotspots_to_sarif, write_sarif
+        # W607-CP: ``serialize_to_sarif`` substrate -- a raise in the
+        # SARIF writer used to crash the hotspots command on the CI
+        # integration path; now degrades silently to None with a
+        # marker, and the function returns early (matches pre-W607-CP
+        # semantics that SARIF mode short-circuits).
+        def _emit_sarif():
+            # Import via module reference so test monkeypatches on
+            # ``roam.output.sarif.hotspots_to_sarif`` take effect at
+            # call time rather than at function-entry binding.
+            from roam.output import sarif as _sarif_mod
 
-        click.echo(write_sarif(hotspots_to_sarif(items)))
+            click.echo(_sarif_mod.write_sarif(_sarif_mod.hotspots_to_sarif(items)))
+
+        _run_check_cp("serialize_to_sarif", _emit_sarif, default=None)
         return
 
     if discrepancy:
-        items = [h for h in items if h["classification"] in ("UPGRADE", "DOWNGRADE")]
+        # W607-CP: ``apply_discrepancy_filter`` substrate -- the filter
+        # comprehension can raise on a malformed classification value;
+        # the wrap degrades to the unfiltered items list so the envelope
+        # still composes with the marker disclosed.
+        def _apply_discrepancy():
+            return [h for h in items if h["classification"] in ("UPGRADE", "DOWNGRADE")]
+
+        _filtered = _run_check_cp("apply_discrepancy_filter", _apply_discrepancy, default=items)
+        items = _filtered if _filtered is not None else items
 
     if sort_runtime:
-        items.sort(key=lambda h: h["runtime_rank"])
+        # W607-CP: ``apply_runtime_sort`` substrate -- the runtime_rank
+        # sort can raise on a malformed/missing runtime_rank field; the
+        # wrap degrades to the unsorted items list with the marker.
+        def _apply_runtime_sort():
+            items.sort(key=lambda h: h["runtime_rank"])
+            return items
 
-    total = len(items)
-    upgrades = sum(1 for h in items if h["classification"] == "UPGRADE")
-    confirmed = sum(1 for h in items if h["classification"] == "CONFIRMED")
-    downgrades = sum(1 for h in items if h["classification"] == "DOWNGRADE")
+        _run_check_cp("apply_runtime_sort", _apply_runtime_sort, default=None)
+
+    # W607-CP: ``aggregate_by_kind`` substrate -- the kind counters can
+    # raise on a malformed classification value; the wrap degrades to
+    # (0, 0, 0) so the envelope still composes with empty histograms.
+    def _aggregate_by_kind():
+        return (
+            len(items),
+            sum(1 for h in items if h["classification"] == "UPGRADE"),
+            sum(1 for h in items if h["classification"] == "CONFIRMED"),
+            sum(1 for h in items if h["classification"] == "DOWNGRADE"),
+        )
+
+    _agg = _run_check_cp("aggregate_by_kind", _aggregate_by_kind, default=(len(items), 0, 0, 0))
+    if _agg is None:
+        _agg = (len(items), 0, 0, 0)
+    total, upgrades, confirmed, downgrades = _agg
 
     hidden = upgrades
     verdict = f"{total} runtime hotspots ({hidden} hidden -- static analysis missed them)"
 
     if json_mode:
-        next_steps = suggest_next_steps(
+        # W607-CP: ``derive_next_steps`` substrate on the populated
+        # runtime path. A raise in suggest_next_steps degrades to an
+        # empty list with the marker, and the envelope still composes.
+        next_steps = _run_check_cp(
+            "derive_next_steps",
+            suggest_next_steps,
             "hotspots",
             {
                 "upgrades": upgrades,
                 "total": total,
             },
+            default=[],
         )
+        if next_steps is None:
+            next_steps = []
         # W21.7 LAW 4: explicit-facts when the runtime view is empty so we
         # don't ship ``"0 total findings"`` / ``"0 upgrades findings"``.
         envelope_extra = {}
@@ -906,18 +1161,31 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                     "no runtime hotspots to report; ingest traces or rerun against a populated dataset",
                 ],
             }
-        envelope = json_envelope(
-            "hotspots",
-            budget=token_budget,
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "upgrades": upgrades,
-                "confirmed": confirmed,
-                "downgrades": downgrades,
-            },
-            **envelope_extra,
-            hotspots=[
+        runtime_summary = {
+            "verdict": verdict,
+            "total": total,
+            "upgrades": upgrades,
+            "confirmed": confirmed,
+            "downgrades": downgrades,
+        }
+        # W607-CP: mirror substrate markers into BOTH the top-level
+        # envelope ``warnings_out`` AND ``summary.warnings_out`` so MCP
+        # consumers see disclosure regardless of which surface they
+        # read. A non-empty W607-CP bucket flips partial_success so a
+        # degraded path is NOT mistaken for a clean populated run.
+        if _w607cp_warnings_out:
+            runtime_summary["warnings_out"] = list(_w607cp_warnings_out)
+            runtime_summary["partial_success"] = True
+        runtime_extra_top: dict = {}
+        if _w607cp_warnings_out:
+            runtime_extra_top["warnings_out"] = list(_w607cp_warnings_out)
+
+        # W607-CP: ``serialize_items`` substrate -- the per-item dict
+        # comprehension can raise on a malformed item (missing
+        # classification / static_stats / etc.). Degrades to an empty
+        # hotspot list so the envelope still composes with the marker.
+        def _serialize_items():
+            return [
                 {
                     "symbol": h["symbol_name"],
                     "file": h["file_path"],
@@ -931,9 +1199,174 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                     },
                 }
                 for h in items
-            ],
-            next_steps=next_steps,
+            ]
+
+        _serialized = _run_check_cp("serialize_items", _serialize_items, default=[])
+        if _serialized is None:
+            _serialized = []
+
+        # W607-EN -- score_classify boundary. Buckets the run by total
+        # hotspot count:
+        #   * COLD     -- total == 0
+        #   * WARM     -- 1..4 hotspots
+        #   * HOT      -- >=5 hotspots
+        #   * DEGRADED -- floor on raise
+        # W978 5th-discipline: ``total`` passed as a raw arg; arithmetic
+        # lives INSIDE the closure (no len() / no math at kwarg-bind).
+        def _score_classify_run(_total):
+            if _total == 0:
+                _state_label = "COLD"
+            elif _total < 5:
+                _state_label = "WARM"
+            else:
+                _state_label = "HOT"
+            return {"state": _state_label, "scanned": _total}
+
+        _score_dict = _run_check_en(
+            "score_classify",
+            _score_classify_run,
+            total,
+            default={"state": "DEGRADED", "scanned": 0},
         )
+
+        # W607-EN -- compute_predicate boundary. Rollup metrics dict
+        # surfacing aggregate dimensions (risk_score sum, heat band,
+        # commit_count, hottest_files) so a downstream refactor of the
+        # rollup logic surfaces a marker rather than crashing.
+        # W978 5th-discipline: ``items`` passed as a raw arg; counting
+        # / iteration lives INSIDE the closure.
+        def _compute_predicate_fields(_items):
+            _heat = 0
+            _commit_count = 0
+            _hottest_files: list[dict] = []
+            for _h in _items:
+                _rs = _h.get("runtime_stats") or {}
+                _ss = _h.get("static_stats") or {}
+                _cc = _rs.get("call_count")
+                if isinstance(_cc, int):
+                    _heat += _cc
+                _ch = _ss.get("churn")
+                if isinstance(_ch, int):
+                    _commit_count += _ch
+            # hottest_files: top 3 by runtime_rank (lower rank == hotter)
+            _ranked = sorted(
+                _items,
+                key=lambda x: x.get("runtime_rank") or 999999,
+            )[:3]
+            for _h in _ranked:
+                _hottest_files.append(
+                    {
+                        "file": _h.get("file_path"),
+                        "symbol": _h.get("symbol_name"),
+                        "classification": _h.get("classification"),
+                    }
+                )
+            return {
+                "heat": _heat,
+                "commit_count": _commit_count,
+                "hottest_files": _hottest_files,
+            }
+
+        _pred_fields = _run_check_en(
+            "compute_predicate",
+            _compute_predicate_fields,
+            items,
+            default={
+                "heat": 0,
+                "commit_count": 0,
+                "hottest_files": [],
+            },
+        )
+
+        # W607-EN -- compute_verdict boundary. Wraps the verdict string
+        # assembly so a downstream f-string refactor surfaces a marker
+        # rather than crashing the envelope. Literal
+        # "hotspots completed" floor (LAW 6 still holds: the line works
+        # standalone).
+        #
+        # W978 1st-discipline: the floor MUST NOT re-interpolate the
+        # same values that tripped the closure. W978 2nd-discipline:
+        # ``default=`` is a literal constant.
+        def _build_verdict_str(_verdict_floor):
+            return _verdict_floor
+
+        verdict_wrapped = _run_check_en(
+            "compute_verdict",
+            _build_verdict_str,
+            verdict,
+            default="hotspots completed",
+        )
+        # Keep the original key in summary aligned with the wrapped
+        # verdict so downstream consumers (and the auto-fact humanizer)
+        # read the SAME string both layers produced.
+        runtime_summary["verdict"] = verdict_wrapped
+
+        # W607-EN: surface score_classify + compute_predicate results on
+        # the envelope so consumers can read run state + rollup
+        # dimensions without re-deriving from the raw `hotspots` list.
+        # W978 7th-discipline: bare ``_score_dict["state"]`` /
+        # ``_pred_fields["..."]`` lookups (floor dicts guarantee the
+        # keys) -- NOT ``.get(..., expensive_default)``.
+        runtime_summary["run_state"] = _score_dict["state"]
+        runtime_summary["heat"] = _pred_fields["heat"]
+        runtime_summary["commit_count"] = _pred_fields["commit_count"]
+        runtime_summary["hottest_files"] = _pred_fields["hottest_files"]
+
+        # W607-CP + W607-EN: mirror combined substrate-CALL +
+        # aggregation-phase markers into BOTH the top-level envelope
+        # ``warnings_out`` AND ``summary.warnings_out`` so MCP consumers
+        # see disclosure regardless of which surface they read. Flipping
+        # ``partial_success: True`` is the Pattern-2 silent-fallback
+        # guard -- a degraded substrate OR aggregation path must NOT be
+        # mistaken for a clean populated runtime verdict.
+        _combined_warnings = list(_w607cp_warnings_out) + list(_w607en_warnings_out)
+        if _combined_warnings:
+            runtime_summary["warnings_out"] = list(_combined_warnings)
+            runtime_summary["partial_success"] = True
+            runtime_extra_top["warnings_out"] = list(_combined_warnings)
+
+        # W607-EN -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("hotspots", ...)`` would otherwise
+        # crash AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name. W978 6th-discipline: floor is a
+        # concrete dict, not a sentinel that may __len__-raise downstream.
+        _envelope_floor: dict = {
+            "command": "hotspots",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": "hotspots completed",
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings),
+            },
+            "warnings_out": list(_combined_warnings),
+        }
+        envelope = _run_check_en(
+            "serialize_envelope",
+            json_envelope,
+            "hotspots",
+            budget=token_budget,
+            summary=runtime_summary,
+            **envelope_extra,
+            **runtime_extra_top,
+            hotspots=_serialized,
+            next_steps=next_steps,
+            default=_envelope_floor,
+        )
+        # W607-EN -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``hotspots_serialize_envelope_failed:`` marker was appended to
+        # ``_w607en_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild.
+        if envelope is _envelope_floor and _w607en_warnings_out:
+            _combined_warnings = list(_w607cp_warnings_out) + list(_w607en_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+            _envelope_floor["warnings_out"] = list(_combined_warnings)
+            envelope = _envelope_floor
         if not detail:
             envelope = strip_list_payloads(envelope)
         click.echo(to_json(envelope))

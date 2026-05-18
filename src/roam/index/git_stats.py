@@ -138,13 +138,40 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
         return
 
     if _head_unchanged_since_last_run(conn, project_root):
-        log.info("git HEAD unchanged since last index — skipping git stats pass")
+        # W985-followup: surface BOTH the recorded HEAD AND the --force opt-out
+        # so an operator running `roam health` / `roam index` and expecting
+        # fresh metrics can disambiguate "nothing to do" from "broken / stale
+        # index" without re-reading the manifest table. Same diagnosis-
+        # shadowing shape as the W985 shallow-history filter: the existing
+        # "skipping git stats pass" line was technically correct but did not
+        # name the previous index's HEAD nor the opt-out, so readers had to
+        # cross-reference the manifest to confirm the skip was legitimate.
+        recorded_head = _recorded_head_for_log(conn)
+        log.info(
+            "git HEAD unchanged since last index (last: %s) — skipping git stats pass; pass --force to re-run anyway",
+            recorded_head,
+        )
         return
 
     since = _resolve_default_since(conn)
     commits = parse_git_log(project_root, since=since)
     if not commits:
-        log.info("No git commits found")
+        if since:
+            # W985: surface the shallow-history filter as the likely cause
+            # when the corpus is empty. W978 BAIL discovery showed that the
+            # first hypothesis on empty-git results is usually "no commits",
+            # when in fact the W405 365-day default is shadowing older
+            # history. Naming the shadowing window collapses the diagnosis
+            # gap from a multi-hop investigation to one log line.
+            raw_env = os.environ.get("ROAM_GIT_SINCE")
+            effective = raw_env if raw_env is not None else _DEFAULT_SINCE
+            log.info(
+                "parse_git_log returned 0 commits — ROAM_GIT_SINCE=%s may be "
+                "shadowing history; set ROAM_GIT_SINCE=0 to disable shallow truncation",
+                effective,
+            )
+        else:
+            log.info("No git commits found")
         return
 
     if since:
@@ -156,6 +183,30 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
     compute_cochange(conn)
     compute_file_stats(conn)
     compute_complexity(conn, project_root)
+
+
+def _recorded_head_for_log(conn: sqlite3.Connection) -> str:
+    """Return the 7-char short SHA of the latest manifest's ``git_head``.
+
+    W985-followup helper for the "HEAD unchanged" skip log. Returns the
+    truncated SHA when the manifest is readable AND has a recorded HEAD;
+    returns ``"unknown"`` otherwise. Defensive: any failure path collapses
+    to ``"unknown"`` rather than raising — this is a diagnostic log call,
+    not a control-flow check, and the caller has already confirmed the
+    skip is legitimate via ``_head_unchanged_since_last_run``.
+    """
+    try:
+        from roam.index.manifest import latest_manifest
+
+        prev = latest_manifest(conn)
+    except Exception:
+        return "unknown"
+    if not prev:
+        return "unknown"
+    recorded = prev.get("git_head") or ""
+    if not recorded:
+        return "unknown"
+    return recorded[:7]
 
 
 def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path) -> bool:

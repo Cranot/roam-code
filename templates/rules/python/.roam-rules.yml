@@ -20,42 +20,45 @@ rules:
   # ---- Dangerous APIs ----
 
   - id: py-no-eval
-    description: eval() executes arbitrary code; use ast.literal_eval or a real parser.
+    description: Replace eval() with ast.literal_eval or a real parser; eval() executes arbitrary code.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: eval
     severity: BLOCK
 
   - id: py-no-exec
-    description: exec() executes arbitrary code at runtime; almost always wrong.
+    description: Remove exec(); it runs arbitrary code at runtime and is almost always a placeholder for missing structure.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: exec
     severity: BLOCK
 
   - id: py-no-pickle-loads
-    description: pickle.loads on untrusted data is RCE. Use json/msgpack instead.
+    description: Replace pickle.loads with json or msgpack; pickle.loads on untrusted data is RCE.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: pickle.loads
     severity: BLOCK
 
   - id: py-no-os-system
-    description: os.system bypasses argv quoting; use subprocess.run with a list arg.
+    description: Replace os.system with subprocess.run + list args; os.system bypasses argv quoting.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: os.system
     severity: BLOCK
 
+  # WARN (not BLOCK) because subprocess.* legitimately covers Popen / run /
+  # check_output etc. — the violation needs human review to confirm shell=True
+  # vs. a list-args call.
   - id: py-no-shell-true
-    description: subprocess with shell=True is shell-injection territory; always pass a list.
+    description: Pass a list to subprocess instead of shell=True to avoid shell-injection vectors.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: subprocess.*
     severity: WARN
 
   - id: py-no-yaml-load
-    description: yaml.load without SafeLoader is unsafe; use yaml.safe_load.
+    description: Use yaml.safe_load instead of yaml.load to block arbitrary-object deserialization.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: yaml.load
@@ -63,15 +66,18 @@ rules:
 
   # ---- LLM-favourite hallucinated imports ----
 
+  # WHY: LLMs frequently hallucinate "v2" / numbered module names when the
+  # real module already exists at a non-numbered path. Renaming forces the
+  # author to confirm the actual target.
   - id: py-no-numbered-modules
-    description: Numbered modules (foo_v2, util1) are typical LLM hallucinations; rename or remove.
+    description: Rename or remove numbered modules (foo_v2, util1); these names are typical LLM hallucinations.
     pattern: import_from
     source_glob: "src/**/*.py"
     forbidden_target_glob: "*_v[0-9]*"
     severity: WARN
 
   - id: py-no-helper-helper
-    description: helpers.helpers / utils.utils are LLM placeholder modules; pick a real name.
+    description: Replace helpers.helpers / utils.utils with a domain-specific module name; doubled-name modules are LLM placeholders.
     pattern: import_from
     source_glob: "src/**/*.py"
     forbidden_target_glob: "*helpers.helpers*"
@@ -96,14 +102,14 @@ rules:
   # ---- Stale-code markers in new code ----
 
   - id: py-no-deprecated-decorator
-    description: "New code should not be marked @deprecated. Remove the decorator or remove the function."
+    description: "Remove @deprecated from new code: either delete the decorator or delete the function it marks."
     pattern: decorator_use
     source_glob: "src/**/*.py"
     forbidden_target_glob: deprecated
     severity: WARN
 
   - id: py-no-todo-decorator
-    description: "@todo decorators leak unfinished work to production."
+    description: "Resolve @todo decorators before shipping; they leak unfinished work into production releases."
     pattern: decorator_use
     source_glob: "src/**/*.py"
     forbidden_target_glob: todo*
@@ -112,14 +118,14 @@ rules:
   # ---- Dangerous base classes ----
 
   - id: py-no-deprecated-base
-    description: Inheriting from a deprecated base class compounds tech debt.
+    description: Pick a non-deprecated base class; inheriting from *Deprecated* compounds tech debt downstream.
     pattern: class_inherit
     source_glob: "src/**/*.py"
     forbidden_target_glob: "*Deprecated*"
     severity: WARN
 
   - id: py-no-unsafe-base
-    description: Base classes named *Unsafe* signal known-risky subclassing.
+    description: Avoid subclassing *Unsafe* base classes; the name signals known-risky inheritance contracts.
     pattern: class_inherit
     source_glob: "src/**/*.py"
     forbidden_target_glob: "*Unsafe*"

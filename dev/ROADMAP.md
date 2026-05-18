@@ -1,23 +1,48 @@
 # Roadmap — full demand index
 
-Master index of ~155 items synthesised from 8 deep-audit lenses run
-2026-05-10. **What to build / research / test next.** Items get pulled
-from here into `dev/BACKLOG.md` when they're queued up.
+Status: STRATEGIC BACKLOG. Last freshness pass 2026-05-18. Original
+8-lens audit synthesised 2026-05-10.
 
-Current strategy/build order lives in `dev/ROAM-STRATEGY-2026-05-15.md`.
-Treat this roadmap as the full demand index, not the authoritative
-next-sprint sequence. Some top-tier entries are retained for provenance even
-after shipping. Older entries may preserve historical marketing/count wording;
-use the strategy command center and generated docs counts for current surface
-numbers.
+Master index of ~155 items. **What could be built / researched / tested
+next, ranked by leverage.** Items get pulled from here into
+`dev/BACKLOG.md` when they're queued up for execution.
 
-Current architecture evidence-compiler memo lives in
-`dev/ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md`.
+This is the demand index, NOT the current execution queue.
+
+- **Current execution queue (P0/P1/P2/P3 with readiness percentages):**
+  `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`
+- **Product thesis, launch posture, GTM ladder, category guardrails:**
+  `dev/ROAM-STRATEGY-2026-05-15.md`
+- **Doc-hygiene queue + recent cleanup record:**
+  `dev/DOCS-CLEANUP-PLAN-2026-05-18.md`
+- **Engineering ledger + sprint history:** `dev/BACKLOG.md`
+- **Billing-entity + Stripe payment-link operational plan:**
+  private operational memo (path withheld per
+  `tests/test_no_internal_language.py` discipline)
+
+**Tier ↔ priority mapping (advisory only):**
+
+| ROADMAP tier | Rough mapping to execution-queue rank |
+| --- | --- |
+| ★★★★★ (top moves) | P0 stabilize + P1 cash path candidates |
+| ★★★★ (next-sprint) | P1 cash path + P2 Review funnel + P3 service-delivery |
+| ★★★ (sprint-class strategic) | P3/P4/P5 + customer-pulled |
+| ★★ (polish + future bets) | P5/P6 + deferred |
+
+Several top-tier entries are now sealed (marked `— SHIPPED in <sha>`);
+they are retained as provenance. Older entries may preserve historical
+marketing/count wording — when public copy or numbers matter, use the
+strategy command center and `python dev/build_readme_counts.py --check`
+as the source of truth.
+
+Evidence-compiler decisions now live in `CLAUDE.md`, `dev/BACKLOG.md`,
+and the `src/roam/evidence/` tests. The older standalone architecture
+memo was pruned after synthesis.
 
 Each item carries an audit-angle tag in square brackets — `[01]` =
 positioning, `[02]` = GTM, `[03]` = architecture, `[04]` = agent / MCP
 DX, `[05]` = security, `[06]` = developer experience, `[07]` = site /
-brand, `[08]` = performance. `[S]` = this session's work, `[D]` =
+brand, `[08]` = performance. `[S]` = original-session work, `[D]` =
 dogfood-derived. Cross-references called out where two or more lenses
 independently flagged the same gap. Full citations live in the Sources
 section at the bottom.
@@ -30,8 +55,14 @@ These are the items at least two of: (a) named in a Top 5, (b)
 load-bearing for a paid product about to launch, (c) correctness gap
 that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
-### S1. Fix `roam init` writing `.github/workflows/roam.yml` unsolicited [06 R1]
-- **Where:** `src/roam/commands/cmd_init.py:113-120`
+### S1. Fix `roam init` writing `.github/workflows/roam.yml` unsolicited [06 R1] — SHIPPED
+- **Where:** `src/roam/commands/cmd_init.py`
+- **Status:** Done. `roam init` no longer drops the CI workflow file by
+  default. Opt in with `roam init --with-ci=github`; the existing
+  `roam ci-setup --platform github --write` remains the canonical
+  multi-platform path. See CHANGELOG entry "No more unsolicited CI
+  workflow file."
+- **Original brief retained below for provenance.**
 - **Effort:** 15 LOC
 - **Why now:** Touches 100% of installs. Trust-damaging side-effect on first
   command. Users on GitLab/Bitbucket get stray GitHub config; users
@@ -41,8 +72,14 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   `roam init --with-ci=github` OR rely on existing `roam ci-setup
   --platform github --write`. Keep `.roam/fitness.yaml`.
 
-### S2. Fix the rename-no-recovery silent-correctness bug [08 S1]
-- **Where:** `src/roam/index/indexer.py:1618`
+### S2. Fix the rename-no-recovery silent-correctness bug [08 S1] — SHIPPED
+- **Where:** `src/roam/index/indexer.py`
+- **Status:** Done. The `and modified` clause was dropped so pure renames
+  (which produce `modified=[]`) now invoke affected-neighbor recovery.
+  Regression guard: `tests/test_index.py::test_pure_removal_invokes_affected_neighbor_recovery`
+  plus `tests/test_rename_edge_recovery.py`. See CHANGELOG entry "Pure
+  renames now recover affected-neighbor edges."
+- **Original brief retained below for provenance.**
 - **Effort:** 1-word fix + regression test
 - **Why now:** Pure rename produces `(added=[bar.py], modified=[],
   removed=[foo.py])`. The gating clause `if not force and modified and
@@ -55,20 +92,36 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   changed_file_ids`. Add `tests/test_index.py::test_rename_preserves_xfile_edges`
   comparing rename-incremental edge count to `--force` reindex count.
 
-### S3. Replace mailto-as-buy-button on PR Replay (and Review/Cloud) [02 A1]
+### S3. Replace mailto-as-buy-button on PR Replay (and Review/Cloud) [02 A1] — P1 CASH PATH
 - **Where:** `templates/distribution/landing-page/audit.html` `STRIPE_TEAM_LINK`
   and `STRIPE_DEEP_LINK` placeholders → mailto fallback. Also
   `pricing.html` and `index.html` Review/Cloud CTAs.
-- **Effort:** 1-5 days once payment processor clears
+- **Status (2026-05-18):** Decision is now **Stripe-first on an
+  EU sole-proprietorship billing entity**, NOT Stripe Atlas / NOT
+  Lemon Squeezy. Operational checklist + accountant question list:
+  private operational memo (path withheld). Site placeholder Stripe
+  buttons exist on `index.html` and `audit.html`; replace
+  `PLACEHOLDER_TEAM` and `PLACEHOLDER_DEEP` with live Payment Link
+  URLs only after: (1) accountant confirms local tax-registration
+  flow, (2) the billing-entity registration is approved, (3) Stripe
+  KYC is approved, (4) the PR Replay sample/report/runbook path is
+  ready to deliver. Tied to
+  P1 cash path in `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`.
+- **Effort:** 1-5 days of integration work once the accountant +
+  business + Stripe KYC + sample/runbook gates clear.
 - **Why now:** Single highest-leverage GTM change. The HTML literally has
   the placeholder comment ("when the live Stripe Payment Link URL is
-  ready, replace…"). Mailto on a $2,500 ticket is malpractice. Per AADE
-  delay, use Stripe Atlas (LLC, 5-day setup) OR Lemon Squeezy (Merchant
-  of Record, 2-day setup, handles VAT) as bridge.
-- **Move:** Live payment processor this week. Switch back to
-  Greek-entity Stripe when AADE clears. Routing: webhook → kickoff
-  email. Per-tier discount code emitted to deliverable for Review
+  ready, replace…"). Mailto on a $2,500 ticket is malpractice.
+- **Move:** Once the four gates above pass, replace the mailto fallback
+  with live Stripe Payment Links. Issue a separate locally-compliant
+  tax invoice after each Stripe payment (Stripe receipt is not the
+  legal invoice in EU billing jurisdictions). Webhook → kickoff email.
+  Per-tier discount code emitted on the deliverable for Review
   conversion tracking.
+- **Reference pricing (canonical from `audit.html` JSON-LD):** Team
+  $2,500 (30-PR, 30-min walk-through) · Deep $6,000 (90-PR, 90-min
+  walk-through). 50% of fee credits toward a Roam Review subscription
+  within 60 days.
 
 ### S4. Fix `roam cga verify` silently skipping cosign [05 R4] — SHIPPED in df4a091
 - **Where:** `src/roam/commands/cmd_cga.py:294-381` (cga_verify fail-closed branch)
@@ -114,11 +167,19 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   tree dirty when predicate claims clean. (c) `cga emit --sign` refuses
   on dirty working tree by default; `--allow-dirty` for emergency.
 
-### S6. Rewrite `dpa.md` for Roam Review with no-training clause inline [05 R3]
-- **Where:** `templates/legal/dpa.md` (currently flagged "Superseded for
-  launch until rewritten")
+### S6. Rewrite `dpa.md` for Roam Review with no-training clause inline [05 R3] — PARTIAL
+- **Where:** `templates/legal/dpa.md`
+- **Status (2026-05-18):** Initial rewrite shipped per
+  `dev/DOCS-CLEANUP-PLAN-2026-05-18.md` — repointed from old
+  audit-service draft to PR Replay / planned-Review processing, with
+  explicit hosted-service placeholders and an attorney-review warning.
+  **Still pending:** attorney pass, `[CLOUD_PROVIDER]` /
+  `[POSTGRES_PROVIDER]` / `[OBJECT_STORAGE]` vendor fill-in, and one
+  real repo walkthrough before external use. Aligned with the P3
+  "Harden service delivery" lane in `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`.
+- **Original brief retained below for provenance.**
 - **Effort:** 1 week of legal drafting + counsel pass
-- **Why now:** Procurement packet § 6 + audit.html:360 make
+- **Why now:** Procurement packet § 6 + audit.html make
   contractual-grade no-training promises. **DPA omits the clause and is
   internally flagged superseded.** Customer signing the DPA is not bound
   by the no-training promise unless SOW or Terms incorporate the
@@ -130,9 +191,16 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   `[POSTGRES_PROVIDER]` / `[OBJECT_STORAGE]` placeholders with concrete
   vendor names. Counsel pass before binding.
 
-### S7. Rename "structural intelligence layer" → "local codebase intelligence layer" [01 A1]
+### S7. Rename "structural intelligence layer" → "local codebase intelligence layer" [01 A1] — PARTIAL
 - **Where:** Every public surface — hero, llms.txt, press kit, README,
   JSON-LD description, OG/Twitter descriptions.
+- **Status (2026-05-18):** Mostly done. `index.html` JSON-LD, meta
+  description, OG/Twitter alt, and the layer headline all use "local
+  codebase intelligence" wording. The "maps, gates, evidence" triad is
+  the canonical category frame in `dev/ROAM-STRATEGY-2026-05-15.md`.
+  Any residual "structural intelligence" mentions are now in older
+  marketing copy or this roadmap itself — sweep on the next docs pass.
+- **Original brief retained below for provenance.**
 - **Effort:** Copy edits across ~20 files
 - **Why now:** Buyers search "code graph" / "context engine" / "graph
   for AI coding." They do not search "structural intelligence." Roam is
@@ -506,10 +574,16 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 - **Success metric:** 1,000 installs by month 3; 5,000 by month 9; 75
   paid Review conversions over 12 months (1.5%).
 
-#### C2. Tighten Roam Review Starter caps [02 A4]
+#### C2. Tighten Roam Review Starter caps [02 A4] — P2 PARTIAL
 - **Where:** `pricing.html`, JSON-LD `Offer`
+- **Status (2026-05-18):** `index.html` JSON-LD and the private
+  Review-tier product brief have been tightened to
+  3 repos / 5 active PR authors / 100 reviews/mo. Public
+  `pricing.html` card copy still needs the cap update applied.
+  Tied to the P2 "Tighten the Review funnel before building the app"
+  lane in `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`.
 - **Effort:** 30 minutes
-- **Why now:** Current Starter (5 repos / 10 PR authors / 200 reviews/mo)
+- **Why now:** Older public Starter (5 repos / 10 PR authors / 200 reviews/mo)
   eats 2-15-dev shops who should be on Team ($299 = 3x ARR per logo).
 - **Move:** Drop to "3 repos, 5 active PR authors, 100 reviews/mo." Team
   becomes the natural upgrade for any team >5 PR authors. Target: of
@@ -525,15 +599,22 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   "First 30 customers lock $99/mo for life. Pay today, billed monthly
   starting at first PR-comment ship date."
 
-#### C4. Pull Self-Hosted from public 4-card to `/enterprise` [02 A3]
+#### C4. Pull Self-Hosted from public 4-card to `/enterprise` [02 A3] — PARTIAL
 - **Where:** `pricing.html`, `index.html`, new `/enterprise`
-- **Effort:** 1 day
-- **Why now:** v3 memo said do this 3 days ago; not done. Saves founder
-  hours. Captures regulated buyers behind a qualifying gate.
-- **Move:** Remove Self-Hosted from public 4-card. New `/enterprise`:
-  qualifying intake form (regulated? EU AI Act-affected? # devs? annual
-  budget band?), Calendly gated behind intake, **public mention of
-  $7.5k/90-day pilot — 3 slots, Q3 2026, X open**.
+- **Status (2026-05-18):** Public copy softened — `pricing.html`,
+  `index.html`, `about.html`, `press.html`, `status.html`, and the
+  refund/terms/privacy pages now frame Self-Hosted as customer-pulled
+  "private-deployment pilot" rather than a packaged subscription. The
+  dedicated `/enterprise` qualifying intake form / Calendly gate is
+  still TBD.
+- **Effort:** 1 day for the dedicated `/enterprise` page; copy
+  softening already shipped.
+- **Why now:** Saves founder hours and captures regulated buyers behind
+  a qualifying gate.
+- **Move:** Build the `/enterprise` qualifying intake form (regulated?
+  EU AI Act-affected? # devs? annual budget band?) with Calendly gated
+  behind intake. [TBD: pilot capacity / slot count / target quarter —
+  confirm before pilot capacity is published publicly.]
 
 #### C5. Add annual-discount toggle on /pricing [02 A5]
 - **Where:** `pricing.html`
@@ -568,15 +649,22 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 - **Move:** Backend job runner + email capture + Mailgun follow-up.
   GitGuardian's Good Samaritan converts at ~10%.
 
-#### C9. Trust-and-compliance page with SOC 2 / ISO 42001 status [02 B6]
-- **Where:** New `/trust`
-- **Effort:** 1-2 days for page; ~$15-25K + 6-12 months for audit
-- **Why now:** Procurement reviews stall here; even "in progress" status
-  with named timeline gets through ~80% of buyer-side checklists.
-- **Move:** Honest stance: "SOC 2 Type II — controls in design, expected
-  Q1 2027. ISO 42001 — gap analysis underway, expected Q3 2027." Plus
-  DPA, sub-processor list, security contact, vulnerability disclosure,
-  data flow diagram.
+#### C9. Trust-and-compliance page with SOC 2 / ISO 42001 status [02 B6] — PARTIAL
+- **Where:** `/trust`
+- **Status (2026-05-18):** `/trust` page exists. Per
+  `dev/DOCS-CLEANUP-PLAN-2026-05-18.md`, specific SOC 2 / ISO 42001
+  certification dates were removed in favor of roadmap language with
+  no current attestation. DPA draft, sub-processor list, security
+  contact, vulnerability disclosure, and data-flow diagram are still
+  partial — DPA pending attorney pass (see S6).
+- **Effort:** 1-2 days for further page polish; ~$15-25K + 6-12 months
+  for SOC 2 audit (defer until first qualifying deal funds it — see I9).
+- **Why now:** Procurement reviews stall here; "in progress" status
+  without a specific date is acceptable while no deal funds the audit.
+- **Move:** Keep the page's honest "no current attestation" stance.
+  When a Self-Hosted deal funds SOC 2, surface a target year (not month)
+  + audit firm name. Avoid month-precision certification claims until
+  the audit window is locked.
 
 #### C10. Public-repo Good Samaritan outreach batch #1 [02 B7]
 - **Where:** Manual founder outreach
@@ -598,7 +686,7 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
 #### C12. Agent Governance Evidence Pack [02 C10, 05 cross-ref]
 - **Where:** New `/governance` or `/trust` page; `templates/legal/`;
-  `dev/MONETIZATION-OPPORTUNITIES-2026-05-13.md`
+  current queue in `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`
 - **Effort:** 1-2 days for public page + control matrix; counsel pass
   before binding.
 - **Why now:** Web research validates AI-governance evidence as a real
@@ -684,8 +772,8 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   teams that want shared encrypted index artifacts and faster PR gates.
 
 #### C19. Codebase Due Diligence / Investor Technical Audit [02 C17]
-- **Where:** New sample report under `templates/audit-report/`; use
-  `dev/MONETIZATION-SYNERGY-MAP-2026-05-13.md` as positioning source.
+- **Where:** New sample report under `templates/audit-report/`; use the
+  current service-report queue in `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`.
 - **Effort:** 2-4 days for a public-repo sample and repeatable command
   recipe.
 - **Why now:** Web research shows a live market for local/AI-assisted
@@ -1173,7 +1261,10 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 - **Move:** "Why flat pricing? CodeRabbit and Greptile charge per
   developer; you pay more as you grow. Roam Review is
   $99/$299/$799/$1,499 flat. A 50-developer team pays the same as 30."
-  Procurement-gate insight from `pricing_v3` is load-bearing.
+  Procurement-gate insight (originally from the pruned `pricing_v3`
+  memo) is load-bearing. Re-confirm tier prices against
+  `pricing.html` and the private Review-tier product brief before
+  publishing the section.
 
 #### H7. Drop EU AI Act framing from homepage; keep on /security [01 B5]
 - **Where:** Homepage + FAQ
@@ -1272,11 +1363,18 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
 ### I. GTM tier-3 (longer ramp / customer-pulled)
 
-#### I1. Roam Review GitHub App MVP [02 C1]
+#### I1. Roam Review GitHub App MVP [02 C1] — P4 (gated on demand)
 - **Where:** New
-- **Effort:** ~13.5 ew per `build_priorities.md` Phase 2
-- **Why now:** Aug 2 EU AI Act enforcement in 12 weeks. Founding-customer
-  commitments depend on Q3 ship date.
+- **Status (2026-05-18):** Held under P4 in
+  `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`: "Build Roam Review MVP only
+  after demand is trapped." Trigger gates listed there — 2-3 delivered
+  PR Replay engagements, a founding customer ready to commit, or
+  repeated "show me this on every PR" stalls.
+- **Effort:** ~13.5 engineering-weeks per the pruned `build_priorities.md`
+  Phase 2 estimate (historical; recheck before scheduling).
+- **Why now:** EU AI Act timelines remain a tailwind for governance
+  buyers, but the gating signal is repeated buyer pull, not the
+  regulatory calendar.
 - **Move:** Webhook handler, OAuth, install flow, Stripe billing on the
   App. Land first 30 founding customers from C3 onto the App.
 
@@ -1307,8 +1405,10 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 #### I6. Founder content cadence [02 C6]
 - **Effort:** 4-6 hours/week
 - **Move:** 1 long-form/week dual-published to roam-code.com/blog and
-  Substack/HN. Topics from monetization_v2 memo (PocketOS, Amazon
-  Treadwell, EU AI Act). 5 X posts/week. Compounds for 6-12 months.
+  Substack/HN. Topic candidates (historical from the now-pruned
+  monetization_v2 memo): PocketOS, Amazon Treadwell, EU AI Act
+  enforcement, the Faros 242.7%-incidents-per-PR finding. 5 X posts/week.
+  Compounds for 6-12 months.
 
 #### I7. Podcast tour — 6 shows over 90 days [02 C7]
 - **Effort:** 8-12 hours founder-time per episode
@@ -1331,8 +1431,10 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
 #### I10. 14-day Pro+ trial of Review [02 D1]
 - **When:** Once C1 ships and 5+ customers ask for SSO/audit-logs/BYOK
-- **Move:** CC-required (31.4% trial→paid vs 8.9% opt-in per
-  monetization_v2_subscription_pivot). 1 ew on top of GitHub App.
+- **Move:** CC-required (per historical pruned-memo benchmark:
+  31.4% trial→paid vs 8.9% opt-in). 1 ew on top of GitHub App.
+  Re-run conversion benchmark from current 2026 sources before
+  scheduling.
 
 #### I11. AWS / Azure / GCP marketplace listings [02 D2]
 - **When:** After 3 customers explicitly ask
@@ -1932,14 +2034,15 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
 ### P. Session-finding follow-ups [S, D]
 
-#### P1. Update dogfood triage with false-positive findings
-- **Where:** `dev/dogfood-triage-2026-05-10.md`
+#### P1. Update dogfood triage with false-positive findings — HISTORICAL
+- **Where:** Originally `pruned dev memo: dogfood-triage-2026-05-10.md`
+  (no longer exists; durable lessons folded into `internal/dogfood/`).
 - **Effort:** XS
-- **Move:** Document this session's detector-fix work — 4 of 5 originally-
-  flagged math/algo findings cleared as false positives after detector
-  fixes (complexity walker iterator-vs-body, list-prepend SQL `_`-LIKE
-  escape, nested-lookup suppression list expansion, IO-wrapper
-  cross-repo names).
+- **Move:** Already documented: 4 of 5 originally-flagged math/algo
+  findings cleared as false positives after detector fixes (complexity
+  walker iterator-vs-body, list-prepend SQL `_`-LIKE escape,
+  nested-lookup suppression list expansion, IO-wrapper cross-repo
+  names). Retained for provenance only.
 
 #### P2. Fix the quadratic string concat in gitignore.py [D B]
 - **Where:** `src/roam/index/gitignore.py:21` `_compile_pattern`
@@ -2086,10 +2189,10 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 
 ## Sequencing recommendation
 
-Superseded for current scheduling by `dev/BUILD-PRIORITIES-2026-05-13.md`.
+Superseded for current scheduling by `dev/NEXT-BUILD-PRIORITIES-2026-05-18.md`.
 The sequence below is retained as the 2026-05-10 audit read and still useful
 for provenance, but it includes items that have since shipped or been
-reprioritized by the 2026-05-13 monetization and handover passes.
+reprioritized by later monetization and quality passes.
 
 A pragmatic order, given the brief is "everything that adds value despite
 complexity," but the user is the one who decides what to actually pick up.

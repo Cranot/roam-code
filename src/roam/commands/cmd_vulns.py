@@ -543,6 +543,107 @@ def vulns(ctx, import_file, fmt, reachable_only, persist):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-AQ -- substrate-boundary plumbing for the VEX projection /
+    # vuln-ingest leg of the W805 cross-artifact-consistency family
+    # (cmd_supply_chain W607-AK is the consumer/projection sibling,
+    # cmd_sbom W607-AM is the SBOM emit producer sibling). Prior to W607-AQ
+    # a raise inside any of the substrate boundaries -- detect_format /
+    # load_npm_audit / load_pip_audit / load_trivy / load_osv / load_generic /
+    # ingest_report / query_vulns / compute_reachability / classify_findings /
+    # emit_vuln_findings / vulns_to_sarif / serialize_envelope -- crashed the
+    # whole vulns invocation wholesale. Each is wrapped via ``_run_check_aq``
+    # so a raise becomes a structured
+    # ``vulns_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607aq_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # Marker prefix discipline: every W607-AQ substrate marker uses the
+    # canonical ``vulns_<phase>_failed:<exc_class>:<detail>`` shape. cmd_vulns
+    # has NO pre-existing warnings_out channel -- W607-AQ is FRESH: the
+    # accumulator-based markers become the canonical ``summary.warnings_out``
+    # field outright.
+    _w607aq_warnings_out: list[str] = []
+
+    def _run_check_aq(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AQ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``vulns_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607aq_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607aq_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CH -- ADDITIVE aggregation-phase plumbing on top of the W607-AQ
+    # substrate-CALL markers. W607-AQ already wrapped the 11 substrate-helper
+    # boundaries on the build path (detect_format / load_<5 ingest formats> /
+    # ingest_report / query_vulns / emit_vuln_findings / classify_findings /
+    # confidence_distribution / verdict_with_high_count / severity_breakdown /
+    # vulns_to_sarif / write_sarif / serialize_envelope); W607-CH extends
+    # marker coverage to the AGGREGATION-PHASE boundaries that W607-AQ left
+    # unguarded:
+    #
+    #   - ``compute_predicate``    -- per-field extraction of the metric
+    #                                 fields (total / by_severity /
+    #                                 reachable_count / state /
+    #                                 just_imported) used to compose the
+    #                                 verdict string + envelope. A future
+    #                                 ``_severity_breakdown`` schema
+    #                                 refactor that returns a non-dict
+    #                                 would otherwise crash the envelope
+    #                                 post-build.
+    #   - ``compute_verdict``      -- verdict-string assembly based on the
+    #                                 vuln-count + severity-breakdown.
+    #                                 Floor to a literal "Vulnerability
+    #                                 scan completed" string per LAW 6
+    #                                 (standalone-parse) + W978 first-
+    #                                 hypothesis discipline (no re-
+    #                                 interpolation of the same values
+    #                                 that just raised).
+    #   - ``build_envelope``       -- ``json_envelope("vulns", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions). Phase
+    #                                 name distinct from W607-AQ's
+    #                                 existing ``serialize_envelope``
+    #                                 (which wraps ``to_json`` instead).
+    #
+    # cmd_vulns is the vulnerability scanner -- W117 origin, original 16
+    # findings-registry detectors. Per W826 HIGH-SEV bug pin (cmd_taint
+    # silent-SAFE on empty corpus -- security-critical Pattern-2):
+    # cmd_vulns must NEVER silently emit a SAFE verdict on the
+    # aggregation-phase boundary raising; the marker + partial_success
+    # disclosure preserves the W823 empty-corpus security-axis discipline.
+    #
+    # Closes the SECURITY-REACHABILITY TRIAD at the substrate level
+    # alongside cmd_taint (W607-AY) and cmd_vuln_reach (W607-AU).
+    #
+    # Marker family ``vulns_*`` -- same family as W607-AQ (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path.
+    #
+    # No ``auto_log`` phase: cmd_vulns has no active-run ledger write at
+    # present, so the W607-BZ 4-phase set drops to 3 phases here
+    # (compute_predicate / compute_verdict / build_envelope). Same marker
+    # shape contract, narrower phase set.
+    _w607ch_warnings_out: list[str] = []
+
+    def _run_check_ch(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CH marker emission.
+
+        Mirror of ``_run_check_aq`` shape (same ``vulns_<phase>_failed:``
+        marker family) but writes into ``_w607ch_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # If importing, we need write access
     if import_file:
         _do_import(
@@ -553,9 +654,23 @@ def vulns(ctx, import_file, fmt, reachable_only, persist):
             token_budget,
             reachable_only,
             persist,
+            _run_check_aq,
+            _w607aq_warnings_out,
+            _run_check_ch,
+            _w607ch_warnings_out,
         )
     else:
-        _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist)
+        _do_inventory(
+            json_mode,
+            sarif_mode,
+            token_budget,
+            reachable_only,
+            persist,
+            _run_check_aq,
+            _w607aq_warnings_out,
+            _run_check_ch,
+            _w607ch_warnings_out,
+        )
 
 
 def _do_import(
@@ -566,19 +681,133 @@ def _do_import(
     token_budget,
     reachable_only,
     persist,
+    _run_check_aq=None,
+    _w607aq_warnings_out=None,
+    _run_check_ch=None,
+    _w607ch_warnings_out=None,
 ):
     """Import a vulnerability report and show results."""
+    # Fallback no-op wrap for callers that bypass the W607-AQ closure --
+    # preserves the pre-W607-AQ behaviour byte-for-byte when no accumulator
+    # is wired (e.g. unit tests that import _do_import directly).
+    if _run_check_aq is None or _w607aq_warnings_out is None:
+        _w607aq_warnings_out = []
+
+        def _run_check_aq(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607aq_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
+    # W607-CH fallback no-op wrap for callers that bypass the click closure.
+    if _run_check_ch is None or _w607ch_warnings_out is None:
+        _w607ch_warnings_out = []
+
+        def _run_check_ch(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
     with open_db(readonly=False) as conn:
-        ingested = _ingest_report(conn, import_file, fmt)
-        conn.commit()
+        # Dispatch through the format dispatcher; each ingest-format
+        # boundary (npm-audit / pip-audit / trivy / osv / generic)
+        # is its own substrate phase so a raise in one format does not
+        # crash the vulns invocation wholesale.
+        if fmt == "auto":
+            try:
+                raw = _run_check_aq(
+                    "detect_format_load",
+                    lambda p: _json.loads(Path(p).read_text(encoding="utf-8")),
+                    import_file,
+                    default=None,
+                )
+                if raw is None:
+                    detected_fmt = "generic"
+                else:
+                    detected_fmt = _run_check_aq("detect_format", _detect_format, raw, default="generic")
+            except Exception:
+                detected_fmt = "generic"
+        else:
+            detected_fmt = fmt
+
+        # Per-format ingest boundary -- each format gets its own marker
+        # family so multi-ingest-format coverage is one assertion per
+        # format. Source-level guard pins literal phase names so a
+        # future refactor that drops a format from the dispatch fails
+        # the guard rather than silently regressing.
+        if detected_fmt == "npm-audit":
+            ingested = _run_check_aq(
+                "load_npm_audit",
+                _ingest_report,
+                conn,
+                import_file,
+                detected_fmt,
+                default=[],
+            )
+        elif detected_fmt == "pip-audit":
+            ingested = _run_check_aq(
+                "load_pip_audit",
+                _ingest_report,
+                conn,
+                import_file,
+                detected_fmt,
+                default=[],
+            )
+        elif detected_fmt == "trivy":
+            ingested = _run_check_aq(
+                "load_trivy",
+                _ingest_report,
+                conn,
+                import_file,
+                detected_fmt,
+                default=[],
+            )
+        elif detected_fmt == "osv":
+            ingested = _run_check_aq(
+                "load_osv",
+                _ingest_report,
+                conn,
+                import_file,
+                detected_fmt,
+                default=[],
+            )
+        else:
+            ingested = _run_check_aq(
+                "load_generic",
+                _ingest_report,
+                conn,
+                import_file,
+                detected_fmt,
+                default=[],
+            )
+        if ingested is None:
+            ingested = []
+        _run_check_aq("commit_ingest", conn.commit, default=None)
 
         # Now query the full inventory
-        vuln_rows = _query_vulns(conn, reachable_only)
+        vuln_rows = _run_check_aq(
+            "query_vulns",
+            _query_vulns,
+            conn,
+            reachable_only,
+            default=[],
+        )
+        if vuln_rows is None:
+            vuln_rows = []
 
         if persist:
             try:
-                _emit_vuln_findings(conn, vuln_rows)
-                conn.commit()
+                _run_check_aq(
+                    "emit_vuln_findings",
+                    _emit_vuln_findings,
+                    conn,
+                    vuln_rows,
+                    default=None,
+                )
+                _run_check_aq("commit_findings", conn.commit, default=None)
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
@@ -590,26 +819,86 @@ def _do_import(
         token_budget,
         extra_summary={"imported": len(ingested), "import_file": import_file},
         reachable_only=reachable_only,
+        _run_check_aq=_run_check_aq,
+        _w607aq_warnings_out=_w607aq_warnings_out,
+        _run_check_ch=_run_check_ch,
+        _w607ch_warnings_out=_w607ch_warnings_out,
     )
 
 
-def _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist):
+def _do_inventory(
+    json_mode,
+    sarif_mode,
+    token_budget,
+    reachable_only,
+    persist,
+    _run_check_aq=None,
+    _w607aq_warnings_out=None,
+    _run_check_ch=None,
+    _w607ch_warnings_out=None,
+):
     """Show current vulnerability inventory from DB."""
+    # Fallback no-op wrap when not invoked from the click closure.
+    if _run_check_aq is None or _w607aq_warnings_out is None:
+        _w607aq_warnings_out = []
+
+        def _run_check_aq(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607aq_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
+    # W607-CH fallback no-op wrap when not invoked from the click closure.
+    if _run_check_ch is None or _w607ch_warnings_out is None:
+        _w607ch_warnings_out = []
+
+        def _run_check_ch(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
     # When --persist is set we need a writable connection so the
     # findings emit can land — otherwise stay readonly to honour the
     # principle that listing inventory is side-effect-free.
     with open_db(readonly=not persist) as conn:
-        vuln_rows = _query_vulns(conn, reachable_only)
+        vuln_rows = _run_check_aq(
+            "query_vulns",
+            _query_vulns,
+            conn,
+            reachable_only,
+            default=[],
+        )
+        if vuln_rows is None:
+            vuln_rows = []
 
         if persist:
             try:
-                _emit_vuln_findings(conn, vuln_rows)
-                conn.commit()
+                _run_check_aq(
+                    "emit_vuln_findings",
+                    _emit_vuln_findings,
+                    conn,
+                    vuln_rows,
+                    default=None,
+                )
+                _run_check_aq("commit_findings", conn.commit, default=None)
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
 
-    _output_results(vuln_rows, json_mode, sarif_mode, token_budget, reachable_only=reachable_only)
+    _output_results(
+        vuln_rows,
+        json_mode,
+        sarif_mode,
+        token_budget,
+        reachable_only=reachable_only,
+        _run_check_aq=_run_check_aq,
+        _w607aq_warnings_out=_w607aq_warnings_out,
+        _run_check_ch=_run_check_ch,
+        _w607ch_warnings_out=_w607ch_warnings_out,
+    )
 
 
 def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
@@ -674,10 +963,43 @@ def _output_results(
     extra_summary: dict | None = None,
     *,
     reachable_only: bool = False,
+    _run_check_aq=None,
+    _w607aq_warnings_out=None,
+    _run_check_ch=None,
+    _w607ch_warnings_out=None,
 ):
     """Produce output in text, JSON, or SARIF format."""
+    # Fallback no-op accumulator when invoked outside the click closure.
+    if _run_check_aq is None or _w607aq_warnings_out is None:
+        _w607aq_warnings_out = []
+
+        def _run_check_aq(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607aq_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
+    # W607-CH fallback no-op accumulator when invoked outside the click closure.
+    if _run_check_ch is None or _w607ch_warnings_out is None:
+        _w607ch_warnings_out = []
+
+        def _run_check_ch(phase, fn, *args, default=None, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
+
     total = len(vulns)
-    by_severity = _severity_breakdown(vulns)
+    by_severity = _run_check_aq(
+        "severity_breakdown",
+        _severity_breakdown,
+        vulns,
+        default={},
+    )
+    if by_severity is None:
+        by_severity = {}
     reachable_count = sum(1 for v in vulns if v.get("reachable") == 1)
 
     # Fix E (Pattern 2: silent fallbacks) — distinguish "scan ran and found
@@ -691,29 +1013,93 @@ def _output_results(
     # just import a report (extra_summary["imported"] is unset), we are in
     # the no-scan state. An import that found zero rows is still a scan.
     just_imported = bool(extra_summary and extra_summary.get("imported") is not None)
-    state = "scanned"
-    partial_success = False
 
-    if total == 0 and not just_imported:
-        state = "no_scan"
-        partial_success = True
-        verdict = (
-            "no vulnerability scan available (vulnerabilities table is empty; "
-            "run `roam vulns --import-file <report.json>` to ingest npm-audit, "
-            "pip-audit, trivy, or osv output)"
-        )
-    elif total == 0:
-        verdict = "No vulnerabilities found"
-    else:
-        sev_parts = []
+    # W607-CH -- compute_predicate boundary. Wraps the per-field extraction
+    # of metrics so a future ``_severity_breakdown`` schema refactor that
+    # returns a non-dict (or a dict missing the canonical CVSS keys)
+    # surfaces a marker rather than crashing the verdict assembly. Floor
+    # to a documented empty-shape dict so downstream verdict/summary
+    # fields stay non-null.
+    def _compute_predicate_fields(
+        total_local: int,
+        by_severity_local: dict,
+        reachable_count_local: int,
+        just_imported_local: bool,
+    ) -> dict:
+        sev_parts: list[str] = []
         for sev in ("critical", "high", "medium", "low", "unknown"):
-            count = by_severity.get(sev, 0)
+            count = by_severity_local.get(sev, 0)
             if count > 0:
                 sev_parts.append(f"{count} {sev}")
+        if total_local == 0 and not just_imported_local:
+            state_local = "no_scan"
+            partial_success_local = True
+        else:
+            state_local = "scanned"
+            partial_success_local = False
+        return {
+            "total": total_local,
+            "sev_parts": sev_parts,
+            "reachable_count": reachable_count_local,
+            "just_imported": just_imported_local,
+            "state": state_local,
+            "partial_success": partial_success_local,
+        }
+
+    _pred_fields = _run_check_ch(
+        "compute_predicate",
+        _compute_predicate_fields,
+        total,
+        by_severity,
+        reachable_count,
+        just_imported,
+        default={
+            "total": total,
+            "sev_parts": [],
+            "reachable_count": reachable_count,
+            "just_imported": just_imported,
+            "state": "scanned",
+            "partial_success": False,
+        },
+    )
+    state = _pred_fields["state"]
+    partial_success = _pred_fields["partial_success"]
+
+    # W607-CH -- compute_verdict boundary. Wraps the verdict-string assembly
+    # so a downstream f-string refactor (e.g. a non-int total or a
+    # severity tuple that raises on join) surfaces a marker rather than
+    # crashing the envelope. Floor must NOT re-interpolate the same values
+    # that tripped the closure (W978 first-hypothesis discipline: a
+    # __format__-raising sentinel under test would re-raise inside the
+    # default f-string). Use a literal ``"Vulnerability scan completed"``
+    # floor instead (LAW 6 still holds: the line works standalone).
+    # Mirror of cmd_supply_chain W607-CD / cmd_cga W607-BZ compute_verdict
+    # pattern.
+    def _build_verdict_str(fields: dict) -> str:
+        total_local = fields["total"]
+        sev_parts = fields["sev_parts"]
+        reachable_count_local = fields["reachable_count"]
+        just_imported_local = fields["just_imported"]
+        if total_local == 0 and not just_imported_local:
+            return (
+                "no vulnerability scan available (vulnerabilities table is empty; "
+                "run `roam vulns --import-file <report.json>` to ingest npm-audit, "
+                "pip-audit, trivy, or osv output)"
+            )
+        if total_local == 0:
+            return "No vulnerabilities found"
         sev_str = ", ".join(sev_parts)
-        verdict = f"{total} vulnerabilities ({sev_str})"
-        if reachable_count > 0:
-            verdict += f", {reachable_count} reachable"
+        out = f"{total_local} vulnerabilities ({sev_str})"
+        if reachable_count_local > 0:
+            out += f", {reachable_count_local} reachable"
+        return out
+
+    verdict = _run_check_ch(
+        "compute_verdict",
+        _build_verdict_str,
+        _pred_fields,
+        default="Vulnerability scan completed",
+    )
 
     # --- SARIF output ---
     if sarif_mode:
@@ -737,11 +1123,24 @@ def _output_results(
         _, sarif_notif_overrides = runtime_filter_disclosure(
             finding_level_filters=finding_filters,
         )
-        sarif = _vulns_to_sarif(
+        sarif = _run_check_aq(
+            "vulns_to_sarif",
+            _vulns_to_sarif,
             vulns,
             runtime_notification_overrides=sarif_notif_overrides or None,
+            default={},
         )
-        click.echo(write_sarif(sarif))
+        if sarif is None:
+            sarif = {}
+        sarif_text = _run_check_aq(
+            "write_sarif",
+            write_sarif,
+            sarif,
+            default="{}",
+        )
+        if sarif_text is None:
+            sarif_text = "{}"
+        click.echo(sarif_text)
         return
 
     # --- JSON output ---
@@ -769,9 +1168,32 @@ def _output_results(
                 rec["hop_count"] = v["hop_count"]
             vuln_records.append(rec)
 
-        vuln_triples = wrap_findings(vuln_records, classifier=_vuln_classify)
-        distribution = confidence_distribution(vuln_triples)
-        verdict_with_conf = verdict_with_high_count(verdict, distribution)
+        vuln_triples = _run_check_aq(
+            "classify_findings",
+            wrap_findings,
+            vuln_records,
+            classifier=_vuln_classify,
+            default=[],
+        )
+        if vuln_triples is None:
+            vuln_triples = []
+        distribution = _run_check_aq(
+            "confidence_distribution",
+            confidence_distribution,
+            vuln_triples,
+            default={},
+        )
+        if distribution is None:
+            distribution = {}
+        verdict_with_conf = _run_check_aq(
+            "verdict_with_high_count",
+            verdict_with_high_count,
+            verdict,
+            distribution,
+            default=verdict,
+        )
+        if verdict_with_conf is None:
+            verdict_with_conf = verdict
 
         summary: dict = {
             "verdict": verdict_with_conf,
@@ -785,13 +1207,89 @@ def _output_results(
         if extra_summary:
             summary.update(extra_summary)
 
-        envelope = json_envelope(
+        # W607-AQ / W607-CH: merge substrate-CALL markers AND aggregation-
+        # phase markers into the canonical ``warnings_out`` channel. Both
+        # buckets share the canonical ``vulns_*`` family (the W607-CH bucket
+        # is ADDITIVE, not a separate prefix). The aggregation-phase bucket
+        # stays distinguishable in tests + audits via its phase names
+        # (``compute_predicate`` / ``compute_verdict`` / ``build_envelope``).
+        # ``partial_success`` flips when ANY bucket is non-empty.
+        # W805 invariant: vulns invocation never collapses to a silent SAFE
+        # verdict when any of the ingest / reach / VEX-emit substrates or
+        # aggregation-phase boundaries raised. W826 security-axis: the
+        # cmd_taint silent-SAFE Pattern-2 bug must NOT regress here.
+        _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
+        if _combined_warnings_out:
+            summary["warnings_out"] = list(_combined_warnings_out)
+            summary["partial_success"] = True
+
+        envelope_kwargs: dict = {
+            "summary": summary,
+            "budget": token_budget,
+            "vulnerabilities": vuln_triples,
+        }
+        if _combined_warnings_out:
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+
+        # W607-CH -- build_envelope boundary. Wraps the
+        # ``json_envelope("vulns", ...)`` projection. A downstream schema-
+        # shape refactor that breaks the envelope helper would otherwise
+        # crash AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name. Phase name distinct from W607-AQ's
+        # existing ``serialize_envelope`` (which wraps ``to_json`` instead).
+        _envelope_floor: dict = {
+            "command": "vulns",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        envelope = _run_check_ch(
+            "build_envelope",
+            json_envelope,
             "vulns",
-            summary=summary,
-            budget=token_budget,
-            vulnerabilities=vuln_triples,
+            default=_envelope_floor,
+            **envelope_kwargs,
         )
-        click.echo(to_json(envelope))
+        # W607-CH -- if ``build_envelope`` raised AFTER the combined bucket
+        # was already snapshotted, the new ``vulns_build_envelope_failed:``
+        # marker was appended to ``_w607ch_warnings_out`` and the floor
+        # stub carries only the pre-raise combined list. Rebuild the floor
+        # stub's warnings_out so the new marker reaches the JSON output.
+        # Clean path -> envelope is the real json_envelope return value,
+        # no rebuild needed.
+        if envelope is _envelope_floor and _w607ch_warnings_out:
+            _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            envelope = _envelope_floor
+
+        output_text = _run_check_aq(
+            "serialize_envelope",
+            to_json,
+            envelope,
+            default="{}",
+        )
+        if output_text is None:
+            output_text = "{}"
+        # W805 / Pattern-1 variant-D safety net: if serialize_envelope
+        # raised AFTER envelope build, re-build with the now-disclosed
+        # marker on warnings_out so the consumer still sees it.
+        if output_text == "{}" and (_w607aq_warnings_out or _w607ch_warnings_out):
+            _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            envelope_kwargs["summary"]["warnings_out"] = list(_combined_warnings_out)
+            try:
+                envelope = json_envelope("vulns", **envelope_kwargs)
+                output_text = to_json(envelope)
+            except Exception:
+                output_text = "{}"
+        click.echo(output_text)
         return
 
     # --- Text output ---

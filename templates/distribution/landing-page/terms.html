@@ -20,7 +20,7 @@
     "name": "Terms of Service",
     "url": "https://roam-code.com/terms",
     "inLanguage": "en",
-    "dateModified": "2026-05-09",
+    "dateModified": "2026-05-18",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -70,19 +70,37 @@
   <main id="main" class="legal-page">
     <header class="legal-header">
       <h1>Terms of Service</h1>
-      <p class="legal-meta">Last updated: <time datetime="2026-05-07">2026-05-07</time> · Effective: <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="legal-meta">Last updated: <time datetime="2026-05-18">2026-05-18</time> · Effective: <time datetime="2026-05-18">2026-05-18</time></p>
     </header>
 
     <article>
       <p>
-        These Terms govern your use of Roam's paid services (Roam Review, Roam
-        Cloud, Roam Self-Hosted) and the roam-code.com website. The open-source
-        CLI is governed by its <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">Apache 2.0 license</a>
-        — these Terms do not change that.
+        These Terms govern your use of Roam's paid and early-access services
+        (PR Replay, Roam Review, Roam Cloud, and private-deployment pilots)
+        and the roam-code.com website. The open-source CLI is governed by its
+        <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">Apache 2.0 license</a>
+        on
+        <a href="https://github.com/Cranot/roam-code">GitHub</a> (and the
+        same package on
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>) — these Terms
+        do not change that license and impose no additional obligation on
+        free CLI use.
       </p>
       <p>
         By using a paid service, you agree to these Terms. If you don't agree,
         don't use the paid services.
+      </p>
+      <p>
+        Procurement reviewers: the operational companions to this contract
+        are the <a href="/privacy">privacy policy</a>, the
+        <a href="/trust">trust &amp; compliance posture page</a>, and the
+        <a href="/security">security policy</a>. Refund mechanics live on
+        the <a href="/refund">refund policy</a>. The
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
+        and the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">PR Replay SOW</a>
+        carry the GDPR Article 28 processor terms and the per-engagement
+        commercial terms.
       </p>
 
       <h2>1. Who you're contracting with</h2>
@@ -92,12 +110,45 @@
         <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
       </p>
 
-      <h2>2. The services</h2>
-      <p>We currently offer three paid services:</p>
+      <h2 id="precedence">2. Order of precedence</h2>
+      <p>
+        Where you've signed a Statement of Work or order form for a paid
+        engagement, the documents apply in this descending order — the
+        higher document controls on any conflict:
+      </p>
+      <ol>
+        <li>
+          The signed <strong>Statement of Work</strong> or order form
+          (e.g. the
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">PR Replay SOW</a>).
+        </li>
+        <li>
+          The
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Addendum (DPA)</a>,
+          where personal data is processed on your behalf.
+        </li>
+        <li>
+          These <strong>Terms of Service</strong>.
+        </li>
+        <li>
+          The <a href="/privacy">privacy policy</a> and the
+          <a href="/refund">refund policy</a> as incorporated by reference.
+        </li>
+      </ol>
+      <p>
+        Free use of the open-source CLI is governed solely by its
+        <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">Apache 2.0 license</a>;
+        these Terms apply to that CLI only when you also use the paid
+        services or the website.
+      </p>
+
+      <h2>3. The services</h2>
+      <p>Paid offerings may include:</p>
       <ul>
-        <li><strong>Roam Review</strong> — a GitHub App that posts a structural-risk verdict on every pull request. Subscription priced per developer per month.</li>
-        <li><strong>Roam Cloud</strong> — a hosted dashboard for code-health metrics over time. Subscription priced per repository per month.</li>
-        <li><strong>Roam Self-Hosted</strong> — the full Roam stack delivered as a container or installer for your own infrastructure. Annual licence.</li>
+        <li><strong>PR Replay</strong> — a paid historical PR audit delivered as a written report and walk-through.</li>
+        <li><strong>Roam Review</strong> — an early-access GitHub App concept that posts a structural-risk verdict on pull requests.</li>
+        <li><strong>Roam Cloud</strong> — a planned hosted dashboard for code-health metrics over time.</li>
+        <li><strong>Roam Self-Hosted</strong> — a customer-pulled private-deployment pilot, scoped by individual order form when needed.</li>
       </ul>
       <p>
         Pricing and feature lists are on the <a href="/">homepage</a> and any
@@ -105,19 +156,17 @@
         at is locked for the term you committed to (annual or monthly).
       </p>
 
-      <h2>3. Free trials and money-back</h2>
+      <h2>4. Free trials and money-back</h2>
       <p>
         Some plans offer a free trial. The trial converts to a paid subscription
         at the end of the trial period unless you cancel beforehand.
       </p>
       <p>
-        Roam Cloud subscriptions include a <strong>30-day money-back guarantee</strong>
-        from the first charge — see our <a href="/refund">Refund Policy</a> for the
-        exact mechanism. Other plans have their own refund terms documented on the
-        Refund page.
+        Refund terms are documented on the <a href="/refund">Refund Policy</a>
+        and, for custom engagements, in the signed SOW or order form.
       </p>
 
-      <h2>4. Acceptable use</h2>
+      <h2>5. Acceptable use</h2>
       <p>You agree not to:</p>
       <ul>
         <li>Use the services to violate any law or third-party right</li>
@@ -128,15 +177,17 @@
       </ul>
       <p>We may suspend or terminate accounts that materially breach these terms, with prior notice except where the breach is severe enough to warrant immediate action.</p>
 
-      <h2>5. Your data and intellectual property</h2>
+      <h2>6. Your data and intellectual property</h2>
       <p>
         Your code is yours. Your repository content remains your IP.
       </p>
       <p>
-        For Roam Review: PR diffs are processed in our cloud (or yours, if you
-        self-host) and discarded after analysis. We do not retain or train on
-        your source code. We do retain analysis metadata (verdict, finding count,
-        confidence) for audit-trail purposes — never the diff text itself.
+        For Roam Review: PR diffs are processed ephemerally in our cloud, or
+        in a separately scoped private-deployment pilot when hosted processing
+        is blocked by policy, and discarded after analysis. We do not retain or
+        train on your source code. We do retain analysis metadata (verdict,
+        finding count, confidence) for audit-trail purposes — never the diff
+        text itself.
       </p>
       <p>
         For Roam Cloud: only metrics are uploaded — never source code. See the
@@ -148,22 +199,26 @@
         subscription.
       </p>
 
-      <h2>6. Service-level commitments</h2>
+      <h2>7. Service-level commitments</h2>
       <p>
-        Roam Cloud and Roam Review are <strong>early access</strong> as of
-        2026-05-09; SLAs activate at general availability. The post-GA
-        target is 99.5% monthly uptime, measured by external uptime
-        monitoring (BetterStack / UptimeRobot, planned). Until GA, both
-        services run on a best-effort basis. Self-Hosted runs in your
-        environment, so uptime is in your control.
+        Roam Cloud and Roam Review are <strong>early access / planned</strong>
+        as of 2026-05-18; SLAs activate at general availability. The
+        post-GA <strong>target</strong> is 99.5% monthly uptime, measured by
+        external uptime monitoring
+        (<em>[TBD: monitoring vendor — BetterStack or UptimeRobot, named
+        at GA]</em>). This is a target, not a guarantee; we make no claim
+        of 100% availability. Until GA, both services run on a best-effort
+        basis when enabled for a design partner. Private-deployment pilots
+        run in the customer's environment under the support terms in the
+        order form.
       </p>
       <p>
         Maintenance windows are announced 48 hours in advance where possible.
-        For Self-Hosted customers, support response targets are documented in
-        your individual SLA.
+        For private-deployment pilots, support response targets are documented
+        in your individual SLA.
       </p>
 
-      <h2>7. Warranty disclaimer</h2>
+      <h2>8. Warranty disclaimer</h2>
       <p>
         Roam analyses code; it does not guarantee that all bugs, security
         vulnerabilities, or compliance issues will be detected. Findings are
@@ -180,7 +235,7 @@
         affected by this clause.
       </p>
 
-      <h2>8. Limitation of liability</h2>
+      <h2>9. Limitation of liability</h2>
       <p>
         To the fullest extent permitted by law, our total aggregate liability
         for any claim arising out of these Terms or use of the services is
@@ -199,7 +254,7 @@
         liability that cannot be excluded under applicable law.
       </p>
 
-      <h2>9. Termination</h2>
+      <h2>10. Termination</h2>
       <p>
         You may cancel your subscription at any time from your account
         dashboard, or by emailing <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
@@ -213,7 +268,7 @@
         per Greek tax law).
       </p>
 
-      <h2>10. Governing law and disputes</h2>
+      <h2>11. Governing law and disputes</h2>
       <p>
         These Terms are governed by the laws of Greece, without regard to
         conflict-of-law principles. The competent courts of Athens, Greece
@@ -226,7 +281,7 @@
         proceedings in their local courts where applicable.
       </p>
 
-      <h2>11. Changes to these Terms</h2>
+      <h2>12. Changes to these Terms</h2>
       <p>
         We may modify these Terms by posting an updated version on this page
         and notifying active subscribers by email at least 30 days in advance.
@@ -235,14 +290,31 @@
         annual subscription.
       </p>
 
-      <h2>12. Miscellaneous</h2>
+      <h2>13. Miscellaneous</h2>
       <p>
-        These Terms are the entire agreement between us regarding the paid
-        services. If any provision is held unenforceable, the rest stays in
-        force. Our failure to enforce any right is not a waiver. You may not
-        assign these Terms without our consent; we may assign them in
-        connection with a sale or restructuring of the business.
+        Subject to the order of precedence in §2, these Terms are the
+        agreement between us for your use of the paid services and the
+        website. Where a signed SOW or DPA covers an engagement, that
+        document controls on any conflict per §2. If any provision is held
+        unenforceable, the rest stays in force. Our failure to enforce any
+        right is not a waiver. You may not assign these Terms without our
+        consent; we may assign them in connection with a sale or
+        restructuring of the business — including to a successor entity
+        on incorporation (e.g. into an IKE) on 30 days' notice, matching
+        the assignment clause in
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">SOW §14</a>.
       </p>
+
+      <h2>14. Related documents</h2>
+      <ul>
+        <li><a href="/privacy">Privacy Policy</a> — GDPR data-rights handling, sub-processor list, retention windows.</li>
+        <li><a href="/trust">Trust &amp; compliance posture</a> — procurement-overview companion (framework status, DPA, data-flow diagram).</li>
+        <li><a href="/security">Security policy</a> — vulnerability disclosure, supply-chain integrity, PGP key.</li>
+        <li><a href="/refund">Refund policy</a> — money-back terms for paid services.</li>
+        <li><a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Addendum (DPA)</a> — GDPR Article 28 processor agreement.</li>
+        <li><a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">PR Replay Statement of Work</a> — per-engagement commercial terms.</li>
+        <li><a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">Apache 2.0 LICENSE</a> — the open-source CLI license on GitHub.</li>
+      </ul>
 
       <p class="legal-foot">
         Questions about these Terms? <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.

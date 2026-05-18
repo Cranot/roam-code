@@ -595,25 +595,60 @@ def test_resolve_rules_filter_by_id():
 
 
 def test_resolve_rules_filter_by_severity_error():
+    """``--severity error`` keeps rules with rank >= 4 (error/high/critical).
+
+    W1005-followup-C: this filter is now a canonical-rank floor, not an
+    equality match. Built-in rules emit only {error, warning, info}, so
+    the rank-4 floor keeps exactly the ``error``-severity rules.
+    """
     from roam.commands.cmd_check_rules import _resolve_rules
+    from roam.output._severity import severity_rank
 
     rules = _resolve_rules(None, "error", [])
+    # Floor-rank semantic: every kept rule must rank >= 4.
+    assert all(severity_rank(r.severity) >= severity_rank("error") for r in rules)
+    # Built-in rules emit only the 3-tier {error, warning, info}, so
+    # rank-4 floor strictly keeps the error-tier set.
     assert all(r.severity == "error" for r in rules)
     assert len(rules) >= 1
 
 
 def test_resolve_rules_filter_by_severity_warning():
+    """``--severity warning`` keeps rules with rank >= 3 (warning + error).
+
+    W1005-followup-C: floor semantic — ``warning`` rank 3 retains every
+    rule at rank 3 (warning) OR rank 4 (error). Pre-W1005-followup-C this
+    test pinned equality-match; the new contract is the canonical
+    severity_rank floor shared with cmd_smells / cmd_secrets / cmd_test_gaps.
+    """
     from roam.commands.cmd_check_rules import _resolve_rules
+    from roam.output._severity import severity_rank
 
     rules = _resolve_rules(None, "warning", [])
-    assert all(r.severity == "warning" for r in rules)
+    # Floor-rank semantic: every kept rule must rank >= 3.
+    floor = severity_rank("warning")
+    assert all(severity_rank(r.severity) >= floor for r in rules)
+    # Built-in rules emit only {error, warning, info}, so the rank-3 floor
+    # keeps the warning + error tiers (NOT info, rank 0).
+    kept_severities = {r.severity for r in rules}
+    assert kept_severities.issubset({"warning", "error"})
+    assert len(rules) >= 1
 
 
 def test_resolve_rules_filter_by_severity_info():
+    """``--severity info`` keeps every rule (rank >= 0 == every defined tier).
+
+    W1005-followup-C: floor semantic — ``info`` is the canonical floor
+    (rank 0), so the filter accepts every rule whose severity is a
+    defined tier. Pre-W1005-followup-C this pinned equality-match.
+    """
     from roam.commands.cmd_check_rules import _resolve_rules
+    from roam.output._severity import severity_rank
 
     rules = _resolve_rules(None, "info", [])
-    assert all(r.severity == "info" for r in rules)
+    # Floor-rank semantic: every kept rule must rank >= 0 (= every defined
+    # tier in {error, warning, info}).
+    assert all(severity_rank(r.severity) >= severity_rank("info") for r in rules)
     assert len(rules) >= 1
 
 

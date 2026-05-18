@@ -43,9 +43,17 @@ def _contribution_entropy(author_shares):
 
 
 def _knowledge_risk_label(entropy: float) -> str:
-    """Map entropy to a knowledge-risk label."""
+    """Map entropy to a knowledge-risk label.
+
+    W761/W847: returns UPPER-case INTERNAL VOCABULARY for the
+    ``knowledge_risk`` per-directory payload field. This is the
+    knowledge-concentration risk tier (entropy-derived); distinct from
+    the canonical W547 ``severity`` envelope slot. The bus-factor JSON
+    envelope summary intentionally has no ``severity`` slot — its
+    rollup is on ``directories_analyzed`` / ``high_risk`` / ``run_state``.
+    """
     if entropy < 0.3:
-        return "CRITICAL"
+        return "CRITICAL"  # W761/W847 retained UPPER-case for internal vocabulary
     if entropy < 0.5:
         return "HIGH"
     if entropy < 0.7:
@@ -106,9 +114,14 @@ def _compute_staleness_factor(last_active_epoch: int, stale_months: int) -> floa
 
 
 def _risk_label(score: float) -> str:
-    """Map a numeric risk score to a label."""
+    """Map a numeric risk score to a label.
+
+    W761/W847: returns UPPER-case INTERNAL VOCABULARY for the per-directory
+    ``risk`` payload field (bus-factor + staleness composite). Distinct
+    from the canonical W547 ``severity`` envelope slot.
+    """
     if score >= 1.5:
-        return "HIGH"
+        return "HIGH"  # W761/W847 retained UPPER-case for internal vocabulary
     if score >= 0.7:
         return "MEDIUM"
     return "LOW"
@@ -665,9 +678,140 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
     exclude_prefixes: tuple[str, ...] = () if include_excluded else DEFAULT_EXCLUDE_PREFIXES
     ensure_index()
 
+    # W607-CQ -- substrate-boundary plumbing for cmd_bus_factor.
+    # ``_run_check_cq`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cq_warnings_out`` rather than
+    # crashing the bus-factor detector outright (W115 origin per CLAUDE.md
+    # detector roster -- part of the original 16 findings-registry
+    # substrate detectors). W164 (solo-author summary collapse) and
+    # W811/W817 (empty-corpus Pattern-2 guard with explicit zero-count
+    # verdict) preceded this wave; this wave layers substrate isolation
+    # on top so a raise in ``_analyse_bus_factor`` (git-history ingest),
+    # ``_emit_solo_author_summary_finding`` (W164 collapse), or the
+    # downstream verdict-composer is disclosed rather than fatal.
+    # Marker family ``bus_factor_<phase>_failed:<exc_class>:<detail>``.
+    # Substrates wrapped:
+    #
+    #   * analyse_bus_factor         -- git-blame + co-change ingest
+    #   * query_brain_methods        -- high-cc rollup (conditional)
+    #   * detect_project_shape       -- single-author auto-detection
+    #   * apply_solo_author_collapse -- STALE-only filter when solo-author
+    #   * emit_solo_author_summary   -- W164 repo-level collapse finding
+    #   * emit_bus_factor_findings   -- W115 registry mirror
+    #                                   (sqlite3.OperationalError silent
+    #                                   no-op preserved for pre-W89 DB)
+    #   * aggregate_risk_counts      -- high/medium/concentrated/stale
+    #                                   histogram
+    #   * compose_verdict            -- LAW 6 single-line verdict string
+    #                                   (min_bf, top_dir.directory accesses)
+    #   * serialize_to_sarif         -- SARIF projection (CI integration)
+    _w607cq_warnings_out: list[str] = []
+
+    def _run_check_cq(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CQ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``bus_factor_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607cq_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cq_warnings_out.append(f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-EH -- AGGREGATION-layer plumbing on top of W607-CQ substrate
+    # layer. The two buckets are disjoint and merged at envelope-emit
+    # time so consumers see the full degradation lineage. The phase names
+    # (score_classify / compute_predicate / compute_verdict /
+    # serialize_envelope) are disjoint from the W607-CQ substrate phases
+    # above (analyse_bus_factor / query_brain_methods /
+    # detect_project_shape / apply_solo_author_collapse /
+    # emit_solo_author_summary / emit_bus_factor_findings /
+    # aggregate_risk_counts / compose_verdict / serialize_to_sarif /
+    # build_envelope_directories). Marker family
+    # ``bus_factor_<phase>_failed:<exc_class>:<detail>`` is shared so
+    # any consumer regex over the marker family catches both layers.
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_eh(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder.
+    #   4. phase-name collision: verified above against CQ's 10 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_eh(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    #
+    # Aggregation phases wrapped (sibling pattern to cmd_auth_gaps's
+    # W607-ED + cmd_missing_index's W607-DX):
+    #
+    #   * score_classify     -- buckets the run by min bus_factor into
+    #                          HEALTHY (>=3) / WARN (2) / CRITICAL (1) /
+    #                          DEGRADED
+    #   * compute_predicate  -- rollup metrics dict (solo_authored_count,
+    #                          low_contributor_count, hottest_files)
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor:
+    #                          "bus_factor completed")
+    #   * serialize_envelope -- json_envelope("bus-factor", ...) projection
+    _w607eh_warnings_out: list[str] = []
+
+    def _run_check_eh(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-EH marker emission.
+
+        Mirror of ``_run_check_cq`` shape (same
+        ``bus_factor_<phase>_failed:`` marker family) but writes into
+        ``_w607eh_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits. W607-DW finding pin: the
+        return statement is verbatim ``return default`` (NOT
+        ``return default if default is not None else {}``) so the floor
+        is a literal pass-through.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607eh_warnings_out.append(f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
-        results, excluded_files_count = _analyse_bus_factor(conn, stale_months, exclude_prefixes=exclude_prefixes)
-        brain_list = _query_brain_methods(conn) if brain_methods else []
+        # W607-CQ: ``analyse_bus_factor`` substrate -- the main detector
+        # pass. A raise in the git-history aggregation degrades to
+        # (results=[], excluded_files_count=0) so the empty-state path
+        # composes cleanly.
+        analyse_result = _run_check_cq(
+            "analyse_bus_factor",
+            _analyse_bus_factor,
+            conn,
+            stale_months,
+            exclude_prefixes=exclude_prefixes,
+            default=([], 0),
+        )
+        if analyse_result is None:
+            analyse_result = ([], 0)
+        results, excluded_files_count = analyse_result
+
+        # W607-CQ: ``query_brain_methods`` substrate -- only invoked
+        # when --brain-methods is set. Default [] keeps the envelope
+        # well-formed if the SQL query trips.
+        if brain_methods:
+            brain_list = _run_check_cq(
+                "query_brain_methods",
+                _query_brain_methods,
+                conn,
+                default=[],
+            )
+            if brain_list is None:
+                brain_list = []
+        else:
+            brain_list = []
 
         # Round 4 #13, Q: detect single-author projects so we don't flood
         # the output with "bus factor 1" warnings. Switch to a focused
@@ -680,10 +824,18 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         from roam.output.project_shape import detect_project_shape
 
         project_root = find_project_root()
-        try:
-            shape = detect_project_shape(conn, project_root)
-        except Exception:
-            shape = None
+        # W607-CQ: ``detect_project_shape`` substrate -- previously a
+        # bare ``except Exception: shape = None`` swallow. Now disclosed
+        # via the W607-CQ marker so observers know the auto-team-size
+        # detection degraded (matters because ``single_author_mode``
+        # downstream gates the W164 collapse path).
+        shape = _run_check_cq(
+            "detect_project_shape",
+            detect_project_shape,
+            conn,
+            project_root,
+            default=None,
+        )
         single_author_mode = not force_team_mode and shape is not None and shape.team_size == "single-author"
 
         # W115 + W164 — mirror concentrated / stale-ownership rows into
@@ -699,6 +851,17 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         # summary finding instead. Stale-ownership rows still emit
         # per-directory since "this module is forgotten" stays
         # actionable even on a solo repo.
+        # W607-CQ: ``emit_solo_author_summary`` and ``emit_bus_factor_findings``
+        # substrate boundaries use DIRECT try/except (not _run_check_cq)
+        # because the pre-W89 schema path (sqlite3.OperationalError on
+        # missing ``findings`` table) is the EXPECTED degraded path --
+        # the W115/W164 silent no-op contract for that case must NOT
+        # produce a W607-CQ marker. Generic exceptions surface via
+        # ``bus_factor_emit_solo_author_summary_failed:<exc>:<detail>``
+        # and ``bus_factor_emit_bus_factor_findings_failed:<exc>:<detail>``
+        # markers. Mirrors the cmd_auth_gaps W607-CM template:
+        # OperationalError == silent no-op; generic Exception ==
+        # W607-CQ marker.
         if persist and results:
             try:
                 if single_author_mode:
@@ -707,26 +870,61 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                     # per-directory — those name actually-actionable
                     # forgotten modules regardless of team size.
                     repo_id = _repo_identifier(project_root)
-                    _emit_solo_author_summary_finding(conn, results, repo_id, BUS_FACTOR_DETECTOR_VERSION)
+                    try:
+                        _emit_solo_author_summary_finding(conn, results, repo_id, BUS_FACTOR_DETECTOR_VERSION)
+                    except sqlite3.OperationalError:
+                        # findings table missing (pre-W89 schema) — silently no-op.
+                        raise
+                    except Exception as _summary_exc:  # noqa: BLE001 -- W607-CQ disclosure
+                        _w607cq_warnings_out.append(
+                            f"bus_factor_emit_solo_author_summary_failed:{type(_summary_exc).__name__}:{_summary_exc}"
+                        )
                     stale_only = [r for r in results if r.get("stale_primary")]
                     if stale_only:
-                        _emit_bus_factor_findings(conn, stale_only, BUS_FACTOR_DETECTOR_VERSION)
+                        try:
+                            _emit_bus_factor_findings(conn, stale_only, BUS_FACTOR_DETECTOR_VERSION)
+                        except sqlite3.OperationalError:
+                            raise
+                        except Exception as _emit_exc:  # noqa: BLE001 -- W607-CQ disclosure
+                            _w607cq_warnings_out.append(
+                                f"bus_factor_emit_bus_factor_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
+                            )
                     conn.commit()
                 else:
                     persistable = [r for r in results if r.get("concentrated") or r.get("stale_primary")]
                     if persistable:
-                        _emit_bus_factor_findings(conn, persistable, BUS_FACTOR_DETECTOR_VERSION)
-                        conn.commit()
+                        try:
+                            _emit_bus_factor_findings(conn, persistable, BUS_FACTOR_DETECTOR_VERSION)
+                            conn.commit()
+                        except sqlite3.OperationalError:
+                            raise
+                        except Exception as _emit_exc:  # noqa: BLE001 -- W607-CQ disclosure
+                            _w607cq_warnings_out.append(
+                                f"bus_factor_emit_bus_factor_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
+                            )
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — silently no-op.
                 pass
 
-        if single_author_mode and results:
-            # Keep STALE modules — those represent forgotten code regardless of
-            # team size. Drop the rest from the headline ranking.
-            stale_only = [r for r in results if r.get("stale_primary")]
-            if stale_only:
-                results = stale_only
+        # W607-CQ: ``apply_solo_author_collapse`` substrate -- the
+        # single-author-mode filter that demotes pure "bus factor 1"
+        # rows out of the headline ranking. A raise here degrades to
+        # the unfiltered ``results`` list so the standard ranked
+        # envelope still composes.
+        def _apply_solo_author_collapse():
+            if single_author_mode and results:
+                stale_only = [r for r in results if r.get("stale_primary")]
+                if stale_only:
+                    return stale_only
+            return results
+
+        collapsed = _run_check_cq(
+            "apply_solo_author_collapse",
+            _apply_solo_author_collapse,
+            default=results,
+        )
+        if collapsed is not None:
+            results = collapsed
 
         if not results:
             # SARIF path honors empty input — emit a valid SARIF doc
@@ -734,9 +932,16 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
             # catalogue even on a clean / no-history run. Mirrors the
             # cmd_over_fetch / cmd_auth_gaps empty-list contract.
             if sarif_mode:
-                from roam.output.sarif import bus_factor_to_sarif, write_sarif
+                # W607-CQ: ``serialize_to_sarif`` substrate on the
+                # no-data branch -- a raise in the SARIF writer used
+                # to crash the bus-factor command on the CI integration
+                # path; now degrades silently to None with a marker.
+                def _emit_no_data_sarif():
+                    from roam.output.sarif import bus_factor_to_sarif, write_sarif
 
-                click.echo(write_sarif(bus_factor_to_sarif([])))
+                    click.echo(write_sarif(bus_factor_to_sarif([])))
+
+                _run_check_cq("serialize_to_sarif", _emit_no_data_sarif, default=None)
                 return
             no_data_verdict = "no git history data available"
             if json_mode:
@@ -761,7 +966,48 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 )
                 if brain_methods:
                     envelope_kwargs["brain_methods"] = brain_list
-                click.echo(to_json(json_envelope("bus-factor", **envelope_kwargs)))
+                # W607-CQ + W607-EH: mirror combined substrate-CALL +
+                # aggregation-phase markers into BOTH the top-level
+                # envelope ``warnings_out`` AND ``summary.warnings_out``
+                # so MCP consumers see disclosure regardless of which
+                # surface they read. On the no-data branch the markers
+                # ride alongside the explicit zero-count verdict
+                # (W811/W817 Pattern-2 guard).
+                _no_data_combined = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
+                if _no_data_combined:
+                    no_data_summary["partial_success"] = True
+                    no_data_summary["warnings_out"] = list(_no_data_combined)
+                    envelope_kwargs["warnings_out"] = list(_no_data_combined)
+                # W607-EH: serialize_envelope boundary on the no-data
+                # path. A raise in ``json_envelope`` here used to crash
+                # bus-factor on a clean empty-history repo; now degrades
+                # to a parseable floor stub with the canonical command
+                # name + the no-data verdict. Mirrors the ranked-branch
+                # serialize_envelope wrap so the no-data path also
+                # benefits from the W607-EH aggregation layer.
+                _no_data_envelope_floor: dict = {
+                    "command": "bus-factor",
+                    "schema_version": "1.0.0",
+                    "summary": {
+                        "verdict": "bus_factor completed",
+                        "partial_success": True,
+                        "warnings_out": list(_no_data_combined),
+                    },
+                    "warnings_out": list(_no_data_combined),
+                }
+                _no_data_envelope = _run_check_eh(
+                    "serialize_envelope",
+                    json_envelope,
+                    "bus-factor",
+                    default=_no_data_envelope_floor,
+                    **envelope_kwargs,
+                )
+                if _no_data_envelope is _no_data_envelope_floor and _w607eh_warnings_out:
+                    _no_data_combined = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
+                    _no_data_envelope_floor["summary"]["warnings_out"] = list(_no_data_combined)
+                    _no_data_envelope_floor["warnings_out"] = list(_no_data_combined)
+                    _no_data_envelope = _no_data_envelope_floor
+                click.echo(to_json(_no_data_envelope))
             else:
                 click.echo(f"VERDICT: {no_data_verdict}\n")
                 click.echo("No git history data available. Run 'roam index' first.")
@@ -771,21 +1017,57 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
 
         limited = results[:limit]
 
-        high_risk = sum(1 for r in results if r["risk"] == "HIGH")
-        medium_risk = sum(1 for r in results if r["risk"] == "MEDIUM")
-        concentrated_count = sum(1 for r in results if r["concentrated"])
-        stale_count = sum(1 for r in results if r["stale_primary"])
-        critical_entropy_count = sum(1 for r in results if r["knowledge_risk"] == "CRITICAL")
-
-        # Build verdict
-        if results:
-            top_dir = results[0]
-            min_bf = min(r["bus_factor"] for r in results)
-            bus_verdict = (
-                f"bus factor {min_bf} (min), {high_risk} high-risk, "
-                f"{concentrated_count} single-owner modules, top risk: {top_dir['directory']}"
+        # W607-CQ: ``aggregate_risk_counts`` substrate -- the histogram
+        # construction over the ranked rows. A raise (e.g. KeyError on a
+        # malformed result dict missing ``risk`` / ``concentrated`` /
+        # ``stale_primary`` / ``knowledge_risk``) degrades to the
+        # all-zero tuple so the verdict composer still produces a
+        # coherent string.
+        def _aggregate_risk_counts():
+            # W761/W847 retained UPPER-case for internal vocabulary —
+            # ``risk`` / ``knowledge_risk`` are per-directory payload
+            # fields (NOT envelope-slot severity); the comparison strings
+            # mirror the values produced by ``_risk_label()`` and
+            # ``_knowledge_risk_label()`` upstream.
+            return (
+                sum(1 for r in results if r["risk"] == "HIGH"),
+                sum(1 for r in results if r["risk"] == "MEDIUM"),
+                sum(1 for r in results if r["concentrated"]),
+                sum(1 for r in results if r["stale_primary"]),
+                sum(1 for r in results if r["knowledge_risk"] == "CRITICAL"),
             )
-        else:
+
+        agg = _run_check_cq(
+            "aggregate_risk_counts",
+            _aggregate_risk_counts,
+            default=(0, 0, 0, 0, 0),
+        )
+        if agg is None:
+            agg = (0, 0, 0, 0, 0)
+        high_risk, medium_risk, concentrated_count, stale_count, critical_entropy_count = agg
+
+        # W607-CQ: ``compose_verdict`` substrate -- LAW 6 single-line
+        # verdict string. The ``min(r["bus_factor"] for r in results)``
+        # call and the ``top_dir['directory']`` access are KeyError /
+        # ValueError prone on malformed result rows; the wrap degrades
+        # to the explicit "no data" floor so the envelope still emits
+        # a non-empty verdict (W811/W817 Pattern-2 contract).
+        def _compose_verdict():
+            if results:
+                top_dir = results[0]
+                min_bf = min(r["bus_factor"] for r in results)
+                return (
+                    f"bus factor {min_bf} (min), {high_risk} high-risk, "
+                    f"{concentrated_count} single-owner modules, top risk: {top_dir['directory']}"
+                )
+            return "no data"
+
+        bus_verdict = _run_check_cq(
+            "compose_verdict",
+            _compose_verdict,
+            default="no data",
+        )
+        if bus_verdict is None:
             bus_verdict = "no data"
 
         # ---------------------------------------------------------------
@@ -798,36 +1080,47 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         # repo-level solo-author summary row alongside the per-directory
         # stale-ownership rows.
         if sarif_mode:
-            from roam.output.sarif import bus_factor_to_sarif, write_sarif
+            # W607-CQ: ``serialize_to_sarif`` substrate on the main
+            # ranked branch -- a raise in the SARIF writer or in the
+            # solo-author summary-entry composition (numeric
+            # aggregation over ``top_authors`` rows) used to crash the
+            # bus-factor command on the CI integration path; now
+            # degrades silently to None with a marker, and the function
+            # returns early (matches pre-W607-CQ semantics that SARIF
+            # mode short-circuits).
+            def _emit_main_sarif():
+                from roam.output.sarif import bus_factor_to_sarif, write_sarif
 
-            sarif_findings: list[dict] = list(results)
-            if single_author_mode:
-                repo_id = _repo_identifier(project_root)
-                author_churn: dict[str, int] = {}
-                for r in results:
-                    for a in r.get("top_authors") or []:
-                        name = a.get("name") or ""
-                        if not name:
-                            continue
-                        author_churn[name] = author_churn.get(name, 0) + int(a.get("churn") or 0)
-                unique_authors_count = len(author_churn)
-                total_churn = sum(author_churn.values())
-                dominant_author = ""
-                dominant_share = 0.0
-                if author_churn:
-                    dominant_author, dom_churn = max(author_churn.items(), key=lambda kv: kv[1])
-                    dominant_share = (dom_churn / total_churn) if total_churn else 0.0
-                summary_entry = {
-                    "summary_only": True,
-                    "repo": repo_id,
-                    "total_directories_analyzed": len(results),
-                    "unique_authors_count": unique_authors_count,
-                    "dominant_author": dominant_author,
-                    "dominant_actor": dominant_author,
-                    "dominant_author_share_pct": round(dominant_share * 100),
-                }
-                sarif_findings = [summary_entry] + sarif_findings
-            click.echo(write_sarif(bus_factor_to_sarif(sarif_findings)))
+                sarif_findings: list[dict] = list(results)
+                if single_author_mode:
+                    repo_id = _repo_identifier(project_root)
+                    author_churn: dict[str, int] = {}
+                    for r in results:
+                        for a in r.get("top_authors") or []:
+                            name = a.get("name") or ""
+                            if not name:
+                                continue
+                            author_churn[name] = author_churn.get(name, 0) + int(a.get("churn") or 0)
+                    unique_authors_count = len(author_churn)
+                    total_churn = sum(author_churn.values())
+                    dominant_author = ""
+                    dominant_share = 0.0
+                    if author_churn:
+                        dominant_author, dom_churn = max(author_churn.items(), key=lambda kv: kv[1])
+                        dominant_share = (dom_churn / total_churn) if total_churn else 0.0
+                    summary_entry = {
+                        "summary_only": True,
+                        "repo": repo_id,
+                        "total_directories_analyzed": len(results),
+                        "unique_authors_count": unique_authors_count,
+                        "dominant_author": dominant_author,
+                        "dominant_actor": dominant_author,
+                        "dominant_author_share_pct": round(dominant_share * 100),
+                    }
+                    sarif_findings = [summary_entry] + sarif_findings
+                click.echo(write_sarif(bus_factor_to_sarif(sarif_findings)))
+
+            _run_check_cq("serialize_to_sarif", _emit_main_sarif, default=None)
             return
 
         if json_mode:
@@ -854,19 +1147,15 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 # scorer so consumers cannot confuse it with cyclomatic.
                 summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
 
-            envelope_kwargs = dict(
-                summary=summary,
-                stale_months=stale_months,
-                # W198 vocabulary drift fix: every per-directory row now
-                # carries both ``primary_author`` (git-blame vocabulary,
-                # kept for back-compat) and ``primary_actor`` (W182
-                # ActorRef crosswalk vocabulary). Same value, two keys —
-                # so a ``ChangeEvidence`` collector reading this envelope
-                # picks one canonical name without losing the original.
-                # ``top_authors`` entries get the same treatment: each
-                # row carries ``name`` (existing) and ``actor`` (new) so
-                # the crosswalk surface is consistent across the array.
-                directories=[
+            # W607-CQ: ``build_envelope_directories`` substrate -- the
+            # per-directory row construction. A KeyError on a malformed
+            # result row (missing ``directory`` / ``risk`` / etc.)
+            # degrades to [] so the envelope still composes the verdict
+            # and summary even when the upstream substrates raised AFTER
+            # producing the empty floor (or before, leaving the malformed
+            # rows in ``limited``).
+            def _build_envelope_directories():
+                return [
                     {
                         "directory": r["directory"],
                         "bus_factor": r["bus_factor"],
@@ -887,11 +1176,201 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                         "top_authors": [{**a, "actor": a.get("name")} for a in r["top_authors"]],
                     }
                     for r in limited
-                ],
+                ]
+
+            envelope_directories = _run_check_cq(
+                "build_envelope_directories",
+                _build_envelope_directories,
+                default=[],
+            )
+            if envelope_directories is None:
+                envelope_directories = []
+
+            # W607-EH -- score_classify boundary. Buckets the run by the
+            # minimum bus_factor across analysed directories:
+            #   * HEALTHY   -- min_bus_factor >= 3
+            #   * WARN      -- min_bus_factor == 2
+            #   * CRITICAL  -- min_bus_factor == 1
+            #   * DEGRADED  -- floor on raise (or results empty)
+            # W978 5th-discipline: ``results`` passed as a raw arg;
+            # min()/iteration lives INSIDE the closure (no len() / no
+            # min() at kwarg-bind).
+            def _score_classify_run(_results):
+                # W761/W847 retained UPPER-case for internal vocabulary —
+                # ``state`` is the W607-EH score_classify rollup label
+                # (HEALTHY / WARN / CRITICAL / DEGRADED), surfaced as the
+                # ``run_state`` summary field. Distinct from the canonical
+                # W547 ``severity`` envelope slot (bus-factor's summary
+                # has no ``severity`` slot by design — rollup is on
+                # ``run_state`` / ``directories_analyzed`` / ``high_risk``).
+                if not _results:
+                    return {"state": "DEGRADED", "scanned": 0}
+                _min_bf = min(r["bus_factor"] for r in _results)
+                if _min_bf >= 3:
+                    _state_label = "HEALTHY"
+                elif _min_bf == 2:
+                    _state_label = "WARN"
+                else:
+                    _state_label = "CRITICAL"
+                return {"state": _state_label, "scanned": len(_results)}
+
+            _score_dict = _run_check_eh(
+                "score_classify",
+                _score_classify_run,
+                results,
+                default={"state": "DEGRADED", "scanned": 0},
+            )
+
+            # W607-EH -- compute_predicate boundary. Rollup metrics dict
+            # surfacing aggregate dimensions (solo_authored_count,
+            # low_contributor_count, hottest_files) so a downstream refactor
+            # of the rollup logic surfaces a marker rather than crashing.
+            # W978 5th-discipline: ``results`` passed as a raw arg;
+            # counting / iteration lives INSIDE the closure.
+            def _compute_predicate_fields(_results):
+                _solo = 0
+                _low = 0
+                _hottest_files: list[dict] = []
+                for _r in _results:
+                    _bf = _r.get("bus_factor")
+                    if _bf == 1:
+                        _solo += 1
+                    if isinstance(_bf, int) and _bf <= 2:
+                        _low += 1
+                # hottest_files: top 3 directories by risk_score desc
+                _ranked = sorted(
+                    _results,
+                    key=lambda x: -(x.get("risk_score") or 0),
+                )[:3]
+                for _r in _ranked:
+                    _hottest_files.append(
+                        {
+                            "directory": _r.get("directory"),
+                            "bus_factor": _r.get("bus_factor"),
+                            "risk": _r.get("risk"),
+                        }
+                    )
+                return {
+                    "solo_authored_count": _solo,
+                    "low_contributor_count": _low,
+                    "hottest_files": _hottest_files,
+                }
+
+            _pred_fields = _run_check_eh(
+                "compute_predicate",
+                _compute_predicate_fields,
+                results,
+                default={
+                    "solo_authored_count": 0,
+                    "low_contributor_count": 0,
+                    "hottest_files": [],
+                },
+            )
+
+            # W607-EH -- compute_verdict boundary. Wraps the verdict
+            # string assembly so a downstream f-string refactor surfaces
+            # a marker rather than crashing the envelope. Literal
+            # "bus_factor completed" floor (LAW 6 still holds: the line
+            # works standalone).
+            #
+            # W978 1st-discipline: the floor MUST NOT re-interpolate the
+            # same values that tripped the closure. W978 2nd-discipline:
+            # ``default=`` is a literal constant.
+            def _build_verdict_str(_verdict_floor):
+                return _verdict_floor
+
+            verdict = _run_check_eh(
+                "compute_verdict",
+                _build_verdict_str,
+                bus_verdict,
+                default="bus_factor completed",
+            )
+            # Keep the original key in summary aligned with the wrapped
+            # verdict so downstream consumers (and the auto-fact
+            # humanizer) read the SAME string both layers produced.
+            summary["verdict"] = verdict
+
+            # W607-EH: surface score_classify + compute_predicate results
+            # on the envelope so consumers can read run state + rollup
+            # dimensions without re-deriving from the raw `directories`
+            # list. W978 7th-discipline: bare ``_score_dict["state"]``
+            # / ``_pred_fields["..."]`` lookups (floor dicts guarantee
+            # the keys) -- NOT ``.get(..., expensive_default)``.
+            summary["run_state"] = _score_dict["state"]
+            summary["solo_authored_count"] = _pred_fields["solo_authored_count"]
+            summary["low_contributor_count"] = _pred_fields["low_contributor_count"]
+            summary["hottest_files"] = _pred_fields["hottest_files"]
+
+            envelope_kwargs = dict(
+                summary=summary,
+                stale_months=stale_months,
+                # W198 vocabulary drift fix: every per-directory row now
+                # carries both ``primary_author`` (git-blame vocabulary,
+                # kept for back-compat) and ``primary_actor`` (W182
+                # ActorRef crosswalk vocabulary). Same value, two keys —
+                # so a ``ChangeEvidence`` collector reading this envelope
+                # picks one canonical name without losing the original.
+                # ``top_authors`` entries get the same treatment: each
+                # row carries ``name`` (existing) and ``actor`` (new) so
+                # the crosswalk surface is consistent across the array.
+                directories=envelope_directories,
             )
             if brain_methods:
                 envelope_kwargs["brain_methods"] = brain_list
-            click.echo(to_json(json_envelope("bus-factor", **envelope_kwargs)))
+            # W607-CQ + W607-EH: mirror combined substrate-CALL +
+            # aggregation-phase markers into BOTH the top-level envelope
+            # ``warnings_out`` AND ``summary.warnings_out`` so MCP
+            # consumers see disclosure regardless of which surface they
+            # read. Flipping ``partial_success: True`` is the Pattern-2
+            # silent-fallback guard -- a degraded substrate OR
+            # aggregation path must NOT be mistaken for a clean ranked
+            # verdict.
+            _combined_warnings = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
+            if _combined_warnings:
+                summary["partial_success"] = True
+                summary["warnings_out"] = list(_combined_warnings)
+                envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-EH -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("bus-factor", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. W978
+            # 6th-discipline: floor is a concrete dict, not a sentinel
+            # that may __len__-raise downstream.
+            _envelope_floor: dict = {
+                "command": "bus-factor",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": "bus_factor completed",
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            envelope = _run_check_eh(
+                "serialize_envelope",
+                json_envelope,
+                "bus-factor",
+                default=_envelope_floor,
+                **envelope_kwargs,
+            )
+            # W607-EH -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``bus_factor_serialize_envelope_failed:`` marker was
+            # appended to ``_w607eh_warnings_out`` and the floor stub
+            # carries only the pre-raise combined list. Rebuild the
+            # floor stub's warnings_out so the new marker reaches the
+            # JSON output. Clean path -> envelope is the real
+            # json_envelope return value, no rebuild.
+            if envelope is _envelope_floor and _w607eh_warnings_out:
+                _combined_warnings = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                envelope = _envelope_floor
+            click.echo(to_json(envelope))
             return
 
         # --- Text output ---

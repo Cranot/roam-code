@@ -123,6 +123,21 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-C: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the findings-registry query path. ``db/findings.py``
+    # is W604 fail-loud-correct (no try/except inside the substrate;
+    # ``sqlite3.OperationalError`` propagates loudly). The consumer-side
+    # disclosure shape therefore lives at the **outer-guard boundary**:
+    # any uncaught exception from the registry query (substrate
+    # corruption, schema drift, locked DB, malformed migration) emits
+    # the canonical marker
+    # ``findings_query_failed:<exc_class>:<detail>`` and the envelope
+    # surfaces with empty findings + ``partial_success=True``. Mirrors
+    # the cmd_retrieve W607-B / cmd_search_semantic W607-A idiom.
+    # Empty bucket → byte-identical envelope (hash-stable per
+    # ``json_envelope`` W817 always-emit discipline).
+    warnings_out: list[str] = []
+
     with open_db(readonly=True) as conn:
         # W1063 (sibling of W1057): when ``--detector`` is supplied,
         # validate against the registry's known-detectors set BEFORE
@@ -146,8 +161,21 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
         # The agent now knows the difference between "fix the typo" and
         # "run the detector first" instead of being told both are equally
         # unknown.
-        live_counts = count_by_detector(conn)
-        full_vocabulary = known_detector_names(conn)
+        try:
+            live_counts = count_by_detector(conn)
+            full_vocabulary = known_detector_names(conn)
+        except Exception as exc:
+            # W607-C outer-guard: registry query raised before we could
+            # build the detector vocabulary. Disclose loudly via the
+            # canonical ``findings_query_failed:<exc_class>:<detail>``
+            # marker (mirrors cmd_retrieve W607-B
+            # ``retrieve_pipeline_failed:...`` outer-guard idiom) and
+            # fall back to empty floors so the rest of the envelope
+            # still emits consistent fields. Without this, the agent
+            # got a Click traceback and no structured signal.
+            warnings_out.append(f"findings_query_failed:{type(exc).__name__}:{exc}")
+            live_counts = {}
+            full_vocabulary = frozenset()
         frag = (
             structured_unknown_filter(
                 requested=detector,
@@ -194,6 +222,13 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                         "subject_id": subject_id,
                     },
                 }
+                if warnings_out:
+                    # W607-C Pattern-2 disclosure: surface markers AND
+                    # flip partial_success so consumers can distinguish
+                    # "clean unknown-detector branch" from "registry
+                    # query failed mid-build of the vocabulary".
+                    summary_payload["warnings_out"] = list(warnings_out)
+                    summary_payload["partial_success"] = True
                 click.echo(
                     to_json(
                         json_envelope(
@@ -207,6 +242,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                                 "facts": frag["facts"],
                                 "next_commands": ["roam findings count"],
                             },
+                            **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                         )
                     )
                 )
@@ -228,23 +264,30 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                 f"findings on this project yet (run `roam {detector}` first)"
             )
             if json_mode:
+                summary_not_emitted: dict[str, object] = {
+                    "verdict": verdict_not_emitted,
+                    "partial_success": True,
+                    "state": "not_yet_emitted",
+                    "requested_detector": detector,
+                    "known_detectors": sorted(full_vocabulary),
+                    "total_findings": 0,
+                    "filters": {
+                        "detector": detector,
+                        "subject_kind": subject_kind,
+                        "subject_id": subject_id,
+                    },
+                }
+                if warnings_out:
+                    # W607-C disclosure — partial_success is already
+                    # True for this state, but the marker bucket must
+                    # still surface so consumers see the substrate
+                    # signal beyond the not_yet_emitted state.
+                    summary_not_emitted["warnings_out"] = list(warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "findings-list",
-                            summary={
-                                "verdict": verdict_not_emitted,
-                                "partial_success": True,
-                                "state": "not_yet_emitted",
-                                "requested_detector": detector,
-                                "known_detectors": sorted(full_vocabulary),
-                                "total_findings": 0,
-                                "filters": {
-                                    "detector": detector,
-                                    "subject_kind": subject_kind,
-                                    "subject_id": subject_id,
-                                },
-                            },
+                            summary=summary_not_emitted,
                             budget=token_budget,
                             findings=[],
                             agent_contract={
@@ -257,6 +300,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                                     "roam findings count",
                                 ],
                             },
+                            **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                         )
                     )
                 )
@@ -268,13 +312,22 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
             )
             return
 
-        rows = list_findings(
-            conn,
-            detector=detector,
-            subject_kind=subject_kind,
-            subject_id=subject_id,
-            limit=limit,
-        )
+        try:
+            rows = list_findings(
+                conn,
+                detector=detector,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                limit=limit,
+            )
+        except Exception as exc:
+            # W607-C outer-guard: ``list_findings`` raised before
+            # returning rows. Same canonical marker family as the
+            # vocabulary guard above. Fall back to empty rows so the
+            # envelope still emits the populated-vs-empty-state contract
+            # cleanly.
+            warnings_out.append(f"findings_query_failed:{type(exc).__name__}:{exc}")
+            rows = []
 
     # Empty state: the registry may be empty either because no detector
     # has migrated yet (typical today) OR because the filters excluded
@@ -283,27 +336,37 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
     if not rows:
         verdict_empty = "no findings registered (registry empty or filters too narrow)"
         if json_mode:
+            summary_empty: dict[str, object] = {
+                "verdict": verdict_empty,
+                "partial_success": False,
+                "state": "empty",
+                "total_findings": 0,
+                "filters": {
+                    "detector": detector,
+                    "subject_kind": subject_kind,
+                    "subject_id": subject_id,
+                },
+            }
+            if warnings_out:
+                # W607-C disclosure: registry query raised (e.g. list_findings
+                # OperationalError) but the empty-floor fallback let us still
+                # produce a structured envelope. Flip partial_success +
+                # surface markers so the agent knows the empty rows are NOT
+                # the same as a legitimately empty registry.
+                summary_empty["warnings_out"] = list(warnings_out)
+                summary_empty["partial_success"] = True
             click.echo(
                 to_json(
                     json_envelope(
                         "findings-list",
-                        summary={
-                            "verdict": verdict_empty,
-                            "partial_success": False,
-                            "state": "empty",
-                            "total_findings": 0,
-                            "filters": {
-                                "detector": detector,
-                                "subject_kind": subject_kind,
-                                "subject_id": subject_id,
-                            },
-                        },
+                        summary=summary_empty,
                         budget=token_budget,
                         findings=[],
                         agent_contract={
                             "facts": ["0 findings registered"],
                             "next_commands": ["roam findings count"],
                         },
+                        **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                     )
                 )
             )
@@ -316,28 +379,38 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
     verdict = f"{len(rows)} findings from {len(detectors_present)} detectors"
 
     if json_mode:
+        summary_populated: dict[str, object] = {
+            "verdict": verdict,
+            "partial_success": False,
+            "state": "populated",
+            "total_findings": len(rows),
+            "detectors": detectors_present,
+            "filters": {
+                "detector": detector,
+                "subject_kind": subject_kind,
+                "subject_id": subject_id,
+            },
+        }
+        if warnings_out:
+            # W607-C disclosure: extremely rare on the populated branch
+            # (we already passed list_findings successfully) — but if a
+            # partial substrate fault was disclosed during vocabulary
+            # build, surface it here so the agent knows results may be
+            # incomplete relative to the canonical detector set.
+            summary_populated["warnings_out"] = list(warnings_out)
+            summary_populated["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "findings-list",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": False,
-                        "state": "populated",
-                        "total_findings": len(rows),
-                        "detectors": detectors_present,
-                        "filters": {
-                            "detector": detector,
-                            "subject_kind": subject_kind,
-                            "subject_id": subject_id,
-                        },
-                    },
+                    summary=summary_populated,
                     budget=token_budget,
                     findings=rows,
                     agent_contract={
                         "facts": [f"{len(rows)} findings"],
                         "next_commands": [f"roam findings show {rows[0]['finding_id_str']}"],
                     },
+                    **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                 )
             )
         )
@@ -383,29 +456,46 @@ def findings_show(ctx, finding_id_str):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-C: Pattern-2 consumer-layer wiring — outer-guard around the
+    # registry ``get_finding`` query (mirrors the ``findings_list``
+    # idiom). Empty bucket → byte-identical envelope (hash-stable).
+    warnings_out: list[str] = []
+
     with open_db(readonly=True) as conn:
-        record = get_finding(conn, finding_id_str)
+        try:
+            record = get_finding(conn, finding_id_str)
+        except Exception as exc:
+            warnings_out.append(f"findings_query_failed:{type(exc).__name__}:{exc}")
+            record = None
 
     if record is None:
+        # W607-C: when the registry query raised, ``record is None``
+        # could be either "no row matched" or "substrate failure".
+        # The verdict + state stays unknown_finding (consumer-visible
+        # behaviour) but the warnings_out bucket disambiguates.
         verdict_missing = f"finding id {finding_id_str!r} not found (run `roam findings list` to discover valid ids)"
         if json_mode:
+            summary_missing: dict[str, object] = {
+                "verdict": verdict_missing,
+                "partial_success": True,
+                "state": "unknown_finding",
+                "error": "finding_not_found",
+                "total_findings": 0,
+            }
+            if warnings_out:
+                summary_missing["warnings_out"] = list(warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
                         "findings-show",
-                        summary={
-                            "verdict": verdict_missing,
-                            "partial_success": True,
-                            "state": "unknown_finding",
-                            "error": "finding_not_found",
-                            "total_findings": 0,
-                        },
+                        summary=summary_missing,
                         budget=token_budget,
                         finding=None,
                         agent_contract={
                             "facts": [f"no finding with id {finding_id_str}"],
                             "next_commands": ["roam findings list"],
                         },
+                        **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                     )
                 )
             )
@@ -416,18 +506,26 @@ def findings_show(ctx, finding_id_str):
     verdict = f"finding {record['finding_id_str']} from {record['source_detector']} ({record['confidence']})"
 
     if json_mode:
+        summary_found: dict[str, object] = {
+            "verdict": verdict,
+            "partial_success": False,
+            "state": "found",
+            "total_findings": 1,
+        }
+        if warnings_out:
+            # Unreachable in practice (we have a record → no exception
+            # was raised) but kept for shape symmetry across the three
+            # subcommand envelope-emit sites.
+            summary_found["warnings_out"] = list(warnings_out)
+            summary_found["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "findings-show",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": False,
-                        "state": "found",
-                        "total_findings": 1,
-                    },
+                    summary=summary_found,
                     budget=token_budget,
                     finding=record,
+                    **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                 )
             )
         )
@@ -471,8 +569,18 @@ def findings_count(ctx):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-C: Pattern-2 consumer-layer wiring — outer-guard around the
+    # registry ``count_by_detector`` query (mirrors ``findings_list`` /
+    # ``findings_show``). Empty bucket → byte-identical envelope
+    # (hash-stable).
+    warnings_out: list[str] = []
+
     with open_db(readonly=True) as conn:
-        counts = count_by_detector(conn)
+        try:
+            counts = count_by_detector(conn)
+        except Exception as exc:
+            warnings_out.append(f"findings_query_failed:{type(exc).__name__}:{exc}")
+            counts = {}
 
     total = sum(counts.values())
     detector_count = len(counts)
@@ -480,23 +588,33 @@ def findings_count(ctx):
     if total == 0:
         verdict_empty = "no findings registered (no detector has emitted to the registry yet)"
         if json_mode:
+            summary_empty_count: dict[str, object] = {
+                "verdict": verdict_empty,
+                "partial_success": False,
+                "state": "empty",
+                "total_findings": 0,
+                "total_detectors": 0,
+            }
+            if warnings_out:
+                # W607-C disclosure: registry query raised but the
+                # empty-floor fallback produced a structured envelope.
+                # Flip partial_success so the agent knows the empty
+                # counts are NOT the same as a legitimately empty
+                # registry.
+                summary_empty_count["warnings_out"] = list(warnings_out)
+                summary_empty_count["partial_success"] = True
             click.echo(
                 to_json(
                     json_envelope(
                         "findings-count",
-                        summary={
-                            "verdict": verdict_empty,
-                            "partial_success": False,
-                            "state": "empty",
-                            "total_findings": 0,
-                            "total_detectors": 0,
-                        },
+                        summary=summary_empty_count,
                         budget=token_budget,
                         counts={},
                         agent_contract={
                             "facts": ["0 findings registered"],
                             "next_commands": ["roam findings list"],
                         },
+                        **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                     )
                 )
             )
@@ -507,17 +625,24 @@ def findings_count(ctx):
     verdict = f"{total} findings across {detector_count} detectors"
 
     if json_mode:
+        summary_populated_count: dict[str, object] = {
+            "verdict": verdict,
+            "partial_success": False,
+            "state": "populated",
+            "total_findings": total,
+            "total_detectors": detector_count,
+        }
+        if warnings_out:
+            # Unreachable on the populated branch (we have counts → no
+            # exception raised) but kept for shape symmetry across the
+            # three subcommand envelope-emit sites.
+            summary_populated_count["warnings_out"] = list(warnings_out)
+            summary_populated_count["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "findings-count",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": False,
-                        "state": "populated",
-                        "total_findings": total,
-                        "total_detectors": detector_count,
-                    },
+                    summary=summary_populated_count,
                     budget=token_budget,
                     counts=counts,
                     agent_contract={
@@ -527,6 +652,7 @@ def findings_count(ctx):
                         ],
                         "next_commands": ["roam findings list"],
                     },
+                    **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                 )
             )
         )

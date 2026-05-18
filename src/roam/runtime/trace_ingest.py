@@ -6,6 +6,8 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+from roam.output.formatter import WarningsOut
+
 # OTel span-status codes that signal an error. Both numeric (``2`` per
 # the OTLP wire format) and the canonical string label are accepted —
 # different producers emit different shapes. Centralised here so the
@@ -257,7 +259,12 @@ def _statement_type(statement: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
+def ingest_generic_trace(
+    conn: sqlite3.Connection,
+    trace_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Parse a simple generic JSON trace format.
 
     Expected format::
@@ -278,7 +285,22 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
     a mapping. Pattern-2 "make fallback chains loud" — silently
     skipping malformed input would let an OTel/Jaeger/Zipkin file
     routed here by mistake produce zero rows and a SUCCESS verdict.
+
+    W599: generic stays loud on wrong-shape (ValueError) — that
+    discipline pre-dates W599 and is intentional. The only post-parse
+    silent-empty path is an *empty list* (``[]``), which is a
+    legitimate cold-trace sentinel; the marker is informational.
+
+    Emitted kind (closed enum):
+
+      * ``trace_ingest_generic_empty:<path>`` — JSON parsed cleanly
+        as an empty list (legitimate cold-trace sentinel; no entries).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     ensure_runtime_table(conn)
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -289,6 +311,10 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
             f"got {type(data).__name__}; use auto_detect_format() to "
             f"route to the right ingester"
         )
+
+    if not data:
+        _emit(f"trace_ingest_generic_empty:{trace_path}")
+        return []
 
     results = []
     for i, entry in enumerate(data):
@@ -319,18 +345,67 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
     return results
 
 
-def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
+def ingest_otel_trace(
+    conn: sqlite3.Connection,
+    trace_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Parse OpenTelemetry JSON trace format (OTLP JSON).
 
     Handles the standard OTLP JSON export structure with
     resourceSpans > scopeSpans > spans.
+
+    W599: mirrors the W595 ``read_permit`` / W596 ``read_run_meta`` /
+    W597 ``daemon_state`` / W598 ``_load_cache`` plumb — when
+    *warnings_out* is supplied, the silent-empty wrong-shape sites
+    each append one structured closed-enum marker so callers can tell
+    "valid JSON but wrong format (misroute)" from "valid OTel JSON
+    with zero spans (legitimate cold-trace dump)". The returned
+    ``list[dict]`` shape is PRESERVED — the empty-list return is the
+    caller contract. ``warnings_out=None`` (default) preserves the
+    pre-W599 silent-empty behaviour.
+
+    W978 first-hypothesis finding: ``open()`` and ``json.load()``
+    already RAISE loudly (``OSError`` / ``JSONDecodeError``); the CLI
+    bridge in ``cmd_ingest_trace`` catches both and emits a structured
+    parse-error envelope. There is no silent-None read-failure path
+    to plumb. The plumb here targets the *post-parse* silent-empty
+    paths: valid JSON whose top-level shape is not OTel-flavoured.
+
+    Marker shape mirrors W595's / W596's / W597's / W598's closed-enum
+    vocabulary with a ``trace_ingest_otel_`` prefix so a caller
+    threading the same bucket through multiple substrate read sites
+    sees one uniform marker vocabulary.
+
+    Emitted kinds (closed enum):
+
+      * ``trace_ingest_otel_corrupt:<path>:WrongFormat`` — JSON parsed
+        cleanly but the top-level shape is not an OTLP doc (missing
+        both ``resourceSpans`` and ``resource_spans`` keys; or
+        top-level is not a JSON object). This is a misroute signal:
+        a Jaeger/Zipkin/generic file was handed to the OTel reader.
+      * ``trace_ingest_otel_empty:<path>`` — JSON parsed cleanly,
+        ``resourceSpans`` was present but contained zero spans. This
+        is the legitimate cold-trace cold-start sentinel (trace agent
+        started but no traffic yet); the marker is informational
+        rather than an error.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     ensure_runtime_table(conn)
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     # Collect spans grouped by operation name
     span_groups: dict[str, list[dict]] = {}
+
+    if not isinstance(data, dict) or ("resourceSpans" not in data and "resource_spans" not in data):
+        _emit(f"trace_ingest_otel_corrupt:{trace_path}:WrongFormat")
+        return []
 
     resource_spans = data.get("resourceSpans", data.get("resource_spans", []))
     for rs in resource_spans:
@@ -414,21 +489,51 @@ def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
         )
         results.append(result)
 
+    if not results:
+        # Legitimate cold-trace sentinel: OTel doc parsed cleanly but
+        # contained zero spans. Informational marker so an operator
+        # threading ``warnings_out`` can distinguish "no spans ingested
+        # because file was empty" from "no spans ingested because the
+        # file matched a different format".
+        _emit(f"trace_ingest_otel_empty:{trace_path}")
     return results
 
 
-def ingest_jaeger_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
+def ingest_jaeger_trace(
+    conn: sqlite3.Connection,
+    trace_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Parse Jaeger JSON format.
 
     Handles the standard Jaeger UI export structure with
     data > traces > spans.
+
+    W599: mirrors the OTel sibling. Closed-enum markers:
+
+      * ``trace_ingest_jaeger_corrupt:<path>:WrongFormat`` — JSON
+        parsed cleanly but the top-level shape is not a Jaeger doc
+        (top-level is not an object, or has no ``data``/``spans``
+        key). Misroute signal.
+      * ``trace_ingest_jaeger_empty:<path>`` — Jaeger doc parsed
+        cleanly with zero spans (legitimate cold-trace sentinel).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     ensure_runtime_table(conn)
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     # Collect spans grouped by operation name
     span_groups: dict[str, list[dict]] = {}
+
+    if not isinstance(data, dict) or ("data" not in data and "spans" not in data):
+        _emit(f"trace_ingest_jaeger_corrupt:{trace_path}:WrongFormat")
+        return []
 
     traces = data.get("data", [data]) if isinstance(data.get("data"), list) else [data]
     for trace in traces:
@@ -474,20 +579,54 @@ def ingest_jaeger_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]
         )
         results.append(result)
 
+    if not results:
+        _emit(f"trace_ingest_jaeger_empty:{trace_path}")
     return results
 
 
-def ingest_zipkin_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
+def ingest_zipkin_trace(
+    conn: sqlite3.Connection,
+    trace_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Parse Zipkin JSON format.
 
     Zipkin exports as a flat list of spans.
+
+    W599: mirrors the OTel/Jaeger siblings. Closed-enum markers:
+
+      * ``trace_ingest_zipkin_corrupt:<path>:WrongFormat`` — JSON
+        parsed cleanly but the top-level is neither a list nor a dict
+        that looks like a Zipkin span (no ``traceId``/``id`` keys on
+        the wrapped element). Misroute signal.
+      * ``trace_ingest_zipkin_empty:<path>`` — top-level was an empty
+        list (legitimate cold-trace sentinel).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     ensure_runtime_table(conn)
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     # Zipkin is a flat list of spans
-    if not isinstance(data, list):
+    if isinstance(data, list):
+        if not data:
+            # Empty list — legitimate cold-trace sentinel.
+            _emit(f"trace_ingest_zipkin_empty:{trace_path}")
+            return []
+    else:
+        # Single-span dict — heuristic check that it actually looks
+        # like a Zipkin span. The Zipkin span shape has both
+        # ``traceId`` and ``id`` (auto_detect_format relies on the
+        # same pair). If either is missing, it's a misroute (a
+        # Jaeger/OTel/generic doc handed to the Zipkin reader).
+        if not isinstance(data, dict) or "traceId" not in data or "id" not in data:
+            _emit(f"trace_ingest_zipkin_corrupt:{trace_path}:WrongFormat")
+            return []
         data = [data]
 
     span_groups: dict[str, list[dict]] = {}
@@ -532,7 +671,11 @@ def ingest_zipkin_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]
     return results
 
 
-def auto_detect_format(trace_path: str) -> str:
+def auto_detect_format(
+    trace_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> str:
     """Auto-detect trace format from JSON structure.
 
     Returns one of: "otel", "jaeger", "zipkin", "generic".
@@ -542,7 +685,28 @@ def auto_detect_format(trace_path: str) -> str:
     structured error envelope instead of a stack trace. Mirrors the
     "make fallback chains loud" rule — the underlying failure stays
     typed but the wrapping is uniform for the caller.
+
+    W599: when no shape matches (dict without OTel/Jaeger keys, list
+    of non-Zipkin/non-generic dicts, empty list, or non-collection
+    root), the detector silently falls back to ``"generic"``. With
+    *warnings_out* supplied, the silent fallback emits a closed-enum
+    marker so a caller threading the bucket can disclose the misroute
+    risk rather than letting a non-generic file produce zero rows
+    under a SUCCESS verdict.
+
+    Emitted kind (closed enum):
+
+      * ``trace_ingest_auto_detect_fallback_generic:<path>`` — no
+        format-specific shape matched; the detector defaulted to
+        ``"generic"``. The string return is unchanged; the marker is
+        informational. ``warnings_out=None`` (default) preserves the
+        pre-W599 silent-fallback behaviour.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     try:
         with open(trace_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -577,4 +741,5 @@ def auto_detect_format(trace_path: str) -> str:
                 if "function" in first:
                     return "generic"
 
+    _emit(f"trace_ingest_auto_detect_fallback_generic:{trace_path}")
     return "generic"

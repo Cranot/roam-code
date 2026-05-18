@@ -1143,6 +1143,67 @@ def conventions(ctx, max_outliers, persist):
     include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
     ensure_index()
 
+    # W607-CW -- substrate-boundary plumbing for cmd_conventions.
+    # ``_run_check_cw`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cw_warnings_out`` rather than
+    # crashing the conventions detector outright. cmd_conventions is
+    # the project-convention detector (W133 origin per CLAUDE.md
+    # detector roster -- part of the original 16 findings-registry
+    # substrate detectors). Per W162 (test/fixture path exclusion +
+    # TypeAlias detection) + W988 (Pattern-2 empty-state playbook
+    # applied) + Fix G (conventions_helper.compute_conventions
+    # canonical aggregator delegation) the substrate boundaries here
+    # are: the conventions_helper delegation (Fix G), the per-axis
+    # analysis helpers (files/imports/errors/exports), the registry
+    # mirror (W133 --persist), and the verdict / wrap_findings
+    # composition. Marker family
+    # ``conventions_<phase>_failed:<exc_class>:<detail>``. Closes the
+    # 12-WAY detector family with cmd_orphan_imports + cmd_bus_factor +
+    # cmd_hotspots + cmd_auth_gaps + cmd_n1 + cmd_over_fetch +
+    # cmd_missing_index + cmd_smells + cmd_vibe_check + cmd_clones +
+    # cmd_duplicates + cmd_dead.
+    #
+    # Substrates wrapped:
+    #
+    #   * analyse_naming             -- Fix G conventions_helper
+    #                                   delegation (the canonical
+    #                                   per-(family, group) aggregator)
+    #   * query_files                -- ``SELECT path FROM files`` row
+    #                                   fetch (DB read)
+    #   * analyse_files              -- file-organization summarizer
+    #                                   (test patterns / barrel files
+    #                                   / top dirs)
+    #   * analyse_imports            -- import-edge style detector
+    #                                   (absolute vs relative)
+    #   * analyse_error_handling     -- error-symbol roll-up
+    #   * analyse_exports            -- is_exported distribution +
+    #                                   JS/TS default-vs-named style
+    #   * emit_findings              -- W133 registry mirror
+    #                                   (sqlite3.OperationalError silent
+    #                                   no-op preserved for pre-W89 DB)
+    #   * build_naming_violations    -- per-outlier dict assembly with
+    #                                   group_dominant_pct annotation
+    #   * wrap_findings_classify     -- R22 wrap_findings +
+    #                                   confidence_distribution +
+    #                                   verdict_with_high_count
+    #   * compose_verdict            -- LAW 6 single-line verdict
+    _w607cw_warnings_out: list[str] = []
+
+    def _run_check_cw(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CW marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``conventions_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607cw_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cw_warnings_out.append(f"conventions_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         project = find_project_root().name
 
@@ -1151,7 +1212,21 @@ def conventions(ctx, max_outliers, persist):
         # the legacy scan-everything behaviour is still available via
         # the global ``--include-excluded`` flag.
         exclude_paths = () if include_excluded else None
-        all_symbols, naming_summary, outliers, affixes = _analyze_naming(conn, exclude_paths=exclude_paths)
+        # W607-CW: ``analyse_naming`` substrate -- the Fix G canonical
+        # delegation to conventions_helper.compute_conventions. A raise
+        # in the helper (e.g. on a malformed symbols table) degrades to
+        # the empty-floor tuple so the envelope's per-axis composition
+        # still runs.
+        analyse_naming_result = _run_check_cw(
+            "analyse_naming",
+            _analyze_naming,
+            conn,
+            exclude_paths=exclude_paths,
+            default=([], {}, [], {"prefixes": [], "suffixes": []}),
+        )
+        if analyse_naming_result is None:
+            analyse_naming_result = ([], {}, [], {"prefixes": [], "suffixes": []})
+        all_symbols, naming_summary, outliers, affixes = analyse_naming_result
 
         # --- W133: mirror outliers into the central findings registry ---
         # Runs ONLY with --persist. We emit one row per convention
@@ -1159,72 +1234,238 @@ def conventions(ctx, max_outliers, persist):
         # the standard envelope (the per-(family, group) summary).
         # Wrapped defensively so a pre-W89 DB (no ``findings`` table)
         # degrades cleanly without breaking the standard output path.
+        # W607-CW: ``emit_findings`` substrate boundary uses DIRECT
+        # try/except (not _run_check_cw) because the pre-W89 schema
+        # path (sqlite3.OperationalError on missing ``findings`` table)
+        # is the EXPECTED degraded path -- the W133 silent no-op
+        # contract for that case must NOT produce a W607-CW marker.
+        # Generic exceptions surface via
+        # ``conventions_emit_findings_failed:<exc_class>:<detail>``
+        # marker. Mirrors the cmd_bus_factor W607-CQ template:
+        # OperationalError == silent no-op; generic Exception ==
+        # W607-CW marker.
         if persist:
             try:
                 _emit_conventions_findings(conn, outliers, CONVENTIONS_DETECTOR_VERSION)
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CW disclosure
+                _w607cw_warnings_out.append(f"conventions_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         # ---- 2. File organization ----
-        file_rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
-        file_paths = [r["path"] for r in file_rows]
-        file_info = _analyze_files(file_paths)
+        # W607-CW: ``query_files`` substrate -- the SELECT path FROM
+        # files row fetch. A raise (e.g. OperationalError on missing
+        # files table) degrades to [] so the per-file analysis runs
+        # against the empty floor.
+        file_paths = _run_check_cw(
+            "query_files",
+            lambda: [r["path"] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()],
+            default=[],
+        )
+        if file_paths is None:
+            file_paths = []
+        # W607-CW: ``analyse_files`` substrate -- file-organization
+        # summarizer (test patterns / barrel files / top dirs).
+        file_info = _run_check_cw(
+            "analyse_files",
+            _analyze_files,
+            file_paths,
+            default={
+                "total_files": 0,
+                "top_dirs": [],
+                "test_patterns": [],
+                "test_dirs": [],
+                "test_file_count": 0,
+                "barrel_files": 0,
+                "has_barrels": False,
+            },
+        )
+        if file_info is None:
+            file_info = {
+                "total_files": 0,
+                "top_dirs": [],
+                "test_patterns": [],
+                "test_dirs": [],
+                "test_file_count": 0,
+                "barrel_files": 0,
+                "has_barrels": False,
+            }
 
         # ---- 3. Import patterns ----
-        import_info = _analyze_imports(conn)
+        # W607-CW: ``analyse_imports`` substrate -- import-edge style
+        # detector. A raise in the SQL ingest degrades to the empty
+        # 'unknown' floor.
+        import_info = _run_check_cw(
+            "analyse_imports",
+            _analyze_imports,
+            conn,
+            default={
+                "total_import_edges": 0,
+                "absolute_imports": 0,
+                "relative_imports": 0,
+                "absolute_pct": 0,
+                "relative_pct": 0,
+                "style": "unknown",
+            },
+        )
+        if import_info is None:
+            import_info = {
+                "total_import_edges": 0,
+                "absolute_imports": 0,
+                "relative_imports": 0,
+                "absolute_pct": 0,
+                "relative_pct": 0,
+                "style": "unknown",
+            }
 
         # ---- 4. Error handling ----
-        error_info = _analyze_error_handling(conn)
+        # W607-CW: ``analyse_error_handling`` substrate -- error-symbol
+        # roll-up. A raise (e.g. file_stats query trips) degrades to
+        # the zero-count floor.
+        error_info = _run_check_cw(
+            "analyse_error_handling",
+            _analyze_error_handling,
+            conn,
+            default={
+                "error_symbol_count": 0,
+                "error_classes": 0,
+                "error_functions": 0,
+                "error_symbols": [],
+                "avg_complexity": 0,
+                "max_complexity": 0,
+                "files_with_complexity": 0,
+            },
+        )
+        if error_info is None:
+            error_info = {
+                "error_symbol_count": 0,
+                "error_classes": 0,
+                "error_functions": 0,
+                "error_symbols": [],
+                "avg_complexity": 0,
+                "max_complexity": 0,
+                "files_with_complexity": 0,
+            }
 
         # ---- 5. Export patterns ----
-        export_info = _analyze_exports(conn)
+        # W607-CW: ``analyse_exports`` substrate -- is_exported
+        # distribution + JS/TS default-vs-named style. A raise degrades
+        # to the zero-count floor with style="unknown".
+        export_info = _run_check_cw(
+            "analyse_exports",
+            _analyze_exports,
+            conn,
+            default={
+                "total_symbols": 0,
+                "exported": 0,
+                "private": 0,
+                "exported_pct": 0,
+                "by_kind": [],
+                "js_ts_export_style": "unknown",
+                "js_ts_single_export_files": 0,
+                "js_ts_multi_export_files": 0,
+            },
+        )
+        if export_info is None:
+            export_info = {
+                "total_symbols": 0,
+                "exported": 0,
+                "private": 0,
+                "exported_pct": 0,
+                "by_kind": [],
+                "js_ts_export_style": "unknown",
+                "js_ts_single_export_files": 0,
+                "js_ts_multi_export_files": 0,
+            }
 
         # ---- Build verdict ----
-        # Dominant naming style across all groups
-        dominant_desc = ""
-        if naming_summary:
-            # Pick the group with the most symbols to represent overall style
-            biggest_group = max(naming_summary.values(), key=lambda g: g["total"])
-            dominant_desc = f"{biggest_group['dominant_style']} ({biggest_group['percent']}%)"
-        test_desc = f"{file_info['test_file_count']} test files" if file_info["test_file_count"] else "no test files"
-        outlier_desc = f"{len(outliers)} naming outliers" if outliers else "consistent naming"
-        verdict = f"{outlier_desc}, {dominant_desc}, {test_desc}"
+        # W607-CW: ``compose_verdict`` substrate -- LAW 6 single-line
+        # verdict string. The ``max(naming_summary.values(), key=...)``
+        # call and the ``biggest_group['dominant_style']`` access are
+        # KeyError / ValueError prone on a degraded naming_summary
+        # (e.g. if analyse_naming raised earlier and returned the {}
+        # empty floor). The wrap degrades to the explicit "no data"
+        # floor so the envelope still emits a non-empty verdict
+        # (W811/W817-style Pattern-2 contract).
+        def _compose_verdict():
+            dominant_desc = ""
+            if naming_summary:
+                # Pick the group with the most symbols to represent overall style
+                biggest_group = max(naming_summary.values(), key=lambda g: g["total"])
+                dominant_desc = f"{biggest_group['dominant_style']} ({biggest_group['percent']}%)"
+            test_desc = (
+                f"{file_info['test_file_count']} test files" if file_info["test_file_count"] else "no test files"
+            )
+            outlier_desc = f"{len(outliers)} naming outliers" if outliers else "consistent naming"
+            return f"{outlier_desc}, {dominant_desc}, {test_desc}"
+
+        verdict = _run_check_cw("compose_verdict", _compose_verdict, default="no data")
+        if verdict is None:
+            verdict = "no data"
 
         # ---- JSON output ----
         if json_mode:
-            # Annotate each outlier with the dominant-style percent of
-            # its (family, group) so the R22 classifier can derive a
-            # confidence label without needing naming_summary at hand.
-            violation_list = []
-            for o in outliers:
-                family = o.get("language_family", "unknown")
-                # Recover group by looking at the kind (we don't store
-                # group on the outlier directly).
-                kind = o.get("kind", "")
-                group = _group_for_kind(kind)
-                key = f"{family}/{group}" if family != "unknown" else group
-                grp_info = naming_summary.get(key) or {}
-                violation_list.append(
-                    {
-                        "name": o["name"],
-                        "kind": o["kind"],
-                        "actual_style": o["actual_style"],
-                        "expected_style": o["expected_style"],
-                        "file": o["file"],
-                        "line": o["line"],
-                        "group_dominant_pct": grp_info.get("percent"),
-                        "group_dominant_style": grp_info.get("dominant_style"),
-                        "naming_group": key,
-                    }
-                )
+            # W607-CW: ``build_naming_violations`` substrate -- per-outlier
+            # dict assembly with group_dominant_pct annotation. A raise
+            # (e.g. KeyError on a malformed outlier missing ``name``)
+            # degrades to [] so the envelope's violations array stays
+            # well-formed.
+            def _build_naming_violations():
+                violation_list = []
+                for o in outliers:
+                    family = o.get("language_family", "unknown")
+                    # Recover group by looking at the kind (we don't store
+                    # group on the outlier directly).
+                    kind = o.get("kind", "")
+                    group = _group_for_kind(kind)
+                    key = f"{family}/{group}" if family != "unknown" else group
+                    grp_info = naming_summary.get(key) or {}
+                    violation_list.append(
+                        {
+                            "name": o["name"],
+                            "kind": o["kind"],
+                            "actual_style": o["actual_style"],
+                            "expected_style": o["expected_style"],
+                            "file": o["file"],
+                            "line": o["line"],
+                            "group_dominant_pct": grp_info.get("percent"),
+                            "group_dominant_style": grp_info.get("dominant_style"),
+                            "naming_group": key,
+                        }
+                    )
+                return violation_list
+
+            violation_list = _run_check_cw(
+                "build_naming_violations",
+                _build_naming_violations,
+                default=[],
+            )
+            if violation_list is None:
+                violation_list = []
+
             # R22: wrap each violation in {value, confidence, reason}.
             # Consumers that previously read violations[i]["name"] must
             # now read violations[i]["value"]["name"] plus
             # violations[i]["confidence"] / violations[i]["reason"].
-            violation_triples = wrap_findings(violation_list, classifier=_convention_classify)
-            distribution = confidence_distribution(violation_triples)
-            wrapped_verdict = verdict_with_high_count(verdict, distribution)
+            # W607-CW: ``wrap_findings_classify`` substrate -- R22
+            # wrap_findings + confidence_distribution +
+            # verdict_with_high_count composition. A raise in the
+            # classifier or the distribution rollup degrades to the
+            # unwrapped verdict + empty distribution.
+            def _wrap_findings_classify():
+                triples = wrap_findings(violation_list, classifier=_convention_classify)
+                dist = confidence_distribution(triples)
+                return triples, dist, verdict_with_high_count(verdict, dist)
+
+            wfc_result = _run_check_cw(
+                "wrap_findings_classify",
+                _wrap_findings_classify,
+                default=([], {}, verdict),
+            )
+            if wfc_result is None:
+                wfc_result = ([], {}, verdict)
+            violation_triples, distribution, wrapped_verdict = wfc_result
             # W805-followup-E: empty-state disclosure (Pattern 2 silent-
             # fallback fix). When naming_summary is empty the per-group
             # symbol analysis ran against zero symbols; "consistent
@@ -1250,22 +1491,28 @@ def conventions(ctx, max_outliers, persist):
             if empty_naming:
                 summary["partial_success"] = True
                 summary["state"] = "no_symbols_analyzed"
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "conventions",
-                        summary=summary,
-                        budget=token_budget,
-                        naming=naming_summary,
-                        affixes=affixes,
-                        files=file_info,
-                        imports=import_info,
-                        exports=export_info,
-                        errors=error_info,
-                        violations=violation_triples,
-                    )
-                )
+            # W607-CW: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. Flipping ``partial_success: True`` is the
+            # Pattern-2 silent-fallback guard -- a degraded substrate
+            # path must NOT be mistaken for a clean conventions verdict.
+            envelope_kwargs = dict(
+                summary=summary,
+                budget=token_budget,
+                naming=naming_summary,
+                affixes=affixes,
+                files=file_info,
+                imports=import_info,
+                exports=export_info,
+                errors=error_info,
+                violations=violation_triples,
             )
+            if _w607cw_warnings_out:
+                summary["partial_success"] = True
+                summary["warnings_out"] = list(_w607cw_warnings_out)
+                envelope_kwargs["warnings_out"] = list(_w607cw_warnings_out)
+            click.echo(to_json(json_envelope("conventions", **envelope_kwargs)))
             return
 
         # ---- Text output ----

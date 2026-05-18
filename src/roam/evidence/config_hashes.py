@@ -30,6 +30,42 @@ Determinism contract:
   first, constitution second, control-map third (mirrors the order the
   fields appear in the dataclass).
 
+W600 lineage disclosure ("Make fallback chains loud", agi-in-md
+CP45/CP46/CP52/CP53). The empty-string return value alone cannot
+distinguish "file deliberately absent (clean state)" from "file exists
+but unreadable (operational anomaly)". Both ``compute_config_hash``
+and ``stamp_all`` accept an optional ``warnings_out`` keyword that, when
+supplied, receives closed-enum lineage markers:
+
+* ``config_hash_<scope>_not_found:<rel_path>`` — informational. The
+  file does not exist on disk. This is the COMMON, EXPECTED case (the
+  three canonical paths are user-owned expectations; a repo without
+  ``.roam/control-map.yml`` is not broken). Marker discipline mirrors
+  W596 ``run_meta_not_found`` — distinguishes "absent" from
+  "anomalously broken".
+* ``config_hash_<scope>_read_failed:<rel_path>:<exc_class>:<detail>``
+  — operational anomaly. The file exists but ``Path.read_bytes()``
+  raised (permission denied, deleted mid-read, I/O error, etc.).
+  Marker discipline mirrors W596 ``run_meta_read_failed``.
+
+W978 first-hypothesis check: ``compute_config_hash`` is a RAW BYTE
+HASH — ``hashlib.sha256(read_bytes()).hexdigest()``. There is no
+parse step, so there is NO ``_corrupt:<exc_class>`` failure path. The
+W596/W598 third marker (parse-corruption) is N/A here; the closed
+enum has exactly 2 kinds per scope.
+
+Scope short-names map from the W210 field name by stripping the
+``_hash`` suffix: ``rules_config_hash`` → ``rules_config``,
+``constitution_hash`` → ``constitution``, ``control_map_hash`` →
+``control_map``. The mapping is stable: each W210 field gets exactly
+one scope short-name, exposed via ``SCOPE_NAMES``.
+
+The empty-string return is PRESERVED — every silent return path
+remains byte-identical to pre-W600 behaviour. ``warnings_out=None``
+(default) preserves the silent-empty contract; existing callers
+(``runs/ledger.start_run`` + ``config_hashes_producer.current_hashes_or_none``)
+need no changes.
+
 Forbidden:
 
 * This module MUST NOT create any of the three files. The canonical
@@ -44,6 +80,8 @@ import hashlib
 import pathlib
 from collections.abc import Mapping
 
+from roam.output.formatter import WarningsOut
+
 # Canonical relative paths, keyed by the W210 ChangeEvidence field name
 # that consumes the hash. The ordering matches the dataclass field
 # order so stamp_all output reads naturally next to ChangeEvidence
@@ -54,8 +92,24 @@ CANONICAL_PATHS: Mapping[str, str] = {
     "control_map_hash": ".roam/control-map.yml",
 }
 
+# Scope short-names for the W600 closed-enum warning markers. Derived
+# from the W210 field by stripping the ``_hash`` suffix so the marker
+# vocabulary aligns with the existing W210 vocabulary an operator
+# already sees on RunMeta.extra / ChangeEvidence.
+SCOPE_NAMES: Mapping[str, str] = {
+    "rules_config_hash": "rules_config",
+    "constitution_hash": "constitution",
+    "control_map_hash": "control_map",
+}
 
-def compute_config_hash(root: pathlib.Path, rel_path: str) -> str:
+
+def compute_config_hash(
+    root: pathlib.Path,
+    rel_path: str,
+    *,
+    scope: str | None = None,
+    warnings_out: WarningsOut = None,
+) -> str:
     """Return sha256 hex digest of ``root / rel_path``, or ``""`` if absent.
 
     Missing-file semantics: insufficient-data discipline (W1234). We
@@ -63,14 +117,48 @@ def compute_config_hash(root: pathlib.Path, rel_path: str) -> str:
     fabricating a hash that looks computed. Downstream verifiers
     distinguish "hash absent" from "hash mismatch" by checking for
     ``""`` explicitly.
+
+    W600 lineage disclosure: when ``warnings_out`` is supplied, this
+    function appends ONE closed-enum marker per call when the silent
+    empty-string path is taken. The empty-string return value is
+    preserved on every path. ``warnings_out=None`` (default) preserves
+    pre-W600 silent behaviour. ``scope`` is the marker namespace —
+    callers usually pass the W210 field name (e.g. ``rules_config``);
+    when ``None``, ``rel_path`` is used verbatim so an ad-hoc caller
+    still gets a usable marker.
+
+    Closed-enum markers (exactly 2 kinds, per W978 first-hypothesis
+    discipline — this is a raw-byte hash with no parse step):
+
+    * ``config_hash_<scope>_not_found:<rel_path>`` — informational
+      (file absent; intentional-absence case mirrors W597
+      ``daemon_state_not_found`` discipline).
+    * ``config_hash_<scope>_read_failed:<rel_path>:<exc_class>:<detail>``
+      — operational anomaly (file exists but ``read_bytes()`` raised).
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
+    scope_token = scope if scope is not None else rel_path
     abs_path = pathlib.Path(root) / rel_path
     if not abs_path.exists():
+        _emit(f"config_hash_{scope_token}_not_found:{rel_path}")
         return ""
-    return hashlib.sha256(abs_path.read_bytes()).hexdigest()
+    try:
+        payload = abs_path.read_bytes()
+    except OSError as exc:
+        _emit(f"config_hash_{scope_token}_read_failed:{rel_path}:{type(exc).__name__}:{exc}")
+        return ""
+    return hashlib.sha256(payload).hexdigest()
 
 
-def stamp_all(root: pathlib.Path) -> dict[str, str]:
+def stamp_all(
+    root: pathlib.Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict[str, str]:
     """Compute all three canonical config hashes for *root*.
 
     Returns a dict mapping the W210 :class:`ChangeEvidence` field name
@@ -79,12 +167,30 @@ def stamp_all(root: pathlib.Path) -> dict[str, str]:
 
     The returned dict is freshly constructed on every call - callers
     may mutate it without affecting subsequent invocations.
+
+    W600 lineage disclosure: when ``warnings_out`` is supplied, every
+    silent empty-string path emits one closed-enum marker tagged with
+    the W210-aligned scope short-name (``rules_config`` /
+    ``constitution`` / ``control_map``). The dict values are unchanged
+    from the pre-W600 contract — caller contract preserved.
+    ``warnings_out=None`` (default) preserves silent behaviour for the
+    two live callsites (``runs/ledger.start_run`` and
+    ``config_hashes_producer.current_hashes_or_none``).
     """
-    return {field: compute_config_hash(root, rel_path) for field, rel_path in CANONICAL_PATHS.items()}
+    return {
+        field: compute_config_hash(
+            root,
+            rel_path,
+            scope=SCOPE_NAMES[field],
+            warnings_out=warnings_out,
+        )
+        for field, rel_path in CANONICAL_PATHS.items()
+    }
 
 
 __all__ = [
     "CANONICAL_PATHS",
+    "SCOPE_NAMES",
     "compute_config_hash",
     "stamp_all",
 ]

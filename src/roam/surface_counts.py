@@ -14,7 +14,13 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
-    """Find the repository root by walking up until src/roam exists."""
+    """Find the repository root by walking up until src/roam exists.
+
+    Source-tree-only helper. Used by dev scripts / tests that need the
+    project root (e.g. to resolve ``dev/compatibility-baseline.json``).
+    Runtime helpers MUST use :func:`_package_file` instead — wheel
+    installs have no ``src/`` prefix and this walk will fail there.
+    """
     start = Path(__file__).resolve()
     for parent in [start, *start.parents]:
         cli_path = parent / "src" / "roam" / "cli.py"
@@ -22,6 +28,49 @@ def _repo_root() -> Path:
         if cli_path.exists() and mcp_path.exists():
             return parent
     raise RuntimeError("Could not locate repository root from surface_counts.py")
+
+
+def _package_file(filename: str) -> Path:
+    """Resolve a file inside the installed ``roam`` package, wheel-safe.
+
+    Uses ``importlib.resources.files("roam")`` so this works identically
+    in three layouts:
+
+    1. ``pip install roam-code`` wheel install — ``site-packages/roam/<filename>``.
+    2. ``pip install -e .`` editable install — ``src/roam/<filename>``.
+    3. Source-tree run without install (``PYTHONPATH=src`` or pytest from
+       repo root) — falls back to the dev-tree walk via :func:`_repo_root`.
+
+    Pre-fix the W420 cascade migrated ``cmd_surface`` / ``cmd_compatibility``
+    / ``cmd_doctor`` / ``cmd_capabilities`` to call ``cli_commands()`` /
+    ``mcp_tool_names()`` here. Those helpers walked ``Path(__file__).parents``
+    looking for ``src/roam/cli.py`` — a path that does not exist in a
+    wheel install. Result: ``roam --json surface`` and ``roam --json
+    capabilities`` raised ``RuntimeError`` for every PyPI user. Mirrors
+    the W554 / W664 / W668 wheel-safe resource pattern already used by
+    ``cmd_evidence_oscal`` and ``cmd_taint``.
+    """
+    try:
+        from importlib.resources import files as _resource_files
+
+        # ``roam`` is a regular package (has ``__init__.py``), so ``files()``
+        # returns a concrete on-disk path — no ``as_file()`` / temp-extraction
+        # hazard (W643/W668 lesson).
+        package_resource = _resource_files("roam") / filename
+        resolved = Path(str(package_resource))
+        if resolved.exists():
+            return resolved
+    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
+        pass
+
+    # Fallback: source-tree layout without install (e.g. running tests with
+    # ``PYTHONPATH=src`` before ``pip install -e .`` has run).
+    dev_path = _repo_root() / "src" / "roam" / filename
+    if dev_path.exists():
+        return dev_path
+    raise RuntimeError(
+        f"Could not locate {filename} via importlib.resources or dev-tree walk"
+    )
 
 
 def _load_ast(path: Path) -> ast.Module:
@@ -49,7 +98,7 @@ def cli_commands() -> dict[str, tuple[str, str]]:
     AST-only by design so doc-headline counts reflect what ships with
     ``pip install roam-code``.
     """
-    cli_path = _repo_root() / "src" / "roam" / "cli.py"
+    cli_path = _package_file("cli.py")
     module = _load_ast(cli_path)
     commands = _literal_assignment(module, "_COMMANDS")
     if not isinstance(commands, dict):
@@ -92,7 +141,7 @@ def mcp_tool_names() -> list[str]:
     combined with the runtime smoke test ``tests/test_w444_mcp_tool_names_no_dedupe.py``
     this is defense-in-depth against duplicate-registration regressions.
     """
-    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     names: list[str] = []
     for node in ast.walk(module):
@@ -153,6 +202,7 @@ _MCP_TOOL_SUFFIXES: tuple[str, ...] = (
     "emit",
     "export",
     "info",
+    "plan",  # W421: recognise subcommand-group wrappers like roam_fleet_plan
     "report",
     "validate",
     "verify",
@@ -189,7 +239,7 @@ def mcp_tool_descriptions() -> list[tuple[str, str]]:
     table — eliminates the recurring drift class where every wrapper batch
     landed without a README update (W299..W306, W449).
     """
-    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     entries: dict[str, str] = {}
     for node in ast.walk(module):
@@ -234,7 +284,7 @@ def mcp_tool_decorations() -> list[tuple[str, str, int]]:
     silently overwrite ``_TOOL_METADATA[name]`` and produce undefined
     dispatch behaviour under FastMCP — see W432.
     """
-    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     decorations: list[tuple[str, str, int]] = []
     for node in ast.walk(module):
@@ -335,7 +385,7 @@ def mcp_preset_counts() -> dict[str, int]:
     misleading 0. Closed enumeration (CLAUDE.md Constraint 8): the keys
     are exactly the literal keys of ``_PRESETS``.
     """
-    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     core_tools = _literal_assignment(module, "_CORE_TOOLS")
     if not isinstance(core_tools, set):
@@ -392,7 +442,7 @@ def mcp_preset_counts() -> dict[str, int]:
 
 def mcp_surface_counts() -> dict:
     """Return MCP tool counts from `_tool(name=...)` decorators and presets."""
-    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     core_tools = _literal_assignment(module, "_CORE_TOOLS")
     if not isinstance(core_tools, set):

@@ -259,6 +259,15 @@ def _readme_blocks(c: Counts) -> dict[str, str]:
         # evidence) rather than the count headline. Authoritative counts
         # still flow through ``readme-canonical-mention`` and the table /
         # preset blocks below.
+        # README:15 ``<sub>N commands · M MCP tools (C in the default
+        # `core` preset) · 28 languages</sub>`` headline. Re-wrapped in
+        # auto-count markers after the integration smoke caught a +3 MCP
+        # drift (224 → 227) that the hand-maintained W419-era headline
+        # missed. Closes the headline-counts drift class.
+        "readme-headline-counts": (
+            f"<sub>{c.command_names} commands · {c.mcp_full} MCP tools "
+            f"({c.mcp_core} in the default `core` preset) · 28 languages</sub>"
+        ),
         # Line 325: "the canonical surface is N commands (X canonical + Y aliases) organised into Z categories"
         "readme-canonical-mention": (
             f"**Lead with the 5 verbs.** The [5 core commands](#core-commands) "

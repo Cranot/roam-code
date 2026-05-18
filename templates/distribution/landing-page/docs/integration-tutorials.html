@@ -76,7 +76,7 @@
       End-to-end MCP setup and daily workflow for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Goal: make the first successful query fast, then standardise a repeatable loop.
     </p>
     <div class="callout">
-      Scope: 5 MCP-aware coding platforms. Non-goal: cloud-hosted Roam deployment (use Self-Hosted for that).
+      Scope: 5 MCP-aware coding platforms. Non-goal: hosted Roam deployment; private-deployment pilots are scoped separately by SOW.
     </div>
 
     <section>
@@ -179,6 +179,16 @@ roam layers</code></pre>
         <li><code>roam context &lt;symbol&gt;</code> returns ranked files/lines.</li>
         <li><code>roam check-rules</code> runs without configuration errors.</li>
         <li><code>roam health --gate</code> returns deterministic gate output.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>See also</h2>
+      <ul>
+        <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> &mdash; every command, every flag, every JSON envelope.</li>
+        <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> &mdash; how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
+        <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> &mdash; context before edit, impact before delete, critique before merge.</li>
+        <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> &mdash; we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
     </section>
 

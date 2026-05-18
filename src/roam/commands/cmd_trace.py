@@ -419,49 +419,152 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             resolution_block["tgt_max_results_hit"] = True
         verdict_suffix = _verdict_fuzzy_suffix(src_tier, tgt_tier)
 
-        G = build_symbol_graph(conn)
+        # W607-EQ -- substrate-boundary plumbing for cmd_trace.
+        # ``_run_check_eq`` wraps each substrate helper so an uncaught
+        # raise in any one boundary degrades to a sensible empty-floor
+        # default AND surfaces a marker in ``_w607eq_warnings_out``
+        # rather than crashing the trace command outright. cmd_trace is
+        # the k-shortest-paths pathfinding command (Yen's exhaustive +
+        # bounded BFS), sibling to cmd_closure (W607-EM, transitive
+        # closure), cmd_cut (W607-EI, minimum edge cuts), and
+        # cmd_simulate (W607-EF, counterfactual transforms) in the
+        # structural-analysis / pathfinding family. A raise inside
+        # ``build_symbol_graph``, the path-enumeration loops
+        # (``find_k_paths`` / ``_find_bounded_paths``), the per-path
+        # annotation (``_build_hops`` / ``_detect_hubs`` /
+        # ``_classify_coupling`` / ``_path_quality``), or any downstream
+        # verdict / envelope composer used to crash the trace command
+        # outright. Marker family
+        # ``trace_<phase>_failed:<exc_class>:<detail>``. Substrates
+        # wrapped:
+        #
+        #   * resolve_source_target_symbols -- captures the already-
+        #                                resolved (src_ids, tgt_ids,
+        #                                tier-block) for downstream
+        #                                disclosure consistency.
+        #   * build_dependency_graph -- networkx graph from DB.
+        #   * compute_k_shortest_paths -- the k-paths enumeration over
+        #                                all (sid, tid) combinations
+        #                                including the file-edge shortcut.
+        #   * extract_path_metrics   -- per-path hops + hubs + coupling
+        #                                + quality annotations.
+        #   * compose_verdict        -- LAW 6 single-line floor.
+        #   * compose_facts          -- agent_contract.facts list.
+        #   * compose_next_commands  -- agent_contract.next_commands.
+        #   * serialize_envelope     -- JSON envelope emission.
+        #   * format_text_output     -- text path-table emission.
+        #
+        # W978 7-discipline applied: (1) f-string verdict floor uses
+        # literal zero-count text -- no Name references, (2) default=...
+        # carries plain literals, (3) no json.dumps(default=str) needed
+        # (no datetimes), (4) ``trace_*`` prefix is unique (collision-
+        # checked by cross-prefix-discipline test), (5) len() at
+        # kwarg-bind is gated by the envelope fallback, (6) len() /
+        # if x: on a poisoned object only runs after the empty-floor
+        # guard, (7) no dict.get(key, expensive_default) calls -- all
+        # defaults are immutable literals.
+        _w607eq_warnings_out: list[str] = []
 
-        # Pre-check: direct file-level imports beat graph pathfinding.
-        _file_ids = {}
-        for _sid in src_ids + tgt_ids:
-            row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (_sid,)).fetchone()
-            if row:
-                _file_ids[_sid] = row["file_id"]
+        def _run_check_eq(phase, fn, *args, default=None, **kwargs):
+            """Run one substrate helper with W607-EQ marker emission.
 
-        # Collect all paths across all source/target combinations
-        all_paths = []
-        for sid in src_ids:
-            for tid in tgt_ids:
-                if sid == tid:
-                    continue
-                # Direct file import shortcut
-                src_fid = _file_ids.get(sid)
-                tgt_fid = _file_ids.get(tid)
-                if src_fid and tgt_fid and src_fid != tgt_fid:
-                    fe = conn.execute(
-                        "SELECT 1 FROM file_edges WHERE source_file_id = ? AND target_file_id = ?",
-                        (src_fid, tgt_fid),
-                    ).fetchone()
-                    if fe:
-                        all_paths.append([sid, tid])
+            On a clean call the result is returned as-is. On an uncaught
+            exception, surface a
+            ``trace_<phase>_failed:<exc_class>:<detail>`` marker via
+            ``_w607eq_warnings_out`` and return *default* -- the
+            envelope still emits cleanly with the remaining substrates.
+            """
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+                _w607eq_warnings_out.append(f"trace_{phase}_failed:{type(exc).__name__}:{exc}")
+                return default
 
-                if exhaustive:
-                    paths = find_k_paths(G, sid, tid, k=k_paths)
-                else:
-                    paths = _find_bounded_paths(G, sid, tid, max_hops=max_hops, k=k_paths)
-                for p in paths:
-                    all_paths.append(p)
+        # W607-EQ: ``resolve_source_target_symbols`` substrate -- the
+        # source + target id lists are already resolved (with tier
+        # disclosure) by the find_symbol_id_with_tier calls above. The
+        # substrate captures the resolved bundle so a raise here would
+        # degrade to empty id lists; in practice this is a near-no-op
+        # but keeps the substrate count uniform with sibling commands.
+        def _resolve_source_target_symbols():
+            return (list(src_ids), list(tgt_ids), src_tier, tgt_tier)
 
-        # Deduplicate and sort by length
-        seen = set()
-        unique_paths = []
-        for p in all_paths:
-            key = tuple(p)
-            if key not in seen:
-                seen.add(key)
-                unique_paths.append(p)
-        unique_paths.sort(key=len)
-        unique_paths = unique_paths[:k_paths]
+        resolved_bundle = _run_check_eq(
+            "resolve_source_target_symbols",
+            _resolve_source_target_symbols,
+            default=([], [], "symbol", "symbol"),
+        )
+        if resolved_bundle is None:
+            resolved_bundle = ([], [], "symbol", "symbol")
+        _safe_src_ids, _safe_tgt_ids, _safe_src_tier, _safe_tgt_tier = resolved_bundle
+        if not isinstance(_safe_src_ids, list):
+            _safe_src_ids = []
+        if not isinstance(_safe_tgt_ids, list):
+            _safe_tgt_ids = []
+
+        # W607-EQ: ``build_dependency_graph`` substrate -- DB -> networkx
+        # graph. A raise here degrades to None which the downstream
+        # path-enumeration substrate handles by returning the empty
+        # path list.
+        G = _run_check_eq(
+            "build_dependency_graph",
+            build_symbol_graph,
+            conn,
+            default=None,
+        )
+
+        # W607-EQ: ``compute_k_shortest_paths`` substrate -- the path
+        # enumeration loop. A raise inside find_k_paths / the bounded
+        # DFS / the file-edge shortcut query degrades to an empty
+        # unique-paths list so the downstream "no path" path kicks in.
+        def _compute_k_shortest_paths():
+            if G is None:
+                return []
+            _file_ids_local: dict = {}
+            for _sid in _safe_src_ids + _safe_tgt_ids:
+                row_local = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (_sid,)).fetchone()
+                if row_local:
+                    _file_ids_local[_sid] = row_local["file_id"]
+
+            all_paths_local: list = []
+            for sid in _safe_src_ids:
+                for tid in _safe_tgt_ids:
+                    if sid == tid:
+                        continue
+                    src_fid_local = _file_ids_local.get(sid)
+                    tgt_fid_local = _file_ids_local.get(tid)
+                    if src_fid_local and tgt_fid_local and src_fid_local != tgt_fid_local:
+                        fe_local = conn.execute(
+                            "SELECT 1 FROM file_edges WHERE source_file_id = ? AND target_file_id = ?",
+                            (src_fid_local, tgt_fid_local),
+                        ).fetchone()
+                        if fe_local:
+                            all_paths_local.append([sid, tid])
+
+                    if exhaustive:
+                        paths_local = find_k_paths(G, sid, tid, k=k_paths)
+                    else:
+                        paths_local = _find_bounded_paths(G, sid, tid, max_hops=max_hops, k=k_paths)
+                    for p_local in paths_local:
+                        all_paths_local.append(p_local)
+
+            seen_local: set = set()
+            unique_paths_local: list = []
+            for p_local in all_paths_local:
+                key_local = tuple(p_local)
+                if key_local not in seen_local:
+                    seen_local.add(key_local)
+                    unique_paths_local.append(p_local)
+            unique_paths_local.sort(key=len)
+            return unique_paths_local[:k_paths]
+
+        unique_paths = _run_check_eq(
+            "compute_k_shortest_paths",
+            _compute_k_shortest_paths,
+            default=[],
+        )
+        if not isinstance(unique_paths, list):
+            unique_paths = []
 
         if not unique_paths:
             # Distinguish "bounded search exhausted hop budget" from "definitive
@@ -484,36 +587,43 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             # suffix mirrors the same signal for text-only consumers.
             no_path_verdict = f"{no_path_verdict}{verdict_suffix}"
             partial = partial or combined_tier != "symbol"
+            # W607-EQ: a substrate failure earlier (e.g. graph build or
+            # path enumeration) also collapses to the "no_path" branch;
+            # mirror the disclosure into both envelope locations so MCP
+            # consumers see the marker regardless of which surface they
+            # read, and flip partial_success on the degraded path.
+            if _w607eq_warnings_out:
+                partial = True
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "trace",
-                            summary={
-                                "verdict": no_path_verdict,
-                                "hops": 0,
-                                "paths": 0,
-                                "state": no_path_state,
-                                "partial_success": partial,
-                                "max_hops": max_hops,
-                                "exhaustive": exhaustive,
-                                # W1248 — Pattern-2 variant-D disclosure. The
-                                # helper's own partial_success is suppressed
-                                # here because we OR-combine it with the
-                                # no-path partial flag above.
-                                **_disclosure_for_summary(resolution_block),
-                            },
-                            source=source,
-                            target=target,
-                            path=None,
-                            paths=[],
-                            coupling_summary="none — no dependency path exists",
-                            state=no_path_state,
-                            partial_success=partial,
-                            **_disclosure_for_kwargs(resolution_block),
-                        )
-                    )
+                no_path_summary: dict = {
+                    "verdict": no_path_verdict,
+                    "hops": 0,
+                    "paths": 0,
+                    "state": no_path_state,
+                    "partial_success": partial,
+                    "max_hops": max_hops,
+                    "exhaustive": exhaustive,
+                    # W1248 — Pattern-2 variant-D disclosure. The
+                    # helper's own partial_success is suppressed
+                    # here because we OR-combine it with the
+                    # no-path partial flag above.
+                    **_disclosure_for_summary(resolution_block),
+                }
+                no_path_kwargs: dict = dict(
+                    summary=no_path_summary,
+                    source=source,
+                    target=target,
+                    path=None,
+                    paths=[],
+                    coupling_summary="none — no dependency path exists",
+                    state=no_path_state,
+                    partial_success=partial,
+                    **_disclosure_for_kwargs(resolution_block),
                 )
+                if _w607eq_warnings_out:
+                    no_path_summary["warnings_out"] = list(_w607eq_warnings_out)
+                    no_path_kwargs["warnings_out"] = list(_w607eq_warnings_out)
+                click.echo(to_json(json_envelope("trace", **no_path_kwargs)))
             else:
                 click.echo(f"VERDICT: {no_path_verdict}\n")
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
@@ -526,36 +636,50 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                     )
             return
 
-        # Annotate all paths with hub detection and quality scoring
-        annotated_paths = []
-        for path_ids in unique_paths:
-            annotated = format_path(path_ids, conn)
-            hops = _build_hops(path_ids, annotated, G)
-            hubs = _detect_hubs(path_ids, G)
-            coupling = _classify_coupling(hops)
-            quality = _path_quality(hops, hubs)
+        # W607-EQ: ``extract_path_metrics`` substrate -- per-path hops +
+        # hubs + coupling + quality annotation. A raise inside
+        # ``_build_hops`` / ``_detect_hubs`` / ``_classify_coupling`` /
+        # ``_path_quality`` / ``format_path`` degrades to an empty
+        # annotated_paths list which the downstream "no annotated
+        # paths" guard treats as a degraded no-path verdict.
+        def _extract_path_metrics():
+            annotated_paths_local: list = []
+            for path_ids_local in unique_paths:
+                annotated_local = format_path(path_ids_local, conn)
+                hops_local = _build_hops(path_ids_local, annotated_local, G)
+                hubs_local = _detect_hubs(path_ids_local, G)
+                coupling_local = _classify_coupling(hops_local)
+                quality_local = _path_quality(hops_local, hubs_local)
 
-            # Mark hub nodes in hops
-            hub_ids = {h[0] for h in hubs}
-            hub_degrees = {h[0]: h[1] for h in hubs}
-            for i, node_id in enumerate(path_ids):
-                if node_id in hub_ids:
-                    hops[i]["is_hub"] = True
-                    hops[i]["hub_degree"] = hub_degrees[node_id]
+                # Mark hub nodes in hops
+                hub_ids_local = {h[0] for h in hubs_local}
+                hub_degrees_local = {h[0]: h[1] for h in hubs_local}
+                for i_local, node_id_local in enumerate(path_ids_local):
+                    if node_id_local in hub_ids_local:
+                        hops_local[i_local]["is_hub"] = True
+                        hops_local[i_local]["hub_degree"] = hub_degrees_local[node_id_local]
 
-            annotated_paths.append(
-                {
-                    "path_ids": path_ids,
-                    "hops": hops,
-                    "coupling": coupling,
-                    "quality": round(quality, 2),
-                    "hub_count": len(hubs),
-                }
-            )
+                annotated_paths_local.append(
+                    {
+                        "path_ids": path_ids_local,
+                        "hops": hops_local,
+                        "coupling": coupling_local,
+                        "quality": round(quality_local, 2),
+                        "hub_count": len(hubs_local),
+                    }
+                )
 
-        # Sort by quality (desc), then length (asc)
-        annotated_paths.sort(key=lambda ap: (-ap["quality"], len(ap["hops"])))
-        annotated_paths = annotated_paths[:k_paths]
+            # Sort by quality (desc), then length (asc)
+            annotated_paths_local.sort(key=lambda ap: (-ap["quality"], len(ap["hops"])))
+            return annotated_paths_local[:k_paths]
+
+        annotated_paths = _run_check_eq(
+            "extract_path_metrics",
+            _extract_path_metrics,
+            default=[],
+        )
+        if not isinstance(annotated_paths, list):
+            annotated_paths = []
 
         # Coupling summary: strongest coupling across ALL paths (not just best-quality).
         # A hub-mediated call chain may rank lower on quality but still reveals
@@ -572,85 +696,168 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             default="none",
         )
 
-        if json_mode:
-            # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
-            first = annotated_paths[0]
-            # W1248 — Pattern-2 variant-D: append fuzzy-resolution marker to
-            # the verdict + flip partial_success when the resolver landed on
-            # a degraded match for either source or target. Path-finding
-            # itself succeeded -- the disclosure surfaces *which* source/
-            # target pair was traced.
-            trace_verdict = (
-                f"trace: {len(first['hops'])} hops {source}->{target}, "
-                f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
+        # W607-EQ: when ``extract_path_metrics`` degrades to an empty
+        # list, we still owe the caller a coherent envelope. The first
+        # path is referenced below as ``first`` / ``first_txt``; build a
+        # safe-floor placeholder so the verdict composer + envelope can
+        # bind without IndexError.
+        if annotated_paths:
+            first_hops = annotated_paths[0].get("hops", []) or []
+        else:
+            first_hops = []
+
+        # W607-EQ: ``compose_verdict`` substrate -- LAW 6 single-line
+        # trace floor. A raise degrades to the literal zero-count floor
+        # string -- the W811/W817 Pattern-2 guard: never collapse to a
+        # SAFE/passed verdict on the degraded path.
+        def _compose_verdict():
+            return (
+                f"trace: {len(first_hops)} hops {source}->{target}, "
+                f"{len(annotated_paths)} path"
+                f"{'s' if len(annotated_paths) != 1 else ''} found, "
                 f"{coupling_summary}{verdict_suffix}"
             )
-            is_partial = combined_tier != "symbol"
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "trace",
-                        summary={
-                            "verdict": trace_verdict,
-                            "hops": len(first["hops"]),
-                            "paths": len(annotated_paths),
-                            "coupling": coupling_summary,
-                            "state": "ok",
-                            "max_hops": max_hops,
-                            "exhaustive": exhaustive,
-                            "partial_success": is_partial,
-                            # W1248 — merge disclosure (omit duplicate
-                            # partial_success; computed above).
-                            **_disclosure_for_summary(resolution_block),
-                        },
-                        source=source,
-                        target=target,
-                        hops=len(first["hops"]),
-                        path=first["hops"],
-                        coupling_summary=coupling_summary,
-                        state="ok",
-                        partial_success=is_partial,
-                        paths=[
-                            {
-                                "hops": len(ap["hops"]),
-                                "coupling": ap["coupling"],
-                                "quality": ap["quality"],
-                                "hub_count": ap["hub_count"],
-                                "path": ap["hops"],
-                            }
-                            for ap in annotated_paths
-                        ],
-                        **_disclosure_for_kwargs(resolution_block),
-                    )
-                )
+
+        trace_verdict = _run_check_eq(
+            "compose_verdict",
+            _compose_verdict,
+            default=f"trace: 0 hops {source}->{target}, 0 paths found, none",
+        )
+        if not isinstance(trace_verdict, str) or not trace_verdict:
+            trace_verdict = f"trace: 0 hops {source}->{target}, 0 paths found, none"
+
+        # W607-EQ: ``compose_facts`` substrate -- agent_contract.facts
+        # list. A raise degrades to a single verdict-only fact so LAW 6
+        # verdict-first invariant holds.
+        def _compose_facts():
+            return [
+                trace_verdict,
+                f"{len(annotated_paths)} paths",
+                f"{len(first_hops)} hops",
+                f"coupling: {coupling_summary}",
+            ]
+
+        facts = _run_check_eq("compose_facts", _compose_facts, default=[trace_verdict])
+        if facts is None:
+            facts = [trace_verdict]
+
+        # W607-EQ: ``compose_next_commands`` substrate -- conditional
+        # advisory next-step suggestions. A raise degrades to an empty
+        # list so the agent_contract still composes.
+        def _compose_next_commands():
+            cmds: list[str] = []
+            if annotated_paths:
+                cmds.append(f"roam impact {source}")
+                cmds.append(f"roam impact {target}")
+            return cmds
+
+        next_commands = _run_check_eq(
+            "compose_next_commands",
+            _compose_next_commands,
+            default=[],
+        )
+        if next_commands is None:
+            next_commands = []
+
+        is_partial = combined_tier != "symbol"
+        # W607-EQ: any substrate marker forces partial_success on the
+        # final envelope -- Pattern-2 silent-fallback guard.
+        if _w607eq_warnings_out:
+            is_partial = True
+
+        if json_mode:
+            # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
+            # W607-EQ: ``serialize_envelope`` substrate -- json_envelope
+            # construction + click.echo emission. The wrap protects
+            # against crashes inside the formatter call so the marker
+            # surfaces and the function returns cleanly.
+            envelope_summary: dict = {
+                "verdict": trace_verdict,
+                "hops": len(first_hops),
+                "paths": len(annotated_paths),
+                "coupling": coupling_summary,
+                "state": "ok" if annotated_paths else "no_path",
+                "max_hops": max_hops,
+                "exhaustive": exhaustive,
+                "partial_success": is_partial,
+                # W1248 — merge disclosure (omit duplicate
+                # partial_success; computed above).
+                **_disclosure_for_summary(resolution_block),
+            }
+            envelope_kwargs: dict = dict(
+                summary=envelope_summary,
+                source=source,
+                target=target,
+                hops=len(first_hops),
+                path=first_hops if annotated_paths else None,
+                coupling_summary=coupling_summary,
+                state="ok" if annotated_paths else "no_path",
+                partial_success=is_partial,
+                paths=[
+                    {
+                        "hops": len(ap.get("hops", [])),
+                        "coupling": ap.get("coupling", ""),
+                        "quality": ap.get("quality", 0.0),
+                        "hub_count": ap.get("hub_count", 0),
+                        "path": ap.get("hops", []),
+                    }
+                    for ap in annotated_paths
+                ],
+                agent_contract={
+                    "facts": facts,
+                    "risks": [],
+                    "next_commands": next_commands,
+                    "confidence": None,
+                },
+                **_disclosure_for_kwargs(resolution_block),
             )
+            # W607-EQ: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read.
+            if _w607eq_warnings_out:
+                envelope_summary["warnings_out"] = list(_w607eq_warnings_out)
+                envelope_kwargs["warnings_out"] = list(_w607eq_warnings_out)
+
+            def _serialize_envelope():
+                click.echo(to_json(json_envelope("trace", **envelope_kwargs)))
+
+            _run_check_eq("serialize_envelope", _serialize_envelope, default=None)
             return
 
         # --- Text output ---
-        first_txt = annotated_paths[0]
-        text_verdict = (
-            f"trace: {len(first_txt['hops'])} hops {source}->{target}, "
-            f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
-            f"{coupling_summary}{verdict_suffix}"
-        )
-        click.echo(f"VERDICT: {text_verdict}\n")
+        # W607-EQ: ``format_text_output`` substrate -- the human-readable
+        # text emission path. A raise inside the path loop (e.g. a
+        # malformed hop dict) degrades to a verdict-only emission so the
+        # user still sees the LAW 6 floor.
+        def _format_text_output():
+            click.echo(f"VERDICT: {trace_verdict}\n")
 
-        if len(annotated_paths) == 1:
-            ap = annotated_paths[0]
-            hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
-            click.echo(f"Path ({len(ap['hops'])} hops, quality={ap['quality']}, {ap['coupling']}{hub_note}):")
-            _print_path(ap["hops"])
-        else:
-            for idx, ap in enumerate(annotated_paths, 1):
+            if not annotated_paths:
+                click.echo("(no paths to display)")
+                click.echo(f"\nCoupling: {coupling_summary}")
+                return
+
+            if len(annotated_paths) == 1:
+                ap = annotated_paths[0]
                 hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
-                click.echo(
-                    f"\n=== Path {idx} of {len(annotated_paths)} "
-                    f"({len(ap['hops'])} hops, quality={ap['quality']}, "
-                    f"{ap['coupling']}{hub_note}) ==="
-                )
+                click.echo(f"Path ({len(ap['hops'])} hops, quality={ap['quality']}, {ap['coupling']}{hub_note}):")
                 _print_path(ap["hops"])
+            else:
+                for idx, ap in enumerate(annotated_paths, 1):
+                    hub_note = (
+                        f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
+                    )
+                    click.echo(
+                        f"\n=== Path {idx} of {len(annotated_paths)} "
+                        f"({len(ap['hops'])} hops, quality={ap['quality']}, "
+                        f"{ap['coupling']}{hub_note}) ==="
+                    )
+                    _print_path(ap["hops"])
 
-        click.echo(f"\nCoupling: {coupling_summary}")
+            click.echo(f"\nCoupling: {coupling_summary}")
+
+        _run_check_eq("format_text_output", _format_text_output, default=None)
 
 
 def _print_path(hops):

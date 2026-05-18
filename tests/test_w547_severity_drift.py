@@ -67,9 +67,11 @@ _RANK_ALLOWLIST: dict[str, str] = {
     "commands/cmd_preflight.py": "OK clean-pass marker; WARNING≡MEDIUM merge",
     # ``breaking`` is an API-change severity, not in canonical vocab.
     "commands/cmd_api_changes.py": "breaking/warning/info — API-change domain",
-    # ``unmatched_begin`` / ``unsafe_mutation`` / etc are tx classifications,
-    # not severities — variable name ``_SEVERITY_RANK`` is misleading.
-    "commands/cmd_tx_boundaries.py": "ranks tx classifications, not severities",
+    # W598: cmd_tx_boundaries.py used to need a W564 allowlist entry
+    # because its rank table was misleadingly named ``_SEVERITY_RANK``.
+    # After the W598 rename to ``_TX_CLASSIFICATION_RANK``, the target
+    # name no longer matches the W564 ``sever|level_order`` pattern and
+    # the file is naturally out of scope — no allowlist entry needed.
 }
 
 # Severity-vocabulary tokens. A dict whose KEYS draw from this set AND

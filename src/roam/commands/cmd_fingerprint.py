@@ -425,6 +425,58 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         compact = bool(ctx.obj.get("compact"))
     ensure_index()
 
+    # W607-DH -- substrate-boundary plumbing for cmd_fingerprint.
+    # ``_run_check_dh`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607dh_warnings_out`` rather than
+    # crashing the topology-fingerprint detector outright. cmd_fingerprint
+    # is the topology-hash + cross-repo comparison detector (W82 / W82.1
+    # sprint origin); the W155 cluster-level findings substrate (W93
+    # follow-up) layered the registry-mirror on top of the original
+    # graph-topology pass.
+    #
+    # Marker family ``fingerprint_<phase>_failed:<exc_class>:<detail>``.
+    # Substrates wrapped:
+    #
+    #   * build_symbol_graph         -- DB → networkx graph construction
+    #   * compute_fingerprint        -- topology pass (layers / modularity /
+    #                                   fiedler / tangle / clusters / hubs)
+    #   * compute_god_components     -- W17.2 canonical god-component
+    #                                   reconciliation (degree-thresholded,
+    #                                   agrees with roam health)
+    #   * detect_clusters            -- Louvain community detection over G
+    #   * label_clusters             -- {cluster_id: label} naming pass
+    #   * gather_cyclic_sccs         -- W155 cross-cluster SCC mining
+    #   * emit_fingerprint_findings  -- W155 registry mirror (silent
+    #                                   no-op preserved for pre-W89 DB
+    #                                   via sqlite3.OperationalError)
+    #   * compose_verdict            -- LAW 6 single-line verdict
+    #                                   (layers / modularity / fiedler /
+    #                                   tangle composition)
+    #   * write_export               -- W82.1 file-write pattern (atomic
+    #                                   JSON export when --export is set)
+    #   * compare_fingerprints       -- drift detection between two
+    #                                   topology fingerprints (when
+    #                                   --compare is set)
+    #   * serialize_envelope         -- JSON envelope projection
+    #                                   (Pattern 6 cluster cap +
+    #                                   summary composition)
+    _w607dh_warnings_out: list[str] = []
+
+    def _run_check_dh(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-DH marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``fingerprint_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607dh_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dh_warnings_out.append(f"fingerprint_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
@@ -501,8 +553,34 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                 err=True,
             )
 
-        G = build_symbol_graph(conn)
-        fp = compute_fingerprint(conn, G)
+        # W607-DH: ``build_symbol_graph`` substrate -- a raise here
+        # (DB schema drift, networkx import failure) degrades to an
+        # empty graph stand-in so the downstream substrates can still
+        # compose an empty-floor envelope. We use a fresh empty
+        # ``networkx.DiGraph`` placeholder rather than ``None`` so
+        # ``compute_fingerprint`` doesn't trip on a NoneType.attribute
+        # access before its own wrap fires.
+        def _empty_graph():
+            import networkx as nx
+
+            return nx.DiGraph()
+
+        G = _run_check_dh("build_symbol_graph", build_symbol_graph, conn, default=None)
+        if G is None:
+            G = _run_check_dh("build_symbol_graph_fallback", _empty_graph, default=None)
+            if G is None:
+                # networkx import itself failed -- collapse to a tiny
+                # duck-typed stand-in so compute_fingerprint's wrap can
+                # still surface its own marker without an AttributeError
+                # bypass. The substrates below honor ``default={}``.
+                G = object()
+
+        # W607-DH: ``compute_fingerprint`` substrate -- the main topology
+        # pass. A raise degrades to an empty floor dict; downstream
+        # substrates honor the missing keys via ``.get()`` defaults.
+        fp = _run_check_dh("compute_fingerprint", compute_fingerprint, conn, G, default={})
+        if fp is None:
+            fp = {}
 
         # W17.2 / Pattern 3c: reconcile god-component count with `roam health`.
         # The legacy `god_objects` field uses a statistical (avg_degree*2)
@@ -510,7 +588,9 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         # is owned by `roam.quality.god_components`. We surface both:
         # `god_components` (canonical, agrees with health) and
         # `god_objects` (legacy alias, retained for back-compat).
-        try:
+        # W607-DH: the historical bare ``try/except: pass`` is now a
+        # disclosed substrate boundary.
+        def _compute_god_components():
             from roam.quality.god_components import (
                 definition as _gc_def,
             )
@@ -525,8 +605,9 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
             fp["antipatterns"]["god_components_actionable"] = _gsum.actionable
             fp["antipatterns"]["god_components_legacy_god_objects"] = fp["antipatterns"].get("god_objects", 0)
             fp["antipatterns"]["god_components_definition"] = _gc_def()
-        except Exception:
-            pass
+            return True
+
+        _run_check_dh("compute_god_components", _compute_god_components, default=None)
 
         # --- W155: mirror cluster-level findings into the registry ---
         # Runs ONLY with --persist. The persisted set is independent of
@@ -543,6 +624,15 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         # roam.quality.god_components helper). Emitting from both would
         # double-count the registry surface.
         if persist:
+            # W607-DH: ``emit_fingerprint_findings`` substrate boundary
+            # uses DIRECT try/except (not _run_check_dh) for the
+            # sqlite3.OperationalError leg because the pre-W89 schema
+            # path (missing ``findings`` table) is the EXPECTED degraded
+            # path -- the W155 silent no-op contract for that case must
+            # NOT produce a W607-DH marker. Generic exceptions surface
+            # via the per-substrate marker. Mirrors the cmd_bus_factor
+            # W607-CQ template: OperationalError == silent no-op;
+            # generic Exception == W607-DH marker.
             try:
                 # Re-derive cluster_map + cluster labels for cross-cluster
                 # SCC analysis. compute_fingerprint already ran these,
@@ -550,27 +640,80 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                 # the raw {node_id: cluster_id} map to intersect with SCCs.
                 from roam.graph.clusters import detect_clusters, label_clusters
 
-                _cluster_map = detect_clusters(G)
-                _cluster_labels = label_clusters(_cluster_map, conn)
-                _cyclic_sccs = _gather_cyclic_sccs(conn, G, _cluster_map, _cluster_labels)
-                _emit_fingerprint_findings(
+                # W607-DH: ``detect_clusters`` substrate -- Louvain pass.
+                _cluster_map = _run_check_dh("detect_clusters", detect_clusters, G, default={})
+                if _cluster_map is None:
+                    _cluster_map = {}
+                # W607-DH: ``label_clusters`` substrate -- naming pass.
+                _cluster_labels = _run_check_dh("label_clusters", label_clusters, _cluster_map, conn, default={})
+                if _cluster_labels is None:
+                    _cluster_labels = {}
+                # W607-DH: ``gather_cyclic_sccs`` substrate -- W155 SCC mine.
+                _cyclic_sccs = _run_check_dh(
+                    "gather_cyclic_sccs",
+                    _gather_cyclic_sccs,
                     conn,
-                    fp.get("clusters", []) or [],
-                    _cyclic_sccs,
-                    FINGERPRINT_DETECTOR_VERSION,
+                    G,
+                    _cluster_map,
+                    _cluster_labels,
+                    default=[],
                 )
-                conn.commit()
+                if _cyclic_sccs is None:
+                    _cyclic_sccs = []
+                # W607-DH: ``emit_fingerprint_findings`` substrate boundary
+                # -- W155 registry mirror with sqlite3.OperationalError
+                # silent-no-op preserved. Generic exceptions surface via
+                # the marker.
+                try:
+                    _emit_fingerprint_findings(
+                        conn,
+                        fp.get("clusters", []) or [],
+                        _cyclic_sccs,
+                        FINGERPRINT_DETECTOR_VERSION,
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    # findings table missing (pre-W89 schema) — silently no-op.
+                    raise
+                except Exception as _emit_exc:  # noqa: BLE001 -- W607-DH disclosure
+                    _w607dh_warnings_out.append(
+                        f"fingerprint_emit_fingerprint_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
+                    )
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
 
-        topo = fp["topology"]
-        n_layers = topo["layers"]
-        modularity = topo["modularity"]
-        fiedler = topo["fiedler"]
-        tangle = topo["tangle_ratio"]
+        # W607-DH: ``compose_verdict`` substrate -- LAW 6 single-line
+        # verdict string. A KeyError on the topology dict (e.g. when
+        # ``compute_fingerprint`` raised and ``fp`` collapsed to {})
+        # degrades to the explicit no-data floor so the envelope still
+        # emits a non-empty verdict. The closure embeds every dict
+        # lookup INSIDE the wrapped function (W978 5th discipline:
+        # never index a possibly-poisoned dict at the kwarg-bind site).
+        def _compose_verdict():
+            topo_local = fp["topology"]
+            n_layers_local = topo_local["layers"]
+            modularity_local = topo_local["modularity"]
+            fiedler_local = topo_local["fiedler"]
+            tangle_local = topo_local["tangle_ratio"]
+            return (
+                topo_local,
+                n_layers_local,
+                modularity_local,
+                fiedler_local,
+                tangle_local,
+                f"{n_layers_local} layers, modularity {modularity_local:.2f}, "
+                f"fiedler {fiedler_local:.3f}, tangle {int(tangle_local * 100)}%",
+            )
 
-        verdict = f"{n_layers} layers, modularity {modularity:.2f}, fiedler {fiedler:.3f}, tangle {int(tangle * 100)}%"
+        verdict_bundle = _run_check_dh(
+            "compose_verdict",
+            _compose_verdict,
+            default=({}, 0, 0.0, 0.0, 0.0, "no fingerprint data"),
+        )
+        if verdict_bundle is None:
+            verdict_bundle = ({}, 0, 0.0, 0.0, 0.0, "no fingerprint data")
+        topo, n_layers, modularity, fiedler, tangle, verdict = verdict_bundle
 
         # -- Export --
         if export_path:
@@ -579,48 +722,69 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
             # fingerprint export feeds `--compare` round-trips and CI
             # comparison, so partial-file silent corruption would surface
             # downstream as a confusing parse error.
-            from roam.atomic_io import atomic_write_text
+            # W607-DH: ``write_export`` substrate -- W82.1 file-write
+            # pattern. A raise (OSError, permissions) degrades to a
+            # marker without crashing the rest of the envelope path.
+            def _write_export():
+                from roam.atomic_io import atomic_write_text
 
-            atomic_write_text(
-                Path(export_path),
-                _json.dumps(fp, indent=2, default=str),
-            )
-            if not json_mode and not compact:
+                atomic_write_text(
+                    Path(export_path),
+                    _json.dumps(fp, indent=2, default=str),
+                )
+                return True
+
+            _wrote = _run_check_dh("write_export", _write_export, default=None)
+            if _wrote and not json_mode and not compact:
                 click.echo(f"Fingerprint written to {export_path}")
 
         # -- Compare --
         comparison = None
         if compare_path:
-            other_fp = _json.loads(Path(compare_path).read_text(encoding="utf-8"))
-            comparison = compare_fingerprints(fp, other_fp)
+            # W607-DH: ``compare_fingerprints`` substrate -- drift
+            # detection between two topology fingerprints. A raise
+            # (malformed JSON, missing fields) degrades to comparison=None
+            # so the standard envelope still emits without the comparison
+            # section.
+            def _compare():
+                other_fp = _json.loads(Path(compare_path).read_text(encoding="utf-8"))
+                return compare_fingerprints(fp, other_fp)
+
+            comparison = _run_check_dh("compare_fingerprints", _compare, default=None)
 
         # -- JSON output --
         if json_mode:
-            from roam.quality.god_components import definition as _gc_def_local
+            # W607-DH: ``serialize_envelope`` substrate -- JSON envelope
+            # construction. A raise inside the Pattern 6 cluster slice,
+            # the god-components definition import, or the summary
+            # composition degrades to a minimal floor envelope so the
+            # command still emits valid JSON. W978 5th discipline:
+            # ``len()`` over ``_all_clusters`` lives INSIDE the closure,
+            # not at the kwarg-bind site.
+            def _build_envelope():
+                from roam.quality.god_components import definition as _gc_def_local
 
-            # Pattern 6 (response volume) — cap the clusters list to
-            # _CLUSTERS_JSON_TOP_N. compute_fingerprint sorts clusters
-            # descending by size so the kept slice is the meaningful
-            # head; the trailing tail on roam-code itself is ~9200
-            # singleton clusters (one-symbol "islands") that bloat the
-            # envelope to >300K tokens. Disclose lineage via
-            # ``clusters_total`` / ``clusters_truncated_to`` so a
-            # downstream reader can tell "cap hit" apart from "graph
-            # actually has 100 clusters". The on-disk export (``--export``)
-            # is unaffected — it still emits the full ``fp`` dict above
-            # so cross-repo compares stay lossless.
-            _all_clusters = fp.get("clusters", []) or []
-            _clusters_total = len(_all_clusters)
-            _clusters_truncated = _clusters_total > _CLUSTERS_JSON_TOP_N
-            _envelope_fp = dict(fp)
-            if _clusters_truncated:
-                _envelope_fp["clusters"] = _all_clusters[:_CLUSTERS_JSON_TOP_N]
-                _envelope_fp["clusters_total"] = _clusters_total
-                _envelope_fp["clusters_truncated_to"] = _CLUSTERS_JSON_TOP_N
+                # Pattern 6 (response volume) — cap the clusters list to
+                # _CLUSTERS_JSON_TOP_N. compute_fingerprint sorts clusters
+                # descending by size so the kept slice is the meaningful
+                # head; the trailing tail on roam-code itself is ~9200
+                # singleton clusters (one-symbol "islands") that bloat the
+                # envelope to >300K tokens. Disclose lineage via
+                # ``clusters_total`` / ``clusters_truncated_to`` so a
+                # downstream reader can tell "cap hit" apart from "graph
+                # actually has 100 clusters". The on-disk export
+                # (``--export``) is unaffected — it still emits the full
+                # ``fp`` dict above so cross-repo compares stay lossless.
+                _all_clusters_local = fp.get("clusters", []) or []
+                _clusters_total_local = len(_all_clusters_local)
+                _clusters_truncated_local = _clusters_total_local > _CLUSTERS_JSON_TOP_N
+                _envelope_fp_local = dict(fp)
+                if _clusters_truncated_local:
+                    _envelope_fp_local["clusters"] = _all_clusters_local[:_CLUSTERS_JSON_TOP_N]
+                    _envelope_fp_local["clusters_total"] = _clusters_total_local
+                    _envelope_fp_local["clusters_truncated_to"] = _CLUSTERS_JSON_TOP_N
 
-            envelope = json_envelope(
-                "fingerprint",
-                summary={
+                summary_local = {
                     "verdict": verdict,
                     "layers": n_layers,
                     "modularity": modularity,
@@ -631,15 +795,48 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                         fp.get("antipatterns", {}).get("god_objects", 0),
                     ),
                     "god_components_definition": _gc_def_local(),
-                    "clusters_total": _clusters_total,
-                    "clusters_emitted": min(_clusters_total, _CLUSTERS_JSON_TOP_N),
-                    "clusters_truncated": _clusters_truncated,
-                },
-                fingerprint=_envelope_fp,
-            )
+                    "clusters_total": _clusters_total_local,
+                    "clusters_emitted": min(_clusters_total_local, _CLUSTERS_JSON_TOP_N),
+                    "clusters_truncated": _clusters_truncated_local,
+                }
+                envelope_local = json_envelope(
+                    "fingerprint",
+                    summary=summary_local,
+                    fingerprint=_envelope_fp_local,
+                )
+                return envelope_local
+
+            envelope = _run_check_dh("serialize_envelope", _build_envelope, default=None)
+            if envelope is None:
+                # Floor envelope -- the W607-DH wrap surfaced a marker but
+                # we still owe a structurally valid JSON envelope to the
+                # caller. Pattern-2 silent-fallback discipline: name the
+                # concrete state, not SAFE/completed.
+                envelope = json_envelope(
+                    "fingerprint",
+                    summary={
+                        "verdict": "envelope serialization failed",
+                        "layers": n_layers,
+                        "modularity": modularity,
+                        "fiedler": fiedler,
+                        "tangle_ratio": tangle,
+                        "partial_success": True,
+                        "state": "envelope_serialize_failed",
+                    },
+                )
             if comparison:
                 envelope["comparison"] = comparison
-                envelope["summary"]["similarity_score"] = comparison["similarity"]
+                envelope.setdefault("summary", {})["similarity_score"] = comparison.get("similarity")
+            # W607-DH: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. Flipping ``partial_success: True`` is the
+            # Pattern-2 silent-fallback guard -- a degraded substrate
+            # path must NOT be mistaken for a clean topology verdict.
+            if _w607dh_warnings_out:
+                envelope.setdefault("summary", {})["partial_success"] = True
+                envelope.setdefault("summary", {})["warnings_out"] = list(_w607dh_warnings_out)
+                envelope["warnings_out"] = list(_w607dh_warnings_out)
             click.echo(to_json(envelope))
             return
 

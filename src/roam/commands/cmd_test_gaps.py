@@ -172,24 +172,18 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
 # Severity classification
 # ---------------------------------------------------------------------------
 
-# W564: severity ordering routed through roam.output._severity.severity_rank.
-# This command uses a local 3-tier index (high=0, medium=1, low=2) for its
-# ``--severity`` floor math; ``_severity_idx`` derives it from the canonical
-# rank so the contract stays single-sourced.
-_TEST_GAPS_TIER_INDEX: dict[int, int] = {
-    severity_rank("high"): 0,
-    severity_rank("medium"): 1,
-    severity_rank("low"): 2,
-}
-
-
-def _severity_idx(label: str) -> int:
-    """Return the local 3-tier index (high=0, medium=1, low=2) for *label*.
-
-    Unknown labels collapse to the ``medium`` tier so ``--severity foo``
-    keeps the W564 baseline behaviour of including medium + above.
-    """
-    return _TEST_GAPS_TIER_INDEX.get(severity_rank(label), 1)
+# W564 + W1005-followup-C: severity ordering routed through
+# ``roam.output._severity.severity_rank`` (canonical, higher = worse).
+# The ``--severity`` Choice (below) was widened from 3-tier {high, medium,
+# low} to the W547 canonical 7-tier so agents can pass any of
+# {critical, error, high, warning, medium, low, info} and have the floor
+# math route through ``severity_rank`` for the canonical comparison.
+# The test-gap detectors EMIT only {high, medium, low} via
+# ``_classify_severity`` below — input/emit asymmetry is intentional and
+# documented at the call site. A user-passed ``--severity warning``
+# (rank 3) keeps every ``medium``-rank (2) gap and above; ``--severity
+# critical`` (rank 5) keeps nothing because the emitted set tops out at
+# ``high`` (rank 4).
 
 
 def _classify_severity(symbol_row, pagerank):
@@ -235,8 +229,21 @@ def _classify_severity(symbol_row, pagerank):
     "--severity",
     "min_severity",
     default="medium",
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Minimum severity to report (default: medium)",
+    type=click.Choice(
+        # W1005-followup-C: widened from 3-tier {high, medium, low} to the
+        # W547 canonical 7-tier so agents reading severity_rank()'s
+        # docstring can pass any canonical token. Emit-vocab is narrower
+        # (detectors emit only {high, medium, low}) — asymmetry documented
+        # at the rank table above.
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum severity to report (default: medium). Uses the canonical "
+        "W547 7-tier ordering (critical > error == high > warning > medium "
+        "> low > info). Detectors emit high/medium/low today; canonical "
+        "aliases route through severity_rank() for the comparison."
+    ),
 )
 @click.pass_context
 def test_gaps(ctx, files, changed, min_severity):
@@ -285,7 +292,8 @@ def test_gaps(ctx, files, changed, min_severity):
             click.echo("Provide file paths or use --changed to analyze git diff.")
         return
 
-    min_sev_idx = _severity_idx(min_severity)
+    # W1005-followup-C: floor math routed through canonical severity_rank.
+    min_rank = severity_rank(min_severity.lower())
 
     with open_db(readonly=True) as conn:
         # Resolve paths to DB file IDs
@@ -502,12 +510,16 @@ def test_gaps(ctx, files, changed, min_severity):
         low_gaps.sort(key=_gap_sort_key)
         stale_tests.sort(key=lambda s: (s["file"], s["name"]))
 
-        # Apply severity filter — include severities at or above the minimum.
-        # Severity indices: high=0, medium=1, low=2.  A gap is included
-        # when its severity index <= min_sev_idx.
-        filtered_high = high_gaps  # high (0) is always <= any min
-        filtered_medium = medium_gaps if min_sev_idx >= 1 else []
-        filtered_low = low_gaps if min_sev_idx >= 2 else []
+        # Apply severity filter — include severities at or above ``min_rank``
+        # via the canonical ``severity_rank`` (higher = worse). Detectors emit
+        # only {high(4), medium(2), low(1)} via ``_classify_severity`` so the
+        # filter buckets stay 3 even when the user passes a canonical token
+        # outside that set: e.g. ``--severity warning`` (rank 3) keeps
+        # ``high`` (4) and drops ``medium`` (2) / ``low`` (1); ``--severity
+        # critical`` (rank 5) keeps nothing.
+        filtered_high = high_gaps if severity_rank("high") >= min_rank else []
+        filtered_medium = medium_gaps if severity_rank("medium") >= min_rank else []
+        filtered_low = low_gaps if severity_rank("low") >= min_rank else []
         total_gaps = len(filtered_high) + len(filtered_medium) + len(filtered_low)
 
         # Build recommendations

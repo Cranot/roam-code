@@ -736,9 +736,41 @@ def _load_gate_config(
 ) -> dict:
     """Load quality gate thresholds from .roam-gates.yml or use defaults.
 
-    Delegates file-read + parse + root-type check to
-    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` (W1052,
-    Phase 2 of the YAML-loader consolidation).
+    Thin wrapper over :func:`_load_gate_config_with_status` that drops the
+    closed-enum ``LoadStatus`` return so pre-W1030-followup-B callers (the
+    SARIF-emit path + the existing W1052 ``warnings_out`` tests) stay
+    byte-identical. New callsites that want to disambiguate
+    ``missing`` / ``empty_file`` / ``empty_yaml`` / ``parse_error`` /
+    ``wrong_root_type`` / ``read_error`` / ``schema_invalid`` / ``ok``
+    should call :func:`_load_gate_config_with_status` directly.
+    """
+    cfg, _status = _load_gate_config_with_status(warnings_out=warnings_out)
+    return cfg
+
+
+def _load_gate_config_with_status(
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[dict, str]:
+    """W1030-followup-B: load quality-gate thresholds and return ``(cfg, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the ``roam health --gate`` envelope
+    disambiguate "no ``.roam-gates.yml`` configured yet" (``missing`` ->
+    use baseline gates silently) from "``.roam-gates.yml`` exists but is
+    empty" (``empty_file`` / ``empty_yaml`` -> use baseline gates +
+    flag the empty stub) from "``.roam-gates.yml`` is broken"
+    (``parse_error`` / ``wrong_root_type`` / ``read_error`` /
+    ``schema_invalid`` -> ``partial_success=True``, warnings already
+    populated by the canonical loader).
+
+    Mirror of :func:`roam.commands.cmd_budget._load_budgets_with_status`
+    (W1030-followup-A reference impl). ``health`` is the flagship CI-gate
+    command — every agent invokes ``roam health`` first — so the
+    config-state disclosure rides on the highest-leverage envelope.
 
     W1052 (Pattern 2 — silent fallback, mirror of W706's
     ``_load_ignore_findings_file``): when *warnings_out* is supplied as
@@ -747,9 +779,7 @@ def _load_gate_config(
     ``health`` block) appends an actionable warning naming the path, the
     failure shape, and the resolution. Pre-W1052 callers that don't
     supply ``warnings_out`` retain byte-identical silent-defaults
-    behaviour so flagship-CI consumers (the ``health --gate`` path) keep
-    emitting byte-identical envelopes when ``.roam-gates.yml`` is
-    well-formed.
+    behaviour.
 
     The function is intentionally narrow — health is a flagship CI-gate
     command (W834 sealed its silent-Healthy bug on empty corpus); the
@@ -760,27 +790,40 @@ def _load_gate_config(
 
     config_path = Path(".roam-gates.yml")
     if not config_path.exists():
-        return defaults
+        return defaults, "missing"
 
     from roam.commands._yaml_loader import load_yaml_with_warnings
 
     path_str = str(config_path)
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = load_yaml_with_warnings(
+    data, status = load_yaml_with_warnings(
         config_path,
         tiny_parser=_parse_simple_yaml,
         config_label="health-gate",
         warnings_out=warnings_out,
+        return_status=True,
     )
     if data is None:
         # Missing file — already short-circuited above; defensive.
-        return defaults
+        return defaults, status
+    if status in ("empty_file", "empty_yaml"):
+        # W1030-followup-B: zero-byte / comments-only file is a distinct
+        # on-disk state from "non-empty file missing the ``health:``
+        # key" — the user created a stub but did not write any
+        # thresholds. Suppress the "no `health:` key" warning that the
+        # legacy missing-key branch would emit so the empty-stub state
+        # surfaces cleanly as ``config_state=empty_file`` (or
+        # ``empty_yaml``) on the envelope, with no warning. Pattern 2 is
+        # preserved for the malformed cases — ``parse_error`` /
+        # ``wrong_root_type`` still emit the canonical loader's warning
+        # above. Mirrors cmd_budget._load_budgets_with_status.
+        return defaults, status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper already explained the failure (read error / malformed
         # YAML / wrong root type / tiny-parser fallback). Propagate the
         # defaults without piling on a second "no `health:` key" warning
         # that would just confuse the caller.
-        return defaults
+        return defaults, status
     assert isinstance(data, dict)
     if "health" not in data:
         if warnings_out is not None:
@@ -790,7 +833,7 @@ def _load_gate_config(
                 f"`{{health_min, complexity_max, cycle_max, tangle_max}}` "
                 f"thresholds."
             )
-        return defaults
+        return defaults, status
     # W1038 — shared "load → check type → warn-or-default" extractor.
     from roam.commands._yaml_loader import extract_typed
 
@@ -804,7 +847,7 @@ def _load_gate_config(
         expected_shape="a mapping",
     )
     defaults.update(health_block)
-    return defaults
+    return defaults, status
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1264,93 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
     if not gate and ctx.obj and ctx.obj.get("ci_mode"):
         gate = True
     ensure_index()
+
+    # W607-M: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the DB-shape health pipeline. cmd_health is the
+    # flagship CI-gate aggregator that consumes graph_metrics / symbols /
+    # files / file_stats / graph (build_symbol_graph) / find_cycles /
+    # detect_layers / propagation_cost / algebraic_connectivity /
+    # imported_coverage_overview substrates via direct SQL queries +
+    # helper calls; any of those raising silently degrades the pipeline
+    # while the JSON envelope claims success.
+    #
+    # Marker family ``health_*`` (DB scope, distinct from W607-G/H/I/J
+    # grep_* / history_* / refs_text_* / delete_check_* subprocess
+    # families, W607-K's ``describe_*`` flagship-aggregator family, and
+    # W607-L's ``minimap_*`` DB-shape family). The marker-prefix
+    # discipline keeps each consumer's scope identifiable downstream.
+    #
+    # Complementary to W805-833 / W833 Pattern-2 silent-Healthy fix
+    # (which pins the empty-corpus silent-100/100-Healthy verdict).
+    # W607-M does NOT graduate any W833 bug — empty-corpus state
+    # disclosure is a separate Pattern-2 contract orthogonal to the
+    # DB-shape degrade axis here. On empty corpus the early-return at
+    # _early_symbol_count==0 fires BEFORE the W607-M-instrumented phases,
+    # so warnings_out stays empty and the envelope is byte-identical
+    # to the pre-W607-M shape. Outside the empty-corpus path, helpers
+    # that hit a healthy substrate return cleanly (NOT exceptions), so
+    # warnings_out also stays empty on the happy path.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either ``summary`` or top-level).
+    _w607m_warnings_out: list[str] = []
+
+    # W607-BA — ADDITIVE per-substrate plumbing layered on top of the
+    # W607-M inline try/except plumbing. The W607-M wave covered the
+    # DB-shape graph-substrate boundaries (graph_build / cycles /
+    # god_components / bottlenecks / layers / tangle / propagation /
+    # algebraic_connectivity / file_health / imported_coverage). W607-BA
+    # closes the remaining substrate-CALL boundaries on the FLAGSHIP
+    # 0-100 score CI-gate aggregator that W607-M did NOT wrap:
+    #
+    #   * gate_config_load          -- `.roam-gates.yml` loader (gate branch)
+    #   * gate_complexity_query     -- complexity_max SELECT (replaces a
+    #                                  pre-W607-BA bare ``except Exception``
+    #                                  that swallowed the marker entirely)
+    #   * compute_health_score      -- the geometric-mean 0-100 composition
+    #   * compose_verdict           -- the "Healthy 32/100 with 12 cycles"
+    #                                  derivation (CLAUDE.md LAW 6 canonical
+    #                                  example)
+    #   * health_findings_emit      -- ``_emit_health_findings`` registry write
+    #   * suggest_next_steps_call   -- agent-contract next_steps composition
+    #   * baseline_diff_emit        -- the ``--baseline`` branch helper
+    #   * sarif_emit                -- the SARIF projection branch
+    #   * gate_sarif_loader         -- ``_load_gate_config`` inside SARIF mode
+    #   * serialize_envelope_main   -- the on-text JSON serialization on the
+    #                                  primary --json branch
+    #
+    # CLAUDE.md LAW 6 critical axis: cmd_health's "Healthy 32/100 with 12
+    # cycles" verdict is the canonical example for a verdict that must
+    # work without any other field. A silent failure in any sub-score
+    # boundary defeats the CI gate downstream consumers depend on. The
+    # W607-BA additive bucket surfaces a marker even when the failure
+    # happens AFTER the W607-M-wrapped DB phases succeed.
+    #
+    # Marker family ``health_*`` (same as W607-M -- the same scope
+    # consumer reads BOTH wave's markers off the same bucket field).
+    # The two waves share the marker family AND the warnings_out axis
+    # (the per-wave bucket is merged into a single ``warnings_out``
+    # list before serialization).
+    #
+    # Empty bucket -> no field added -> byte-identical envelope to the
+    # pre-W607-BA shape (W607-M parity discipline).
+    _w607ba_warnings_out: list[str] = []
+
+    def _run_check_ba(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BA marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``health_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607ba_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ba_warnings_out.append(f"health_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # W834 — empty-corpus carve-out (Pattern 2 silent-fallback fix).
         # If the corpus has zero indexed symbols, every health factor
@@ -1286,12 +1416,27 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 raise GateFailureError("Quality gate failed: empty corpus (0 indexed symbols)")
             return
 
-        G = build_symbol_graph(conn)
+        # W607-M: per-phase substrate guard — graph build is the
+        # foundation; falling back to an empty graph means downstream
+        # cycles / layers / propagation all return empty results.
+        try:
+            G = build_symbol_graph(conn)
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_graph_build_failed:{type(exc).__name__}:{exc}")
+            import networkx as _nx  # local import — keep import cost off cold path
+
+            G = _nx.DiGraph()
 
         # --- Cycles ---
-        cycles = find_cycles(G)
-        formatted_cycles = format_cycles(cycles, conn) if cycles else []
-        mark_actionable_cycles(formatted_cycles)
+        # W607-M: per-phase substrate guard for find_cycles + format_cycles.
+        try:
+            cycles = find_cycles(G)
+            formatted_cycles = format_cycles(cycles, conn) if cycles else []
+            mark_actionable_cycles(formatted_cycles)
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_cycles_failed:{type(exc).__name__}:{exc}")
+            cycles = []
+            formatted_cycles = []
 
         raw_by_formatted_cycle = list(zip(cycles, formatted_cycles))
 
@@ -1320,7 +1465,12 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             )
 
         # --- God components ---
-        degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
+        # W607-M: per-phase substrate guard for TOP_BY_DEGREE query.
+        try:
+            degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_god_components_failed:{type(exc).__name__}:{exc}")
+            degree_rows = []
         god_items = []
         for r in degree_rows:
             total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
@@ -1338,13 +1488,19 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # Fetch all non-zero betweenness values to compute percentile thresholds.
         # Raw betweenness is unnormalized (shortest-path counts), so absolute
         # thresholds don't scale across codebase sizes. Percentiles do.
-        all_bw = sorted(
-            r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
-        )
+        # W607-M: per-phase substrate guard for betweenness queries.
+        try:
+            all_bw = sorted(
+                r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
+            )
+            bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_bottlenecks_failed:{type(exc).__name__}:{exc}")
+            all_bw = []
+            bw_rows = []
         bn_p70 = _percentile(all_bw, 70)
         bn_p90 = _percentile(all_bw, 90)
 
-        bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
         bn_items = []
         for r in bw_rows:
             bw = r["betweenness"] or 0
@@ -1367,18 +1523,28 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             filtered_count = before - len(god_items) - len(bn_items)
 
         # --- Layer violations ---
-        layer_map = detect_layers(G)
-        violations = find_violations(G, layer_map) if layer_map else []
-        v_lookup = {}
-        if violations:
-            all_ids = {v["source"] for v in violations} | {v["target"] for v in violations}
-            for r in batched_in(
-                conn,
-                "SELECT s.id, s.name, f.path as file_path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
-                list(all_ids),
-            ):
-                v_lookup[r["id"]] = r
+        # W607-M: per-phase substrate guard for layer detection +
+        # v_lookup batched_in. Falling back to an empty layer_map +
+        # violations + v_lookup means layer-violation counts go to 0
+        # and the verdict surfaces the marker rather than crashing.
+        try:
+            layer_map = detect_layers(G)
+            violations = find_violations(G, layer_map) if layer_map else []
+            v_lookup = {}
+            if violations:
+                all_ids = {v["source"] for v in violations} | {v["target"] for v in violations}
+                for r in batched_in(
+                    conn,
+                    "SELECT s.id, s.name, f.path as file_path "
+                    "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+                    list(all_ids),
+                ):
+                    v_lookup[r["id"]] = r
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_layers_failed:{type(exc).__name__}:{exc}")
+            layer_map = {}
+            violations = []
+            v_lookup = {}
 
         # ---- Classify issue severity (location-aware) ----
         # W718: severity labels are canonical lowercase (W547).
@@ -1479,7 +1645,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # so a pre-W89 DB (without the ``findings`` table) silently
         # no-ops rather than crashing the standard health command path.
         if persist:
-            try:
+            # W607-BA: wrap ``_emit_health_findings`` substrate with the
+            # per-phase marker emitter. The pre-W607-BA ``except
+            # sqlite3.OperationalError: pass`` silently swallowed the
+            # schema-missing case -- a legitimate degrade path but one
+            # that left no marker on the envelope. W607-BA surfaces a
+            # ``health_findings_emit_failed:`` marker on EVERY exception
+            # class while keeping the pre-W89 schema-missing degrade
+            # silent (sqlite3.OperationalError is caught inline first so
+            # it doesn't flip partial_success on legitimate degrade).
+            def _do_emit_findings() -> None:
                 _emit_health_findings(
                     conn,
                     formatted_cycles,
@@ -1491,12 +1666,25 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     raw_by_formatted_cycle=raw_by_formatted_cycle,
                 )
                 conn.commit()
+
+            try:
+                _do_emit_findings()
             except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
+                # findings table missing (pre-W89 schema) — legitimate
+                # degrade, stay silent (preserves W89 contract).
                 pass
+            except Exception as exc:  # noqa: BLE001
+                # Any OTHER exception surfaces via W607-BA so the agent
+                # sees the failure rather than a silent no-op.
+                _w607ba_warnings_out.append(f"health_findings_emit_failed:{type(exc).__name__}:{exc}")
 
         # --- Tangle ratio ---
-        total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 1
+        # W607-M: per-phase substrate guard for total_symbols query.
+        try:
+            total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 1
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_tangle_failed:{type(exc).__name__}:{exc}")
+            total_symbols = 1
         cycle_symbol_ids = set()
         for scc, cyc_info in raw_by_formatted_cycle:
             if cyc_info.get("actionable"):
@@ -1506,11 +1694,21 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # --- Propagation Cost (MacCormack et al. 2006) ---
         # Fraction of the system affected by a change to any component.
         # Uses transitive closure: PC = sum(V) / n^2
-        prop_cost = propagation_cost(G)
+        # W607-M: per-phase substrate guard for propagation_cost.
+        try:
+            prop_cost = propagation_cost(G)
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_propagation_cost_failed:{type(exc).__name__}:{exc}")
+            prop_cost = 0.0
 
         # --- Algebraic Connectivity (Fiedler 1973) ---
         # Second-smallest Laplacian eigenvalue; low = fragile architecture
-        fiedler = algebraic_connectivity(G)
+        # W607-M: per-phase substrate guard for algebraic_connectivity.
+        try:
+            fiedler = algebraic_connectivity(G)
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_algebraic_connectivity_failed:{type(exc).__name__}:{exc}")
+            fiedler = 0.0
 
         # --- Composite health score (0-100) ---
         # Weighted geometric mean: score = 100 * product(h_i ^ w_i)
@@ -1542,7 +1740,12 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         bn_critical = sum(1 for b in bn_actionable_items if b.get("severity") == CRITICAL)
         bn_signal = (bn_critical * 2 + len(bn_actionable_items) * 0.3) / size_norm
 
-        coverage_import = imported_coverage_overview(conn)
+        # W607-M: per-phase substrate guard for imported coverage helper.
+        try:
+            coverage_import = imported_coverage_overview(conn)
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_imported_coverage_failed:{type(exc).__name__}:{exc}")
+            coverage_import = {}
 
         # Base factors (weights sum to 1.0 before optional imported coverage).
         # Scales tuned post-normalisation so a normal repo (low percent of
@@ -1554,6 +1757,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             (_health_factor(len(violations), 5), 0.15),  # layer violations
         ]
         # File-level health: map avg [0-10] to a factor
+        # W607-M: per-phase substrate guard. Mirrors the pre-W607-M
+        # try/except floor (1.0) so the score behaviour is unchanged on
+        # the happy path; the only addition is the disclosure marker.
         try:
             avg_file_health = conn.execute(
                 "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
@@ -1562,7 +1768,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 base_factors.append((min(1.0, avg_file_health / 10.0), 0.20))
             else:
                 base_factors.append((1.0, 0.20))
-        except Exception:
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_file_health_failed:{type(exc).__name__}:{exc}")
             base_factors.append((1.0, 0.20))
 
         # Imported test coverage (#134): when available, reserve 10% score weight
@@ -1576,8 +1783,18 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             _health_factors = base_factors
 
         # Weighted geometric mean in log space
-        log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
-        health_score = max(0, min(100, int(100 * math.exp(log_score))))
+        # W607-BA: wrap the FLAGSHIP 0-100 score composition (CLAUDE.md
+        # LAW 6 canonical example) so a math overflow / domain error in
+        # the geometric mean surfaces as a marker rather than crashing
+        # the gate. Default 0 keeps the verdict scorer compositable on
+        # the degraded path.
+        def _compute_health_score() -> int:
+            log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
+            return max(0, min(100, int(100 * math.exp(log_score))))
+
+        health_score = _run_check_ba("compute_health_score", _compute_health_score, default=0)
+        if health_score is None:
+            health_score = 0
 
         # record per-factor contributions so --explain can show
         # WHY the score is what it is. Each factor's "loss" (1 - h) is
@@ -1620,30 +1837,58 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             _focus_hint = " (all flagged as utility / non-actionable)"
 
         # --- Verdict ---
-        if health_score >= 80:
-            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts[CRITICAL]} critical issues{_focus_hint}"
-        elif health_score >= 60:
-            verdict = (
-                f"Fair codebase ({health_score}/100) — "
-                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
-            )
-        elif health_score >= 40:
-            verdict = (
-                f"Needs attention ({health_score}/100) — "
-                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
-            )
-        else:
-            verdict = (
+        # W607-BA: wrap the verdict composition itself. cmd_health's
+        # one-line verdict ("Healthy 32/100 with 12 cycles") is the
+        # canonical CLAUDE.md LAW 6 example -- the verdict MUST work
+        # without any other field. Wrap the composition so a string
+        # format / lookup error surfaces a marker rather than
+        # propagating up to crash the gate. The default fallback
+        # verdict still satisfies LAW 6 (single-line + score
+        # included).
+        def _compose_verdict() -> str:
+            if health_score >= 80:
+                return f"Healthy codebase ({health_score}/100) — {sev_counts[CRITICAL]} critical issues{_focus_hint}"
+            if health_score >= 60:
+                return (
+                    f"Fair codebase ({health_score}/100) — "
+                    f"{sev_counts[CRITICAL]} critical, "
+                    f"{sev_counts[WARNING]} warnings{_focus_hint}"
+                )
+            if health_score >= 40:
+                return (
+                    f"Needs attention ({health_score}/100) — "
+                    f"{sev_counts[CRITICAL]} critical, "
+                    f"{sev_counts[WARNING]} warnings{_focus_hint}"
+                )
+            return (
                 f"Unhealthy codebase ({health_score}/100) — "
-                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
+                f"{sev_counts[CRITICAL]} critical, "
+                f"{sev_counts[WARNING]} warnings{_focus_hint}"
             )
+
+        verdict = _run_check_ba(
+            "compose_verdict",
+            _compose_verdict,
+            default=f"Health score {health_score}/100 (verdict composition degraded)",
+        )
+        if verdict is None:
+            verdict = f"Health score {health_score}/100 (verdict composition degraded)"
 
         # --- Baseline-diff mode ---
         # When --baseline is set, delegate to the dedicated helper and
         # exit before gate/sarif/json/text branches. Existing behaviour
         # is untouched when the flag is absent.
         if baseline_ref:
-            _emit_baseline_diff(
+            # W607-BA: wrap the baseline-diff emit substrate. A raise
+            # inside ``_emit_baseline_diff`` surfaces as a structured
+            # marker so the early-return doesn't bypass the disclosure
+            # axis. The function's contract is "emit the diff envelope
+            # itself" so on the degraded path we still return early
+            # (the partial-diff is the substrate, not something we can
+            # recompose here).
+            _run_check_ba(
+                "baseline_diff_emit",
+                _emit_baseline_diff,
                 conn=conn,
                 baseline_ref=baseline_ref,
                 health_score=health_score,
@@ -1659,7 +1904,24 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # --- Quality Gate ---
         if gate:
             _gate_warnings: list[str] = []
-            gate_config = _load_gate_config(warnings_out=_gate_warnings)
+            # W1030-followup-B: opt into the closed-enum LoadStatus so
+            # ``summary.config_state`` discloses what the loader saw on
+            # disk (``missing`` / ``empty_file`` / ``empty_yaml`` /
+            # ``ok`` / degraded). Mirrors the cmd_alerts + cmd_budget
+            # surfacing pattern landed in W1030-followup-A.
+            # W607-BA: wrap the gate-config loader substrate. The
+            # default tuple keeps the gate behaviour compositable on
+            # the degraded path (empty config -> baseline thresholds
+            # apply, ``config_state="load_error"``).
+            _gate_cfg_pair = _run_check_ba(
+                "gate_config_load",
+                _load_gate_config_with_status,
+                warnings_out=_gate_warnings,
+                default=({}, "load_error"),
+            )
+            if _gate_cfg_pair is None:
+                _gate_cfg_pair = ({}, "load_error")
+            gate_config, _gate_config_state = _gate_cfg_pair
             gate_results = []
             all_passed = True
 
@@ -1673,12 +1935,18 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             # Optional gates
             c_max = gate_config.get("complexity_max")
             if c_max is not None:
-                try:
-                    max_cc = (
-                        conn.execute("SELECT MAX(complexity) FROM symbols WHERE complexity IS NOT NULL").fetchone()[0]
-                        or 0
-                    )
-                except Exception:
+                # W607-BA: replaces the pre-W607-BA bare ``except
+                # Exception: pass`` that silently swallowed any DB
+                # failure on the complexity_max gate. Now the marker
+                # rides on warnings_out so a degraded gate doesn't
+                # silently PASS with max_cc=0 against a DB that
+                # genuinely failed to query complexity.
+                def _query_complexity_max() -> int:
+                    row = conn.execute("SELECT MAX(complexity) FROM symbols WHERE complexity IS NOT NULL").fetchone()
+                    return (row[0] if row is not None else 0) or 0
+
+                max_cc = _run_check_ba("gate_complexity_query", _query_complexity_max, default=0)
+                if max_cc is None:
                     max_cc = 0
                 passed = max_cc <= c_max
                 gate_results.append(
@@ -1728,15 +1996,60 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     "imported_coverage_pct": coverage_import.get("coverage_pct"),
                     # W331: gate-mode envelope also reports a score.
                     "health_score_definition": HEALTH_SCORE_DEFINITION,
+                    # W1030-followup-B: closed-enum LoadStatus disclosure
+                    # so agents can tell "no .roam-gates.yml configured
+                    # yet" (missing -> baseline gates silently) from
+                    # ".roam-gates.yml exists but is empty" (empty_file
+                    # / empty_yaml -> baseline gates AND user probably
+                    # meant to configure something) from ".roam-gates.yml
+                    # is broken" (parse_error / wrong_root_type -- already
+                    # accompanied by a warning in warnings_out).
+                    "config_state": _gate_config_state,
                 }
-                if _gate_warnings:
-                    # W1052: surface loader warnings (malformed gate
-                    # config) so the agent doesn't see PASS verdicts
-                    # silently produced against the defaults.
-                    gate_summary["warnings_out"] = list(_gate_warnings)
+                # W1030-followup-B: a degraded config_state flips
+                # partial_success regardless of warning emission, mirroring
+                # cmd_alerts + cmd_budget. The user's quality-gate
+                # thresholds did not materialize — agents must see the
+                # discard, not just the PASS / FAIL verdict.
+                _gate_config_degraded = _gate_config_state in (
+                    "parse_error",
+                    "wrong_root_type",
+                    "read_error",
+                    "schema_invalid",
+                )
+                # W607-M + W607-BA: merge DB-shape warnings with
+                # gate-config warnings AND W607-BA additive per-substrate
+                # markers on the same ``warnings_out`` axis. The W607-M
+                # / W607-BA markers use the ``health_<phase>_failed:...``
+                # shape; the gate-config markers carry the legacy
+                # ``health-gate: ...`` shape; all three live on the same
+                # bucket so consumers reading the gate envelope see ALL
+                # degradation lineage on a single field.
+                _merged_warnings: list[str] = (
+                    list(_gate_warnings) + list(_w607m_warnings_out) + list(_w607ba_warnings_out)
+                )
+                if _merged_warnings:
+                    # W1052 + W607-M: surface loader warnings AND
+                    # DB-shape substrate-degrade markers so the agent
+                    # doesn't see PASS verdicts silently produced
+                    # against degraded inputs.
+                    gate_summary["warnings_out"] = list(_merged_warnings)
                     gate_summary["partial_success"] = True
-                envelope = json_envelope(
-                    "health",
+                elif _gate_config_degraded:
+                    gate_summary["partial_success"] = True
+                # W1030-followup-B: agent_contract.facts state disclosure.
+                # LAW 4 anchored on concrete-noun terminals ("gates" /
+                # "defaults"). Mirrors the cmd_alerts vocabulary.
+                _gate_facts: list[str] = []
+                if _gate_config_state == "missing":
+                    _gate_facts.append("no .roam-gates.yml configured; using baseline gates")
+                elif _gate_config_state == "empty_file":
+                    _gate_facts.append("empty .roam-gates.yml stub on disk; using baseline gates")
+                elif _gate_config_state == "empty_yaml":
+                    _gate_facts.append("comment-only .roam-gates.yml on disk; using baseline gates")
+                elif _gate_config_degraded:
+                    _gate_facts.append(f"health config rejected ({_gate_config_state}); using baseline gates")
+                envelope_kwargs: dict = dict(
                     budget=token_budget,
                     summary=gate_summary,
                     gate_results=gate_results,
@@ -1744,6 +2057,19 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     imported_coverage_pct=coverage_import.get("coverage_pct"),
                     imported_coverage_files=coverage_import.get("files_with_coverage", 0),
                 )
+                if _gate_facts:
+                    envelope_kwargs["agent_contract"] = {
+                        "facts": _gate_facts,
+                        "next_commands": ["roam health"],
+                    }
+                # W607-M: top-level ``warnings_out`` mirror on the gate
+                # envelope. The preserved-list-field discipline at
+                # ``_ALWAYS_PRESERVED_LIST_FIELDS`` requires the top-level
+                # mirror so the field survives detail-mode list-payload
+                # stripping. Matches W607-A..L mirror parity.
+                if _merged_warnings:
+                    envelope_kwargs["warnings_out"] = list(_merged_warnings)
+                envelope = json_envelope("health", **envelope_kwargs)
                 click.echo(to_json(envelope))
                 if not all_passed:
                     from roam.exit_codes import GateFailureError
@@ -1785,7 +2111,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             # Default-False to keep pre-W1084 SARIF bytes when
             # `.roam-gates.yml` is well-formed or absent.
             _gate_warnings: list[str] = []
-            _load_gate_config(warnings_out=_gate_warnings)
+            # W607-BA: wrap the SARIF-mode gate-config loader on the
+            # same axis as the JSON-gate branch. SARIF is consumed by
+            # CI; a silent loader crash here would let a degraded
+            # config emit unannotated SARIF rows.
+            _run_check_ba(
+                "gate_sarif_loader",
+                _load_gate_config,
+                warnings_out=_gate_warnings,
+                default=None,
+            )
 
             # W718: lowercase canonical severity (W547). The SARIF
             # projection in ``health_to_sarif`` calls ``_to_level`` with
@@ -1833,11 +2168,30 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     for v in violations
                 ],
             }
-            sarif = health_to_sarif(
+            # W607-BA: wrap the SARIF projection substrate. A failure
+            # in ``health_to_sarif`` would otherwise crash CI with a
+            # generic traceback; the marker default ({}) plus the
+            # degraded write_sarif call still emits a valid SARIF
+            # envelope (zero results) so the CI consumer doesn't
+            # crash on parse.
+            sarif = _run_check_ba(
+                "sarif_emit",
+                health_to_sarif,
                 issues,
                 emit_runtime_notifications=bool(_gate_warnings),
                 warnings_out=_gate_warnings,
+                default={
+                    "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+                    "version": "2.1.0",
+                    "runs": [],
+                },
             )
+            if sarif is None:
+                sarif = {
+                    "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+                    "version": "2.1.0",
+                    "runs": [],
+                }
             click.echo(write_sarif(sarif))
             return
 
@@ -1847,14 +2201,24 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             bottleneck_severity = _severity_counts(bn_items)
             layer_severity = _severity_counts(violations)
             j_issue_count = len(actionable_cycles) + len(god_items) + len(bn_items) + len(violations)
-            next_steps = suggest_next_steps(
+            # W607-BA: wrap the next-steps suggester substrate. A
+            # failure here would lose the agent-contract guidance
+            # rows; default [] keeps the envelope shape but surfaces
+            # the marker so the agent knows the suggestion list is
+            # empty due to degradation, not because no steps apply.
+            next_steps = _run_check_ba(
+                "suggest_next_steps_call",
+                suggest_next_steps,
                 "health",
                 {
                     "score": health_score,
                     "critical_issues": sev_counts[CRITICAL],
                     "cycles": len(actionable_cycles),
                 },
+                default=[],
             )
+            if next_steps is None:
+                next_steps = []
             envelope = json_envelope(
                 "health",
                 budget=token_budget,
@@ -1961,6 +2325,21 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             _idx_status_json = _index_status_json()
             if _idx_status_json is not None:
                 envelope["index_status"] = _idx_status_json
+            # W607-M + W607-BA: thread DB-shape AND additive-substrate
+            # markers onto the main JSON envelope. Mirror discipline:
+            # top-level ``warnings_out`` (so the preserved-list field
+            # survives detail-mode list-payload stripping) +
+            # summary.warnings_out + summary.partial_success = True.
+            # Empty bucket -> no key added -> byte-identical envelope
+            # (W607-A..L parity discipline). Both wave's markers share
+            # the ``health_*`` family and the same warnings_out axis.
+            _merged_main_warnings: list[str] = list(_w607m_warnings_out) + list(_w607ba_warnings_out)
+            if _merged_main_warnings:
+                envelope["warnings_out"] = list(_merged_main_warnings)
+                _smry = envelope.get("summary")
+                if isinstance(_smry, dict):
+                    _smry["warnings_out"] = list(_merged_main_warnings)
+                    _smry["partial_success"] = True
             if not detail:
                 envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))

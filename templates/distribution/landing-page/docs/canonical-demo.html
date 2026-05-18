@@ -86,6 +86,15 @@
       reaches a server, it's a bug — please file it.
     </div>
 
+    <div class="callout">
+      <strong>Illustrative output.</strong> The numbers, symbol names, file paths, run ids,
+      and timestamps below are illustrative fixtures — the <em>shape</em> of what these
+      commands emit, not values from a real repo. The byte-stable
+      <code>ChangeEvidence</code> packet you get on your own machine fills the same shape
+      deterministically from your index. See <a href="/docs/agent-contract">/docs/agent-contract</a>
+      for the canonical JSON envelope.
+    </div>
+
     <section>
       <h2>Step 1 &mdash; Install and index. Zero accounts, runs offline.</h2>
 <pre><code>pip install "roam-code[mcp]"
@@ -210,6 +219,11 @@ VERDICT: chain valid (18 records)
         breaks the chain and surfaces the affected line. This is the artifact a CISO buyer or auditor
         sees: <strong>proof that the agent read the right context, was authorised to act, ran the right
         gates, and recorded the result</strong>. Cursor and Cody log the session; Roam emits the proof.
+        The packet maps to and supports evidence for SOC 2, ISO 42001, and EU AI Act Article 12
+        controls — it never <em>certifies</em> or <em>makes compliant</em>. See
+        <a href="/docs/agent-contract">/docs/agent-contract</a> for the envelope schema and
+        <a href="/audit">Roam Audit</a> for the analyst-driven replay of the same packet into a
+        written report.
       </p>
     </section>
 
@@ -247,6 +261,17 @@ VERDICT: chain valid (18 records)
         above is the entire shape of the moat in one sitting. <a href="/compare">See the side-by-side
         comparison</a> against Cursor, Cody, Windsurf, CodeRabbit, Greptile, Qodo, and SonarQube.
       </p>
+    </section>
+
+    <section>
+      <h2>Where to next</h2>
+      <ul>
+        <li><a href="/docs/agent-contract">The agent contract</a> &mdash; the canonical JSON envelope every command emits, plus the five rules an agent should follow.</li>
+        <li><a href="/docs/how-roam-thinks">How Roam thinks</a> &mdash; nine workflow moments mapped to the right Roam commands for each.</li>
+        <li><a href="/docs/architecture">Architecture</a> &mdash; the evidence-compiler model, the eight evidence questions, and how packets project to SARIF, in-toto, and OSCAL.</li>
+        <li><a href="/audit">Roam Audit</a> &mdash; the analyst-driven projection: replay your last five PRs through this same pipeline and get a signed packet plus a written report.</li>
+        <li><a href="/docs/mcp-usage">Using Roam via MCP</a> &mdash; the cold-start envelope and canonical agent loop for Claude Code, Cursor, and Continue.</li>
+      </ul>
     </section>
 
     <nav class="docs-footer-nav" aria-label="Pagination">

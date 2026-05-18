@@ -21,6 +21,11 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
+from roam.db.edge_kinds import (
+    CALL_EDGE_KINDS,
+    IMPORT_EDGE_KINDS,
+    INHERITANCE_EDGE_KINDS,
+)
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -28,6 +33,21 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+
+# W543-followup-C: structural-neighbour edge kinds for the hover summary.
+# Cross-vocabulary union of three canonical tuples — preserves the original
+# ``('call', 'calls', 'inherits', 'import', 'imports')`` literal at line 62
+# (W524-fix shape) by composing it from named constants instead of an
+# inline literal. The intent (per the edge_kinds.py module docstring,
+# lines 56-58: "cmd_hover deliberately unions both so the strongest-
+# neighbour query catches file-level rows that survived a schema-revision
+# drift") is preserved: any structural caller/callee that ranks via
+# PageRank should reach this query. Reference edges
+# (``'reference'`` / ``'references'``) are deliberately NOT in the union
+# because the original W524-fix literal omitted them — hover surfaces
+# explicit call/inherit/import edges, not arbitrary symbol references.
+_HOVER_NEIGHBOUR_KINDS: tuple[str, ...] = CALL_EDGE_KINDS + INHERITANCE_EDGE_KINDS + IMPORT_EDGE_KINDS
+_HOVER_NEIGHBOUR_PLACEHOLDERS: str = ", ".join("?" for _ in _HOVER_NEIGHBOUR_KINDS)
 
 
 def _blast_bucket(in_degree: int) -> str:
@@ -48,6 +68,12 @@ def _top_neighbour(conn, sym_id: int, *, direction: str) -> dict | None:
         edge_clause = "e.target_id = ? AND s.id = e.source_id"
     else:
         edge_clause = "e.source_id = ? AND s.id = e.target_id"
+    # W543-followup-C: edge-kind tuple composed from canonical constants
+    # (CALL_EDGE_KINDS + INHERITANCE_EDGE_KINDS + IMPORT_EDGE_KINDS) so a
+    # future widening (e.g. a new plugin-emitted plural alias) reaches
+    # this query by adding to the canonical tuple, not by editing every
+    # call site. Bound as ?-placeholders to keep the statement
+    # parameterised end to end.
     rows = conn.execute(
         f"""
         SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path,
@@ -56,14 +82,11 @@ def _top_neighbour(conn, sym_id: int, *, direction: str) -> dict | None:
         JOIN symbols s ON {edge_clause}
         JOIN files f ON s.file_id = f.id
         LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
-        -- W524-fix: 'imports' is a phantom for the symbol-level `edges` table
-        -- (canonical writer is 'import' singular; 'imports' is the file_edges value).
-        -- Union both forms + plural 'calls' for plugin variants (W79 / W499 pattern).
-        WHERE e.kind IN ('call', 'calls', 'inherits', 'import', 'imports')
+        WHERE e.kind IN ({_HOVER_NEIGHBOUR_PLACEHOLDERS})
         ORDER BY pr DESC
         LIMIT 1
         """,
-        (sym_id,),
+        (sym_id, *_HOVER_NEIGHBOUR_KINDS),
     ).fetchall()
     if not rows:
         return None

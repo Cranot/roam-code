@@ -31,11 +31,29 @@ from roam.output.formatter import (
     truncate_lines,
 )
 
-_EDGE_PRIORITY = {"call": 0, "template": 0, "inherits": 1, "implements": 2, "import": 3}
+# W543-followup: the priority tiers for ``inherits`` / ``implements`` /
+# ``uses_trait`` mirror :data:`roam.db.edge_kinds.INHERITANCE_EDGE_KINDS`;
+# ``import`` mirrors :data:`roam.db.edge_kinds.IMPORT_EDGE_KINDS` (plural
+# ``'imports'`` collapses to the same priority via the default fallback).
+# Keeping the mapping inline rather than computed off the canonical
+# tuples preserves the explicit ordering: call < inherits < implements
+# < uses_trait < import. ``uses_trait`` previously hit the default
+# priority (1) — making it explicit means a future addition to the
+# canonical inheritance set is a one-line change here, not a silent
+# behaviour shift.
+_EDGE_PRIORITY = {
+    "call": 0,
+    "template": 0,
+    "inherits": 1,
+    "implements": 2,
+    "uses_trait": 2,
+    "import": 3,
+    "imports": 3,
+}
 
 
 def _dedup_edges(edges):
-    """Dedup edges by symbol, preferring call > inherits > implements > import."""
+    """Dedup edges by symbol, preferring call > inherits > implements/uses_trait > import."""
     best = {}
     for c in edges:
         sid = c["id"]

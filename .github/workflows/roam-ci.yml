@@ -1,7 +1,8 @@
 # CI pipeline for roam-code itself.
 #
 # Jobs:
-#   test         — pytest across all supported Python versions (3.9–3.13)
+#   test         — pytest across all supported Python versions (3.10–3.13;
+#                   3.9 dropped 2026-05-16 per pyproject requires-python).
 #   lint         — ruff format/lint check (Python 3.12 only, fast gate)
 #   self-analysis — roam analyses its own codebase on PRs using the local
 #                   composite action (uses: ./), posting a sticky comment

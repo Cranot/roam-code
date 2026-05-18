@@ -13,14 +13,17 @@ the per-file aliases now resolve via import rather than re-definition.
 ``loc`` / ``find_workspace_root`` behavior is byte-identical to the
 prior in-file definitions in ``smells.py`` — pure relocation.
 
-``is_test_path`` (W873) is the most permissive of the historical
-catalog-layer variants. It UNIONs the directory-pattern set used by
-``detectors._is_test_path`` and the basename-pattern set used by
-``type_switch._file_is_test``, plus the cross-language extension
-suffixes the rules layer already recognised. Callers outside
-``roam.catalog`` should keep using ``roam.commands.changed_files.
-is_test_file`` (which delegates to ``roam.index.file_roles`` and is
-the canonical commands-layer detector) — see W873-drive-by notes.
+``is_test_path`` (W873 → W898) is now a thin delegate to the canonical
+``roam.commands.changed_files.is_test_file`` — the long arc of
+W873/W886/W889/W891/W893 patches consolidated every per-language edge
+case onto the commands-layer detector (which itself delegates to
+``roam.index.test_conventions.is_test_file``). Pre-W898 the catalog
+re-implemented the same heuristics in parallel; W898 collapses both
+onto one source of truth. The lazy import inside the body keeps
+``catalog._shared`` import-cycle-free at module load (no cycle exists
+today — verified per the CLAUDE.md "Verify the cycle before hedging"
+rule W907 — but lazy import avoids accidentally introducing one if
+``commands.changed_files`` ever needs to reach back into the catalog).
 
 ``enclosing_symbol`` (W877) is the defensive superset of the two
 historical variants: it preserves ``type_switch._enclosing_symbol``'s
@@ -65,7 +68,6 @@ dict literal is removed.
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -117,128 +119,25 @@ def find_workspace_root() -> Path:
         return Path.cwd()
 
 
-# Directory components anywhere in the normalised path that mark a test
-# tree. Matched after Windows-backslash normalisation + lowercasing.
-_TEST_DIR_SEGMENTS: tuple[str, ...] = (
-    "/tests/",
-    "/test/",
-    "/__tests__/",
-    "/spec/",
-    "/testing/",
-)
-# Same segments anchored at the start of the path (no leading slash).
-_TEST_DIR_PREFIXES: tuple[str, ...] = (
-    "tests/",
-    "test/",
-    "__tests__/",
-    "spec/",
-    "testing/",
-)
-# Cross-language basename suffixes for test files.
-# ``_test.py`` / ``_tests.py`` (Python alt), ``_test.go`` (Go),
-# ``_test.rs`` (Rust), ``_test.php`` (PHP), ``_test.exs`` (Elixir),
-# ``_test.dart`` (Dart). The Elixir / Dart entries close W891 — the
-# canonical ``roam.index.test_conventions.DEFAULT_TEST_PATTERNS``
-# already covered both, so this is a pure parity fix at the catalog
-# layer (same FP-risk class as the W889 camelCase widening).
-_TEST_FILE_SUFFIXES: tuple[str, ...] = (
-    "_test.py",
-    "_tests.py",
-    "_test.go",
-    "_test.rs",
-    "_test.php",
-    "_test.exs",
-    "_test.dart",
-)
-# Basename infixes for JS/TS/Vue/Svelte (Vitest, Jest, ``.spec.ts``).
-_TEST_BASENAME_INFIXES: tuple[str, ...] = (".test.", ".spec.")
-
-# camelCase / PascalCase test basenames for Java / Kotlin / C# / Swift /
-# PHP / Scala / Apex. Matches the same set covered by
-# ``roam.index.test_conventions.DEFAULT_TEST_PATTERNS`` so the catalog
-# layer stays in parity with the canonical commands-layer detector
-# (``commands.changed_files.is_test_file``) on cross-language repos
-# where test files live outside an explicit ``tests/`` directory
-# (W889 / drive-by from W886).
-#
-# Case-sensitivity matters here: the canonical
-# ``DEFAULT_TEST_PATTERNS`` uses case-sensitive ``Tests?\.java`` so that
-# ``latest.java`` (lowercase ``test`` inside ``latest``) is NOT
-# misclassified as a test file. The catalog ``is_test_path`` lowercases
-# its input for directory matching, but this camelCase check runs
-# against the ORIGINAL-CASE basename to preserve that discipline.
-# Scala adds a parallel ``Spec`` suffix (``FooSpec.scala``); the
-# canonical pattern covers both.
-_CAMELCASE_TEST_BASENAME_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Java, Kotlin, C#, Swift, Apex: ``*Test.<ext>`` / ``*Tests.<ext>``.
-    # Uses ``.*`` (not ``.+``) to match the canonical
-    # ``DEFAULT_TEST_PATTERNS`` exactly — a bare ``Test.java`` is treated
-    # as a test file (boundary case: aligns with the canonical regex so
-    # the two layers agree). Note: Apex ``cls`` is single-suffix-only in
-    # the canonical (``^.*Test\.cls$``, no plural), so it's split out
-    # below alongside PHP.
-    re.compile(r"^.*Tests?\.(?:java|kt|cs|swift)$"),
-    # PHP, Apex: ``*Test.<ext>`` only (no plural per canonical).
-    re.compile(r"^.*Test\.(?:php|cls)$"),
-    # Scala: ``*Test.scala`` / ``*Spec.scala``.
-    re.compile(r"^.*(?:Test|Spec)\.scala$"),
-)
-
-
 def is_test_path(path: str) -> bool:
-    """Return True if *path* points at a test file.
+    """Delegate to canonical ``changed_files.is_test_file`` (W898).
 
-    Most permissive catalog-layer detector. Combines every directory
-    pattern (``tests/``, ``test/``, ``__tests__/``, ``spec/``,
-    ``testing/``) and basename pattern (``test_*.py``, ``conftest.py``,
-    ``*_test.py``, ``*_tests.py``, ``*_test.go``, ``*_test.rs``,
-    ``*_test.php``, ``*.test.ts``, ``*.spec.js``) seen across the
-    historical in-file copies, PLUS the camelCase/PascalCase basenames
-    common in Java / Kotlin / C# / Swift / PHP / Scala / Apex codebases
-    (``UserTest.java``, ``UserTests.cs``, ``UserSpec.scala``, ...) so
-    detectors on those stacks don't mis-classify test files as
-    production code (W889 — parity with the canonical commands-layer
-    detector at ``commands.changed_files.is_test_file``).
-
-    Windows-safe: ``\\`` is normalised to ``/`` before matching, so a
-    ``"tests\\foo\\test_bar.py"`` input matches the same way as the
-    POSIX form. Directory matching is case-insensitive (mixed-case
-    ``Tests/`` directories on case-insensitive filesystems still
-    match). The camelCase basename check is case-SENSITIVE so that
-    ``latest.java`` (lowercase ``test`` inside ``latest``) is NOT
-    treated as a test file — matching the canonical
-    ``DEFAULT_TEST_PATTERNS`` discipline.
+    Historical catalog-layer detector. Pre-W898 this module re-implemented
+    the same test-path heuristics as the commands-layer
+    ``changed_files.is_test_file`` (W873 hoist) and the two ran in
+    parallel — same concept, two implementations, with W886/W889/W891/W893
+    repeatedly patching one side to match the other. W898 collapses both
+    onto the canonical commands-layer detector, which itself delegates to
+    ``roam.index.test_conventions.is_test_file`` for cross-language
+    coverage. No cycle exists: ``commands.changed_files`` does not import
+    from ``roam.catalog`` (verified via grep both directions per the
+    CLAUDE.md "Verify the cycle before hedging" rule, W907).
 
     Returns ``False`` for empty / falsy inputs.
     """
-    if not path:
-        return False
-    # Original-case forward-slash path for case-sensitive camelCase match.
-    p_cs = path.replace("\\", "/")
-    p = p_cs.lower()
-    if any(seg in p for seg in _TEST_DIR_SEGMENTS):
-        return True
-    if any(p.startswith(prefix) for prefix in _TEST_DIR_PREFIXES):
-        return True
-    # Basename checks
-    base = p.rsplit("/", 1)[-1]
-    if base == "conftest.py":
-        return True
-    if base.startswith("test_"):
-        return True
-    if any(base.endswith(suffix) for suffix in _TEST_FILE_SUFFIXES):
-        return True
-    if any(infix in base for infix in _TEST_BASENAME_INFIXES):
-        return True
-    # camelCase / PascalCase basename match (Java / Kotlin / C# / Swift /
-    # PHP / Scala / Apex) — case-sensitive against the original basename
-    # so ``latest.java`` (lowercase ``test`` inside ``latest``) is NOT
-    # treated as a test file. Parity with
-    # ``index.test_conventions.DEFAULT_TEST_PATTERNS`` (W889).
-    base_cs = p_cs.rsplit("/", 1)[-1]
-    if any(pat.match(base_cs) for pat in _CAMELCASE_TEST_BASENAME_PATTERNS):
-        return True
-    return False
+    from roam.commands.changed_files import is_test_file
+
+    return is_test_file(path)
 
 
 def enclosing_symbol(conn: sqlite3.Connection, file_id: int, line: int) -> tuple[str, str, int]:

@@ -98,7 +98,7 @@ controls:
       - review
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       Each PR bundle carries a run_id, agent identifier, and intent string,
@@ -176,7 +176,7 @@ controls:
       - review
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- check context_read.commands_run for "roam preflight" or "roam impact"
     pass_condition: any_required_present
     export_text: >-
@@ -264,7 +264,7 @@ controls:
       - security-reachability
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       The PR bundle's `risks[]` array, together with per-symbol
@@ -324,7 +324,7 @@ controls:
       - due-diligence
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       Each emitted PR bundle ties its commit_sha to a run_id and named agent,
@@ -352,7 +352,7 @@ controls:
       - governance-pack
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- look for "roam critique" and "roam impact" in commands_run
     pass_condition: any_required_present
     export_text: >-
@@ -380,7 +380,7 @@ controls:
       - due-diligence
     wording_guard: "audit-ready record"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       The PR bundle composes commit_sha, run_id, context_read, and tests_run
@@ -409,7 +409,7 @@ controls:
       - governance-pack
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       The PR bundle's `context_read` manifest, combined with a recorded
@@ -440,7 +440,7 @@ controls:
       - governance-pack
     wording_guard: "supports evidence for"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- non-empty tests_required AND tests_run; at least one passed=true
     pass_condition: conditional
     export_text: >-
@@ -478,7 +478,7 @@ controls:
       - governance-pack
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- plus roam --json runs show <run_id> for per-event actor
     pass_condition: all_required_present
     export_text: >-
@@ -542,7 +542,7 @@ controls:
       - due-diligence
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
     pass_condition: all_required_present
     export_text: >-
       Roam's ChangeEvidence (actor_refs, run_ids, commit_sha, context_read)
@@ -575,7 +575,7 @@ controls:
       - governance-pack
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- look for "roam critique" in commands_run with severity recorded
     pass_condition: any_required_present
     export_text: >-
@@ -641,7 +641,7 @@ controls:
     query: |
       roam --json mode
       roam --json constitution
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- inspect authority_refs[] (mode + permit + policy_rule)
     pass_condition: all_required_present
     export_text: >-
@@ -675,7 +675,7 @@ controls:
       - due-diligence
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       roam --json runs show <run_id>
       -- inspect actor_refs[] + commit_sha + per-event timestamps
     pass_condition: all_required_present
@@ -757,7 +757,7 @@ controls:
       - security-reachability
     wording_guard: "maps to"
     query: |
-      roam --json pr-bundle show <run_id>
+      Inspect '.roam/pr-bundles/<run_id>.json' (with jq or python -m json.tool)
       -- any affected_symbols.blast_radius >= threshold (default 10)
     pass_condition: conditional
     export_text: >-

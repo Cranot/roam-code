@@ -1096,10 +1096,62 @@ def orphan_imports(ctx, lang, persist) -> None:
     targets = ["python", "javascript", "go"] if lang.lower() == "all" else [lang.lower()]
     all_orphans: list[dict] = []
     files_scanned = 0
+
+    # W607-CR -- substrate-boundary plumbing for cmd_orphan_imports.
+    # ``_run_check_cr`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cr_warnings_out`` rather than
+    # crashing the orphan-imports detector outright (W132 origin per
+    # CLAUDE.md detector roster -- part of the original 16 findings-
+    # registry detectors; W812 empty-corpus smoke + W814 partial_success
+    # fix; W160 conftest + try-except + relative-import filters). Marker
+    # family ``orphan_imports_<phase>_failed:<exc_class>:<detail>``.
+    # Substrates wrapped:
+    #
+    #   * scan_python                -- per-language Python orphan scanner
+    #                                   (covers W160 conftest + try/except
+    #                                   + relative-import filter helpers
+    #                                   indirectly via the scanner's call
+    #                                   tree)
+    #   * scan_javascript            -- per-language JS/TS orphan scanner
+    #   * scan_go                    -- per-language Go orphan scanner
+    #   * emit_findings              -- W132 findings-registry mirror
+    #                                   (sqlite3.OperationalError silent
+    #                                   no-op preserved for pre-W89 DB)
+    #   * serialize_to_sarif         -- SARIF projection
+    #   * derive_distribution        -- R22 wrap + confidence_distribution
+    #                                   + verdict_with_high_count
+    _w607cr_warnings_out: list[str] = []
+
+    def _run_check_cr(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CR marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``orphan_imports_<phase>_failed:<exc_class>:<detail>`` marker
+        via ``_w607cr_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cr_warnings_out.append(f"orphan_imports_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         for tgt in targets:
+            # W607-CR: per-language scanner substrate. A raise inside one
+            # language's scanner (e.g., a malformed regex match on a Go
+            # file) degrades to ([], 0) for that language so the OTHER
+            # languages still classify correctly and the marker surfaces.
+            # Per-language isolation: a Python-scan failure must NOT
+            # block the JavaScript and Go scans.
+            phase = f"scan_{tgt}"
             scanner = _SCANNERS[tgt]
-            orphans, n = scanner(conn)
+            result = _run_check_cr(phase, scanner, conn, default=([], 0))
+            if result is None:
+                result = ([], 0)
+            orphans, n = result
             all_orphans.extend(orphans)
             files_scanned += n
 
@@ -1109,6 +1161,12 @@ def orphan_imports(ctx, lang, persist) -> None:
         # 200 below is a display truncation, not a persistence one, so
         # the registry stays comprehensive regardless of how a
         # particular invocation slices the view.
+        # W607-CR: ``emit_findings`` substrate boundary. The pre-W89
+        # schema path (sqlite3.OperationalError on missing ``findings``
+        # table) is the EXPECTED degraded path -- the try/except below
+        # maintains the W132 silent no-op contract for that case.
+        # Generic exceptions surface via the
+        # ``orphan_imports_emit_findings_failed:<exc>:<detail>`` marker.
         if persist:
             try:
                 _emit_orphan_imports_findings(conn, all_orphans, ORPHAN_IMPORTS_DETECTOR_VERSION)
@@ -1116,6 +1174,10 @@ def orphan_imports(ctx, lang, persist) -> None:
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CR disclosure
+                _w607cr_warnings_out.append(
+                    f"orphan_imports_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
+                )
 
     verdict = (
         f"OK — no orphan imports across {files_scanned} file(s)"
@@ -1130,9 +1192,17 @@ def orphan_imports(ctx, lang, persist) -> None:
     # json_mode below) so a CI gate sees every detected orphan, not a
     # truncated slice.
     if sarif_mode:
-        from roam.output.sarif import orphan_imports_to_sarif, write_sarif
+        # W607-CR: ``serialize_to_sarif`` substrate -- a raise in the
+        # SARIF writer used to crash the orphan-imports command on the
+        # CI integration path; now degrades silently with a marker, and
+        # the function returns early (matches pre-W607-CR semantics
+        # that SARIF mode short-circuits).
+        def _emit_sarif():
+            from roam.output.sarif import orphan_imports_to_sarif, write_sarif
 
-        click.echo(write_sarif(orphan_imports_to_sarif(all_orphans)))
+            click.echo(write_sarif(orphan_imports_to_sarif(all_orphans)))
+
+        _run_check_cr("serialize_to_sarif", _emit_sarif, default=None)
         return
 
     if json_mode:
@@ -1140,21 +1210,52 @@ def orphan_imports(ctx, lang, persist) -> None:
         # Consumers that previously read `orphans[i]["module"]` must
         # now read `orphans[i]["value"]["module"]` plus
         # `orphans[i]["confidence"]` / `orphans[i]["reason"]`.
-        orphan_triples = wrap_findings(all_orphans[:200], classifier=_orphan_classify)
-        distribution = confidence_distribution(orphan_triples)
-        verdict_with_conf = verdict_with_high_count(verdict, distribution)
+        # W607-CR: ``derive_distribution`` substrate -- R22 wrap +
+        # distribution computation. Degrades to ([], {}, verdict) so
+        # the envelope still emits with empty orphans and an unwrapped
+        # verdict.
+        def _derive_distribution():
+            _triples = wrap_findings(all_orphans[:200], classifier=_orphan_classify)
+            _dist = confidence_distribution(_triples)
+            _wrapped = verdict_with_high_count(verdict, _dist)
+            return (_triples, _dist, _wrapped)
+
+        _derive_result = _run_check_cr(
+            "derive_distribution",
+            _derive_distribution,
+            default=([], {}, verdict),
+        )
+        if _derive_result is None:
+            _derive_result = ([], {}, verdict)
+        orphan_triples, distribution, verdict_with_conf = _derive_result
+
+        # W607-CR: mirror substrate markers into BOTH the top-level
+        # envelope ``warnings_out`` AND ``summary.warnings_out`` so MCP
+        # consumers see disclosure regardless of which surface they
+        # read. A non-empty W607-CR bucket flips partial_success so a
+        # degraded path is NOT mistaken for a clean populated run
+        # (Pattern-2 silent-fallback guard, paired with W812/W814
+        # empty-corpus history).
+        summary_block = {
+            "verdict": verdict_with_conf,
+            "count": len(all_orphans),
+            "files_scanned": files_scanned,
+            "languages": targets,
+            "findings_confidence_distribution": distribution,
+        }
+        envelope_kwargs: dict = {
+            "summary": summary_block,
+            "orphans": orphan_triples,
+        }
+        if _w607cr_warnings_out:
+            summary_block["warnings_out"] = list(_w607cr_warnings_out)
+            summary_block["partial_success"] = True
+            envelope_kwargs["warnings_out"] = list(_w607cr_warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "orphan-imports",
-                    summary={
-                        "verdict": verdict_with_conf,
-                        "count": len(all_orphans),
-                        "files_scanned": files_scanned,
-                        "languages": targets,
-                        "findings_confidence_distribution": distribution,
-                    },
-                    orphans=orphan_triples,
+                    **envelope_kwargs,
                 )
             )
         )

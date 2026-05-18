@@ -817,45 +817,225 @@ def supply_chain(ctx, top):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    try:
-        project_root = find_project_root()
-    except Exception:
+    # W607-AK -- substrate-boundary plumbing for the SBOM/VEX projection
+    # leg of the W805 cross-artifact-consistency family. Prior to W607-AK a
+    # raise inside any of discover_and_parse / compute_risk_score / top_risky
+    # / supply_chain_to_sarif / write_sarif crashed the whole supply-chain
+    # build wholesale. Each is wrapped via ``_run_check_ak`` so a raise
+    # becomes a structured
+    # ``supply_chain_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ak_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # cmd_supply_chain is the SBOM/VEX projection on the W805 cross-artifact
+    # family (CGA/VSA -> SBOM/VEX projection chain) -- producer-side consumer
+    # of vuln-reach / taint reachability relevant to the W805 6-artifact
+    # identity-coherence story.
+    #
+    # Marker prefix discipline: every W607-AK substrate marker uses the
+    # canonical ``supply_chain_<phase>_failed:<exc_class>:<detail>`` shape.
+    # cmd_supply_chain has only a thin pre-existing ``warnings_out`` channel
+    # (W1142-followup-B cap-hit disclosure) -- W607-AK is ADDITIVE: the
+    # accumulator-based markers merge into the SAME ``summary.warnings_out``
+    # field. The marker prefix disambiguates them downstream
+    # (``truncated to ...`` vs ``supply_chain_<phase>_failed:*``).
+    _w607ak_warnings_out: list[str] = []
+
+    def _run_check_ak(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AK marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``supply_chain_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ak_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ak_warnings_out.append(f"supply_chain_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CD -- ADDITIVE aggregation-phase plumbing on top of the W607-AK
+    # substrate-CALL markers. W607-AK already wrapped the substrate-helper
+    # boundaries on the build path (find_project_root / discover_and_parse /
+    # compute_risk_score / sort_risky_full / top_risky / supply_chain_to_sarif
+    # / write_sarif); W607-CD extends marker coverage to the AGGREGATION-PHASE
+    # boundaries that W607-AK left unguarded:
+    #
+    #   - ``compute_predicate``    -- per-field extraction of metrics fields
+    #                                 (score, total, direct_count, dev_count,
+    #                                 pin_coverage_pct, exact_count,
+    #                                 range_count, unpinned_count) used to
+    #                                 compose the verdict string + envelope.
+    #                                 A future ``compute_risk_score`` schema
+    #                                 refactor that drops/renames one of
+    #                                 these keys would otherwise crash the
+    #                                 envelope post-build.
+    #   - ``compute_verdict``      -- verdict string assembly based on score
+    #                                 thresholds (>=80 healthy / >=60 fair /
+    #                                 <60 risky / empty deps -> no-deps).
+    #                                 Floor to a literal "Supply chain
+    #                                 analysis completed" string per LAW 6
+    #                                 (standalone-parse) + W978 first-
+    #                                 hypothesis discipline (no re-
+    #                                 interpolation of the same values that
+    #                                 just raised).
+    #   - ``serialize_envelope``   -- ``json_envelope("supply-chain", ...)``
+    #                                 projection (downstream contract changes
+    #                                 / shape regressions).
+    #
+    # cmd_supply_chain is the SBOM/VEX projection leg of the W805 cross-
+    # artifact-consistency family. Closes the supply-chain attestation
+    # QUARTET together with W607-AD/BT (cmd_attest), W607-AE/BW
+    # (cmd_pr_bundle), and W607-AF/BZ (cmd_cga). The W607-CD markers fire
+    # AT RUNTIME when an aggregation-phase boundary raises, complementing
+    # the W805 xfail-strict pins that catch structural inconsistency at
+    # the dataclass level.
+    #
+    # Marker family ``supply_chain_*`` -- same family as W607-AK (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope on
+    # the success path.
+    #
+    # No ``auto_log`` phase: cmd_supply_chain has no active-run ledger
+    # write at present, so the W607-BZ 4-phase set drops to 3 phases here
+    # (compute_predicate / compute_verdict / serialize_envelope). Same
+    # marker shape contract, narrower phase set.
+    _w607cd_warnings_out: list[str] = []
+
+    def _run_check_cd(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CD marker emission.
+
+        Mirror of ``_run_check_ak`` shape (same ``supply_chain_<phase>_failed:``
+        marker family) but writes into ``_w607cd_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cd_warnings_out.append(f"supply_chain_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    project_root = _run_check_ak("find_project_root", find_project_root, default=None)
+    if project_root is None:
         project_root = Path.cwd()
 
-    deps = discover_and_parse(project_root)
-    metrics = compute_risk_score(deps)
+    deps = _run_check_ak("discover_and_parse", discover_and_parse, project_root, default=[])
+    metrics = _run_check_ak(
+        "compute_risk_score",
+        compute_risk_score,
+        deps,
+        default=dict(
+            score=0,
+            pin_coverage=0.0,
+            dev_ratio=0.0,
+            total=0,
+            direct_count=0,
+            dev_count=0,
+            exact_count=0,
+            range_count=0,
+            unpinned_count=0,
+        ),
+    )
     score = metrics["score"]
     # W1142-followup-B: cap-hit disclosure. ``top_risky`` returns a
     # risk-sorted slice of length <= ``top``; the full pre-slice
     # population is the risk-sorted ``deps`` list. Record the full
     # count so the envelope can disclose when ``--limit`` truncated
     # the riskiest-dependency report.
-    risky_full = sorted(
-        deps, key=lambda d: ({"unpinned": 2, "range": 1, "exact": 0}[d.pin_status], not d.is_dev), reverse=True
+    risky_full = _run_check_ak(
+        "sort_risky_full",
+        lambda _deps: sorted(
+            _deps,
+            key=lambda d: ({"unpinned": 2, "range": 1, "exact": 0}[d.pin_status], not d.is_dev),
+            reverse=True,
+        ),
+        deps,
+        default=[],
     )
     total_risky_full = len(risky_full)
-    risky = top_risky(deps, top)
+    risky = _run_check_ak("top_risky", top_risky, deps, top, default=[])
     risky_truncated = total_risky_full > len(risky)
     found_files = sorted({d.source_file for d in deps})
     ecosystems: dict[str, int] = {}
     for d in deps:
         ecosystems[d.ecosystem] = ecosystems.get(d.ecosystem, 0) + 1
-    if not deps:
-        verdict = "No dependency files found"
-    elif score >= 80:
-        _pct = int(metrics["pin_coverage"] * 100)
-        verdict = f"Supply chain healthy ({score}/100) -- {_pct}% pinned"
-    elif score >= 60:
-        _u = metrics["unpinned_count"]
-        _r = metrics["range_count"]
-        verdict = f"Supply chain fair ({score}/100) -- {_u} unpinned, {_r} ranges"
-    else:
-        _u = metrics["unpinned_count"]
-        verdict = f"Supply chain risky ({score}/100) -- {_u} unpinned dependencies"
+
+    # W607-CD -- compute_predicate boundary. Wraps the per-field extraction
+    # of metrics so a future ``compute_risk_score`` schema refactor that
+    # drops/renames keys surfaces a marker rather than crashing the envelope.
+    # Floor to documented empty-shape ints matching the happy-path return so
+    # downstream verdict/summary fields stay non-null. Accessors are safe-
+    # floored via ``.get()`` so a malformed metrics dict (missing keys)
+    # caught by this wrap doesn't trip a KeyError post-disclosure.
+    def _compute_predicate_fields(metrics_local: dict) -> dict:
+        return {
+            "score": metrics_local["score"],
+            "pin_coverage": metrics_local["pin_coverage"],
+            "unpinned_count": metrics_local["unpinned_count"],
+            "range_count": metrics_local["range_count"],
+            "exact_count": metrics_local["exact_count"],
+            "total": metrics_local["total"],
+            "direct_count": metrics_local["direct_count"],
+            "dev_count": metrics_local["dev_count"],
+        }
+
+    _pred_fields = _run_check_cd(
+        "compute_predicate",
+        _compute_predicate_fields,
+        metrics,
+        default={
+            "score": 0,
+            "pin_coverage": 0.0,
+            "unpinned_count": 0,
+            "range_count": 0,
+            "exact_count": 0,
+            "total": 0,
+            "direct_count": 0,
+            "dev_count": 0,
+        },
+    )
+
+    # W607-CD -- compute_verdict boundary. Wraps the verdict-string assembly
+    # so a downstream f-string refactor (e.g. a non-int pin_coverage from a
+    # vocabulary refactor) surfaces a marker rather than crashing the
+    # envelope. Floor must NOT re-interpolate the same values that tripped
+    # the closure (W978 first-hypothesis discipline: a __format__-raising
+    # sentinel under test would re-raise inside the default f-string). Use
+    # a literal ``"Supply chain analysis completed"`` floor instead (LAW 6
+    # still holds: the line works standalone). Mirror of cmd_cga W607-BZ
+    # compute_verdict pattern.
+    def _build_verdict_str(fields: dict, has_deps: bool) -> str:
+        if not has_deps:
+            return "No dependency files found"
+        score_local = fields["score"]
+        if score_local >= 80:
+            _pct_local = int(fields["pin_coverage"] * 100)
+            return f"Supply chain healthy ({score_local}/100) -- {_pct_local}% pinned"
+        if score_local >= 60:
+            _u_local = fields["unpinned_count"]
+            _r_local = fields["range_count"]
+            return f"Supply chain fair ({score_local}/100) -- {_u_local} unpinned, {_r_local} ranges"
+        _u_local = fields["unpinned_count"]
+        return f"Supply chain risky ({score_local}/100) -- {_u_local} unpinned dependencies"
+
+    verdict = _run_check_cd(
+        "compute_verdict",
+        _build_verdict_str,
+        _pred_fields,
+        bool(deps),
+        default="Supply chain analysis completed",
+    )
 
     if sarif_mode:
-        sarif = supply_chain_to_sarif(deps, score)
-        click.echo(write_sarif(sarif))
+        sarif = _run_check_ak(
+            "supply_chain_to_sarif",
+            supply_chain_to_sarif,
+            deps,
+            score,
+            default={},
+        )
+        _sarif_text = _run_check_ak("write_sarif", write_sarif, sarif, default="")
+        click.echo(_sarif_text)
         return
 
     if json_mode:
@@ -871,35 +1051,53 @@ def supply_chain(ctx, top):
         _warnings_out: list[str] = []
         if risky_truncated:
             _warnings_out.append(f"truncated to {len(risky)} of {total_risky_full} — pass --limit larger to see more")
+        # W607-AK / W607-CD: merge substrate-CALL markers AND aggregation-
+        # phase markers into the canonical ``warnings_out`` channel. All
+        # three buckets share the canonical ``supply_chain_*`` family
+        # (W1142-followup-B uses prose; the W607-* buckets use the
+        # ``supply_chain_<phase>_failed:`` shape). The additive bucket
+        # stays distinguishable in tests + audits via its phase names
+        # (``compute_predicate`` / ``compute_verdict`` /
+        # ``serialize_envelope``). ``partial_success`` flips when ANY
+        # bucket is non-empty.
+        _combined_warnings_out = list(_warnings_out) + list(_w607ak_warnings_out) + list(_w607cd_warnings_out)
+        # W607-CD: safe-floor metric accessors via ``.get()`` so a
+        # malformed metrics dict (missing keys) caught by the
+        # compute_predicate wrap above doesn't trip a KeyError post-
+        # disclosure. The W607-CD marker is already on the bucket; the
+        # envelope still emits with documented empty-floor values so
+        # consumers see the degradation lineage rather than empty stdout.
         _summary = dict(
             verdict=verdict,
-            risk_score=score,
-            total_dependencies=metrics["total"],
-            direct_count=metrics["direct_count"],
-            dev_count=metrics["dev_count"],
-            pin_coverage_pct=round(metrics["pin_coverage"] * 100, 1),
-            unpinned_count=metrics["unpinned_count"],
-            range_count=metrics["range_count"],
-            exact_count=metrics["exact_count"],
+            risk_score=_pred_fields.get("score", 0),
+            total_dependencies=metrics.get("total", 0),
+            direct_count=metrics.get("direct_count", 0),
+            dev_count=metrics.get("dev_count", 0),
+            pin_coverage_pct=round(_pred_fields.get("pin_coverage", 0.0) * 100, 1)
+            if isinstance(_pred_fields.get("pin_coverage"), (int, float))
+            else 0.0,
+            unpinned_count=metrics.get("unpinned_count", 0),
+            range_count=metrics.get("range_count", 0),
+            exact_count=metrics.get("exact_count", 0),
             files_scanned=found_files,
             ecosystems=ecosystems,
             **_cap_summary,
         )
-        if _warnings_out:
-            _summary["warnings_out"] = _warnings_out
+        if _combined_warnings_out:
+            _summary["warnings_out"] = list(_combined_warnings_out)
             _summary["partial_success"] = True
-        envelope = json_envelope(
-            "supply-chain",
-            summary=_summary,
+        _envelope_kwargs: dict = dict(
             budget=token_budget,
-            risk_score=score,
-            total_dependencies=metrics["total"],
-            direct_count=metrics["direct_count"],
-            dev_count=metrics["dev_count"],
-            exact_count=metrics["exact_count"],
-            range_count=metrics["range_count"],
-            unpinned_count=metrics["unpinned_count"],
-            pin_coverage_pct=round(metrics["pin_coverage"] * 100, 1),
+            risk_score=_pred_fields.get("score", 0),
+            total_dependencies=metrics.get("total", 0),
+            direct_count=metrics.get("direct_count", 0),
+            dev_count=metrics.get("dev_count", 0),
+            exact_count=metrics.get("exact_count", 0),
+            range_count=metrics.get("range_count", 0),
+            unpinned_count=metrics.get("unpinned_count", 0),
+            pin_coverage_pct=round(_pred_fields.get("pin_coverage", 0.0) * 100, 1)
+            if isinstance(_pred_fields.get("pin_coverage"), (int, float))
+            else 0.0,
             files_scanned=found_files,
             ecosystems=ecosystems,
             top_risky=[
@@ -927,6 +1125,50 @@ def supply_chain(ctx, top):
                 for d in deps
             ],
         )
+        if _combined_warnings_out:
+            _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            _envelope_kwargs["partial_success"] = True
+
+        # W607-CD -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("supply-chain", ...)`` would otherwise
+        # crash AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name. Mirror of cmd_cga's W607-BZ
+        # serialize_envelope floor pattern.
+        _envelope_floor: dict = {
+            "command": "supply-chain",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        envelope = _run_check_cd(
+            "serialize_envelope",
+            json_envelope,
+            "supply-chain",
+            default=_envelope_floor,
+            summary=_summary,
+            **_envelope_kwargs,
+        )
+        # W607-CD -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``supply_chain_serialize_envelope_failed:`` marker was appended
+        # to ``_w607cd_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild
+        # needed.
+        if envelope is _envelope_floor and _w607cd_warnings_out:
+            _combined_warnings_out = list(_warnings_out) + list(_w607ak_warnings_out) + list(_w607cd_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            envelope = _envelope_floor
+
         click.echo(to_json(envelope))
         return
 

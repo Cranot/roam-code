@@ -80,13 +80,16 @@ def _discover_invariants(conn, sym_id, sym_info):
     invariants = []
 
     # Signature contract
+    # W761/W847: ``stability`` is INTERNAL VOCABULARY for the invariants
+    # display contract (per-invariant payload field, distinct from the
+    # canonical W547 ``severity`` envelope slot). UPPER-case retained.
     if signature:
         stability = "HIGH" if caller_count >= 10 else "MEDIUM" if caller_count >= 3 else "LOW"
         invariants.append(
             {
                 "type": "SIGNATURE",
                 "description": f"Signature: {signature}",
-                "stability": stability,
+                "stability": stability,  # W761/W847 retained UPPER-case for internal vocabulary
                 "detail": f"{caller_count} callers depend on this signature",
             }
         )
@@ -97,7 +100,9 @@ def _discover_invariants(conn, sym_id, sym_info):
             {
                 "type": "PARAMS",
                 "description": f"Accepts {param_count} parameter(s)",
-                "stability": "HIGH" if caller_count >= 5 else "MEDIUM",
+                "stability": "HIGH"
+                if caller_count >= 5
+                else "MEDIUM",  # W761/W847 retained UPPER-case for internal vocabulary
                 "detail": f"Changing parameter count would affect {caller_count} call sites",
             }
         )
@@ -108,7 +113,7 @@ def _discover_invariants(conn, sym_id, sym_info):
             {
                 "type": "USAGE_SPREAD",
                 "description": f"Used across {file_spread} files",
-                "stability": "HIGH",
+                "stability": "HIGH",  # W761/W847 retained UPPER-case for internal vocabulary
                 "detail": "Wide usage makes this a de-facto public API",
             }
         )
@@ -120,15 +125,20 @@ def _discover_invariants(conn, sym_id, sym_info):
             {
                 "type": "DEPENDENCIES",
                 "description": f"Depends on {len(callees)} symbol(s): {', '.join(dep_names)}",
-                "stability": "MEDIUM",
+                "stability": "MEDIUM",  # W761/W847 retained UPPER-case for internal vocabulary
                 "detail": "Removing a dependency may change behavior",
             }
         )
 
     # Breaking risk score
+    # W761/W847: ``risk_level`` is the canonical rollup field per W847
+    # scope clarification (the same field name appears in cmd_preflight
+    # and is intentionally distinct from the W547 ``severity`` envelope
+    # slot). UPPER-case retained as INTERNAL VOCABULARY for the
+    # agent-facing risk-tier display contract.
     breaking_risk = caller_count * max(file_spread, 1)
     risk_level = (
-        "CRITICAL"
+        "CRITICAL"  # W761/W847 retained UPPER-case for internal vocabulary
         if breaking_risk >= 50
         else "HIGH"
         if breaking_risk >= 20
@@ -193,6 +203,58 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
+    # W607-CU -- substrate-boundary plumbing for cmd_invariants.
+    # ``_run_check_cu`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cu_warnings_out`` rather than
+    # crashing the architectural-invariant detector (W119 origin per
+    # CLAUDE.md detector roster -- part of the original 16 findings-
+    # registry substrate detectors, paired with cmd_laws). W824 sealed
+    # the empty-corpus smoke; this wave layers substrate isolation on
+    # top so a raise in ``_discover_invariants`` (per-symbol caller-
+    # graph + complexity rollup), the file/symbol-target resolvers,
+    # the public-api / breaking-risk batch queries, the sort step, or
+    # the downstream verdict composer is disclosed rather than fatal.
+    # Marker family ``invariants_<phase>_failed:<exc_class>:<detail>``.
+    # Substrates wrapped:
+    #
+    #   * lookup_file_target               -- file path lookup (exact + LIKE)
+    #   * query_file_symbols               -- per-file symbol bulk query
+    #   * discover_invariants_for_file_sym -- per-symbol invariant discovery
+    #                                         (file-target branch)
+    #   * resolve_symbol_target            -- find_symbol() symbol mode
+    #   * discover_invariants_for_symbol   -- per-symbol invariant discovery
+    #                                         (symbol-target / fallback branch)
+    #   * query_public_api_symbols         -- --public-api batch query
+    #   * discover_invariants_public_api   -- per-symbol invariant discovery
+    #                                         (--public-api batch)
+    #   * query_breaking_risk_symbols      -- --breaking-risk batch query
+    #   * discover_invariants_breaking_risk -- per-symbol invariant discovery
+    #                                          (--breaking-risk batch)
+    #   * sort_by_breaking_risk            -- ranking sort
+    #   * aggregate_summary                -- total_invariants + high_risk
+    #                                         histogram (W978 discipline 6:
+    #                                         literal-int counts hoisted out
+    #                                         of downstream summary code)
+    #   * build_resolution_disclosure      -- W1245 resolution block
+    #   * compose_verdict                  -- LAW 6 single-line verdict
+    #   * build_envelope_symbols           -- per-symbol envelope rows
+    _w607cu_warnings_out: list[str] = []
+
+    def _run_check_cu(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CU marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an ``invariants_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607cu_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cu_warnings_out.append(f"invariants_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
         results = []
         # W1245 Pattern-2 variant-D: track the resolver tier of any
@@ -240,28 +302,77 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             looks_like_file = target_suffix in _known_exts
 
             if looks_like_file:
-                # File mode: try exact match, then suffix/LIKE match
-                row = conn.execute("SELECT id FROM files WHERE path = ?", (target_norm,)).fetchone()
-                if not row:
-                    row = conn.execute("SELECT id FROM files WHERE path LIKE ?", (f"%{target_norm}",)).fetchone()
+                # File mode: try exact match, then suffix/LIKE match.
+                # W607-CU: ``lookup_file_target`` substrate -- the SQL
+                # ``files`` table lookup. A raise here degrades to
+                # ``None`` so the symbol-fallback path still runs.
+                def _lookup_file_target():
+                    row = conn.execute("SELECT id FROM files WHERE path = ?", (target_norm,)).fetchone()
+                    if not row:
+                        row = conn.execute("SELECT id FROM files WHERE path LIKE ?", (f"%{target_norm}",)).fetchone()
+                    return row
+
+                row = _run_check_cu("lookup_file_target", _lookup_file_target, default=None)
 
                 if row:
-                    syms = conn.execute(
-                        """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
-                                  f.path as file_path
-                           FROM symbols s JOIN files f ON s.file_id = f.id
-                           WHERE s.file_id = ?
-                           AND s.kind IN ('function', 'method', 'class')
-                           ORDER BY s.line_start""",
-                        (row["id"],),
-                    ).fetchall()
+                    # W607-CU: ``query_file_symbols`` substrate -- bulk
+                    # query of symbols within the resolved file. A raise
+                    # degrades to [] so the empty-results path composes
+                    # the standard usage-error envelope.
+                    def _query_file_symbols():
+                        return conn.execute(
+                            """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
+                                      f.path as file_path
+                               FROM symbols s JOIN files f ON s.file_id = f.id
+                               WHERE s.file_id = ?
+                               AND s.kind IN ('function', 'method', 'class')
+                               ORDER BY s.line_start""",
+                            (row["id"],),
+                        ).fetchall()
+
+                    syms = _run_check_cu("query_file_symbols", _query_file_symbols, default=[])
+                    if syms is None:
+                        syms = []
+                    # W607-CU: ``discover_invariants_for_file_sym``
+                    # substrate -- per-symbol invariant discovery on
+                    # the file-target branch. Per-invariant ISOLATION:
+                    # a raise on one symbol degrades to None for that
+                    # row and the loop continues (matches the W607-CQ
+                    # template's per-substrate isolation discipline).
                     for sym in syms:
-                        results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                        inv_row = _run_check_cu(
+                            "discover_invariants_for_file_sym",
+                            _discover_invariants,
+                            conn,
+                            sym["id"],
+                            dict(sym),
+                            default=None,
+                        )
+                        if inv_row is not None:
+                            results.append(inv_row)
                 else:
-                    # Not found as file, fall back to symbol lookup
-                    sym = find_symbol(conn, target)
+                    # Not found as file, fall back to symbol lookup.
+                    # W607-CU: ``resolve_symbol_target`` substrate --
+                    # the find_symbol() resolver call. A raise degrades
+                    # to None -> target_unresolved disclosure.
+                    sym = _run_check_cu(
+                        "resolve_symbol_target",
+                        find_symbol,
+                        conn,
+                        target,
+                        default=None,
+                    )
                     if sym:
-                        results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                        inv_row = _run_check_cu(
+                            "discover_invariants_for_symbol",
+                            _discover_invariants,
+                            conn,
+                            sym["id"],
+                            dict(sym),
+                            default=None,
+                        )
+                        if inv_row is not None:
+                            results.append(inv_row)
                         resolution_tier = sym.get("_resolution_tier", "symbol")
                         resolved_target = sym.get("qualified_name") or sym["name"]
                     else:
@@ -269,9 +380,24 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                         resolved_target = target
             else:
                 # Symbol mode
-                sym = find_symbol(conn, target)
+                sym = _run_check_cu(
+                    "resolve_symbol_target",
+                    find_symbol,
+                    conn,
+                    target,
+                    default=None,
+                )
                 if sym:
-                    results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                    inv_row = _run_check_cu(
+                        "discover_invariants_for_symbol",
+                        _discover_invariants,
+                        conn,
+                        sym["id"],
+                        dict(sym),
+                        default=None,
+                    )
+                    if inv_row is not None:
+                        results.append(inv_row)
                     resolution_tier = sym.get("_resolution_tier", "symbol")
                     resolved_target = sym.get("qualified_name") or sym["name"]
                 else:
@@ -279,29 +405,61 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                     resolved_target = target
 
         elif public_api:
-            # All exported symbols (functions/classes with 0 or more callers)
-            syms = conn.execute(
-                """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
-                          f.path as file_path
-                   FROM symbols s JOIN files f ON s.file_id = f.id
-                   WHERE s.kind IN ('function', 'method', 'class')
-                   AND s.name NOT LIKE '\\_%' ESCAPE '\\'
-                   ORDER BY s.name"""
-            ).fetchall()
+            # All exported symbols (functions/classes with 0 or more callers).
+            # W607-CU: ``query_public_api_symbols`` substrate -- the
+            # batch query. A raise degrades to [] so the empty-results
+            # path emits the usage-error envelope.
+            def _query_public_api_symbols():
+                return conn.execute(
+                    """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
+                              f.path as file_path
+                       FROM symbols s JOIN files f ON s.file_id = f.id
+                       WHERE s.kind IN ('function', 'method', 'class')
+                       AND s.name NOT LIKE '\\_%' ESCAPE '\\'
+                       ORDER BY s.name"""
+                ).fetchall()
+
+            syms = _run_check_cu("query_public_api_symbols", _query_public_api_symbols, default=[])
+            if syms is None:
+                syms = []
             for sym in syms[: top_n * 2]:  # over-fetch, then sort/trim
-                results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                inv_row = _run_check_cu(
+                    "discover_invariants_public_api",
+                    _discover_invariants,
+                    conn,
+                    sym["id"],
+                    dict(sym),
+                    default=None,
+                )
+                if inv_row is not None:
+                    results.append(inv_row)
 
         elif breaking_risk:
-            # All symbols ranked by breaking risk
-            syms = conn.execute(
-                """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
-                          f.path as file_path
-                   FROM symbols s JOIN files f ON s.file_id = f.id
-                   WHERE s.kind IN ('function', 'method', 'class')
-                   ORDER BY s.name"""
-            ).fetchall()
+            # All symbols ranked by breaking risk.
+            # W607-CU: ``query_breaking_risk_symbols`` substrate.
+            def _query_breaking_risk_symbols():
+                return conn.execute(
+                    """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
+                              f.path as file_path
+                       FROM symbols s JOIN files f ON s.file_id = f.id
+                       WHERE s.kind IN ('function', 'method', 'class')
+                       ORDER BY s.name"""
+                ).fetchall()
+
+            syms = _run_check_cu("query_breaking_risk_symbols", _query_breaking_risk_symbols, default=[])
+            if syms is None:
+                syms = []
             for sym in syms:
-                results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                inv_row = _run_check_cu(
+                    "discover_invariants_breaking_risk",
+                    _discover_invariants,
+                    conn,
+                    sym["id"],
+                    dict(sym),
+                    default=None,
+                )
+                if inv_row is not None:
+                    results.append(inv_row)
 
         if not results and not target and not public_api and not breaking_risk:
             # Pattern 1 Variant C: in JSON mode, emit a structured
@@ -310,43 +468,80 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             # and the next_commands suggest exactly how to recover.
             verdict = "Provide a TARGET symbol/file, or use --public-api or --breaking-risk."
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "invariants",
-                            summary={
-                                "verdict": verdict,
-                                "symbols_analyzed": 0,
-                                "total_invariants": 0,
-                                "high_risk_count": 0,
-                                "partial_success": True,
-                                "state": "usage_error",
-                            },
-                            symbols=[],
-                            agent_contract={
-                                "facts": [verdict],
-                                "next_commands": [
-                                    "roam invariants <symbol-or-file>",
-                                    "roam invariants --public-api",
-                                    "roam invariants --breaking-risk",
-                                ],
-                            },
-                        )
-                    )
+                usage_summary: dict = {
+                    "verdict": verdict,
+                    "symbols_analyzed": 0,
+                    "total_invariants": 0,
+                    "high_risk_count": 0,
+                    "partial_success": True,
+                    "state": "usage_error",
+                }
+                usage_envelope_kwargs: dict = dict(
+                    summary=usage_summary,
+                    symbols=[],
+                    agent_contract={
+                        "facts": [verdict],
+                        "next_commands": [
+                            "roam invariants <symbol-or-file>",
+                            "roam invariants --public-api",
+                            "roam invariants --breaking-risk",
+                        ],
+                    },
                 )
+                # W607-CU: mirror substrate markers into BOTH the
+                # top-level envelope ``warnings_out`` AND
+                # ``summary.warnings_out`` so MCP consumers see
+                # disclosure regardless of which surface they read.
+                if _w607cu_warnings_out:
+                    usage_summary["warnings_out"] = list(_w607cu_warnings_out)
+                    usage_envelope_kwargs["warnings_out"] = list(_w607cu_warnings_out)
+                click.echo(to_json(json_envelope("invariants", **usage_envelope_kwargs)))
             else:
                 click.echo(verdict)
             raise SystemExit(1)
 
-        # Sort by breaking risk if requested
+        # Sort by breaking risk if requested.
+        # W607-CU: ``sort_by_breaking_risk`` substrate -- a malformed
+        # result row missing ``breaking_risk`` would KeyError on the
+        # sort key lookup. The wrap degrades to the unsorted ``results``
+        # list so the envelope still composes.
         if breaking_risk:
-            results.sort(key=lambda r: -r["breaking_risk"])
+
+            def _sort_by_breaking_risk():
+                results.sort(key=lambda r: -r["breaking_risk"])
+                return True
+
+            _run_check_cu("sort_by_breaking_risk", _sort_by_breaking_risk, default=False)
 
         results = results[:top_n]
 
-        # Compute summary
-        total_invariants = sum(len(r["invariants"]) for r in results)
-        high_risk = sum(1 for r in results if r["risk_level"] in ("CRITICAL", "HIGH"))
+        # W607-CU: ``aggregate_summary`` substrate -- the
+        # total_invariants + high_risk histogram. A KeyError on a
+        # malformed result row (missing ``invariants`` / ``risk_level``)
+        # degrades to (0, 0) so the verdict composer still produces a
+        # coherent string. W978 discipline 6 (hoist literal-int counts
+        # into a predicate phase): the literal-int floor lives in the
+        # default tuple here so downstream summary code never operates
+        # on an unguarded ``len()`` / ``if results:`` shape.
+        def _aggregate_summary():
+            total_inv = sum(len(r["invariants"]) for r in results)
+            # W761/W847 retained UPPER-case for internal vocabulary —
+            # ``risk_level`` is the canonical rollup field; comparison
+            # set mirrors the source values produced upstream.
+            high_r = sum(1 for r in results if r["risk_level"] in ("CRITICAL", "HIGH"))
+            return (total_inv, high_r)
+
+        agg = _run_check_cu("aggregate_summary", _aggregate_summary, default=(0, 0))
+        if agg is None:
+            agg = (0, 0)
+        total_invariants, high_risk = agg
+
+        # W978 discipline 6: literal-int len for the ranked envelope so
+        # the verdict composer + envelope-build phases never re-evaluate
+        # ``len(results)`` on a potentially-mutated list. Hoisted here
+        # alongside the histogram so the predicate phase owns BOTH
+        # counts.
+        results_len = len(results)
 
         # W1245 Pattern-2 variant-D: build the disclosure block. When a
         # symbol-target callsite resolved unresolved, surface that
@@ -355,6 +550,9 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
         # an exact-but-empty resolution. The batch modes (--public-api,
         # --breaking-risk) leave the disclosure as the no-op ``symbol``
         # default because there's no per-input grading to apply.
+        # W607-CU: ``build_resolution_disclosure`` substrate -- a raise
+        # in the disclosure helper degrades to {} so the envelope still
+        # composes without the disclosure block.
         if target_unresolved:
             disclosure_tier = "unresolved"
         else:
@@ -363,55 +561,95 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
         # walked the resolver (or attempted it). The batch modes resolve
         # everything by direct DB query and don't have a tier to report.
         emit_disclosure = bool(target)
-        resolution_block = resolution_disclosure(disclosure_tier, target=resolved_target) if emit_disclosure else {}
+        if emit_disclosure:
+            resolution_block = _run_check_cu(
+                "build_resolution_disclosure",
+                resolution_disclosure,
+                disclosure_tier,
+                target=resolved_target,
+                default={},
+            )
+            if resolution_block is None:
+                resolution_block = {}
+        else:
+            resolution_block = {}
         fuzzy_suffix = " [fuzzy resolution]" if disclosure_tier == "fuzzy" else ""
 
-        if not results:
-            verdict = f"No symbols found for: {target or 'query'}"
-        elif len(results) == 1:
-            r = results[0]
-            verdict = (
-                f"{len(r['invariants'])} invariants for {r['name']}"
-                f" ({r['caller_count']} callers, risk: {r['risk_level']})"
-                f"{fuzzy_suffix}"
-            )
-        else:
-            verdict = (
-                f"{total_invariants} invariants across {len(results)} symbols, {high_risk} high-risk{fuzzy_suffix}"
-            )
+        # W607-CU: ``compose_verdict`` substrate -- LAW 6 single-line
+        # verdict string. The single-result branch indexes into
+        # ``r['name']`` / ``r['caller_count']`` / ``r['risk_level']`` /
+        # ``r['invariants']`` -- KeyError-prone on a malformed result
+        # row. The wrap degrades to the explicit "no data" floor so the
+        # envelope still emits a non-empty verdict.
+        def _compose_verdict():
+            if not results:
+                return f"No symbols found for: {target or 'query'}"
+            if results_len == 1:
+                r = results[0]
+                return (
+                    f"{len(r['invariants'])} invariants for {r['name']}"
+                    f" ({r['caller_count']} callers, risk: {r['risk_level']})"
+                    f"{fuzzy_suffix}"
+                )
+            return f"{total_invariants} invariants across {results_len} symbols, {high_risk} high-risk{fuzzy_suffix}"
+
+        verdict = _run_check_cu("compose_verdict", _compose_verdict, default="no data")
+        if verdict is None:
+            verdict = "no data"
 
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "invariants",
-                        summary={
-                            "verdict": verdict,
-                            "symbols_analyzed": len(results),
-                            "total_invariants": total_invariants,
-                            "high_risk_count": high_risk,
-                            # W331: name what an "invariant" actually is
-                            # here (NOT a verified property; a usage-
-                            # derived heuristic contract) and how the
-                            # breaking_risk score is computed.
-                            "invariants_definition": INVARIANTS_DEFINITION,
-                            "breaking_risk_definition": BREAKING_RISK_DEFINITION,
-                            # W335: per-symbol payload carries
-                            # caller_count = len(callers) — same
-                            # raw_edge_rows shape as cmd_uses /
-                            # cmd_context. Label it so downstream
-                            # consumers know it counts per-file edge
-                            # rows (with multiplicity), not distinct
-                            # upstream symbols (which would be
-                            # direct_in_degree).
-                            "caller_metric_definition": CALLER_METRIC_RAW,
-                            **resolution_block,
-                        },
-                        symbols=results,
-                        **resolution_block,
-                    )
-                )
+            ranked_summary: dict = {
+                "verdict": verdict,
+                "symbols_analyzed": results_len,
+                "total_invariants": total_invariants,
+                "high_risk_count": high_risk,
+                # W331: name what an "invariant" actually is
+                # here (NOT a verified property; a usage-
+                # derived heuristic contract) and how the
+                # breaking_risk score is computed.
+                "invariants_definition": INVARIANTS_DEFINITION,
+                "breaking_risk_definition": BREAKING_RISK_DEFINITION,
+                # W335: per-symbol payload carries
+                # caller_count = len(callers) — same
+                # raw_edge_rows shape as cmd_uses /
+                # cmd_context. Label it so downstream
+                # consumers know it counts per-file edge
+                # rows (with multiplicity), not distinct
+                # upstream symbols (which would be
+                # direct_in_degree).
+                "caller_metric_definition": CALLER_METRIC_RAW,
+                **resolution_block,
+            }
+
+            # W607-CU: ``build_envelope_symbols`` substrate -- the
+            # per-symbol envelope rows. A raise here degrades to []
+            # so the envelope still composes the verdict + summary.
+            def _build_envelope_symbols():
+                return list(results)
+
+            envelope_symbols = _run_check_cu(
+                "build_envelope_symbols",
+                _build_envelope_symbols,
+                default=[],
             )
+            if envelope_symbols is None:
+                envelope_symbols = []
+            ranked_envelope_kwargs: dict = dict(
+                summary=ranked_summary,
+                symbols=envelope_symbols,
+                **resolution_block,
+            )
+            # W607-CU: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. Flipping ``partial_success: True`` is the
+            # Pattern-2 silent-fallback guard -- a degraded substrate
+            # path must NOT be mistaken for a clean ranked verdict.
+            if _w607cu_warnings_out:
+                ranked_summary["partial_success"] = True
+                ranked_summary["warnings_out"] = list(_w607cu_warnings_out)
+                ranked_envelope_kwargs["warnings_out"] = list(_w607cu_warnings_out)
+            click.echo(to_json(json_envelope("invariants", **ranked_envelope_kwargs)))
             return
 
         # Text output

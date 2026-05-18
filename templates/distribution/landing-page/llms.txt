@@ -1,13 +1,21 @@
 # roam-code
 
-> Local codebase intelligence for developers and AI agents — maps, gates, and evidence in one CLI. Roam parses a repo into a local SQLite-backed graph, then turns that graph into retrieval, algorithmic judgment, change-safety checks, and tamper-evident evidence. Source and evidence stay on the machine unless the user explicitly sends them elsewhere.
+> Give every AI coding agent a map of your repo before it edits — and a tamper-evident record of what it did. Roam parses a repo into a local SQLite-backed graph, then turns that graph into retrieval, algorithmic judgment, change-safety checks, and portable `ChangeEvidence` packets. **Maps before agents edit. Gates before they merge. Evidence after every run.** Source and evidence stay on the machine unless the user explicitly sends them elsewhere.
 
-roam-code (`pip install roam-code`) is a local code-graph engine. It parses
-your repo once, stores structural facts in a local SQLite graph (symbols,
-dependencies, call graphs, architecture layers, git history, runtime
-traces), and exposes the graph through 241 CLI commands and 224 MCP tools
-across 28 languages. AI agents (Claude Code, Cursor, Codex, Aider, your own)
-call it before, during, and after every change.
+roam-code (`pip install roam-code`, Python 3.10+) is a local code-graph
+engine. It parses your repo once, stores structural facts in a local SQLite
+graph (symbols, dependencies, call graphs, architecture layers, git history,
+runtime traces), and exposes the graph through 241 CLI commands and 224 MCP
+tools (57 in the default `core` preset) across 28 languages. AI agents
+(Claude Code, Cursor, Codex, Aider, your own) call it before, during, and
+after every change.
+
+Every AI-assisted change compiles into one portable `ChangeEvidence` packet
+(HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle)
+that answers the eight evidence questions: *who acted, what authority
+existed, what context was read, what changed, what could break, what policy
+applied, what verified it, who accepted risk*. Cursor logs the run; Roam
+proves the change.
 
 The senses Roam gives an agent — each tied to one engineering question
 agents miss:
@@ -17,7 +25,7 @@ agents miss:
 - **Change safety**: "What breaks if I edit this?" -> preflight, impact, affected-tests, diff, guard
 - **PR review**: "Did the AI miss a clone, a caller, a test?" -> critique, pr-analyze, pr-risk, pr-comment-render
 - **Algorithmic judgment** (the differentiator): "Is this correct but slow?" -> math/algo, n1, missing-index, hotspots
-- **Architecture governance**: "Is the architecture drifting?" -> layers, cycles, clusters, health, budget, fitness, dark-matter
+- **Architecture governance**: "Is the architecture drifting?" -> layers, clusters, spectral, health, budget, fitness, dark-matter, architecture-drift
 - **Refactor safety**: "Can I simulate this first?" -> simulate, mutate, safe-delete, closure, plan-refactor
 - **Multi-agent coordination**: "Can agents work in parallel?" -> fleet, partition, orchestrate, agent-plan
 - **Evidence + compliance**: "Can we prove what was checked?" -> attest, cga, audit-trail-export, audit-trail-verify, --sarif
@@ -37,16 +45,16 @@ Evidence stays on your machine and hash-verifies offline. No telemetry, no netwo
 
 ## Products
 
-Status as of 2026-05-08: the Free CLI is live (PyPI). Roam Review,
-Roam Cloud, and Roam Self-Hosted are pre-launch / early access — pricing
-is published, sign-up is via email at hello@roam-code.com. Self-serve
-checkout (Stripe) launches alongside the products. See
+Status as of 2026-05-18: the Free CLI is live (PyPI). PR Replay is available
+via email while checkout is being finalized. Roam Review and Roam Cloud are
+early access / planned hosted layers. Roam Self-Hosted is a customer-pulled
+private-deployment pilot path, not a packaged GA product. See
 https://roam-code.com/status for the operational state.
 
 - [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever. **Live today.**
 - [Roam Review](https://roam-code.com/#review) — flat tiers from $99/mo (Starter $99, Team $299, Business $799, Scale $1,499). PR bot that posts a structural-risk verdict on every pull request. Usage caps with no surprise overage. **Early access.**
 - [Roam Cloud](https://roam-code.com/#cloud) — from $19/repo/mo (Team $99/mo, Growth $299/mo). Hosted dashboard for code-health metrics over time. Source code never uploaded; metrics-only payload. **Early access.**
-- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network. For regulated buyers. **Early access.**
+- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — private-deployment pilots scoped by SOW for regulated buyers that cannot use hosted Review or Cloud. **Customer-pulled.**
 - [PR Replay](https://roam-code.com/audit) — one-shot paid audit. Sample (free / DIY) · Team ($2,500) · Deep ($6,000). 50% credits toward a Roam Review subscription within 60 days. **Available today via email**; self-serve checkout launches with Review.
 
 ## Key links
@@ -55,6 +63,11 @@ https://roam-code.com/status for the operational state.
 - GitHub: https://github.com/Cranot/roam-code
 - PyPI: https://pypi.org/project/roam-code/
 - Landing page: https://roam-code.com/
+- Setup (agent integration): https://roam-code.com/setup
+- Pricing: https://roam-code.com/pricing
+- PR Replay (paid audit): https://roam-code.com/audit
+- Compare vs CodeRabbit/Greptile/Qodo: https://roam-code.com/compare
+- Status: https://roam-code.com/status
 - MCP server card: https://roam-code.com/.well-known/mcp-server-card.json
 
 ## Compliance

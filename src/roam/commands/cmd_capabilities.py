@@ -165,26 +165,38 @@ def _populate_registry() -> None:
     The historical hardcoded 6-module list pre-dated the
     sweep-the-whole-tree contract that ``tests/test_capability_decoration.py``
     now enforces (233 decorated commands as of the W869 follow-up).
-    Driving the sweep off ``cli._COMMANDS`` keeps the runtime view and
-    the test contract in lockstep by construction.
+    Driving the sweep off the AST-parsed ``_COMMANDS`` dict keeps the
+    runtime view and the test contract in lockstep by construction.
 
-    Best-effort — modules that fail to import (optional extras, broken
-    plugins) are skipped silently. Their commands simply won't appear in
-    the registry output, which is the correct failure mode for a
-    "show what's installed" command.
+    W420: source the module list from
+    :func:`roam.surface_counts.cli_commands` (AST-parsed) rather than the
+    runtime ``roam.cli._COMMANDS`` dict. Plugin discovery mutates the
+    runtime dict in-place (see ``_ensure_plugin_commands_loaded`` at
+    ``cli.py:678``); importing plugin modules here would fire their
+    ``@roam_capability`` decorators and change the ``summary.count``,
+    ``verdict``, and ``capabilities[]`` envelope fields consumed by the
+    Roam Review GitHub App, MCP server, and doc generators. The AST
+    source is env-independent and plugin-invariant; plugin capabilities
+    surface separately via ``roam plugins list``.
+
+    Best-effort — modules that fail to import (optional extras) are
+    skipped silently. Their commands simply won't appear in the registry
+    output, which is the correct failure mode for a "show what's
+    installed" command.
     """
     import importlib
 
-    from roam.cli import _COMMANDS
+    from roam.surface_counts import cli_commands as _cli_commands_ast
 
+    _commands = _cli_commands_ast()
     seen: set[str] = set()
-    for _name, (module_path, _func_name) in _COMMANDS.items():
+    for _name, (module_path, _func_name) in _commands.items():
         if module_path in seen:
             continue
         seen.add(module_path)
         try:
             importlib.import_module(module_path)
         except Exception:
-            # Best-effort; missing optional deps or broken plugins
-            # shouldn't break the registry dump.
+            # Best-effort; missing optional deps shouldn't break the
+            # registry dump.
             pass

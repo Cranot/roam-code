@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>The Agent Contract — Roam Docs · How agents should call Roam</title>
-  <meta name="description" content="Five rules for AI coding agents using Roam: read context, check impact, critique diffs, simulate refactors, and ask algorithmic-risk questions.">
+  <meta name="description" content="Five rules plus the JSON envelope shape for AI coding agents using Roam: read context, check impact, critique diffs, simulate refactors, ask algorithmic-risk questions, and parse a single canonical envelope.">
   <link rel="canonical" href="https://roam-code.com/docs/agent-contract">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -166,6 +166,134 @@
 <span class="t-prompt">$</span> <span class="t-cmd">roam math</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam hotspots --danger</span></pre>
 
+      <h2 id="canonical-envelope">The canonical JSON envelope</h2>
+      <p>
+        Every <code>roam --json &lt;cmd&gt;</code> call and every MCP tool
+        response is shaped by one canonical envelope. Marshal against
+        this shape and the same code handles success, partial success,
+        and the four Pattern-1 failure variants (missing prerequisite,
+        intermediate-layer signal loss, empty stdout, degraded
+        resolution).
+      </p>
+<pre class="terminal" aria-label="Canonical roam JSON envelope shape"><span class="t-cmd">{
+  "command": "&lt;tool_name&gt;",
+  "status": "&lt;index_not_built | advisory_warnings | partial_failure | hard_failure | usage_error | rate_limited | stale_index&gt;",
+  "isError": true,
+  "summary": {
+    "verdict": "&lt;one-line, imperative, concrete-noun terminal&gt;",
+    "level": "&lt;blocker | warning | info&gt;",
+    "partial_success": false,
+    "state": "&lt;machine-readable state&gt;"
+  },
+  "error_code": "&lt;closed enum&gt;",
+  "error": "&lt;human-readable error text, never raw JSON dump&gt;",
+  "hint": "&lt;imperative: what to do next&gt;",
+  "next_command": "&lt;copy-pasteable roam command, when applicable&gt;",
+  "retry_after_seconds": 60,
+  "agent_contract": {
+    "facts": ["&lt;concrete-noun anchored fact&gt;", "..."],
+    "next_commands": ["&lt;copy-pasteable&gt;", "# explanation..."]
+  },
+  "_meta": { "timestamp": "...", "index_age_s": 42 }
+}</span></pre>
+      <p>
+        Hard invariants on the shape:
+      </p>
+      <ul>
+        <li><code>isError: true</code> sits <em>inside</em> a successful
+          JSON-RPC result; it is not a protocol-level error.
+          Protocol errors do not reliably reach the LLM context window.</li>
+        <li>Partial results beat total failure. When the underlying
+          check produced any structured signal, the envelope carries it
+          (annotated with <code>partial_success: true</code>) rather
+          than collapsing to a generic <code>COMMAND_FAILED</code>.</li>
+        <li>The <code>error</code> field carries actionable guidance,
+          never a raw exception trace.</li>
+        <li><code>summary.verdict</code> stands alone — an agent that
+          reads only the verdict gets a complete next-action signal.</li>
+        <li><code>next_command</code> (when set) is a literal
+          copy-paste-executable <code>roam &lt;subcommand&gt;</code>
+          string, not a description.</li>
+      </ul>
+      <p>
+        Worked example: the cold-start envelope an MCP tool returns
+        when <code>.roam/index.db</code> does not exist yet —
+        <a href="/docs/mcp-usage#the-cold-start-envelope">/docs/mcp-usage#the-cold-start-envelope</a>.
+      </p>
+
+      <h2 id="verdict-vocabulary">Verdict vocabulary — concrete nouns only</h2>
+      <p>
+        Verdicts and <code>agent_contract.facts</code> end on a
+        concrete-noun terminal so downstream models stay in
+        analytical mode rather than collapsing to summary mode. A
+        fact-string is anchored when its terminal token (last word,
+        punctuation stripped) is one of the canonical anchors. The
+        live set lives in
+        <code>src/roam/output/formatter.py</code> and is mirrored by
+        the LAW 4 lint at <code>tests/test_law4_lint.py</code>.
+      </p>
+      <table>
+        <thead><tr><th>Family</th><th>Representative anchors</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Code structure</td>
+            <td><code>files</code>, <code>symbols</code>, <code>edges</code>, <code>nodes</code>, <code>cycles</code>, <code>clusters</code>, <code>layers</code>, <code>modules</code>, <code>commands</code>, <code>tools</code>, <code>capabilities</code>, <code>imports</code>, <code>endpoints</code>, <code>dependencies</code>, <code>packages</code>, <code>routes</code></td>
+          </tr>
+          <tr>
+            <td>Findings</td>
+            <td><code>findings</code>, <code>hotspots</code>, <code>smells</code>, <code>violations</code>, <code>warnings</code>, <code>errors</code>, <code>alerts</code>, <code>issues</code>, <code>gaps</code>, <code>leaks</code>, <code>secrets</code>, <code>vulnerabilities</code></td>
+          </tr>
+          <tr>
+            <td>Quality metrics</td>
+            <td><code>keys</code>, <code>values</code>, <code>chars</code>, <code>lines</code>, <code>tokens</code>, <code>bytes</code>, <code>items</code>, <code>entries</code>, <code>records</code>, <code>fields</code></td>
+          </tr>
+          <tr>
+            <td>State qualifiers</td>
+            <td><code>passed</code>, <code>failed</code>, <code>scanned</code>, <code>checked</code>, <code>affected</code>, <code>scored</code>, <code>confirmed</code>, <code>analyzed</code>, <code>skipped</code>, <code>reached</code></td>
+          </tr>
+          <tr>
+            <td>Time units</td>
+            <td><code>days</code>, <code>weeks</code>, <code>months</code>, <code>years</code>, <code>hours</code>, <code>minutes</code>, <code>seconds</code>, <code>milliseconds</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Wrong: <code>"7 of 10 capabilities are AI-safe"</code> (ends on
+        <code>AI-safe</code>, not anchored). Right:
+        <code>"7 of 10 AI-safe capabilities"</code> (ends on
+        <code>capabilities</code>, anchored). When an agent generates a
+        fact for its own internal reasoning, the same discipline keeps
+        the next step actionable.
+      </p>
+
+      <h2 id="eight-evidence-questions">The eight evidence questions</h2>
+      <p>
+        Roam compiles every AI-assisted change into one
+        <code>ChangeEvidence</code> packet that answers these eight
+        questions. Each question maps to commands the agent already
+        runs as part of the contract above — the packet just makes the
+        answers portable for a reviewer.
+      </p>
+      <table>
+        <thead><tr><th>Question</th><th>Primitives</th></tr></thead>
+        <tbody>
+          <tr><td>Who acted?</td><td><code>roam runs</code>, <code>roam replay</code>, MCP receipt</td></tr>
+          <tr><td>What authority existed?</td><td><code>roam mode</code>, <code>roam permit</code>, <code>roam lease</code>, <code>roam constitution</code></td></tr>
+          <tr><td>What context was read?</td><td><code>roam context</code>, <code>roam retrieve</code>, pr-bundle</td></tr>
+          <tr><td>What changed?</td><td><code>roam diff</code>, <code>roam pr-analyze</code>, <code>roam workspace</code></td></tr>
+          <tr><td>What could break?</td><td><code>roam impact</code>, <code>roam preflight</code>, <code>roam test-impact</code>, <code>roam vuln-reach</code></td></tr>
+          <tr><td>What policy applied?</td><td><code>roam rules</code>, <code>roam laws</code>, <code>roam check-rules</code></td></tr>
+          <tr><td>What verified it?</td><td><code>roam tests</code>, <code>roam critique</code>, <code>roam pr-bundle</code>, <code>roam runs verify</code></td></tr>
+          <tr><td>Who accepted risk?</td><td><code>roam permit</code>, <code>roam pr-bundle</code>, audit trail</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Roam <em>maps to</em> and <em>supports evidence for</em>
+        governance controls; it does not <em>certify</em> or
+        <em>make compliant</em>. The evidence packet is portable input
+        for the external GRC tool of your choice.
+      </p>
+
       <h2>Wire it into your agent</h2>
       <p>
         Roam ships a Model Context Protocol server and an auto-generated
@@ -205,6 +333,23 @@
         install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
         <code>ChangeEvidence</code> packet, end to end.
       </p>
+      <p>
+        <strong>Agent onboarding companions:</strong>
+      </p>
+      <ul>
+        <li><a href="/llms.txt">/llms.txt</a> &mdash;
+          the LLM-friendly index of every Roam doc page. Drop this
+          into your agent's bootstrap prompt to give it the full
+          surface in one fetch.</li>
+        <li><a href="/docs/getting-started">/docs/getting-started</a> &mdash;
+          the five-minute setup path for the human running the agent.</li>
+        <li><a href="/docs/mcp-usage">/docs/mcp-usage</a> &mdash;
+          the MCP-specific call patterns: cold-start envelope, slow-tool
+          handle pattern, typical agent flow, parameter aliases.</li>
+        <li><a href="/docs/architecture">/docs/architecture</a> &mdash;
+          how the call graph, evidence layer, and detector registry fit
+          together. Read once; agents do not need it per call.</li>
+      </ul>
     </article>
 
     <nav class="docs-footer-nav" aria-label="Pagination">

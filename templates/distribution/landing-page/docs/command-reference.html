@@ -88,7 +88,7 @@
       <table>
         <thead><tr><th>Tier</th><th>What it covers</th><th>When to reach for it</th></tr></thead>
         <tbody>
-          <tr><td><strong>Tier 1 — Core workflow</strong></td><td><code>init</code> · <code>understand</code> · <code>retrieve</code> · <code>context</code> · <code>preflight</code> · <code>critique</code></td><td>First-day, every-day. Six commands cover ~80% of agent workflows.</td></tr>
+          <tr><td><strong>Tier 1 — Core workflow</strong></td><td><code>understand</code> · <code>retrieve</code> · <code>context</code> · <code>preflight</code> · <code>critique</code> (plus one-time <code>init</code>)</td><td>First-day, every-day. Five core verbs cover ~80% of agent workflows; <code>init</code> is run once per repo.</td></tr>
           <tr><td><strong>Tier 2 — High-value practical</strong></td><td><code>impact</code> · <code>affected-tests</code> · <code>test-gaps</code> · <code>safe-delete</code> · <code>clones</code> · <code>pr-risk</code> · <code>verify-imports</code> · <code>math</code> / <code>algo</code></td><td>When you're acting on real changes, not just exploring.</td></tr>
           <tr><td><strong>Tier 3 — Agent / MCP</strong></td><td><code>mcp</code> · <code>mcp-setup</code> · <code>agent-export</code> · <code>skill-generate</code> · <code>minimap</code> · <code>agent-context</code></td><td>Wiring Roam into Claude Code, Cursor, Codex, your own agent.</td></tr>
           <tr><td><strong>Tier 4 — CI / enterprise</strong></td><td><code>pr-analyze</code> · <code>pr-comment-render</code> · <code>attest</code> · <code>audit-trail-export</code> · <code>audit-trail-verify</code> · <code>--sarif</code></td><td>Production CI gates, audit evidence, signed attestations.</td></tr>
@@ -140,7 +140,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam search &lt;pattern&gt;</code></td><td>FTS5 symbol search (BM25-ranked, qname-aware)</td></tr>
-          <tr><td><code>roam symbol &lt;path&gt;</code></td><td>File skeleton — top-level symbols + line ranges</td></tr>
+          <tr><td><code>roam symbol &lt;name&gt;</code></td><td>Show symbol definition, callers, and callees</td></tr>
           <tr><td><code>roam file &lt;path&gt;</code></td><td>Detailed file info: complexity, ownership, recent changes</td></tr>
           <tr><td><code>roam impact &lt;name&gt;</code></td><td>Caller list — what breaks if you change this symbol</td></tr>
           <tr><td><code>roam trace &lt;a&gt; &lt;b&gt;</code></td><td>k-shortest paths between two symbols in the call graph</td></tr>
@@ -204,7 +204,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; 224 in <code>full</code>)</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; 227 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
@@ -220,7 +220,7 @@
         <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
         <tbody>
           <tr><td><code>--json</code></td><td>Stable JSON envelope with schema versioning. For agent + script consumption.</td></tr>
-          <tr><td><code>--sarif</code></td><td>SARIF 2.1.0 — for GitHub Code Scanning. Supported on 241 commands incl. <code>health</code>, <code>complexity</code>, <code>dead</code>, <code>smells</code>, <code>clones</code>, <code>vulns</code>, <code>taint</code>, <code>secrets</code>, <code>n1</code>, <code>dark-matter</code>, <code>supply-chain</code>, <code>critique</code>, <code>stale-refs</code>. Run <code>roam --help</code> for the live list.</td></tr>
+          <tr><td><code>--sarif</code></td><td>SARIF 2.1.0 — for GitHub Code Scanning. Supported on SARIF-capable analysis commands including <code>health</code>, <code>complexity</code>, <code>dead</code>, <code>smells</code>, <code>clones</code>, <code>vulns</code>, <code>taint</code>, <code>secrets</code>, <code>n1</code>, <code>dark-matter</code>, <code>supply-chain</code>, <code>critique</code>, <code>stale-refs</code>. Run <code>roam --help</code> for the live list.</td></tr>
           <tr><td><code>--agent</code></td><td>Compact JSON + 500-token default budget. Optimised for sub-agent CLI calls.</td></tr>
           <tr><td><code>--budget &lt;n&gt;</code></td><td>Cap output to N tokens (0 = unlimited).</td></tr>
         </tbody>
@@ -234,6 +234,7 @@
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
         <li><strong>Recipes</strong>: <code>roam ask --list</code> shows every dispatchable recipe; <code>roam ask "&lt;intent&gt;"</code> runs the closest match.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>
+        <li><strong>Something broken?</strong> See <a href="/docs/troubleshooting">Troubleshooting</a> for index errors, missing flags, MCP setup issues, and rebuild guidance.</li>
       </ul>
       <p><strong>See it run:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, end to end.</p>
     </section>

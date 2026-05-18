@@ -80,9 +80,11 @@ class TestResolveTarget:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                target_type, tid, row = _resolve_target(conn, "src/models.py")
+                target_type, tid, row, tier = _resolve_target(conn, "src/models.py")
                 assert target_type == "file"
                 assert tid is not None
+                # Pattern-1 Variant D Wave C: exact-path match -> tier="file".
+                assert tier == "file"
         finally:
             os.chdir(old_cwd)
 
@@ -94,9 +96,11 @@ class TestResolveTarget:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                target_type, tid, row = _resolve_target(conn, "models.py")
+                target_type, tid, row, tier = _resolve_target(conn, "models.py")
                 assert target_type == "file"
                 assert tid is not None
+                # Pattern-1 Variant D Wave C: substring match -> tier="file_substring".
+                assert tier == "file_substring"
         finally:
             os.chdir(old_cwd)
 
@@ -108,9 +112,12 @@ class TestResolveTarget:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                target_type, tid, row = _resolve_target(conn, "create_user")
+                target_type, tid, row, tier = _resolve_target(conn, "create_user")
                 assert target_type == "symbol"
                 assert tid is not None
+                # Pattern-1 Variant D Wave C: symbol resolution tier is None
+                # (caller reads ``row["_resolution_tier"]`` from find_symbol's stamp).
+                assert tier is None
         finally:
             os.chdir(old_cwd)
 
@@ -122,9 +129,10 @@ class TestResolveTarget:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                target_type, tid, row = _resolve_target(conn, "nonexistent_xyz_999")
+                target_type, tid, row, tier = _resolve_target(conn, "nonexistent_xyz_999")
                 assert target_type == "unknown"
                 assert tid is None
+                assert tier is None
         finally:
             os.chdir(old_cwd)
 
@@ -164,7 +172,7 @@ class TestCollectSymbolMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, sid, _ = _resolve_target(conn, "create_user")
+                _, sid, _, _ = _resolve_target(conn, "create_user")
                 if sid is None:
                     pytest.skip("create_user symbol not found")
                 m = collect_symbol_metrics(conn, sid)
@@ -180,7 +188,7 @@ class TestCollectSymbolMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, sid, _ = _resolve_target(conn, "create_user")
+                _, sid, _, _ = _resolve_target(conn, "create_user")
                 if sid is None:
                     pytest.skip("create_user symbol not found")
                 m = collect_symbol_metrics(conn, sid)
@@ -196,7 +204,7 @@ class TestCollectSymbolMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, sid, _ = _resolve_target(conn, "create_user")
+                _, sid, _, _ = _resolve_target(conn, "create_user")
                 if sid is None:
                     pytest.skip("create_user symbol not found")
                 m = collect_symbol_metrics(conn, sid)
@@ -212,7 +220,7 @@ class TestCollectSymbolMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, sid, _ = _resolve_target(conn, "create_user")
+                _, sid, _, _ = _resolve_target(conn, "create_user")
                 if sid is None:
                     pytest.skip("create_user symbol not found")
                 m = collect_symbol_metrics(conn, sid)
@@ -232,7 +240,7 @@ class TestCollectSymbolMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, sid, _ = _resolve_target(conn, "create_user")
+                _, sid, _, _ = _resolve_target(conn, "create_user")
                 if sid is None:
                     pytest.skip("create_user symbol not found")
                 m = collect_symbol_metrics(conn, sid)
@@ -260,7 +268,7 @@ class TestCollectFileMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, fid, _ = _resolve_target(conn, "src/models.py")
+                _, fid, _, _ = _resolve_target(conn, "src/models.py")
                 if fid is None:
                     pytest.skip("src/models.py not found")
                 data = collect_file_metrics(conn, fid)
@@ -292,7 +300,7 @@ class TestCollectFileMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, fid, _ = _resolve_target(conn, "src/models.py")
+                _, fid, _, _ = _resolve_target(conn, "src/models.py")
                 if fid is None:
                     pytest.skip("src/models.py not found")
                 data = collect_file_metrics(conn, fid)
@@ -309,7 +317,7 @@ class TestCollectFileMetrics:
         try:
             os.chdir(str(metrics_project))
             with open_db(readonly=True) as conn:
-                _, fid, _ = _resolve_target(conn, "src/models.py")
+                _, fid, _, _ = _resolve_target(conn, "src/models.py")
                 if fid is None:
                     pytest.skip("src/models.py not found")
                 data = collect_file_metrics(conn, fid)

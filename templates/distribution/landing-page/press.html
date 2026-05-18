@@ -21,6 +21,8 @@
   <meta property="og:description" content="Logos, screenshots, founder bio, voice notes.">
   <meta property="og:url" content="https://roam-code.com/press">
   <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <script type="application/ld+json">
   {
@@ -29,7 +31,7 @@
     "name": "Press kit",
     "url": "https://roam-code.com/press",
     "inLanguage": "en",
-    "dateModified": "2026-05-07",
+    "dateModified": "2026-05-18",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -75,9 +77,10 @@
       <h2>One-liner</h2>
       <p>
         <em>Roam is the local codebase intelligence layer for developers
-        and AI agents — maps, algorithmic judgment, pre-change gates,
-        and post-change evidence in one local CLI, with paid PR bot,
-        dashboard, and self-hosted surfaces for teams.</em>
+        and AI agents — a map of your repo, algorithmic judgment,
+        pre-change gates, and post-change evidence in one local CLI,
+        with paid PR Replay, a planned hosted PR bot, and a planned
+        metrics dashboard.</em>
       </p>
 
       <h2>Two-paragraph blurb</h2>
@@ -90,17 +93,24 @@
         deterministic local tools — call graphs, blast-radius, algorithmic
         risk, refactor simulation, audit evidence — that agents call
         before, during, and after every change. The CLI runs entirely on
-        your machine; the same engine runs on every pull request via
-        Roam Review or inside your network via Self-Hosted.
+        your machine; the same engine is planned to run on every pull request
+        via Roam Review, or inside a customer's network when a private-
+        deployment pilot is explicitly scoped.
       </p>
       <p>
-        The CLI is open source under Apache 2.0 and free forever. Paid
-        layers ship Roam as a GitHub PR bot, a hosted dashboard for code
-        health over time, and a self-hosted bundle for regulated teams.
-        Built by a sole-trader in Athens, customer-funded, no VC. Every
+        On top of that engine, Roam compiles trustworthy evidence for
+        AI-assisted software change — who acted, what authority existed,
+        what context was read, what changed, what could break, what
+        policy applied, what verified it, who accepted risk. Every
         analysis writes a tamper-evident local audit trail (in-toto v1,
-        cosign-verifiable) — useful evidence for AI-governance reviews,
-        without overclaiming framework conformance.
+        cosign-verifiable). Roam <em>maps to</em> and <em>supports
+        evidence for</em> SOC 2 CC8.1, ISO 42001, and internal
+        AI-governance controls; it does not certify compliance with any
+        framework. The CLI is open source under Apache 2.0 and free
+        forever. Paid layers package Roam as PR Replay today, with
+        hosted Roam Review and Roam Cloud as early-access products and
+        private-deployment pilots scoped by SOW for regulated buyers.
+        Built by a sole-trader in Athens, customer-funded, no VC.
       </p>
 
       <h2>Logos</h2>
@@ -110,8 +120,11 @@
       </p>
       <ul>
         <li>SVG (preferred): <a href="/favicon.svg">/favicon.svg</a> — single-character logo on rounded blue tile</li>
-        <li>For larger logo files (full wordmark in vector + PNG sizes), email <a href="mailto:hello@roam-code.com?subject=Logo%20files">hello@roam-code.com</a> — we'll send a zip</li>
+        <li>Open Graph preview card (1200×630 PNG): <a href="/og.png">/og.png</a> — usable as a social-share or banner image</li>
+        <li>[TBD: standalone wordmark in vector SVG + PNG sizes — not yet packaged; email <a href="mailto:hello@roam-code.com?subject=Logo%20files">hello@roam-code.com</a> for the current source files and we'll send what exists]</li>
       </ul>
+      <h3>Headshots</h3>
+      <p>[TBD: founder headshot not yet published. Email <a href="mailto:hello@roam-code.com?subject=Headshot%20request">hello@roam-code.com</a> for the current photo if needed for print.]</p>
 
       <h2>Brand colors</h2>
       <p class="muted" style="margin-top:-4px;font-size:13px">
@@ -157,29 +170,29 @@
       </ul>
 
       <h2>Numbers (refresh as you write)</h2>
-      <p>Authoritative counts as of <time datetime="2026-05-17">2026-05-17</time>:</p>
+      <p>Authoritative counts as of <time datetime="2026-05-18">2026-05-18</time>:</p>
       <ul>
         <li><strong>241</strong> CLI commands</li>
         <li><strong>224</strong> MCP tools (57 in the default core preset)</li>
         <li><strong>28</strong> programming languages</li>
-        <li><strong>2,400+</strong> community-contributed rules</li>
+        <li><strong>2,489</strong> community-contributed rules (under <code>rules/community/</code> in the repo)</li>
         <li><strong>50+</strong> code-quality detectors</li>
         <li><strong>6</strong> cross-language bridges (Salesforce, REST, Django, .proto, Jinja/Django templates, env-var → config)</li>
         <li>GitHub stars: <a href="https://github.com/Cranot/roam-code/stargazers">live count</a></li>
-        <li>PyPI installs: ~7,700 / month and rising</li>
+        <li>PyPI installs: <strong>~7,731 / month</strong> and rising</li>
       </ul>
 
       <h2>Pricing snapshot</h2>
-      <p>The free CLI is live today (Apache 2.0 on PyPI). Paid products are
-      <strong>early access</strong> as of 2026-05-09 — sign-up via email at
+      <p>The free CLI is live today (Apache 2.0 on PyPI). Paid surfaces are
+      staged as of 2026-05-18 — sign-up via email at
       <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>; full pricing
       lives at <a href="/pricing">/pricing</a>.</p>
       <ul>
         <li><strong>Free CLI</strong> — Apache 2.0, free forever</li>
-        <li><strong>Roam Review</strong> (early access) — flat tiers from $99/mo: Starter $99, Team $299, Business $799, Scale $1,499</li>
-        <li><strong>Roam Cloud</strong> (early access) — from $19/repo/mo, Team $99/mo (10 repos), Growth $299/mo</li>
-        <li><strong>Roam Self-Hosted</strong> (early access) — custom annual pricing for regulated buyers</li>
-        <li><strong>PR Replay</strong> (one-shot paid audit) — Sample (free DIY) · Team $2,500 (30 PRs) · Deep $6,000 (90 PRs); 50% credit toward Roam Review</li>
+        <li><strong>PR Replay</strong> (available by email) — Sample (free DIY) · Team $2,500 (30 PRs) · Deep $6,000 (90 PRs); 50% credit toward Roam Review</li>
+        <li><strong>Roam Review</strong> (early access / planned hosted product) — flat tiers from $99/mo: Starter $99, Team $299, Business $799, Scale $1,499</li>
+        <li><strong>Roam Cloud</strong> (planned hosted dashboard) — from $19/repo/mo, Team $99/mo (10 repos), Growth $299/mo</li>
+        <li><strong>Roam Self-Hosted</strong> (customer-pulled) — private-deployment pilots scoped by SOW for regulated buyers that cannot use hosted Review or Cloud</li>
       </ul>
 
       <h2>Voice notes</h2>
@@ -202,12 +215,15 @@
       <h2>What to link</h2>
       <ul>
         <li>Marketing site: <a href="/">roam-code.com</a></li>
+        <li>Founder bio + funding model: <a href="/about">/about</a></li>
         <li>Reference docs: <a href="/docs/">roam-code.com/docs/</a></li>
-        <li>Source: <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a></li>
+        <li>Source (Apache 2.0): <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a></li>
         <li>Package: <a href="https://pypi.org/project/roam-code/">pypi.org/project/roam-code</a></li>
         <li>Comparison vs CodeRabbit / Greptile / Qodo / SonarQube: <a href="/compare">/compare</a></li>
         <li>Pricing: <a href="/pricing">/pricing</a></li>
         <li>PR Replay paid audit (Team $2,500 / Deep $6,000 + free DIY 5-PR sample): <a href="/audit">/audit</a></li>
+        <li>Agent Governance Evidence Pack (control mapping, sample audit report, evidence checklist): <a href="/governance">/governance</a></li>
+        <li>Trust posture (data handling, retention, processing locations per surface): <a href="/trust">/trust</a></li>
       </ul>
 
       <h2>Embargo + interview policy</h2>
@@ -221,12 +237,15 @@
 
       <p class="legal-foot">
         Need something not listed here? Email <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+        Writing a profile piece on the founder or the company? Start at
+        <a href="/about">/about</a> for the funding model, founding
+        beliefs, and "why now" context.
       </p>
     </article>
 
-  <section class="page-cta-strip">
+  <section class="page-cta-strip" aria-label="Get started with Roam">
     <div class="page-cta-inner">
-      <p>Ready to try Roam? <a href="/" class="btn-primary">Install the free CLI</a> · or <a href="/pricing">see paid plans</a></p>
+      <p>Ready to try Roam? <a href="/" class="btn-primary">Install the free CLI</a> · <a href="/audit">book a PR Replay audit</a> · <a href="/pricing">see paid plans</a></p>
     </div>
   </section>
   </main>

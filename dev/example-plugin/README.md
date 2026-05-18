@@ -38,12 +38,40 @@ example = "roam_plugin_example:register"
 The critical line in `roam_plugin_example/__init__.py`:
 
 ```python
+from roam.plugins import FrameworkProfile
+
 def register(ctx):
     ctx.declare(name="example", version="0.1.0", description="…")
-    ctx.register_framework_detector(my_detector)
+    ctx.register_framework_profile(FrameworkProfile(
+        name="example",
+        detect_fn=my_detector,            # Callable[[pathlib.Path], Optional[str]] (W56)
+        file_patterns=("example.config.*",),
+        recommended_commands=("describe", "health"),
+        conventions={"controller": "examples/controllers/*"},
+    ))
     ctx.register_detector("my-task", "my-way", my_detector_fn)
     ctx.register_language_extractor("qml", MyExtractor, extensions=[".qml"])
     ctx.register_bridge(MyBridge())
+```
+
+`register_framework_profile` (W123) is the preferred surface for new
+plugins; it wires the detector AND the profile in one call. The
+legacy `register_framework_detector(detect_fn)` still works for
+detector-only plugins (see `roam_plugin_rails/`).
+
+## Plugin commands and the headline count (W319)
+
+Commands a plugin registers via `ctx.register_command()` do **not**
+roll into roam's headline "241 commands" count. The auto-count
+scripts (`dev/build_readme_counts.py`, `roam.surface_counts`) are
+AST-only and scope to commands shipped in the `roam-code` wheel.
+
+Surface plugin-registered commands at runtime via:
+
+```bash
+roam plugins list           # which plugins loaded
+roam plugins info <name>    # what each plugin contributes
+roam --help-all             # full command roster including plugin commands
 ```
 
 ## Available `ctx` methods
@@ -54,11 +82,13 @@ def register(ctx):
 | `register_command(...)`        | Add a `roam <name>` CLI subcommand.              |
 | `register_detector(...)`       | Add an algorithm-catalog detector.               |
 | `register_language_extractor`  | Add a symbol/reference extractor for a language. |
-| `register_framework_detector`  | Detect which framework a project uses.           |
+| `register_framework_detector`  | Detect which framework a project uses. `detect_fn` signature: `Callable[[pathlib.Path], Optional[str]]` (W56 — type-hint `Path`, not `str`). |
+| `register_framework_profile`   | Bundle a detector with `file_patterns` + `recommended_commands` + `conventions` in one call (W123). Prefer this over the bare detector API for new plugins. |
 | `register_bridge(...)`         | Add a cross-language reference bridge.           |
 
-See `src/roam/plugins/registry.py` in the roam-code repo for the
-typed signatures.
+See `src/roam/plugins/registry.py` for the typed signatures and
+`CLAUDE.md` "Writing a roam plugin" for the canonical contract +
+discovery semantics.
 
 ## Trying it locally
 
@@ -69,19 +99,20 @@ This package isn't published. To dogfood it against the host repo:
 pip install -e dev/example-plugin/
 
 # Then ask roam what it sees:
-roam plugins              # should list "example"
+roam plugins list              # should list "example"
 roam plugins info example
-roam plugins doctor       # no errors
+roam plugins doctor            # no errors
 ```
 
 For one-shot development without installing the package, use the
-`ROAM_PLUGIN_MODULES` channel:
+`ROAM_PLUGIN_MODULES` channel — this matches the canonical form in
+`CLAUDE.md` ("Writing a roam plugin" section):
 
 ```bash
-ROAM_PLUGIN_MODULES=roam_plugin_example roam plugins
+PYTHONPATH=dev/example-plugin \
+ROAM_PLUGIN_MODULES=roam_plugin_example \
+roam plugins list
 ```
-
-(requires the package directory to be on `PYTHONPATH`).
 
 ## What this example does
 

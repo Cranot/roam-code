@@ -209,9 +209,12 @@
             if you subscribe within 60 days.
             <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
           </p>
-          <!-- STRIPE_TEAM_LINK: when the live Stripe Payment Link URL is
-               ready, replace the primary button's href with the Stripe
-               URL and re-add the "Or email first" mailto as the secondary. -->
+          <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_TEAM marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
             Buy Team — $2,500
@@ -230,9 +233,12 @@
             subscribe within 60 days.
             <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample (Team format; Deep adds the deep-dive section)</a>.
           </p>
-          <!-- STRIPE_DEEP_LINK: when the live Stripe Payment Link URL is
-               ready, replace the primary button's href with the Stripe
-               URL and re-add the "Or email first" mailto as the secondary. -->
+          <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_DEEP marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
             Buy Deep — $6,000
@@ -245,8 +251,13 @@
         Reports ship as Markdown + PDF. Turnaround: 5 business days for
         Team, 10 business days for Deep, both from kickoff. We never
         train on or reuse buyer code; the engagement runs against a
-        temporary clone we delete on completion. See the
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
+        temporary clone we delete on completion. A separate
+        locally-compliant tax invoice (reverse-charge VAT for EU B2B
+        buyers with a valid VAT-ID) is issued by our accountant within
+        30 days of payment; the Stripe receipt is not the legal invoice
+        in the provider's billing jurisdiction. See the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">SOW</a>,
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>,
         and <a href="/security">security policy</a> for details. Email
         <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
         with questions before purchase.
@@ -361,7 +372,7 @@
       </div>
       <div class="trust-cell">
         <strong>EU-based, GDPR-native</strong>
-        <span>Built in Athens. Made in the EU. The default processing location is the EU; Stripe handles billing under SCCs.</span>
+        <span>EU-based provider. Default processing location is the EU; Stripe handles billing under SCCs. EU B2B buyers receive a separate locally-compliant tax invoice (reverse-charge VAT) within 30 days of payment — see the <a href="/terms">terms</a> for billing entity and tax-ID.</span>
       </div>
     </div>
   </section>

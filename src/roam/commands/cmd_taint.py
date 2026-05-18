@@ -441,13 +441,131 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
+    # W607-AY -- substrate-boundary plumbing for the taint dataflow-reach
+    # leg of the security-reachability triad (cmd_vuln_reach W607-AU is
+    # the call-graph reachability sibling, cmd_supply_chain W607-AK is
+    # the supply-chain projection sibling). Prior to W607-AY a raise
+    # inside any of the substrate boundaries -- capture_qualified_only_lint
+    # (load_rules + W454/W479 lint capture), query_symbol_count
+    # (corpus-empty probe), run_taint (the BFS source->sink propagation),
+    # build_emit_entries (flow-shape classifier), emit_findings (registry
+    # write), wrap_findings (confidence classifier), taint_to_sarif
+    # (SARIF projection), serialize_envelope (on-text JSON serialization)
+    # -- crashed the whole taint invocation wholesale. Each is wrapped
+    # via ``_run_check_ay`` so a raise becomes a structured
+    # ``taint_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ay_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # Marker prefix discipline: every W607-AY substrate marker uses the
+    # canonical ``taint_<phase>_failed:<exc_class>:<detail>`` shape.
+    # cmd_taint has NO pre-existing warnings_out channel -- W607-AY is
+    # FRESH: the accumulator-based markers become the canonical
+    # ``summary.warnings_out`` field outright.
+    _w607ay_warnings_out: list[str] = []
+
+    def _run_check_ay(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AY marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``taint_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ay_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ay_warnings_out.append(f"taint_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CJ -- ADDITIVE aggregation-phase plumbing on top of the W607-AY
+    # substrate-CALL markers. W607-AY already wrapped the substrate-helper
+    # boundaries on the build path (capture_qualified_only_lint /
+    # query_symbol_count / run_taint / build_emit_entries / emit_findings /
+    # wrap_findings / taint_to_sarif / serialize_envelope); W607-CJ extends
+    # marker coverage to the AGGREGATION-PHASE boundaries that W607-AY left
+    # unguarded:
+    #
+    #   - ``score_classify``       -- per-flow severity classification +
+    #                                 risk_score computation (high_count /
+    #                                 medium_count / sanitized_count + the
+    #                                 raw_points -> risk_score normalization).
+    #                                 A future ``TaintFinding`` schema
+    #                                 refactor that drops/renames the
+    #                                 .severity or .sanitizer_in_path fields
+    #                                 would otherwise crash the envelope
+    #                                 post-BFS.
+    #   - ``compute_predicate``    -- per-field extraction of the metrics
+    #                                 fields (rules / findings / errors /
+    #                                 warnings / sanitized / risk_score)
+    #                                 used to compose the verdict string +
+    #                                 envelope. Floor to documented empty-
+    #                                 shape ints matching the happy-path
+    #                                 shape so downstream verdict/summary
+    #                                 fields stay non-null.
+    #   - ``compute_verdict``      -- verdict string assembly based on
+    #                                 findings count (LAW 6 standalone-
+    #                                 parse). Floor to a literal "Taint
+    #                                 analysis completed" string per LAW 6
+    #                                 + W978 first-hypothesis discipline
+    #                                 (no re-interpolation of the same
+    #                                 values that just raised).
+    #   - ``serialize_envelope``   -- ``json_envelope("taint", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions).
+    #
+    # cmd_taint is the dataflow-reach leg of the security-reachability
+    # triad. Closes the SECURITY-FLOW RING together with W607-AQ/CH
+    # (cmd_vulns -- ingestion / catalog) and W607-AU (cmd_vuln_reach --
+    # call-graph reachability sibling). The W607-CJ markers fire AT
+    # RUNTIME when an aggregation-phase boundary raises, complementing
+    # the W607-AY substrate-CALL coverage.
+    #
+    # Marker family ``taint_*`` -- same family as W607-AY (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope on
+    # the success path.
+    #
+    # No ``auto_log`` phase: cmd_taint has no active-run ledger write at
+    # present, so the W607-CD 3-phase set is kept here with the addition
+    # of ``score_classify`` (taint-specific severity-grading step that
+    # cmd_supply_chain / cmd_sbom don't have).
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_cj(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(findings) if ...``). A computed
+    # default expression evaluates BEFORE the wrap call, so a raise
+    # inside the expression escapes the try-block. cmd_sbom's W607-CG
+    # sealed this axis after a regression where a ``len(_BadDeps())``
+    # default eagerly raised. Floors below are documented constants.
+    _w607cj_warnings_out: list[str] = []
+
+    def _run_check_cj(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CJ marker emission.
+
+        Mirror of ``_run_check_ay`` shape (same ``taint_<phase>_failed:``
+        marker family) but writes into ``_w607cj_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cj_warnings_out.append(f"taint_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     rules_path = Path(rules_dir) if rules_dir else _default_rules_dir()
     # W489-A: capture the W454/W479 `qualified_only` lint warnings
     # alongside the loaded rules so the envelope can disclose bare-name
     # violations without losing rule_id / kind / name fields. The lint
     # is advisory — rules still load — so this is disclosure-only and
     # never gates execution (W462 territory).
-    rules, _w489_a_violations = _w489_a_capture_qualified_only_lint(rules_path)
+    # W607-AY: wrap the rule-load + lint capture so a corrupt YAML file
+    # or unreadable rules-dir surfaces a marker rather than crashing.
+    rules, _w489_a_violations = _run_check_ay(
+        "capture_qualified_only_lint",
+        _w489_a_capture_qualified_only_lint,
+        rules_path,
+        default=([], []),
+    )
     _w489_a_total_rules = len(rules)
     # W1061-followup: capture the pre-filter rule-id set so the SARIF emit
     # branch below can disclose which rules ``--rule`` / ``--rules-pack``
@@ -484,9 +602,16 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                 _w489_a_summary["warnings_out"] = [
                     f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
                 ]
+            # W607-AY: stamp substrate markers if rule-load itself raised.
+            if _w607ay_warnings_out:
+                _w489_a_summary["partial_success"] = True
+                existing = list(_w489_a_summary.get("warnings_out") or [])
+                _w489_a_summary["warnings_out"] = existing + list(_w607ay_warnings_out)
             _w489_a_envelope_extra: dict = {"rules_dir": str(rules_path)}
             if _w489_a_violations:
                 _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
+            if _w607ay_warnings_out:
+                _w489_a_envelope_extra["warnings_out"] = list(_w607ay_warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
@@ -515,7 +640,15 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         # on an unanalyzed corpus. Mirror cmd_vulns Fix E: emit
         # state="empty_corpus" + partial_success=True + a verdict that
         # names the absent state and points at `roam index --force`.
-        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        # W607-AY: corpus probe boundary -- a raise here (stale schema /
+        # locked DB) used to crash the whole taint command.
+        _symbol_count_row = _run_check_ay(
+            "query_symbol_count",
+            lambda c: c.execute("SELECT COUNT(*) FROM symbols").fetchone(),
+            conn,
+            default=(0,),
+        )
+        symbol_count = _symbol_count_row[0] if _symbol_count_row else 0
         if symbol_count == 0:
             verdict = (
                 f"no symbols to analyze (corpus empty; "
@@ -546,6 +679,11 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                     _w489_a_summary["warnings_out"] = [
                         f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
                     ]
+                # W607-AY: stamp substrate markers on the empty-corpus
+                # branch -- a raise in query_symbol_count surfaces here.
+                if _w607ay_warnings_out:
+                    existing = list(_w489_a_summary.get("warnings_out") or [])
+                    _w489_a_summary["warnings_out"] = existing + list(_w607ay_warnings_out)
                 _w489_a_envelope_extra: dict = {
                     "rules_dir": str(rules_path),
                     "rule_ids": [r.rule_id for r in rules],
@@ -564,6 +702,8 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                 }
                 if _w489_a_violations:
                     _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
+                if _w607ay_warnings_out:
+                    _w489_a_envelope_extra["warnings_out"] = list(_w607ay_warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
@@ -577,43 +717,137 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
             click.echo(f"VERDICT: {verdict}")
             return
 
-        findings = run_taint(conn, rules, max_hops=max_hops)
-
-        high_count = sum(1 for f in findings if f.severity == "error")
-        medium_count = sum(1 for f in findings if f.severity == "warning")
-        sanitized_count = sum(1 for f in findings if f.sanitizer_in_path)
-
-        # single 0-100 risk score. ``error`` weighs 5×; ``warning``
-        # 1×; sanitized findings count for half (mitigated, not eliminated).
-        # The score saturates at 100 for >20 effective points so a clean
-        # repo lands at 0 and any non-trivial risk is visible.
-        raw_points = (high_count * 5) + medium_count - (sanitized_count * 2)
-        raw_points = max(0, raw_points)
-        risk_score = min(100, int(round(raw_points / 20.0 * 100)))
-
-        verdict = (
-            f"{len(findings)} finding(s) "
-            f"({high_count} error, {medium_count} warning, "
-            f"{sanitized_count} sanitized) across {len(rules)} rule(s); risk_score={risk_score}"
-            if findings
-            else f"No taint findings across {len(rules)} rule(s)"
+        # W607-AY: the BFS source->sink propagation is THE critical
+        # correctness boundary (W493/W499/W512 audit history -- edge-kind
+        # vocabulary, sanitizer-stop semantics, sub-pass co-call
+        # detection). A raise inside ``run_taint`` previously crashed the
+        # whole taint command; now it degrades to "zero findings" plus a
+        # marker so the envelope still discloses the rules / corpus
+        # state.
+        findings = _run_check_ay(
+            "run_taint",
+            run_taint,
+            conn,
+            rules,
+            max_hops=max_hops,
+            default=[],
         )
 
-        findings_dump = [
-            {
-                "rule_id": f.rule_id,
-                "severity": f.severity,
-                "cwe": f.cwe,
-                "owasp_top10": f.owasp_top10,
-                "source": f.source_symbol,
-                "sink": f.sink_symbol,
-                "path_length": len(f.path_symbols),
-                "path": [{"name": p.get("name"), "file": p.get("file"), "line": p.get("line")} for p in f.path_symbols],
-                "sanitizer_in_path": f.sanitizer_in_path,
-                "vex_justification": (vex_justification_for(f) if f.sanitizer_in_path else None),
+        # W607-CJ -- score_classify boundary. Wraps the per-flow severity
+        # classification + the 0-100 risk_score computation + the
+        # ``findings_dump`` projection (all three walk the same findings
+        # list and access the same fields). A future ``TaintFinding``
+        # schema refactor that drops/renames the .severity or
+        # .sanitizer_in_path fields would otherwise raise inside any of
+        # these unguarded f.<attr> accesses. Floor to literal-zero counts
+        # + risk_score 0 + an empty ``findings_dump`` (LAW 6: standalone
+        # parse). W978 discipline: ``default=`` is a literal dict, NOT a
+        # comprehension that re-walks ``findings`` (a corrupt finding
+        # raising in its ``.severity`` getter would otherwise re-raise
+        # inside the default expression).
+        def _classify_scores(_findings) -> dict:
+            _high = sum(1 for f in _findings if f.severity == "error")
+            _med = sum(1 for f in _findings if f.severity == "warning")
+            _san = sum(1 for f in _findings if f.sanitizer_in_path)
+            # ``error`` weighs 5×; ``warning`` 1×; sanitized findings
+            # count for half (mitigated, not eliminated). The score
+            # saturates at 100 for >20 effective points so a clean repo
+            # lands at 0 and any non-trivial risk is visible.
+            _raw = max(0, (_high * 5) + _med - (_san * 2))
+            _score = min(100, int(round(_raw / 20.0 * 100)))
+            _dump = [
+                {
+                    "rule_id": f.rule_id,
+                    "severity": f.severity,
+                    "cwe": f.cwe,
+                    "owasp_top10": f.owasp_top10,
+                    "source": f.source_symbol,
+                    "sink": f.sink_symbol,
+                    "path_length": len(f.path_symbols),
+                    "path": [
+                        {"name": p.get("name"), "file": p.get("file"), "line": p.get("line")} for p in f.path_symbols
+                    ],
+                    "sanitizer_in_path": f.sanitizer_in_path,
+                    "vex_justification": (vex_justification_for(f) if f.sanitizer_in_path else None),
+                }
+                for f in _findings
+            ]
+            return {
+                "high_count": _high,
+                "medium_count": _med,
+                "sanitized_count": _san,
+                "risk_score": _score,
+                "findings_dump": _dump,
             }
-            for f in findings
-        ]
+
+        _score_dict = _run_check_cj(
+            "score_classify",
+            _classify_scores,
+            findings,
+            default={
+                "high_count": 0,
+                "medium_count": 0,
+                "sanitized_count": 0,
+                "risk_score": 0,
+                "findings_dump": [],
+            },
+        )
+        high_count = _score_dict["high_count"]
+        medium_count = _score_dict["medium_count"]
+        sanitized_count = _score_dict["sanitized_count"]
+        risk_score = _score_dict["risk_score"]
+
+        # W607-CJ -- compute_verdict boundary. Wraps the verdict-string
+        # assembly so a downstream f-string refactor (e.g. a non-int
+        # count from a vocabulary refactor) surfaces a marker rather
+        # than crashing the envelope. Floor must NOT re-interpolate the
+        # same values that tripped the closure (W978 first-hypothesis
+        # discipline: a __format__-raising sentinel under test would
+        # re-raise inside the default f-string). Use a literal "Taint
+        # analysis completed" floor instead (LAW 6 still holds: the
+        # line works standalone).
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(findings)`` /
+        # ``len(rules)`` are computed INSIDE the wrapped closure rather
+        # than at the call site -- a ``_BadFindingList`` whose
+        # ``__len__`` raises would otherwise escape the try-block at
+        # kwarg-bind time.
+        def _build_verdict_str(
+            _findings,
+            _h: int,
+            _m: int,
+            _s: int,
+            _rules,
+            _risk: int,
+        ) -> str:
+            _findings_len = len(_findings)
+            _rules_len = len(_rules)
+            if _findings_len:
+                return (
+                    f"{_findings_len} finding(s) "
+                    f"({_h} error, {_m} warning, "
+                    f"{_s} sanitized) across {_rules_len} rule(s); "
+                    f"risk_score={_risk}"
+                )
+            return f"No taint findings across {_rules_len} rule(s)"
+
+        verdict = _run_check_cj(
+            "compute_verdict",
+            _build_verdict_str,
+            findings,
+            high_count,
+            medium_count,
+            sanitized_count,
+            rules,
+            risk_score,
+            default="Taint analysis completed",
+        )
+
+        # W607-CJ: ``findings_dump`` is built inside the ``score_classify``
+        # boundary above so a raise during per-finding field access
+        # surfaces a marker rather than crashing the envelope. The floor
+        # is an empty list (literal constant per W978 discipline).
+        findings_dump = _score_dict.get("findings_dump", [])
 
         # --- W122: mirror into the central findings registry ---
         # Detector-specific output below is untouched; the registry rows
@@ -621,9 +855,32 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         # Wrapped so a pre-W89 DB (no ``findings`` table) silently no-ops
         # rather than crashing the standard taint command path.
         if persist:
-            findings_for_emit = _build_emit_entries(conn, findings, findings_dump)
+            # W607-AY: flow-shape classifier substrate (build_emit_entries
+            # walks every finding to classify forward_bfs vs co_call via
+            # adjacent-pair edge probes -- a raise inside the classifier
+            # used to crash the whole persist path).
+            findings_for_emit = _run_check_ay(
+                "build_emit_entries",
+                _build_emit_entries,
+                conn,
+                findings,
+                findings_dump,
+                default=[],
+            )
             try:
-                _emit_taint_findings(conn, findings_for_emit, TAINT_DETECTOR_VERSION)
+                # W607-AY: registry-write substrate. Still keeps the
+                # existing OperationalError swallow for pre-W89 schemas;
+                # the W607-AY wrap layers underneath catches any other
+                # exception class (e.g. constraint failures) and surfaces
+                # a marker rather than crashing.
+                _run_check_ay(
+                    "emit_findings",
+                    _emit_taint_findings,
+                    conn,
+                    findings_for_emit,
+                    TAINT_DETECTOR_VERSION,
+                    default=None,
+                )
                 conn.commit()
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
@@ -680,15 +937,26 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
             finding_level_filters=finding_filters,
         )
 
-        click.echo(
-            write_sarif(
-                taint_to_sarif(
-                    findings_dump,
-                    runtime_overrides=sarif_overrides or None,
-                    runtime_notification_overrides=sarif_notif_overrides or None,
-                )
-            )
+        # W607-AY: SARIF projection substrate -- isolate the rendering
+        # pipeline so a renderer raise surfaces a marker. The SARIF
+        # output path is text-only (no envelope to stamp markers onto),
+        # so this falls back to "empty SARIF document" if the projection
+        # raises -- consumers downstream still get well-formed JSON.
+        _sarif_doc = _run_check_ay(
+            "taint_to_sarif",
+            taint_to_sarif,
+            findings_dump,
+            runtime_overrides=sarif_overrides or None,
+            runtime_notification_overrides=sarif_notif_overrides or None,
+            default={},
         )
+        _sarif_text = _run_check_ay(
+            "write_sarif",
+            write_sarif,
+            _sarif_doc,
+            default="{}",
+        )
+        click.echo(_sarif_text if _sarif_text is not None else "{}")
         if ci_mode and high_count > 0:
             ctx.exit(5)
         return
@@ -698,9 +966,67 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         # Consumers that previously read findings[i]["rule_id"] must
         # now read findings[i]["value"]["rule_id"] plus
         # findings[i]["confidence"] / findings[i]["reason"].
-        finding_triples = wrap_findings(findings_dump, classifier=_taint_classify)
+        # W607-AY: wrap the confidence classifier so a raise inside
+        # ``_taint_classify`` (or wrap_findings itself) surfaces a marker
+        # and falls back to the raw findings_dump.
+        finding_triples = _run_check_ay(
+            "wrap_findings",
+            wrap_findings,
+            findings_dump,
+            classifier=_taint_classify,
+            default=list(findings_dump),
+        )
         distribution = confidence_distribution(finding_triples)
         wrapped_verdict = verdict_with_high_count(verdict, distribution)
+
+        # W607-CJ -- compute_predicate boundary. Wraps the per-field
+        # extraction of metrics so a future ``TaintFinding`` schema
+        # refactor that drops/renames count fields surfaces a marker
+        # rather than crashing the envelope. Floor to documented empty-
+        # shape ints matching the happy-path return so downstream
+        # verdict/summary fields stay non-null. W978 discipline:
+        # ``default=`` is a literal dict, NOT a computed expression
+        # over the (potentially poisoned) inputs.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(rules)`` /
+        # ``len(findings)`` are computed INSIDE the wrapped closure --
+        # passing the raw lists keeps the kwarg-bind step pure (no
+        # ``__len__`` call until we're inside the try-block).
+        def _compute_predicate_fields(
+            _rules,
+            _findings,
+            _h: int,
+            _m: int,
+            _s: int,
+            _risk: int,
+        ) -> dict:
+            return {
+                "rules": len(_rules),
+                "findings": len(_findings),
+                "errors": _h,
+                "warnings": _m,
+                "sanitized": _s,
+                "risk_score": _risk,
+            }
+
+        _pred_fields = _run_check_cj(
+            "compute_predicate",
+            _compute_predicate_fields,
+            rules,
+            findings,
+            high_count,
+            medium_count,
+            sanitized_count,
+            risk_score,
+            default={
+                "rules": 0,
+                "findings": 0,
+                "errors": 0,
+                "warnings": 0,
+                "sanitized": 0,
+                "risk_score": 0,
+            },
+        )
 
         # Round 3 #23: only ship the OpenVEX vocabulary lists when there
         # are findings to attach them to. Empty taint runs returning the
@@ -720,12 +1046,12 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         # (W1006 redactions[] precedent for content lists).
         _w489_a_summary = {
             "verdict": wrapped_verdict,
-            "rules": len(rules),
-            "findings": len(findings),
-            "errors": high_count,
-            "warnings": medium_count,
-            "sanitized": sanitized_count,
-            "risk_score": risk_score,
+            "rules": _pred_fields.get("rules", 0),
+            "findings": _pred_fields.get("findings", 0),
+            "errors": _pred_fields.get("errors", 0),
+            "warnings": _pred_fields.get("warnings", 0),
+            "sanitized": _pred_fields.get("sanitized", 0),
+            "risk_score": _pred_fields.get("risk_score", 0),
             "findings_confidence_distribution": distribution,
             "rules_lint": {
                 "qualified_only_violations": len(_w489_a_violations),
@@ -738,15 +1064,70 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                 f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
             ]
             envelope_kwargs["qualified_only_violations"] = _w489_a_violations
-        click.echo(
-            to_json(
-                json_envelope(
-                    "taint",
-                    summary=_w489_a_summary,
-                    **envelope_kwargs,
-                )
-            )
+        # W607-AY / W607-CJ: append BOTH substrate-CALL markers AND
+        # aggregation-phase markers to ``summary.warnings_out`` and
+        # top-level ``warnings_out``. Both buckets share the canonical
+        # ``taint_*`` marker family (W607-CJ is additive, not a separate
+        # prefix); the additive bucket stays distinguishable via its
+        # phase names (``score_classify`` / ``compute_predicate`` /
+        # ``compute_verdict`` / ``serialize_envelope``). Non-empty
+        # combined bucket flips partial_success.
+        _combined_warnings_out = list(_w607ay_warnings_out) + list(_w607cj_warnings_out)
+        if _combined_warnings_out:
+            _w489_a_summary["partial_success"] = True
+            existing = list(_w489_a_summary.get("warnings_out") or [])
+            _w489_a_summary["warnings_out"] = existing + list(_combined_warnings_out)
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+
+        # W607-CJ -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("taint", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name. Mirror of cmd_supply_chain's W607-CD
+        # serialize_envelope floor pattern.
+        _envelope_floor: dict = {
+            "command": "taint",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        _envelope = _run_check_cj(
+            "serialize_envelope",
+            json_envelope,
+            "taint",
+            default=_envelope_floor,
+            summary=_w489_a_summary,
+            **envelope_kwargs,
         )
+        # W607-CJ -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``taint_serialize_envelope_failed:`` marker was appended to
+        # ``_w607cj_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild
+        # needed.
+        if _envelope is _envelope_floor and _w607cj_warnings_out:
+            _combined_warnings_out = list(_w607ay_warnings_out) + list(_w607cj_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            _envelope = _envelope_floor
+
+        # W607-AY: wrap the JSON serialization itself so a circular-ref
+        # bug or hostile field surfaces a marker rather than crashing.
+        _output_text = _run_check_ay(
+            "serialize_envelope",
+            to_json,
+            _envelope,
+            default="{}",
+        )
+        click.echo(_output_text if _output_text is not None else "{}")
         if ci_mode and high_count > 0:
             ctx.exit(5)
         return

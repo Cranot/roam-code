@@ -181,7 +181,7 @@ def invoke_cli(runner, args, cwd=None, json_mode=False):
     Args:
         runner: CliRunner instance
         args: list of CLI arguments (e.g. ["health"])
-        cwd: directory to run in (monkeypatched via env)
+        cwd: directory to run in (applied via os.chdir, restored in finally)
         json_mode: if True, prepend --json flag
     Returns:
         click.testing.Result
@@ -192,10 +192,6 @@ def invoke_cli(runner, args, cwd=None, json_mode=False):
     if json_mode:
         full_args.append("--json")
     full_args.extend(args)
-
-    env = {}
-    if cwd:
-        env["PWD"] = str(cwd)
 
     old_cwd = os.getcwd()
     try:
@@ -567,7 +563,7 @@ def project_with_snapshots(indexed_project, monkeypatch):
         git_commit(indexed_project, f"add extra_{i}")
         out, rc = index_in_process(indexed_project)
         assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"
-        out, rc = roam("trends", "--save", "--tag", f"v{i}", cwd=indexed_project)
         # trends --save creates a snapshot; don't assert exit code
+        roam("trends", "--save", "--tag", f"v{i}", cwd=indexed_project)
 
     return indexed_project

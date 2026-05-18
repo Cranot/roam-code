@@ -101,6 +101,40 @@ def repo_root() -> Path:
        ``tests/_helpers/``). This branch only executes if neither
        git nor a marker-file walk succeeds; tests will then fail
        loudly on the missing file rather than silently mis-resolve.
+
+    Usage styles (W629)
+    -------------------
+
+    Both styles below are acceptable and CI-guard-compliant (W588 ruff
+    rule). The W594 sweep produced both shapes in the migrated tree;
+    W629 records that this is intentional rather than a drift to fix.
+
+    Style A -- call at use-site. Preferred for one-off uses (1-2
+    references per file) and inside test functions where the call is
+    obvious::
+
+        from tests._helpers.repo_root import repo_root
+
+        def test_thing():
+            src = (repo_root() / "src" / "roam" / "x.py").read_text()
+
+    Style B -- cache as a module-level constant. Preferred when the
+    file references the root 3+ times; the ``lru_cache(maxsize=1)``
+    discipline makes the second-and-later calls free, but a named
+    constant reads more cleanly at every use-site::
+
+        from tests._helpers.repo_root import repo_root
+
+        REPO_ROOT = repo_root()  # or ROOT = repo_root()
+
+        SRC = REPO_ROOT / "src" / "roam"
+
+    Constant naming is unconstrained (``ROOT`` / ``REPO_ROOT`` /
+    ``PROJECT_ROOT`` / ``_REPO_ROOT`` all appear in the post-W594
+    tree). Alias-on-import (``import repo_root as _repo_root``) is
+    only needed when the importing module already binds the name
+    ``repo_root`` to something else (e.g. a local variable in a test
+    body); see ``tests/test_agents_md.py`` for the one real case.
     """
     here = Path(__file__).resolve().parent  # tests/_helpers/
 

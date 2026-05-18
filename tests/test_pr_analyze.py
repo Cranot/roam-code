@@ -760,7 +760,9 @@ def test_cli_pr_analyze_with_input_file_returns_safe_for_trivial_diff(tmp_path, 
     assert result.exit_code in (0, 5), result.output
     payload = parse_json_output(result)
     summary = payload.get("summary") or {}
-    assert summary.get("verdict") in ("SAFE", "REVIEW"), summary
+    verdict = str(summary.get("verdict") or "").split(" ", 1)[0]
+    assert verdict in ("SAFE", "REVIEW"), summary
+    assert summary.get("risk_level_canonical") in {"low", "medium", "high", "critical"}, summary
     assert "ai_likelihood" in summary
     assert "blast_radius" in summary
 

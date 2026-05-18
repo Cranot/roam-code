@@ -14,7 +14,7 @@ rules:
   # ---- Optionals + nil safety ----
 
   - id: sw-no-force-unwrap
-    description: "! force-unwrap crashes on nil; use guard let / if let / nil-coalescing instead."
+    description: "Replace ! force-unwrap with guard let / if let / nil-coalescing; force-unwrap crashes on nil."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "*!"
@@ -28,14 +28,14 @@ rules:
     severity: NOTE
 
   - id: sw-no-try-bang
-    description: "try! crashes on throw; use try? or do/catch."
+    description: "Replace try! with try? or do/catch; try! crashes on throw."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "try!"
     severity: WARN
 
   - id: sw-no-as-bang
-    description: "as! crashes on type mismatch; use as? + guard."
+    description: "Replace as! with as? + guard; as! crashes on type mismatch."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "as!"
@@ -60,7 +60,7 @@ rules:
   # ---- Concurrency ----
 
   - id: sw-no-blocking-main-thread
-    description: "Synchronous I/O on main thread blocks the UI; use Task { } or DispatchQueue.global()."
+    description: "Replace DispatchQueue.main.sync with Task { } or DispatchQueue.global(); synchronous I/O on the main thread freezes the UI."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "DispatchQueue.main.sync"
@@ -165,8 +165,12 @@ rules:
     forbidden_target_glob: "objc"
     severity: NOTE
 
+  # WHY: Private Apple SPI (underscore-prefixed symbols) trips App Store static
+  # analysis on submission, blocking release. The forbidden glob catches the
+  # _UI* family; extend the glob if your codebase reaches into NSPrivate* /
+  # _CF* surfaces.
   - id: sw-no-private-api
-    description: "Private Apple APIs (_UI*, NSPrivate*) cause App Store rejection; use public alternatives."
+    description: "Replace private Apple APIs (_UI*, NSPrivate*) with public alternatives; private SPI triggers App Store rejection."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "_UI*"
@@ -190,8 +194,11 @@ rules:
 
   # ---- Architecture / layer violations ----
 
+  # WHY: @testable imports expose internal symbols only at test-build time.
+  # Importing them from production targets leaks test-only surface into the
+  # shipped binary and breaks release builds where XCTest isn't linked.
   - id: sw-no-test-imports-in-prod
-    description: "Production code must not import @testable XCTest helpers."
+    description: "Remove @testable XCTest imports from production code; test-only symbols must not ship."
     pattern: import_from
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "@testable*"

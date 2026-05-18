@@ -17,8 +17,12 @@
 rules:
   # ---- Production-quality enforcement ----
 
+  # WHY: .unwrap() collapses Option / Result into a runtime panic with no
+  # context, so production crashes surface as bare `unwrap()` panics rather
+  # than typed errors. The ? operator (or expect() with a message) preserves
+  # the failure path for callers and logs.
   - id: rs-no-unwrap-in-prod
-    description: ".unwrap() panics on None/Err; use ? operator or expect() with context message instead."
+    description: "Replace .unwrap() with the ? operator or expect() with a context message; unwrap panics on None/Err in production."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*.unwrap"
@@ -32,14 +36,14 @@ rules:
     severity: WARN
 
   - id: rs-no-panic
-    description: "panic!() in library code propagates badly; return Result<T, E> instead."
+    description: "Replace panic!() with a Result<T, E> return; panic in library code propagates failure modes badly across crate boundaries."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "panic"
     severity: WARN
 
   - id: rs-no-eprintln-in-prod
-    description: "eprintln!() in production code suggests forgotten debug output; use tracing / log instead."
+    description: "Replace eprintln!() with tracing or log crates; eprintln in production code is forgotten debug output."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "eprintln"
@@ -47,15 +51,19 @@ rules:
 
   # ---- Unsafe / dangerous APIs ----
 
+  # WHY: std::mem::transmute reinterprets bits between arbitrary types and
+  # bypasses every Rust safety check at once (lifetimes, alignment, layout).
+  # Almost every legitimate use is expressible via safer alternatives
+  # (`as` casts, From/Into, byte-slice wrappers) — keep BLOCK strict.
   - id: rs-no-mem-transmute
-    description: "std::mem::transmute is the most dangerous unsafe; almost always wrong."
+    description: "Remove std::mem::transmute; transmute reinterprets bits between arbitrary types and bypasses every Rust safety check."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "mem::transmute"
     severity: BLOCK
 
   - id: rs-no-process-exit
-    description: "std::process::exit() in library code kills the host process; return Result instead."
+    description: "Replace std::process::exit() with a Result return in library code; exit kills the host process and skips destructors."
     pattern: function_call
     source_glob: "src/lib.rs"
     forbidden_target_glob: "process::exit"
@@ -71,7 +79,7 @@ rules:
   # ---- Hallucinated crate imports ----
 
   - id: rs-no-numbered-modules
-    description: "Numbered modules (foo_v2, util1) often signal LLM hallucinations."
+    description: "Rename or remove numbered modules (foo_v2, util1); these names are typical LLM hallucinations."
     pattern: import_from
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*_v[0-9]*"

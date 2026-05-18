@@ -177,13 +177,13 @@ class TestForeignKeys:
     def test_inline_fk(self):
         code = "CREATE TABLE t (dept_id INT REFERENCES departments(id));"
         _, refs = _parse(code)
-        ref_targets = _ref_names(refs, "references")
+        ref_targets = _ref_names(refs, "reference")
         assert "departments" in ref_targets
 
     def test_inline_fk_source_name(self):
         code = "CREATE TABLE orders (user_id INT REFERENCES users(id));"
         _, refs = _parse(code)
-        fk = [r for r in refs if r["kind"] == "references"][0]
+        fk = [r for r in refs if r["kind"] == "reference"][0]
         assert fk["source_name"] == "orders"
 
     def test_constraint_fk(self):
@@ -195,7 +195,7 @@ class TestForeignKeys:
             ");"
         )
         _, refs = _parse(code)
-        ref_targets = _ref_names(refs, "references")
+        ref_targets = _ref_names(refs, "reference")
         assert "users" in ref_targets
 
     def test_constraint_fk_source_name(self):
@@ -207,13 +207,13 @@ class TestForeignKeys:
             ");"
         )
         _, refs = _parse(code)
-        fk = [r for r in refs if r["kind"] == "references"][0]
+        fk = [r for r in refs if r["kind"] == "reference"][0]
         assert fk["source_name"] == "orders"
 
     def test_multiple_fks(self):
         code = "CREATE TABLE t (\n    a_id INT REFERENCES table_a(id),\n    b_id INT REFERENCES table_b(id)\n);"
         _, refs = _parse(code)
-        ref_targets = _ref_names(refs, "references")
+        ref_targets = _ref_names(refs, "reference")
         assert "table_a" in ref_targets
         assert "table_b" in ref_targets
 
@@ -389,7 +389,7 @@ class TestCreateIndex:
     def test_index_table_ref(self):
         code = "CREATE INDEX idx_email ON users (email);"
         _, refs = _parse(code)
-        ref_targets = _ref_names(refs, "references")
+        ref_targets = _ref_names(refs, "reference")
         assert "users" in ref_targets
 
 

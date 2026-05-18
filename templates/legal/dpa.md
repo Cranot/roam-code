@@ -1,141 +1,238 @@
 # Data Processing Agreement
 
-> ⚠️ **REVIEW BEFORE USE.** v1 draft, 2026-05-05. Based on the GDPR Article 28 framework. Have a qualified attorney review before binding execution. EU-based clients should require this signed before repo access.
-> Superseded for launch until rewritten. This DPA was drafted for the old audit
-> service; update the service description, subprocessors, retention, and
-> product-specific processing details before using it for PR Replay or Review.
+> REVIEW BEFORE USE. v2 draft, 2026-05-18. This template is aligned to the
+> current PR Replay service and the planned Roam Review hosted service, but it
+> is not legal advice and must be reviewed by qualified counsel before binding
+> execution. Bracketed fields must be completed per engagement.
+>
+> Research references checked on 2026-05-18: GDPR Article 28 processor
+> structure, the European Commission controller-processor standard contractual
+> clauses, Stripe Payment Links / invoicing docs, and AADE myDATA public
+> updates. Recheck these before external use.
 
 ---
 
-This Data Processing Agreement ("**DPA**") forms part of and is subject to the Statement of Work signed `[SOW_DATE]` (the "**SOW**") between:
+This Data Processing Agreement ("DPA") forms part of and is subject to the
+Statement of Work, order form, or subscription agreement signed on
+`[EFFECTIVE_DATE]` (the "Agreement") between:
 
-- **`[CONTROLLER_LEGAL_NAME]`** ("**Controller**" / "Client"); and
-- **`[PROCESSOR_LEGAL_NAME]`** ("**Processor**" / "Provider").
+> For PR Replay engagements, the "Agreement" is the Statement of Work at
+> `https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md`
+> (the "SOW"). The SOW incorporates this DPA by reference. In case of
+> conflict, **Section 13 (Order of precedence)** applies.
 
-This DPA applies to the Processor's processing of Personal Data on the Controller's behalf in connection with the services described in the SOW.
+- **`[CONTROLLER_LEGAL_NAME]`** ("Controller" / "Client"); and
+- **`[PROCESSOR_LEGAL_NAME]`** ("Processor" / "Provider").
+
+This DPA applies when Processor processes Personal Data on Controller's behalf
+in connection with the services described in the Agreement.
 
 ---
 
 ## 1. Definitions
 
-Terms used in this DPA — "Personal Data", "Data Subject", "Processing", "Controller", "Processor", "Sub-processor", "Supervisory Authority" — have the meanings given in **Regulation (EU) 2016/679** (the "GDPR"). "Applicable Data Protection Law" means the GDPR and any national or supplementary laws (e.g. UK GDPR, Greek Law 4624/2019).
+Terms used in this DPA - including "Personal Data", "Data Subject",
+"Processing", "Controller", "Processor", "Sub-processor", and "Supervisory
+Authority" - have the meanings given in Regulation (EU) 2016/679 (the "GDPR").
+"Applicable Data Protection Law" means the GDPR and applicable supplementary
+law, including UK GDPR where relevant and Greek Law 4624/2019 where applicable.
 
-## 2. Subject matter, duration, nature, purpose
+## 2. Processing description
 
-| Aspect | Detail |
-|---|---|
-| **Subject matter** | Static analysis of Controller's source code repository to produce an architectural audit report (the "Service") |
-| **Duration** | The duration of the SOW plus the retention period in Section 7 |
-| **Nature** | Read-only analysis using `roam-code` (Apache 2.0, local SQLite indexer); no modification of Controller's systems |
-| **Purpose** | To deliver the Service per the SOW |
-| **Categories of Data Subjects** | Controller's employees and contributors whose names appear in repository git history; Controller's end users only if their Personal Data appears in source code (e.g. test fixtures, hard-coded examples) |
-| **Categories of Personal Data** | Author names and email addresses from git commit metadata; any Personal Data inadvertently committed to source code (e.g. fixture data, comments, test files) |
+| Aspect | PR Replay | Roam Review / hosted services |
+| --- | --- | --- |
+| Subject matter | Read-only replay of agreed pull-request history to produce a structural-review report. | Planned pre-merge structural review, dashboards, and evidence history for subscribed repositories. |
+| Duration | Agreement term plus the retention period in Section 7. | Subscription term plus the retention period in Section 7. |
+| Nature | Local deterministic analysis using `roam-code`; temporary repo clone or git bundle; no source-code modification. | Git provider webhook ingestion, PR diff analysis, Roam evidence generation, dashboard/report storage where enabled. |
+| Purpose | Deliver the PR Replay report, walkthrough, and agreed follow-up. | Deliver Review verdicts, evidence packets, dashboards, and support. |
+| Data subjects | Client employees, contractors, contributors, and any person whose Personal Data appears in git metadata, pull requests, comments, fixtures, test data, or source files. | Same as PR Replay, plus users/admins of the hosted service. |
+| Personal Data categories | Names, email addresses, usernames, commit metadata, PR metadata, comments, access logs, and any Personal Data inadvertently committed to source code or fixtures. | Same as PR Replay, plus account, billing-contact, organization, webhook, usage, and support metadata. |
+
+Hosted Roam Review fields are included so the template can evolve with the
+product. Do not use this DPA for hosted Review until the hosting provider,
+sub-processors, retention windows, and security schedule are completed.
 
 ## 3. Processor obligations
 
-The Processor will:
+Processor will:
 
-(a) Process Personal Data **only** on the Controller's documented instructions, including those in this DPA and the SOW. The Processor will inform the Controller if a legal requirement compels it to process otherwise.
+1. Process Personal Data only on Controller's documented instructions,
+   including this DPA, the Agreement, and written instructions sent by
+   Controller.
+2. Inform Controller if Processor believes an instruction infringes Applicable
+   Data Protection Law, unless prohibited by law.
+3. Ensure that personnel authorised to process Personal Data are bound by a
+   contractual or statutory confidentiality duty.
+4. Implement appropriate technical and organisational measures proportionate to
+   the risk, including the measures in Section 6.
+5. Assist Controller, where reasonably possible, with data-subject requests
+   under Articles 15-22 GDPR.
+6. Assist Controller with Articles 32-36 GDPR obligations, including security,
+   breach notification, DPIAs, and prior consultation where the requested
+   assistance relates to Processor's processing.
+7. Make information reasonably necessary to demonstrate compliance available to
+   Controller and support audits under Section 10.
+8. Delete or return Personal Data at the end of the services as described in
+   Section 7.
 
-(b) Ensure that personnel authorised to process Personal Data are bound by a contractual or statutory duty of confidentiality.
+## 4. Controller obligations
 
-(c) Implement appropriate technical and organisational measures to ensure a level of security appropriate to the risk, including:
+Controller will:
 
-- **Encryption at rest**: Controller's repository is stored only on full-disk-encrypted volumes (BitLocker / FileVault / VeraCrypt) on the Processor's working machine.
-- **No cloud sync**: client repositories are excluded from automatic cloud synchronisation services (OneDrive / iCloud / Google Drive) on the Processor's machine.
-- **No third-party AI**: Processor's `roam-code` analysis tool runs 100% locally with zero API keys; Controller's source code is not transmitted to any AI provider unless the Controller explicitly opts in (see Section 6).
-- **Access logs**: per-engagement log of `repo_id, file_accessed, timestamp, action` retained for the duration of the engagement plus the retention period.
-- **Endpoint hygiene**: OS auto-updates enabled; full-disk antivirus active; screen lock under 5 min idle.
+1. Provide lawful instructions and ensure it has a valid legal basis for the
+   Personal Data supplied to Processor.
+2. Avoid sharing production secrets, credentials, customer records, or special
+   category data unless strictly necessary for the agreed scope.
+3. Prefer redacted git bundles or least-privilege read-only repository access
+   where that still allows Processor to deliver the service.
+4. Notify Processor promptly if the repo or materials contain unusually
+   sensitive data that changes the risk profile.
 
-(d) Assist the Controller, by appropriate technical and organisational measures, in fulfilling its obligation to respond to Data Subject requests under Articles 15-22 GDPR.
+## 5. Sub-processors
 
-(e) Assist the Controller in ensuring compliance with Articles 32 to 36 GDPR (security, breach notification, DPIAs, prior consultation).
+Controller authorises the following Sub-processors at the Effective Date:
 
-(f) Make available to the Controller all information necessary to demonstrate compliance with this DPA, and allow for and contribute to audits — including inspections — conducted by the Controller or another auditor mandated by the Controller (see Section 9).
+| Sub-processor | Purpose | Personal Data scope | Location / transfer basis |
+| --- | --- | --- | --- |
+| Stripe, Inc. | Payment processing, receipts, refunds, and billing records. | Billing contact and transaction metadata only; no source code. | USA; Stripe transfer terms/SCCs where applicable. |
+| GitHub, Inc. | Repository access when Controller chooses GitHub collaborator, deploy-key, GitHub App, or webhook access. | Repository content, git metadata, PR metadata, and user metadata needed for the agreed service. | USA / global; GitHub transfer terms/SCCs where applicable. |
+| `[TBD: HOSTING_PROVIDER_IF_ANY]` | Hosted Roam Review or Cloud infrastructure, if enabled. Not applicable to PR Replay (local-only). | `[TBD: DATA_SCOPE]` | `[TBD: REGION_AND_TRANSFER_BASIS]` |
+| `[TBD: EMAIL_OR_STORAGE_PROVIDER_IF_ANY]` | Delivery of reports, support, or encrypted artifact storage, if used. For PR Replay v1 delivery is via direct email from Processor's mailbox. | Contact details and report artifacts. | `[TBD: REGION_AND_TRANSFER_BASIS]` |
 
-## 4. Sub-processors
+Processor will not add a new Sub-processor without at least 14 calendar days'
+prior notice, unless emergency replacement is necessary to maintain security or
+service continuity. Controller may object on reasonable data-protection
+grounds. If the parties cannot resolve the objection, Controller may terminate
+the affected service and receive any refund required by the Agreement.
 
-The Controller authorises the following Sub-processors at the Effective Date:
+Processor remains responsible for Sub-processor performance of equivalent data
+protection obligations.
 
-| Sub-processor | Purpose | Location |
-|---|---|---|
-| Stripe, Inc. | Billing only (no source code or repository content) | USA |
-| `[CLOUD_PROVIDER_IF_ANY]` | `[E.G. encrypted EU-region storage for git bundle uploads]` | `[REGION]` |
+## 6. Security measures
 
-The Processor will not engage additional Sub-processors without prior written notice (at least **14 calendar days**) to the Controller. The Controller may object on reasonable data-protection grounds; if the Parties cannot resolve the objection, the Controller may terminate the SOW with refund of unworked prepayment.
+For PR Replay, Processor will apply at least the following measures:
 
-The Processor is liable for Sub-processor compliance with this DPA equivalent obligations.
+- **Local-only analysis.** `roam-code` is a 100% local CLI; it requires
+  no API key, no vendor cloud endpoint, and no inbound network egress
+  to Processor or any third party for analysis. Personal Data and source
+  code stay on Processor's local working machine for the duration of the
+  engagement and never transit a Processor-operated cloud service.
+  Sub-processor scope (Stripe, GitHub) is limited to the purposes listed
+  in **Section 5** and does not include analysis data.
+- Temporary working copy stored only on encrypted storage controlled by
+  Processor.
+- Client repositories excluded from consumer cloud-sync folders.
+- Read-only repository access wherever possible.
+- No training, fine-tuning, evaluation, or benchmarking on Client code,
+  diffs, comments, metrics, or derived artifacts.
+- OS auto-updates enabled, endpoint malware protection active, and screen lock
+  under 5 minutes idle.
+- Engagement ledger recording tier, client, scope, commits scanned, generated
+  report path, and deletion status.
+- Report artifacts stored encrypted at rest until deletion or retention expiry.
 
-## 5. Cross-border transfers
+For hosted Roam Review or Cloud, Processor must complete a separate security
+schedule before launch covering hosting region, encryption, access control,
+key management, logging, backup, vulnerability handling, incident response,
+retention, and admin access review.
 
-If Personal Data is transferred outside the European Economic Area, the transfer will be subject to one of the safeguards in Articles 44-49 GDPR — typically the European Commission's **Standard Contractual Clauses** (2021/914/EU) annexed to this DPA on request. The Processor's primary processing location is **Greece (EU)**; transfers to US-based Sub-processors (e.g. Stripe) rely on those Sub-processors' own SCC commitments.
+## 7. Return, deletion, and retention
 
-## 6. Optional AI-augmented analysis
+Unless the Agreement states a shorter period, Processor will:
 
-By default, no Personal Data or source code is transmitted to any AI provider. The Controller may **opt in**, by separate written authorisation, to AI-summarised findings using the Anthropic API. If opted in:
+1. Delete temporary repository clones, git bundles, indexes, and derivative
+   working files within 7 calendar days after report delivery or service
+   termination.
+2. Provide written deletion confirmation on request.
+3. Retain the final delivered report for up to 90 days to support follow-up
+   questions, unless Controller requests earlier deletion.
+4. Retain engagement ledger entries for up to 2 years for audit defence,
+   reconciliation, and dispute handling.
+5. Retain invoices, accounting records, and legally required tax records for
+   the period required by applicable law, including Greek tax requirements
+   where Processor is Greek-established.
+6. Retain only anonymised aggregate product metrics where no Client, repo,
+   contributor, code, identifier, or quote can be reconstructed.
 
-- Source code chunks may be transmitted to Anthropic's API for the limited purpose of generating natural-language summaries.
-- Anthropic's data-handling policy applies (see <https://www.anthropic.com/legal>).
-- The Controller's authorisation is revocable at any time on written notice.
+Hosted service retention must be filled in the relevant order form before
+launch. Placeholder hosted retention language is not sufficient for external
+execution.
 
-If not opted in, the Processor will use only deterministic local analysis.
+## 8. Optional AI providers
 
-## 7. Data return and deletion
+By default, Processor will not transmit Client source code, diffs, comments, or
+report artifacts to Anthropic, OpenAI, Google, or any other AI provider.
 
-Upon completion of the Service or earlier termination of the SOW, the Processor will:
+Any AI-assisted narrative summarisation or third-party model use requires a
+separate written opt-in that names the provider, data categories, purpose,
+retention setting, transfer basis, and revocation process. The provider must
+also be added to Section 5 before processing begins.
 
-(a) Delete the Controller's source code, repository working copies, and derivative working files within **14 calendar days**.
-(b) Provide written confirmation of deletion within 7 calendar days of completion.
-(c) Retain only:
-   - The final audit report deliverable, in encrypted archive, for **90 days** to support reasonable Controller follow-up questions; the Controller may request earlier deletion.
-   - Per-engagement access logs for **2 years** for compliance and audit defence.
-   - Sanitised, fully Controller-anonymised metrics (file counts, language distribution, never identifiable code) for Processor's own product analytics.
+## 9. Personal Data breach notification
 
-(d) On Controller's request, extend retention by amendment for repeat or follow-up audits (up to 90 additional days).
-
-## 8. Personal Data breach notification
-
-The Processor will notify the Controller without undue delay, and in any event within **72 hours**, of becoming aware of any Personal Data breach affecting Controller Personal Data. The notice will include, to the extent known:
+Processor will notify Controller without undue delay, and where feasible within
+72 hours after becoming aware, of a Personal Data breach affecting Controller
+Personal Data. The notice will include, to the extent known:
 
 - Nature of the breach.
 - Approximate categories and number of Data Subjects and records affected.
 - Likely consequences.
 - Measures taken or proposed to address the breach and mitigate effects.
 
-The Processor will reasonably assist the Controller in fulfilling Articles 33-34 GDPR notifications.
+Processor will reasonably assist Controller with Articles 33-34 GDPR
+notifications where the breach relates to Processor's processing.
 
-## 9. Audits
+## 10. Audits
 
-Once per year, with at least 30 days' written notice, the Controller may audit the Processor's compliance with this DPA. The audit will be conducted during business hours, will not unreasonably interfere with the Processor's operations, will be limited to information relevant to this DPA, and will be subject to the NDA. Audits at the Processor's expense if material non-compliance is found; otherwise at the Controller's expense.
+Once per year, with at least 30 days' written notice, Controller may audit
+Processor's compliance with this DPA. Audits must be limited to information
+relevant to this DPA, conducted during business hours, subject to reasonable
+confidentiality safeguards, and structured to avoid unreasonable disruption.
 
-## 10. Liability and indemnity
+Where a material non-compliance finding is confirmed, Processor will remediate
+within a reasonable period and bear reasonable audit costs directly caused by
+the confirmed non-compliance. Otherwise, Controller bears its audit costs.
 
-Each Party's liability under this DPA is subject to the liability cap in the SOW, except for breaches of confidentiality and breaches resulting from gross negligence or wilful misconduct, which are uncapped.
+## 11. Cross-border transfers
 
-## 11. Term and termination
+Processor's primary PR Replay processing location is Greece (EU), unless the
+Agreement says otherwise. Where Personal Data is transferred outside the EEA,
+the parties will rely on an applicable GDPR Chapter V safeguard, such as an
+adequacy decision, the European Commission Standard Contractual Clauses, or
+another lawful transfer mechanism.
 
-This DPA continues for as long as the Processor processes Controller Personal Data under the SOW. Sections 7, 8, 9, and 10 survive termination.
+Where Controller requests a non-EEA hosted deployment, Controller and Processor
+will document the transfer basis and supplementary measures in the order form
+or security schedule.
 
-## 12. Order of precedence
+## 12. Liability
 
-In case of conflict between this DPA and the SOW, this DPA prevails for matters concerning the Processing of Personal Data.
+Each party's liability under this DPA is subject to the liability provisions in
+the Agreement, except where Applicable Data Protection Law requires otherwise.
 
-## 13. Governing law
+## 13. Order of precedence
 
-This DPA is governed by the same law as the SOW.
+In case of conflict between this DPA and the Agreement, this DPA prevails only
+for matters concerning Processor's processing of Personal Data.
+
+## 14. Term
+
+This DPA continues for as long as Processor processes Controller Personal Data
+under the Agreement. Sections 7, 9, 10, 11, 12, and 13 survive termination for
+as long as needed to give them effect.
 
 ---
 
 ## Signatures
 
-**Controller — `[CONTROLLER_LEGAL_NAME]`**
+**Controller - `[CONTROLLER_LEGAL_NAME]`**
 
 - Signed: ____________________
 - Name: `[CONTROLLER_SIGNATORY]`
 - Title: `[CONTROLLER_TITLE]`
 - Date: ____________________
 
-**Processor — `[PROCESSOR_LEGAL_NAME]`**
+**Processor - `[PROCESSOR_LEGAL_NAME]`**
 
 - Signed: ____________________
 - Name: `[PROCESSOR_SIGNATORY]`

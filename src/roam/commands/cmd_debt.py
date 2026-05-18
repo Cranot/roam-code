@@ -60,10 +60,15 @@ def _parent_dir(path):
 # ---------------------------------------------------------------------------
 
 
-def _compute_file_debt(conn):
+def _compute_file_debt(conn, warnings_out=None):
     """Compute per-file debt scores.
 
     Returns a list of dicts sorted by debt_score descending.
+
+    W607-BG: if *warnings_out* is provided, the cycle-detection inner block
+    surfaces a ``debt_cycle_detection_failed:<exc_class>:<detail>`` marker
+    instead of silently swallowing exceptions (Pattern-2 silent-fallback
+    FIXED IN PLACE).
     """
     # 1. Fetch file_stats rows (complexity, churn)
     file_stats = conn.execute("""
@@ -109,8 +114,14 @@ def _compute_file_debt(conn):
                     list(all_cycle_ids),
                 )
                 cycle_files = {r["file_id"] for r in rows}
-    except Exception:
-        pass  # graph not available — skip cycle detection
+    except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        # W607-BG: surface graph-substrate failure rather than silently
+        # swallowing. Pattern-2 silent-fallback FIXED IN PLACE — the
+        # bug is the success verdict on a degraded cycle scan, not the
+        # decision to keep going. cycle_files remains empty, which is the
+        # correct floor when the graph is unavailable.
+        if warnings_out is not None:
+            warnings_out.append(f"debt_cycle_detection_failed:{type(exc).__name__}:{exc}")
 
     # 3. God component membership (high fan-in + fan-out per file)
     god_files = set()
@@ -564,21 +575,80 @@ def debt(ctx, limit, by_kind, threshold, roi):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-BG -- substrate-CALL marker plumbing on the debt-prioritization
+    # surface. cmd_debt is the paired aggregator to cmd_health (W607-M +
+    # W607-BA) on the DB-substrate family: cycles, god_components,
+    # complexity, dead exports, churn percentile, coupling intensity.
+    # The substrate boundaries we wrap:
+    #
+    #   * compute_file_debt      -- the per-file score aggregator (loads
+    #                               file_stats + cycles + god + dead +
+    #                               coupling, builds debt_score). Carries
+    #                               the inline cycle_detection sub-marker.
+    #   * summary_stats          -- aggregate project-level rollup
+    #   * improvement_suggestions -- actionable suggestions block
+    #   * estimate_refactoring_roi -- the ROI prioritization core
+    #                                  (developer-hours saved / quarter)
+    #   * group_by_directory     -- --by-kind grouping
+    #
+    # Marker family ``debt_<phase>_failed:<exc_class>:<detail>``. Empty
+    # bucket -> no field added -> byte-identical envelope on the happy
+    # path (W607-A..BA parity discipline). Threads into BOTH the top-level
+    # ``warnings_out`` (preserved-list-field discipline) AND
+    # ``summary.warnings_out`` + ``summary.partial_success=True``.
+    #
+    # ROI-degradation discipline: a raise inside _estimate_refactoring_roi
+    # surfaces the marker, returns the empty default ({}, {}), and the
+    # debt items still emit in raw debt_score order (which is the natural
+    # severity fallback when the ROI ranking layer collapses).
+    _w607bg_warnings_out: list[str] = []
+
+    def _run_check_bg(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BG marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``debt_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607bg_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bg_warnings_out.append(f"debt_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
-        all_items = _compute_file_debt(conn)
+        all_items = _run_check_bg(
+            "compute_file_debt",
+            _compute_file_debt,
+            conn,
+            warnings_out=_w607bg_warnings_out,
+            default=[],
+        )
+        if all_items is None:
+            all_items = []
 
         if not all_items:
             if json_mode:
+                # W607-BG: thread substrate-CALL markers into the empty
+                # path too -- a raise in compute_file_debt collapses
+                # all_items to [] and would otherwise hide the lineage.
+                _empty_summary = {
+                    "verdict": "no debt data — run roam index first",
+                    "total_files": 0,
+                    "total_debt": 0,
+                }
+                _empty_kwargs: dict = {"summary": _empty_summary, "items": []}
+                if _w607bg_warnings_out:
+                    _empty_summary["warnings_out"] = list(_w607bg_warnings_out)
+                    _empty_summary["partial_success"] = True
+                    _empty_kwargs["warnings_out"] = list(_w607bg_warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "debt",
-                            summary={
-                                "verdict": "no debt data — run roam index first",
-                                "total_files": 0,
-                                "total_debt": 0,
-                            },
-                            items=[],
+                            **_empty_kwargs,
                         )
                     )
                 )
@@ -592,8 +662,28 @@ def debt(ctx, limit, by_kind, threshold, roi):
         if threshold is not None:
             all_items = [r for r in all_items if r["debt_score"] >= threshold]
 
-        stats = _summary_stats(all_items)
-        suggestions = _improvement_suggestions(all_items)
+        stats = _run_check_bg(
+            "summary_stats",
+            _summary_stats,
+            all_items,
+            default={
+                "total_files": 0,
+                "total_debt": 0,
+                "mean_debt": 0,
+                "median_debt": 0,
+                "worst_quartile_debt": 0,
+                "worst_quartile_files": 0,
+                "files_with_cycles": 0,
+                "files_with_god_components": 0,
+                "hotspot_files": 0,
+            },
+        )
+        suggestions = _run_check_bg(
+            "improvement_suggestions",
+            _improvement_suggestions,
+            all_items,
+            default=[],
+        )
 
         # Build verdict
         _n_cycles = stats["files_with_cycles"]
@@ -617,10 +707,22 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         roi_summary, roi_by_path = ({}, {})
         if roi:
-            roi_summary, roi_by_path = _estimate_refactoring_roi(
+            # W607-BG: ROI-degradation discipline. If
+            # ``_estimate_refactoring_roi`` raises, fall back to the empty
+            # tuple ({}, {}). Downstream code already treats absent ROI as
+            # "no roi payload" -- the debt items emit in raw debt_score
+            # order, which is the natural severity fallback when the ROI
+            # ranking layer collapses.
+            _roi_result = _run_check_bg(
+                "estimate_refactoring_roi",
+                _estimate_refactoring_roi,
                 all_items,
                 top_n=max(limit, 10),
+                default=({}, {}),
             )
+            if _roi_result is None:
+                _roi_result = ({}, {})
+            roi_summary, roi_by_path = _roi_result
 
         def _roi_payload(path):
             entry = roi_by_path.get(path)
@@ -636,11 +738,27 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         # --- Grouped by directory ---
         if by_kind:
-            groups = _group_by_directory(all_items)
+            groups = _run_check_bg(
+                "group_by_directory",
+                _group_by_directory,
+                all_items,
+                default=[],
+            )
+            if groups is None:
+                groups = []
 
             if json_mode:
+                # W607-BG: thread substrate markers into BOTH
+                # summary.warnings_out (with partial_success=True flip)
+                # AND top-level warnings_out (preserved-list-field
+                # discipline). Empty bucket -> no field added -> byte-
+                # identical envelope on the happy path.
+                _grouped_summary = {**stats, "verdict": _debt_verdict}
+                if _w607bg_warnings_out:
+                    _grouped_summary["warnings_out"] = list(_w607bg_warnings_out)
+                    _grouped_summary["partial_success"] = True
                 payload = {
-                    "summary": {**stats, "verdict": _debt_verdict},
+                    "summary": _grouped_summary,
                     "budget": token_budget,
                     "suggestions": suggestions,
                     "grouping": "directory",
@@ -667,6 +785,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
                 }
                 if roi:
                     payload["roi"] = roi_summary
+                if _w607bg_warnings_out:
+                    payload["warnings_out"] = list(_w607bg_warnings_out)
                 click.echo(to_json(json_envelope("debt", **payload)))
                 return
 
@@ -717,6 +837,11 @@ def debt(ctx, limit, by_kind, threshold, roi):
         _warnings_out: list[str] = []
         if items_truncated:
             _warnings_out.append(f"truncated to {len(display)} of {total_items_full} — pass --limit larger to see more")
+        # W607-BG: merge substrate-CALL markers onto the same
+        # warnings_out axis as the pre-existing W1142 cap-hit warning.
+        # Empty bucket -> no change -> byte-identical envelope on the
+        # happy path.
+        _warnings_out.extend(_w607bg_warnings_out)
 
         if json_mode:
             _summary = {**stats, "verdict": _debt_verdict, **_cap_summary}
@@ -755,6 +880,11 @@ def debt(ctx, limit, by_kind, threshold, roi):
             }
             if roi:
                 payload["roi"] = roi_summary
+            # W607-BG: top-level warnings_out mirror (preserved-list-field
+            # discipline). The summary mirror lives inside ``_summary``
+            # above; this is the top-level companion field.
+            if _warnings_out:
+                payload["warnings_out"] = list(_warnings_out)
             click.echo(to_json(json_envelope("debt", **payload)))
             return
 

@@ -463,7 +463,10 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
     if patterns is None:
         patterns = _COMPILED_PATTERNS
 
-    min_rank = -1 if min_severity == "all" else severity_rank(min_severity)
+    # W1005-followup-C: ``all`` is a no-floor sentinel (case-insensitive
+    # for parity with the widened click.Choice ``case_sensitive=False``);
+    # every other token routes through canonical ``severity_rank``.
+    min_rank = -1 if min_severity.lower() == "all" else severity_rank(min_severity)
 
     findings: list[dict] = []
     try:
@@ -567,9 +570,30 @@ def _walk_for_files(root: Path) -> list[str]:
 @click.command("secrets")
 @click.option(
     "--severity",
-    type=click.Choice(["all", "high", "medium", "low"]),
+    type=click.Choice(
+        # W1005-followup-C: widened from 3-tier {high, medium, low} to the
+        # W547 canonical 7-tier so agents can pass any canonical token.
+        # ``all`` is preserved as a 4th option — it's a "no floor" sentinel,
+        # NOT a severity, handled distinctly in ``scan_file``/``scan_project``
+        # (``min_rank = -1`` short-circuits the rank comparison so every
+        # finding passes). Emit-vocab is narrower: the secret patterns at
+        # module-load time emit only {high, medium, low}, so a user-passed
+        # ``--severity warning`` (rank 3) keeps high(4) and drops medium(2)
+        # / low(1); ``--severity critical`` (rank 5) keeps nothing because
+        # no pattern emits critical. Aliases (``note``/``unknown``)
+        # intentionally omitted — they collapse onto info / sort-below-info
+        # in severity_rank, so a user-facing filter on them would be
+        # confusing.
+        ["all", "critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
     default="all",
-    help="Show only findings at or above this severity level",
+    help=(
+        "Show only findings at or above this severity level. Uses the "
+        "canonical W547 7-tier ordering (critical > error == high > warning > "
+        "medium > low > info); ``all`` is a no-floor sentinel. Patterns emit "
+        "high/medium/low today; canonical aliases route through severity_rank()."
+    ),
 )
 @click.option("--fail-on-found", is_flag=True, help="Exit with code 5 if any secrets are found (for CI)")
 @click.option(

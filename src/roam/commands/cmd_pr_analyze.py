@@ -77,6 +77,7 @@ from roam.commands.pr_analyze.cache import (
 )
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
+from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
 EXIT_GATE_BLOCK = 5  # mirrors EXIT_GATE_FAILURE used by cmd_rules / cmd_critique
@@ -2004,6 +2005,100 @@ def pr_analyze(
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-AA -- substrate-CALL marker plumbing for cmd_pr_analyze. Mirrors the
+    # canonical W607 template (latest landed: W607-Y cmd_critique / W607-Z
+    # cmd_diff). Each substrate boundary inside the pr-analyze pipeline (diff
+    # acquisition, pr-prep fan-out, AI-likelihood scoring, rules-yaml load,
+    # rule check, prep-failure inspection, verdict decision, rationale build,
+    # reviewers capture, drift apply) gets wrapped in ``_run_check`` so a
+    # raise surfaces a structured ``pr_analyze_<phase>_failed:<exc_class>:<detail>``
+    # marker on ``_w607aa_warnings_out`` -- the envelope still emits cleanly
+    # with whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from any pre-existing
+    # disclosure channel (e.g. ``rules_warnings`` / ``failed_subcommands``)
+    # so the substrate-CALL axis (helper raised before producing its floor
+    # value) stays separable from the data-shape axes already surfaced on
+    # the envelope. Both feed the same envelope ``warnings_out`` field on
+    # emission; ``partial_success`` flips when EITHER bucket is non-empty.
+    _w607aa_warnings_out: list[str] = []
+
+    def _run_check(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AA marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``pr_analyze_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607aa_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607aa_warnings_out.append(f"pr_analyze_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BY -- ADDITIVE aggregation-phase plumbing on top of the W607-AA
+    # substrate-CALL markers. W607-AA already wrapped the ten substrate-helper
+    # boundaries (acquire_diff / capture_pr_prep / compute_ai_likelihood /
+    # check_rules / inspect_prep_subcommand_failures / determine_verdict /
+    # added_lines_by_file / capture_suggest_reviewers / build_rationale /
+    # apply_drift); W607-BY extends marker coverage to the AGGREGATION-PHASE
+    # boundaries that W607-AA left unguarded:
+    #
+    #   - ``score_classify``    -- map the composite pr-analyze verdict
+    #                              (INTENTIONAL / SAFE / REVIEW / BLOCK /
+    #                              NOCHANGES) onto the internal pr-analyze
+    #                              4-tier risk vocabulary
+    #                              (``low``/``medium``/``high``/``critical``).
+    #                              Default=None drives the
+    #                              ``score_classification: "unknown"``
+    #                              sentinel (mirror of cmd_pr_risk W607-BU /
+    #                              cmd_attest W607-BT score_classify
+    #                              pattern).
+    #   - ``score_normalize``   -- canonical W631 risk-LEVEL projection
+    #                              (``normalize_risk_level`` + ``risk_rank``).
+    #                              Pattern 3a discipline -- routes through
+    #                              ``normalize_risk_level`` (the W631
+    #                              canonical helper) NOT through a separate
+    #                              inline severity map. Floors to ``"low"`` /
+    #                              rank ``1`` so downstream comparators stay
+    #                              non-null.
+    #   - ``compute_verdict``   -- augmented verdict text build appending the
+    #                              canonical ``(risk_level X)`` suffix
+    #                              (LAW 6 standalone-parse). Floor must NOT
+    #                              re-format ``risk_level_canonical`` -- the
+    #                              same value that tripped the closure would
+    #                              re-raise inside the default f-string (W978
+    #                              first-hypothesis check: literal "low"
+    #                              floor instead).
+    #   - ``auto_log``          -- active-run ledger write (silent no-op if
+    #                              no run is active, but the underlying
+    #                              ``auto_log`` can still raise on HMAC chain
+    #                              misshape or filesystem failures).
+    #   - ``serialize_envelope`` -- ``json_envelope("pr-analyze", ...)``
+    #                              projection.
+    #
+    # cmd_pr_analyze closes the PR-REVIEW COMPOSER TRIO with cmd_pr_risk
+    # (W607-BU) and cmd_diff (W607-BP); all three are W607-plumbed end-to-end
+    # on both the substrate-CALL layer AND the aggregation-phase layer.
+    #
+    # Marker family ``pr_analyze_*`` -- same family as W607-AA (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope.
+    _w607by_warnings_out: list[str] = []
+
+    def _run_check_by(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BY marker emission.
+
+        Mirror of ``_run_check`` shape (same ``pr_analyze_<phase>_failed:``
+        marker family) but writes into ``_w607by_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607by_warnings_out.append(f"pr_analyze_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # B7 (C.1.ff) — --watch mode: re-run analysis whenever the working
     # tree's diff hash changes. Useful for live dogfooding during a
     # long refactor session. Ctrl-C exits cleanly.
@@ -2051,7 +2146,18 @@ def pr_analyze(
         )
         return
 
-    diff_text = _acquire_diff(input_file, commit_range, staged, diff_from_pr=diff_from_pr)
+    diff_text = (
+        _run_check(
+            "acquire_diff",
+            _acquire_diff,
+            input_file,
+            commit_range,
+            staged,
+            diff_from_pr=diff_from_pr,
+            default="",
+        )
+        or ""
+    )
 
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
@@ -2069,8 +2175,20 @@ def pr_analyze(
     ):
         return
 
-    prep_payload = _capture_pr_prep(commit_range, high_callers)
-    ai = _compute_ai_likelihood(diff_text, language_override=language_override)
+    prep_payload = _run_check(
+        "capture_pr_prep",
+        _capture_pr_prep,
+        commit_range,
+        high_callers,
+        default={"summary": {}, "error": "capture_pr_prep_w607aa_default"},
+    ) or {"summary": {}}
+    ai = _run_check(
+        "compute_ai_likelihood",
+        _compute_ai_likelihood,
+        diff_text,
+        language_override=language_override,
+        default={"score": 0, "signals": {}, "weights": {}},
+    ) or {"score": 0, "signals": {}, "weights": {}}
 
     explicit_rules_path = rules_file is not None  # don't warn about default missing
     try:
@@ -2085,7 +2203,16 @@ def pr_analyze(
     if not explicit_rules_path:
         rules_warnings = [w for w in rules_warnings if "not found" not in w]
 
-    rule_violations = _check_rules(diff_text, rules)
+    rule_violations = (
+        _run_check(
+            "check_rules",
+            _check_rules,
+            diff_text,
+            rules,
+            default=[],
+        )
+        or []
+    )
 
     summary = prep_payload.get("summary") or {}
     blast_radius = int(summary.get("pr_risk_score") or 0)
@@ -2096,7 +2223,15 @@ def pr_analyze(
     # envelope for inner subcommand failure/no-changes BEFORE choosing a
     # verdict. Without this, pr-analyze would happily emit SAFE/READY
     # even when its internal `diff` step crashed or had nothing to look at.
-    failed_subcommands, prep_state, prep_state_reason = _inspect_prep_subcommand_failures(prep_payload)
+    _inspect_result = _run_check(
+        "inspect_prep_subcommand_failures",
+        _inspect_prep_subcommand_failures,
+        prep_payload,
+        default=([], None, ""),
+    )
+    failed_subcommands, prep_state, prep_state_reason = (
+        _inspect_result if _inspect_result is not None else ([], None, "")
+    )
 
     # When the user supplied a diff out-of-band (--input / stdin /
     # --diff-from-pr) the working tree may legitimately be clean — but
@@ -2108,7 +2243,9 @@ def pr_analyze(
         prep_state_reason = ""
         failed_subcommands = []
 
-    verdict, reasons = _determine_verdict(
+    _verdict_result = _run_check(
+        "determine_verdict",
+        _determine_verdict,
         blast_radius=blast_radius,
         ai_likelihood=ai["score"],
         rule_violations=rule_violations,
@@ -2116,6 +2253,10 @@ def pr_analyze(
         intent=intent or "",
         block_threshold=block_threshold,
         pr_prep_error=pr_prep_error,
+        default=("REVIEW", ["pr_analyze_determine_verdict_w607aa_default"]),
+    )
+    verdict, reasons = (
+        _verdict_result if _verdict_result is not None else ("REVIEW", ["pr_analyze_determine_verdict_w607aa_default"])
     )
 
     # Override the verdict on no-changes / failed-subcommand. We do NOT
@@ -2136,11 +2277,28 @@ def pr_analyze(
 
     reviewers_payload: dict | None = None
     if with_reviewers:
-        touched_files = sorted(_added_lines_by_file(diff_text).keys())
+        _touched_map = (
+            _run_check(
+                "added_lines_by_file",
+                _added_lines_by_file,
+                diff_text,
+                default={},
+            )
+            or {}
+        )
+        touched_files = sorted(_touched_map.keys())
         if touched_files:
-            reviewers_payload = _capture_suggest_reviewers(touched_files, reviewers_top)
+            reviewers_payload = _run_check(
+                "capture_suggest_reviewers",
+                _capture_suggest_reviewers,
+                touched_files,
+                reviewers_top,
+                default=None,
+            )
 
-    rationale = _build_rationale(
+    rationale = _run_check(
+        "build_rationale",
+        _build_rationale,
         verdict=verdict,
         blast_radius=blast_radius,
         ai=ai,
@@ -2150,7 +2308,8 @@ def pr_analyze(
         intent=intent or "",
         reviewers_payload=reviewers_payload,
         prep_payload=prep_payload,
-    )
+        default={"summary_text": "", "concerns": [], "next_steps": []},
+    ) or {"summary_text": "", "concerns": [], "next_steps": []}
 
     bundle_summary: dict = {
         "verdict": verdict,
@@ -2188,7 +2347,16 @@ def pr_analyze(
 
     # --- Baseline drift detection -----------------------------------------
     base_path = Path(baseline_path) if baseline_path else DEFAULT_BASELINE_PATH
-    verdict, reasons = _apply_drift(bundle, base_path, verdict, reasons)
+    _drift_result = _run_check(
+        "apply_drift",
+        _apply_drift,
+        bundle,
+        base_path,
+        verdict,
+        reasons,
+        default=(verdict, reasons),
+    )
+    verdict, reasons = _drift_result if _drift_result is not None else (verdict, reasons)
 
     if save_baseline:
         # Save AFTER drift logic so saved envelope reflects the post-drift verdict
@@ -2222,12 +2390,178 @@ def pr_analyze(
         # Advisory only: never block on the conformance computation itself.
         _run_conformance_check_inline(bundle, trail_path)
 
-    pr_analyze_envelope = json_envelope("pr-analyze", budget=token_budget, **bundle)
-    auto_log(
+    # W607-BY -- score_classify boundary. Map the composite pr-analyze
+    # verdict (INTENTIONAL / SAFE / REVIEW / BLOCK / NOCHANGES) onto the
+    # internal 4-tier risk vocabulary (low/medium/high/critical). The
+    # bucketing logic is wrapped in ``_run_check_by`` so a future
+    # closed-enum verdict refactor surfaces a marker rather than crashing
+    # the envelope. Floors to ``None`` so the
+    # ``score_classification: "unknown"`` sentinel disambiguates a degraded
+    # outcome from a real ``"low"`` classification (mirror of cmd_pr_risk
+    # W607-BU / cmd_attest W607-BT score_classify pattern).
+    def _classify_pr_analyze_level(_verdict: str) -> str:
+        if _verdict == "BLOCK":
+            return "critical"
+        if _verdict == "REVIEW":
+            return "high"
+        if _verdict in ("INTENTIONAL", "NOCHANGES"):
+            return "low"
+        # SAFE + any unknown verdict floors to ``low`` -- the W531 CI-safety
+        # lesson: a typo'd / new verdict label MUST NOT promote a finding
+        # into a CI-failing rank.
+        return "low"
+
+    _by_score_probe = _run_check_by(
+        "score_classify",
+        _classify_pr_analyze_level,
+        verdict,
+        default=None,
+    )
+    # When the BY probe raised (None floor), mark classification unknown.
+    # Clean path -> classification is "classified". This sentinel rides
+    # the summary block below alongside the canonical ``"low"`` floor.
+    _score_classification_state = "unknown" if _by_score_probe is None else "classified"
+    # Use the BY probe result when clean; on raise fall back to the
+    # CI-safety floor ("low" per the W531 lesson).
+    _pr_analyze_domain_level = _by_score_probe if _by_score_probe is not None else "low"
+
+    # W607-BY -- score_normalize boundary. Wraps the canonical W631
+    # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+    # signature change / closed-enum vocabulary drift surfaces a marker
+    # rather than crashing the envelope. Floors to ``"low"`` / rank ``1`` so
+    # downstream comparators stay non-null. Pattern 3a discipline: route
+    # through ``normalize_risk_level`` (the W631 canonical helper) -- NOT
+    # through a separate inline severity map.
+    risk_level_canonical = _run_check_by(
+        "score_normalize",
+        lambda _level: normalize_risk_level(_level) or "low",
+        _pr_analyze_domain_level,
+        default="low",
+    )
+    risk_rank_int = _run_check_by(
+        "score_normalize",
+        risk_rank,
+        risk_level_canonical,
+        default=1,
+    )
+
+    # W607-BY -- compute_verdict boundary. Wraps the canonical augmented
+    # verdict text build appending the canonical ``(risk_level X)`` suffix
+    # (LAW 6 standalone-parse). Floor must NOT re-format
+    # ``risk_level_canonical`` -- the same value that tripped the closure
+    # (e.g. a __format__-raising sentinel under test) would re-raise inside
+    # the default f-string. Use a literal "low" floor instead (LAW 6 still
+    # holds: the line works standalone; the W631 floor is "low"). W978
+    # first-hypothesis discipline mirror of cmd_pr_risk W607-BU /
+    # cmd_attest W607-BT.
+    def _build_augmented_verdict() -> str:
+        return f"{verdict} (risk_level {risk_level_canonical})"
+
+    augmented_verdict = _run_check_by(
+        "compute_verdict",
+        _build_augmented_verdict,
+        default="pr-analyze completed (risk_level low)",
+    )
+
+    # W607-AA + W607-BY -- thread substrate-CALL markers AND aggregation-
+    # phase markers onto BOTH summary.warnings_out and the top-level
+    # envelope.warnings_out so consumers that read either surface see the
+    # disclosure channel. ``partial_success`` flips when EITHER bucket is
+    # non-empty -- mirrors the W607-BU / W607-BT bucket-merge pattern.
+    # Both buckets share the ``pr_analyze_*`` marker family; the additive
+    # W607-BY bucket stays distinguishable in tests + audits via its
+    # phase names (score_classify / score_normalize / compute_verdict /
+    # auto_log / serialize_envelope).
+    _combined_warnings_out: list[str] = list(_w607aa_warnings_out) + list(_w607by_warnings_out)
+    # Surface the augmented verdict (W607-BY compute_verdict) on the
+    # summary block + the W641 canonical risk-LEVEL projection. The
+    # W607-BY ``score_classification`` sentinel rides the summary too,
+    # disambiguating degraded outcomes (`"unknown"`) from real
+    # classifications (`"classified"`).
+    bundle_summary["verdict"] = augmented_verdict
+    bundle_summary["risk_level_canonical"] = risk_level_canonical
+    bundle_summary["risk_rank"] = risk_rank_int
+    bundle_summary["score_classification"] = _score_classification_state
+    # Top-level mirrors of summary.risk_level_canonical / summary.risk_rank
+    # so consumers that read the top-level envelope head (without
+    # descending into ``summary``) see the canonical bucket. Mirror of the
+    # W641-followup contract across the risk-LEVEL emitter family.
+    bundle["risk_level_canonical"] = risk_level_canonical
+    bundle["risk_rank"] = risk_rank_int
+    if _combined_warnings_out:
+        bundle_summary["warnings_out"] = list(_combined_warnings_out)
+        bundle_summary["partial_success"] = True
+        bundle["warnings_out"] = list(_combined_warnings_out)
+
+    # W607-BY -- serialize_envelope boundary. Wraps the envelope
+    # serialization itself. A downstream schema-shape refactor that breaks
+    # ``json_envelope("pr-analyze", ...)`` would otherwise crash AFTER all
+    # substrate + aggregation signals were already gathered. Floor to a
+    # minimal envelope stub so consumers still receive a parseable JSON
+    # object with the marker attached + the canonical command name.
+    # Mirror of cmd_pr_risk's W607-BU / cmd_attest's W607-BT / cmd_diff's
+    # W607-BP serialize_envelope floor pattern.
+    _envelope_floor: dict = {
+        "command": "pr-analyze",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": augmented_verdict,
+            "partial_success": True,
+            "warnings_out": list(_combined_warnings_out),
+        },
+        "warnings_out": list(_combined_warnings_out),
+    }
+    pr_analyze_envelope = _run_check_by(
+        "serialize_envelope",
+        json_envelope,
+        "pr-analyze",
+        default=_envelope_floor,
+        budget=token_budget,
+        **bundle,
+    )
+    # W607-BY -- if ``serialize_envelope`` raised AFTER the combined
+    # bucket was already snapshotted, the new
+    # ``pr_analyze_serialize_envelope_failed:`` marker was appended to
+    # ``_w607by_warnings_out`` and the floor stub carries only the old
+    # combined list. Rebuild the floor stub's warnings_out so the new
+    # marker reaches the JSON output. Clean path -> envelope is the real
+    # json_envelope return value, no rebuild needed.
+    if pr_analyze_envelope is _envelope_floor and _w607by_warnings_out:
+        _combined_warnings_out = list(_w607aa_warnings_out) + list(_w607by_warnings_out)
+        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+        pr_analyze_envelope = _envelope_floor
+
+    # W607-BY -- auto_log boundary. Silent no-op if no active run; the
+    # wrap surfaces HMAC chain-misshape / filesystem failures as
+    # ``pr_analyze_auto_log_failed:...`` markers instead of crashing the
+    # envelope after it was already built. Mirror of cmd_pr_risk's
+    # W607-BU / cmd_attest's W607-BT / cmd_diff's W607-BP auto_log pattern.
+    _run_check_by(
+        "auto_log",
+        auto_log,
         pr_analyze_envelope,
         action="pr-analyze",
         target=commit_range or intent or "",
+        default=None,
     )
+    # W607-BY -- if ``auto_log`` raised, rebuild the envelope so the
+    # marker reaches the JSON output. Empty bucket (clean auto_log) ->
+    # envelope stays byte-identical to the version already built above.
+    _existing_summary_wo = bundle_summary.get("warnings_out") or []
+    if _w607by_warnings_out and not any(m.startswith("pr_analyze_auto_log_failed:") for m in _existing_summary_wo):
+        _combined_warnings_out = list(_w607aa_warnings_out) + list(_w607by_warnings_out)
+        bundle_summary["warnings_out"] = list(_combined_warnings_out)
+        bundle_summary["partial_success"] = True
+        bundle["warnings_out"] = list(_combined_warnings_out)
+        pr_analyze_envelope = _run_check_by(
+            "serialize_envelope",
+            json_envelope,
+            "pr-analyze",
+            default=_envelope_floor,
+            budget=token_budget,
+            **bundle,
+        )
     if json_mode:
         click.echo(to_json(pr_analyze_envelope))
     elif quiet:

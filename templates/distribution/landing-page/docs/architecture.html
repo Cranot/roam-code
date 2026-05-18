@@ -194,7 +194,7 @@
        -> security.taint_engine.run()  # graph-reach BFS, sanitizer stops
             -> _finding_to_vex_claim() # OpenVEX status + justification
   -> in-toto v1 Statement
-       (predicateType: roam-code.dev/CodeGraph/v1)
+       (predicateType: https://roam-code.com/spec/CodeGraph/v1)
   -> cosign sign-blob --bundle         # optional, graceful skip if absent
   -> .roam/attestations/&lt;sha&gt;.intoto.json + .sig</code></pre>
       <p>
@@ -205,6 +205,48 @@
         <strong>Tradeoff</strong>: static structure gives speed and determinism, but cannot model
         fully dynamic runtime behavior without trace ingestion (<code>roam ingest-trace</code>).
       </p>
+    </section>
+
+    <section>
+      <h2>Agent OS Substrate</h2>
+      <p>
+        On top of the analysis core, Roam ships an 11-package control-plane substrate that
+        lets agents earn the right to change code. Every package is repo-local (under
+        <code>.roam/</code>), zero-network, and additive to the index.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Package</th><th>What it does</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>atomic_io</code></td><td>POSIX + Windows-safe atomic writes (<code>os.replace</code>) for every ledger and bundle file.</td></tr>
+          <tr><td><code>agents_md/</code></td><td>Compositional <code>AGENTS.md</code> generator; consumes the rest of the substrate.</td></tr>
+          <tr><td><code>constitution/</code></td><td>Capstone <code>.roam/constitution.yml</code> unifying laws, rules, memory, gates.</td></tr>
+          <tr><td><code>db/findings.py</code></td><td>Cross-detector finding registry (<code>roam findings list/show/count</code>); USER_VERSION 17.</td></tr>
+          <tr><td><code>laws/</code></td><td>Invariant mining (<code>roam laws mine/check</code>) — self-installing.</td></tr>
+          <tr><td><code>leases/</code></td><td>Multi-agent coordination (<code>roam lease claim/release/list</code>).</td></tr>
+          <tr><td><code>memory/</code></td><td>Repo-local agent memory at <code>.roam/memory.jsonl</code>.</td></tr>
+          <tr><td><code>modes/</code></td><td>Four cumulative action modes: <code>read_only</code> / <code>safe_edit</code> / <code>migration</code> / <code>autonomous_pr</code>.</td></tr>
+          <tr><td><code>policy/</code></td><td>Graph-aware rule clauses (<code>reachable_from</code>, <code>imports_from</code>, ...).</td></tr>
+          <tr><td><code>runs/</code></td><td>Per-run event ledger + HMAC tamper detection (<code>roam runs verify</code>).</td></tr>
+          <tr><td><code>world_model/</code></td><td>Four detectors: side-effects, idempotency, causal-graph, tx-boundaries.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The canonical agent loop:
+      </p>
+<pre><code>1.  roam runs start             # open run, get ROAM_RUN_ID (HMAC-signed events)
+2.  roam mode safe_edit         # declare action surface
+3.  roam pr-bundle init         # start proof bundle
+4.  roam preflight &lt;sym&gt;        # gate before edit
+5.  roam impact &lt;sym&gt;            # blast radius
+6.  &lt;edit&gt;
+7.  roam diff | roam critique   # review
+7a. roam findings list          # cross-detector findings on the workspace
+8.  roam pr-bundle emit         # close bundle with proofs
+9.  roam runs end --with-pr-bundle-emit
+10. roam replay &lt;id&gt;             # narrate the run
+11. roam agent-score            # composite 0..100 score</code></pre>
     </section>
 
     <section>
@@ -298,7 +340,7 @@
       <h3>CLI surface</h3>
 <pre><code>roam findings list                       # all findings on this workspace
 roam findings list --detector clones     # filter by detector
-roam findings list --confidence=static_analysis
+roam findings list --subject-kind symbol # filter by subject kind
 roam findings show &lt;finding_id&gt;          # one record, full evidence
 roam findings count                      # per-detector totals</code></pre>
       <p>
@@ -307,31 +349,47 @@ roam findings count                      # per-detector totals</code></pre>
 
       <h3>Detectors that persist findings</h3>
       <p>
-        Detectors emit to the registry when invoked with <code>--persist</code>. Migration is per-detector
-        work; the list below reflects the current state.
+        28 detectors persist findings to the registry as of 2026-05-18. Run
+        <code>roam findings count</code> for the live per-detector tally on your workspace.
+        The table below covers the original 16-detector substrate plus two additional
+        substrate detectors (<code>boundary</code>, <code>test-hermeticity</code>) and
+        the consumer / aggregator detectors that re-emit derived findings.
       </p>
       <table>
         <thead>
-          <tr><th>Detector</th><th>Wave</th><th>Status</th><th>What it finds</th></tr>
+          <tr><th>Detector</th><th>Wave</th><th>Tier</th><th>What it finds</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>clones</code></td><td>W95</td><td>shipped</td><td>copy-paste / structural duplicates</td></tr>
-          <tr><td><code>dead</code></td><td>W99</td><td>shipped</td><td>unreachable symbols</td></tr>
-          <tr><td><code>complexity</code></td><td>W102</td><td>shipped</td><td>cognitive complexity hotspots</td></tr>
-          <tr><td><code>smells</code></td><td>W109+</td><td>in flight</td><td>god class / long method / feature envy</td></tr>
-          <tr><td><code>n1</code></td><td>W109+</td><td>in flight</td><td>loop-with-dependent-query patterns</td></tr>
-          <tr><td><code>missing-index</code></td><td>W109+</td><td>in flight</td><td>unindexed predicate columns</td></tr>
-          <tr><td><code>over-fetch</code></td><td>W109+</td><td>in flight</td><td>SELECT * / wildcard column reads</td></tr>
-          <tr><td><code>bus-factor</code></td><td>W109+</td><td>in flight</td><td>single-owner critical components</td></tr>
-          <tr><td><code>auth-gaps</code></td><td>W109+</td><td>in flight</td><td>endpoints missing auth checks</td></tr>
-          <tr><td><code>vulns</code></td><td>W109+</td><td>in flight</td><td>reachable vulnerable dependencies</td></tr>
-          <tr><td><code>ai-rot</code></td><td>W109+</td><td>in flight</td><td>AI-generated drift / pattern decay</td></tr>
-          <tr><td><code>invariants</code></td><td>W109+</td><td>in flight</td><td>mined invariant violations</td></tr>
-          <tr><td><code>hotspots</code></td><td>W109+</td><td>in flight</td><td>runtime-trace classified hotspots</td></tr>
-          <tr><td><code>taint</code></td><td>W109+</td><td>in flight</td><td>source &rarr; sink dataflow leaks</td></tr>
-          <tr><td><code>vibe-check</code></td><td>W109+</td><td>in flight</td><td>fuzzy semantic anomalies</td></tr>
+          <tr><td><code>clones</code></td><td>W95</td><td>structural</td><td>copy-paste / structural duplicates</td></tr>
+          <tr><td><code>dead</code></td><td>W99</td><td>structural</td><td>unreachable symbols</td></tr>
+          <tr><td><code>complexity</code></td><td>W102</td><td>static_analysis</td><td>cognitive complexity hotspots</td></tr>
+          <tr><td><code>smells</code></td><td>W109</td><td>heuristic</td><td>god class / long method / feature envy (24 kinds)</td></tr>
+          <tr><td><code>n1</code></td><td>W110</td><td>structural</td><td>loop-with-dependent-query patterns</td></tr>
+          <tr><td><code>missing-index</code></td><td>W111</td><td>static_analysis</td><td>unindexed predicate columns</td></tr>
+          <tr><td><code>over-fetch</code></td><td>W114</td><td>static_analysis</td><td>SELECT * / wildcard column reads</td></tr>
+          <tr><td><code>bus-factor</code></td><td>W115</td><td>heuristic</td><td>single-owner critical components</td></tr>
+          <tr><td><code>auth-gaps</code></td><td>W116</td><td>structural</td><td>endpoints missing auth checks</td></tr>
+          <tr><td><code>vulns</code></td><td>W117</td><td>static_analysis</td><td>reachable vulnerable dependencies</td></tr>
+          <tr><td><code>invariants</code> / <code>laws</code></td><td>W119</td><td>structural</td><td>mined invariant violations</td></tr>
+          <tr><td><code>hotspots</code></td><td>W120</td><td>runtime</td><td>runtime-trace classified hotspots</td></tr>
+          <tr><td><code>taint</code></td><td>W122</td><td>static_analysis</td><td>source &rarr; sink dataflow leaks</td></tr>
+          <tr><td><code>vibe-check</code></td><td>W125</td><td>heuristic</td><td>AI-rot anomalies (8 pattern families)</td></tr>
+          <tr><td><code>orphan-imports</code></td><td>W132</td><td>structural</td><td>imported-but-unused modules</td></tr>
+          <tr><td><code>conventions</code></td><td>W133</td><td>heuristic</td><td>naming / layout convention drift</td></tr>
+          <tr><td><code>pr-risk</code></td><td>W134</td><td>structural</td><td>per-PR risk factors</td></tr>
+          <tr><td><code>duplicates</code></td><td>W136</td><td>heuristic</td><td>near-duplicate symbol families</td></tr>
+          <tr><td><code>audit-trail-conformance</code></td><td>W145</td><td>static_analysis</td><td>audit-trail integrity checks</td></tr>
+          <tr><td><code>audit-trail-verify</code></td><td>W146</td><td>static_analysis</td><td>signed-ledger verification</td></tr>
+          <tr><td><code>boundary</code></td><td>&mdash;</td><td>static_analysis / structural</td><td>public-by-accident exports, wrong-direction layer imports</td></tr>
+          <tr><td><code>test-hermeticity</code></td><td>&mdash;</td><td>structural / static_analysis</td><td>non-hermetic test calls (network, time, random, fs, env, subprocess)</td></tr>
         </tbody>
       </table>
+      <p>
+        The remaining detectors (<code>critique</code>, <code>doctor</code>, <code>fan</code>,
+        <code>fingerprint</code>, <code>health</code>, <code>llm-smells</code>,
+        <code>dark-matter</code>) are aggregators / consumers that re-emit derived findings
+        from the upstream detectors above.
+      </p>
 
       <h3>Agent loop integration</h3>
       <p>
@@ -350,7 +408,7 @@ roam findings count                      # per-detector totals</code></pre>
       </p>
     </section>
 
-    <section>
+    <section id="evidence-compiler">
       <h2>Evidence Compiler</h2>
       <p>
         Roam is becoming a local evidence compiler for AI-assisted software change. The findings
@@ -393,10 +451,10 @@ roam findings count                      # per-detector totals</code></pre>
           <tr>
             <td><code>EvidenceLink</code></td>
             <td>
-              Typed edges inside a packet:
+              Typed edges inside a packet (12-member closed enumeration):
               <code>derived_from</code>, <code>touches</code>, <code>calls</code>,
-              <code>tested_by</code>, <code>blocked_by</code>, <code>allowed_by</code>,
-              <code>accepted_by</code>, <code>satisfies_control</code>,
+              <code>tested_by</code>, <code>triggered</code>, <code>blocked_by</code>,
+              <code>allowed_by</code>, <code>accepted_by</code>, <code>satisfies_control</code>,
               <code>maps_to_standard</code>, <code>supersedes</code>, <code>mitigates</code>.
             </td>
           </tr>
@@ -495,6 +553,67 @@ roam findings count                      # per-detector totals</code></pre>
       </ul>
     </section>
 
+    <section id="slsa-src-l3">
+      <h2>SLSA Source Track L3</h2>
+      <p>
+        SLSA Source Track L3 is the strongest signed projection from the
+        <a href="#evidence-compiler">evidence compiler</a>. Roam <em>maps to</em> SLSA SRC-L3
+        requirements by emitting two in-toto v1 statements alongside every code-change scope:
+        a Code Graph Attestation (CGA) that pins the structural fingerprint of the analysed
+        tree, and a SLSA Verification Summary Attestation (VSA) that projects the same
+        <code>ChangeEvidence</code> packet into the SLSA-shaped predicate consumers expect.
+      </p>
+
+      <h3>Two predicates</h3>
+      <p>Roam emits two attestation predicates from one shared evidence record:</p>
+      <ul>
+        <li>
+          <strong>CGA &mdash; Code Graph Attestation</strong> &mdash; predicateType
+          <code>https://roam-code.com/spec/CodeGraph/v1</code>. Merkle root over symbol
+          fingerprints plus an edge bundle digest. Reproducible: same source tree at the same
+          git HEAD produces the same predicate digest. Emitted by <code>roam cga emit</code>.
+        </li>
+        <li>
+          <strong>VSA &mdash; Verification Summary Attestation</strong> &mdash; predicateType
+          <code>https://slsa.dev/verification_summary/v1</code> (SLSA v1.2). Projects
+          <code>ChangeEvidence</code> into the SLSA VSA predicate shape so external verifiers
+          (<code>slsa-verifier</code>, Sigstore, Rekor consumers) ingest Roam evidence without
+          learning the roam-specific CGA predicate. Emitted by
+          <code>roam cga emit --also-vsa</code> as a sibling artifact, or by
+          <code>roam pr-bundle emit --slsa-l3</code> through the proof-bundle pipeline.
+        </li>
+      </ul>
+
+      <h3>Standalone CGA limitation</h3>
+      <p>
+        A standalone CGA alone <em>does not</em> reach SRC L3. A CGA is not a Verification
+        Summary Attestation, so its supply-chain claim falls short of the SRC-L3 requirement
+        set. For the canonical L3 path, pair the CGA with a sibling VSA via
+        <code>roam cga emit --also-vsa</code>, or run the same wiring through
+        <code>roam pr-bundle emit --slsa-l3</code> &mdash; the VSA is byte-identical across both
+        entry points because it projects the same shared evidence packet.
+      </p>
+
+      <h3>CI auto-trigger</h3>
+      <p>
+        <code>roam ci-setup --with-slsa-l3</code> scaffolds a GitHub Actions workflow at
+        <code>.github/workflows/roam-slsa-src-l3.yml</code> that auto-triggers
+        <code>roam pr-bundle emit --slsa-l3 --sign --keyless</code> on every PR. The keyless
+        cosign path uses Fulcio short-lived certificates plus Rekor transparency-log entries;
+        the workflow emits the VSA, the run-ledger-root statement, the cosign signature
+        triplet, and the Rekor record alongside the proof bundle.
+      </p>
+
+      <h3>Honest banner</h3>
+      <p>
+        Roam <em>maps to</em> SLSA SRC L3 requirements and <em>supports evidence for</em> the
+        L3 claim. Roam itself does not certify that L3 is reached &mdash; the user is responsible
+        for the offline verifier step plus Rekor publishing. The wording-lint that ships with
+        the evidence compiler enforces this rule on every generated report: Roam emits the
+        evidence; the verifier asserts the claim.
+      </p>
+    </section>
+
     <section>
       <h2>Why SQLite</h2>
       <ul>
@@ -513,6 +632,13 @@ roam findings count                      # per-detector totals</code></pre>
         install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
         <code>ChangeEvidence</code> packet, end to end. The architecture
         above in one sitting.
+      </p>
+      <p>
+        Want this architecture run on your own repo by an analyst? See
+        <a href="/audit">Roam Audit</a> &mdash; we replay your last 5 PRs through
+        the same pipeline, return a signed evidence packet plus a written report.
+        Or jump straight to <a href="/pricing">pricing</a> /
+        <a href="/governance">governance</a> / <a href="/trust">trust</a>.
       </p>
     </section>
 

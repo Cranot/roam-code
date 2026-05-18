@@ -1809,22 +1809,124 @@ def vibe_check(ctx, threshold, persist):
 
     project_root = find_project_root()
 
+    # W607-BS -- substrate-CALL marker plumbing on the 10-detector vibe-check
+    # AI-rot pipeline. cmd_vibe_check is the LLM-rot sibling of cmd_smells
+    # (W607-BN), the 831-findings-row detector listed in CLAUDE.md, with
+    # ``static_analysis``/``structural`` confidence tiers and 8 score-bearing
+    # ai-rot patterns plus 2 W371 informational patterns.
+    #
+    # Substrate boundaries wrapped:
+    #
+    #   * load_corpus                       -- file/symbol-count corpus probes
+    #   * detect_dead_exports               -- pattern 1
+    #   * detect_short_churn                -- pattern 2
+    #   * detect_empty_handlers             -- pattern 3
+    #   * detect_stubs                      -- pattern 4 (abandoned_stubs)
+    #   * detect_hallucinated_imports       -- pattern 5
+    #   * detect_error_inconsistency        -- pattern 6
+    #   * detect_comment_anomalies          -- pattern 7
+    #   * detect_copy_paste                 -- pattern 8
+    #   * detect_modular_mirage             -- W371 informational pattern 9
+    #   * detect_boilerplate_inflation      -- W371 informational pattern 10
+    #   * aggregate_by_kind                 -- worst-files / patterns rollup
+    #   * classify_severity                 -- _compute_score + _severity_label
+    #   * emit_findings                     -- W125 findings-registry mirror
+    #
+    # Marker family ``vibe_check_<phase>_failed:<exc_class>:<detail>``.
+    # Empty bucket -> byte-identical envelope on the happy path. Per-detector
+    # isolation: a failure in one of the 10 detectors degrades that detector's
+    # counts to (0, 0, []) and surfaces a single marker -- the remaining 9
+    # detectors continue to report their findings (W607 canonical discipline).
+    _w607bs_warnings_out: list[str] = []
+
+    def _run_check_bs(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BS marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``vibe_check_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bs_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bs_warnings_out.append(f"vibe_check_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
-        # Run all 8 score-bearing detectors
-        p1_found, p1_total = _detect_dead_exports(conn)
-        p2_found, p2_total, p2_details = _detect_short_churn(conn)
-        p3_found, p3_total, p3_details = _detect_empty_handlers(conn, project_root)
-        p4_found, p4_total, p4_details = _detect_stubs(conn, project_root)
-        p5_found, p5_total, p5_details = _detect_hallucinated_imports(conn)
-        p6_found, p6_total, p6_details = _detect_error_inconsistency(conn, project_root)
-        p7_found, p7_total, p7_details = _detect_comment_anomalies(conn, project_root)
-        p8_found, p8_total, p8_details = _detect_copy_paste(conn, project_root)
+        # W607-BS: per-detector isolation. Each of the 10 ai-rot patterns
+        # runs through ``_run_check_bs`` so a raise in one detector
+        # degrades to a zero-tuple for that pattern (the other 9 still
+        # report). Empty-floor defaults match each detector's return
+        # shape: 2-tuple for dead-exports, 3-tuple for the rest.
+        _dead_result = _run_check_bs("detect_dead_exports", _detect_dead_exports, conn, default=(0, 0))
+        p1_found, p1_total = _dead_result if _dead_result is not None else (0, 0)
+
+        _short_result = _run_check_bs("detect_short_churn", _detect_short_churn, conn, default=(0, 0, []))
+        p2_found, p2_total, p2_details = _short_result if _short_result is not None else (0, 0, [])
+
+        _empty_result = _run_check_bs(
+            "detect_empty_handlers",
+            _detect_empty_handlers,
+            conn,
+            project_root,
+            default=(0, 0, []),
+        )
+        p3_found, p3_total, p3_details = _empty_result if _empty_result is not None else (0, 0, [])
+
+        _stubs_result = _run_check_bs("detect_stubs", _detect_stubs, conn, project_root, default=(0, 0, []))
+        p4_found, p4_total, p4_details = _stubs_result if _stubs_result is not None else (0, 0, [])
+
+        _halluc_result = _run_check_bs(
+            "detect_hallucinated_imports",
+            _detect_hallucinated_imports,
+            conn,
+            default=(0, 0, []),
+        )
+        p5_found, p5_total, p5_details = _halluc_result if _halluc_result is not None else (0, 0, [])
+
+        _err_result = _run_check_bs(
+            "detect_error_inconsistency",
+            _detect_error_inconsistency,
+            conn,
+            project_root,
+            default=(0, 0, []),
+        )
+        p6_found, p6_total, p6_details = _err_result if _err_result is not None else (0, 0, [])
+
+        _comment_result = _run_check_bs(
+            "detect_comment_anomalies",
+            _detect_comment_anomalies,
+            conn,
+            project_root,
+            default=(0, 0, []),
+        )
+        p7_found, p7_total, p7_details = _comment_result if _comment_result is not None else (0, 0, [])
+
+        _cp_result = _run_check_bs(
+            "detect_copy_paste",
+            _detect_copy_paste,
+            conn,
+            project_root,
+            default=(0, 0, []),
+        )
+        p8_found, p8_total, p8_details = _cp_result if _cp_result is not None else (0, 0, [])
+
         # W371: two additional informational detectors. NOT in
         # ``_WEIGHTS`` — the canonical AI rot score stays computed off
         # the 8 detectors above, so downstream consumers see the same
         # number pre- and post-W371.
-        p9_found, p9_total, p9_details = _detect_modular_mirage(conn)
-        p10_found, p10_total, p10_details = _detect_boilerplate_inflation(conn, project_root)
+        _mirage_result = _run_check_bs("detect_modular_mirage", _detect_modular_mirage, conn, default=(0, 0, []))
+        p9_found, p9_total, p9_details = _mirage_result if _mirage_result is not None else (0, 0, [])
+
+        _boiler_result = _run_check_bs(
+            "detect_boilerplate_inflation",
+            _detect_boilerplate_inflation,
+            conn,
+            project_root,
+            default=(0, 0, []),
+        )
+        p10_found, p10_total, p10_details = _boiler_result if _boiler_result is not None else (0, 0, [])
 
         # --- W125: mirror into the central findings registry ---
         # Detector-specific output below is untouched; the registry rows
@@ -1862,6 +1964,12 @@ def vibe_check(ctx, threshold, persist):
                 "modular_mirage": p9_details,
                 "boilerplate_inflation": boilerplate_records,
             }
+            # W607-BS: emit_findings substrate boundary. The pre-W89
+            # schema path (sqlite3.OperationalError on missing
+            # ``findings`` table) is the EXPECTED degraded path -- the
+            # try/except below maintains the W125 silent no-op contract
+            # for that case. Generic exceptions surface via the
+            # ``vibe_check_emit_findings_failed:<exc>:<detail>`` marker.
             try:
                 _emit_vibe_check_findings(
                     conn,
@@ -1872,6 +1980,8 @@ def vibe_check(ctx, threshold, persist):
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-BS disclosure
+                _w607bs_warnings_out.append(f"vibe_check_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         # Build patterns dict
         def _rate(found, total):
@@ -1928,22 +2038,50 @@ def vibe_check(ctx, threshold, persist):
             },
         }
 
-        # ``_compute_score`` reads ``_WEIGHTS`` which intentionally omits
-        # the W371 informational patterns; the canonical score is still
-        # the 8-pattern composite.
-        score = _compute_score(patterns)
-        severity = _severity_label(score)
+        # W607-BS: classify_severity substrate boundary -- score
+        # computation + severity-label classification. A raise here
+        # (e.g. divide-by-zero on a malformed ``_WEIGHTS`` override)
+        # degrades to a 0/HEALTHY tuple so the envelope still composes
+        # with verdict + warnings_out.
+        def _classify_score_and_severity(
+            patterns_dict: dict[str, dict],
+        ) -> tuple[int, str]:
+            """W607-BS extracted helper: composite score + severity label."""
+            return _compute_score(patterns_dict), _severity_label(_compute_score(patterns_dict))
+
+        _classify_result = _run_check_bs(
+            "classify_severity",
+            _classify_score_and_severity,
+            patterns,
+            default=None,
+        )
+        if _classify_result is None:
+            score = 0
+            severity = "HEALTHY"
+        else:
+            score, severity = _classify_result
         # ``total_issues`` includes informational patterns so the
         # surface count tells an honest "raw issues seen" story even
         # though the SCORE is unaffected.
         total_issues = sum(p["found"] for p in patterns.values())
-        files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        # W805-followup-A: symbol-count signal for the empty-corpus disclosure
-        # below. ``files_scanned`` alone is insufficient — a fixture with
-        # one zero-byte Python file shows 1 file but 0 symbols, so every
-        # AI-rot detector scores 0/0 and collapses to a "HEALTHY 0/100"
-        # verdict indistinguishable from a real clean run.
-        symbols_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+        # W607-BS: load_corpus substrate boundary -- the two SQL
+        # COUNT(*) probes feed the W805-followup-A empty-corpus
+        # disclosure. A raise here (e.g. transient cursor failure,
+        # locked DB) degrades to ``(0, 0)`` so the empty-corpus path
+        # fires cleanly with the substrate marker surfaced.
+        def _probe_corpus(c) -> tuple[int, int]:
+            """W607-BS extracted helper: files/symbols COUNT(*) probe."""
+            f = c.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            s = c.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+            return f, s
+
+        _corpus_result = _run_check_bs("load_corpus", _probe_corpus, conn, default=None)
+        if _corpus_result is None:
+            files_scanned = 0
+            symbols_count = 0
+        else:
+            files_scanned, symbols_count = _corpus_result
 
         # Severity per pattern
         for key, pdata in patterns.items():
@@ -1973,7 +2111,18 @@ def vibe_check(ctx, threshold, persist):
             "modular_mirage": p9_details,
             "boilerplate_inflation": p10_details,
         }
-        worst_files = _aggregate_worst_files(all_details)
+        # W607-BS: aggregate_by_kind substrate boundary -- worst-files
+        # rollup over the 10-detector details dict. A raise here
+        # degrades to an empty list so the envelope still emits the
+        # patterns table + score (the worst-files block is purely
+        # additive disclosure).
+        _wf_result = _run_check_bs(
+            "aggregate_by_kind",
+            _aggregate_worst_files,
+            all_details,
+            default=None,
+        )
+        worst_files = [] if _wf_result is None else _wf_result
 
         # Recommendations
         recommendations = []
@@ -2069,11 +2218,19 @@ def vibe_check(ctx, threshold, persist):
             if empty_corpus:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_files_scanned"
-            envelope = json_envelope(
-                "vibe-check",
-                budget=budget,
-                summary=_summary,
-                patterns=[
+            # W607-BS: surface the substrate-CALL marker bucket on BOTH
+            # ``summary.warnings_out`` (so a consumer reading only the
+            # summary block sees the degraded substrates) AND a top-level
+            # ``warnings_out`` field (mirrors the W607-BN smells layout).
+            # Empty bucket -> byte-identical envelope on the happy path
+            # (the conditional avoids adding an empty list field).
+            if _w607bs_warnings_out:
+                _summary["partial_success"] = True
+                _summary["warnings_out"] = list(_w607bs_warnings_out)
+            envelope_kwargs: dict = {
+                "budget": budget,
+                "summary": _summary,
+                "patterns": [
                     {
                         "name": key,
                         "label": _PATTERN_NAMES[key],
@@ -2093,15 +2250,18 @@ def vibe_check(ctx, threshold, persist):
                     }
                     for key, pdata in patterns.items()
                 ],
-                worst_files=worst_files,
-                recommendations=recommendations,
+                "worst_files": worst_files,
+                "recommendations": recommendations,
                 # LAW 11: surface the aggregate command so an agent
                 # holding only the vibe-check envelope discovers
                 # ``roam dashboard`` for the project-level summary.
-                next_steps=[
+                "next_steps": [
                     "roam dashboard for project-level summary",
                 ],
-            )
+            }
+            if _w607bs_warnings_out:
+                envelope_kwargs["warnings_out"] = list(_w607bs_warnings_out)
+            envelope = json_envelope("vibe-check", **envelope_kwargs)
             click.echo(to_json(envelope))
 
             # Gate check

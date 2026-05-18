@@ -54,6 +54,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, to_json
 
@@ -646,8 +647,24 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
     "--confidence",
     "confidence_filter",
     default=None,
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Filter by confidence level",
+    # W1005-followup-D: widened from 3-tier {high, medium, low} to the W547
+    # canonical 7-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info} and have the floor compared via
+    # ``severity_rank()`` from ``roam.output._severity``. The detector emits
+    # only {high, medium, low} (the CVSS 3-tier) but the Choice accepts the
+    # full canonical vocabulary so canonical-aware agents can pass any tier.
+    # Semantic change: equality → floor (pre-fix kept findings with EXACTLY
+    # that confidence; post-fix keeps findings AT OR ABOVE that rank).
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum confidence floor. Uses the canonical W547 7-tier ordering "
+        "(critical > error == high > warning > medium > low > info). Detector "
+        "emits high/medium/low today; canonical aliases rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option(
     "--include-archive",
@@ -689,9 +706,13 @@ def migration_safety_cmd(ctx, limit, confidence_filter, include_archive):
     with open_db(readonly=True) as conn:
         findings = analyze_migration_safety(conn, limit=limit * 3, include_archive=include_archive)
 
-    # Apply confidence filter
+    # Apply confidence filter — W1005-followup-D: equality → floor via
+    # canonical severity_rank(). Detector emits {high, medium, low}; the
+    # Click Choice accepts the full W547 7-tier. Floor keeps a finding when
+    # ``severity_rank(f.confidence) >= severity_rank(confidence_filter)``.
     if confidence_filter:
-        findings = [f for f in findings if f["confidence"] == confidence_filter]
+        _floor_rank = severity_rank(confidence_filter)
+        findings = [f for f in findings if severity_rank(f["confidence"]) >= _floor_rank]
 
     # Re-apply limit after filter
     truncated = len(findings) > limit

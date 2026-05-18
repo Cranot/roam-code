@@ -37,7 +37,98 @@ from roam.critique.checks import (
 )
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
+
+# W641-followup-B — critique severity → canonical risk-LEVEL projection.
+#
+# Pattern-3a structural close-out, fifth axis. W641 / W641-followup-A
+# canonicalised pr-risk + impact onto the W631 risk-LEVEL vocabulary
+# (``critical``/``high``/``medium``/``low``); critique is the natural
+# #2 candidate — it emits a ``severity`` field on each diff-region
+# finding (``high``/``medium``/``low``/``info`` per the closed
+# ``Finding`` constructor vocabulary) but had no risk-axis projection.
+#
+# Polarity: **higher = worse**, matching the W631 canonical rank.
+# Aggregation across multiple findings: MAX-severity (the worst
+# critique finding drives the report's risk_level). Empty findings →
+# ``low`` floor (W531 CI-safety lesson — a typo'd or absent label MUST
+# NOT promote a finding into a CI-failing rank).
+#
+# The table below is the inline projection. We deliberately do NOT
+# re-use ``roam.output._severity._DEFAULT_SEVERITY_TO_CONFIDENCE_LEVEL``
+# even though its polarity matches: that helper projects severity onto
+# the *confidence-LEVEL* axis (the ranker's "high/medium/low"
+# confidence rating), which is a distinct axis from risk. Reusing it
+# would conflate two independent concepts — see the "NOTE on
+# vocabulary axes" comment in ``roam.output.risk`` for the discipline.
+#
+# Conservative-on-critical: the critique severity vocabulary tops out
+# at ``high`` (no ``critical`` tier — see ``aggregator.severity_rank``
+# and the closed ``Finding`` constructor vocab). The projection
+# saturates at ``high``; we do NOT escalate to ``critical`` on a
+# threshold the underlying detector can't reach (mirrors the W641-
+# followup-A discipline on ``_impact_risk_level``).
+_CRITIQUE_SEVERITY_TO_RISK_LEVEL: dict[str, str] = {
+    "critical": "high",  # not emitted by checks today; mapped for forward-compat
+    "error": "high",  # not emitted by checks today; mapped for forward-compat
+    "high": "high",
+    "warning": "medium",
+    "medium": "medium",
+    "info": "low",
+    "low": "low",
+    "note": "low",
+    "unknown": "low",
+}
+
+
+def _critique_risk_level(
+    findings: list[dict],
+    *,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Aggregate finding severities onto the canonical W631 risk-LEVEL set.
+
+    Walks *findings* (the per-region dicts produced by
+    :func:`roam.critique.aggregator.aggregate`) and returns a string in
+    :data:`roam.output.risk.RISK_LEVELS`
+    (``critical``/``high``/``medium``/``low``).
+
+    Aggregation rule: **max-severity** — the worst finding's projected
+    risk_level wins. Empty findings → ``low`` (the W531 CI-safety floor:
+    no findings means nothing to gate on; a typo'd or absent label MUST
+    NOT promote a finding into a CI-failing rank).
+
+    Unknown severities accumulate a marker on *warnings_out* (when
+    provided) under the ``critique_unknown_severity:<label>`` key so
+    Pattern-2 silent-fallback discipline stays loud — the projection
+    safe-floors to ``low`` but the marker disambiguates a real-low
+    finding from an unrecognised-label drop.
+    """
+    if not findings:
+        return "low"
+    worst_rank = -1
+    worst_level = "low"
+    for f in findings:
+        sev = (f.get("severity") or "").strip().lower() if isinstance(f, dict) else ""
+        if not sev:
+            # Empty / None severity — record + safe-floor.
+            if warnings_out is not None:
+                warnings_out.append("critique_unknown_severity:")
+            continue
+        if sev in _CRITIQUE_SEVERITY_TO_RISK_LEVEL:
+            level = _CRITIQUE_SEVERITY_TO_RISK_LEVEL[sev]
+        else:
+            # Unknown label — safe-floor to ``low`` + record marker.
+            if warnings_out is not None:
+                warnings_out.append(f"critique_unknown_severity:{sev}")
+            level = "low"
+        r = risk_rank(level)
+        if r > worst_rank:
+            worst_rank = r
+            worst_level = level
+    return worst_level
+
 
 # W153 — critique is the SEVENTH detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102,
@@ -524,6 +615,11 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
             continue
         result, _ = _critique_one(diff_text, high_callers, intent_text)
         high_count += result["severity_breakdown"].get("high", 0)
+        # W641-followup-B — per-diff canonical risk_level. Max-severity
+        # across the diff's findings; empty findings floor to ``low``.
+        per_diff_warnings: list[str] = []
+        per_diff_domain = _critique_risk_level(result["findings"], warnings_out=per_diff_warnings)
+        per_diff_canonical = normalize_risk_level(per_diff_domain) or "low"
         per_file.append(
             {
                 "file": diff_path.name,
@@ -532,27 +628,59 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
                 "changed_symbols": len(result["changed_symbols"]),
                 "findings": len(result["findings"]),
                 "severity_breakdown": result["severity_breakdown"],
+                "risk_level_canonical": per_diff_canonical,
+                "risk_rank": risk_rank(per_diff_canonical),
             }
         )
+    # W641-followup-B — batch-level canonical risk_level. Max across all
+    # per-diff canonical levels (the worst diff drives the batch's
+    # gate); empty batches floor to ``low``.
+    if per_file:
+        _batch_worst_rank = -1
+        _batch_worst_level = "low"
+        for entry in per_file:
+            lvl = entry.get("risk_level_canonical") or "low"
+            r = risk_rank(lvl)
+            if r > _batch_worst_rank:
+                _batch_worst_rank = r
+                _batch_worst_level = lvl
+        batch_risk_level_canonical = _batch_worst_level
+    else:
+        batch_risk_level_canonical = "low"
+    batch_risk_rank_int = risk_rank(batch_risk_level_canonical)
+    base_verdict = (
+        f"{len(per_file)} diff(s) reviewed, {high_count} high-severity finding(s)"
+        if high_count == 0
+        else f"GATE FAIL — {high_count} high-severity finding(s) across {len(per_file)} diff(s)"
+    )
     summary = {
-        "verdict": (
-            f"{len(per_file)} diff(s) reviewed, {high_count} high-severity finding(s)"
-            if high_count == 0
-            else f"GATE FAIL — {high_count} high-severity finding(s) across {len(per_file)} diff(s)"
-        ),
+        "verdict": f"{base_verdict} (risk_level {batch_risk_level_canonical})",
         "diff_count": len(per_file),
         "high_severity_total": high_count,
+        # W641-followup-B — batch-level canonical projection + integer
+        # rank. Aggregated max-of-max across the batch (worst diff
+        # wins). Mirrors the W641 pr-risk / W641-followup-A cmd_impact
+        # contract so cross-command floor comparators read the same
+        # axis without re-deriving the rank vocabulary.
+        "risk_level_canonical": batch_risk_level_canonical,
+        "risk_rank": batch_risk_rank_int,
     }
     batch_envelope = json_envelope(
         "critique",
         summary=summary,
         budget=token_budget,
         diffs=per_file,
+        # W641-followup-B — top-level mirrors of summary fields.
+        risk_level_canonical=batch_risk_level_canonical,
+        risk_rank=batch_risk_rank_int,
     )
     auto_log(batch_envelope, action="critique", target=str(base))
     if json_mode:
         click.echo(to_json(batch_envelope))
     else:
+        # W641-followup-B — text-mode verdict also carries the canonical
+        # risk_level suffix (already embedded in summary["verdict"] above
+        # at envelope build time).
         click.echo(f"VERDICT: {summary['verdict']}")
         click.echo()
         click.echo(f"{'File':<40}  {'Findings':>8}  {'High':>4}  Verdict")
@@ -655,6 +783,13 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     present (mirrors ``cmd_rules`` ``EXIT_GATE_FAILURE``) so CI can
     gate on it.
 
+    The JSON envelope carries canonical W631 risk-LEVEL fields
+    (``summary.risk_level_canonical`` + ``summary.risk_rank``) projected
+    from the max-severity of the aggregated critique findings. Empty
+    findings floor to ``risk_level_canonical="low"``. The verdict line
+    terminates on ``(risk_level <canonical>)`` so a consumer reading
+    only the verdict string parses the canonical bucket directly (LAW 6).
+
     \b
     Examples:
       git diff | roam critique
@@ -708,7 +843,92 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
 
     ensure_index()
 
-    regions = parse_diff(diff_text)
+    # W607-Y -- substrate-CALL marker plumbing for cmd_critique. Mirrors the
+    # canonical W607 template (latest landed: W607-W cmd_relate). Each
+    # substrate boundary inside the critique pipeline (diff parsing, changed-
+    # symbol resolution, check fan-out, finding aggregation, override load,
+    # bench-hint computation) gets wrapped in ``_run_check`` so a raise
+    # surfaces a structured ``critique_<phase>_failed:<exc_class>:<detail>``
+    # marker on ``_w607y_warnings_out`` -- the envelope still emits cleanly
+    # with whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from the existing
+    # ``_critique_warnings_out`` bucket (W641-followup-B unknown-severity
+    # tracking) so the two axes don't entangle: unknown-severity is a
+    # data-shape disclosure (a finding's severity label couldn't be mapped),
+    # while W607-Y is a substrate-CALL disclosure (a helper raised before
+    # producing its floor value). Both feed the same envelope ``warnings_out``
+    # field on emission; ``partial_success`` flips when EITHER bucket is
+    # non-empty.
+    _w607y_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-Y marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``critique_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607y_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607y_warnings_out.append(f"critique_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BL -- ADDITIVE aggregation-phase plumbing on top of the
+    # W607-Y substrate-CALL markers. W607-Y already wrapped the substrate-
+    # helper boundaries (parse_diff / find_changed_symbols / run_checks /
+    # aggregate / emit_findings / load_overrides / bench_relevance_hint /
+    # compute_risk_level); W607-BL extends marker coverage to the
+    # AGGREGATION-PHASE boundaries that W607-Y left unguarded:
+    #
+    #   - ``severity_classify``    -- per-finding severity classification
+    #                                 (the inner ``_critique_risk_level``
+    #                                 walk; W607-Y wraps the CALL but the
+    #                                 inner classify step has its own
+    #                                 future-raise surface as the closed
+    #                                 severity vocabulary evolves)
+    #   - ``severity_normalize``   -- canonical W631 risk-LEVEL projection
+    #                                 (normalize_risk_level + risk_rank)
+    #                                 mirror of cmd_impact's W607-BB pattern
+    #   - ``compute_verdict``      -- augmented_verdict text build with
+    #                                 the canonical risk_level suffix
+    #   - ``auto_log``             -- active-run ledger write (silent
+    #                                 no-op if no run is active, but the
+    #                                 underlying ``auto_log`` can still
+    #                                 raise on HMAC chain misshape or
+    #                                 filesystem failures)
+    #   - ``serialize_envelope``   -- ``json_envelope("critique", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions)
+    #
+    # cmd_critique is the POST-EDIT GATE completing the agent-OS edit
+    # loop (pre-edit triangle preflight/impact/diagnose -> edit -> post-
+    # edit critique). With W607-BL landed, the agent-OS edit loop is
+    # W607-plumbed end-to-end on BOTH the substrate-CALL layer
+    # (W607-R + W607-T + W607-S + W607-Y) AND the aggregation-phase
+    # layer (W607-AW + W607-BB + W607-BH + W607-BL). Each command has
+    # dual-bucket plumbing with combined-warnings emission.
+    #
+    # Marker family ``critique_*`` -- same family as W607-Y (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope.
+    _w607bl_warnings_out: list[str] = []
+
+    def _run_check_bl(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BL marker emission.
+
+        Mirror of ``_run_check`` shape (same ``critique_<phase>_failed:``
+        marker family) but writes into ``_w607bl_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bl_warnings_out.append(f"critique_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    regions = _run_check("parse_diff", parse_diff, diff_text, default=[]) or []
 
     # Auto-pick up latest commit subject if --intent wasn't passed.
     effective_intent = intent_text
@@ -728,16 +948,33 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
             effective_intent = None
 
     with open_db(readonly=not persist) as conn:
-        changed_symbols = find_changed_symbols(conn, regions)
-        findings, check_status = _run_checks_with_status(
+        changed_symbols = _run_check("find_changed_symbols", find_changed_symbols, conn, regions, default=[]) or []
+        _checks_result = _run_check(
+            "run_checks",
+            _run_checks_with_status,
             conn,
             changed_symbols,
             regions,
             high_callers=high_callers,
             effective_intent=effective_intent,
+            default=([], {}),
         )
+        findings, check_status = _checks_result if _checks_result is not None else ([], {})
 
-        result = aggregate(findings, check_status=check_status)
+        result = _run_check(
+            "aggregate",
+            aggregate,
+            findings,
+            check_status=check_status,
+            default={
+                "verdict": "No concerns from roam critique",
+                "findings": [],
+                "severity_breakdown": {},
+                "top_finding": None,
+                "check_status": check_status,
+                "partial_success": False,
+            },
+        )
 
         # --- W153: mirror into the central findings registry ---
         # INVOCATION-SCOPED: critique runs against a specific diff, so the
@@ -758,7 +995,9 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
                     intent_text=effective_intent,
                     file_paths=file_list_for_id,
                 )
-                _emit_critique_findings(
+                _run_check(
+                    "emit_findings",
+                    _emit_critique_findings,
                     conn,
                     result["findings"],
                     {
@@ -768,6 +1007,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
                         "file_list": file_list_for_id,
                     },
                     CRITIQUE_DETECTOR_VERSION,
+                    default=0,
                 )
                 conn.commit()
             except sqlite3.OperationalError:
@@ -782,15 +1022,125 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     # command makes the verifier conversation include the one
     # validation that actually exercises the modified code. Loaded
     # before output so it lands in BOTH text and JSON.
-    overrides = _load_critique_overrides()
-    bench_hint = _bench_relevance_hint(regions, overrides=overrides)
+    overrides = _run_check("load_overrides", _load_critique_overrides, default=[]) or []
+    bench_hint = (
+        _run_check(
+            "bench_relevance_hint",
+            _bench_relevance_hint,
+            regions,
+            overrides=overrides,
+            default="",
+        )
+        or ""
+    )
+
+    # W641-followup-B — canonical W631 risk-LEVEL projection from the
+    # max-severity of the aggregated findings. Empty findings safe-floor
+    # to ``low`` (W531 CI-safety: a no-findings result must NOT promote
+    # into a CI-failing rank). Unknown severities accumulate a marker on
+    # ``_critique_warnings_out`` so Pattern-2 silent-fallback discipline
+    # stays loud — the projection safe-floors to ``low`` but the marker
+    # disambiguates a real-low finding from an unrecognised-label drop.
+    _critique_warnings_out: list[str] = []
+    # W607-Y -- substrate-CALL boundary on ``_critique_risk_level``
+    # (kept intact). Pinned by tests/test_w607_y_cmd_critique_warnings_out_envelope.py.
+    _critique_domain_level_y = _run_check(
+        "compute_risk_level",
+        _critique_risk_level,
+        result["findings"],
+        warnings_out=_critique_warnings_out,
+        default="low",
+    )
+    if _critique_domain_level_y is None:
+        _critique_domain_level_y = "low"
+    # W607-BL -- severity_classify boundary, ADDITIVE on top of the
+    # W607-Y substrate-CALL wrap. We re-classify with the SAME helper
+    # but flag the result on the AGGREGATION-PHASE axis: if the
+    # classifier raises (a closed-vocabulary refactor or future inner
+    # inspection helper), the wrap floors the domain tier to ``None``
+    # and surfaces the marker alongside the canonical ``"low"`` floor +
+    # ``severity_classification: "unknown"`` sentinel in the envelope
+    # summary. Mirror of cmd_impact W607-BB / cmd_diagnose W607-BH
+    # severity_classification sentinel.
+    _bl_severity_probe = _run_check_bl(
+        "severity_classify",
+        _critique_risk_level,
+        result["findings"],
+        warnings_out=_critique_warnings_out,
+        default=None,
+    )
+    # Domain-tier raised (None floor) -> mark classification unknown so
+    # the envelope discloses the degraded outcome. When W607-BL probe
+    # succeeded (non-None), classification is "classified".
+    _severity_classification_state = "unknown" if _bl_severity_probe is None else "classified"
+    # Use the W607-Y domain level for the canonical projection (the
+    # W607-Y wrap already floors to "low" on raise); the BL probe is
+    # the additive aggregation-phase boundary that drives the
+    # severity_classification sentinel.
+    _critique_domain_level = _critique_domain_level_y
+    # W607-BL -- severity_normalize boundary. Wraps the canonical W631
+    # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+    # signature change / closed-enum vocabulary drift surfaces a marker
+    # rather than crashing the envelope. Floors to ``"low"`` / rank ``1``
+    # so downstream comparators stay non-null. Mirror of cmd_impact
+    # W607-BB / cmd_diagnose W607-BH severity_normalize pattern.
+    risk_level_canonical = _run_check_bl(
+        "severity_normalize",
+        lambda level: normalize_risk_level(level) or "low",
+        _critique_domain_level,
+        default="low",
+    )
+    risk_rank_int = _run_check_bl(
+        "severity_normalize",
+        risk_rank,
+        risk_level_canonical,
+        default=1,
+    )
+
+    # W607-BL -- compute_verdict boundary. Wraps the canonical augmented
+    # verdict text build so a future format-spec regression on
+    # ``result["verdict"]`` (e.g. non-string verdict from an aggregator
+    # shape refactor) surfaces a marker rather than crashing the
+    # envelope. Floors to a stable verdict string so LAW 6 ("verdict
+    # works standalone") stays satisfied even on degraded paths.
+    def _build_augmented_verdict() -> str:
+        # Verdict augmentation per LAW 6 (line works standalone): append the
+        # canonical risk_level in a closed-enum parenthesis so a consumer
+        # parsing only the verdict string sees the canonical bucket directly.
+        return f"{result['verdict']} (risk_level {risk_level_canonical})"
+
+    augmented_verdict = _run_check_bl(
+        "compute_verdict",
+        _build_augmented_verdict,
+        default=f"critique completed (risk_level {risk_level_canonical})",
+    )
 
     summary = {
-        "verdict": result["verdict"],
+        "verdict": augmented_verdict,
         "changed_files": len(regions),
         "changed_symbols": len(changed_symbols),
         "findings": len(result["findings"]),
         "high_severity": result["severity_breakdown"].get("high", 0),
+        # W641-followup-B — canonical W631 risk-LEVEL projection +
+        # integer rank. Aggregated via max-severity across the
+        # critique's per-region findings (the worst finding's projected
+        # risk_level wins). Empty findings safe-floor to ``low`` (rank
+        # 1). Mirrors the W641 (pr-risk) + W641-followup-A (cmd_impact)
+        # contract so cross-command floor comparators
+        # (``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+        # high-or-worse) work without each consumer re-deriving the
+        # rank vocabulary at the call site (Pattern-3a).
+        "risk_level_canonical": risk_level_canonical,
+        "risk_rank": risk_rank_int,
+        # W607-BL -- SEVERITY-CLASSIFY DEGRADATION sentinel. When the
+        # ``severity_classify`` boundary raises (and the classify result
+        # floors to ``None``), surface ``severity_classification:
+        # "unknown"`` so the agent sees the degraded outcome alongside
+        # the canonical floor ("low") rather than mistaking the floor
+        # for a real classification. Clean path -> ``"classified"``.
+        # Mirror of cmd_impact's ``risk_classification`` /
+        # cmd_diagnose's ``severity_classification`` sentinel.
+        "severity_classification": _severity_classification_state,
         "intent": effective_intent,
         "bench_hint": bench_hint or None,
         # W832 — disclose per-check status so consumers can tell
@@ -801,9 +1151,39 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         "partial_success": result.get("partial_success", False),
         "state": ("partial_critique" if result.get("partial_success") else "all_checks_ran"),
     }
+    # W641-followup-B — record any unknown-severity drops on the
+    # summary so Pattern-2 silent-fallback stays visible. Non-empty
+    # ``warnings_out`` flips ``partial_success`` (mirrors W989 pr-risk
+    # + W918 alerts discipline) so a downstream consumer reading
+    # ``partial_success`` alone sees the degradation.
+    #
+    # W607-Y — substrate-CALL markers ride the same ``warnings_out`` channel
+    # but accumulate in a DIFFERENT bucket (``_w607y_warnings_out``) so the
+    # two axes (unknown-severity data shape vs. helper-raised substrate
+    # boundary) don't conflate at the call site. They merge into a single
+    # ``warnings_out`` list on emission; the marker PREFIX disambiguates
+    # them downstream (``critique_unknown_severity:*`` vs.
+    # ``critique_<phase>_failed:*``). ``partial_success`` flips when EITHER
+    # bucket is non-empty -- consumers reading ``partial_success`` alone
+    # need not distinguish the two flavours.
+    #
+    # W607-BL -- ADDITIVE aggregation-phase markers join the same
+    # combined-channel: ``_critique_warnings_out`` (unknown-severity) +
+    # ``_w607y_warnings_out`` (substrate-CALL) +
+    # ``_w607bl_warnings_out`` (aggregation-phase). All three share the
+    # ``critique_*`` family per the marker-prefix discipline test; the
+    # additive bucket stays distinguishable in tests + audits via its
+    # phase names (``severity_classify`` / ``severity_normalize`` /
+    # ``compute_verdict`` / ``auto_log`` / ``serialize_envelope``).
+    _combined_warnings_out: list[str] = (
+        list(_critique_warnings_out) + list(_w607y_warnings_out) + list(_w607bl_warnings_out)
+    )
+    if _combined_warnings_out:
+        summary["warnings_out"] = list(_combined_warnings_out)
+        summary["partial_success"] = True
+        summary["state"] = "partial_critique"
 
-    critique_envelope = json_envelope(
-        "critique",
+    _envelope_kwargs: dict = dict(
         summary=summary,
         budget=token_budget,
         severity_breakdown=result["severity_breakdown"],
@@ -811,6 +1191,12 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         top_finding=result["top_finding"],
         bench_hint=bench_hint,
         check_status=result.get("check_status", {}),
+        # W641-followup-B — top-level mirrors of summary.risk_level_canonical
+        # / summary.risk_rank so consumers that read the top-level envelope
+        # directly (without descending into ``summary``) see the canonical
+        # bucket. Mirror of the W641-followup-A cmd_impact contract.
+        risk_level_canonical=risk_level_canonical,
+        risk_rank=risk_rank_int,
         changed_symbols=[
             {
                 "symbol_id": s.symbol_id,
@@ -824,10 +1210,85 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
             for s in changed_symbols
         ],
     )
+    # W607-Y / W607-BL — top-level mirror of summary.warnings_out so
+    # consumers that read the top-level envelope directly (without
+    # descending into ``summary``) see the marker channel. Mirror parity
+    # with W607-W cmd_relate (and the rest of the W607 family).
+    if _combined_warnings_out:
+        _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+        _envelope_kwargs["partial_success"] = True
+    # W607-BL -- serialize_envelope boundary. Wraps the envelope
+    # serialization itself. A downstream schema-shape refactor that
+    # breaks ``json_envelope("critique", ...)`` would otherwise crash
+    # AFTER all substrate + aggregation signals were already gathered.
+    # Floor to a minimal envelope stub so consumers still receive a
+    # parseable JSON object with the marker attached + the canonical
+    # command name. Mirror of cmd_diagnose's W607-BH serialize_envelope
+    # floor pattern.
+    _envelope_floor: dict = {
+        "command": "critique",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": augmented_verdict,
+            "partial_success": True,
+            "warnings_out": list(_combined_warnings_out),
+        },
+        "warnings_out": list(_combined_warnings_out),
+    }
+    critique_envelope = _run_check_bl(
+        "serialize_envelope",
+        json_envelope,
+        "critique",
+        default=_envelope_floor,
+        **_envelope_kwargs,
+    )
+    # W607-BL -- if ``serialize_envelope`` raised AFTER the combined
+    # bucket was already snapshotted, the new
+    # ``critique_serialize_envelope_failed:`` marker was appended to
+    # ``_w607bl_warnings_out`` and the floor stub carries only the old
+    # combined list. Rebuild the floor stub's warnings_out so the new
+    # marker reaches the JSON output. Clean path -> envelope is the
+    # real json_envelope return value, no rebuild needed.
+    if critique_envelope is _envelope_floor and _w607bl_warnings_out:
+        _combined_warnings_out = list(_critique_warnings_out) + list(_w607y_warnings_out) + list(_w607bl_warnings_out)
+        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+        critique_envelope = _envelope_floor
     # Auto-log into the active run; target is the intent string (e.g. PR
     # title / commit subject) when available, else the input path.
+    # W607-BL -- auto_log boundary. Silent no-op if no active run; the
+    # wrap surfaces HMAC chain-misshape / filesystem failures as
+    # ``critique_auto_log_failed:...`` markers instead of crashing the
+    # envelope after it was already built. Mirror of cmd_diagnose's
+    # W607-BH auto_log emit pattern.
     _critique_target = effective_intent or (input_path or "")
-    auto_log(critique_envelope, action="critique", target=_critique_target)
+    _run_check_bl(
+        "auto_log",
+        auto_log,
+        critique_envelope,
+        action="critique",
+        target=_critique_target,
+        default=None,
+    )
+    # W607-BL -- if ``auto_log`` raised, rebuild the envelope so the
+    # marker reaches the JSON output. Empty bucket (clean auto_log) ->
+    # envelope stays byte-identical to the version already built above.
+    if _w607bl_warnings_out and not any(
+        m.startswith("critique_auto_log_failed:") for m in (summary.get("warnings_out") or [])
+    ):
+        _combined_warnings_out = list(_critique_warnings_out) + list(_w607y_warnings_out) + list(_w607bl_warnings_out)
+        summary["warnings_out"] = list(_combined_warnings_out)
+        summary["partial_success"] = True
+        summary["state"] = "partial_critique"
+        _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+        _envelope_kwargs["partial_success"] = True
+        critique_envelope = _run_check_bl(
+            "serialize_envelope",
+            json_envelope,
+            "critique",
+            default=_envelope_floor,
+            **_envelope_kwargs,
+        )
 
     if sarif_mode:
         # W1146: SARIF projection for CI / GitHub Code Scanning integration.
@@ -843,7 +1304,10 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     elif json_mode:
         click.echo(to_json(critique_envelope))
     else:
-        click.echo(f"VERDICT: {result['verdict']}")
+        # W641-followup-B — the text-mode verdict also carries the
+        # canonical risk_level suffix so a human-readable run discloses
+        # the bucket (LAW 6 — the line works standalone).
+        click.echo(f"VERDICT: {augmented_verdict}")
         click.echo()
         click.echo(f"  changed files:   {len(regions)}")
         click.echo(f"  changed symbols: {len(changed_symbols)}")

@@ -717,33 +717,107 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
     ensure_index()
     root = find_project_root()
 
+    # W607-EK -- substrate-boundary plumbing for cmd_adversarial.
+    # ``_run_check_ek`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607ek_warnings_out`` rather than
+    # crashing the adversarial command outright. cmd_adversarial is a
+    # multi-substrate aggregator (W148-doc + W150 detector-candidacy
+    # audit) composing cycles + clusters + layers + catalog + dead +
+    # complexity on changed files. A raise inside any constituent
+    # substrate helper (_check_new_cycles, _check_layer_violations,
+    # _check_anti_patterns, _check_cross_cluster, _check_orphaned_symbols,
+    # _check_high_fan_out), the changed-file resolver, or any downstream
+    # verdict / envelope composer used to crash the adversarial command
+    # outright. Marker family
+    # ``adversarial_<phase>_failed:<exc_class>:<detail>``. Substrates
+    # wrapped:
+    #
+    #   * resolve_changed_files     -- get_changed_files +
+    #                                  resolve_changed_to_db
+    #   * lookup_changed_symbols    -- batched_in changed-symbol-id lookup
+    #   * compose_cycles_check      -- _check_new_cycles (cycles substrate)
+    #   * compose_layers_check      -- _check_layer_violations (layers
+    #                                  substrate)
+    #   * compose_catalog_check     -- _check_anti_patterns (algo catalog
+    #                                  substrate)
+    #   * compose_clusters_check    -- _check_cross_cluster (clusters
+    #                                  substrate)
+    #   * compose_dead_check        -- _check_orphaned_symbols (dead
+    #                                  substrate)
+    #   * compose_complexity_check  -- _check_high_fan_out (complexity
+    #                                  substrate)
+    #   * score_classify            -- severity filter + sort + counters
+    #   * compose_verdict           -- LAW 6 single-line verdict floor
+    #   * serialize_envelope        -- JSON envelope emission
+    #
+    # W978 7-discipline applied: (1) verdict floor uses literal
+    # zero-count text -- no Name references, (2) default values for
+    # _run_check_ek are immutable literals or empty lists, (3) no
+    # json.dumps(default=str) needed (no datetimes), (4) ``adversarial_*``
+    # prefix is unique (collision-checked by cross-prefix-discipline
+    # test), (5) len() at kwarg-bind is gated by the envelope fallback,
+    # (6) len() / if x: on a poisoned object only runs after the
+    # empty-floor guard, (7) no dict.get(key, expensive_default) calls --
+    # all defaults are immutable literals.
+    _w607ek_warnings_out: list[str] = []
+
+    def _run_check_ek(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-EK marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``adversarial_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607ek_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ek_warnings_out.append(f"adversarial_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
         # ------------------------------------------------------------------
-        # Resolve changed files
+        # Resolve changed files (W607-EK: resolve_changed_files substrate)
         # ------------------------------------------------------------------
-        changed = get_changed_files(root, staged=staged, commit_range=commit_range)
+        changed = _run_check_ek(
+            "resolve_changed_files",
+            get_changed_files,
+            root,
+            staged=staged,
+            commit_range=commit_range,
+            default=[],
+        )
+        if changed is None:
+            changed = []
 
         if not changed:
             verdict = "No changes detected"
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "adversarial",
-                            summary={
-                                "verdict": verdict,
-                                "challenges": 0,
-                                "critical": 0,
-                                "high": 0,
-                                "warning": 0,
-                                "info": 0,
-                                "changed_files": 0,
-                            },
-                            budget=token_budget,
-                            challenges=[],
-                        )
-                    )
+                # W607-EK: mirror substrate markers + partial_success
+                # into the early-return envelope so a degraded
+                # resolve_changed_files raise surfaces here rather
+                # than vanishing into the no-changes path.
+                _early_summary: dict = {
+                    "verdict": verdict,
+                    "challenges": 0,
+                    "critical": 0,
+                    "high": 0,
+                    "warning": 0,
+                    "info": 0,
+                    "changed_files": 0,
+                }
+                _early_kwargs: dict = dict(
+                    summary=_early_summary,
+                    budget=token_budget,
+                    challenges=[],
                 )
+                if _w607ek_warnings_out:
+                    _early_summary["partial_success"] = True
+                    _early_summary["warnings_out"] = list(_w607ek_warnings_out)
+                    _early_kwargs["warnings_out"] = list(_w607ek_warnings_out)
+                click.echo(to_json(json_envelope("adversarial", **_early_kwargs)))
             elif fmt == "markdown":
                 click.echo(_format_markdown([], verdict, 0))
             else:
@@ -751,29 +825,44 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                 click.echo("No uncommitted changes found.")
             return
 
-        file_map = resolve_changed_to_db(conn, changed)
+        # W607-EK: resolve_changed_files substrate (second leg) -- the
+        # DB-side resolver. A raise here degrades to an empty file_map
+        # so the rest of the envelope still composes.
+        file_map = _run_check_ek(
+            "resolve_changed_files",
+            resolve_changed_to_db,
+            conn,
+            changed,
+            default={},
+        )
+        if file_map is None:
+            file_map = {}
 
         if not file_map:
             verdict = "Changed files not found in index"
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "adversarial",
-                            summary={
-                                "verdict": verdict,
-                                "challenges": 0,
-                                "critical": 0,
-                                "high": 0,
-                                "warning": 0,
-                                "info": 0,
-                                "changed_files": len(changed),
-                            },
-                            budget=token_budget,
-                            challenges=[],
-                        )
-                    )
+                # W607-EK: mirror substrate markers + partial_success
+                # into the early-return envelope so a degraded
+                # resolve_changed_to_db raise surfaces here.
+                _early_summary2: dict = {
+                    "verdict": verdict,
+                    "challenges": 0,
+                    "critical": 0,
+                    "high": 0,
+                    "warning": 0,
+                    "info": 0,
+                    "changed_files": len(changed),
+                }
+                _early_kwargs2: dict = dict(
+                    summary=_early_summary2,
+                    budget=token_budget,
+                    challenges=[],
                 )
+                if _w607ek_warnings_out:
+                    _early_summary2["partial_success"] = True
+                    _early_summary2["warnings_out"] = list(_w607ek_warnings_out)
+                    _early_kwargs2["warnings_out"] = list(_w607ek_warnings_out)
+                click.echo(to_json(json_envelope("adversarial", **_early_kwargs2)))
             elif fmt == "markdown":
                 click.echo(_format_markdown([], verdict, len(changed)))
             else:
@@ -798,16 +887,34 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         changed_sym_ids: set[int] = set()
         changed_file_ids: set[int] = set(file_map.values())
         sym_lookup_status = "ran"
-        if changed_file_ids:
+
+        # W607-EK: lookup_changed_symbols substrate -- batched_in
+        # changed-symbol-id lookup. A raise here degrades to an empty
+        # changed_sym_ids set so each downstream substrate emits its
+        # "no_changed_symbols" skipped state. The existing
+        # sym_lookup_status check_status entry preserves the W1259
+        # silent-swallow guard.
+        def _lookup_changed_symbols():
+            if not changed_file_ids:
+                return (set(), "ran")
             try:
                 rows = batched_in(
                     conn,
                     "SELECT id FROM symbols WHERE file_id IN ({ph})",
                     list(changed_file_ids),
                 )
-                changed_sym_ids = {r["id"] for r in rows}
+                return ({r["id"] for r in rows}, "ran")
             except Exception as exc:  # noqa: BLE001
-                sym_lookup_status = f"errored:symbol_lookup:{type(exc).__name__}"
+                return (set(), f"errored:symbol_lookup:{type(exc).__name__}")
+
+        lookup_result = _run_check_ek(
+            "lookup_changed_symbols",
+            _lookup_changed_symbols,
+            default=(set(), "ran"),
+        )
+        if lookup_result is None:
+            lookup_result = (set(), "ran")
+        changed_sym_ids, sym_lookup_status = lookup_result
 
         # ------------------------------------------------------------------
         # Run all challenge generators
@@ -822,31 +929,109 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         if sym_lookup_status != "ran":
             check_status["symbol_lookup"] = sym_lookup_status
         challenges: list[dict] = []
-        challenges.extend(_check_new_cycles(conn, changed_sym_ids, status=check_status))
-        challenges.extend(_check_layer_violations(conn, changed_sym_ids, status=check_status))
-        challenges.extend(_check_anti_patterns(conn, changed_file_ids, status=check_status))
-        challenges.extend(_check_cross_cluster(conn, changed_sym_ids, status=check_status))
-        challenges.extend(_check_orphaned_symbols(conn, changed_sym_ids, status=check_status))
-        challenges.extend(_check_high_fan_out(conn, changed_sym_ids, status=check_status))
+
+        # W607-EK: each constituent substrate wrapped so an uncaught
+        # raise inside any one helper degrades to an empty list +
+        # surfaces a marker. The six legs map 1:1 to the substrate
+        # boundaries declared in the W148-doc characterization
+        # (cycles + clusters + layers + catalog + dead + complexity on
+        # changed files).
+        cycles_result = _run_check_ek(
+            "compose_cycles_check",
+            _check_new_cycles,
+            conn,
+            changed_sym_ids,
+            status=check_status,
+            default=[],
+        )
+        if cycles_result is None:
+            cycles_result = []
+        challenges.extend(cycles_result)
+
+        layers_result = _run_check_ek(
+            "compose_layers_check",
+            _check_layer_violations,
+            conn,
+            changed_sym_ids,
+            status=check_status,
+            default=[],
+        )
+        if layers_result is None:
+            layers_result = []
+        challenges.extend(layers_result)
+
+        catalog_result = _run_check_ek(
+            "compose_catalog_check",
+            _check_anti_patterns,
+            conn,
+            changed_file_ids,
+            status=check_status,
+            default=[],
+        )
+        if catalog_result is None:
+            catalog_result = []
+        challenges.extend(catalog_result)
+
+        clusters_result = _run_check_ek(
+            "compose_clusters_check",
+            _check_cross_cluster,
+            conn,
+            changed_sym_ids,
+            status=check_status,
+            default=[],
+        )
+        if clusters_result is None:
+            clusters_result = []
+        challenges.extend(clusters_result)
+
+        dead_result = _run_check_ek(
+            "compose_dead_check",
+            _check_orphaned_symbols,
+            conn,
+            changed_sym_ids,
+            status=check_status,
+            default=[],
+        )
+        if dead_result is None:
+            dead_result = []
+        challenges.extend(dead_result)
+
+        complexity_result = _run_check_ek(
+            "compose_complexity_check",
+            _check_high_fan_out,
+            conn,
+            changed_sym_ids,
+            status=check_status,
+            default=[],
+        )
+        if complexity_result is None:
+            complexity_result = []
+        challenges.extend(complexity_result)
 
         # ------------------------------------------------------------------
-        # Filter by minimum severity
+        # W607-EK: score_classify substrate -- severity filter + sort +
+        # per-bucket counters. A raise inside ``severity_rank`` on a
+        # malformed challenge dict degrades to the empty-counts floor
+        # so the verdict still emits.
         # ------------------------------------------------------------------
-        min_sev = _MIN_SEVERITY.get(severity.lower(), severity_rank("low"))
-        challenges = [c for c in challenges if severity_rank(c["severity"]) >= min_sev]
+        def _score_classify():
+            min_sev_local = _MIN_SEVERITY.get(severity.lower(), severity_rank("low"))
+            filtered_local = [c for c in challenges if severity_rank(c["severity"]) >= min_sev_local]
+            filtered_local.sort(key=lambda c: -severity_rank(c["severity"]))
+            critical_local = sum(1 for c in filtered_local if c["severity"] == "CRITICAL")
+            high_local = sum(1 for c in filtered_local if c["severity"] == "HIGH")
+            warning_local = sum(1 for c in filtered_local if c["severity"] == "WARNING")
+            info_local = sum(1 for c in filtered_local if c["severity"] == "INFO")
+            return (filtered_local, critical_local, high_local, warning_local, info_local)
 
-        # ------------------------------------------------------------------
-        # Sort: critical first, then high, warning, info
-        # ------------------------------------------------------------------
-        challenges.sort(key=lambda c: -severity_rank(c["severity"]))
-
-        # ------------------------------------------------------------------
-        # Compute summary counts
-        # ------------------------------------------------------------------
-        critical = sum(1 for c in challenges if c["severity"] == "CRITICAL")
-        high = sum(1 for c in challenges if c["severity"] == "HIGH")
-        warning = sum(1 for c in challenges if c["severity"] == "WARNING")
-        info = sum(1 for c in challenges if c["severity"] == "INFO")
+        classified = _run_check_ek(
+            "score_classify",
+            _score_classify,
+            default=([], 0, 0, 0, 0),
+        )
+        if classified is None:
+            classified = ([], 0, 0, 0, 0)
+        challenges, critical, high, warning, info = classified
 
         # SYNTHESIS Pattern 2 (silent fallback) guard — surface any
         # silently-degraded checks BEFORE deciding the verdict. If any
@@ -854,34 +1039,42 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         errored_checks = sorted(name for name, s in check_status.items() if s.startswith("errored:"))
         partial_success = bool(errored_checks)
 
-        # W1259 dogfood fix (LAW 4): the original verdicts ended on
-        # ``critical`` / ``severity`` / ``info`` — none of which are in
-        # ``_CONCRETE_NOUN_ANCHORS``. Static lint missed it because
-        # ``facts = [verdict]`` is a Name reference, not a literal. At
-        # runtime the verdict (which fact[0] copies) failed LAW 4
-        # anchoring. Rephrase each verdict to terminate on ``challenges``
-        # (anchored).
-        if not challenges:
-            if partial_success:
-                verdict = (
-                    f"PARTIAL ({len(errored_checks)} check(s) errored: "
-                    f"{', '.join(errored_checks)}) -- adversarial review degraded, "
-                    "cannot certify clean"
-                )
+        # W607-EK: compose_verdict substrate -- LAW 6 single-line
+        # verdict floor. A raise here degrades to the literal zero-count
+        # floor string so the verdict NEVER disappears.
+        # W1259 dogfood fix (LAW 4): the verdicts terminate on
+        # ``challenges`` (anchored).
+        def _compose_verdict():
+            if not challenges:
+                if partial_success:
+                    return (
+                        f"PARTIAL ({len(errored_checks)} check(s) errored: "
+                        f"{', '.join(errored_checks)}) -- adversarial review degraded, "
+                        "cannot certify clean"
+                    )
+                return "No architectural challenges found -- changes look clean"
+            if critical > 0:
+                verdict_local = f"{critical} critical of {len(challenges)} challenges"
+            elif high > 0:
+                verdict_local = f"{high} high-severity of {len(challenges)} challenges"
+            elif warning > 0:
+                verdict_local = f"{warning} warning(s) across {len(challenges)} challenges"
             else:
-                verdict = "No architectural challenges found -- changes look clean"
-        elif critical > 0:
-            verdict = f"{critical} critical of {len(challenges)} challenges"
-        elif high > 0:
-            verdict = f"{high} high-severity of {len(challenges)} challenges"
-        elif warning > 0:
-            verdict = f"{warning} warning(s) across {len(challenges)} challenges"
-        else:
-            verdict = f"{info} info-level of {len(challenges)} challenges"
-        if partial_success and challenges:
-            # Append partial qualifier so consumers see BOTH the findings
-            # count AND the cascade. Matches the W832 cmd_critique shape.
-            verdict += f" -- {len(errored_checks)} check(s) errored: {', '.join(errored_checks)}"
+                verdict_local = f"{info} info-level of {len(challenges)} challenges"
+            if partial_success:
+                # Append partial qualifier so consumers see BOTH the
+                # findings count AND the cascade. Matches the W832
+                # cmd_critique shape.
+                verdict_local += f" -- {len(errored_checks)} check(s) errored: {', '.join(errored_checks)}"
+            return verdict_local
+
+        verdict = _run_check_ek(
+            "compose_verdict",
+            _compose_verdict,
+            default="0 of 0 challenges",
+        )
+        if not isinstance(verdict, str) or not verdict:
+            verdict = "0 of 0 challenges"
 
         # ------------------------------------------------------------------
         # Output
@@ -909,35 +1102,54 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
             next_commands: list[str] = ["roam preflight", "roam critique"]
             if critical:
                 next_commands.insert(0, "roam diff")
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "adversarial",
-                        summary={
-                            "verdict": verdict,
-                            "challenges": len(challenges),
-                            "critical": critical,
-                            "high": high,
-                            "warning": warning,
-                            "info": info,
-                            "changed_files": len(file_map),
-                            # SYNTHESIS Pattern 2 — disclose silent
-                            # check-degradation so the verdict can't be
-                            # silently read as a clean pass.
-                            "partial_success": partial_success,
-                            "failed_checks": errored_checks,
-                            "check_status": dict(check_status),
-                            "state": ("partial_adversarial" if partial_success else "all_checks_ran"),
-                        },
-                        budget=token_budget,
-                        challenges=challenges,
-                        agent_contract={
-                            "facts": facts,
-                            "next_commands": next_commands,
-                        },
-                    )
-                )
+
+            # W607-EK: mirror substrate markers into BOTH the top-level
+            # envelope ``warnings_out`` AND ``summary.warnings_out`` so
+            # MCP consumers see disclosure regardless of which surface
+            # they read. Flipping ``partial_success: True`` is the
+            # Pattern-2 silent-fallback guard. The substrate-marker flip
+            # is independent of the in-tree ``check_status`` Pattern-2
+            # guard -- a substrate boundary raising is a different
+            # failure class from a constituent check returning
+            # ``errored:*``.
+            envelope_summary: dict = {
+                "verdict": verdict,
+                "challenges": len(challenges),
+                "critical": critical,
+                "high": high,
+                "warning": warning,
+                "info": info,
+                "changed_files": len(file_map),
+                # SYNTHESIS Pattern 2 — disclose silent
+                # check-degradation so the verdict can't be
+                # silently read as a clean pass.
+                "partial_success": partial_success,
+                "failed_checks": errored_checks,
+                "check_status": dict(check_status),
+                "state": ("partial_adversarial" if partial_success else "all_checks_ran"),
+            }
+            envelope_kwargs: dict = dict(
+                summary=envelope_summary,
+                budget=token_budget,
+                challenges=challenges,
+                agent_contract={
+                    "facts": facts,
+                    "next_commands": next_commands,
+                },
             )
+            if _w607ek_warnings_out:
+                envelope_summary["partial_success"] = True
+                envelope_summary["warnings_out"] = list(_w607ek_warnings_out)
+                envelope_kwargs["warnings_out"] = list(_w607ek_warnings_out)
+
+            # W607-EK: serialize_envelope substrate -- json_envelope
+            # construction + click.echo emission. The wrap protects
+            # against crashes inside the formatter call so the marker
+            # surfaces and the function returns cleanly.
+            def _serialize_envelope():
+                click.echo(to_json(json_envelope("adversarial", **envelope_kwargs)))
+
+            _run_check_ek("serialize_envelope", _serialize_envelope, default=None)
             if fail_on_critical and critical > 0:
                 from roam.exit_codes import EXIT_GATE_FAILURE
 

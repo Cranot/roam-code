@@ -17,7 +17,74 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
+from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
+
+# ---------------------------------------------------------------------------
+# W641-followup-E — canonical risk-LEVEL projection from blast-radius
+# ---------------------------------------------------------------------------
+#
+# cmd_diff emits volumetric counts (changed_files, affected_symbols,
+# affected_files) but no native severity vocabulary. The canonical W631
+# risk-LEVEL bucket is derived from the same blast-radius thresholds
+# cmd_impact uses (W641-followup-A) so an agent comparing
+# ``roam diff`` against ``roam impact <sym>`` sees a consistent canonical
+# floor. Thresholds:
+#
+#   affected_symbols >= 50  OR  affected_files >= 20  -> "high"
+#   affected_symbols >= 10  OR  affected_files >= 5   -> "medium"
+#   affected_symbols > 0                              -> "low"
+#   affected_symbols == 0                             -> "low"
+#
+# Conservative-on-critical: cmd_diff structurally aligns with cmd_impact
+# (per-symbol blast-radius count) and cmd_critique (per-region severity
+# aggregation) — both floor at ``high`` because their underlying signal
+# is single-axis (count or severity tier) without the multi-factor
+# composite-score evidence cmd_attest's _collect_risk provides (which DOES
+# legitimately reach ``critical``). The W531 CI-safety lesson: a
+# threshold wobble MUST NOT promote a finding into a CI-gating rank.
+# cmd_diff floors at ``high``; ``critical`` is reserved for the multi-
+# factor composite-score commands.
+
+
+def _diff_risk_level(
+    affected_symbols: int,
+    affected_files: int,
+    *,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Project blast-radius metrics onto the canonical W631 risk-LEVEL set.
+
+    Returns a string in :data:`roam.output.risk.RISK_LEVELS`
+    (``critical``/``high``/``medium``/``low``). cmd_diff saturates at
+    ``high`` (W641-followup-A/B discipline — single-axis blast-radius
+    signal does not justify escalating to ``critical``).
+
+    Safe-floor: any combination producing ``affected_symbols == 0`` AND
+    ``affected_files == 0`` collapses to ``low`` (W531 CI-safety: a
+    clean diff MUST NOT promote into a gating rank).
+
+    Unknown / negative inputs accumulate a marker on *warnings_out*
+    (when provided) under ``diff_unknown_severity:<value>`` so Pattern-2
+    silent-fallback stays loud — mirrors the W918 alerts / W989 pr-risk
+    / W641-followup-B critique / W641-followup-D attest discipline.
+    """
+    # Guard: negative / non-int counts should never reach the projection,
+    # but stay loud if they do — record a marker + safe-floor.
+    if not isinstance(affected_symbols, int) or not isinstance(affected_files, int):
+        if warnings_out is not None:
+            warnings_out.append(f"diff_unknown_severity:non_int_counts({affected_symbols!r},{affected_files!r})")
+        return "low"
+    if affected_symbols < 0 or affected_files < 0:
+        if warnings_out is not None:
+            warnings_out.append(f"diff_unknown_severity:negative({affected_symbols},{affected_files})")
+        return "low"
+    if affected_symbols >= 50 or affected_files >= 20:
+        return "high"
+    if affected_symbols >= 10 or affected_files >= 5:
+        return "medium"
+    return "low"
+
 
 # ---------------------------------------------------------------------------
 # Affected tests helper
@@ -356,6 +423,16 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
       roam diff --since-tag             # last release ➝ HEAD
       roam diff --full                  # tests + coupling + fitness
 
+    The JSON envelope emits ``summary.risk_level_canonical`` +
+    ``summary.risk_rank`` on the canonical W631 risk-LEVEL axis
+    (W641-followup-E). The canonical bucket is projected from blast-
+    radius thresholds (mirrors the cmd_impact W641-followup-A polarity)
+    and saturates at ``high`` — ``critical`` is reserved for the
+    multi-factor composite-score commands (cmd_attest). The canonical
+    fields are emitted unconditionally so agents downstream can call
+    ``risk_rank(summary["risk_level_canonical"]) >= 3`` to gate on
+    high-or-worse blast radius without re-deriving the threshold table.
+
     See also ``critique`` (clones-not-edited gate on the same diff),
     ``pr-risk`` (PR-level risk score), and ``impact`` (per-symbol
     blast radius).
@@ -364,6 +441,108 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     root = find_project_root()
+
+    # W607-Z -- substrate-CALL marker plumbing for cmd_diff. Mirrors the
+    # canonical W607 template (latest landed: W607-Y cmd_critique). Each
+    # substrate boundary inside the diff pipeline (changed-file discovery,
+    # DB resolution, symbol-graph construction, affected-tests gather,
+    # coupling-warnings + fitness-violations collectors, risk-LEVEL
+    # projection) gets wrapped in ``_run_check`` so a raise surfaces a
+    # structured ``diff_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607z_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # cmd_diff is the diff-INPUT pair complement to cmd_critique (W607-Y),
+    # which consumes diff TEXT via stdin: cmd_diff consumes git REFS
+    # through ``get_changed_files``. Wrapping that call surfaces the
+    # SHARED-HELPER family's silent-empty fallback (returncode!=0 /
+    # FileNotFoundError / TimeoutExpired -> []) at THIS call site even
+    # before the root-cause helper fix lands. See W805-HHHH probe.
+    #
+    # The accumulator is intentionally DISTINCT from the existing
+    # ``_diff_warnings_out`` bucket (W641-followup-E unknown-severity /
+    # negative-count tracking) so the two axes don't entangle:
+    # unknown-severity is a data-shape disclosure (a count couldn't be
+    # mapped to a canonical risk-LEVEL bucket), while W607-Z is a
+    # substrate-CALL disclosure (a helper raised before producing its
+    # floor value). Both feed the same envelope ``warnings_out`` field on
+    # emission via bucket-merge; ``partial_success`` flips when EITHER
+    # bucket is non-empty -- consumers reading ``partial_success`` alone
+    # need not distinguish the two flavours.
+    _w607z_warnings_out: list[str] = []
+
+    def _run_check(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-Z marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``diff_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607z_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607z_warnings_out.append(f"diff_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BP -- ADDITIVE aggregation-phase plumbing on top of the
+    # W607-Z substrate-CALL markers. W607-Z already wrapped the substrate-
+    # helper boundaries (get_changed_files / resolve_changed_to_db /
+    # build_symbol_graph / collect_affected_tests / collect_coupling_warnings /
+    # collect_fitness_violations / compute_risk_level); W607-BP extends
+    # marker coverage to the AGGREGATION-PHASE boundaries that W607-Z left
+    # unguarded:
+    #
+    #   - ``severity_classify``    -- per-affected-symbol severity
+    #                                 classification (the inner
+    #                                 ``_diff_risk_level`` walk; W607-Z
+    #                                 wraps the CALL but the inner classify
+    #                                 step has its own future-raise surface
+    #                                 as the closed severity vocabulary
+    #                                 evolves) -- mirror of cmd_critique
+    #                                 W607-BL pattern with default=None
+    #                                 driving the severity_classification
+    #                                 "unknown" sentinel
+    #   - ``severity_normalize``   -- canonical W631 risk-LEVEL projection
+    #                                 (normalize_risk_level + risk_rank)
+    #                                 mirror of cmd_impact's W607-BB
+    #                                 pattern
+    #   - ``compute_verdict``      -- augmented_verdict text build with
+    #                                 the canonical risk_level suffix
+    #                                 (LAW 6 standalone-parse)
+    #   - ``auto_log``             -- active-run ledger write (silent
+    #                                 no-op if no run is active, but the
+    #                                 underlying ``auto_log`` can still
+    #                                 raise on HMAC chain misshape or
+    #                                 filesystem failures)
+    #   - ``serialize_envelope``   -- ``json_envelope("diff", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions)
+    #
+    # cmd_diff is the POST-EDIT signal SOURCE feeding into the critique
+    # gate per ``roam diff | roam critique``. With W607-BP landed, the
+    # agent-OS edit loop is W607-plumbed end-to-end on BOTH the
+    # substrate-CALL layer (W607-R + W607-T + W607-S + W607-Y + W607-Z)
+    # AND the aggregation-phase layer (W607-AW + W607-BB + W607-BH +
+    # W607-BL + W607-BP). Each of the five edit-loop commands carries
+    # dual-bucket plumbing with combined-warnings emission.
+    #
+    # Marker family ``diff_*`` -- same family as W607-Z (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope.
+    _w607bp_warnings_out: list[str] = []
+
+    def _run_check_bp(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BP marker emission.
+
+        Mirror of ``_run_check`` shape (same ``diff_<phase>_failed:``
+        marker family) but writes into ``_w607bp_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bp_warnings_out.append(f"diff_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
 
     # --since-tag auto-fills commit_range with <last-tag>..HEAD.
     if since_tag and not commit_range:
@@ -391,7 +570,17 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         coupling = True
         fitness = True
 
-    changed = get_changed_files(root, staged=staged, commit_range=commit_range)
+    changed = (
+        _run_check(
+            "get_changed_files",
+            get_changed_files,
+            root,
+            staged=staged,
+            commit_range=commit_range,
+            default=[],
+        )
+        or []
+    )
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
         # Pattern 1 fix (Fix A from internal/dogfood/SYNTHESIS-2026-05-12.md):
@@ -399,18 +588,35 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         # `Expecting value: line 1 column 1 (char 0)` when given empty
         # output. Always emit a structured envelope. Mirrors the shape
         # `pr-risk` uses on clean tree.
-        _no_changes_envelope = json_envelope(
-            "diff",
+        #
+        # W641-followup-E — canonical risk-LEVEL projection. A clean diff
+        # has zero affected_symbols / files, so the canonical rank is the
+        # W631 floor "low". Emitted unconditionally so agents downstream
+        # can call ``risk_rank(summary["risk_level_canonical"])`` without
+        # None-handling (parity with W641-followup-A/B/D).
+        _no_changes_canonical = normalize_risk_level("low") or "low"
+        _no_changes_rank = risk_rank(_no_changes_canonical)
+        # Verdict on the no-changes path stays literal ``"no changes"``
+        # (NOT augmented with the canonical suffix) to preserve the
+        # pre-W641-followup-E regression contract pinned in
+        # ``tests/test_diff_empty_state.py``. The canonical fields are
+        # still emitted on summary + top level so agents can call
+        # ``risk_rank(summary["risk_level_canonical"])`` unconditionally;
+        # the state field (``"no_changes"``) and ``partial_success=False``
+        # already disambiguate the LAW 6 standalone-parse.
+        _no_changes_summary: dict = {
+            "verdict": "no changes",
+            "state": "no_changes",
+            "partial_success": False,
+            "changed_files": 0,
+            "affected_symbols": 0,
+            "affected_files": 0,
+            "label": label,
+            "risk_level_canonical": _no_changes_canonical,
+            "risk_rank": _no_changes_rank,
+        }
+        _no_changes_envelope_kwargs: dict = dict(
             budget=token_budget,
-            summary={
-                "verdict": "no changes",
-                "state": "no_changes",
-                "partial_success": False,
-                "changed_files": 0,
-                "affected_symbols": 0,
-                "affected_files": 0,
-                "label": label,
-            },
             label=label,
             changed_files=0,
             symbols_defined=0,
@@ -418,7 +624,23 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             affected_files=0,
             per_file=[],
             blast_radius=[],
+            risk_level_canonical=_no_changes_canonical,
+            risk_rank=_no_changes_rank,
             message=f"No changes found for {label}.",
+        )
+        # W607-Z -- if get_changed_files raised, the substrate marker
+        # rides BOTH summary.warnings_out AND the top-level mirror on
+        # the no-changes envelope. ``partial_success`` flips to True so
+        # consumers reading the summary alone see the degradation.
+        if _w607z_warnings_out:
+            _no_changes_summary["warnings_out"] = list(_w607z_warnings_out)
+            _no_changes_summary["partial_success"] = True
+            _no_changes_envelope_kwargs["warnings_out"] = list(_w607z_warnings_out)
+            _no_changes_envelope_kwargs["partial_success"] = True
+        _no_changes_envelope = json_envelope(
+            "diff",
+            summary=_no_changes_summary,
+            **_no_changes_envelope_kwargs,
         )
         auto_log(_no_changes_envelope, action="diff", target=label, repo_root=root)
         if json_mode:
@@ -429,27 +651,46 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
 
     with open_db(readonly=True) as conn:
         # Map changed files to file IDs
-        file_map = resolve_changed_to_db(conn, changed)
+        file_map = (
+            _run_check(
+                "resolve_changed_to_db",
+                resolve_changed_to_db,
+                conn,
+                changed,
+                default={},
+            )
+            or {}
+        )
 
         if not file_map:
             # Pattern 1 fix: --json mode must never emit empty stdout.
             # The working tree has changes but they don't intersect the
             # index — surface this explicitly as ``index_stale`` so
             # consumers don't conflate it with ``no_changes``.
+            #
+            # W641-followup-E — canonical risk-LEVEL projection. An
+            # index-stale path produced no resolved symbols, so the
+            # canonical rank is the W631 floor "low". Emit
+            # unconditionally so agents downstream can call
+            # ``risk_rank(summary["risk_level_canonical"])`` without
+            # None-handling (parity with W641-followup-A/B/D).
             label = commit_range or ("staged" if staged else "unstaged")
-            _stale_envelope = json_envelope(
-                "diff",
+            _stale_canonical = normalize_risk_level("low") or "low"
+            _stale_rank = risk_rank(_stale_canonical)
+            _stale_summary: dict = {
+                "verdict": (f"changed files not in index (risk_level {_stale_canonical})"),
+                "state": "index_stale",
+                "partial_success": True,
+                "changed_files": 0,
+                "affected_symbols": 0,
+                "affected_files": 0,
+                "label": label,
+                "hint": "Run `roam index` to refresh.",
+                "risk_level_canonical": _stale_canonical,
+                "risk_rank": _stale_rank,
+            }
+            _stale_envelope_kwargs: dict = dict(
                 budget=token_budget,
-                summary={
-                    "verdict": "changed files not in index",
-                    "state": "index_stale",
-                    "partial_success": True,
-                    "changed_files": 0,
-                    "affected_symbols": 0,
-                    "affected_files": 0,
-                    "label": label,
-                    "hint": "Run `roam index` to refresh.",
-                },
                 label=label,
                 changed_files=0,
                 symbols_defined=0,
@@ -458,9 +699,23 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 per_file=[],
                 blast_radius=[],
                 files_not_in_index=len(changed),
+                risk_level_canonical=_stale_canonical,
+                risk_rank=_stale_rank,
                 message=(
                     f"Changed files not found in index ({len(changed)} files changed). Try running `roam index` first."
                 ),
+            )
+            # W607-Z -- mirror substrate markers onto the index_stale
+            # envelope so a resolve_changed_to_db raise that produced an
+            # empty file_map still surfaces the underlying cause.
+            if _w607z_warnings_out:
+                _stale_summary["warnings_out"] = list(_w607z_warnings_out)
+                _stale_envelope_kwargs["warnings_out"] = list(_w607z_warnings_out)
+                _stale_envelope_kwargs["partial_success"] = True
+            _stale_envelope = json_envelope(
+                "diff",
+                summary=_stale_summary,
+                **_stale_envelope_kwargs,
             )
             auto_log(_stale_envelope, action="diff", target=label, repo_root=root)
             if json_mode:
@@ -487,7 +742,13 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             click.echo("Graph module not available.")
             return
 
-        G = build_symbol_graph(conn)
+        G = _run_check("build_symbol_graph", build_symbol_graph, conn, default=None)
+        if G is None:
+            # Substrate raise -- fall back to an empty DiGraph so the
+            # loop body below produces zero affected symbols/files rather
+            # than crashing. The W607-Z marker on
+            # ``_w607z_warnings_out`` already discloses the failure.
+            G = nx.DiGraph()
         RG = G.reverse()
 
         # Per-file impact analysis
@@ -530,32 +791,157 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         test_results = []
         pytest_cmd = ""
         if tests:
-            test_results, pytest_cmd = _collect_affected_tests(conn, sym_by_file)
+            # W607-Z -- wrap to surface helper raises as a structured
+            # marker rather than crashing the whole `roam diff` invocation.
+            _at = _run_check(
+                "collect_affected_tests",
+                _collect_affected_tests,
+                conn,
+                sym_by_file,
+                default=([], ""),
+            )
+            test_results, pytest_cmd = _at if _at is not None else ([], "")
 
         # Coupling warnings
         coupling_warnings = []
         if coupling:
-            try:
-                coupling_warnings = _collect_coupling_warnings(conn, file_map)
-            except Exception:
-                pass  # table may not exist in older indexes
+            # W607-Z -- formerly a silent ``try/except: pass`` (the
+            # ``git_cochange`` table may be missing on older indexes).
+            # Marker now surfaces the underlying cause via
+            # ``_w607z_warnings_out`` instead of vanishing.
+            coupling_warnings = (
+                _run_check(
+                    "collect_coupling_warnings",
+                    _collect_coupling_warnings,
+                    conn,
+                    file_map,
+                    default=[],
+                )
+                or []
+            )
 
         # Fitness violations
         fitness_rule_results = []
         fitness_violations = []
         if fitness:
-            try:
-                fitness_rule_results, fitness_violations = _collect_fitness_violations(conn, file_map, root)
-            except Exception:
-                pass  # fitness.yaml may not exist
+            # W607-Z -- formerly a silent ``try/except: pass`` (the
+            # ``fitness.yaml`` file may be absent). Marker now surfaces
+            # the underlying cause via ``_w607z_warnings_out``.
+            _fv = _run_check(
+                "collect_fitness_violations",
+                _collect_fitness_violations,
+                conn,
+                file_map,
+                root,
+                default=([], []),
+            )
+            fitness_rule_results, fitness_violations = _fv if _fv is not None else ([], [])
 
         # ── Envelope construction (used by JSON output + auto-log) ───
 
-        _diff_verdict = (
+        _diff_base_verdict = (
             f"{len(file_map)} files changed, "
             f"{len(all_affected_syms)} symbols affected, "
             f"{len(all_affected_files)} files in blast radius"
         )
+
+        # W641-followup-E — canonical W631 risk-LEVEL projection. cmd_diff
+        # has no native severity vocabulary; the canonical bucket is
+        # derived from the blast-radius thresholds (see ``_diff_risk_level``
+        # docstring). Mirrors W641-followup-A's polarity (cmd_impact) so a
+        # cross-command consumer can ``risk_rank(summary["risk_level_canonical"])
+        # >= 3`` to gate on high-or-worse without re-deriving the threshold
+        # table at the call site (same Pattern-3a discipline as W632 /
+        # W641 / W641-followup-A/B/C/D).
+        #
+        # ``or "low"`` floor mirrors the W531 CI-safety lesson — a typo'd
+        # or unrecognised severity bucket MUST NOT promote into a CI-gating
+        # rank. The canonical fields are emitted unconditionally so agents
+        # downstream call ``risk_rank(...)`` without None-handling.
+        _diff_warnings_out: list[str] = []
+        # W607-Z -- substrate-CALL boundary on ``_diff_risk_level``
+        # (kept intact). Pinned by tests/test_w607_z_cmd_diff_warnings_out_envelope.py.
+        _diff_domain_level_z = _run_check(
+            "compute_risk_level",
+            _diff_risk_level,
+            len(all_affected_syms),
+            len(all_affected_files),
+            warnings_out=_diff_warnings_out,
+            default="low",
+        )
+        if _diff_domain_level_z is None:
+            _diff_domain_level_z = "low"
+        # W607-BP -- severity_classify boundary, ADDITIVE on top of the
+        # W607-Z substrate-CALL wrap. We re-classify with the SAME helper
+        # but flag the result on the AGGREGATION-PHASE axis: if the
+        # classifier raises (a closed-vocabulary refactor or future inner
+        # threshold helper), the wrap floors the domain tier to ``None``
+        # and surfaces the marker alongside the canonical ``"low"`` floor +
+        # ``severity_classification: "unknown"`` sentinel in the envelope
+        # summary. Mirror of cmd_critique W607-BL / cmd_diagnose W607-BH
+        # severity_classification sentinel.
+        _bp_severity_probe = _run_check_bp(
+            "severity_classify",
+            _diff_risk_level,
+            len(all_affected_syms),
+            len(all_affected_files),
+            warnings_out=_diff_warnings_out,
+            default=None,
+        )
+        # Domain-tier raised (None floor) -> mark classification unknown so
+        # the envelope discloses the degraded outcome. When W607-BP probe
+        # succeeded (non-None), classification is "classified".
+        _severity_classification_state = "unknown" if _bp_severity_probe is None else "classified"
+        # Use the W607-Z domain level for the canonical projection (the
+        # W607-Z wrap already floors to "low" on raise); the BP probe is
+        # the additive aggregation-phase boundary that drives the
+        # severity_classification sentinel.
+        _diff_domain_level = _diff_domain_level_z
+        # W607-BP -- severity_normalize boundary. Wraps the canonical W631
+        # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+        # signature change / closed-enum vocabulary drift surfaces a marker
+        # rather than crashing the envelope. Floors to ``"low"`` / rank ``1``
+        # so downstream comparators stay non-null. Mirror of cmd_critique
+        # W607-BL / cmd_diagnose W607-BH severity_normalize pattern.
+        risk_level_canonical = _run_check_bp(
+            "severity_normalize",
+            lambda level: normalize_risk_level(level) or "low",
+            _diff_domain_level,
+            default="low",
+        )
+        risk_rank_int = _run_check_bp(
+            "severity_normalize",
+            risk_rank,
+            risk_level_canonical,
+            default=1,
+        )
+
+        # W607-BP -- compute_verdict boundary. Wraps the canonical
+        # augmented verdict text build so a future format-spec regression
+        # on the components (e.g. non-string risk_level_canonical from a
+        # vocabulary refactor) surfaces a marker rather than crashing the
+        # envelope. Floors to a stable verdict string so LAW 6 ("verdict
+        # works standalone") stays satisfied even on degraded paths.
+        #
+        # Verdict augmentation: append the canonical bucket so LAW 6
+        # standalone-parse holds — an agent reading just the verdict line
+        # can call ``risk_rank`` on the parenthesised token without
+        # consulting any other envelope field. Mirrors the W641-followup-
+        # A/B/C/D verdict-augmentation contract.
+        def _build_augmented_verdict() -> str:
+            return f"{_diff_base_verdict} (risk_level {risk_level_canonical})"
+
+        # Floor must NOT re-format ``risk_level_canonical`` -- the same
+        # value that tripped the closure (e.g. a __format__-raising
+        # sentinel under test) would re-raise inside the default
+        # f-string. Use a literal "low" floor instead (LAW 6 still holds:
+        # the line works standalone; the W631 floor is "low").
+        _diff_verdict = _run_check_bp(
+            "compute_verdict",
+            _build_augmented_verdict,
+            default="diff completed (risk_level low)",
+        )
+
         _diff_label = commit_range or ("staged" if staged else "unstaged")
         envelope_data = dict(
             label=_diff_label,
@@ -565,6 +951,12 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             affected_files=len(all_affected_files),
             per_file=file_impacts,
             blast_radius=sorted(all_affected_files),
+            # W641-followup-E — top-level mirror of summary.risk_level_canonical
+            # / summary.risk_rank so consumers reading the top-level envelope
+            # head without descending into ``summary`` see the canonical
+            # bucket too (parity with cmd_impact / cmd_critique / cmd_attest).
+            risk_level_canonical=risk_level_canonical,
+            risk_rank=risk_rank_int,
         )
 
         summary = {
@@ -572,7 +964,56 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             "changed_files": len(file_map),
             "affected_symbols": len(all_affected_syms),
             "affected_files": len(all_affected_files),
+            # W641-followup-E — canonical W631 risk-LEVEL + integer rank.
+            # Projected from blast-radius thresholds via
+            # ``_diff_risk_level`` (Pattern-3a structural close-out).
+            # Cross-command consumers can compare e.g.
+            # ``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+            # high-or-worse blast radius.
+            "risk_level_canonical": risk_level_canonical,
+            "risk_rank": risk_rank_int,
+            # W607-BP -- SEVERITY-CLASSIFY DEGRADATION sentinel. When the
+            # ``severity_classify`` boundary raises (and the classify
+            # result floors to ``None``), surface
+            # ``severity_classification: "unknown"`` so the agent sees
+            # the degraded outcome alongside the canonical floor
+            # ("low") rather than mistaking the floor for a real
+            # classification. Clean path -> ``"classified"``. Mirror of
+            # cmd_impact's ``risk_classification`` / cmd_diagnose's
+            # ``severity_classification`` / cmd_critique's
+            # ``severity_classification`` sentinel.
+            "severity_classification": _severity_classification_state,
         }
+
+        # Surface Pattern-2 silent-fallback markers (unknown / negative
+        # counts). Empty list omitted to keep the envelope tight.
+        #
+        # W607-Z -- substrate-CALL markers ride the same ``warnings_out``
+        # channel but accumulate in a DIFFERENT bucket
+        # (``_w607z_warnings_out``) so the two axes (unknown-severity
+        # data shape vs. helper-raised substrate boundary) don't conflate
+        # at the call site. They MERGE into a single ``warnings_out``
+        # list on emission; the marker PREFIX disambiguates them
+        # downstream (``diff_unknown_severity:*`` vs. ``diff_<phase>_failed:*``).
+        # ``partial_success`` flips when EITHER bucket is non-empty --
+        # consumers reading ``partial_success`` alone need not distinguish
+        # the two flavours. Mirrors the W607-Y cmd_critique bucket-merge.
+        #
+        # W607-BP -- ADDITIVE aggregation-phase markers join the same
+        # combined-channel: ``_diff_warnings_out`` (unknown-severity) +
+        # ``_w607z_warnings_out`` (substrate-CALL) +
+        # ``_w607bp_warnings_out`` (aggregation-phase). All three share
+        # the ``diff_*`` family per the marker-prefix discipline test;
+        # the additive bucket stays distinguishable in tests + audits
+        # via its phase names (``severity_classify`` /
+        # ``severity_normalize`` / ``compute_verdict`` / ``auto_log`` /
+        # ``serialize_envelope``).
+        _combined_warnings_out: list[str] = (
+            list(_diff_warnings_out) + list(_w607z_warnings_out) + list(_w607bp_warnings_out)
+        )
+        if _combined_warnings_out:
+            summary["warnings_out"] = list(_combined_warnings_out)
+            summary["partial_success"] = True
 
         if tests:
             direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
@@ -623,15 +1064,89 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 "violations": fitness_violations[:100],
             }
 
-        diff_envelope = json_envelope(
+        # W607-Z / W607-BP -- top-level mirror of summary.warnings_out so
+        # consumers that read the top-level envelope directly (without
+        # descending into ``summary``) see the marker channel. Mirror
+        # parity with W607-Y cmd_critique (and the rest of the W607 family).
+        if _combined_warnings_out:
+            envelope_data["warnings_out"] = list(_combined_warnings_out)
+            envelope_data["partial_success"] = True
+
+        # W607-BP -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("diff", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_critique's W607-BL serialize_envelope
+        # floor pattern.
+        _envelope_floor: dict = {
+            "command": "diff",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": _diff_verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        diff_envelope = _run_check_bp(
+            "serialize_envelope",
+            json_envelope,
             "diff",
+            default=_envelope_floor,
             budget=token_budget,
             summary=summary,
             **envelope_data,
         )
+        # W607-BP -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``diff_serialize_envelope_failed:`` marker was appended to
+        # ``_w607bp_warnings_out`` and the floor stub carries only the
+        # old combined list. Rebuild the floor stub's warnings_out so the
+        # new marker reaches the JSON output. Clean path -> envelope is
+        # the real json_envelope return value, no rebuild needed.
+        if diff_envelope is _envelope_floor and _w607bp_warnings_out:
+            _combined_warnings_out = list(_diff_warnings_out) + list(_w607z_warnings_out) + list(_w607bp_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            diff_envelope = _envelope_floor
 
-        # Auto-log into the active run (silent no-op when no run is active).
-        auto_log(diff_envelope, action="diff", target=_diff_label, repo_root=root)
+        # W607-BP -- auto_log boundary. Silent no-op if no active run;
+        # the wrap surfaces HMAC chain-misshape / filesystem failures as
+        # ``diff_auto_log_failed:...`` markers instead of crashing the
+        # envelope after it was already built. Mirror of cmd_critique's
+        # W607-BL auto_log pattern.
+        _run_check_bp(
+            "auto_log",
+            auto_log,
+            diff_envelope,
+            action="diff",
+            target=_diff_label,
+            repo_root=root,
+            default=None,
+        )
+        # W607-BP -- if ``auto_log`` raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # -> envelope stays byte-identical to the version already built
+        # above.
+        if _w607bp_warnings_out and not any(
+            m.startswith("diff_auto_log_failed:") for m in (summary.get("warnings_out") or [])
+        ):
+            _combined_warnings_out = list(_diff_warnings_out) + list(_w607z_warnings_out) + list(_w607bp_warnings_out)
+            summary["warnings_out"] = list(_combined_warnings_out)
+            summary["partial_success"] = True
+            envelope_data["warnings_out"] = list(_combined_warnings_out)
+            envelope_data["partial_success"] = True
+            diff_envelope = _run_check_bp(
+                "serialize_envelope",
+                json_envelope,
+                "diff",
+                default=_envelope_floor,
+                budget=token_budget,
+                summary=summary,
+                **envelope_data,
+            )
 
         # ── JSON output ──────────────────────────────────────────────
 
@@ -645,10 +1160,14 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             label = commit_range
         else:
             label = "staged" if staged else "unstaged"
+        # W641-followup-E — surface the canonical risk-LEVEL bucket on the
+        # text-mode VERDICT line so reviewers reading the terminal output
+        # see the same closed-enum token as the JSON envelope.
         _diff_verdict_text = (
             f"{len(file_map)} files changed, "
             f"{len(all_affected_syms)} symbols affected, "
-            f"{len(all_affected_files)} files in blast radius"
+            f"{len(all_affected_files)} files in blast radius "
+            f"(risk_level {risk_level_canonical})"
         )
         click.echo(f"VERDICT: {_diff_verdict_text}")
         click.echo()

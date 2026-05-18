@@ -93,10 +93,25 @@
       <h2>The decision tree</h2>
       <p class="lede">
         The <a href="/docs/agent-contract">agent contract</a> covers the
-        five rules. This page goes deeper: nine moments that come up in
-        real work, with the four-to-five Roam commands that answer each
-        and one example invocation per moment. If you only remember the
-        moment, you can find the command later.
+        five rules and the canonical JSON envelope. This page goes
+        deeper: nine moments that come up in real work, with the
+        four-to-five Roam commands that answer each and one example
+        invocation per moment. If you only remember the moment, you can
+        find the command later.
+      </p>
+      <p>
+        Underneath every command is the same model: parse the repo once,
+        store structural facts in a local SQLite index, and answer
+        questions from that index. The output of each command lands as
+        a JSON envelope; the audit pipeline composes those envelopes
+        into typed <code>ChangeEvidence</code> packets that answer the
+        eight evidence questions &mdash; who acted, what authority they
+        had, what context was read, what changed, what could break,
+        what policy applied, what verified it, and who accepted risk.
+        See <a href="/docs/architecture">architecture</a> for the
+        compiler and <a href="/audit">Roam Audit</a> for the
+        analyst-driven projection of the same packets into a written
+        report.
       </p>
     </div>
   </section>
@@ -293,11 +308,21 @@
       <div class="whats-in-inner">
         <h2>9. "Can we prove what was checked, signed, and gated?"</h2>
         <p>
-          For governance, audit, and SOC 2 / ISO 42001 / AI Governance
-          evidence: emit a Code Graph Attestation (in-toto v1, optionally
-          cosign-signed) that records the index hash, the fitness gates
-          that ran, and the verdict. SARIF output plugs straight into
-          GitHub Code Scanning so findings live next to the PR.
+          Roam compiles change-time evidence into typed
+          <code>ChangeEvidence</code> packets that answer the eight
+          evidence questions (who acted, what authority, what context,
+          what changed, what could break, what policy, what verified it,
+          who accepted risk). For governance work &mdash; SOC 2, ISO
+          42001, AI Governance &mdash; the same packet projects to a
+          Code Graph Attestation (in-toto v1, optionally cosign-signed),
+          a SARIF file for GitHub Code Scanning, and an OSCAL-shaped
+          control mapping. The wording stays disciplined: Roam
+          <em>maps to</em> and <em>supports evidence for</em> controls;
+          it never <em>certifies</em> or <em>makes compliant</em>. See
+          <a href="/docs/agent-contract">/docs/agent-contract</a> for
+          the canonical envelope, <a href="/docs/architecture">/docs/architecture</a>
+          for the compiler, and <a href="/audit">/audit</a> for the
+          analyst-driven Roam Audit projection.
         </p>
         <p>
           Commands: <code>roam attest</code> ·
@@ -338,7 +363,8 @@
             unsafe deserialisation in isolation. Use a SAST tool
             (Semgrep, CodeQL, SonarQube). Roam complements these by
             showing whether the smell is reachable from an entry point
-            (<code>roam vuln</code>) — but the smell catalogue is theirs.
+            (<code>roam vulns</code>, <code>roam taint</code>) — but the
+            smell catalogue is theirs.
           </li>
           <li>
             <strong>Type errors</strong> — use the type checker
@@ -348,7 +374,7 @@
             <strong>Runtime profiling</strong> — Roam predicts
             algorithmic shape from the graph. To measure a real run, use
             a profiler (<code>py-spy</code>, <code>perf</code>, your APM)
-            and feed traces back via <code>roam runtime ingest</code>.
+            and feed traces back via <code>roam ingest-trace</code>.
           </li>
         </ul>
         <p>
@@ -365,6 +391,7 @@
         <p>
           <a href="/docs/agent-contract" class="btn-primary">Read the agent contract</a> ·
           <a href="/docs/command-reference">browse the full command reference</a> ·
+          <a href="/docs/architecture">read the architecture</a> ·
           <a href="/docs/getting-started">run the 10-minute tutorial</a>.
         </p>
         <p>
@@ -372,6 +399,12 @@
           <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash;
           install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
           <code>ChangeEvidence</code> packet, end to end.
+        </p>
+        <p>
+          <strong>Want the analyst-driven projection?</strong>
+          <a href="/audit">Roam Audit</a> replays your last five PRs
+          through the same pipeline and returns a signed evidence
+          packet plus a written report.
         </p>
       </div>
     </section>

@@ -46,10 +46,14 @@ from roam.world_model.tx_boundaries import (
     classify_tx_boundaries,
 )
 
-# Ranked by severity for sorting / verdict prioritisation.
+# Ranked by tx-classification severity for sorting / verdict prioritisation.
+# Keys are tx-boundary classification labels (NOT canonical severity tiers):
 # unmatched_* are bugs; unsafe_mutation is a latent bug; partial_* is a
 # smell; transactional / non_transactional are clean; unknown is a gap.
-_SEVERITY_RANK: dict[str, int] = {
+# W598: name clarified from the misleading ``_SEVERITY_RANK`` — this
+# table does NOT rank canonical severity tiers (``critical``/``high``/
+# ``medium``/``low``/``info``) and is intentionally outside W547/W564 scope.
+_TX_CLASSIFICATION_RANK: dict[str, int] = {
     "unmatched_begin": 6,
     "unmatched_commit": 5,
     "unsafe_mutation": 4,
@@ -179,7 +183,7 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
     # W596: canonical confidence-LEVEL rank — higher = more confident.
     def _key(c):
         return (
-            _SEVERITY_RANK.get(c.classification, 0),
+            _TX_CLASSIFICATION_RANK.get(c.classification, 0),
             confidence_level_rank(c.confidence, fallback=-1),
             -len(c.file or ""),
         )

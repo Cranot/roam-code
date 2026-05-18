@@ -15,14 +15,14 @@ rules:
   # ---- Coroutine / async anti-patterns ----
 
   - id: kt-no-runblocking-in-suspend
-    description: "runBlocking inside suspend code defeats cooperative cancellation; restructure with coroutineScope { }."
+    description: "Replace runBlocking with coroutineScope { } in suspend code; runBlocking defeats cooperative cancellation."
     pattern: function_call
     source_glob: "src/**/*.kt"
     forbidden_target_glob: runBlocking
     severity: WARN
 
   - id: kt-no-globalscope
-    description: "GlobalScope leaks — coroutines outlive the originating component. Use a structured scope (lifecycleScope, viewModelScope, CoroutineScope(Job()))."
+    description: "Replace GlobalScope.launch with a structured scope (lifecycleScope, viewModelScope, CoroutineScope(Job())); GlobalScope coroutines outlive the originating component."
     pattern: function_call
     source_glob: "src/**/*.kt"
     forbidden_target_glob: GlobalScope.launch
@@ -38,21 +38,21 @@ rules:
     severity: BLOCK
 
   - id: kt-no-runtime-exec
-    description: "Runtime.exec() bypasses argv quoting; use ProcessBuilder with a list."
+    description: "Replace Runtime.getRuntime().exec() with ProcessBuilder + list args; exec() bypasses argv quoting."
     pattern: function_call
     source_glob: "src/**/*.kt"
     forbidden_target_glob: "Runtime.getRuntime"
     severity: BLOCK
 
   - id: kt-no-printstacktrace
-    description: "e.printStackTrace() leaks exceptions to stderr; use a structured logger (slf4j / Timber)."
+    description: "Replace e.printStackTrace() with a structured logger (slf4j / Timber); printStackTrace leaks exceptions to stderr."
     pattern: function_call
     source_glob: "src/main/kotlin/**/*.kt"
     forbidden_target_glob: "*.printStackTrace"
     severity: WARN
 
   - id: kt-no-md5
-    description: "MessageDigest.getInstance(MD5) is broken for security; use SHA-256+."
+    description: "Replace MessageDigest.getInstance(MD5) with SHA-256 or stronger; MD5 is broken for security uses."
     pattern: function_call
     source_glob: "src/**/*.kt"
     forbidden_target_glob: "MessageDigest.getInstance"
@@ -67,8 +67,11 @@ rules:
     forbidden_target_glob: "Deprecated"
     severity: WARN
 
+  # WARN (not BLOCK) because @OptIn legitimately appears inside libraries
+  # that intentionally consume an experimental API — the violation needs
+  # human review to confirm it isn't escaping into a shipped public surface.
   - id: kt-no-experimental-api
-    description: "@OptIn(...ExperimentalApi::class) on shipped code locks you to a moving target."
+    description: "Remove @OptIn(...ExperimentalApi::class) from shipped code; ExperimentalApi locks the call site to a moving target."
     pattern: decorator_use
     source_glob: "src/main/kotlin/**/*.kt"
     forbidden_target_glob: "OptIn"
@@ -76,8 +79,11 @@ rules:
 
   # ---- LLM hallucination patterns ----
 
+  # WHY: LLMs frequently hallucinate "v2" / numbered package names when the
+  # real package already exists at a non-numbered path. Renaming forces the
+  # author to confirm the actual target.
   - id: kt-no-numbered-packages
-    description: "Numbered packages (com.foo.v2, com.foo.utils2) signal LLM hallucinations."
+    description: "Rename or remove numbered packages (com.foo.v2, com.foo.utils2); these names are typical LLM hallucinations."
     pattern: import_from
     source_glob: "src/**/*.kt"
     forbidden_target_glob: "*.v[0-9]*.*"

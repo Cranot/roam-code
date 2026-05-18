@@ -14,7 +14,14 @@ from roam.index.file_roles import is_test as _roles_is_test
 # ---------------------------------------------------------------------------
 
 _TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
-_TEST_DIR_PATS = ["tests/", "test/", "__tests__/", "spec/"]
+# Test directory components — matched case-insensitively against the
+# lowercased path so mixed-case directories (``Tests/``, ``__TESTS__/``,
+# ``SPEC/``, ``TESTING/``) on case-insensitive filesystems still
+# classify as test files. ``testing/`` is included for parity with
+# ``catalog._shared.is_test_path`` and the canonical
+# ``test_conventions._TEST_DIR_PATTERNS`` (W898 — port of catalog's
+# permissive directory match).
+_TEST_DIR_PATS = ["tests/", "test/", "__tests__/", "spec/", "testing/"]
 
 
 def is_test_file(path: str | None) -> bool:
@@ -22,6 +29,10 @@ def is_test_file(path: str | None) -> bool:
 
     Uses the file_roles classifier first (covers 22 language-specific test
     naming patterns) and falls back to the legacy heuristic for edge cases.
+    The legacy fallback matches test-directory components
+    case-insensitively (W898) so mixed-case ``Tests/`` / ``__TESTS__/`` /
+    ``SPEC/`` / ``TESTING/`` directories on case-insensitive filesystems
+    still classify as test paths.
 
     Returns ``False`` for empty / falsy inputs.
     """
@@ -29,10 +40,13 @@ def is_test_file(path: str | None) -> bool:
         return False
     if _roles_is_test(path):
         return True
-    # Legacy fallback for patterns file_roles might miss
-    p = path.replace("\\", "/")
-    bn = os.path.basename(p)
-    return any(pat in bn for pat in _TEST_NAME_PATS) or any(d in p for d in _TEST_DIR_PATS)
+    # Legacy fallback for patterns file_roles might miss.
+    p_cs = path.replace("\\", "/")
+    p_lower = p_cs.lower()
+    bn = os.path.basename(p_cs)
+    if any(pat in bn for pat in _TEST_NAME_PATS):
+        return True
+    return any(d in p_lower for d in _TEST_DIR_PATS)
 
 
 _LOW_RISK_ROLES = frozenset({"docs", "config", "data", "ci", "generated", "vendored"})

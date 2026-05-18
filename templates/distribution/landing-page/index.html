@@ -47,19 +47,19 @@
     "softwareHelp": {"@type": "CreativeWork", "url": "/docs/"},
     "softwareVersion": "13.2",
     "softwareRequirements": "Python 3.10+",
-    "fileSize": "~ 8 MB wheel",
+    "fileSize": "~8 MB wheel",
     "image": "https://roam-code.com/og.png",
     "screenshot": "https://roam-code.com/og.png",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "inLanguage": "en",
     "offers": [
       {"@type": "Offer", "name": "Free CLI (Apache 2.0)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "url": "https://roam-code.com/#install"},
-      {"@type": "Offer", "name": "Roam Review — Starter", "price": "99", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "5 repos, 10 active PR authors, 200 reviews/mo"},
+      {"@type": "Offer", "name": "Roam Review — Starter", "price": "99", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "3 repos, 5 active PR authors, 100 reviews/mo"},
       {"@type": "Offer", "name": "Roam Review — Team", "price": "299", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "20 repos, 30 active PR authors, 900 reviews/mo, current-run Cloud dashboard"},
       {"@type": "Offer", "name": "Roam Review — Business", "price": "799", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "100 repos, 100 active PR authors, 3,000 reviews/mo, SSO, audit export"},
       {"@type": "Offer", "name": "Roam Review — Scale", "price": "1499", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "Annual only. 250 active PR authors, 8,000 reviews/mo, SAML/SCIM, priority support"},
       {"@type": "Offer", "name": "Roam Cloud", "price": "19", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/#cloud", "description": "From $19/repo/mo. Team $99/mo, Growth $299/mo"},
-      {"@type": "Offer", "name": "Roam Self-Hosted", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/#self-hosted", "description": "Custom annual pricing — contact hello@roam-code.com. Launches alongside Roam Review + Roam Cloud."}
+      {"@type": "Offer", "name": "Roam Self-Hosted", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/#self-hosted", "description": "Private-deployment pilots scoped by SOW; not a packaged GA product."}
     ],
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
@@ -74,9 +74,9 @@
     "@type": "FAQPage",
     "mainEntity": [
       {"@type": "Question", "name": "How is Roam different from CodeRabbit, Greptile, and Qodo?", "acceptedAnswer": {"@type": "Answer", "text": "They review what the code does. Roam reviews what the code touches. Different layer, different findings. Most teams keep their existing reviewer and add Roam alongside it. Two extras: the CLI runs entirely on your machine, and every analysis emits a tamper-evident audit-trail entry useful for SOC 2, ISO 42001, and internal AI-governance evidence."}},
-      {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0. Free for individuals, teams, and companies of any size. We charge for the hosted PR bot, the dashboard, and the self-hosted bundle, not the local engine."}},
+      {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0. Free for individuals, teams, and companies of any size. We charge for PR Replay, hosted Review/Cloud, and scoped private-deployment pilots, not the local engine."}},
       {"@type": "Question", "name": "What audit-trail evidence does Roam produce?", "acceptedAnswer": {"@type": "Answer", "text": "Every Roam analysis writes a tamper-evident log file plus signed records (in-toto v1, verifiable with cosign). The kind of evidence SOC 2 CC8.1 (change management), ISO 42001 (AI management system), and internal AI-governance policies want to see. We give you the artifact; the framework mapping and conformity assessment for your own controls is still on you."}},
-      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. When Roam Cloud and Roam Review launch (early access), Cloud receives metrics only — never source code; Review processes PR diffs ephemerally in our cloud, or in yours via Self-Hosted."}},
+      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. When Roam Cloud and Roam Review launch (early access), Cloud receives metrics only — never source code; Review processes PR diffs ephemerally in our cloud, or in a private-deployment pilot if scoped by SOW."}},
       {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports findings in SARIF 2.1.0 format, which GitHub Code Scanning, GitLab, and most CI platforms understand natively. Ready-to-drop GitHub Actions templates ship with the package. roam critique returns exit code 5 on any high-severity finding so a CI step can gate on it."}}
     ]
   }
@@ -154,10 +154,13 @@
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
-        <a class="btn-secondary" href="#what-roam-catches">See what it catches</a>
+        <a class="btn-secondary" href="#audit">Replay your last 5 PRs</a>
       </div>
       <p class="hero-trust-strip">
         Free CLI · Apache 2.0 · 28 languages · 57 core agent tools · 224 total MCP tools · 7,731 PyPI installs/month
+      </p>
+      <p class="hero-trust-strip hero-trust-strip--secondary">
+        Paid PR Replay audit available today — <a href="/audit">see Team and Deep tiers</a>.
       </p>
     </div>
   </header>
@@ -773,8 +776,11 @@
       <h2>For teams: three paid surfaces, one engine</h2>
       <p class="lede">
         Same engine, three deployment surfaces. Pick the ones your team
-        needs — every pull request (Review), shared visibility across
-        repos (Cloud), or self-hosted inside your network.
+        needs — every pull request (Review, early access), shared
+        visibility across repos (Cloud, early access), or a scoped
+        private-deployment pilot. The paid <a href="/audit">PR Replay
+        audit</a> is available today and gives you a written report on
+        your last 5 / 30 / 90 PRs before committing to a subscription.
       </p>
     </div>
   </section>
@@ -815,24 +821,24 @@
         <span class="price-note">$99/mo Team (10 repos) · $299/mo Growth · 30-day money back</span>
       </div>
       <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Cloud%20early%20access&amp;body=Hi%20%E2%80%94%20requesting%20Roam%20Cloud%20early%20access.%0A%0AGitHub%20org%3A%20%0ARepos%20to%20track%3A%20%0AInterested%20tier%3A%20Starter%20%2F%20Team%20%2F%20Growth%0A%0A%E2%80%94%20">Get early access</a>
-      <p class="product-bridge">Cloud pairs with <a href="#review">Roam Review →</a>. Regulated stack? <a href="#self-hosted">Run all of it inside your network →</a></p>
+      <p class="product-bridge">Cloud pairs with <a href="#review">Roam Review →</a>. Regulated stack? <a href="#self-hosted">Talk to us about a private-deployment pilot →</a></p>
     </div>
 
     <div class="product-card" id="self-hosted">
       <h3>Roam Self-Hosted</h3>
-      <p class="tagline">Roam running entirely inside your network. Launches alongside Review + Cloud (<a href="/status">early access</a>).</p>
+      <p class="tagline">Private-deployment pilots for teams that cannot use hosted Review or Cloud.</p>
       <ul class="features">
-        <li>The full Roam stack — Review, Cloud, Audit Trail — running <strong>inside</strong> your cluster, alongside your existing CI</li>
-        <li>SSO/SAML, audit logs, custom rules — no external traffic by default</li>
+        <li>Scoped deployment plan for Review, Cloud-style dashboards, and audit-trail evidence inside your environment</li>
+        <li>SSO/SAML, audit logs, custom rules, and network boundaries written into the SOW before build starts</li>
         <li>Audit-trail artifacts designed to support SOC 2, ISO 42001, and AI-governance evidence packages (your auditor judges fit)</li>
-        <li>SLA + dedicated support; conformity-assessment-ready artefacts (the assessment itself remains the buyer's process)</li>
+        <li>SLA and dedicated support are negotiated per pilot; the formal assessment remains the buyer's process</li>
       </ul>
       <div class="price">
         <span class="price-amount">Custom</span>
-        <span class="price-note">Annual. Sized to team, support level, and compliance scope. For regulated buyers.</span>
+        <span class="price-note">Private pilot. Sized to team, support level, and compliance scope.</span>
       </div>
-      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">Book a 30-min call</a>
-      <p class="product-bridge">Self-Hosted bundles <a href="#review">Roam Review</a> + <a href="#cloud">Roam Cloud</a> + the audit-trail toolkit. Talk to us about a pilot first.</p>
+      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20pilot">Discuss a pilot</a>
+      <p class="product-bridge">Self-Hosted is customer-pulled infrastructure. Start with PR Replay or Review early access unless a private deployment is required.</p>
     </div>
   </section>
 
@@ -927,8 +933,8 @@
         <summary>Will the CLI stay free?</summary>
         <p>
           Yes. Forever. Apache 2.0. Free for individuals, teams, and companies
-          of any size. We charge for the hosted PR bot, the dashboard, and the
-          self-hosted bundle — not the local engine.
+          of any size. We charge for PR Replay, hosted Review/Cloud, and scoped
+          private-deployment pilots — not the local engine.
         </p>
       </details>
       <details>
@@ -965,9 +971,9 @@
         </p>
         <p>
           From <strong>Roam Review</strong> (when launched, <a href="/status">early access</a>): the PR diff is processed
-          ephemerally in our cloud, or in yours via Self-Hosted. Same scope
-          as any other PR-bot product. Always a fair question to ask any
-          PR-bot vendor what their threat model is.
+          ephemerally in our cloud. Private-deployment pilots are scoped
+          separately when hosted processing is blocked by policy. Always a
+          fair question to ask any PR-bot vendor what their threat model is.
         </p>
       </details>
       <details>
@@ -1029,13 +1035,12 @@
       <details>
         <summary>How does Roam Self-Hosted differ from running the CLI offline?</summary>
         <p>
-          The CLI is already 100% local — that's the free path. Self-Hosted
-          adds (1) a long-lived service that watches your repos and indexes
-          on every push, (2) the Roam Review PR-bot logic running inside your
-          network instead of ours, (3) a Roam Cloud-equivalent dashboard
-          served from your own domain, and (4) signed audit-trail evidence
-          collected centrally for SOC 2 / ISO 42001 / internal review. All
-          contained inside your network perimeter.
+          The CLI is already 100% local — that's the free path. A private-
+          deployment pilot would scope the extra pieces you actually need:
+          long-lived indexing, Review-style PR checks, Cloud-style dashboards,
+          and centrally collected signed evidence. It is not a boxed GA product
+          today; deployment, support, and retention terms are written into the
+          pilot SOW.
         </p>
       </details>
       <details>

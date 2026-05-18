@@ -106,7 +106,7 @@ def _section_entry_points(conn):
     return lines
 
 
-def _section_key_abstractions(conn):
+def _section_key_abstractions(conn, *, warnings_out: list[str] | None = None):
     """Top 15 symbols by PageRank."""
     lines = ["", "## Key Abstractions", ""]
     try:
@@ -119,7 +119,12 @@ def _section_key_abstractions(conn):
             WHERE s.kind IN ('function', 'class', 'method', 'interface', 'struct', 'trait')
             ORDER BY gm.pagerank DESC LIMIT 15
         """).fetchall()
-    except Exception:
+    except Exception as exc:
+        # W607-K: surface the DB-shape failure via warnings_out so the
+        # outer envelope can mirror the marker; complementary to the
+        # human-readable "Graph metrics not available." text.
+        if warnings_out is not None:
+            warnings_out.append(f"describe_key_abstractions_failed:{type(exc).__name__}:{exc}")
         lines.append("Graph metrics not available. Run `roam index` first.")
         return lines
 
@@ -143,7 +148,7 @@ def _section_key_abstractions(conn):
     return lines
 
 
-def _section_architecture(conn):
+def _section_architecture(conn, *, warnings_out: list[str] | None = None):
     """Layer count, shape, and cycle count.
 
     W17.2 / Pattern 3c: cycle count comes from `roam.quality.cycles` so
@@ -173,7 +178,12 @@ def _section_architecture(conn):
                 "- **Layer distribution:** "
                 + ", ".join(f"L{k}: {v} symbols" for k, v in sorted(layer_counts.items())[:5])
             )
-    except Exception:
+    except Exception as exc:
+        # W607-K: graph-builder / layer-detection / cycles-summary helper
+        # failures surface via warnings_out so the consumer can detect
+        # the degrade lineage independent of the markdown blob.
+        if warnings_out is not None:
+            warnings_out.append(f"describe_architecture_failed:{type(exc).__name__}:{exc}")
         lines.append("Architecture analysis not available (graph module not loaded).")
     return lines
 
@@ -563,7 +573,7 @@ def _section_conventions(conn):
     return lines
 
 
-def _section_complexity_guide(conn):
+def _section_complexity_guide(conn, *, warnings_out: list[str] | None = None):
     """Document complexity hotspots to guide refactoring."""
     lines = ["", "## Complexity Hotspots", ""]
 
@@ -597,11 +607,15 @@ def _section_complexity_guide(conn):
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_describe:section", _exc)
+        # W607-K: also surface the marker on warnings_out so the consumer
+        # gets the disclosure axis even when ROAM_VERBOSE is off.
+        if warnings_out is not None:
+            warnings_out.append(f"describe_complexity_failed:{type(_exc).__name__}:{_exc}")
 
     return lines
 
 
-def _section_dependencies(conn):
+def _section_dependencies(conn, *, warnings_out: list[str] | None = None):
     """Top imported files (most incoming file_edges)."""
     lines = ["", "## Core Modules", ""]
     try:
@@ -613,7 +627,11 @@ def _section_dependencies(conn):
             ORDER BY import_count DESC
             LIMIT 10
         """).fetchall()
-    except Exception:
+    except Exception as exc:
+        # W607-K: file_edges substrate failure (table missing, JOIN error)
+        # surfaces via warnings_out for consumer-side degrade detection.
+        if warnings_out is not None:
+            warnings_out.append(f"describe_dependencies_failed:{type(exc).__name__}:{exc}")
         lines.append("File edge data not available.")
         return lines
 
@@ -630,8 +648,17 @@ def _section_dependencies(conn):
     return lines
 
 
-def _agent_prompt_data(conn):
-    """Gather compact data for --agent-prompt output."""
+def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
+    """Gather compact data for --agent-prompt output.
+
+    W607-K: optional ``warnings_out`` accumulator threads DB-shape silent
+    paths (find_project_root, top-PageRank, hotspots, cycle-health,
+    project-shape) onto the envelope so the consumer can detect a
+    degraded agent-prompt build independent of sentinel values like
+    ``health=N/A`` (which alone do not distinguish "no cycles" from
+    "graph-builder threw"). Complementary to W805-I Pattern-2 silent
+    SAFE on empty corpus.
+    """
     data = {}
 
     # ── Project overview ─────────────────────────────────────────────
@@ -646,7 +673,12 @@ def _agent_prompt_data(conn):
     try:
         root = find_project_root()
         project_name = root.name
-    except Exception:
+    except Exception as exc:
+        # W607-K: project-root resolution failure is a silent path that
+        # collapses to ``"unknown"`` — surface it so the consumer doesn't
+        # confuse "no manifest" with "project_root resolver crashed".
+        if warnings_out is not None:
+            warnings_out.append(f"describe_project_root_failed:{type(exc).__name__}:{exc}")
         project_name = "unknown"
 
     data["project"] = project_name
@@ -701,6 +733,8 @@ def _agent_prompt_data(conn):
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_describe:section", _exc)
+        if warnings_out is not None:
+            warnings_out.append(f"describe_key_abstractions_failed:{type(_exc).__name__}:{_exc}")
     data["key_abstractions"] = abstractions
 
     # ── Hotspots (top 3 by churn * complexity) ───────────────────────
@@ -725,6 +759,8 @@ def _agent_prompt_data(conn):
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_describe:section", _exc)
+        if warnings_out is not None:
+            warnings_out.append(f"describe_hotspots_failed:{type(_exc).__name__}:{_exc}")
     data["hotspots"] = hotspots
 
     # ── Cycle-only health estimate + canonical cycle counts ────────
@@ -772,6 +808,8 @@ def _agent_prompt_data(conn):
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_describe:section", _exc)
+        if warnings_out is not None:
+            warnings_out.append(f"describe_cycle_health_failed:{type(_exc).__name__}:{_exc}")
 
     # ── Test command guess ──
     from roam.output.project_shape import detect_project_shape
@@ -784,9 +822,12 @@ def _agent_prompt_data(conn):
         elif shape.test_runner:
             data["test_cmd"] = shape.test_runner
             data["test_runner"] = shape.test_runner
-    except Exception:
+    except Exception as exc:
         # Detector should never fail, but guarantee describe still emits.
-        pass
+        # W607-K: still surface a marker so the consumer can detect the
+        # "test_cmd fell back to heuristic" lineage.
+        if warnings_out is not None:
+            warnings_out.append(f"describe_project_shape_failed:{type(exc).__name__}:{exc}")
 
     if "test_cmd" not in data:
         # Fallback to the historic heuristic if shape detection turned up nothing.
@@ -931,55 +972,315 @@ def describe(ctx, write, force, agent_prompt, out_file):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    if agent_prompt:
-        with open_db(readonly=True) as conn:
-            data = _agent_prompt_data(conn)
+    # W607-K: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the DB-shape section pipeline. cmd_describe is a
+    # flagship aggregator that consumes graph_metrics / symbol_metrics /
+    # file_edges / build_symbol_graph / cycles_summary substrates; any of
+    # those raising silently degrades the markdown blob into a stripped
+    # "No X available" sentinel line. The W607-K outer-guard + per-section
+    # marker thread makes the degrade lineage visible to consumers
+    # independent of the markdown blob. Marker family ``describe_*``
+    # (DB scope, distinct from W607-G/H/I/J grep_* / history_* /
+    # refs_text_* / delete_check_* subprocess families).
+    #
+    # Complementary to W805-I strict-xfail Pattern-2 set (which pins the
+    # empty-corpus silent-SAFE verdict). W607-K does NOT graduate any
+    # W805-I bug — empty-corpus state disclosure is a separate Pattern-2
+    # contract orthogonal to the DB-shape degrade axis here.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either ``summary`` or top-level).
+    warnings_out: list[str] = []
 
-        _ap_verdict = (
-            f"{data.get('project', 'project')}: {data.get('files', 0)} files, "
-            f"{data.get('languages', 'unknown')} | health={data.get('health_score', 'N/A')}"
+    # W607-DG: AGGREGATION-PHASE plumbing additive on top of the W607-K
+    # substrate-CALL layer. Wraps the 4 aggregation boundaries
+    # (``score_classify`` / ``compute_predicate`` / ``compute_verdict`` /
+    # ``serialize_envelope``) so a downstream refactor of any of those
+    # surfaces a structured marker rather than crashing the envelope or
+    # silently misreporting.
+    #
+    # SYMBOL-EXPLORATION 4-WAY pairing at agg-layer:
+    #   cmd_uses    -- W607-U substrate + W607-DE aggregation
+    #   cmd_relate  -- W607-W substrate + W607-DA aggregation
+    #   cmd_deps    -- W607-V substrate + W607-DB aggregation
+    #   cmd_describe-- W607-K substrate + W607-DG aggregation (THIS)
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_dg(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(symbols)``). A computed default
+    # expression evaluates BEFORE the wrap call, so a raise inside the
+    # expression escapes the try-block.
+    #
+    # W607-K / W607-DG PHASE-NAME COLLISION CHECK (W978 4th-discipline):
+    # W607-K substrate phase names (key_abstractions / architecture /
+    # complexity / dependencies / project_root / hotspots / cycle_health
+    # / project_shape / agent_prompt / pipeline / cycles_summary) do NOT
+    # collide with score_classify / compute_predicate / compute_verdict
+    # / serialize_envelope, so no rename is required.
+    _w607dg_warnings_out: list[str] = []
+
+    def _run_check_dg(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DG marker emission.
+
+        Mirror of ``_run_check`` shape (same
+        ``describe_<phase>_failed:`` marker family) but writes into
+        ``_w607dg_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dg_warnings_out.append(f"describe_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    if agent_prompt:
+        try:
+            with open_db(readonly=True) as conn:
+                data = _agent_prompt_data(conn, warnings_out=warnings_out)
+        except Exception as exc:
+            # W607-K outer-guard: the full agent-prompt DB pipeline raised
+            # (db corruption / locked / schema drift). Disclose loudly via
+            # ``describe_agent_prompt_failed:...`` and fall back to empty
+            # data so the envelope still emits cleanly.
+            warnings_out.append(f"describe_agent_prompt_failed:{type(exc).__name__}:{exc}")
+            data = {
+                "project": "unknown",
+                "files": 0,
+                "symbols": 0,
+                "languages": "",
+                "stack": "",
+                "conventions": "mixed",
+                "structure": "",
+                "key_abstractions": [],
+                "hotspots": [],
+                "cycle_health_estimate": "N/A",
+                "cycles": "N/A",
+                "test_cmd": "",
+            }
+
+        # W607-DG -- score_classify boundary (agent-prompt branch). Wraps
+        # corpus-shape bucketing into a state label (POPULATED / EMPTY /
+        # DEGRADED) so a downstream refactor of the state selection logic
+        # surfaces a marker. Floor returns documented "DEGRADED" so
+        # downstream serialize_envelope stays non-null.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: ``data`` passed as raw arg;
+        # all ``.get()`` calls live INSIDE the closure with literal
+        # defaults (cmd_taint W607-CJ 5th-discipline anchor). Floor dict
+        # is a literal constant.
+        def _score_classify_corpus(_data):
+            _files = _data.get("files", 0) if isinstance(_data, dict) else 0
+            _symbols = _data.get("symbols", 0) if isinstance(_data, dict) else 0
+            if _files == 0 and _symbols == 0:
+                _state = "EMPTY"
+            elif _files > 0 and _symbols > 0:
+                _state = "POPULATED"
+            else:
+                _state = "PARTIAL"
+            return {"state": _state, "file_count": _files, "symbol_count": _symbols}
+
+        _ap_score_dict = _run_check_dg(
+            "score_classify",
+            _score_classify_corpus,
+            data,
+            default={"state": "DEGRADED", "file_count": 0, "symbol_count": 0},
         )
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "describe",
-                        summary={"verdict": _ap_verdict, "mode": "agent-prompt"},
-                        **data,
-                    )
-                )
+
+        # W607-DG -- compute_predicate boundary (agent-prompt branch).
+        # Wraps describe-metrics extraction (file_count + symbol_count +
+        # language_count) so a future schema refactor that drops or
+        # renames fields on the ``data`` dict surfaces a marker rather
+        # than crashing the envelope.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: raw dict passed as arg;
+        # ``.get()`` lookups live INSIDE the closure with literal
+        # defaults. Floor dict is a literal constant.
+        def _compute_predicate_fields_ap(_data) -> dict:
+            if not isinstance(_data, dict):
+                return {"file_count": 0, "symbol_count": 0, "language_count": 0}
+            _files = _data.get("files", 0)
+            _symbols = _data.get("symbols", 0)
+            _languages_str = _data.get("languages", "") or ""
+            # languages may be a comma-separated string -- count parts
+            _lang_count = len([p for p in _languages_str.split(",") if p.strip()])
+            return {
+                "file_count": _files,
+                "symbol_count": _symbols,
+                "language_count": _lang_count,
+            }
+
+        _ap_pred_fields = _run_check_dg(
+            "compute_predicate",
+            _compute_predicate_fields_ap,
+            data,
+            default={"file_count": 0, "symbol_count": 0, "language_count": 0},
+        )
+
+        # W607-DG -- compute_verdict boundary (agent-prompt branch).
+        # Wraps the verdict-string assembly so a downstream f-string
+        # refactor (non-numeric values from a vocabulary refactor, or a
+        # __format__-raising sentinel) surfaces a marker rather than
+        # crashing the envelope. Floor must NOT re-interpolate the same
+        # values that tripped the closure (W978 first-hypothesis). Use
+        # the literal "describe analysis completed" floor.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: raw dict passed as arg;
+        # ``.get()`` lookups + f-string interpolation live INSIDE the
+        # closure. Floor is a literal string constant.
+        def _build_ap_verdict_str(_data):
+            return (
+                f"{_data.get('project', 'project')}: "
+                f"{_data.get('files', 0)} files, "
+                f"{_data.get('languages', 'unknown')} | "
+                f"health={_data.get('health_score', 'N/A')}"
             )
+
+        _ap_verdict = _run_check_dg(
+            "compute_verdict",
+            _build_ap_verdict_str,
+            data,
+            default="describe analysis completed",
+        )
+
+        if json_mode:
+            ap_summary: dict[str, object] = {
+                "verdict": _ap_verdict,
+                "mode": "agent-prompt",
+                # W607-DG: surface score_classify state + predicate
+                # metrics on the envelope so consumers can read the
+                # corpus shape without re-deriving from ``data``.
+                "corpus_state": _ap_score_dict["state"],
+                "file_count": _ap_pred_fields["file_count"],
+                "symbol_count": _ap_pred_fields["symbol_count"],
+                "language_count": _ap_pred_fields["language_count"],
+            }
+            # W607-K + W607-DG: combined warnings_out at envelope-emit
+            # time so consumers see the full degradation lineage in
+            # marker-emission order (substrate-CALL + aggregation-phase
+            # share the same ``describe_*`` family).
+            _ap_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
+            if _ap_combined_wo:
+                # W607-K: surface marker bucket on summary mirror so the
+                # consumer sees the substrate-degrade lineage. We do NOT
+                # flip ``partial_success`` on the agent-prompt branch
+                # here — that flip is what W805-I's strict-xfail
+                # ``test_agent_prompt_empty_corpus_partial_success_coupled_to_na``
+                # is pinning as a SEPARATE Pattern-2 fix wave (the
+                # health=N/A + partial_success=False mismatch). W607-K
+                # adds the marker disclosure only; W805-I will graduate
+                # the partial_success contract on its own wave.
+                # W607-DG: aggregation-phase markers DO flip
+                # partial_success (distinct contract from substrate-only
+                # W607-K markers).
+                ap_summary["warnings_out"] = list(_ap_combined_wo)
+                if _w607dg_warnings_out:
+                    ap_summary["partial_success"] = True
+
+            # W607-DG -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("describe", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name.
+            _ap_kwargs: dict = {
+                "summary": ap_summary,
+                **data,
+            }
+            if _ap_combined_wo:
+                _ap_kwargs["warnings_out"] = list(_ap_combined_wo)
+            _ap_envelope_floor: dict = {
+                "command": "describe",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": _ap_verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_ap_combined_wo),
+                },
+                "warnings_out": list(_ap_combined_wo),
+            }
+            _ap_envelope = _run_check_dg(
+                "serialize_envelope",
+                json_envelope,
+                "describe",
+                default=_ap_envelope_floor,
+                **_ap_kwargs,
+            )
+            # W607-DG -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``describe_serialize_envelope_failed:`` marker was appended
+            # to ``_w607dg_warnings_out`` and the floor stub carries only
+            # the pre-raise combined list. Rebuild the floor stub's
+            # warnings_out so the new marker reaches the JSON output.
+            if _ap_envelope is _ap_envelope_floor and _w607dg_warnings_out:
+                _ap_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
+                _ap_envelope_floor["summary"]["warnings_out"] = list(_ap_combined_wo)
+                _ap_envelope_floor["warnings_out"] = list(_ap_combined_wo)
+                _ap_envelope = _ap_envelope_floor
+            click.echo(to_json(_ap_envelope))
         else:
             click.echo(f"VERDICT: {_ap_verdict}")
             click.echo()
             click.echo(_format_agent_prompt(data))
         return
 
-    with open_db(readonly=True) as conn:
-        sections = []
-        sections.append(["# Project Architecture", ""])
-        sections.append(_section_overview(conn))
-        sections.append(_section_directories(conn))
-        sections.append(_section_entry_points(conn))
-        sections.append(_section_key_abstractions(conn))
-        sections.append(_section_architecture(conn))
-        sections.append(_section_testing(conn))
-        sections.append(_section_conventions(conn))
-        sections.append(_section_complexity_guide(conn))
-        sections.append(_section_domain(conn))
-        sections.append(_section_dependencies(conn))
+    try:
+        with open_db(readonly=True) as conn:
+            sections = []
+            sections.append(["# Project Architecture", ""])
+            sections.append(_section_overview(conn))
+            sections.append(_section_directories(conn))
+            sections.append(_section_entry_points(conn))
+            sections.append(_section_key_abstractions(conn, warnings_out=warnings_out))
+            sections.append(_section_architecture(conn, warnings_out=warnings_out))
+            sections.append(_section_testing(conn))
+            sections.append(_section_conventions(conn))
+            sections.append(_section_complexity_guide(conn, warnings_out=warnings_out))
+            sections.append(_section_domain(conn))
+            sections.append(_section_dependencies(conn, warnings_out=warnings_out))
 
-        output = "\n".join(line for sec in sections for line in sec)
+            output = "\n".join(line for sec in sections for line in sec)
 
-        # Gather compact verdict data
-        _total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        _lang_counts = Counter(
-            f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"]
-        )
-        _top_lang = _lang_counts.most_common(1)[0][0] if _lang_counts else "unknown"
-        _n_langs = len(_lang_counts)
+            # Gather compact verdict data
+            _total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            _lang_counts = Counter(
+                f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"]
+            )
+            _top_lang = _lang_counts.most_common(1)[0][0] if _lang_counts else "unknown"
+            _n_langs = len(_lang_counts)
+    except Exception as exc:
+        # W607-K outer-guard: the full section pipeline raised. Disclose
+        # via ``describe_pipeline_failed:...`` + fall back to empty
+        # verdict floors so the envelope still emits.
+        warnings_out.append(f"describe_pipeline_failed:{type(exc).__name__}:{exc}")
+        output = "# Project Architecture\n"
+        _total_files = 0
+        _top_lang = "unknown"
+        _n_langs = 0
 
-    _desc_verdict = f"{_top_lang} project, {_total_files} files, {_n_langs} languages"
+    # W607-DG -- compute_verdict boundary (main describe branch). Wraps
+    # the verdict-string assembly so a downstream f-string refactor
+    # (non-numeric values from a vocabulary refactor, or a
+    # __format__-raising sentinel) surfaces a marker rather than
+    # crashing the envelope. Floor must NOT re-interpolate the same
+    # values that tripped the closure (W978 first-hypothesis). Use the
+    # literal "describe analysis completed" floor (LAW 6 standalone-
+    # parse).
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: raw scalars passed as args;
+    # f-string interpolation lives INSIDE the closure. Floor is a
+    # literal string constant.
+    def _build_desc_verdict_str(_top_lang_in, _total_files_in, _n_langs_in):
+        return f"{_top_lang_in} project, {_total_files_in} files, {_n_langs_in} languages"
+
+    _desc_verdict = _run_check_dg(
+        "compute_verdict",
+        _build_desc_verdict_str,
+        _top_lang,
+        _total_files,
+        _n_langs,
+        default="describe analysis completed",
+    )
 
     if json_mode:
         # W17.2 / Pattern 3c: include canonical cycle metric definition
@@ -992,23 +1293,155 @@ def describe(ctx, write, force, agent_prompt, out_file):
             definition as _cyc_def,
         )
 
-        with open_db(readonly=True) as _c2:
-            _csum = _cs(_c2)
-        click.echo(
-            to_json(
-                json_envelope(
-                    "describe",
-                    summary={
-                        "verdict": _desc_verdict,
-                        "length": len(output),
-                        "cycles_total": _csum.total,
-                        "cycles_actionable": _csum.actionable,
-                        "cycles_definition": _cyc_def(),
-                    },
-                    markdown=output,
-                )
-            )
+        try:
+            with open_db(readonly=True) as _c2:
+                _csum = _cs(_c2)
+            _cycles_total = _csum.total
+            _cycles_actionable = _csum.actionable
+        except Exception as exc:
+            # W607-K: cycles_summary substrate failure on the JSON tail
+            # path. Surface via warnings_out + fall back to 0 floors.
+            warnings_out.append(f"describe_cycles_summary_failed:{type(exc).__name__}:{exc}")
+            _cycles_total = 0
+            _cycles_actionable = 0
+
+        # W607-DG -- score_classify boundary (main describe branch).
+        # Wraps corpus-shape bucketing into a state label (POPULATED /
+        # EMPTY / DEGRADED) so a downstream refactor of the state
+        # selection logic surfaces a marker. Floor returns documented
+        # "DEGRADED" so downstream serialize_envelope stays non-null.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: raw scalars passed as args;
+        # all comparisons live INSIDE the closure. Floor dict is a
+        # literal constant.
+        def _score_classify_main(_total_files_in, _n_langs_in, _cycles_total_in):
+            if _total_files_in == 0 and _n_langs_in == 0:
+                _state = "EMPTY"
+            elif _cycles_total_in > 0:
+                _state = "CYCLES_PRESENT"
+            else:
+                _state = "POPULATED"
+            return {
+                "state": _state,
+                "file_count": _total_files_in,
+                "language_count": _n_langs_in,
+            }
+
+        _desc_score_dict = _run_check_dg(
+            "score_classify",
+            _score_classify_main,
+            _total_files,
+            _n_langs,
+            _cycles_total,
+            default={"state": "DEGRADED", "file_count": 0, "language_count": 0},
         )
+
+        # W607-DG -- compute_predicate boundary (main describe branch).
+        # Wraps the describe-metrics extraction (markdown_length +
+        # file_count + language_count) so a future refactor that
+        # changes the metric shape surfaces a marker rather than
+        # crashing the envelope.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: raw scalars + raw string
+        # passed as args; ``len()`` lives INSIDE the closure (cmd_taint
+        # W607-CJ 5th-discipline anchor). Floor dict is a literal
+        # constant.
+        def _compute_predicate_fields_main(_output_in, _total_files_in, _n_langs_in, _cycles_total_in) -> dict:
+            _markdown_length = len(_output_in) if _output_in is not None else 0
+            return {
+                "markdown_length": _markdown_length,
+                "file_count": _total_files_in,
+                "language_count": _n_langs_in,
+                "cycles_total": _cycles_total_in,
+            }
+
+        _desc_pred_fields = _run_check_dg(
+            "compute_predicate",
+            _compute_predicate_fields_main,
+            output,
+            _total_files,
+            _n_langs,
+            _cycles_total,
+            default={
+                "markdown_length": 0,
+                "file_count": 0,
+                "language_count": 0,
+                "cycles_total": 0,
+            },
+        )
+
+        # W978 KWARG-DEFAULT EAGERNESS NOTE (W607-CR 7th-discipline
+        # anchor): do NOT use ``_desc_pred_fields.get("markdown_length",
+        # len(output))`` -- the second arg evaluates EAGERLY.
+        # _desc_pred_fields ALWAYS carries the keys (either real value
+        # or floor 0), so a bare lookup is correct.
+        desc_summary: dict[str, object] = {
+            "verdict": _desc_verdict,
+            "length": _desc_pred_fields["markdown_length"],
+            "cycles_total": _cycles_total,
+            "cycles_actionable": _cycles_actionable,
+            "cycles_definition": _cyc_def(),
+            # W607-DG: surface score_classify state + predicate metrics
+            # so consumers can read the corpus shape without re-deriving
+            # from raw markdown.
+            "corpus_state": _desc_score_dict["state"],
+            "file_count": _desc_pred_fields["file_count"],
+            "language_count": _desc_pred_fields["language_count"],
+        }
+
+        # W607-K + W607-DG: combined warnings_out at envelope-emit time
+        # so consumers see the full degradation lineage in marker-
+        # emission order (substrate-CALL + aggregation-phase share the
+        # same ``describe_*`` family). ``partial_success`` flips if
+        # EITHER bucket carries markers (mirror of W607-DA / W607-DB
+        # contract).
+        _desc_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
+        if _desc_combined_wo:
+            desc_summary["warnings_out"] = list(_desc_combined_wo)
+            desc_summary["partial_success"] = True
+
+        # W607-DG -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("describe", ...)`` would otherwise
+        # crash AFTER all substrate + aggregation signals were already
+        # gathered. Floor to a minimal envelope stub so consumers still
+        # receive a parseable JSON object with the marker attached + the
+        # canonical command name.
+        _desc_kwargs: dict = {
+            "summary": desc_summary,
+            "markdown": output,
+        }
+        if _desc_combined_wo:
+            _desc_kwargs["warnings_out"] = list(_desc_combined_wo)
+        _desc_envelope_floor: dict = {
+            "command": "describe",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": _desc_verdict,
+                "partial_success": True,
+                "warnings_out": list(_desc_combined_wo),
+            },
+            "warnings_out": list(_desc_combined_wo),
+        }
+        _desc_envelope = _run_check_dg(
+            "serialize_envelope",
+            json_envelope,
+            "describe",
+            default=_desc_envelope_floor,
+            **_desc_kwargs,
+        )
+        # W607-DG -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``describe_serialize_envelope_failed:`` marker was appended to
+        # ``_w607dg_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's
+        # warnings_out so the new marker reaches the JSON output.
+        if _desc_envelope is _desc_envelope_floor and _w607dg_warnings_out:
+            _desc_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
+            _desc_envelope_floor["summary"]["warnings_out"] = list(_desc_combined_wo)
+            _desc_envelope_floor["warnings_out"] = list(_desc_combined_wo)
+            _desc_envelope = _desc_envelope_floor
+        click.echo(to_json(_desc_envelope))
         return
 
     click.echo(f"VERDICT: {_desc_verdict}")

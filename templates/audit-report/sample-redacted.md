@@ -9,11 +9,19 @@ fontsize: 11pt
 geometry: margin=2.5cm
 ---
 
-> **SAMPLE.** This audit was generated from a real open-source Python codebase
-> (~3,174 files, ~15,603 symbols, single-author contribution history). In a real
-> client engagement, author names and identifying paths are anonymized in the
-> deliverable. The structure, metrics, and rendering quality below match
-> exactly what a paying customer receives.
+> **SAMPLE — LEGACY TEMPLATE.** This audit was generated from a real
+> open-source Python codebase (~3,174 files, ~15,603 symbols,
+> single-author contribution history) using the older
+> codebase-architecture template (`audit-report.md.tmpl` +
+> `render.py`). In a real client engagement, author names and
+> identifying paths are anonymized in the deliverable; export-profile
+> redactions land in the packet's `redactions[]` field.
+>
+> For new Governance Pack / PR Replay engagements, use the
+> evidence-compiler flow instead: see
+> [`evidence-checklist.md`](evidence-checklist.md) for the Q1-Q8
+> crosswalk and [`sample-audit-report.md`](sample-audit-report.md) for
+> the eight-section outline.
 
 # Executive Summary
 

@@ -959,7 +959,7 @@ def _render_rules(rules: list[str]) -> list[str]:
     for r in rules:
         lines.append(f"- `{r}`")
     lines.append("")
-    lines.append("Run `roam rules check --strict` to evaluate all of them.")
+    lines.append("Run `roam rules --ci` to evaluate all of them.")
     lines.append("")
     return lines
 

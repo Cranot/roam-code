@@ -46,7 +46,8 @@ roam-analysis:
     - roam --json health > roam-health.json
     - roam health
 
-    # Run rules check
+    # Run rules check (advisory: findings ship in artifacts + MR comment;
+    # the merge gate is health-score-only at the Enforce gate stage below).
     - roam --json check-rules > roam-rules.json || true
     - roam check-rules || true
 
@@ -60,7 +61,8 @@ roam-analysis:
         done
       fi
 
-    # Generate SARIF reports
+    # Generate SARIF reports (advisory: artifacts ship for CI ingestion;
+    # generation failure does not block the pipeline).
     - roam --sarif health > roam-health.sarif || true
     - roam --sarif check-rules > roam-rules.sarif 2>/dev/null || true
 

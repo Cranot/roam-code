@@ -284,13 +284,146 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
 
     from roam.graph.clone_detect import detect_clones, store_clones
 
+    # W607-BQ -- substrate-boundary plumbing on the clones AST-clone detector.
+    # cmd_clones completes the W805 paired-scoring family (dark_matter +
+    # duplicates + clones + smells) -- all four detect DRY/architecture debt
+    # from different signal axes (co-change vs structural-similarity vs
+    # AST-subtree vs anti-pattern). cmd_clones overlaps cmd_duplicates on the
+    # DRY axis (W136/W821), and overlaps cmd_smells on the structural-debt
+    # axis (W855 rename-invariant + W856 cross-layer clone subkinds).
+    #
+    # The substrate boundaries we wrap:
+    #
+    #   * query_candidates             -- the AST-subtree-hash detect_clones
+    #                                     call that produces (pairs, clusters)
+    #                                     from the indexed corpus.
+    #   * apply_test_prod_separation   -- W165 test/prod/mixed filtering on
+    #                                     the pair + cluster lists when
+    #                                     ``--exclude-tests`` /
+    #                                     ``--exclude-fixtures`` are set.
+    #   * classify_role_buckets        -- W856 cross-layer clone bucket
+    #                                     classification per cluster (the
+    #                                     verdict-line ``role_buckets`` count
+    #                                     pass).
+    #   * emit_findings                -- ``--persist`` registry mirror
+    #                                     (``store_clones`` +
+    #                                     ``_enrich_clones_findings_with_role_bucket``
+    #                                     + commit). Pattern-2 elimination
+    #                                     target: replaces the implicit
+    #                                     "no error handling around the
+    #                                     persist write" path.
+    #   * serialize_to_sarif           -- ``clones_to_sarif`` projection for
+    #                                     CI gates.
+    #
+    # Marker family ``clones_<phase>_failed:<exc_class>:<detail>``
+    # (underscore form -- matches the W805 paired sibling cmd_dark_matter
+    # (W607-BK) and cmd_duplicates (W607-BM) marker discipline). Empty
+    # bucket -> no field added -> byte-identical envelope on the happy path
+    # (W607-A..BM parity).
+    # Threads into BOTH the top-level ``warnings_out`` (preserved-list-field
+    # discipline) AND ``summary.warnings_out`` + ``summary.partial_success
+    # = True``. Composes with the pre-existing ``_warnings_out`` cap-hit
+    # disclosure (W1142-followup) -- both bins flush into the same
+    # envelope fields so a single consumer sees the union.
+    _w607bq_warnings_out: list[str] = []
+
+    def _run_check_bq(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BQ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``clones_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bq_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bq_warnings_out.append(f"clones_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-DC: aggregation-phase marker plumbing (additive) -----------
+    # cmd_clones detects literal AST-clone classes -- the structural-debt
+    # paired-scoring family (W805 4-way: clones BQ/DC, duplicates BM,
+    # smells BN, dark_matter BK/CZ). W607-BQ (above) plumbed the substrate-
+    # CALL layer (5 boundaries: query_candidates / apply_test_prod_separation
+    # / classify_role_buckets / emit_findings / serialize_to_sarif).
+    # W607-DC adds the AGGREGATION-PHASE layer on top:
+    #
+    #   score_classify       -- bucket the run state (CLONES_FOUND /
+    #                            NO_CLONES) so consumers can read the run
+    #                            classification without re-deriving from
+    #                            raw counts.
+    #   compute_predicate    -- extract clone-class rollup metrics
+    #                            (cluster_count / pair_count /
+    #                            total_functions / avg_similarity /
+    #                            reducible_lines / distribution / role_buckets).
+    #   compute_verdict      -- composite verdict-string assembly with
+    #                            high-confidence count.
+    #   serialize_envelope   -- json_envelope("clones", ...) projection.
+    #
+    # Marker family ``clones_*`` -- SAME family as W607-BQ (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path. Three buckets (W607-BQ substrate + W607-DC aggregation
+    # + W1142-followup cap-hit) are combined at envelope-emit time so
+    # consumers see the full degradation lineage in marker-emission order.
+    # The additive bucket stays distinguishable via its phase names
+    # (``score_classify`` / ``compute_predicate`` / ``compute_verdict`` /
+    # ``serialize_envelope``).
+    #
+    # STRUCTURAL-DEBT PAIRED-SCORING 4-WAY pairing analogue -- pattern
+    # reused here for the AST-similarity axis. After W607-DC lands,
+    # cmd_clones becomes the SECOND member of the 4-way to ALSO carry
+    # an aggregation-phase layer (after cmd_dark_matter W607-CZ):
+    #   cmd_clones        (W607-BQ substrate + DC THIS) -- AST-similarity axis
+    #   cmd_duplicates    (W607-BM substrate)           -- token-similarity axis
+    #   cmd_smells        (W607-BN substrate)           -- smell-pattern axis
+    #   cmd_dark_matter   (W607-BK substrate + CZ)      -- co-change axis
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_dc(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(clusters) if ...``). cmd_sbom W607-CG
+    # sealed this axis; cmd_taint W607-CJ added the 5th discipline
+    # (move ``len()`` INSIDE the closure); cmd_audit_trail_export
+    # W607-CR added the 7th discipline (use bare ``dict[key]`` lookup
+    # when the floor dict guarantees the key).
+    #
+    # W607-BQ/DC PHASE-NAME COLLISION (W607-CH 4th-discipline): the
+    # substrate-CALL layer uses phase names query_candidates /
+    # apply_test_prod_separation / classify_role_buckets / emit_findings /
+    # serialize_to_sarif. None collide with score_classify /
+    # compute_predicate / compute_verdict / serialize_envelope, so no
+    # rename is required. ``serialize_to_sarif`` vs ``serialize_envelope``
+    # are deliberately distinct phase names so an agent can tell which
+    # serialiser raised.
+    _w607dc_warnings_out: list[str] = []
+
+    def _run_check_dc(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DC marker emission.
+
+        Mirror of ``_run_check_bq`` shape (same ``clones_<phase>_failed:``
+        marker family) but writes into ``_w607dc_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dc_warnings_out.append(f"clones_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
-        pairs, clusters = detect_clones(
+        # W607-BQ: wrap the AST-subtree-hash detection. Default is an empty
+        # ([], []) tuple so the downstream zero-cluster path still emits a
+        # well-formed envelope.
+        _detected = _run_check_bq(
+            "query_candidates",
+            detect_clones,
             conn,
             min_similarity=threshold,
             min_lines=min_lines,
             scope=scope,
+            default=([], []),
         )
+        pairs, clusters = _detected if _detected is not None else ([], [])
 
         # W165 — bucket-aware filtering. We compute role buckets BEFORE
         # ``store_clones`` so the persisted clone_pairs / clone_clusters
@@ -299,45 +432,72 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         # mixed (one side src, one side test) survives so the registry
         # keeps surfacing potential test-leakage. ``--exclude-fixtures``
         # drops any pair touching a fixtures/ / testdata/ path.
+        #
+        # W607-BQ: wrap the test/prod separation pass so a raise inside
+        # ``_role_bucket_for_pair`` / ``_role_bucket_for_cluster`` (e.g.
+        # on a malformed file path) surfaces a structured marker rather
+        # than crashing the command. The filter degrades to a no-op
+        # (original pairs + clusters preserved) on the marker path so
+        # the downstream verdict / JSON / SARIF paths still emit cleanly.
         if exclude_tests or exclude_fixtures:
-            kept_pairs = []
-            for p in pairs:
-                if exclude_fixtures and (_is_fixture_path(p.file_a) or _is_fixture_path(p.file_b)):
-                    continue
-                if exclude_tests:
-                    bucket = _role_bucket_for_pair(p.file_a, p.file_b)
-                    if bucket == "test_intentional":
+
+            def _apply_test_prod_separation():
+                kept_pairs = []
+                for p in pairs:
+                    if exclude_fixtures and (_is_fixture_path(p.file_a) or _is_fixture_path(p.file_b)):
                         continue
-                kept_pairs.append(p)
+                    if exclude_tests:
+                        bucket = _role_bucket_for_pair(p.file_a, p.file_b)
+                        if bucket == "test_intentional":
+                            continue
+                    kept_pairs.append(p)
 
-            kept_pair_keys = {tuple(sorted((p.qname_a, p.qname_b))) for p in kept_pairs}
-
-            # Rebuild clusters: keep only members that participate in at
-            # least one surviving pair (size>=2 after the filter).
-            kept_clusters = []
-            for c in clusters:
-                member_files = [m.get("file") or "" for m in c.members]
-                if exclude_fixtures and any(_is_fixture_path(f) for f in member_files):
-                    continue
-                if exclude_tests:
-                    bucket = _role_bucket_for_cluster(member_files)
-                    if bucket == "test_intentional":
+                # Rebuild clusters: keep only members that participate in
+                # at least one surviving pair (size>=2 after the filter).
+                kept_clusters = []
+                for c in clusters:
+                    member_files = [m.get("file") or "" for m in c.members]
+                    if exclude_fixtures and any(_is_fixture_path(f) for f in member_files):
                         continue
-                kept_clusters.append(c)
+                    if exclude_tests:
+                        bucket = _role_bucket_for_cluster(member_files)
+                        if bucket == "test_intentional":
+                            continue
+                    kept_clusters.append(c)
+                return kept_pairs, kept_clusters
 
-            pairs = kept_pairs
-            clusters = kept_clusters
-            _ = kept_pair_keys  # reserved for future per-pair pruning
+            _filtered = _run_check_bq(
+                "apply_test_prod_separation",
+                _apply_test_prod_separation,
+                default=None,
+            )
+            if _filtered is not None:
+                pairs, clusters = _filtered
 
         if persist:
-            store_clones(conn, pairs, clusters)
-            # W165 — after store_clones writes the findings registry rows
-            # (via ``clone_detect._emit_clone_findings``), enrich each row
-            # with a ``role_bucket`` evidence field so consumers of
-            # ``roam findings list --detector clones`` can post-filter by
-            # production vs test_intentional vs mixed.
-            _enrich_clones_findings_with_role_bucket(conn)
-            conn.commit()
+            # W607-BQ: wrap the registry write path. Default is None --
+            # the writes degrade to no-op on a raise while the read-side
+            # ``pairs`` / ``clusters`` still surface in the envelope.
+            # This replaces the implicit "no error handling around the
+            # persist write" Pattern-2 silent fallback: the pre-W607-BQ
+            # code path would have unwound the entire CLI on any
+            # sqlite3.OperationalError surfacing from ``store_clones``
+            # (locked DB, full disk, missing column on a stale schema).
+            def _emit_findings():
+                store_clones(conn, pairs, clusters)
+                # W165 — after store_clones writes the findings registry rows
+                # (via ``clone_detect._emit_clone_findings``), enrich each row
+                # with a ``role_bucket`` evidence field so consumers of
+                # ``roam findings list --detector clones`` can post-filter by
+                # production vs test_intentional vs mixed.
+                _enrich_clones_findings_with_role_bucket(conn)
+                conn.commit()
+
+            _run_check_bq(
+                "emit_findings",
+                _emit_findings,
+                default=None,
+            )
 
         # W1142-followup: cap-hit disclosure. Record the full pre-truncation
         # cluster count so the envelope can distinguish "N total clusters"
@@ -366,10 +526,26 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         # (Pattern-3 vocabulary improvement from internal/dogfood/
         # SYNTHESIS-2026-05-12.md: separate buckets exposed at the
         # surface, not hidden in JSON).
-        bucket_counts = {"production": 0, "test_intentional": 0, "mixed": 0}
-        for c in clusters:
-            files = [m.get("file") or "" for m in c.members]
-            bucket_counts[_role_bucket_for_cluster(files)] += 1
+        # W607-BQ: wrap the bucket-classification pass. A raise inside
+        # ``_role_bucket_for_cluster`` (e.g. on a malformed file path)
+        # now surfaces a structured marker; the bucket counts safe-floor
+        # to zeros so the downstream verdict / JSON still emit cleanly.
+        bucket_counts: dict[str, int] = {
+            "production": 0,
+            "test_intentional": 0,
+            "mixed": 0,
+        }
+
+        def _classify_role_buckets():
+            for c in clusters:
+                files = [m.get("file") or "" for m in c.members]
+                bucket_counts[_role_bucket_for_cluster(files)] += 1
+
+        _run_check_bq(
+            "classify_role_buckets",
+            _classify_role_buckets,
+            default=None,
+        )
 
         if clusters:
             verdict = (
@@ -430,7 +606,21 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 clusters=cluster_values,
                 pairs=pair_values,
             )
-            click.echo(write_sarif(clones_to_sarif(envelope)))
+            # W607-BQ: wrap the SARIF projection so a raise inside
+            # ``clones_to_sarif`` surfaces a structured marker rather
+            # than crashing the CI gate. Default is an empty SARIF
+            # document shape so ``write_sarif`` still emits valid JSON.
+            sarif_doc = _run_check_bq(
+                "serialize_to_sarif",
+                clones_to_sarif,
+                envelope,
+                default={
+                    "version": "2.1.0",
+                    "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                    "runs": [],
+                },
+            )
+            click.echo(write_sarif(sarif_doc))
             return
 
         # aggregate clone pairs into (file_a, file_b) coupling.
@@ -505,11 +695,74 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             ]
             pair_triples = wrap_findings(pair_values, classifier=_pair_classify)
 
-            # Combined distribution for the summary field (clusters +
-            # pairs counted together — both are "findings").
-            combined = cluster_triples + pair_triples
-            distribution = confidence_distribution(combined)
-            verdict_with_conf = verdict_with_high_count(verdict, distribution)
+            # W607-DC -- compute_predicate boundary. Wraps the clones
+            # rollup-metrics extraction (cluster_count + pair_count +
+            # total_functions + avg_similarity + reducible_lines +
+            # distribution + role_buckets). A future refactor of the
+            # cluster/pair triples that drops or renames a field would
+            # otherwise crash here. Floor to documented zero counts +
+            # empty distribution so downstream summary fields stay
+            # non-null. W978 discipline: ``default=`` is a literal dict,
+            # NOT a computed expression over the (potentially poisoned)
+            # inputs.
+            #
+            # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(clusters)`` lives
+            # INSIDE the wrapped closure rather than at the kwarg-bind
+            # site. A __len__-poisoned ``clusters`` sentinel would
+            # otherwise escape the wrap. cmd_taint W607-CJ
+            # 5th-discipline anchor.
+            def _compute_predicate_fields(_cluster_triples, _pair_triples, _bucket_counts) -> dict:
+                _combined = list(_cluster_triples) + list(_pair_triples)
+                _dist = confidence_distribution(_combined)
+                return {
+                    "cluster_count": len(_cluster_triples),
+                    "pair_count": len(_pair_triples),
+                    "distribution": _dist,
+                    "role_buckets": dict(_bucket_counts),
+                }
+
+            _pred_fields = _run_check_dc(
+                "compute_predicate",
+                _compute_predicate_fields,
+                cluster_triples,
+                pair_triples,
+                bucket_counts,
+                default={
+                    "cluster_count": 0,
+                    "pair_count": 0,
+                    "distribution": {},
+                    "role_buckets": {
+                        "production": 0,
+                        "test_intentional": 0,
+                        "mixed": 0,
+                    },
+                },
+            )
+            distribution = _pred_fields["distribution"]
+
+            # W607-DC -- compute_verdict boundary. Wraps the verdict-
+            # string assembly (verdict_with_high_count). A
+            # ``__format__``-raising sentinel or a vocabulary refactor
+            # could otherwise crash the envelope at the verdict line.
+            # Floor must NOT re-interpolate the same values that tripped
+            # the closure (W978 first-hypothesis discipline). Use the
+            # literal "clones completed" floor (LAW 6 still holds:
+            # the line works standalone).
+            #
+            # W978 KWARG-DEFAULT EAGERNESS TRAP: ``verdict`` /
+            # ``distribution`` are passed as raw args; the wrap-then-
+            # format logic lives INSIDE the closure (cmd_taint W607-CJ
+            # 5th-discipline anchor).
+            def _build_verdict_str(_verdict, _distribution):
+                return verdict_with_high_count(_verdict, _distribution)
+
+            verdict_with_conf = _run_check_dc(
+                "compute_verdict",
+                _build_verdict_str,
+                verdict,
+                distribution,
+                default="clones completed",
+            )
 
             # W1142-followup: cap-hit disclosure on the canonical JSON
             # envelope. ``count``/``total_count``/``truncated``/``limit``
@@ -526,6 +779,32 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     f"truncated to {len(clusters)} of {total_clusters_full} — pass --limit larger to see more"
                 )
 
+            # W607-DC -- score_classify boundary. Wraps the run-state
+            # bucketing into a state label (CLONES_FOUND / NO_CLONES) so
+            # a downstream refactor of the state-selection logic surfaces
+            # a marker rather than crashing. Floor returns documented
+            # state matching the no-clones branch shape so downstream
+            # verdict / compute_predicate stay non-null.
+            #
+            # W978 KWARG-DEFAULT EAGERNESS TRAP: ``clusters`` is passed
+            # as raw arg; the branch logic + len() lives INSIDE the
+            # closure. W978 5th-discipline (cmd_taint W607-CJ): no
+            # ``len()`` at kwarg-bind site.
+            def _score_classify_run(_clusters):
+                _n = len(_clusters)
+                if _n > 0:
+                    _state = "CLONES_FOUND"
+                else:
+                    _state = "NO_CLONES"
+                return {"state": _state, "scanned": _n}
+
+            _score_dict = _run_check_dc(
+                "score_classify",
+                _score_classify_run,
+                clusters,
+                default={"state": "DEGRADED", "scanned": 0},
+            )
+
             summary_payload = {
                 "verdict": verdict_with_conf,
                 "clusters": len(clusters),
@@ -538,23 +817,79 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 # the summary so agent contracts can filter
                 # without re-walking clusters[].
                 "role_buckets": bucket_counts,
+                # W607-DC: surface score_classify result on the envelope
+                # so consumers can read the run state without
+                # re-deriving from raw counts. W978 7th-discipline
+                # anchor: bare ``_score_dict["state"]`` lookup (floor
+                # dict guarantees the key) -- NOT
+                # ``.get("state", expensive_default)``.
+                "run_state": _score_dict["state"],
                 **_cap_summary,
             }
-            if _warnings_out:
-                summary_payload["warnings_out"] = _warnings_out
-                summary_payload["partial_success"] = True
+            # W607-BQ + DC: union the cap-hit disclosure list with the
+            # substrate-CALL marker list AND the aggregation-phase
+            # marker list. All three bins flush into the same
+            # ``warnings_out`` envelope fields so a single consumer
+            # sees the full disclosure surface. Order: cap-hit first
+            # (UI-relevant), substrate markers second (debug-relevant),
+            # aggregation markers third (debug-relevant). Empty union
+            # -> no field added -> byte-identical envelope on the
+            # happy path.
+            _combined_warnings = list(_warnings_out) + list(_w607bq_warnings_out) + list(_w607dc_warnings_out)
 
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "clones",
-                        summary=summary_payload,
-                        budget=token_budget,
-                        clusters=cluster_triples,
-                        pairs=pair_triples,
-                    )
-                )
+            _envelope_kwargs: dict = {
+                "summary": summary_payload,
+                "budget": token_budget,
+                "clusters": cluster_triples,
+                "pairs": pair_triples,
+            }
+            if _combined_warnings:
+                summary_payload["warnings_out"] = list(_combined_warnings)
+                summary_payload["partial_success"] = True
+                _envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-DC -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("clones", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. Mirror of
+            # cmd_dark_matter's W607-CZ / cmd_postmortem's W607-CV /
+            # cmd_taint's W607-CJ / cmd_audit_trail_export's W607-CR
+            # serialize_envelope floor pattern.
+            _envelope_floor: dict = {
+                "command": "clones",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict_with_conf,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            _envelope = _run_check_dc(
+                "serialize_envelope",
+                json_envelope,
+                "clones",
+                default=_envelope_floor,
+                **_envelope_kwargs,
             )
+            # W607-DC -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``clones_serialize_envelope_failed:`` marker was appended
+            # to ``_w607dc_warnings_out`` and the floor stub carries
+            # only the pre-raise combined list. Rebuild the floor
+            # stub's warnings_out so the new marker reaches the JSON
+            # output. Clean path -> envelope is the real json_envelope
+            # return value, no rebuild needed.
+            if _envelope is _envelope_floor and _w607dc_warnings_out:
+                _combined_warnings = list(_warnings_out) + list(_w607bq_warnings_out) + list(_w607dc_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                _envelope = _envelope_floor
+
+            click.echo(to_json(_envelope))
             return
 
         # Text output

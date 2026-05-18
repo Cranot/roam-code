@@ -10,6 +10,17 @@ from pathlib import Path
 
 from roam.db.schema import SCHEMA_SQL
 
+# W603 Pattern-2 disclosure substrate: surfaces silent-pass paths that
+# change user-visible DB behavior. We duplicate the
+# ``WarningsOut = list[str] | None`` alias locally instead of importing
+# from ``roam.output.formatter`` to keep ``connection.py`` import-light
+# (formatter is ~50KB / pulls in JSON-envelope helpers / runs on every
+# command's hot path; connection.py is the substrate floor). W907
+# verify-cycle check: there is NO actual top-level import cycle —
+# formatter.py imports connection lazily inside functions — so this
+# duplication is a hot-path-cost choice, NOT a cycle hedge.
+WarningsOut = list[str] | None
+
 DEFAULT_DB_DIR = ".roam"
 DEFAULT_DB_NAME = "index.db"
 
@@ -62,7 +73,7 @@ def find_project_root(start: str = ".") -> Path:
     return Path(start).resolve()
 
 
-def _load_project_config(project_root: Path) -> dict:
+def _load_project_config(project_root: Path, *, warnings_out: WarningsOut = None) -> dict:
     """Load .roam/config.json if it exists.
 
     Returns an empty dict if the file is missing or malformed.
@@ -86,6 +97,23 @@ def _load_project_config(project_root: Path) -> dict:
     * ``UnicodeDecodeError`` — file present but not valid UTF-8 (mojibake
       from a misconfigured editor or a binary blob mistakenly written
       here).
+
+    W603 Pattern-2 disclosure: when ``config.json`` is present but
+    unreadable / corrupt / mojibake, the silent empty-dict fallback
+    silently DROPS any ``db_dir`` override the operator declared — they
+    get the project-default DB path instead of the one they configured,
+    looking identical to "no override was ever set." When
+    ``warnings_out`` is threaded in, the silent-pass emits a
+    ``roam_config_read_failed:<path>:<exc_class>:<detail>`` closed-enum
+    marker so callers can disclose the drop. ``warnings_out=None``
+    (default) preserves the legacy silent behaviour — no caller is
+    forced to thread the bucket.
+
+    Intentional-absence (NOT plumbed, W978 first-hypothesis discipline):
+    the missing-file path (``config_path.exists() == False``) is the
+    common cold-start case — every project without a custom ``db_dir``
+    override hits it. Disclosing on cold-start would train operators
+    to ignore real warnings.
     """
     import json
 
@@ -93,8 +121,9 @@ def _load_project_config(project_root: Path) -> dict:
     if config_path.exists():
         try:
             return json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if warnings_out is not None:
+                warnings_out.append(f"roam_config_read_failed:{config_path}:{type(exc).__name__}:{exc}")
     return {}
 
 
@@ -155,8 +184,33 @@ def _is_cloud_synced(path: Path) -> bool:
     return any(m in resolved for m in markers)
 
 
-def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlite3.Connection:
-    """Get a SQLite connection with optimized settings."""
+def get_connection(
+    db_path: Path | None = None,
+    readonly: bool = False,
+    *,
+    warnings_out: WarningsOut = None,
+) -> sqlite3.Connection:
+    """Get a SQLite connection with optimized settings.
+
+    W603 Pattern-2 disclosure: ``warnings_out`` (kw-only) opts the call
+    into structured surfacing of silent-pass paths that change observed
+    DB behavior:
+
+    * ``roam_readonly_uri_fallback:<path>:<exc_class>:<detail>`` — the
+      requested ``readonly=True`` URI form failed (UNC path, malformed
+      URI) and the function silently fell back to a plain
+      ``sqlite3.connect()`` that has NO driver-level read-only
+      enforcement. The caller asked for a read-only handle; they got
+      one without the safety rail.
+    * ``roam_query_timeout_parse_failed:<value>`` — the operator set
+      ``ROAM_QUERY_TIMEOUT_S=<garbage>`` expecting a per-query timeout,
+      but the parse failed and the env-var silently coerced to 0 (no
+      progress handler installed). The opt-in safety mechanism is
+      absent without disclosure.
+
+    ``warnings_out=None`` (default) preserves the silent legacy
+    behaviour — every existing caller stays unchanged.
+    """
     if db_path is None:
         db_path = get_db_path()
 
@@ -169,7 +223,9 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
         try:
             uri = db_path.as_uri() + "?mode=ro"
             conn = sqlite3.connect(uri, uri=True, timeout=30)
-        except (sqlite3.OperationalError, ValueError):
+        except (sqlite3.OperationalError, ValueError) as exc:
+            if warnings_out is not None:
+                warnings_out.append(f"roam_readonly_uri_fallback:{db_path}:{type(exc).__name__}:{exc}")
             conn = sqlite3.connect(str(db_path), timeout=30)
     else:
         conn = sqlite3.connect(str(db_path), timeout=30)
@@ -227,6 +283,13 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
             timeout_s = float(timeout_str)
         except ValueError:
             timeout_s = 0.0
+            # W603: operator set ROAM_QUERY_TIMEOUT_S expecting a
+            # per-query timeout; the parse failed and the env var
+            # silently coerces to 0 (no progress handler installed).
+            # Disclose the silent drop so the operator sees their
+            # opt-in safety mechanism didn't take effect.
+            if warnings_out is not None:
+                warnings_out.append(f"roam_query_timeout_parse_failed:{timeout_str}")
         if timeout_s > 0:
             import time as _time
 
@@ -431,21 +494,46 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
 ]
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> None:
     """Create tables if they don't exist, and apply migrations.
 
     R9.A2: migrations now run from the ``_MIGRATIONS`` ledger above
     so the contract (count, ordering, name → callable mapping) is
     visible in one place. Each migration is idempotent — re-running
     ``ensure_schema`` is safe at any seq.
+
+    W603 Pattern-2 disclosure: ``warnings_out`` is threaded into the
+    two sub-helpers with plumbable silent-pass paths — ``_ensure_fts5_table``
+    (DROP / CREATE silent-skips) and ``_bump_user_version`` (PRAGMA
+    user_version read coerce). The per-migration loop itself does NOT
+    catch exceptions (intentional fail-loud — a migration that raises
+    propagates as an unexpected DatabaseError to ``open_db``'s
+    ``except sqlite3.DatabaseError`` clause, which surfaces a
+    ``click.ClickException`` with remediation hints). Migration-step
+    silent-swallow is therefore NOT plumbed — the W740-narrowed
+    ``_safe_alter`` only swallows the duplicate-column race (intentional
+    idempotent), and every other migration error propagates loudly.
+
+    W97 substrate UNTOUCHED: ``USER_VERSION`` constant + the
+    schema-version contract are unmodified. This plumb only opts in
+    callers that want migration-time silent-pass disclosure.
     """
     conn.executescript(SCHEMA_SQL)
     for _seq, _name, fn in _MIGRATIONS:
-        fn(conn)
+        # The ``_MIGRATIONS`` ledger holds bound callables — most are
+        # idempotent column-adds via ``_safe_alter`` (already W740-
+        # narrowed). ``_ensure_fts5_table`` is the only entry with
+        # plumbable silent-pass paths, so special-case it by name to
+        # thread ``warnings_out`` through. Every other migration is
+        # either fully loud or W740-intentional idempotent.
+        if _name == "_ensure_fts5_table":
+            _ensure_fts5_table(conn, warnings_out=warnings_out)
+        else:
+            fn(conn)
     # v12.x: index_manifest table is created in SCHEMA_SQL above. Bump
     # PRAGMA user_version so the manifest writer can mirror it. Migration
     # is idempotent — re-running ensure_schema() never lowers the value.
-    _bump_user_version(conn, USER_VERSION)
+    _bump_user_version(conn, USER_VERSION, warnings_out=warnings_out)
 
 
 # Current schema version. Bump this when adding migrations that consumers
@@ -470,16 +558,38 @@ USER_VERSION = 17
 MIGRATION_OPS_COUNT = len(_MIGRATIONS)
 
 
-def _bump_user_version(conn: sqlite3.Connection, target: int) -> None:
+def _bump_user_version(
+    conn: sqlite3.Connection,
+    target: int,
+    *,
+    warnings_out: WarningsOut = None,
+) -> None:
     """Set ``PRAGMA user_version`` to *target* if it's currently lower.
 
     Never lowers the value — that would cause downgraded clients to think
     the DB is fresher than it really is.
+
+    W603 Pattern-2 disclosure: the ``except sqlite3.DatabaseError``
+    clause coerces ``current`` to 0 on a failed PRAGMA read, which then
+    drives the unconditional bump to *target*. That silent reset masks
+    a legitimate drift signal (the W596 + W97 USER_VERSION discipline
+    relies on read-then-compare to detect downgraded/corrupted DBs).
+    When ``warnings_out`` is threaded in, the silent-coerce emits a
+    ``roam_user_version_read_failed:<exc_class>:<detail>`` marker so
+    the manifest writer / drift detector can disclose the read failure
+    rather than show a clean-looking jump. ``warnings_out=None``
+    preserves the legacy silent behaviour.
+
+    W97 substrate UNTOUCHED: the schema-level ``USER_VERSION`` constant
+    + ``ensure_schema()`` invariant are not modified. This plumb only
+    surfaces the read-path failure that would otherwise be lost.
     """
     try:
         row = conn.execute("PRAGMA user_version").fetchone()
         current = int(row[0]) if row else 0
-    except sqlite3.DatabaseError:
+    except sqlite3.DatabaseError as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"roam_user_version_read_failed:{type(exc).__name__}:{exc}")
         current = 0
     if current < target:
         # PRAGMA can't take ? params — target is internal, not user input.
@@ -510,7 +620,7 @@ def _ensure_tfidf_cascade(conn: sqlite3.Connection):
 _FTS5_SCHEMA_COLUMNS = ("name", "qualified_name", "signature", "docstring", "kind", "file_path")
 
 
-def _ensure_fts5_table(conn: sqlite3.Connection):
+def _ensure_fts5_table(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None):
     """Create the FTS5 full-text search virtual table if not present.
 
     FTS5 pushes tokenization, indexing, and BM25 ranking entirely into
@@ -523,6 +633,25 @@ def _ensure_fts5_table(conn: sqlite3.Connection):
     only saw symbol names + signatures, missing the text agents
     typically search for. Existing tables get re-created (cheap, the
     rows are repopulated by ``build_fts_index`` on the next index run).
+
+    W603 Pattern-2 disclosure: TWO silent-pass paths change observed
+    search behaviour without disclosure:
+
+    1. The ``DROP TABLE symbol_fts`` silent-skip on
+       ``sqlite3.OperationalError``: when the docstring-upgrade DROP
+       fails (locked DB, hot reader, etc.), the function early-returns
+       and the table is left WITHOUT the docstring column. ``roam
+       retrieve`` then silently misses natural-language matches.
+    2. The ``CREATE VIRTUAL TABLE ... USING fts5`` silent-skip on
+       ``sqlite3.OperationalError``: the comment says "FTS5 not
+       available in this SQLite build," but the same except clause
+       also catches every OTHER OperationalError (locked DB, corrupt
+       schema). All those failures silently leave FTS5 absent.
+
+    When ``warnings_out`` is threaded in, both paths emit a closed-enum
+    marker (``roam_fts_drop_failed:`` / ``roam_fts_create_failed:``) so
+    operators see WHY their FTS5 search lookups are returning empty.
+    ``warnings_out=None`` preserves the legacy silent fallback.
     """
     row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
     if row:
@@ -535,13 +664,20 @@ def _ensure_fts5_table(conn: sqlite3.Connection):
         # Drop and re-create with the new schema.
         try:
             conn.execute("DROP TABLE symbol_fts")
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if warnings_out is not None:
+                warnings_out.append(f"roam_fts_drop_failed:{type(exc).__name__}:{exc}")
             return
     try:
         cols = ", ".join(_FTS5_SCHEMA_COLUMNS)
         conn.execute(f"CREATE VIRTUAL TABLE symbol_fts USING fts5({cols}, tokenize='porter unicode61')")
-    except sqlite3.OperationalError:
-        pass  # FTS5 not available in this SQLite build
+    except sqlite3.OperationalError as exc:
+        # FTS5 absent is a real signal even when it's the legit
+        # "no such module: fts5" case — operators with that build
+        # need to know their semantic search is degraded. Locked-DB
+        # / corrupt-schema variants also flow through the marker.
+        if warnings_out is not None:
+            warnings_out.append(f"roam_fts_create_failed:{type(exc).__name__}:{exc}")
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):
@@ -661,18 +797,38 @@ def db_exists(project_root: Path | None = None) -> bool:
 
 
 @contextmanager
-def open_db(readonly: bool = False, project_root: Path | None = None) -> "Iterator[sqlite3.Connection]":
+def open_db(
+    readonly: bool = False,
+    project_root: Path | None = None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> "Iterator[sqlite3.Connection]":
     """Context manager for database access. Creates schema if needed.
 
     Raises a descriptive ``click.ClickException`` if the database file is
     missing or corrupted so that agents receive actionable remediation steps
     instead of a raw SQLite traceback.
+
+    W603 Pattern-2 disclosure: ``warnings_out`` (kw-only) is threaded
+    through to ``get_connection`` (URI readonly fallback + query-timeout
+    parse) and ``ensure_schema`` (FTS5 + user_version PRAGMA reads).
+    The ``open_db`` shell itself has TWO error paths but neither is
+    silent — both raise ``click.ClickException`` with remediation hints
+    (already loud per W606-style discipline). The ``PRAGMA optimize``
+    silent-skip at commit time is NOT plumbed: query-planner staleness
+    is explicitly "not load-bearing; never refuse to close on this"
+    (legacy comment), and surfaces only as gradual query-latency
+    degradation — no actionable signal for an operator to take action.
+    W978 intentional-absence.
+
+    ``warnings_out=None`` (default) preserves the legacy silent-pass
+    behaviour for every existing caller (~200+ commands import open_db).
     """
     import click
 
     db_path = get_db_path(project_root)
     try:
-        conn = get_connection(db_path, readonly=readonly)
+        conn = get_connection(db_path, readonly=readonly, warnings_out=warnings_out)
     except sqlite3.DatabaseError as exc:
         raise click.ClickException(
             f"Database error: {exc}\n"
@@ -683,7 +839,7 @@ def open_db(readonly: bool = False, project_root: Path | None = None) -> "Iterat
     try:
         if not readonly:
             try:
-                ensure_schema(conn)
+                ensure_schema(conn, warnings_out=warnings_out)
             except sqlite3.DatabaseError as exc:
                 conn.close()
                 raise click.ClickException(

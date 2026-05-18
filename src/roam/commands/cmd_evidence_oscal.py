@@ -327,6 +327,20 @@ def evidence_oscal(
             # underlying message already names the failing field.
             raise click.ClickException(f"evidence packet failed validation: {exc}")
 
+        # W556: auto-detect the canonical stub Assessment Plan written by
+        # ``roam ci-setup --with-oscal`` (W535) when ``--import-ap-ref`` is
+        # not supplied. The W535 emitter writes the stub AP to
+        # ``.roam/oscal/stub-assessment-plan.json`` precisely so AR
+        # emissions can reference it by stable path instead of inlining
+        # the stub every time (FedRAMP continuous-assessment pattern).
+        # Falling back to None (inline-stub synthesis) when the canonical
+        # file is absent preserves the pre-W556 default behaviour.
+        if import_ap_ref is None:
+            canonical_ap = Path.cwd() / ".roam" / "oscal" / "stub-assessment-plan.json"
+            if canonical_ap.is_file():
+                import_ap_ref = str(canonical_ap)
+                click.echo(f"Auto-detected Assessment Plan at {canonical_ap}", err=True)
+
         doc = build_oscal_assessment_results(
             evidence,
             import_ap_ref=import_ap_ref,

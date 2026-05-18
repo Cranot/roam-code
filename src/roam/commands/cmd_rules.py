@@ -111,6 +111,41 @@ must_not:
 
 
 # ---------------------------------------------------------------------------
+# W1030-followup-F: config-state disclosure helpers
+# ---------------------------------------------------------------------------
+
+# Closed-enum set of LoadStatus values that flip ``partial_success=True``
+# even when no warning fired (e.g. empty stub doesn't warn, but
+# ``schema_invalid`` does -- treat them uniformly at the partial_success
+# level). Mirrors cmd_alerts + cmd_budget + cmd_health + cmd_check_rules +
+# cmd_fitness vocabularies.
+_DEGRADED_LOAD_STATUSES: frozenset[str] = frozenset({"parse_error", "wrong_root_type", "read_error", "schema_invalid"})
+
+
+def _build_config_state_facts(config_state: str) -> list[str]:
+    """W1030-followup-F: build ``agent_contract.facts`` for the ``config_state``.
+
+    LAW 4 anchored on the concrete-noun terminal ``"rules"`` (the
+    governance rules ``cmd_rules`` evaluates). Mirrors cmd_check_rules
+    (anchors on ``"rules"``), cmd_fitness (anchors on ``"rules"``),
+    cmd_alerts (anchors on ``"defaults"``), and cmd_health (anchors on
+    ``"gates"``) by using the command's own subject-noun.
+
+    Returns an empty list when ``config_state == "ok"`` -- no need to
+    disclose the happy path.
+    """
+    if config_state == "missing":
+        return ["no .roam/rules/ directory configured; using baseline rules"]
+    if config_state == "empty_file":
+        return ["empty .roam/rules/ stub on disk; using baseline rules"]
+    if config_state == "empty_yaml":
+        return ["comment-only .roam/rules/ files on disk; using baseline rules"]
+    if config_state in _DEGRADED_LOAD_STATUSES:
+        return [f"rules config rejected ({config_state}); using baseline rules"]
+    return []
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -214,18 +249,25 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             click.echo(write_sarif(sarif))
             return
         if json_mode:
+            # W1030-followup-F: missing rules directory is the "missing"
+            # state; surface it on summary.config_state with the
+            # state-disclosure agent_contract.facts.
+            missing_summary = {
+                "verdict": verdict,
+                "passed": 0,
+                "failed": 0,
+                "warnings": 0,
+                "total": 0,
+                "config_state": "missing",
+            }
+            missing_facts = _build_config_state_facts("missing")
             click.echo(
                 to_json(
                     json_envelope(
                         "rules",
-                        summary={
-                            "verdict": verdict,
-                            "passed": 0,
-                            "failed": 0,
-                            "warnings": 0,
-                            "total": 0,
-                        },
+                        summary=missing_summary,
                         results=[],
+                        agent_contract={"facts": missing_facts} if missing_facts else None,
                     )
                 )
             )
@@ -241,14 +283,16 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
                 )
         return
 
-    from roam.rules.engine import evaluate_all
+    from roam.rules.engine import evaluate_all_with_status
 
     # W1036: plumb the per-file YAML-loader warnings up to the envelope so
     # malformed rule files surface as actionable warnings instead of silent
     # `_error` placeholders.
+    # W1030-followup-F: also surface the directory-level LoadStatus rollup
+    # so the envelope can disambiguate missing / empty / parse_error / ok.
     _rules_warnings: list[str] = []
     with open_db(readonly=True) as conn:
-        results = evaluate_all(
+        results, config_state = evaluate_all_with_status(
             rules_dir,
             conn,
             max_depth=depth,
@@ -337,6 +381,10 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             "failed": failed,
             "warnings": failed_warnings,
             "total": total,
+            # W1030-followup-F: uniform config_state disclosure across the
+            # W1030-followup cohort (alerts / budget / health / check-rules /
+            # fitness / rules).
+            "config_state": config_state,
         }
         if partial_success:
             summary_dict["partial_success"] = True
@@ -346,13 +394,26 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             # silently dropped half its rules.
             summary_dict["warnings_out"] = list(_rules_warnings)
             summary_dict["partial_success"] = True
+        # W1030-followup-F: degraded config_state flips partial_success
+        # even when no warning fired (e.g. empty stub directory).
+        if config_state in _DEGRADED_LOAD_STATUSES:
+            summary_dict["partial_success"] = True
+        # W1030-followup-F: agent_contract.facts disclose the config_state
+        # so an agent reading only the contract sees the lineage of the
+        # verdict (missing config -> baseline rules / degraded -> warning).
+        state_facts = _build_config_state_facts(config_state)
+        envelope_kwargs: dict = {
+            "summary": summary_dict,
+            "results": results,
+            "next_commands": next_commands,
+        }
+        if state_facts:
+            envelope_kwargs["agent_contract"] = {"facts": state_facts}
         click.echo(
             to_json(
                 json_envelope(
                     "rules",
-                    summary=summary_dict,
-                    results=results,
-                    next_commands=next_commands,
+                    **envelope_kwargs,
                 )
             )
         )

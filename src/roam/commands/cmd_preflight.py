@@ -680,12 +680,16 @@ def _resolve_targets(conn, target, staged, root):
     - file_ids: list of file IDs (int)
     - label: human-readable label for the target
     - resolution: W1241 Pattern-2 variant-D state — one of
-      ``{"symbol", "file", "fuzzy", "unresolved", "staged"}``. The
-      ``"staged"`` value is preflight-specific (not in the canonical
+      ``{"symbol", "file", "file_substring", "fuzzy", "unresolved", "staged"}``.
+      The ``"staged"`` value is preflight-specific (not in the canonical
       ``_RESOLUTION_KINDS`` enum) and signals that the caller should
       omit the W1241 disclosure block — preflight on staged changes
-      isn't a single-target resolution. The other four pass through to
-      ``resolution_disclosure()`` directly.
+      isn't a single-target resolution. The other five pass through to
+      ``resolution_disclosure()`` directly. Pattern-1 Variant D Wave B
+      added the ``file_substring`` distinction so substring-LIKE
+      fallback matches surface separately from exact-path resolutions
+      instead of collapsing both into ``"file"`` (closes the audit
+      MEDIUM-severity vocab-mismatch entry).
     """
     sym_ids = set()
     file_paths = set()
@@ -710,8 +714,13 @@ def _resolve_targets(conn, target, staged, root):
     if target:
         target_norm = target.replace("\\", "/")
         if _looks_like_file(target_norm):
-            sids, fpaths = _resolve_file_symbols(conn, target_norm)
-            if not sids:
+            sids, fpaths, file_tier = _resolve_file_symbols(conn, target_norm)
+            # Pattern-1 Variant D Wave B: gate the not-found branch on
+            # tier=None rather than ``not sids`` so a file indexed with
+            # zero symbols stays tier-disclosable (the resolved-but-empty
+            # ``file`` shape is valid; collapsing it into ``unresolved``
+            # would mis-attribute the resolution state).
+            if file_tier is None:
                 return sym_ids, file_paths, file_ids, f"{target} (not found)", "unresolved"
             sym_ids.update(sids)
             file_paths.update(fpaths)
@@ -721,7 +730,7 @@ def _resolve_targets(conn, target, staged, root):
                 if row:
                     file_ids.append(row["id"])
             label = target_norm
-            return sym_ids, file_paths, file_ids, label, "file"
+            return sym_ids, file_paths, file_ids, label, file_tier
         sym = find_symbol(conn, target)
         if sym is None:
             return sym_ids, file_paths, file_ids, f"{target} (not found)", "unresolved"
@@ -808,13 +817,151 @@ def preflight(ctx, target, staged):
     ensure_index()
     root = find_project_root()
 
+    # W607-R — substrate-CALL marker accumulator (eighteenth-in-batch
+    # W607 consumer-layer arc). cmd_preflight composes 6 substrate
+    # helpers (resolve_targets / blast / tests / complexity / coupling
+    # / conventions / fitness) into the 5-signal pre-change safety
+    # envelope. Each helper has its own internal try/except returning a
+    # safe floor, but a helper itself can still raise BEFORE reaching
+    # that floor (downstream SQL-shape refactor, networkx blowing up
+    # during build_symbol_graph, YAML loader surfacing an unexpected
+    # raise from .roam-fitness.yml). The outer call sites previously had
+    # no guards, so the envelope crashed whole. W607-R wraps each
+    # substrate boundary with ``_run_check(phase, fn, *args)`` so the
+    # raise becomes a ``preflight_<phase>_failed:<exc_class>:<detail>``
+    # marker via ``_w607r_warnings_out`` and the envelope still emits
+    # the remaining sections cleanly.
+    #
+    # Marker family ``preflight_*`` — distinct from W607-Q's ``pr_risk_*``,
+    # W607-P's ``audit_*``, W607-O's ``dashboard_*``, W607-N's
+    # ``doctor_*``, W607-M's ``health_*``, W607-L's ``minimap_*``,
+    # W607-K's ``describe_*``. The marker-prefix discipline test pins
+    # this closed-enum distinction.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either summary or top-level, no W607-R-driven partial_success flip;
+    # the W1243 resolution-disclosure path still flips partial_success on
+    # its own axis).
+    _w607r_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-R marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception (the helper itself raised before producing its own
+        floor value), surface a ``preflight_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607r_warnings_out`` and return *default* — the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607r_warnings_out.append(f"preflight_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-AW — ADDITIVE plumbing on top of the W607-R substrate-CALL
+    # markers. W607-R already wrapped the seven helper boundaries
+    # (resolve_targets / blast / tests / complexity / coupling /
+    # conventions / fitness); W607-AW extends marker coverage to the
+    # AGGREGATION-PHASE boundaries that W607-R left unguarded:
+    #
+    #   - ``overall_risk``       — ``_overall_risk(...)`` rollup compute
+    #   - ``risk_driver``        — ``_risk_driver(...)`` row-picker
+    #   - ``fitness_violations`` — flat list build for summary contract
+    #   - ``auto_log``           — active-run ledger write (silent no-op
+    #                              if no run is active, but the underlying
+    #                              ``auto_log`` can still raise on HMAC
+    #                              chain misshape or filesystem failures)
+    #
+    # cmd_preflight is the AGENT-OS PRE-EDIT SAFETY GATE per CLAUDE.md
+    # LAW 1: agents are instructed to run ``roam preflight <symbol>``
+    # BEFORE every code change. A silent failure or partial-success in
+    # preflight is the highest-blast-radius bug class in the entire roam
+    # surface. The 5-signal degradation discipline (blast / complexity /
+    # conventions / coupling / fitness) is preserved by W607-R; W607-AW
+    # adds the same plumbing to the *post-compute* boundaries so the
+    # envelope still surfaces a marker even when the aggregation phase
+    # itself raises.
+    #
+    # Marker family ``preflight_*`` — same family as W607-R (additive,
+    # not a separate prefix). Empty bucket → byte-identical envelope.
+    _w607aw_warnings_out: list[str] = []
+
+    def _run_check_aw(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-AW marker emission.
+
+        Mirror of ``_run_check`` shape (same ``preflight_<phase>_failed:``
+        marker family) but writes into ``_w607aw_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607aw_warnings_out.append(f"preflight_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-EC: post-capture substrate-CALL plumbing LAYERED on top of
+    # W607-R (substrate-CALL helper boundaries) and W607-AW
+    # (aggregation-phase boundaries). cmd_preflight is the FLAGSHIP
+    # gate command — its 5-signal envelope (blast / complexity /
+    # conventions / coupling / fitness) is the canonical "dominant
+    # variable" per CLAUDE.md LAW 1 for agent-decision speed. A raise
+    # inside the POST-capture path (verdict-cascade f-strings, summary
+    # dict assembly, envelope serialization, text formatting) would
+    # silently torpedo the gate envelope WITHOUT lineage.
+    #
+    # W607-EC splits the post-capture boundary into 5 wrapped substrate
+    # calls — DISJOINT phase-name sub-vocabulary from W607-R and
+    # W607-AW so the shared ``preflight_*`` marker family carries no
+    # collision:
+    #
+    #   compute_scores       — pre-verdict score-derivation + label normalization
+    #   compose_verdict      — LAW 1+6 single-line verdict floor (THE
+    #                          canonical agent-decision driver)
+    #   assemble_sections    — summary_dict + envelope_kwargs build
+    #                          (5-signal envelope shape)
+    #   serialize_envelope   — to_json(json_envelope("preflight", ...)) projection
+    #   format_text          — text-mode click.echo formatting
+    #
+    # Markers merge into BOTH ``summary.warnings_out`` and the
+    # top-level ``warnings_out`` at output time. Empty bucket →
+    # byte-identical 5-signal envelope. Helper template returns
+    # ``default`` VERBATIM on raise (NOT
+    # ``default if default is not None else {}``) so ``rendered is None``
+    # guards work on the serialize_envelope degraded path.
+    _w607ec_warnings_out: list[str] = []
+
+    def _run_check_ec(phase: str, fn, *args, default=None, **kwargs):
+        """Run one W607-EC post-capture substrate with marker emission.
+
+        Clean call returns the result as-is. On an uncaught raise,
+        surface ``preflight_<phase>_failed:<exc_class>:<detail>`` via
+        ``_w607ec_warnings_out`` and substitute *default* — the envelope
+        still emits the remaining substrates cleanly.
+
+        ``default`` is returned VERBATIM on raise (including ``None``)
+        so callers can distinguish a degraded-but-empty result (``{}``)
+        from a degraded-no-output result (``None``). Critical for the
+        ``serialize_envelope`` phase whose ``rendered is None`` guard
+        precedes the minimal-fallback echo (W978 #6).
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607ec_warnings_out.append(f"preflight_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
         # Resolve targets
-        sym_ids, file_paths, file_ids, label, resolution = _resolve_targets(
+        _resolve_default = (set(), set(), [], target or "staged changes", "unresolved")
+        sym_ids, file_paths, file_ids, label, resolution = _run_check(
+            "resolve_targets",
+            _resolve_targets,
             conn,
             target,
             staged,
             root,
+            default=_resolve_default,
         )
 
         if not sym_ids:
@@ -848,6 +995,26 @@ def preflight(ctx, target, staged):
             if disclosure is not None:
                 not_found_envelope_kwargs["resolution"] = disclosure["resolution"]
                 not_found_envelope_kwargs["partial_success"] = disclosure["partial_success"]
+            # W607-R + W607-AW — surface substrate-CALL markers on the
+            # not-found path. This branch is reached when
+            # ``_resolve_targets`` returns an empty sym_ids set; if it
+            # raised before that (W607-R wrapper floored to the
+            # unresolved default), the marker lives in
+            # ``_w607r_warnings_out`` and must reach the envelope.
+            # W607-AW bucket is included for parity (empty here since
+            # aggregation-phase boundaries fire AFTER the not-found
+            # branch returns, but the field shape stays uniform across
+            # paths). partial_success already True on this branch.
+            # W607-R + W607-AW + W607-EC — surface substrate-CALL markers
+            # on the not-found path. W607-EC bucket is included for
+            # parity (empty here since post-capture phases haven't run
+            # yet, but the field shape stays uniform across paths).
+            _combined_warnings_out_nf = (
+                list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+            )
+            if _combined_warnings_out_nf:
+                not_found_summary["warnings_out"] = list(_combined_warnings_out_nf)
+                not_found_envelope_kwargs["warnings_out"] = list(_combined_warnings_out_nf)
             not_found_envelope = json_envelope(
                 "preflight",
                 **not_found_envelope_kwargs,
@@ -862,54 +1029,196 @@ def preflight(ctx, target, staged):
                 click.echo("  or `roam index --force` if the symbol was just added.")
             return
 
-        # Run all checks
-        blast = _check_blast_radius(conn, sym_ids, file_paths)
-        tests = _check_affected_tests(conn, sym_ids, file_paths)
-        compl = _check_complexity(conn, sym_ids)
-        coupl = _check_coupling(conn, file_ids, file_paths)
-        convs = _check_conventions(conn, sym_ids)
-        fitns = _check_fitness(conn, root, target_paths=set(file_paths))
+        # Run all checks. W607-R — wrap each substrate boundary so an
+        # unexpected raise surfaces as a marker via warnings_out rather
+        # than crashing the whole envelope. Defaults mirror each
+        # helper's own internal floor shape so downstream consumers
+        # (severity helpers, _risk_driver, _overall_risk) keep reading
+        # the same dict keys.
+        blast = _run_check(
+            "blast_radius",
+            _check_blast_radius,
+            conn,
+            sym_ids,
+            file_paths,
+            default={
+                "affected_symbols": 0,
+                "affected_files": 0,
+                "affected_file_list": [],
+                "severity": "low",
+            },
+        )
+        tests = _run_check(
+            "affected_tests",
+            _check_affected_tests,
+            conn,
+            sym_ids,
+            file_paths,
+            default={
+                "direct": 0,
+                "transitive": 0,
+                "colocated": 0,
+                "total": 0,
+                "test_files": [],
+                "pytest_command": "",
+                "pytest_command_truncated": False,
+                # W759: envelope-slot ``severity`` is the W547 canonical
+                # lowercase vocabulary. The helper ``_test_severity``
+                # returns UPPER (``"WARNING"`` / ``"OK"``) under the
+                # W847 internal-vocabulary carve-out, but ``_run_check``
+                # defaults that surface to the SAME envelope slot must
+                # use lowercase so the W762 drift-guard stays green.
+                # ``_overall_risk`` does ``.lower()`` at lookup time
+                # (W1088) so ``"warning"`` resolves to the same rank as
+                # ``"WARNING"`` (both map to 2 in ``_SEVERITY_ORDER``).
+                "severity": "warning",
+            },
+        )
+        compl = _run_check(
+            "complexity",
+            _check_complexity,
+            conn,
+            sym_ids,
+            default={
+                "max_cognitive_complexity": 0,
+                "max_nesting_depth": 0,
+                "high_complexity_symbols": [],
+                "severity": "low",
+            },
+        )
+        coupl = _run_check(
+            "coupling",
+            _check_coupling,
+            conn,
+            file_ids,
+            file_paths,
+            default={
+                "coupled_files": 0,
+                "missing_partners": [],
+                "severity": "OK",
+            },
+        )
+        convs = _run_check(
+            "conventions",
+            _check_conventions,
+            conn,
+            sym_ids,
+            default={
+                "violations": [],
+                "violation_count": 0,
+                "severity": "OK",
+                "majority_threshold_pct": 70.0,
+                "kinds_with_majority": 0,
+            },
+        )
+        fitns = _run_check(
+            "fitness",
+            _check_fitness,
+            conn,
+            root,
+            target_paths=set(file_paths),
+            default={
+                "rules_checked": 0,
+                "rules_failed": 0,
+                "rules_currently_failing": 0,
+                "rules_failing_on_target": 0,
+                "rules_failing_on_siblings": 0,
+                "total_violations": 0,
+                "failed_rules": [],
+                "rule_details": [],
+                "severity": "OK",
+            },
+        )
 
         # Overall risk
-        risk = _overall_risk(
+        # W607-AW — wrap the rollup compute so an unexpected raise in
+        # ``_overall_risk`` (e.g. a future severity dict-lookup refactor)
+        # surfaces as ``preflight_overall_risk_failed:...`` and the
+        # envelope still emits with a safe "UNKNOWN" floor.
+        risk = _run_check_aw(
+            "overall_risk",
+            _overall_risk,
             blast["severity"],
             tests["severity"],
             compl["severity"],
             coupl["severity"],
             convs["severity"],
             fitns["severity"],
+            default="UNKNOWN",
         )
 
-        # Verdict
+        # W607-EC ``compute_scores`` substrate: derive the verdict-input
+        # tuple (risk-tier kind + interpolation args) from per-signal
+        # capture results. A raise inside arithmetic / dict-lookups on a
+        # degraded capture-result surfaces as
+        # ``preflight_compute_scores_failed:...`` and the floor scores
+        # produce the verdict floor downstream.
+        def _compute_scores():
+            return {
+                "risk": risk,
+                "blast_affected_symbols": blast["affected_symbols"],
+                "label": label,
+            }
+
+        _scores = _run_check_ec(
+            "compute_scores",
+            _compute_scores,
+            default={"risk": "UNKNOWN", "blast_affected_symbols": 0, "label": label},
+        )
+
+        # W607-EC ``compose_verdict`` substrate: LAW 1 + LAW 6 single-line
+        # verdict floor — preflight's verdict is THE canonical
+        # agent-decision driver. A raise inside the f-string composition
+        # returns the literal floor verdict instead of crashing.
         # W847 — LOW/MEDIUM/HIGH branches compare against the canonical
         # ``risk_level`` rollup (agent-facing risk-tier display, NOT a
         # W762-scoped envelope severity slot). The interpolated ``{risk}``
         # also reads as UPPER in the human-facing verdict text on
         # purpose. Out of W759 scope — STAYS UPPER.
-        if risk == "LOW":
-            verdict = f"Safe to proceed — {risk} risk for {label}"
-        elif risk == "MEDIUM":
-            verdict = f"Proceed with caution — {risk} risk for {label}"
-        elif risk == "HIGH":
-            verdict = f"Review carefully — {risk} risk, {blast['affected_symbols']} symbols affected"
-        else:
-            verdict = f"Significant risk — {risk}, {blast['affected_symbols']} symbols in blast radius"
+        def _compose_verdict():
+            _risk = _scores.get("risk", "UNKNOWN") if isinstance(_scores, dict) else "UNKNOWN"
+            _bs = _scores.get("blast_affected_symbols", 0) if isinstance(_scores, dict) else 0
+            _label = _scores.get("label", label) if isinstance(_scores, dict) else label
+            if _risk == "LOW":
+                _v = f"Safe to proceed — {_risk} risk for {_label}"
+            elif _risk == "MEDIUM":
+                _v = f"Proceed with caution — {_risk} risk for {_label}"
+            elif _risk == "HIGH":
+                _v = f"Review carefully — {_risk} risk, {_bs} symbols affected"
+            else:
+                _v = f"Significant risk — {_risk}, {_bs} symbols in blast radius"
 
-        # W1243 — Pattern-2 variant-D suffix on the verdict when the
-        # resolver succeeded through a degraded tier. The underlying
-        # check is still valid (the symbol set we built is real), but
-        # the success verdict must reflect that the input string did
-        # not exact-match a single symbol — agents need to know to
-        # re-issue with a qualified name.
-        if resolution == "fuzzy":
-            verdict = f"{verdict} [fuzzy resolution]"
-        elif resolution == "file":
-            verdict = f"{verdict} [file fallback]"
+            # W1243 — Pattern-2 variant-D suffix on the verdict when the
+            # resolver succeeded through a degraded tier. The underlying
+            # check is still valid (the symbol set we built is real), but
+            # the success verdict must reflect that the input string did
+            # not exact-match a single symbol — agents need to know to
+            # re-issue with a qualified name. Pattern-1 Variant D Wave B
+            # adds the ``file_substring`` distinction so a substring
+            # LIKE-fallback match surfaces separately from an exact-path
+            # ``file`` resolution.
+            if resolution == "fuzzy":
+                _v = f"{_v} [fuzzy resolution]"
+            elif resolution == "file_substring":
+                _v = f"{_v} [file substring match]"
+            elif resolution == "file":
+                _v = f"{_v} [file fallback]"
+            return _v
+
+        # W978 #1: verdict floor is a non-empty literal string so a
+        # degraded compose_verdict still satisfies LAW 6.
+        verdict = _run_check_ec(
+            "compose_verdict",
+            _compose_verdict,
+            default="preflight gate degraded",
+        )
 
         # Build the W1241 disclosure block. ``staged`` resolutions are
-        # multi-target and don't map onto the four-kind enum — omit the
-        # disclosure rather than lie about which tier fired.
-        if resolution in {"symbol", "file", "fuzzy"}:
+        # multi-target and don't map onto the canonical enum — omit the
+        # disclosure rather than lie about which tier fired. Pattern-1
+        # Variant D Wave B added ``file_substring`` for the LIKE-fallback
+        # substring-match path (distinct from exact-path ``file``).
+        if resolution in {"symbol", "file", "file_substring", "fuzzy"}:
             target_for_disclosure = label if target else (target or "")
             disclosure = resolution_disclosure(
                 resolution,  # type: ignore[arg-type]
@@ -927,6 +1236,7 @@ def preflight(ctx, target, staged):
         # ``r['fitness']['failed_rules']`` untouched for existing
         # consumers.
         target_label_for_fitness = label.split(" (", 1)[0] if isinstance(label, str) else ""
+
         # W-dogfood-K: surface ONLY rules the target actually violates.
         # When ``violations_on_target == 0`` the rule is failing on
         # sibling files (other code in the same files OR elsewhere in
@@ -939,195 +1249,351 @@ def preflight(ctx, target, staged):
         # ``r['fitness']['rule_details'][*].violations_on_siblings``
         # and ``r['fitness']['rules_failing_on_siblings']`` for callers
         # that explicitly want global codebase signal.
-        fitness_violations_list = [
-            {
-                "symbol": target_label_for_fitness,
-                "rule": detail.get("name", "unnamed"),
-                "severity": fitns.get("severity", "warning"),
-            }
-            for detail in fitns.get("rule_details") or []
-            if detail.get("status") == "FAIL" and detail.get("violations_on_target", 0) > 0
-        ]
+        # W607-AW — wrap the flat-list build so a malformed
+        # ``rule_details`` row (e.g. a downstream contract change that
+        # makes ``detail`` a non-dict, or a future ``rule_details``
+        # producer that surfaces a None where a list was expected)
+        # surfaces as ``preflight_fitness_violations_failed:...`` and
+        # the envelope still emits a safe empty list instead of
+        # crashing the whole command.
+        def _build_fitness_violations_list():
+            return [
+                {
+                    "symbol": target_label_for_fitness,
+                    "rule": detail.get("name", "unnamed"),
+                    "severity": fitns.get("severity", "warning"),
+                }
+                for detail in fitns.get("rule_details") or []
+                if detail.get("status") == "FAIL" and detail.get("violations_on_target", 0) > 0
+            ]
 
-        # Build the envelope once — used for JSON output and auto-log.
-        # W1243 — Pattern-2 variant-D disclosure: when ``resolution`` is
-        # a degraded tier (file / fuzzy), the verdict already carries
-        # the suffix; the structured ``resolution`` + ``partial_success``
-        # fields go on both ``summary`` (so agents reading only the
-        # summary see them) and at the envelope top level (so the
-        # canonical envelope shape lives alongside risk_level).
-        summary_dict: dict = {
-            "verdict": verdict,
-            "target": label,
-            # W847 — ``risk_level`` is preflight's canonical rollup field
-            # (not the W762-scoped ``severity`` slot). UPPER values flow
-            # from ``_overall_risk``'s agent-facing risk-tier vocabulary.
-            "risk_level": risk,
-            "symbols_checked": len(sym_ids),
-            "files_checked": len(file_paths),
-            "fitness_violations": fitness_violations_list,
-            # W331: preflight aggregates 6 dimensions into one
-            # CRITICAL/HIGH/MEDIUM/LOW verdict. Name the rollup so
-            # agents don't conflate it with a per-dimension severity.
-            "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
-        }
-        envelope_kwargs: dict = {
-            "summary": summary_dict,
-            "blast_radius": {
-                "affected_symbols": blast["affected_symbols"],
-                "affected_files": blast["affected_files"],
-                "affected_file_list": blast["affected_file_list"],
-                "severity": blast["severity"],
-                # W331: same definition as cmd_impact so two commands
-                # don't disagree on what "affected_symbols" means.
-                "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
-                "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+        fitness_violations_list = _run_check_aw(
+            "fitness_violations",
+            _build_fitness_violations_list,
+            default=[],
+        )
+
+        # W607-EC ``assemble_sections`` substrate: build the
+        # ``summary_dict`` + ``envelope_kwargs`` for the 5-signal
+        # envelope in one wrapped call. A raise inside the dict
+        # construction (e.g. ``.get`` on a degraded sub-envelope, an
+        # f-string on a non-stringifiable value) surfaces the canonical
+        # marker; the floor produces a minimal but structurally valid
+        # ``{summary_dict, envelope_kwargs}`` pair so the serialize path
+        # still composes.
+        def _assemble_sections():
+            # Build the envelope once — used for JSON output and auto-log.
+            # W1243 — Pattern-2 variant-D disclosure: when ``resolution`` is
+            # a degraded tier (file / fuzzy), the verdict already carries
+            # the suffix; the structured ``resolution`` + ``partial_success``
+            # fields go on both ``summary`` (so agents reading only the
+            # summary see them) and at the envelope top level (so the
+            # canonical envelope shape lives alongside risk_level).
+            _summary_dict: dict = {
+                "verdict": verdict,
+                "target": label,
+                # W847 — ``risk_level`` is preflight's canonical rollup field
+                # (not the W762-scoped ``severity`` slot). UPPER values flow
+                # from ``_overall_risk``'s agent-facing risk-tier vocabulary.
+                "risk_level": risk,
+                "symbols_checked": len(sym_ids),
+                "files_checked": len(file_paths),
+                "fitness_violations": fitness_violations_list,
+                # W331: preflight aggregates 6 dimensions into one
+                # CRITICAL/HIGH/MEDIUM/LOW verdict. Name the rollup so
+                # agents don't conflate it with a per-dimension severity.
+                "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
+            }
+            _envelope_kwargs: dict = {
+                "summary": _summary_dict,
+                "blast_radius": {
+                    "affected_symbols": blast["affected_symbols"],
+                    "affected_files": blast["affected_files"],
+                    "affected_file_list": blast["affected_file_list"],
+                    "severity": blast["severity"],
+                    # W331: same definition as cmd_impact so two commands
+                    # don't disagree on what "affected_symbols" means.
+                    "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                    "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+                },
+                "tests": {
+                    "direct": tests["direct"],
+                    "transitive": tests["transitive"],
+                    "colocated": tests["colocated"],
+                    "total": tests["total"],
+                    "test_files": tests["test_files"],
+                    "pytest_command": tests["pytest_command"],
+                    "severity": tests["severity"],
+                },
+                "complexity": {
+                    "max_cognitive_complexity": compl["max_cognitive_complexity"],
+                    "max_nesting_depth": compl["max_nesting_depth"],
+                    "high_complexity_symbols": compl["high_complexity_symbols"],
+                    "severity": compl["severity"],
+                    # W331: same canonical definition as cmd_complexity.
+                    "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+                },
+                "coupling": {
+                    "coupled_files": coupl["coupled_files"],
+                    "missing_partners": coupl["missing_partners"],
+                    "severity": coupl["severity"],
+                },
+                "conventions": {
+                    "violation_count": convs["violation_count"],
+                    "violations": convs["violations"],
+                    "severity": convs["severity"],
+                    "majority_threshold_pct": convs.get("majority_threshold_pct"),
+                    "kinds_with_majority": convs.get("kinds_with_majority"),
+                },
+                "fitness": {
+                    "rules_checked": fitns["rules_checked"],
+                    "rules_failed": fitns["rules_failed"],
+                    "total_violations": fitns["total_violations"],
+                    "failed_rules": fitns["failed_rules"],
+                    "rule_details": fitns["rule_details"],
+                    "severity": fitns["severity"],
+                },
+            }
+            if disclosure is not None:
+                _summary_dict["resolution"] = disclosure["resolution"]
+                _summary_dict["partial_success"] = disclosure["partial_success"]
+                _envelope_kwargs["resolution"] = disclosure["resolution"]
+                _envelope_kwargs["partial_success"] = disclosure["partial_success"]
+            return {"summary_dict": _summary_dict, "envelope_kwargs": _envelope_kwargs}
+
+        # Floor on degrade: minimal summary + empty kwargs so the
+        # serialize_envelope substrate still has structurally valid
+        # input. The verdict literal floor preserved separately.
+        _assembled = _run_check_ec(
+            "assemble_sections",
+            _assemble_sections,
+            default={
+                "summary_dict": {"verdict": verdict, "partial_success": True},
+                "envelope_kwargs": {},
             },
-            "tests": {
-                "direct": tests["direct"],
-                "transitive": tests["transitive"],
-                "colocated": tests["colocated"],
-                "total": tests["total"],
-                "test_files": tests["test_files"],
-                "pytest_command": tests["pytest_command"],
-                "severity": tests["severity"],
-            },
-            "complexity": {
-                "max_cognitive_complexity": compl["max_cognitive_complexity"],
-                "max_nesting_depth": compl["max_nesting_depth"],
-                "high_complexity_symbols": compl["high_complexity_symbols"],
-                "severity": compl["severity"],
-                # W331: same canonical definition as cmd_complexity.
-                "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-            },
-            "coupling": {
-                "coupled_files": coupl["coupled_files"],
-                "missing_partners": coupl["missing_partners"],
-                "severity": coupl["severity"],
-            },
-            "conventions": {
-                "violation_count": convs["violation_count"],
-                "violations": convs["violations"],
-                "severity": convs["severity"],
-                "majority_threshold_pct": convs.get("majority_threshold_pct"),
-                "kinds_with_majority": convs.get("kinds_with_majority"),
-            },
-            "fitness": {
-                "rules_checked": fitns["rules_checked"],
-                "rules_failed": fitns["rules_failed"],
-                "total_violations": fitns["total_violations"],
-                "failed_rules": fitns["failed_rules"],
-                "rule_details": fitns["rule_details"],
-                "severity": fitns["severity"],
-            },
-        }
-        if disclosure is not None:
-            summary_dict["resolution"] = disclosure["resolution"]
-            summary_dict["partial_success"] = disclosure["partial_success"]
-            envelope_kwargs["resolution"] = disclosure["resolution"]
-            envelope_kwargs["partial_success"] = disclosure["partial_success"]
+        )
+        summary_dict: dict = (
+            _assembled.get("summary_dict", {"verdict": verdict})
+            if isinstance(_assembled, dict)
+            else {"verdict": verdict}
+        )
+        envelope_kwargs: dict = _assembled.get("envelope_kwargs", {}) if isinstance(_assembled, dict) else {}
+        # The assemble_sections floor builds a free-standing summary_dict
+        # so the envelope_kwargs lookup happens BEFORE we re-tie
+        # ``summary`` in. Re-stamp so non-degraded callers see the same
+        # shape as the pre-W607-EC envelope.
+        if "summary" not in envelope_kwargs:
+            envelope_kwargs["summary"] = summary_dict
+
+        # W607-R + W607-AW + W607-EC — surface substrate-CALL markers on
+        # the success path. All three buckets share the ``preflight_*``
+        # marker family (W607-AW is additive coverage of aggregation-phase
+        # boundaries on top of W607-R's helper-call boundaries; W607-EC
+        # is additive coverage of POST-capture phases on top of both).
+        # Combine all three BEFORE threading into the envelope so
+        # consumers see the full degradation lineage in marker-emission
+        # order.
+        #
+        # Empty combined bucket → byte-identical envelope (no warnings_out
+        # keys added; no partial_success flip from this axis). Non-empty
+        # → warnings_out at top-level AND summary mirror, plus
+        # summary.partial_success=True so the agent can distinguish
+        # "clean preflight" from "preflight ran with substrate
+        # degradation" via the summary alone.
+        _combined_warnings_out = list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+        if _combined_warnings_out:
+            summary_dict["warnings_out"] = list(_combined_warnings_out)
+            summary_dict["partial_success"] = True
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            envelope_kwargs["partial_success"] = True
         preflight_envelope = json_envelope("preflight", **envelope_kwargs)
 
         # Auto-log into the active run (silent no-op if no run is active).
         # Strip the "(file:line)" suffix the resolver appends so the
         # target on disk matches what the agent typed.
+        # W607-AW — wrap the active-run write so HMAC chain-misshape /
+        # filesystem failures / .roam/runs corruption surface as
+        # ``preflight_auto_log_failed:...`` instead of crashing the
+        # envelope after it was already built. Discipline mirror of the
+        # W607-AS HMAC-failure-aborts-write pattern in cmd_runs: the
+        # marker emission keeps the envelope intact while still
+        # disclosing the ledger-write failure to the agent.
         _auto_target = label or ""
         if isinstance(_auto_target, str):
             _auto_target = _auto_target.removesuffix(" (not found)").split(" (", 1)[0]
-        auto_log(preflight_envelope, action="preflight", target=_auto_target, repo_root=root)
+        _run_check_aw(
+            "auto_log",
+            auto_log,
+            preflight_envelope,
+            action="preflight",
+            target=_auto_target,
+            repo_root=root,
+            default=None,
+        )
+        # W607-AW — if ``auto_log`` raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # → preflight_envelope stays byte-identical to the version
+        # already built above.
+        if _w607aw_warnings_out and not any(
+            m.startswith("preflight_auto_log_failed:") for m in (summary_dict.get("warnings_out") or [])
+        ):
+            _combined_warnings_out = list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+            summary_dict["warnings_out"] = list(_combined_warnings_out)
+            summary_dict["partial_success"] = True
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            envelope_kwargs["partial_success"] = True
+            preflight_envelope = json_envelope("preflight", **envelope_kwargs)
 
         # JSON output
         if json_mode:
-            click.echo(to_json(preflight_envelope))
+            # W607-EC ``serialize_envelope`` substrate boundary: a raise
+            # in ``to_json`` (e.g. a non-JSON-serializable section
+            # payload, a __str__ raise on a degraded check entry)
+            # surfaces as ``preflight_serialize_envelope_failed:...`` and
+            # the command still emits a minimal hand-rolled JSON envelope
+            # on the degraded path (Pattern-1 variant C guard — never
+            # empty stdout).
+            def _serialize_envelope():
+                return to_json(preflight_envelope)
+
+            rendered = _run_check_ec("serialize_envelope", _serialize_envelope, default=None)
+            # W978 #6: ``rendered is None`` guard before echo so a
+            # degraded serialize_envelope does not crash on the print
+            # path. The minimal hand-rolled fallback re-surfaces the
+            # markers + verdict so consumers reading stdout see the
+            # disclosure.
+            if rendered is None:
+                import json as _json_fallback
+
+                _fallback_summary = {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": (
+                        list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+                    ),
+                }
+                click.echo(
+                    _json_fallback.dumps(
+                        {
+                            "command": "preflight",
+                            "summary": _fallback_summary,
+                            "warnings_out": _fallback_summary["warnings_out"],
+                        }
+                    )
+                )
+            else:
+                click.echo(rendered)
             return
 
-        # Text output
-        click.echo(f"VERDICT: {verdict}\n")
-        click.echo(f"Pre-flight check for `{label}`:\n")
+        # W607-EC ``format_text`` substrate boundary: a raise during any
+        # click.echo formatting (e.g. a __str__ raise on a degraded
+        # check entry, a missing key on a degraded sub-envelope) surfaces
+        # a ``preflight_format_text_failed:...`` marker rather than
+        # crashing the whole command.
+        def _format_text():
+            # Text output
+            click.echo(f"VERDICT: {verdict}\n")
+            click.echo(f"Pre-flight check for `{label}`:\n")
 
-        # Blast radius
-        blast_desc = f"{blast['affected_symbols']} symbols in {blast['affected_files']} files"
-        click.echo(f"  Blast radius:     {blast_desc:<40s} {_severity_tag(blast['severity'])}")
+            # Blast radius
+            blast_desc = f"{blast['affected_symbols']} symbols in {blast['affected_files']} files"
+            click.echo(f"  Blast radius:     {blast_desc:<40s} {_severity_tag(blast['severity'])}")
 
-        # Affected tests
-        test_desc = f"{tests['direct']} direct, {tests['transitive']} transitive"
-        if tests["colocated"]:
-            test_desc += f", {tests['colocated']} colocated"
-        click.echo(f"  Affected tests:   {test_desc:<40s} {_severity_tag(tests['severity'])}")
+            # Affected tests
+            test_desc = f"{tests['direct']} direct, {tests['transitive']} transitive"
+            if tests["colocated"]:
+                test_desc += f", {tests['colocated']} colocated"
+            click.echo(f"  Affected tests:   {test_desc:<40s} {_severity_tag(tests['severity'])}")
 
-        # Complexity
-        cc = compl["max_cognitive_complexity"]
-        nest = compl["max_nesting_depth"]
-        compl_desc = f"cc={cc:.0f}, nest={nest}"
-        click.echo(f"  Complexity:       {compl_desc:<40s} {_severity_tag(compl['severity'])}")
+            # Complexity
+            cc = compl["max_cognitive_complexity"]
+            nest = compl["max_nesting_depth"]
+            compl_desc = f"cc={cc:.0f}, nest={nest}"
+            click.echo(f"  Complexity:       {compl_desc:<40s} {_severity_tag(compl['severity'])}")
 
-        # Coupling
-        if coupl["coupled_files"] > 0:
-            coupl_desc = f"{coupl['coupled_files']} files often change together"
-        else:
-            coupl_desc = "no missing co-change partners"
-        click.echo(f"  Coupling:         {coupl_desc:<40s} {_severity_tag(coupl['severity'])}")
+            # Coupling
+            if coupl["coupled_files"] > 0:
+                coupl_desc = f"{coupl['coupled_files']} files often change together"
+            else:
+                coupl_desc = "no missing co-change partners"
+            click.echo(f"  Coupling:         {coupl_desc:<40s} {_severity_tag(coupl['severity'])}")
 
-        # Conventions
-        if convs["violation_count"] > 0:
-            conv_desc = f"{convs['violation_count']} naming violations"
-        else:
-            conv_desc = "no violations"
-        click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
+            # Conventions
+            if convs["violation_count"] > 0:
+                conv_desc = f"{convs['violation_count']} naming violations"
+            else:
+                conv_desc = "no violations"
+            click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
 
-        # Fitness — distinguish target-attributed vs sibling failures
-        # . The same rule can fail because of OTHER code in
-        # the same file ("Max function complexity 50" tripped by a
-        # 700-cc neighbour); blaming the changing symbol for that is
-        # misleading. We surface both buckets explicitly.
-        if fitns["rules_checked"] == 0:
-            fit_desc = "no rules configured"
-        elif fitns.get("rules_failing_on_target", 0) > 0:
-            rule_names = ", ".join(fitns["failed_rules"][:3])
-            fit_desc = f"{fitns['rules_failing_on_target']} rules currently fail on target ({rule_names})"
-        elif fitns.get("rules_failing_on_siblings", 0) > 0:
-            rule_names = ", ".join(fitns["failed_rules"][:3])
-            fit_desc = (
-                f"target passes; {fitns['rules_failing_on_siblings']} rule(s) fail on sibling symbols ({rule_names})"
+            # Fitness — distinguish target-attributed vs sibling failures
+            # . The same rule can fail because of OTHER code in
+            # the same file ("Max function complexity 50" tripped by a
+            # 700-cc neighbour); blaming the changing symbol for that is
+            # misleading. We surface both buckets explicitly.
+            if fitns["rules_checked"] == 0:
+                fit_desc = "no rules configured"
+            elif fitns.get("rules_failing_on_target", 0) > 0:
+                rule_names = ", ".join(fitns["failed_rules"][:3])
+                fit_desc = f"{fitns['rules_failing_on_target']} rules currently fail on target ({rule_names})"
+            elif fitns.get("rules_failing_on_siblings", 0) > 0:
+                rule_names = ", ".join(fitns["failed_rules"][:3])
+                fit_desc = f"target passes; {fitns['rules_failing_on_siblings']} rule(s) fail on sibling symbols ({rule_names})"
+            elif fitns["rules_failed"] > 0:
+                rule_names = ", ".join(fitns["failed_rules"][:3])
+                fit_desc = f"{fitns['rules_failed']} rules currently fail ({rule_names})"
+            else:
+                fit_desc = f"all {fitns['rules_checked']} rules pass"
+            click.echo(f"  Fitness:          {fit_desc:<40s} {_severity_tag(fitns['severity'])}")
+
+            # Overall
+            click.echo(f"\n  Overall risk: {risk}")
+
+            # Risk driver — name the row that's pushing the verdict so an
+            # agent doesn't have to deduce it.
+            # Pick the highest-severity row, breaking ties by category
+            # priority (complexity > fitness > tests > coupling > blast >
+            # conventions — most actionable first).
+            # W607-AW — wrap the driver compute so a malformed severity dict
+            # surfaces as ``preflight_risk_driver_failed:...`` and the text
+            # output still emits cleanly (driver becomes empty string —
+            # ``_risk_driver``'s own clean floor when no row drives the
+            # verdict).
+            driver = _run_check_aw(
+                "risk_driver",
+                _risk_driver,
+                blast,
+                tests,
+                compl,
+                coupl,
+                convs,
+                fitns,
+                default="",
             )
-        elif fitns["rules_failed"] > 0:
-            rule_names = ", ".join(fitns["failed_rules"][:3])
-            fit_desc = f"{fitns['rules_failed']} rules currently fail ({rule_names})"
-        else:
-            fit_desc = f"all {fitns['rules_checked']} rules pass"
-        click.echo(f"  Fitness:          {fit_desc:<40s} {_severity_tag(fitns['severity'])}")
+            if driver:
+                click.echo(f"  Risk driver:  {driver}")
 
-        # Overall
-        click.echo(f"\n  Overall risk: {risk}")
+            # Suggested tests
+            if tests["pytest_command"]:
+                click.echo(f"  Suggested tests: {tests['pytest_command']}")
 
-        # Risk driver — name the row that's pushing the verdict so an
-        # agent doesn't have to deduce it.
-        # Pick the highest-severity row, breaking ties by category
-        # priority (complexity > fitness > tests > coupling > blast >
-        # conventions — most actionable first).
-        driver = _risk_driver(blast, tests, compl, coupl, convs, fitns)
-        if driver:
-            click.echo(f"  Risk driver:  {driver}")
+            # — synergy with the rest of the surface. After a
+            # preflight verdict the natural follow-ups depend on the risk
+            # level: HIGH/CRITICAL → impact + diagnose; MEDIUM → affected-
+            # tests; LOW → roam diff after editing. Centralised in
+            # ``next_steps.suggest_next_steps`` so the wording stays
+            # consistent across CLI and the JSON envelope. Strip the
+            # ``(file:line)`` suffix the resolver appends to ``label`` so
+            # the next-step commands carry only the bare symbol name.
+            _ns_symbol = label or ""
+            if isinstance(_ns_symbol, str):
+                _ns_symbol = _ns_symbol.removesuffix(" (not found)").split(" (", 1)[0]
+            _ns = suggest_next_steps(
+                "preflight",
+                {"symbol": _ns_symbol, "risk_level": risk},
+            )
+            _ns_text = format_next_steps_text(_ns)
+            if _ns_text:
+                click.echo(_ns_text)
+            return None
 
-        # Suggested tests
-        if tests["pytest_command"]:
-            click.echo(f"  Suggested tests: {tests['pytest_command']}")
-
-        # — synergy with the rest of the surface. After a
-        # preflight verdict the natural follow-ups depend on the risk
-        # level: HIGH/CRITICAL → impact + diagnose; MEDIUM → affected-
-        # tests; LOW → roam diff after editing. Centralised in
-        # ``next_steps.suggest_next_steps`` so the wording stays
-        # consistent across CLI and the JSON envelope. Strip the
-        # ``(file:line)`` suffix the resolver appends to ``label`` so
-        # the next-step commands carry only the bare symbol name.
-        _ns_symbol = label or ""
-        if isinstance(_ns_symbol, str):
-            _ns_symbol = _ns_symbol.removesuffix(" (not found)").split(" (", 1)[0]
-        _ns = suggest_next_steps(
-            "preflight",
-            {"symbol": _ns_symbol, "risk_level": risk},
-        )
-        _ns_text = format_next_steps_text(_ns)
-        if _ns_text:
-            click.echo(_ns_text)
+        _run_check_ec("format_text", _format_text, default=None)
