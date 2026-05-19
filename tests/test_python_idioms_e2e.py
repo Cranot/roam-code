@@ -31,6 +31,7 @@ import threading
 import asyncio
 import aiofiles
 import httpx
+import pandas as pd
 
 
 def mutable_default(x=[]):  # BAD: py-mutable-default-arg
@@ -76,6 +77,11 @@ def dict_keys_iter(d):
 def type_eq_check(x):
     if type(x) == int:  # BAD: py-type-eq
         return
+
+
+def pandas_iterrows(df):
+    for _, row in df.iterrows():  # BAD: py-pandas-iterrows
+        print(row["name"])
 
 
 async def async_with_leak():
@@ -131,6 +137,11 @@ def ok_isinstance(x):
         return
 
 
+def ok_pandas_itertuples(df):
+    for row in df.itertuples(index=False):
+        print(row.name)
+
+
 async def ok_async_with():
     async with aiofiles.open("file.txt") as f:
         return await f.read()
@@ -182,6 +193,7 @@ def _bad_line(content: str, pattern_id: str) -> int:
         ("detect_star_import", "py-star-import"),
         ("detect_dict_keys_iter", "py-dict-keys-iter"),
         ("detect_type_eq", "py-type-eq"),
+        ("detect_pandas_iterrows", "py-pandas-iterrows"),
         ("detect_async_with_missing", "py-async-with-missing"),
         ("detect_lock_without_with", "py-lock-without-with"),
     ],
@@ -231,3 +243,26 @@ def test_async_not_awaited_finds_bare_call(fixture_project: Path):
     # The fixture doesn't have an explicit not-awaited call, so 0 is
     # the expected count. The detector must not crash.
     assert isinstance(findings, list)
+
+
+def test_run_detectors_only_can_select_python_idiom(fixture_project: Path):
+    """`roam algo --only` should cover the Python idiom detector surface too."""
+    from roam.catalog.detectors import run_detectors
+    from roam.catalog.python_idioms import _clear_file_text_cache
+
+    _clear_file_text_cache()
+    db = fixture_project / ".roam" / "index.db"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        findings, meta = run_detectors(
+            conn,
+            return_meta=True,
+            only=("detect_pandas_iterrows",),
+        )
+    finally:
+        conn.close()
+
+    assert meta["detectors_executed"] == 1
+    assert meta["only_unknown"] == []
+    assert any(f["task_id"] == "py-pandas-iterrows" for f in findings), findings

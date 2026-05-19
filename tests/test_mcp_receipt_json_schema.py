@@ -29,8 +29,8 @@ import pytest
 
 from roam.evidence._vocabulary import REDACTION_REASONS
 from roam.evidence.mcp_receipt import (
-    McpDecisionReceipt,
     _POLICY_DECISIONS,
+    McpDecisionReceipt,
     hash_input_args,
 )
 from roam.evidence.mcp_receipt_schema import (

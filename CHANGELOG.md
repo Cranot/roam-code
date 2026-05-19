@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.3] — 2026-05-19
+
 ### MCP runtime security wave (2026-05-18)
 
 - **MCP-P0.1 — egress redaction at the wrapper boundary.** `redact_secrets_in_string` + recursive `redact_secrets_in_value` walker now run at the `_wrap_with_receipt` boundary in `src/roam/mcp_server.py`, so every tool response is scrubbed before it crosses the MCP transport. Closed-enum `redactions=("secret",)` flag on the envelope; per-pattern detail under `_meta.extra.redaction_details`. New tests: `tests/test_w_mcp_redact_egress.py` (5 tests). Closes the egress half of the "Poison Everywhere" prompt-injection class inside the server, complementing the gateway-side controls described in `dev/MCP-SECURITY-POSTURE.md`.

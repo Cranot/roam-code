@@ -28,7 +28,7 @@ Cursor, Cody, Aider, and Windsurf are **human-first IDE surfaces** that log a se
 
 - **Credential-free.** No account, no API key, no cloud login. `pip install` and run.
 - **100% local by default.** Source code never leaves the machine. Air-gapped repos work the same as cloud repos. The single outbound surface (`roam metrics-push`) is strictly opt-in, summary-only, and prints its exact payload under `--dry-run`.
-- **Tamper-evident `ChangeEvidence` packets.** Each AI-assisted change compiles into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. Cursor logs the run; Roam proves the change.
+- **Tamper-evident `ChangeEvidence` packets.** Each AI-assisted change compiles into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight evidence questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. The PR Replay path currently answers 7 of 8 completely; the remaining approvals question is surfaced as `producer_not_available` instead of silently omitted (no green-flag without a producer). Cursor logs the run; Roam proves the change.
 - **MCP runtime security at the wrapper boundary.** Every MCP tool response is scrubbed for secrets on egress, gated against the active mode (`read_only` / `safe_edit` / `migration` / `autonomous_pr`) with a closed-enum `policy_decision`, and each decision receipt is HMAC-linked into the same signed ledger as the run that produced it (closed enum: `ok` / `missing` / `tampered` / `not_linked`). Inside-server controls; the gateway layer (Interlock / Lasso / Portkey) composes on top — see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md) and public [Discussion #37](https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163).
 
 Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git history, runtime traces, smells, clones, security flows, and algorithmic patterns across 28 languages — the same local facts queried before a change, during review, and after the patch lands.
@@ -63,85 +63,39 @@ Pick the path that matches your role:
 
 ---
 
-## What's New in v13
+## What's New
 
-### In flight (next release) -- MCP runtime security + UX polish
+**v13.3 (released 2026-05-19) — MCP runtime security + UX polish.** Egress secret-redaction at the MCP wrapper boundary, 4-mode `policy_decision` enforcement with shadow-mode (`ROAM_MODE_DRY_RUN`), HMAC-linked `McpDecisionReceipt` + `receipt_integrity` verdict on `roam runs verify`, 3 new persisting detectors (`boundary`, `test-hermeticity`, `compatibility`), `roam doctor` advisory-vs-blocking split, and `--json` warnings-channel discipline. Full diff in [CHANGELOG.md](CHANGELOG.md).
 
-See [CHANGELOG.md `[Unreleased]`](CHANGELOG.md#unreleased) for the full diff. Highlights:
+<details>
+<summary><strong>Earlier releases (v13.2 / v13.1 / v13.0)</strong></summary>
 
-- **MCP runtime security at the wrapper boundary.** Three controls landed end-to-end:
-  - **Egress redaction.** `redact_secrets_in_string` + a recursive value walker run at `_wrap_with_receipt` in `src/roam/mcp_server.py`, so every tool response is scrubbed before it crosses the MCP transport. Closed-enum `redactions=("secret",)` on the envelope.
-  - **4-mode policy enforcement.** Destructive MCP tool calls now gate against the active mode (`read_only` / `safe_edit` / `migration` / `autonomous_pr`). New closed enum `policy_decision: allow / deny / not_evaluated / would_deny_dry_run`; shadow-mode runs via `ROAM_MODE_DRY_RUN`.
-  - **HMAC-linked decision receipts.** Each `McpDecisionReceipt` sha256 is appended to a signed `runs/` event so `roam runs verify` now reports a closed-enum `receipt_integrity: ok / missing / tampered / not_linked` alongside the ledger chain verdict.
-- **Public posture documented for gateway integrators.** [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md) (~450 lines) frames the inside-server vs gateway split for Interlock / Lasso / Portkey — what the server owns, where the gateway adds value. Cross-linked from public [Discussion #37](https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163).
-- **`McpDecisionReceipt` JSON Schema (Draft 2020-12) exported** so external tooling can validate receipts without a Python import. Closed-enum drift-guards keep the schema and the dataclass in lockstep.
-- **Three new persisting detectors.** `boundary` (`public_by_accident`, `wrong_direction_import`), `test-hermeticity` (`network`, `time`, `random`, `fs`, `env`, `subprocess`), and `compatibility` (surface regression vs baseline) now ship as MCP wrappers and emit into the central findings registry — 28 detectors persist findings as of this wave.
-- **Sealed UX bugs.** `roam doctor` advisory-only failures now exit 0 with explicit `summary.status` (closed enum); `roam surface --json` mirrors the canonical counts at the top level; `_meta.roam_version` is stamped on every envelope. `--json` / `--sarif` / `--agent` modes install a defensive `warnings.showwarning` override so warnings cannot pollute stdout JSON.
-- **CI ops hardening.** Concurrency blocks on 3 workflows, Dependabot ignore rules for 3 risky majors, and `.pre-commit-config.yaml` for contributors.
+### v13.2 (released 2026-05-16) — Evidence freshness + resolution disclosure
 
-### v13.2 (released 2026-05-16) -- Evidence freshness + resolution disclosure + public-surface cleanup
+- **Canonical unresolved-path envelopes** across `impact` / `preflight` / `trace` / `test-map` / `context` / `safe-delete` / `split` / `why` — one explicit "not found" shape in JSON mode.
+- **Evidence freshness stamped at the producer.** Runs record hashes for `.roam-rules.yml`, `.roam/constitution.yml`, `.roam/control-map.yml`.
+- **PR Replay evidence coverage improved.** Replay path answers 7 of the 8 evidence questions completely; remaining approvals question marked `producer_not_available` instead of silently omitted.
 
-- **Canonical unresolved-path envelopes across high-traffic commands.** `impact`, `preflight`, `trace`, `test-map`, `context`, `safe-delete`, `split`, and `why` now use one explicit "not found" shape in JSON mode instead of mixing exit codes and partial-success vocabulary.
-- **Evidence freshness is now stamped at the producer.** Runs record hashes for `.roam-rules.yml`, `.roam/constitution.yml`, and `.roam/control-map.yml`, so later evidence packets can prove which policy/config inputs were active.
-- **PR Replay evidence coverage improved.** The replay path now answers 7 of the 8 evidence questions completely and marks the remaining approvals question as `producer_not_available` instead of silently omitting it.
-- **Public surface refreshed to the current shape.** README, MCP metadata, and install guidance now describe the 241-command / 227-tool v13.2 surface with the 57-tool core preset.
+### v13.1 (released 2026-05-15) — Pattern-2 propagation + shared YAML helper + 3 flagship silent-fallback seals
 
-### v13.1 (released 2026-05-15) -- Pattern-2 propagation + shared YAML helper + 3 flagship silent-fallback seals
+- **3 flagship silent-fallback seals.** `cmd_taint`, `cmd_health`, `cmd_doctor` now emit `state="empty_corpus"` + `partial_success=True` on unanalyzed repos instead of false `Healthy 100/100` / `No taint findings` / `all checks passed` verdicts. Security-critical for taint; CI-gate-critical for health.
+- **Shared YAML config-loader helper** (`load_yaml_with_warnings`). 5 of 7 surveyed loaders migrated; ~125 LOC removed.
+- **5 new live smell detectors.** `type-switch`, `speculative-generality`, `empty-catch`, `cross-layer-clone`, `parallel-hierarchy` — `roam smells` now ships 24 deterministic detectors.
+- **`@detector` registry consolidation** — `ALL_DETECTORS` + `_SMELL_KIND_TO_CONFIDENCE` derived from the decorated registry; parallel-maintenance debt eliminated.
+- **SQL `LIKE` `ESCAPE` discipline** — 26 wildcard-unsafe patterns hardened across 4 files; drift-guard test enforces.
+- **30+ behavioral Pattern-2 fixes** + empty-corpus smoke sweep across 25+ detectors. Hash-stability mandate held — 31/31 evidence-schema-migration tests byte-identical.
 
-- **3 flagship Pattern-2 silent-fallback bugs sealed (W826/W834/W836).** `cmd_taint`, `cmd_health`, and `cmd_doctor` now emit explicit `state="empty_corpus"` + `partial_success=True` on unanalyzed repos instead of false `Healthy 100/100` / `No taint findings` / `all checks passed` verdicts. Security-critical for `cmd_taint`, CI-gate-critical for `cmd_health --gate`.
-- **Shared YAML config-loader helper.** New `src/roam/commands/_yaml_loader.py::load_yaml_with_warnings()` absorbs the boilerplate Pattern-2 plumbing (PyYAML + tiny-parser + structured warnings + root-type check). 5 of 7 surveyed YAML loaders migrated. Net ~125 LOC removed across the package.
-- **5 new live smell detectors.** `type-switch`, `speculative-generality`, `empty-catch`, `cross-layer-clone`, and `parallel-hierarchy` bring the `roam smells` roster to 24 deterministic detectors. The rename-invariant clone work exists as clone-analysis groundwork, not a public `roam smells --kind` id yet.
-- **`@detector` registry consolidation (W941, Gate-1 closure).** `ALL_DETECTORS` and `_SMELL_KIND_TO_CONFIDENCE` are derived views from the `@detector`-decorated registry. Parallel-maintenance debt class eliminated for smell detectors.
-- **Cargo-cult `or ""` cleanup (W1029/W1013/W1014/W1034).** 14 defensive wrappers removed across `cmd_complexity`, `cmd_fan`, `cmd_risk`, `cmd_fn_coupling`, `laws/miner`, `world_model/causal_graph`, `search/tfidf`, `search/index_embeddings`. 3 helpers None-guarded at source.
-- **SQL `LIKE` `ESCAPE` discipline (W990–W993).** 26 wildcard-unsafe `LIKE` patterns hardened across 4 files; drift-guard test enforces forever.
-- **Catalog/_shared.py hoisting.** 6 helpers consolidated to a canonical home with `__all__`; 6 catalog/* modules adopted the `__all__` discipline; cross-layer `_is_test_path` / `_camel_split` / `_enclosing_symbol` / `_parse_iso` / `make_finding_id` / `make_smell_finding` all single-sourced.
-- **30+ behavioral Pattern-2 fixes** across `cmd_alerts` / `cmd_smells` / `cmd_pr_risk` / `cmd_taint` / `cmd_health` / `cmd_doctor` / `finding_suppress` / `smells_suppress` / `suppression` / `sarif`.
-- **Empty-corpus smoke sweep (W805 + W639 + W661).** 25+ detectors smoke-tested; 12 already clean, 7 auto-fixed by W817 helper-level auto-inject, 3 dedicated flagship fixes. Forbidden-fragment blacklist (`"safe"` / `"healthy"` / `"100/100"` / `"no concerns"`) prevents regressions.
-- **No persisted-data breaks.** Hash-stability mandate held: 31/31 `test_evidence_schema_migration.py` byte-identical; `make_finding_id` hashes confirmed byte-identical before/after consolidation.
+### v13.0 (released 2026-05-13) — Agent-OS substrate + Laravel idioms + Vue SFC
 
-### v13.0 (released 2026-05-13) -- Agent-OS substrate + Laravel idioms + Vue SFC
+- **Agent-OS control plane.** Repo-local substrates under `.roam/`: constitution, HMAC-chained run ledger, multi-agent leases, portable agent memory, 4 cumulative modes (`read_only` → `safe_edit` → `migration` → `autonomous_pr`).
+- **World-model classifiers (R28).** `roam side-effects`, `roam idempotency`, `roam causal-graph`, `roam tx-boundaries`.
+- **Laravel dynamic-dispatch idioms.** 7 of 8 implicit-edge idioms (Route closures, Eloquent scopes, Policy resolution, Observer registration, Job/Queue/Artisan dispatch) that `auth-gaps`/`n1`/`algo` were silently missing.
+- **Vue SFC import graph.** `.vue` template/script/style blocks parsed; component registrations resolved across the SFC boundary.
+- **Plugin substrate (R25)** validated end-to-end — framework-specific knowledge ships as `roam-plugin-*` packages, not core.
+- **~20 new CLI commands** (`brief`, `next`, `mode`, `constitution`, `laws`, `memory`, `lease`, `runs`, `replay`, `agent-score`, `agents-md`, `architecture-drift`, `graph-diff`, `side-effects`, `idempotency`, `causal-graph`, `tx-boundaries`, `batch-search`, `complete`, `mcp`).
+- **Schema bump (USER_VERSION 12 → 13)** for the algo nested-lookup dataflow predicate.
 
-- **Agent-OS control plane.** New repo-local substrates under `.roam/`: constitution
-  (single source for laws / rules / memory / gates), HMAC-chained run ledger
-  (`roam runs start|verify|end`), multi-agent leases (`roam lease claim|release|list`),
-  portable agent memory (`.roam/memory.jsonl`), and 4 cumulative modes
-  (`read_only` → `safe_edit` → `migration` → `autonomous_pr`). Mode enforcement
-  is opt-in behind `ROAM_MODE_ENFORCEMENT=1` for v13.0 (PR-C ready; staged
-  rollout). See CLAUDE.md "Agent OS substrate" for the canonical loop.
-- **World-model classifiers (R28).** 4 new detectors with first-class CLI surface:
-  `roam side-effects` (io_read / io_write / mutation / process / none),
-  `roam idempotency` (idempotent / non_idempotent / unknown),
-  `roam causal-graph` (param → sink dependency edges), and
-  `roam tx-boundaries` (begin / commit / rollback regions + `unsafe_mutation`
-  outside-tx findings).
-- **Laravel dynamic-dispatch idioms.** New `src/roam/index/laravel_post.py`
-  post-resolver catches 7 of 8 implicit-edge idioms that `auth-gaps`, `n1`,
-  and `algo` were silently missing: Route closures, Eloquent scopes, Policy
-  resolution, Observer registration, Job dispatch, Queue worker dispatch,
-  and Artisan commands.
-- **Vue SFC import graph.** Single-File Component support (`.vue`) — template,
-  script, and style blocks parsed into the symbol graph; imports + component
-  registrations resolved across the SFC boundary so `roam impact`, `roam context`,
-  and `roam preflight` work on Vue projects.
-- **Plugin substrate (R25) validated end-to-end.** The `roam-plugin-*` entry-point
-  surface (see CLAUDE.md "Writing a roam plugin") shipped clean cut on Rails
-  Path A — framework-specific knowledge can ship as a plugin instead of
-  landing in core.
-- **~20 new CLI commands.** `roam brief`, `roam next`, `roam mode`,
-  `roam constitution`, `roam laws`, `roam memory`, `roam lease`, `roam runs`,
-  `roam replay`, `roam agent-score`, `roam agents-md`, `roam architecture-drift`,
-  `roam graph-diff`, `roam side-effects`, `roam idempotency`, `roam causal-graph`,
-  `roam tx-boundaries`, `roam batch-search`, `roam complete`, `roam mcp`.
-- **Real-world feedback fixes.** `stale-refs` heading-slugger now matches
-  GitHub's algorithm exactly; `stale-refs --fix` URL-half + bare-backtick
-  corruption guards; `algo` nested-lookup dataflow predicate +
-  PHP `===`/`!==` detection; `auth-gaps` helper indirection (2-level same-class +
-  ancestor descent); `over-fetch` 3-state classification
-  (BARE / GUARDED_RELATION / UNGUARDED_RELATION);
-  `pr-bundle --strict-resolved` + `--ci` global mode integration.
-- **Schema bump (USER_VERSION 12 → 13).** Migration #51 adds the
-  `loop_eq_with_dependent_write` column that backs the new algo
-  nested-lookup dataflow predicate.
+</details>
 
 Full release notes in [CHANGELOG.md](CHANGELOG.md).
 
@@ -172,7 +126,7 @@ The 11.0 release introduced **MCP v2**: in-process tool execution, 4 compound op
 
 **Dependency-aware, not string-based.** Knows `Flask` has 47 dependents and 31 affected tests. `grep` knows it appears 847 times. One command replaces 5-10 tool calls; <0.5s per query.
 
-**Agent-shaped output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), `--json` envelopes, `--sarif` for CI. 23-pattern algorithm catalog with Big-O suggestions and confidence calibration.
+**Agent-shaped output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), `--json` envelopes, `--sarif` for CI. 34-task algorithm catalog plus Python idiom detectors, with Big-O suggestions, confidence calibration, and impact scoring.
 
 **Evidence that never leaves your machine.** Local SQLite, no telemetry, no network by default. Evidence packets hash-verify offline — air-gapped repos work the same as cloud repos.
 
@@ -184,7 +138,7 @@ The 11.0 release introduced **MCP v2**: in-process tool execution, 4 compound op
 | Wall time | ~11s | **<0.5s** |
 | Tokens consumed | ~15,000 | **~3,000** |
 
-*Measured on a typical agent workflow in a 200-file Python project (Flask). See [benchmarks](#performance) for more.*
+*Illustrative — a typical agent workflow on a 200-file Python project (Flask). Reproducible smoke transcript in [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md); full indexing-rate harness in [`benchmarks/`](benchmarks/). Exact numbers vary with repo size, agent prompt, and model.*
 
 <details>
 <summary><strong>Table of Contents</strong></summary>
@@ -415,7 +369,7 @@ roam init && roam understand && roam health
 | `roam py-types [--detail] [--include-tests] [--ci --min-coverage N]` | Python type-annotation health: % of public functions with full annotations, ``Any`` usage, legacy ``typing.Optional/Dict/List`` (PEP 585/604 modernisation candidates), per-file worst offenders. CI-gateable via ``--ci --min-coverage N`` (exit 5 below threshold). Default-excludes test files |
 | `roam py-modern [--detail]` | Modern-Python adoption signal: counts walrus operator (PEP 572), match statements (PEP 634), PEP 604 ``X \| None``, PEP 585 ``dict[…]``, PEP 695 type aliases, f-strings vs ``.format()``. Reports type-modernisation % and f-string adoption % to gauge migration progress |
 | `roam pytest-fixtures [SYMBOL] [--max-depth N]` | Inventory pytest fixture chains. With no SYMBOL, prints the project-wide fixture count and the top fixtures by dependent count. With a fixture or test name, walks the implicit fixture-parameter dependency graph to show what each test transitively requires. Resolves through ``conftest.py`` chains |
-| `roam algo [--task T] [--confidence C] [--profile P]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count + runtime traces, evidence paths, impact scoring, framework-aware N+1 packs, and language-aware fix templates. Alias: `roam math` |
+| `roam algo [--task T] [--confidence C] [--profile P]` | Algorithm anti-pattern detection: 34-task catalog plus Python idiom/performance detectors for suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, serial awaits, loop-invariant calls) with Big-O improvements. Confidence calibration via caller-count + runtime traces, evidence paths, impact scoring, framework-aware N+1 packs, and language-aware fix templates. Alias: `roam math` |
 | `roam n1 [--confidence C] [--verbose]` | Implicit N+1 I/O detection: finds ORM model computed properties (`$appends`/accessors) that trigger lazy-loaded DB queries in collection contexts. Cross-references with eager loading config. Supports Laravel, Django, Rails, SQLAlchemy, JPA |
 | `roam over-fetch [--threshold N] [--confidence C]` | Detect models serializing too many fields: large `$fillable` without `$hidden`/`$visible`, direct controller returns bypassing API Resources, poor exposed-to-hidden ratio |
 | `roam missing-index [--table T] [--confidence C]` | Find queries on non-indexed columns: cross-references `WHERE`/`ORDER BY` clauses, foreign keys, and paginated queries against migration-defined indexes |
@@ -430,9 +384,9 @@ roam init && roam understand && roam health
 | `roam hotspots [--runtime] [--discrepancy]` | Runtime hotspot analysis: find symbols missed by static analysis but critical at runtime |
 
 <details>
-<summary><strong>roam algo — algorithm anti-pattern catalog (23 patterns)</strong></summary>
+<summary><strong>roam algo — algorithm anti-pattern catalog (34 tasks)</strong></summary>
 
-`roam algo` scans every indexed function against a 23-pattern catalog, ranks findings by runtime-aware impact score, and shows the exact Big-O improvement available. Findings include semantic evidence paths, precision metadata, and language-aware tips/fixes (Python, JS, Go, Rust, Java, etc.):
+`roam algo` scans every indexed function against a 34-task catalog, ranks findings by runtime-aware impact score, and shows the exact Big-O improvement available. The runtime detector surface also includes Python-specific idiom/performance detectors such as Django/SQLAlchemy N+1 shapes, blocking calls in async functions, resource leaks, logger f-string eager formatting, and pandas `DataFrame.iterrows()` loops. Findings include semantic evidence paths, precision metadata, and language-aware tips/fixes (Python, JS, Go, Rust, Java, etc.):
 
 ```
 $ roam algo
@@ -464,7 +418,7 @@ Branching recursion without memoization (1):
         Tip: Add @cache / @lru_cache, or convert to iterative with a table
 ```
 
-**Full catalog — 23 patterns:**
+**Full catalog — 34 tasks:**
 
 | Pattern | Anti-pattern detected | Better approach | Improvement |
 |---------|----------------------|-----------------|-------------|
@@ -491,6 +445,17 @@ Branching recursion without memoization (1):
 | Quadratic string building | `result += chunk` across multiple scopes | `parts.append` + `join` at end | O(n²) → O(n) |
 | Loop-invariant call | `get_config()` / `compile_schema()` inside loop body | Hoist before loop | per-iter cost → O(1) |
 | String reversal | Manual char-by-char loop | `s[::-1]` / `.reverse()` | idiom |
+| Serial await loop | Independent `await` inside loop | `Promise.all` / bounded gather | O(n) wall time → parallel/bounded |
+| Blocking call in async | `time.sleep()` / blocking I/O inside async function | `await asyncio.sleep()` / async client | event-loop stall → non-blocking |
+| Fire-and-forget task | Discarded `asyncio.create_task()` | Store task / `gather` / `TaskGroup` | unmanaged task → managed lifecycle |
+| Nested async runner | `asyncio.run()` inside async function | `await` coroutine directly | runtime error → correct event-loop use |
+| Broad exception swallow | `except Exception: pass` | Catch narrowly or log + re-raise | hidden failure → visible failure |
+| Spread accumulator | `acc = [...acc, x]` in loop/reduce | Push / mutate accumulator | O(n²) → O(n) |
+| Chained collection walk | `filter().find()` / `filter().length` | Single-pass `.find()` / `.some()` / `.every()` | two passes + allocation → one pass |
+| Go defer in loop | `defer` inside `for` / `range` body | Extract helper or close explicitly | O(n) live defers → per-iteration release |
+| React effect deps | `useEffect(...)` without dependency array | Explicit dependency array | every render/stale closure → scoped effect |
+| Event listener lifecycle | `addEventListener` without cleanup | Paired cleanup / `removeEventListener` | leak → paired lifecycle |
+| Dynamic execution | `eval` / `exec` / `new Function` | Parser, template, or safe dispatch | code execution risk → constrained dispatch |
 
 **Filtering:**
 
@@ -499,6 +464,7 @@ roam algo --task nested-lookup       # one pattern type only
 roam algo --confidence high          # high-confidence findings only
 roam algo --profile strict           # precision-first filtering
 roam algo --task io-in-loop -n 5    # top 5 N+1 query sites
+roam algo --list-detectors           # detector names, task ids, metadata
 roam --json algo                     # machine-readable output
 roam --sarif algo > roam-algo.sarif  # SARIF with fingerprints + fixes
 ```
@@ -506,6 +472,8 @@ roam --sarif algo > roam-algo.sarif  # SARIF with fingerprints + fixes
 **Confidence calibration:** `high` = strong structural signal (unbounded loop + high caller/runtime impact + pattern confirmed); `medium` = pattern matched but uncertainty remains; `low` = heuristic signal only.
 
 **Profiles:** `balanced` (default), `strict` (precision-first), `aggressive` (surface more candidates).
+
+Research-backed detector priorities live in [`docs/algo-polish-research.md`](docs/algo-polish-research.md).
 
 </details>
 
@@ -958,7 +926,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-227 tools, 10 resources, and 6 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+227 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run flow, the cold-start envelope your agent will see on a fresh repo, and the canonical 7-step agent sequence.
 
@@ -1384,7 +1352,7 @@ roam metrics-push --no-hotspots --json                 # minimal payload
 
 The hosted dashboard at `roam.cloud` (in development) renders trend charts of health-score, debt, dead-code count, danger-zone count, and bus-factor concentration over time. The schema (`roam-metrics-v1`) is allow-listed: any payload key outside the allow-list is rejected by the receiving API.
 
-Both products are paid layers on top of the free CLI; the CLI itself stays Apache 2.0, zero-API-key, fully local, forever.
+Both products are paid layers on top of the free CLI; the CLI itself is Apache 2.0, zero-API-key, and fully local. The only outbound surface is the strictly opt-in `roam metrics-push` (summary-only, payload printed under `--dry-run`).
 
 ## PR Replay (one-shot paid audit)
 
@@ -1512,14 +1480,16 @@ write_sarif(sarif, "roam-health.sarif")
 
 ## For Teams
 
-Zero infrastructure, zero vendor lock-in, zero data leaving your network.
+Zero infrastructure, zero vendor lock-in, zero data leaving your network by default (opt-in `roam metrics-push` is the only outbound surface, summary-only).
 
 | Tool | Annual cost (20-dev team) | Infrastructure | Setup time |
 |------|--------------------------|----------------|------------|
-| SonarQube Server | $15,000-$45,000 | Self-hosted server | Days |
+| SonarQube Server (paid tier) | $15,000-$45,000 | Self-hosted server | Days |
 | CodeScene | $20,000-$60,000 | SaaS or on-prem | Hours |
 | Code Climate | $12,000-$36,000 | SaaS | Hours |
-| **Roam** | **$0 (Apache 2.0)** | **None (local)** | **5 minutes** |
+| **Roam (free CLI)** | **$0 (Apache 2.0)** | **None (local)** | **5 minutes** |
+
+SonarQube Community Edition is free and ships dashboards / hotspot review / multi-branch tracking that Roam doesn't replicate — the comparison above is against the paid tiers a 20-dev team usually buys, not the free Community edition. Roam complements either tier: pipe its SARIF output into the same Code Scanning surface (see "Roam vs native tools" further down).
 
 <details>
 <summary><strong>Rollout in three steps</strong></summary>
@@ -1647,7 +1617,7 @@ Codebase
     |
 [5] Metrics ────── adaptive PageRank, betweenness, cognitive complexity, Halstead
     |
-[6] Algorithms ── 23-pattern anti-pattern catalog (O(n^2) loops, N+1, recursion)
+[6] Algorithms ── 34-task anti-pattern catalog (O(n^2) loops, N+1, recursion, async, React)
     |
 [7] Git ────────── churn, co-change matrix, authorship, Renyi entropy
     |
@@ -1713,7 +1683,7 @@ You can also exclude patterns via `roam config --exclude "*.proto"` (stored in `
 - **Lift** -- association rule mining metric for co-change statistical significance (Agrawal & Srikant, 1994)
 - **Halstead metrics** -- volume, difficulty, effort, and predicted bugs from operator/operand counts (Halstead, 1977)
 - **SQALE remediation cost** -- time-to-fix estimates per issue type for tech debt prioritization (Letouzey, 2012)
-- **Algorithm anti-pattern catalog** -- 23 patterns detecting suboptimal algorithms (quadratic loops, N+1 queries, quadratic string building, branching recursion, manual top-k, loop-invariant calls) with confidence calibration via caller-count and bounded-loop analysis
+- **Algorithm anti-pattern catalog** -- 34 tasks detecting suboptimal algorithms (quadratic loops, N+1 queries, quadratic string building, branching recursion, manual top-k, serial awaits, loop-invariant calls) with confidence calibration via caller-count and bounded-loop analysis
 
 </details>
 
@@ -1758,6 +1728,9 @@ Documentation lives at <https://roam-code.com/docs/>:
 | Languages | 28 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
+| Interprocedural taint depth | shallow (OpenVEX-shaped) | n/a | n/a | **deep (CodeQL)** |
+| Built-in rule packs | 10 taint packs, 10 governance rules | n/a | n/a | **2,000+ (Semgrep community)** |
+| Cross-repo at GitHub scale | workspace overlay (sibling repos) | n/a | n/a | **native (Sourcegraph)** |
 
 ### Key Differentiators
 
@@ -1769,7 +1742,7 @@ Documentation lives at <https://roam-code.com/docs/>:
 ## FAQ
 
 **Does Roam send any data externally?**
-No. Zero network calls. No telemetry, no analytics, no update checks. The paid Cloud add-on (`roam metrics-push`) is opt-in and sends summary metrics only — source-code bodies never leave the machine.
+No by default — zero telemetry, zero analytics, zero update checks, zero network on every other command. The single outbound surface is `roam metrics-push`: opt-in, summary metrics only, and prints its exact payload locally under `--dry-run`. Source-code bodies never leave the machine.
 
 **Can Roam run in air-gapped environments?**
 Yes. Once installed, no internet access is required.
@@ -1836,7 +1809,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # ~7,500 tests, Python 3.10-3.13
+pytest tests/              # ~16K test cases across 1,094 test files, Python 3.10-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1880,7 +1853,7 @@ roam-code/
 │   │   ├── bridge_salesforce.py       # Apex <-> Aura/LWC/Visualforce
 │   │   └── bridge_protobuf.py         # .proto -> Go/Java/Python stubs
 │   ├── catalog/
-│   │   ├── tasks.py                  # Universal algorithm catalog (23 patterns)
+│   │   ├── tasks.py                  # Universal algorithm catalog (34 tasks)
 │   │   └── detectors.py              # Anti-pattern detectors with confidence calibration
 │   ├── workspace/
 │   │   ├── config.py                  # .roam-workspace.json
@@ -1925,7 +1898,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # 744 test files (run `pytest tests/`)
+└── tests/                             # 1,094 test files (run `pytest tests/`)
 ```
 
 </details>
@@ -1949,7 +1922,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # all ~7,500 tests must pass
+pytest tests/   # all ~16K test cases across 1,094 files must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

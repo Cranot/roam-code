@@ -38,9 +38,7 @@ from roam.runs.signing import (
     ensure_ledger_key,
     verify_chain_with_receipts,
 )
-
 from tests._helpers.repo_root import repo_root  # noqa: F401 — imported for parity with sister tests
-
 
 # ---------------------------------------------------------------------------
 # Closed-enum sanity (imported by reference, never hard-coded)

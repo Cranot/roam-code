@@ -64,6 +64,7 @@ __all__ = [
     "detect_mutable_default_arg",
     "detect_none_eq",
     "detect_open_without_with",
+    "detect_pandas_iterrows",
     "detect_sqlalchemy_lazy",
     "detect_star_import",
     "detect_sync_calls_async_via_graph",
@@ -148,6 +149,12 @@ _HTTPX_CLIENT_RE = re.compile(r"\bhttpx\.AsyncClient\s*\(")
 # Comparing types with ``type(x) == X`` instead of ``isinstance``.
 # Misses subclasses + obscures the intent.
 _TYPE_EQ_RE = re.compile(r"\btype\(\w+\)\s*==\s*\w+")
+
+# ``DataFrame.iterrows()`` yields Series rows, erases dtype consistency, and
+# is slower than ``itertuples()`` for row-wise iteration. Prefer vectorized
+# pandas operations when possible; ``itertuples()`` is the conservative local
+# rewrite when a row loop is truly needed.
+_PANDAS_ITERROWS_RE = re.compile(r"\.iterrows\s*\(")
 
 # ``isinstance(x, int)`` matches True/False (bool is a subclass of int).
 # Pattern: ``isinstance(VAR, int)`` without prior ``not isinstance(VAR, bool)``.
@@ -850,6 +857,43 @@ def detect_type_eq(conn: sqlite3.Connection) -> list[dict]:
                     reason="``type(x) == X`` misses subclasses; use ``isinstance(x, X)``",
                     confidence="high",
                     fix="isinstance(x, X)",
+                )
+            )
+    return findings
+
+
+def detect_pandas_iterrows(conn: sqlite3.Connection) -> list[dict]:
+    """Find pandas ``DataFrame.iterrows()`` row loops.
+
+    This is a Python-specific performance idiom rather than a universal
+    complexity-class detector: pandas documents that ``itertuples()`` is
+    generally faster and preserves dtypes better when row iteration is
+    unavoidable.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text or "iterrows" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _PANDAS_ITERROWS_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-pandas-iterrows",
+                    detected_way="series-row-loop",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="pandas DataFrame.iterrows() yields Series rows; prefer vectorized ops or itertuples()",
+                    confidence="medium",
+                    fix="for row in df.itertuples(index=False): ...",
                 )
             )
     return findings
@@ -1636,6 +1680,7 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-async-not-awaited", "missing-await", detect_async_not_awaited),
     ("py-async-with-missing", "async-resource-leak", detect_async_with_missing),
     ("py-type-eq", "type-not-isinstance", detect_type_eq),
+    ("py-pandas-iterrows", "series-row-loop", detect_pandas_iterrows),
     ("py-lock-without-with", "lock-leak", detect_lock_without_with),
     ("py-sync-calls-async", "missing-await-graph", detect_sync_calls_async_via_graph),
     ("py-django-n1", "django-orm", detect_django_n1),

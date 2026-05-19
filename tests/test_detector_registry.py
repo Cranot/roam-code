@@ -118,8 +118,11 @@ class TestMathListDetectorsFlag:
         assert result.exit_code == 0, result.output
         assert "VERDICT:" in result.output
         assert "decorated detectors" in result.output
+        assert "Python idiom detectors" in result.output
         assert "detect_nested_lookup" in result.output
         assert "nested-lookup" in result.output
+        assert "detect_pandas_iterrows" in result.output
+        assert "py-pandas-iterrows" in result.output
 
     def test_json_output(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
@@ -132,11 +135,13 @@ class TestMathListDetectorsFlag:
         data = parse_json_output(result, "algo")
         assert "detectors" in data
         assert data["summary"]["detector_count"] == len(data["detectors"])
-        assert data["summary"]["detector_count"] >= 10
+        assert data["summary"]["decorated_detector_count"] >= 34
+        assert data["summary"]["python_idiom_detector_count"] >= 23
         names = {d["name"] for d in data["detectors"]}
         assert "detect_nested_lookup" in names
+        assert "detect_pandas_iterrows" in names
         sample = data["detectors"][0]
-        for k in ("name", "task_id", "languages", "confidence_basis", "query_cost", "version"):
+        for k in ("name", "task_id", "languages", "confidence_basis", "query_cost", "version", "source"):
             assert k in sample, f"detector entry missing {k}: {sample}"
 
 

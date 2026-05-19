@@ -118,7 +118,7 @@ recommendation: do not delete. Add deprecation warning instead.</pre>
 
       <h2>3. The accidental O(n²) the linter approved</h2>
       <p><strong>Scenario.</strong> The agent rewrites a list-deduplication loop. It's clean, idiomatic, and uses <code>list.append</code> + <code>if x not in seen</code>. Linters love it. At 100 records it runs in 2 ms; at 50,000 records it takes 18 seconds and the request times out.</p>
-      <p><strong>What Roam does.</strong> <code>roam math</code> (alias <code>roam algo</code>) detects nested-loop lookups (LIST-MEMBERSHIP-IN-LOOP), regex-in-loop, JSON-parse-in-loop, quadratic string concatenation, and seven other algorithmic anti-patterns the AI agent's training distribution doesn't penalise.</p>
+      <p><strong>What Roam does.</strong> <code>roam math</code> (alias <code>roam algo</code>) detects nested-loop lookups, regex-in-loop, N+1 I/O in loops, quadratic string concatenation, serial awaits, pandas row loops, and dozens of other algorithmic anti-patterns the AI agent's training distribution doesn't penalise.</p>
       <pre class="terminal" aria-label="Math/algo demo"><span class="t-prompt">$</span> <span class="t-cmd">roam math --confidence high</span>
 VERDICT: 3 high-confidence findings
 [1] LIST-MEMBERSHIP-IN-LOOP (O(n²))

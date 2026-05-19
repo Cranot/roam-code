@@ -111,7 +111,8 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     default=None,
     help=(
         "Layer a framework-specific cache allowlist on top of defaults. "
-        "Bundled profiles: vue3-tanstack, laravel-multitenant. Unknown names "
+        "Bundled profiles include django, rails, nestjs, vue3-tanstack, "
+        "laravel-multitenant. Unknown names "
         "are tolerated (defaults still apply). See `roam math --list-frameworks`."
     ),
 )
@@ -202,7 +203,7 @@ def math_cmd(
     \b
     Examples:
       roam algo
-      roam algo --task linear-search
+      roam algo --task search-sorted
       roam algo --confidence high --max-per-task 3
       roam algo --framework django
 
@@ -221,46 +222,62 @@ def math_cmd(
         return
 
     if list_detectors:
-        # A3 — enumerate the decorator-registered detectors. Emit JSON when
-        # --json was set so CI / agents can consume the metadata without
-        # parsing the text columns.
-        from roam.catalog.detectors import list_registered_detectors
+        # A3/W1316 — enumerate the full runtime detector surface. The
+        # decorator registry covers the 34 universal catalog detectors; the
+        # runtime also loads Python-specific idiom detectors from
+        # python_idioms.py. Emit JSON when --json was set so CI / agents can
+        # consume the metadata without parsing text columns.
+        from roam.catalog.detectors import list_detector_surface
 
-        entries = sorted(list_registered_detectors(), key=lambda e: (e["task_id"], e["name"]))
+        entries = sorted(list_detector_surface(), key=lambda e: (e["source"], e["task_id"], e["name"]))
+        decorated_count = sum(1 for e in entries if e.get("source") == "catalog")
+        python_idiom_count = sum(1 for e in entries if e.get("source") == "python_idioms")
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "algo",
                         summary={
-                            "verdict": f"{len(entries)} decorated detectors",
+                            "verdict": (
+                                f"{len(entries)} registered detectors "
+                                f"({decorated_count} decorated detectors, "
+                                f"{python_idiom_count} Python idiom detectors)"
+                            ),
                             "detector_count": len(entries),
+                            "decorated_detector_count": decorated_count,
+                            "python_idiom_detector_count": python_idiom_count,
                         },
                         detectors=entries,
                     )
                 )
             )
             return
-        click.echo(f"VERDICT: {len(entries)} decorated detectors")
+        click.echo(
+            f"VERDICT: {len(entries)} registered detectors "
+            f"({decorated_count} decorated detectors, {python_idiom_count} Python idiom detectors)"
+        )
         if not entries:
             return
         click.echo()
-        click.echo(f"  {'name':<38s} {'task':<28s} {'confidence':<16s} {'cost':<8s} {'version':<8s} languages")
+        click.echo(
+            f"  {'name':<38s} {'task':<30s} {'source':<14s} {'confidence':<16s} {'cost':<8s} {'version':<8s} languages"
+        )
         for e in entries:
             langs = ",".join(e["languages"]) or "any"
             click.echo(
-                f"  {e['name']:<38s} {e['task_id']:<28s} {e['confidence_basis']:<16s} "
-                f"{e['query_cost']:<8s} {e['version']:<8s} {langs}"
+                f"  {e['name']:<38s} {e['task_id']:<30s} {e.get('source', 'catalog'):<14s} "
+                f"{e['confidence_basis']:<16s} {e['query_cost']:<8s} {e['version']:<8s} {langs}"
             )
         return
 
-    # validate --task against the catalog; on typo, show
-    # the closest matches by edit distance instead of running 49 detectors
+    # validate --task against the detector task surface; on typo, show
+    # the closest matches by edit distance instead of running all detectors
     # silently to find zero results.
     if task_filter:
-        from roam.catalog.tasks import CATALOG
+        from roam.catalog.detectors import list_detector_surface
 
-        if task_filter not in CATALOG:
+        known_task_ids = sorted({entry["task_id"] for entry in list_detector_surface()})
+        if task_filter not in known_task_ids:
             import difflib
 
             # W1083-followup: cutoff=0.4/n=3 intentional — looser than the
@@ -276,11 +293,11 @@ def math_cmd(
             # intended one when names share a verb prefix. Leave the
             # knobs alone; do NOT migrate this site to the canonical
             # helper without first re-balancing the catalog vocabulary.
-            close = difflib.get_close_matches(task_filter, list(CATALOG.keys()), n=3, cutoff=0.4)
+            close = difflib.get_close_matches(task_filter, known_task_ids, n=3, cutoff=0.4)
             hint = f" Did you mean: {', '.join(close)}?" if close else ""
             click.echo(
                 f"NOTE: --task '{task_filter}' is not a known task id."
-                f" Run `roam math --json` then look at distinct `task_id` values." + hint,
+                f" Run `roam algo --list-detectors` to see task ids." + hint,
                 err=True,
             )
 
@@ -336,7 +353,7 @@ def math_cmd(
         # ``known`` set (run_detectors already partitioned upstream — the
         # helper re-validates against the registry so the disclosure
         # message is consistent with the single-value helper family).
-        from roam.catalog.detectors import _DETECTOR_REGISTRY
+        from roam.catalog.detectors import list_detector_names
         from roam.output.structured_unknowns import (
             structured_unknown_filter_many,
             to_summary_payload_many,
@@ -345,7 +362,7 @@ def math_cmd(
         _filter_warnings: list[str] = []
         only_unknown = detector_meta.get("only_unknown") or []
         exclude_unknown = detector_meta.get("exclude_unknown") or []
-        _registry_keys = set(_DETECTOR_REGISTRY.keys())
+        _registry_keys = list_detector_names()
 
         # ``only_frag`` / ``exclude_frag`` are stamped onto the summary
         # below conditionally. We compute them up-front so the text-mode

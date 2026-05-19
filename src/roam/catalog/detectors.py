@@ -47,6 +47,8 @@ from roam.output._severity import severity_rank
 __all__ = [
     # Registry + decorator (public API).
     "detector",
+    "list_detector_names",
+    "list_detector_surface",
     "list_registered_detectors",
     "run_detectors",
     # Framework-profile API.
@@ -197,6 +199,49 @@ def detector(
 def list_registered_detectors() -> list[dict[str, Any]]:
     """Return registry entries (excluding the callable) for inspection."""
     return [{k: v for k, v in entry.items() if k != "function"} for entry in _DETECTOR_REGISTRY.values()]
+
+
+def list_detector_surface() -> list[dict[str, Any]]:
+    """Return every built-in detector visible through ``roam algo``.
+
+    ``list_registered_detectors()`` is intentionally narrow: it reports
+    detectors declared with the ``@detector`` decorator in this module.
+    The runtime surface is wider because ``run_detectors()`` also loads
+    Python-specific idiom detectors from ``python_idioms.py``. This helper
+    mirrors the runtime surface so CLI discovery and ``--only``/``--exclude``
+    filtering do not hide detectors that already run by default.
+    """
+    entries: list[dict[str, Any]] = []
+    for entry in list_registered_detectors():
+        row = dict(entry)
+        row["source"] = "catalog"
+        entries.append(row)
+
+    try:
+        from roam.catalog.python_idioms import PYTHON_IDIOM_DETECTORS
+        from roam.catalog.versions import detector_version
+
+        for task_id, _way_id, detect_fn in PYTHON_IDIOM_DETECTORS:
+            entries.append(
+                {
+                    "name": getattr(detect_fn, "__name__", ""),
+                    "task_id": task_id,
+                    "languages": ("python",),
+                    "confidence_basis": CONFIDENCE_HEURISTIC,
+                    "query_cost": QUERY_COST_LOW,
+                    "version": detector_version(task_id),
+                    "source": "python_idioms",
+                }
+            )
+    except ImportError:
+        pass
+
+    return entries
+
+
+def list_detector_names() -> set[str]:
+    """Return filterable detector function names for ``--only`` / ``--exclude``."""
+    return {e["name"] for e in list_detector_surface() if e.get("name")}
 
 
 def _is_test_path(path: str) -> bool:
@@ -4750,30 +4795,33 @@ def run_detectors(
             framework_active = framework.lower()
     only_set = {n for n in (only or ()) if n}
     exclude_set = {n for n in (exclude or ()) if n} - only_set
+    detector_entries = list(_iter_registered_detectors())
+    known_detector_names = {getattr(fn, "__name__", "") for _task_id, _way_id, fn in detector_entries}
     # W1057 (Pattern 1D + Pattern 2): diff user-supplied --only/--exclude against
     # the registry-derived authoritative detector-name set so unknown names
     # don't silently filter-to-zero. Mirrors the framework_unknown precedent
     # at L4719-4725. Sorted for deterministic envelope hashing. Empty lists on
     # the happy path keep the meta envelope byte-identical to pre-W1057.
-    only_unknown = sorted(only_set - _DETECTOR_REGISTRY.keys()) if only_set else []
-    exclude_unknown = sorted(exclude_set - _DETECTOR_REGISTRY.keys()) if exclude_set else []
+    only_unknown = sorted(only_set - known_detector_names) if only_set else []
+    exclude_unknown = sorted(exclude_set - known_detector_names) if exclude_set else []
     try:
         findings = []
         failed_detectors = []
         executed = 0
         executed_tasks: list[str] = []
-        for task_id, _way_id, detect_fn in _iter_registered_detectors():
+        for task_id, _way_id, detect_fn in detector_entries:
             if task_filter and task_id != task_filter:
                 continue
-            # A3 — --only / --exclude filter on decorator-registered detectors.
-            # Detectors not in the registry are out-of-scope for these flags:
-            # `only` excludes them; `exclude` ignores them.
+            # A3 — --only / --exclude filter on detector function names.
+            # W1316 extends the filter from decorator-registered detectors
+            # to the full runtime surface (built-in catalog + Python idioms),
+            # so a detector shown by `roam algo --list-detectors` can always
+            # be selected directly.
             fn_name = getattr(detect_fn, "__name__", "")
-            is_registered = fn_name in _DETECTOR_REGISTRY
             if only_set:
-                if not is_registered or fn_name not in only_set:
+                if fn_name not in only_set:
                     continue
-            elif is_registered and fn_name in exclude_set:
+            elif fn_name in exclude_set:
                 continue
             executed += 1
             executed_tasks.append(task_id)

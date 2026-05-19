@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -32,7 +31,6 @@ from roam.runs.signing import (
     verify_chain,
     verify_chain_with_receipts,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
