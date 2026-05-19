@@ -213,19 +213,30 @@ def key_file_mode(
             warnings_out.append(kind)
 
     path = ledger_key_path(repo_root)
-    if not path.exists():
+    # Single stat() — discriminating FileNotFoundError (expected absence,
+    # emits signing_key_not_found:) from other OSErrors (permission/IO
+    # failure, emits signing_key_stat_failed:). Merging the prior
+    # exists()+stat() pair into one call closes the TOCTOU window the
+    # docstring above mentions AND routes ALL stat-permission failures
+    # through the loud-fallback emit path (the prior exists() call was
+    # NOT wrapped, so PermissionError leaked on Python 3.11+ where
+    # Path.exists() no longer swallows it). The not_found marker fires
+    # on Windows too (caller-contract preserved); Windows only skips
+    # the *mode* return below, not the existence check.
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         _emit(f"signing_key_not_found:{LEDGER_KEY_FILE}")
+        return None
+    except OSError as exc:
+        _emit(f"signing_key_stat_failed:{LEDGER_KEY_FILE}:{type(exc).__name__}:{exc}")
         return None
     if os.name == "nt":
         # NTFS reports a synthetic mode that isn't comparable to POSIX
         # 0o600; signal "not meaningful" instead of lying.
         # No marker: this is deliberate non-applicability, not a failure.
         return None
-    try:
-        return stat.S_IMODE(path.stat().st_mode)
-    except OSError as exc:
-        _emit(f"signing_key_stat_failed:{LEDGER_KEY_FILE}:{type(exc).__name__}:{exc}")
-        return None
+    return stat.S_IMODE(st.st_mode)
 
 
 # ---------------------------------------------------------------------------
