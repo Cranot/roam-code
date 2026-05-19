@@ -28,7 +28,20 @@ pip install -e ".[mcp,dev]"  # also includes fastmcp for MCP server work
 
 # Enable the commit-msg hook (rejects Co-Authored-By trailers + AI attribution)
 git config core.hooksPath .githooks
+
+# (Optional) Install the local pre-commit hooks for fast-fail count-drift +
+# Co-Authored-By rejection. CI runs the same checks independently.
+pre-commit install                            # pre-commit stage: count-drift
+pre-commit install --hook-type commit-msg     # commit-msg stage: no-coauthor
 ```
+
+The local hooks live in `.pre-commit-config.yaml` and mirror two CI gates:
+
+- **`count-drift`** runs `scripts/sync_surface_counts.py` and blocks the commit
+  when README / pyproject / landing-page counts diverge from the live CLI
+  surface in `src/roam/cli.py` + `src/roam/mcp_server.py`.
+- **`no-coauthor`** parses the commit message and rejects any
+  `Co-Authored-By:` trailer — project policy is single-author on this repo.
 
 ### Running Tests
 
@@ -64,6 +77,23 @@ binary directly:
 On macOS / Linux the equivalent is `.venv/bin/pytest tests/...`.
 
 All tests must pass before submitting a PR.
+
+### Dogfood smoke (roam-on-roam)
+
+After a meaningful change, run roam on its own source tree to confirm
+the index still builds and the preflight gate behaves on a known
+symbol:
+
+```bash
+roam init                                  # build the SQLite index
+roam health                                # composite health score
+roam preflight ensure_index                # blast radius + tests + fitness on a real symbol
+```
+
+If `roam health` drops sharply or `roam preflight` fails the fitness
+gate on a stable symbol, treat that as a regression and investigate
+before opening the PR. The same loop is the canonical "earn the right
+to change code" rehearsal documented in `AGENTS.md`.
 
 ### Linting
 
@@ -133,6 +163,19 @@ Notes:
 
 ## How to Contribute
 
+Before picking up work, skim:
+
+- `AGENTS.md` — the agent-OS substrate, the 12 substrate packages, and the
+  canonical 4-mode loop (`read_only` / `safe_edit` / `migration` /
+  `autonomous_pr`).
+- `CLAUDE.md` — Claude-specific operator guide; mirrors AGENTS.md plus quality
+  discipline and the LAW-4 concrete-noun anchor rules enforced by
+  `tests/test_law4_lint.py`.
+- `dev/BACKLOG.md` — the sprint queue + shipped history. Good for finding
+  small, well-scoped tasks tagged "drive-by" or "polish".
+- `(internal memo)` — active strategy command center
+  (framing, launch readiness, build priorities).
+
 ### Reporting Bugs
 
 Use the [Bug Report](https://github.com/Cranot/roam-code/issues/new?template=bug_report.yml) issue template. Please include:
@@ -181,9 +224,13 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
    - Add to `_COMMANDS` dict: `"your-command": ("roam.commands.cmd_yourcommand", "your_command")`
    - Add to the appropriate category in `_CATEGORIES` dict
 
-3. Add an MCP tool wrapper in `mcp_server.py` if the command would be useful for AI agents
-   (skip-taxonomy exceptions: setup/bootstrap, local-state-only, daemon, REPL — see CLAUDE.md
-   "Adding a new CLI command" step 4 for the full rule)
+3. Add an MCP tool wrapper in `mcp_server.py` if the command would be useful for AI
+   agents. Four skip categories: setup/bootstrap (`init`, `surface`, `version`),
+   local-state-only (`mode`, `memory`, `runs`, `lease`, `annotate`), daemon (`watch`),
+   and REPL/interactive helpers. Otherwise add the wrapper, declare the read/write
+   side-effect flag, and mark non-idempotent tools so the mode gate can enforce
+   policy on them. The advisory `tests/test_mcp_wrapper_coverage.py` surfaces
+   commands lacking a wrapper that aren't in the skip-taxonomy allowlist.
 
 4. Add `@roam_capability(name="...", category="...", ...)` to the click command — the
    auto-derived `tests/test_capability_decoration.py` will fail without it. Aliases sharing
@@ -205,6 +252,80 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
    CI runs `python dev/build_readme_counts.py --check` in the `doc-hygiene`
    job and will fail if any count drifts from the source of truth in
    `src/roam/cli.py` + `src/roam/mcp_server.py`.
+
+#### MCP boundary security
+
+roam's MCP boundary is where agent-emitted tool calls meet the assurance
+substrate. Three guarantees ship today: (a) egress redaction prevents secret
+leak on output; (b) 4-mode policy enforcement gates state-mutating calls; (c)
+every receipt is HMAC-linked to a signed run-ledger event for tamper-evident
+audit. These map to compliance evidence; they do not by themselves make any
+project compliant.
+
+**When you'd touch this:**
+
+- Adding a new `@_tool` wrapper that mutates state
+- Modifying `_wrap_with_receipt` redaction call sites
+- Extending the `policy_decision` closed enum
+- Adding a new mode classification
+- Touching `src/roam/runs/signing.py`
+
+**Closed-enum vocabulary** (extend the source-of-truth file; never hardcode a new
+string at the call site):
+
+- `policy_decision` (6 at the MCP boundary — `allow`, `deny`, `escalate`,
+  `redact`, `not_evaluated`, `would_deny_dry_run`): `src/roam/evidence/mcp_receipt.py`
+  (strict subset of the 9-member `POLICY_DECISIONS` in `_vocabulary.py`).
+- `redactions[]` reasons (9): `src/roam/evidence/_vocabulary.py:REDACTION_REASONS`.
+- `receipt_integrity` (4 — `ok`, `missing`, `tampered`, `not_linked`):
+  `src/roam/runs/signing.py:RECEIPT_INTEGRITY_STATES`.
+
+**Schema export.** The receipt JSON Schema (Draft 2020-12, `$id` =
+`.../mcp-receipt/v1.json`) lives at `src/roam/evidence/mcp_receipt_schema.py`;
+export via `scripts/export_mcp_receipt_schema.py`. Enums and receipt fields are
+append-only; gateways pin the `$id` to observe breaking bumps.
+
+**Shadow mode.** `ROAM_MODE_DRY_RUN` evaluates policy and emits
+`would_deny_dry_run` instead of blocking, so gateways can observe enforcement
+without disabling it. Findings still persist to the registry.
+
+**Drift-guard tests every contributor should know:**
+
+- `tests/test_w_mcp_redact_egress.py` — P0.1 redaction wiring
+- `tests/test_w_mcp_mode_enforcement.py` — P0.2 4-mode enforcement
+- `tests/test_w_mcp_receipt_hmac_link.py` — P0.3 HMAC-link integrity
+- `tests/test_mcp_receipt_json_schema.py` — P2.2 schema parity
+- `tests/test_evidence_v0.py` / `tests/test_evidence_schema_migration.py` —
+  vocabulary + golden-hash drift
+
+**Hash-stability discipline.** The `ChangeEvidence` content hash and the HMAC
+ledger chain MUST stay byte-identical when default-valued fields are absent;
+pre-P0.3 chains and pre-P2.2 receipts continue to verify cleanly with no
+migration. See the `_W210_OMIT_WHEN_DEFAULT_FIELDS` discipline in
+`src/roam/evidence/change_evidence.py`.
+
+**Where to read more:** `dev/MCP-SECURITY-POSTURE.md` (gateway-integrator
+audience), the "MCP runtime security" section of `CLAUDE.md`, the 12 substrate
+packages and 8 evidence questions in `AGENTS.md`, and Discussion
+[#37 reply](https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163).
+
+#### Findings-registry discipline
+
+Canonical mandate: new detectors are only strategically useful when they emit
+into the shared findings / evidence layer, and new exporters consume from that
+layer rather than querying the graph independently.
+
+- Call `emit_finding(conn, FindingRecord(...))` from `src/roam/db/findings.py`.
+  Carry a `<DETECTOR>_DETECTOR_VERSION` constant at the call site for drift
+  tracking (not in `src/roam/catalog/versions.py`).
+- `roam findings count` returns last-run state per detector, not a cumulative
+  tally — totals reflect the most recent invocation of each detector.
+- Mirror the closest sibling detector in `tests/test_findings_*.py` when adding
+  a new one.
+
+Envelope-only is a narrow exception for invocation-scoped findings (diff-region
+transients) or commands that gate the registry write behind a `--persist` flag.
+Reference patterns: `cmd_clones`, `cmd_flag_dead`, `cmd_path_coverage`.
 
 #### Adding a New Language (Tier 1)
 
@@ -259,6 +380,26 @@ ci: render changelog.html on every push
 This is professional, not personal-journal. The CHANGELOG entry is
 where the colour goes; the commit subject is just the index.
 
+### Author attribution
+
+Single-author project policy: every commit is authored by Cranot. Do NOT append
+`Co-Authored-By:` trailers, AI-attribution lines, or "Generated with" footers.
+The local `no-coauthor` pre-commit hook and `.githooks/commit-msg` both reject
+these trailers; CI re-runs the same check. If a hook rejects your message,
+strip the trailer and re-stage — do not bypass via `--no-verify`.
+
+### Wording lint (governance + security narrative)
+
+CI lints generated reports AND commit messages / docs for over-claim wording:
+
+- **Compliance / governance:** use "maps to" or "supports evidence for" only —
+  the codebase intelligence layer emits portable evidence; external GRC tools
+  consume it. Never "certifies" or "makes compliant".
+- **MCP runtime security:** describe behaviour with the shipped capability
+  names — "egress redaction", "mode-gated policy enforcement",
+  "tamper-evident receipt chain". Avoid absolute claims ("prevents all secret
+  leaks", "fully sandboxed"); the substrate is a defence layer, not a guarantee.
+
 ## Version + release cadence
 
 Single source of truth: `pyproject.toml` → `version`. Everything else
@@ -296,6 +437,26 @@ the underlying drift; don't bypass it.
    `changelog.html` drifts from `CHANGELOG.md`.
 4. `scripts/linkcheck.py` — fails if any internal landing-page link or
    anchor 404s.
+
+### Drift-guard discipline
+
+Four rules that consistently surface as fix-forward causes — fold them into the
+same commit as the original change, not a follow-up PR:
+
+- **When a count changes, ship a structural drift-guard the same session.** Run
+  `python dev/build_readme_counts.py --apply` AND add a test asserting the new
+  count in the same commit. The test stops the next agent from silently reverting
+  your bump.
+- **Render `changelog.html` immediately after editing `CHANGELOG.md`** via
+  `python scripts/build_changelog_html.py`. The drift gate hard-fails on stale
+  renders, so a "doc-only" CHANGELOG edit will block the PR otherwise.
+- **Phantom-annotate when a test pins a missing doc.** Use `skip` / `xfail` with
+  a reason and a TODO pointing at the producing task. Silent-pass via
+  `if path.exists()` trains future readers to ignore the gate.
+- **Add a rationale comment when a canonical list outlives a refactor.** Lists
+  like `_COMPOUND_INVOKERS` that reference modules no longer present need a short
+  comment (`# kept for historical alias resolution` or `# moved to <path>`) in
+  the same commit as the refactor.
 
 ## Deploys
 
@@ -338,8 +499,8 @@ roam-code is organized into these key areas:
 | `src/roam/graph/` | NetworkX graph algorithms (PageRank, SCC, clustering, layers) |
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
-| `src/roam/mcp_server.py` | MCP server with 224 tools (57 in the default `core` preset) |
-| `tests/` | Test suite (744 test files) |
+| `src/roam/mcp_server.py` | MCP server with 227 tools (57 in the default `core` preset) |
+| `tests/` | Test suite |
 
 For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).
 

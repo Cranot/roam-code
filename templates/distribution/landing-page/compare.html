@@ -68,16 +68,22 @@
         <strong>local-CLI agent-assurance.</strong>
       </h1>
       <p class="hero-subhead">
-        The other products on this page focus on different layers — cloud-IDE
-        agents (Cursor, Cody, Windsurf, Continue, Sweep) help write code; cloud
-        semantic reviewers (CodeRabbit, Greptile, Qodo) read diffs as text on a
-        cloud server. Roam runs entirely on the developer's machine — <strong>zero
-        accounts, zero API keys, zero network egress</strong> — and emits a portable
-        tamper-evident <code>ChangeEvidence</code> packet (optionally cosign-signed)
-        that answers eight evidence questions about every AI-assisted change. Among
-        the products surveyed below as of <time datetime="2026-05-18">2026-05-18</time>,
-        we did not find a direct substitute for this combination; if you know of
-        one, email us and we will update the page.
+        Cloud-IDE agents (Cursor, Cody, Windsurf, Continue, Sweep, Claude Code)
+        are human-first surfaces that <em>log a session</em>. Cloud semantic
+        reviewers (CodeRabbit, Greptile, Qodo) read the diff as text on a vendor
+        server. Roam is an agent-first CLI + MCP server that <em>gates the change
+        and emits proof</em> — credential-free, zero network egress, and a
+        portable tamper-evident <code>ChangeEvidence</code> packet (optionally
+        cosign-signed) answering eight evidence questions per AI-assisted change.
+        Among the products surveyed as of <time datetime="2026-05-18">2026-05-18</time>,
+        we did not find a direct substitute for this trio. Vendor pages cited
+        under <a href="#methodology">methodology</a>.
+      </p>
+      <p class="hero-ctas">
+        <a href="/docs/canonical-demo" class="btn-primary">Try the 5-minute demo</a>
+        <a href="/docs/architecture">Architecture</a> ·
+        <a href="/governance">Governance</a> ·
+        <a href="/pricing">Pricing</a>
       </p>
     </div>
   </header>
@@ -86,47 +92,45 @@
     <div class="whats-in-inner whats-in-inner--wide">
       <h2>Three categories, three different questions</h2>
       <p class="lede">
-        Before comparing vendor tables, name the category. The three
-        product shapes below answer different questions for different
-        consumers; comparing across categories is comparing apples to
-        oranges to evidence packets.
+        Before comparing vendor tables, name the category. These three
+        product shapes answer different questions for different consumers.
+        Comparing across categories is apples to oranges to evidence packets.
       </p>
       <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
           <code>Cloud-IDE agent</code>
           <span><strong>"Help me write code."</strong>
-          Cursor, Sourcegraph Cody Enterprise, Windsurf,
-          Continue, Sweep, Claude Code. Human-first surface inside an
-          editor or terminal. Requires a vendor account and at least
-          one cloud LLM endpoint. Audit logs answer <em>who ran what</em>.</span>
+          Cursor, Sourcegraph Cody Enterprise, Windsurf, Continue, Sweep,
+          Claude Code. Human-first IDE or CLI surface. Vendor account +
+          cloud LLM endpoint required. Audit logs answer <em>who ran what</em>.</span>
         </div>
         <div class="verb-cell">
           <code>Cloud semantic reviewer</code>
           <span><strong>"Does this PR make sense?"</strong>
-          CodeRabbit, Greptile, Qodo, SonarQube Cloud. Reads the diff
-          as text on a cloud server. Catches logic bugs, naming drift,
-          intent mismatches. Source code uploaded; self-host is
-          enterprise-tier only.</span>
+          CodeRabbit, Greptile, Qodo, SonarQube Cloud. Reads the diff as
+          text on a vendor server. Catches logic bugs, naming drift,
+          intent mismatches. Source uploaded; self-host is enterprise-tier.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>Local-CLI agent-assurance</code>
-          <span><strong>"Was this change structurally understood?"</strong>
-          <strong>Roam.</strong> Agent-first CLI + MCP server. Builds a
-          local SQLite graph of symbols, callers, layers, runtime hot
-          spots, and clones; offers preflight + blast-radius + critique
-          gates for changes; emits a portable <code>ChangeEvidence</code>
-          packet (optionally cosign-signed) that answers <em>was the
-          change understood, gated, tested, approved, and recorded</em>.</span>
+          <span><strong>"Was this change structurally understood and recorded?"</strong>
+          <strong>Roam.</strong> Agent-first CLI + MCP server. Local SQLite
+          graph of symbols, callers, layers, runtime hot spots, clones;
+          preflight + blast-radius + critique gates; portable
+          <code>ChangeEvidence</code> packet answering eight evidence
+          questions per change.</span>
         </div>
       </div>
       <p class="review-layers-foot">
-        Roam composes with both other categories — keep your cloud-IDE
-        agent for code generation, keep your semantic reviewer for
-        intent checks, add Roam underneath for a local structural and
-        evidence layer that complements them.
-        <strong>See it end-to-end in five commands:</strong>
-        <a href="/docs/canonical-demo">the canonical 5-minute demo</a> walks
-        install &rarr; health &rarr; preflight &rarr; critique &rarr;
+        Roam composes with the other two categories — keep your IDE agent
+        for code generation, keep your semantic reviewer for intent checks,
+        add Roam underneath for the structural + evidence layer.
+        A separate tier of MCP gateways (Lasso, Portkey, Interlock)
+        sits <em>between</em> the agent and its tools; Roam emits evidence
+        such gateways can consume — they are not direct comparisons.
+        <strong>See the trio end-to-end:</strong>
+        <a href="/docs/canonical-demo">the canonical 5-minute demo</a>
+        walks install &rarr; health &rarr; preflight &rarr; critique &rarr;
         portable <code>ChangeEvidence</code> packet without leaving the laptop.
       </p>
     </div>
@@ -134,53 +138,47 @@
 
   <section class="whats-in section-intro-tight" id="three-layers">
     <div class="whats-in-inner whats-in-inner--wide">
-      <h2>Inside the review layer: four sub-layers, Roam owns two</h2>
+      <h2>Inside review: four sub-layers, Roam owns two</h2>
       <p class="lede">
-        Within the "review" half of the picture — distinct from the
-        cloud-IDE-agent half above — most teams are arguing about the
-        wrong axis. These four sub-layers answer different questions and
-        ship different signals. The healthiest setup runs all four; Roam
-        covers two of them.
+        Within the review half of the picture, four sub-layers answer
+        different questions. A healthy setup runs all four; Roam covers
+        the bottom two.
       </p>
       <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
           <code>1. Semantic</code>
           <span><strong>Does the code make sense?</strong>
-          CodeRabbit, Greptile, Qodo. Reads the diff as text. Catches logic
-          bugs, missing error paths, naming issues, intent drift.</span>
+          CodeRabbit, Greptile, Qodo. Reads the diff as text. Catches
+          logic bugs, missing error paths, intent drift.</span>
         </div>
         <div class="verb-cell">
           <code>2. Static</code>
           <span><strong>Does it violate rules?</strong>
-          SonarQube, Semgrep, ast-grep, ESLint. Catches insecure patterns,
-          taint violations, banned APIs. Rule-based and language-aware.</span>
+          SonarQube, Semgrep, ast-grep, ESLint. Insecure patterns, taint
+          violations, banned APIs. Rule-based and language-aware.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>3. Structural</code>
           <span><strong>What else does it touch?</strong>
-          <strong>Roam.</strong> Reads the diff as a graph mutation. Callers,
-          tests, clones, runtime hot spots, layer violations, blast radius —
-          questions the other layers can't answer.</span>
+          <strong>Roam.</strong> Reads the diff as a graph mutation:
+          callers, tests, clones, runtime hot spots, layer violations,
+          blast radius.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>4. Algorithmic</code>
           <span><strong>Is it correct but slow?</strong>
-          <strong>Roam.</strong> Detects patterns that are computationally
-          expensive: O(n²) nested-loop lookups, N+1 queries, regex compiled
-          in hot loops, repeated JSON parses, quadratic strings, branching
-          recursion without memoisation. The kinds of patterns AI agents
-          frequently ship that pass tests and fail at scale. Among the
-          AI-code-review products surveyed below, we did not find a
-          comparable deterministic algorithmic-pattern detector documented
-          on their public pages.</span>
+          <strong>Roam.</strong> Deterministic detectors for O(n²)
+          nested-loop lookups, N+1 queries, regex compiled in hot loops,
+          repeated JSON parses, quadratic string concat, branching
+          recursion without memoisation — patterns AI agents ship that
+          pass tests and fail at scale.</span>
         </div>
       </div>
       <p class="review-layers-foot">
-        Roam isn't a replacement for the semantic or static layers — it
-        complements them by adding the structural <em>and</em> algorithmic
-        layers. The flat-tier pricing is intentional:
-        <strong>add structural + algorithmic review without a per-seat
-        headcount conversation.</strong>
+        Roam adds structural + algorithmic review without replacing the
+        semantic or static layers. The flat-tier pricing is intentional:
+        <strong>add two review layers without a per-seat headcount
+        conversation.</strong>
       </p>
     </div>
   </section>
@@ -363,7 +361,7 @@
             </tr>
             <tr>
               <th scope="row">Compliance certifications<sup>4</sup></th>
-              <td class="yes">N/A by design<sup>3</sup></td>
+              <td class="yes">Not currently certified; see /trust for posture<sup>3</sup></td>
               <td class="ltd">SOC 2 (vendor-stated)</td>
               <td class="ltd">SOC 2 + ISO 27001 (vendor portal)</td>
               <td class="no">None advertised</td>
@@ -474,37 +472,37 @@
 
       <h3 class="text-center prose-h3-spaced">Why "alongside", not "instead of"</h3>
       <p>
-        Semantic and structural review answer different questions.
         Semantic review (CodeRabbit, Greptile, Qodo) reads the diff as text
-        and asks: <em>does this change make sense semantically? Are there
-        bugs in the logic?</em>. Structural review (Roam) reads the diff as
-        a graph mutation and asks: <em>what else does this touch? What's
-        the blast radius? Are there clones we should also update?</em>.
-        Teams that ship AI-assisted changes often benefit from running
-        both signals side by side rather than choosing one.
+        and asks <em>does this make sense semantically?</em>. Structural
+        review (Roam) reads the diff as a graph mutation and asks
+        <em>what else does this touch?</em>. Teams shipping AI-assisted
+        changes often want both signals side by side.
       </p>
       <p>
-        That's why our pricing assumes you keep your existing reviewer:
-        Roam Review at $99-$1,499/mo flat is additive to $24-30/dev/mo for
-        the semantic reviewer, not a replacement. The flat tiers cap your
-        Roam spend regardless of team size, so adding a structural layer
-        doesn't trigger a per-seat headcount conversation.
+        Our pricing assumes you keep your existing reviewer: Roam Review
+        at $99-$1,499/mo flat is additive to $24-30/dev/mo for the
+        semantic reviewer, not a replacement. Flat tiers cap your Roam
+        spend regardless of team size.
       </p>
     </div>
   </section>
 
   <section class="audit-upsell">
     <div class="audit-upsell-inner">
-      <h2>Want to evaluate Roam alongside your current reviewer?</h2>
+      <h2>Try Roam alongside your current reviewer</h2>
       <p>
-        Run the free 5-PR DIY sample on your repo locally
-        (<code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>) — same
-        engine as our paid engagements, just on a tighter window. For a written
-        report on your last 30 or 90 PRs scored against the current detector set,
-        commission a paid PR Replay engagement: <a href="/audit"><strong>see
-        Team ($2,500) and Deep ($6,000) on /audit</strong></a>. 50% of the fee
-        credits toward a Roam Review subscription within 60 days, so the
-        engagement is close to free if you go on to subscribe.
+        <strong>Start with the canonical 5-minute demo</strong> —
+        <a href="/docs/canonical-demo">install &rarr; health &rarr; preflight
+        &rarr; critique &rarr; portable evidence packet</a>, all locally.
+        Or run the free 5-PR DIY sample on your repo:
+        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>.
+      </p>
+      <p>
+        For a written report on your last 30 or 90 PRs scored against the
+        current detector set, commission a paid PR Replay engagement —
+        <a href="/audit">Team ($2,500) and Deep ($6,000) on /audit</a>.
+        50% of the fee credits toward a Roam Review subscription within
+        60 days.
       </p>
     </div>
   </section>

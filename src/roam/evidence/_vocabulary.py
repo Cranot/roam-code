@@ -498,7 +498,7 @@ CLAIM_CONFIDENCES: frozenset[str] = frozenset(
 # dataclass; see ``roam.evidence.policy.PolicyDecision``)
 # ---------------------------------------------------------------------------
 
-# POLICY_DECISIONS - 8-tier policy-evaluation verdict vocabulary used by
+# POLICY_DECISIONS - 9-tier policy-evaluation verdict vocabulary used by
 # ChangeEvidence.policy_decisions[].decision. This is the policy-rule
 # decision layer; OTHER verdict-like vocabularies in roam are:
 #
@@ -548,6 +548,16 @@ CLAIM_CONFIDENCES: frozenset[str] = frozenset(
 #:                        explicit ``decision`` literal (rules envelope
 #:                        fallback path - kept in the closed set so
 #:                        the legacy column doesn't silently leak)
+#: * ``would_deny_dry_run`` - MCP-P1.1 shadow-mode marker. The 4-mode
+#:                        gate WOULD have denied this call under
+#:                        ``ROAM_MODE_ENFORCEMENT=1``, but
+#:                        ``ROAM_MODE_DRY_RUN=1`` was set so the call
+#:                        was allowed to proceed for observe-only
+#:                        rollout. Distinct from ``deny`` (which is the
+#:                        steady-state advisory verdict when enforcement
+#:                        is off without dry-run) — dry-run is an
+#:                        explicit operator opt-in to preview policy
+#:                        before flipping enforcement.
 POLICY_DECISIONS: frozenset[str] = frozenset(
     {
         "pass",
@@ -558,6 +568,7 @@ POLICY_DECISIONS: frozenset[str] = frozenset(
         "redact",
         "not_evaluated",
         "unknown",
+        "would_deny_dry_run",
     }
 )
 

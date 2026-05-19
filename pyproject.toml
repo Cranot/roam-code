@@ -9,14 +9,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roam-code"
 version = "13.2"
-description = "Local codebase intelligence for AI coding agents: a structural map of your repo, change-safety gates, and tamper-evident ChangeEvidence packets. Credential-free, zero network egress."
+description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. 100% local, zero API keys, zero network egress."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
     {name = "Cranot"},
 ]
-keywords = ["agentic-assurance", "ai-agents", "ai-coding", "audit-trail", "blast-radius", "change-evidence", "cli", "code-analysis", "code-attestation", "code-graph", "code-intelligence", "code-quality", "code-review", "developer-tools", "evidence-compiler", "graph-analysis", "local-first", "mcp", "mcp-server", "model-context-protocol", "preflight", "refactoring", "sarif", "software-architecture", "sqlite", "static-analysis", "tree-sitter"]
+keywords = ["agent-os", "agentic-assurance", "ai-agents", "ai-coding", "audit-trail", "blast-radius", "change-evidence", "code-analysis", "code-review", "codebase-intelligence", "developer-tools", "evidence-compiler", "local-first", "mcp", "mcp-server", "model-context-protocol", "preflight", "sarif", "security", "software-architecture", "static-analysis", "tree-sitter"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -27,6 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
     "Topic :: Software Development",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Quality Assurance",
@@ -52,6 +53,7 @@ Homepage = "https://roam-code.com/"
 Documentation = "https://roam-code.com/docs/"
 Repository = "https://github.com/Cranot/roam-code"
 Issues = "https://github.com/Cranot/roam-code/issues"
+Discussions = "https://github.com/Cranot/roam-code/discussions"
 Changelog = "https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md"
 Pricing = "https://roam-code.com/pricing"
 Security = "https://roam-code.com/security"

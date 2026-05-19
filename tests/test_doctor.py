@@ -527,13 +527,21 @@ class TestDoctorExitCodes:
         assert result.exit_code == 2
 
     def test_json_exit_0_when_all_pass(self):
-        """JSON mode exits 0 when all checks pass (no advisory or blocking)."""
+        """JSON mode exits 0 on clean OR advisory-only failures.
+
+        Two-tier exit-code contract (Pattern-2 advisory-vs-blocker):
+          * exit 0 -> no blocking failures (advisory failures allowed)
+          * exit 2 -> at least one blocking failure (or --strict promotes
+            advisory to blocking)
+        Pre-Pattern-2 behaviour was three-tier (0/1/2) which read as
+        "broken" to fresh-install users when only advisories failed.
+        """
         runner = CliRunner()
         result = runner.invoke(cli, ["--json", "doctor"], catch_exceptions=False)
         if result.exit_code == 0:
             data = json.loads(result.output)
-            assert data["summary"]["all_passed"] is True
-            assert data["summary"]["advisory_failed"] == 0
+            # exit 0 is now a CONJUNCT of "no blockers" — advisory failures
+            # are permitted. Assert the conjunct, not the strict all-pass.
             assert data["summary"]["blocking_failed"] == 0
 
     def test_json_envelope_carries_severity_split(self):

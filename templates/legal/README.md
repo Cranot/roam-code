@@ -26,12 +26,13 @@ of `[TBD: PROVIDER_VENUE_CITY]`** (mirrors `sow-pr-replay.md`,
 | `sow-pr-replay.md` | Current PR Replay Statement of Work template. Copy and customise per engagement. Canonical pricing: **Team $2,500 / Deep $6,000**, with **$1,250 / $3,000** Roam Review credits within 60 days of delivery. | 2026-05-18 |
 | `nda-mutual.md` | One-page mutual NDA. Sign at first call when discussing a real codebase. SOW + DPA supersede confidentiality / personal-data clauses on execution (NDA §10A). | 2026-05-18 |
 | `dpa.md` | Data Processing Agreement draft for PR Replay and planned Review processing. Required for EU clients before code access. Carries the canonical **14-day subprocessor notice** (§5) and **vuln SLA 1 business day ack / 2 business days triage** envelope. Still needs attorney review and final hosted-service placeholders before Review launch. | 2026-05-18 |
-| `security-procurement-packet.md` | Pre-fills the questions a typical security or procurement review will ask about Roam Review (hosted PR bot): data flow, GitHub App permissions, sub-processors, retention, no-training statement, incident response, SLA. Pair with `dpa.md` for binding terms. | 2026-05-18 |
+| `security-procurement-packet.md` | Pre-fills the questions a typical security or procurement review will ask across all three surfaces: live CLI (local-only), live PR Replay engagements, and the planned Roam Review hosted GitHub App. Covers data flow, GitHub App permissions, sub-processors, retention, no-training statement, incident response, SLA, the local evidence substrate (run ledger, modes, findings registry, `ChangeEvidence`, signed `pr-bundle` + CGA / VSA, OSCAL export, MCP decision receipts), and the maps-to-not-certified compliance stance. Pair with `dpa.md` for binding terms. | 2026-05-18 |
 
-`security-procurement-packet.md` is a planning draft until Roam Review has
-named production vendors and GA deployment terms. Do not send it externally
-without replacing placeholders and reconciling the Self-Hosted / private-pilot
-language.
+`security-procurement-packet.md` is shareable today for CLI + PR Replay
+procurement reviews; the Roam Review (hosted GitHub App) sections remain a
+planning draft until named production vendors and GA deployment terms are
+filled in. Do not send the hosted-Review sections externally without
+replacing placeholders and reconciling the private-pilot language.
 
 See the customer-journey email templates in `../email/customer-journey.md`
 for the outreach copy that triggers each procurement step below.

@@ -328,6 +328,9 @@
       <tr><td><code>roam dogfood-aggregate</code></td><td>Aggregate the dogfood eval corpus into a backlog/triage v...</td></tr>
       <tr><td><code>roam suppress</code></td><td>Suppress a math / over-fetch / missing-index / auth-gaps ...</td></tr>
       <tr><td><code>roam pr-diff</code></td><td>Show structural impact of pending changes.</td></tr>
+      <tr><td><code>roam evidence-diff</code></td><td>Diff two <code>ChangeEvidence</code> packets.</td></tr>
+      <tr><td><code>roam evidence-doctor</code></td><td>Diagnose a <code>ChangeEvidence</code> packet's health.</td></tr>
+      <tr><td><code>roam evidence-oscal</code></td><td>Emit an OSCAL v1.2 document (Control Mapping or Assessment Results).</td></tr>
       <tr><td><code>roam api-changes</code></td><td>Detect breaking and non-breaking API changes vs a git ref.</td></tr>
       <tr><td><code>roam semantic-diff</code></td><td>Show structural change summary vs a git ref.</td></tr>
       <tr><td><code>roam test-gaps</code></td><td>Map changed symbols to missing test coverage.</td></tr>
@@ -375,6 +378,9 @@
       <tr><td><code>roam health</code></td><td>Show code health: cycles, god components, bottlenecks.</td></tr>
       <tr><td><code>roam smells</code></td><td>Detect code smells: brain methods, god classes, deep nest...</td></tr>
       <tr><td><code>roam vibe-check</code></td><td>Detect AI code anti-patterns and compute AI rot score.</td></tr>
+      <tr><td><code>roam llm-smells</code></td><td>Detect LLM-API integration anti-patterns.</td></tr>
+      <tr><td><code>roam test-hermeticity</code></td><td>Scan Python test files for non-hermetic patterns (AI-test flakiness risk).</td></tr>
+      <tr><td><code>roam boundary</code></td><td>Surface public-by-accident exports + changed-range layer violations.</td></tr>
       <tr><td><code>roam ai-readiness</code></td><td>Estimate how effectively AI agents can work on this codeb...</td></tr>
       <tr><td><code>roam check-rules</code></td><td>Run structural governance rules against the indexed codeb...</td></tr>
       <tr><td><code>roam ai-ratio</code></td><td>Estimate the percentage of AI-generated code from git pat...</td></tr>
@@ -452,6 +458,7 @@
       <tr><td><code>roam relate</code></td><td>Show how a set of symbols relate to each other.</td></tr>
       <tr><td><code>roam endpoints</code></td><td>List all detected REST/GraphQL/gRPC endpoints with handlers.</td></tr>
       <tr><td><code>roam metrics</code></td><td>Show unified metrics for a file or symbol.</td></tr>
+      <tr><td><code>roam findings</code></td><td>Query the central findings registry (cross-detector view).</td></tr>
     </tbody></table></div>
   <h3>Reports &amp; CI</h3>
   <div class="table-wrap"><table>
@@ -485,6 +492,7 @@
       <tr><td><code>roam taint</code></td><td>Reach-analysis from rule sources to sinks over the indexe...</td></tr>
       <tr><td><code>roam cga</code></td><td>Code Graph Attestation: sign-ready in-toto evidence over ...</td></tr>
       <tr><td><code>roam congestion</code></td><td>Detect developer congestion: files with too many concurre...</td></tr>
+      <tr><td><code>roam compatibility</code></td><td>Detect outbound surface regressions vs a baseline snapshot.</td></tr>
     </tbody></table></div>
   <h3>Refactoring</h3>
   <div class="table-wrap"><table>
@@ -508,6 +516,7 @@
       <tr><td><code>roam sketch</code></td><td>Show compact structural skeleton of a directory.</td></tr>
       <tr><td><code>roam test-map</code></td><td>Map a symbol or file to its test coverage.</td></tr>
       <tr><td><code>roam test-pyramid</code></td><td>Count tests by kind (unit/integration/e2e/smoke), flag in...</td></tr>
+      <tr><td><code>roam pr-risk</code></td><td>Compute risk score for pending changes.</td></tr>
       <tr><td><code>roam why</code></td><td>Explain why a symbol matters — role, reach, criticality, ...</td></tr>
       <tr><td><code>roam invariants</code></td><td>Discover implicit contracts for symbols.</td></tr>
       <tr><td><code>roam intent</code></td><td>Link documentation to code -- find what docs describe wha...</td></tr>

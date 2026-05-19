@@ -64,7 +64,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "Zero API keys; zero network egress; tamper-evident evidence packets (HMAC-chained run ledger); local code-graph engine; MCP server for coding agents (57 core / 224 full preset tools); 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export"
+    "featureList": "Zero API keys; 100% local by default (opt-in metrics-push is the only outbound surface); tamper-evident evidence packets (HMAC-chained run ledger); local code-graph engine; MCP server for coding agents (57 core / 227 full preset tools); 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export"
   }
   </script>
 
@@ -141,26 +141,18 @@
         <strong>a map of your repo before it edits.</strong>
       </h1>
       <p class="hero-subhead">
-        Roam gives AI coding agents a local structural map of your
-        repository — callers, dependencies, clones, tests, hot paths,
-        architecture boundaries. Agents call Roam before they edit,
-        during the change, and before merge — so they stop guessing
-        what the codebase means.
-      </p>
-      <p class="hero-subhead hero-subhead--tight">
         <strong>Maps before agents edit. Gates before they merge. Evidence after every run.</strong>
-        Runs locally. Exposes MCP tools. Gates CI. Your source stays
-        on your machine unless you choose otherwise.
+        Roam is the local code-graph and MCP server your coding agent
+        calls to check blast radius, find clones, run static analysis,
+        and emit tamper-evident evidence — credential-free, zero
+        network egress, your source stays on your machine.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
         <a class="btn-secondary" href="#audit">Replay your last 5 PRs</a>
       </div>
       <p class="hero-trust-strip">
-        Free CLI · Apache 2.0 · 28 languages · 57 core agent tools · 224 total MCP tools · 7,731 PyPI installs/month
-      </p>
-      <p class="hero-trust-strip hero-trust-strip--secondary">
-        Paid PR Replay audit available today — <a href="/audit">see Team and Deep tiers</a>.
+        Free CLI · Apache 2.0 · 28 languages · 57 core agent tools · 227 total MCP tools · 7,731 PyPI installs/month
       </p>
     </div>
   </header>
@@ -340,6 +332,10 @@
           <li><code>git diff | roam critique</code> — structural review of your current changes</li>
           <li><code>roam mcp</code> — start the MCP server so your agent can call the 57-tool core preset</li>
         </ol>
+        <p class="how-it-works-foot">
+          More detail in the <a href="/docs/getting-started">getting-started guide</a>
+          and the <a href="/docs/mcp-usage">MCP usage guide</a>.
+        </p>
       </div>
     </div>
   </section>
@@ -577,11 +573,11 @@
       <h2>Built for parallel agents.</h2>
       <p class="lede">
         Most review tools assume one author per change. Roam assumes
-        many — and gives every agent and human in the loop a shared
-        structural map so they don't collide. Split work across agents
-        by graph partition. Detect overlapping blast radius before two
-        agents touch the same call chain. Produce review evidence per
-        agent before merge.
+        many — and gives every agent in the loop a shared structural
+        map so they don't collide. Split work by graph partition,
+        detect overlapping blast radius before two agents touch the
+        same call chain, and produce per-agent review evidence before
+        merge.
       </p>
       <div class="numbers-grid numbers-grid--3">
         <div class="num-cell">
@@ -891,7 +887,7 @@
       </div>
       <div class="trust-cell">
         <strong>Evidence that never leaves your machine</strong>
-        <span>Local SQLite, no telemetry, no network calls — and evidence packets that hash-verify offline. Your code stays on your machine; your audit trail lives in your repo. See the <a href="/security#supply-chain">security page</a> for our supply-chain posture and a comparison with hosted reviewers.</span>
+        <span>Local SQLite, no telemetry, local by default (opt-in <code>metrics-push</code> is the only outbound surface) — and evidence packets that hash-verify offline. Your code stays on your machine; your audit trail lives in your repo. See the <a href="/security#supply-chain">security page</a> for our supply-chain posture and a comparison with hosted reviewers.</span>
       </div>
       <div class="trust-cell">
         <strong>28 languages, 6 cross-language bridges</strong>
@@ -899,7 +895,7 @@
       </div>
       <div class="trust-cell">
         <strong>Local audit trail</strong>
-        <span>Roam keeps local evidence of what was checked, so teams can show how AI-written code was reviewed. Tamper-evident log file plus signed records (in-toto v1, verifiable with cosign). Full framework-specific detail on the <a href="/security">security page</a>.</span>
+        <span>Roam keeps local evidence of what was checked, so teams can show how AI-written code was reviewed. Tamper-evident log file plus signed records (in-toto v1, verifiable with cosign). Full framework-specific detail on the <a href="/security">security page</a> and the <a href="/governance">governance page</a>; trust posture on the <a href="/trust">trust page</a>.</span>
       </div>
       <div class="trust-cell">
         <strong>We never train on your code</strong>
@@ -921,6 +917,7 @@
           the code <em>touches</em> — structure: callers, layers, dependency
           cycles, copy-paste duplicates. Different layer, different findings.
           Most teams keep their existing reviewer and add Roam alongside it.
+          See the <a href="/compare">full comparison</a>.
         </p>
         <p>
           Two extras most teams care about:

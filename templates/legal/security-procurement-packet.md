@@ -1,18 +1,21 @@
 # Security and procurement packet — Roam Code
 
-> **REVIEW BEFORE USE.** v2 draft, 2026-05-18. The single bundle a
-> vendor reviewer receives during a procurement review of Roam Code's
-> services. Pre-fills the questions a typical security or procurement
-> review will ask. Pair with the
+> **REVIEW BEFORE USE.** v2 draft, 2026-05-18 (engine `roam-code`
+> v13.2). The single bundle a vendor reviewer receives during a
+> procurement review of Roam Code's services. Pre-fills the questions a
+> typical security or procurement review will ask. Pair with the
 > [DPA](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md)
 > (signed before repo access for EU customers),
 > the [PR Replay SOW](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md),
 > the [mutual NDA](https://github.com/Cranot/roam-code/blob/main/templates/legal/nda-mutual.md),
 > and the live posture pages at
-> [`roam-code.com/trust`](https://roam-code.com/trust),
-> [`roam-code.com/security`](https://roam-code.com/security),
-> [`roam-code.com/privacy`](https://roam-code.com/privacy), and
-> [`roam-code.com/audit`](https://roam-code.com/audit).
+> [`roam-code.com/trust`](https://roam-code.com/trust) (compliance
+> stance + framework table),
+> [`roam-code.com/audit`](https://roam-code.com/audit) (PR Replay
+> sample report + engagement scope),
+> [`roam-code.com/security`](https://roam-code.com/security) (VDP +
+> supply-chain integrity), and
+> [`roam-code.com/privacy`](https://roam-code.com/privacy).
 > Bracketed placeholders `[LIKE_THIS]` are filled in per engagement.
 > Forward-looking content covering Roam Review (planned hosted PR bot)
 > is marked explicitly; the Stripe + GitHub sub-processor scope listed
@@ -20,7 +23,8 @@
 
 This packet covers:
 
-- **Roam Code CLI** (live; Apache 2.0; 100% local — `pip install roam-code`).
+- **Roam Code CLI** (live; Apache 2.0; 100% local — `pip install
+  roam-code`; 241 commands / 227 MCP tools / 28 finding detectors).
 - **PR Replay** (live; one-shot structural-review engagement priced
   per [SOW §1](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#1-engagement)
   — Team / Deep tiers).
@@ -387,9 +391,9 @@ and
 | Framework | Status | Evidence |
 |---|---|---|
 | GDPR | Applicable; Provider is a Processor for PR-content during analysis. EU-based controllers receive a signed DPA before access ([`templates/legal/dpa.md`](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md)). | DPA + [Privacy Policy](https://roam-code.com/privacy) |
-| SOC 2 CC8.1 (change management) | **Not currently certified.** The audit-trail subsystem produces evidence artefacts (signed in-toto v1 attestations, exportable JSONL) that **map to** and **support evidence for** a SOC 2 CC8.1 evidence package once Provider completes a SOC 2 Type II audit (roadmapped). Provider makes no representation that the artefacts alone satisfy CC8.1 — your auditor judges that. | `roam audit-trail-export` output |
-| ISO/IEC 42001 (AI management system) | **Not currently certified.** Provider's structural-review records and signed attestations **map to** documentation/monitoring inputs that customers may use in their own ISO 42001 evidence package. Standalone Provider certification not in scope at launch. | `roam audit-trail-conformance-check` output |
-| ISO/IEC 27001 | **Not currently certified.** Roadmapped. | — |
+| SOC 2 CC8.1 (change management) | **Not currently certified.** Honest target: **SOC 2 Type II report by Q1 2027.** Until then, the audit-trail subsystem produces evidence artefacts (signed in-toto v1 attestations, exportable JSONL, OSCAL projection via `roam evidence-oscal`) that **map to** and **support evidence for** a SOC 2 CC8.1 evidence package. Provider makes no representation that the artefacts alone satisfy CC8.1 — your auditor judges that. | `roam audit-trail-export` + `roam evidence-oscal` output |
+| ISO/IEC 42001 (AI management system) | **Not currently certified.** Honest target: **ISO/IEC 42001 certification by Q3 2027.** Until then, Provider's structural-review records and signed attestations **map to** documentation/monitoring inputs that customers may use in their own ISO 42001 evidence package. Standalone Provider certification is on the roadmap, not at launch. | `roam audit-trail-conformance-check` + `roam evidence-oscal` output |
+| ISO/IEC 27001 | **Not currently certified.** Roadmapped after SOC 2 Type II. | — |
 | EU AI Act Article 12 | Article 12 logging applies only to providers of high-risk AI systems listed in Annex III. Code-generation tooling is not in Annex III, so Provider's services are out of scope of Article 12. For customers whose *own product* is in Annex III, Provider's signed review attestations are usable as Article 14 human-oversight evidence — not Article 12 logs themselves. | `roam article-12-check` (scoping/readiness assessment, not certification) |
 | NIST AI RMF | Not certified; Provider's evidence artefacts may **map to** RMF Govern/Map/Measure/Manage functions. | [`roam-code.com/governance`](https://roam-code.com/governance) |
 
@@ -496,9 +500,11 @@ commitments.
 > [DPA §5](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#5-sub-processors).
 
 > **Do you have SOC 2?**
-> Not yet. The audit-trail subsystem is built to **map to** a SOC 2
-> CC8.1 evidence package once Provider begins the audit programme.
-> See §7 above and the public
+> Not yet. Honest target: **SOC 2 Type II report by Q1 2027** (ISO/IEC
+> 42001 by Q3 2027). The audit-trail subsystem is built to **map to** a
+> SOC 2 CC8.1 evidence package and to project into OSCAL v1.2 via `roam
+> evidence-oscal` ahead of the audit. See §7 above, the technical
+> substrate in §11.1–§11.4, and the public
 > [`roam-code.com/trust`](https://roam-code.com/trust) framework table.
 
 > **Can you sign our standard infosec questionnaire (CAIQ / SIG / VSAQ)?**
@@ -549,7 +555,7 @@ commitments.
 
 ---
 
-## 11. Attestation
+## 11. Attestation and evidence substrate
 
 Where this packet is bundled with `roam audit-evidence-pack` output
 for a specific repository, the bundle includes a Cosign / Sigstore
@@ -564,6 +570,74 @@ they do not constitute formal conformity assessment (matching
 [NDA §12](https://github.com/Cranot/roam-code/blob/main/templates/legal/nda-mutual.md#12-no-certification-or-compliance-claim)
 and
 [SOW §12.1](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#121-warranty-disclaimer)).
+
+### 11.1 Local evidence substrate (CLI; live in v13.2)
+
+The CLI ships a portable evidence substrate stored under `.roam/` in
+the repo. All four streams are local-filesystem, zero-network, and
+schema-stable for v13.x. None require Provider infrastructure to
+operate:
+
+| Substrate | Storage | Purpose | Verification |
+|---|---|---|---|
+| **HMAC-chained run ledger** | `.roam/runs/` (per-run event JSONL + signed `meta.json`) | Tamper-evident record of every gated agent action (preflight, impact, critique, diff). | `roam runs verify` (offline; detects chain breaks without contacting Provider). |
+| **4-mode policy substrate** | `.roam/modes/` + `.roam/constitution.yml` | Declares the action surface per run: `read_only` / `safe_edit` / `migration` / `autonomous_pr`. Each mode is a cumulative authority envelope. | `roam mode` reads + prints the active mode; the run ledger records the mode in force at each event. |
+| **Findings registry** | `.roam/findings.sqlite` | Normalised cross-detector finding table (28 detectors are wired for findings-registry persistence as of v13.2 — clones, dead, complexity, smells, n1, missing-index, over-fetch, bus-factor, auth-gaps, vulns, invariants, hotspots, taint, vibe-check, orphan-imports, conventions, pr-risk, duplicates, audit-trail-conformance/-verify, boundary, test-hermeticity, plus aggregators; the registry stores last-run state per detector, not a cumulative tally). | `roam findings list / show / count` for per-detector totals; `<DETECTOR>_DETECTOR_VERSION` stamps for drift tracking. |
+| **`ChangeEvidence` packet** | Emitted by `roam pr-bundle emit` (signed, hash-stable) | One portable evidence packet per change scope. Carries actor identity, authority refs, environment, policy decisions, blast radius, findings, redactions, content hash, schema version. | Hash-stable golden parity tests pin canonical JSON byte-output across releases. Validates with `roam pr-bundle validate --strict --strict-resolved` (CI flag `--ci` implies both). |
+
+### 11.2 Signed PR bundles, CGA, and VSA
+
+`roam pr-bundle emit` produces a proof-carrying PR bundle (preflight +
+impact + critique + diff + verdict envelope). When combined with the
+CGA (`roam cga`) and VSA sibling outputs, the bundle is a self-contained
+proof of what an agent saw, what it was authorised to do, and what was
+verified. Verification is offline and signature-rooted — receiving
+teams need only the public Cosign / Sigstore key and the bundle file.
+See `roam attest` for the in-toto v1 attestation surface.
+
+### 11.3 MCP per-tool-call decision receipts
+
+For sensitive MCP tool calls (the `safe_edit` / `migration` /
+`autonomous_pr` modes from §11.1), roam emits an `McpDecisionReceipt`
+(authoritative source: `src/roam/evidence/mcp_receipt.py`). Each
+receipt is a deterministically-serialised, content-hashed JSON
+artefact recording: MCP client id, tool id, declared side-effects,
+inputs hash, decision (allow / deny / require-approval), and outputs
+reference. Receipts are designed to be tailed by a gateway / PEP
+(Interlock, Lasso, Portkey, MintMCP, MCP Manager, Operant) without
+that gateway needing to call Provider. The full server-vs-gateway
+control split is documented at
+[`dev/MCP-SECURITY-POSTURE.md`](https://github.com/Cranot/roam-code/blob/main/dev/MCP-SECURITY-POSTURE.md)
+and in the
+[`mcp-usage.html#security-stance` section](https://roam-code.com/docs/mcp-usage.html#security-stance)
+of the docs site.
+
+**MCP server vs gateway boundary (procurement-relevant summary).** roam
+owns: read-only / destructive flags per tool, scope-based tool
+filtering via the 4-mode policy substrate, integrity of tool
+descriptions returned to the host, and structured-evidence emission.
+roam does NOT own: cross-server policy, audit aggregation across
+multiple MCP servers, shadow-mode rollout, semantic response-content
+scanning, or tenant isolation — those are gateway concerns by design,
+and the receipt + ledger streams are produced precisely so a gateway
+can consume them.
+
+### 11.4 OSCAL v1.2 control mapping export
+
+`roam evidence-oscal` projects the `ChangeEvidence` packet plus the
+`templates/audit-report/control-mapping.yaml` registry into an
+OSCAL-shaped JSON document (component definition + assessment plan +
+assessment results fragments). This is the canonical format for a
+customer's GRC tooling to ingest Provider evidence. As with §7, the
+export **maps to** controls and **supports evidence for** them; it
+does not certify the customer's codebase as compliant with any
+framework — that judgement stays with the customer's auditor.
+
+A wording-guard CI lint (`tests/test_doc_consistency.py` +
+`tests/_helpers/wording_lint.py`) blocks the strings `certif*`,
+`compliant`, and (in compliance context) `guarantee` from appearing in
+generated reports outside an explicit negation window. Every shipped
+artefact passes this lint.
 
 ---
 
@@ -604,12 +678,17 @@ is in place.
 - [Trust posture](https://roam-code.com/trust) — framework table, sub-processor list, security contact, vulnerability disclosure, data-flow diagram
 - [Security policy](https://roam-code.com/security) — VDP, supply-chain integrity, PGP key, hall of thanks
 - [Privacy policy](https://roam-code.com/privacy) — GDPR lawful basis, retention, sub-processors (§6)
-- [Audit / PR Replay](https://roam-code.com/audit) — engagement scope, tiers, sample report
+- [Audit / PR Replay](https://roam-code.com/audit) — engagement scope, tiers, [sample PR Replay report](https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md)
 - [Governance evidence pack](https://roam-code.com/governance) — control-mapping table to SOC 2 CC8.1, ISO/IEC 42001, NIST AI RMF, EU AI Act Article 12
 - [Refund policy](https://roam-code.com/refund)
 - [Terms of service](https://roam-code.com/terms)
 - [Status page](https://roam-code.com/status) (planned)
 - [Live pricing](https://roam-code.com/pricing)
+
+### Technical evidence substrate
+
+- [MCP security posture (`dev/MCP-SECURITY-POSTURE.md`)](https://github.com/Cranot/roam-code/blob/main/dev/MCP-SECURITY-POSTURE.md) — server vs gateway split, the five controls, `McpDecisionReceipt` schema, integration shape for Interlock / Lasso / Portkey / MintMCP / MCP Manager / Operant
+- [`mcp-usage.html#security-stance`](https://roam-code.com/docs/mcp-usage.html#security-stance) — public companion to the MCP-security-posture document
 
 ### Open-source engine
 

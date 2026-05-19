@@ -109,20 +109,79 @@
       </h1>
       <p class="hero-subhead">
         We replay today's structural detectors against your last
-        5 / 30 / 90 merged PRs and ship a written report — what the
-        detectors would have flagged pre-merge, the patterns worth
-        wiring into CI, and the single highest-impact gate to add
-        today.
+        5 / 30 / 90 merged PRs and ship a written report plus a portable
+        evidence packet — what the detectors would have flagged
+        pre-merge, the patterns worth wiring into CI, and a signed
+        <code>ChangeEvidence</code> bundle answering the eight questions
+        a reviewer needs after an AI-assisted change.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="#tiers">See the tiers</a>
-        <a class="btn-secondary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See the sample report</a>
+        <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See the sample report</a>
+        <a class="btn-secondary" href="#tiers">See the tiers</a>
       </div>
       <p class="hero-trust-strip">
-        Same engine as the free CLI · Apache 2.0 · No code uploaded for the DIY sample · 50% credits toward Roam Review
+        Same engine as the free CLI · Apache 2.0 · Signed pr-bundle + HMAC run ledger · No code uploaded for the DIY sample · 50% credits toward Roam Review
       </p>
     </div>
   </header>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Eight evidence questions — the assurance pitch
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="evidence">
+    <div class="whats-in-inner">
+      <h2>Eight questions every PR Replay packet answers</h2>
+      <p class="lede">
+        Every report ships a <code>ChangeEvidence</code> JSON packet next
+        to the Markdown. The packet maps to the eight questions a
+        procurement reviewer, auditor, or post-incident analyst needs
+        after an AI-assisted change.
+      </p>
+      <div class="verbs-grid verbs-grid--3">
+        <div class="verb-cell">
+          <code>Who acted?</code>
+          <span>Human author, agent id, MCP client, tool id — captured per run.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What authority existed?</code>
+          <span>Mode, permits, leases, policy decision — recorded at edit time.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What context was read?</code>
+          <span>Files, symbols, commands, content hashes the agent consumed pre-edit.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What changed?</code>
+          <span>Diff hash, changed files, changed subjects — bound to the run.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What could break?</code>
+          <span>Blast radius, callers, tests, vulnerable paths — from the local graph.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What policy applied?</code>
+          <span>Rules, laws, controls, exceptions — with rule-config hash.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What verified it?</code>
+          <span>Tests run, gates passed, attestations — pr-bundle proof.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Who accepted risk?</code>
+          <span>Approval, accepted risk, reviewer, timestamp — when present.</span>
+        </div>
+      </div>
+      <p class="how-it-works-foot" style="margin-top: 24px;">
+        Each packet is reproducible from the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/">audit-report template</a>,
+        signed via a <code>pr-bundle</code>, and chained into the
+        <code>roam runs</code> HMAC ledger so any post-hoc edit is
+        detectable offline. For the framework mapping see
+        <a href="/governance#controls">governance</a>; for current
+        certification posture and target dates see <a href="/trust">trust</a>.
+      </p>
+    </div>
+  </section>
 
   <!-- ──────────────────────────────────────────────────────────
        How it works
@@ -252,7 +311,7 @@
         Team, 10 business days for Deep, both from kickoff. We never
         train on or reuse buyer code; the engagement runs against a
         temporary clone we delete on completion. A separate
-        locally-compliant tax invoice (reverse-charge VAT for EU B2B
+        EU-conformant tax invoice (reverse-charge VAT for EU B2B
         buyers with a valid VAT-ID) is issued by our accountant within
         30 days of payment; the Stripe receipt is not the legal invoice
         in the provider's billing jurisdiction. See the
@@ -372,7 +431,11 @@
       </div>
       <div class="trust-cell">
         <strong>EU-based, GDPR-native</strong>
-        <span>EU-based provider. Default processing location is the EU; Stripe handles billing under SCCs. EU B2B buyers receive a separate locally-compliant tax invoice (reverse-charge VAT) within 30 days of payment — see the <a href="/terms">terms</a> for billing entity and tax-ID.</span>
+        <span>EU-based provider. Default processing location is the EU; Stripe handles billing under SCCs. EU B2B buyers receive a separate EU-conformant tax invoice (reverse-charge VAT) within 30 days of payment — see the <a href="/terms">terms</a> for billing entity and tax-ID.</span>
+      </div>
+      <div class="trust-cell">
+        <strong>Procurement packet</strong>
+        <span>Reviewers can pull the DPA, NDA template, security-procurement packet, and master SOW from <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md">templates/legal/security-procurement-packet.md</a>. Current certification posture lives on the <a href="/trust">trust page</a>; framework control mapping on <a href="/governance">governance</a>.</span>
       </div>
     </div>
   </section>
@@ -524,6 +587,13 @@
         · or email
         <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
         with questions before purchase.
+      </p>
+      <p class="footer-meta" style="margin-top: 12px;">
+        Adjacent pages:
+        <a href="/trust">Trust</a> ·
+        <a href="/governance">Governance</a> ·
+        <a href="/pricing">Pricing</a> ·
+        <a href="/docs/architecture">Architecture</a>
       </p>
     </div>
   </section>

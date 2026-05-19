@@ -246,11 +246,24 @@ def surface(ctx, filter_by: str, category: str | None):
             summary["mcp_tools_note"] = data["mcp_tools_note"]
         if "mcp_introspection_error" in data:
             summary["mcp_introspection_error"] = data["mcp_introspection_error"]
+        # Mirror count headlines at envelope top-level (additive — keeps
+        # ``summary.*`` for backward compat). CLAUDE.md headline + landing-
+        # page docs reference ``d['command_count']`` / ``d['mcp_tool_count']``
+        # / etc. directly; without this mirror those lookups return None on
+        # a fresh-install audit and read as "broken contract" to agents.
+        # Pattern-3a vocabulary discipline: same concept, same name in the
+        # two places it's consumed — top-level for headline consumers,
+        # ``summary.*`` for envelope-aware ones.
         click.echo(
             to_json(
                 json_envelope(
                     "surface",
                     summary=summary,
+                    command_count=data["command_count"],
+                    canonical_count=data["canonical_count"],
+                    category_count=data["category_count"],
+                    mcp_tool_count=data["mcp_tool_count"],
+                    mcp_tool_count_by_preset=data["mcp_tool_count_by_preset"],
                     categories=data["categories"],
                     commands=data["commands"],
                     mcp_tools=data["mcp_tools"],

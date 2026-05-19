@@ -17,6 +17,16 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# Cancel stale dogfood runs when a new commit lands on the same PR / branch.
+# Unlike publish + cga-attestation, dogfood is a pure read-only audit with
+# no external side effects (no PyPI upload, no Rekor entry, no release asset
+# mutation), so cancelling the old run on a force-push or rapid commit
+# sequence is the right trade-off — saves CI minutes and keeps the sticky
+# PR comment fresh against the latest tip.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write   # post sticky comment

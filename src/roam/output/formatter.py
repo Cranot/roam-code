@@ -1036,9 +1036,24 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
 
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
+    #
+    # W210 evidence axis: stamp ``roam_version`` here so every envelope
+    # carries the producer-version provenance ``ChangeEvidence.roam_version``
+    # expects. The field lives in ``_meta`` rather than at top level for
+    # two reasons:
+    #   (a) ``out["version"]`` already exists at top level for backward-
+    #       compat consumers; ``_meta.roam_version`` is the W210-canonical
+    #       location and matches the ChangeEvidence field name verbatim.
+    #   (b) ``_meta`` is already non-deterministic (timestamp), so adding
+    #       a stable field here cannot regress prompt-cache hit rates that
+    #       were already locked in by the timestamp's variability.
+    # The evidence packet content-hash (test_evidence_schema_migration)
+    # hashes ``ChangeEvidence`` dataclass output, NOT envelope JSON — so
+    # this addition does not affect those golden hashes.
     out["_meta"] = {
         "timestamp": ts,
         "index_age_s": _index_age_seconds(),
+        "roam_version": version,
     }
 
     # Response metadata for MCP agents (#119)

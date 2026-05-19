@@ -72,13 +72,13 @@
     <p class="eyebrow">System Design</p>
     <h1>Roam Architecture</h1>
     <p class="subtitle">
-      Roam is a local-first analysis system: parse source once, store structural facts in SQLite, expose deterministic query primitives to CLI and MCP clients.
+      Roam parses source once, stores structural facts in SQLite, and exposes deterministic query primitives to CLI and MCP clients &mdash; then emits structured evidence (receipts, ledger, packets) that any gateway can act on.
     </p>
     <div class="callout">
-      Design goal: minimise repeated file scanning for agents by turning codebases into a queryable structural index. Query-time latency stays low because expensive parsing happens during index builds, not every command call.
+      <strong>Inside vs gateway.</strong> Roam is the <em>server</em> in the MCP layering: it emits <code>McpDecisionReceipt</code> per sensitive tool call, the HMAC-chained run ledger, and the <code>ChangeEvidence</code> packet. Hosts (Claude Code, Cursor) own per-call approval; gateways own policy + correlation + audit aggregation; Roam ships the structured evidence stream those layers consume. See the <a href="https://github.com/Cranot/roam-code/discussions/37">MCP layering discussion</a> for the full split.
     </div>
 
-    <section>
+    <section id="pipeline">
       <h2>Pipeline at a Glance</h2>
 <pre><code>Repository ──&gt; Index Pipeline ──&gt; SQLite Storage
                                            │
@@ -95,7 +95,7 @@
       </p>
     </section>
 
-    <section>
+    <section id="subsystems">
       <h2>Subsystem Responsibilities</h2>
       <table>
         <thead>
@@ -161,7 +161,7 @@
       </table>
     </section>
 
-    <section>
+    <section id="index-pipeline-stages">
       <h2>Index Pipeline Stages</h2>
       <ol>
         <li><strong>Discovery</strong> — collect tracked files (via <code>git ls-files</code> + <code>.gitignore</code>) and classify file roles.</li>
@@ -175,7 +175,7 @@
                  (incremental path executes only changed files)</code></pre>
     </section>
 
-    <section>
+    <section id="command-to-data-flow">
       <h2>Command-to-Data Flow</h2>
       <h3>Example: <code>roam preflight AuthService</code></h3>
 <pre><code>CLI cmd_preflight
@@ -207,7 +207,7 @@
       </p>
     </section>
 
-    <section>
+    <section id="agent-os-substrate">
       <h2>Agent OS Substrate</h2>
       <p>
         On top of the analysis core, Roam ships an 11-package control-plane substrate that
@@ -249,18 +249,14 @@
 11. roam agent-score            # composite 0..100 score</code></pre>
     </section>
 
-    <section>
+    <section id="findings-registry">
       <h2>Findings Registry</h2>
       <p>
-        Roam ships many detectors — clones, dead code, complexity, smells, N+1, missing index,
-        over-fetch, bus factor, auth gaps, vulns, taint, AI rot, invariants, hotspots, vibe-check —
-        and historically each emitted findings in its own format, in its own table, with its own
-        vocabulary. The findings registry is a normalised cross-detector table that lets an agent
-        ask <em>"what's wrong with this workspace right now?"</em> in one query, instead of
-        running ten detectors and reconciling ten output shapes. Detectors continue to write to
-        their detector-specific tables; they ALSO upsert a row to the central <code>findings</code>
-        table, which becomes the denormalised surface for CLI consumers, SARIF emit, and
-        suppression management.
+        A normalised cross-detector table that answers <em>"what's wrong with this workspace
+        right now?"</em> in one query &mdash; instead of running ten detectors and reconciling
+        ten output shapes. Detectors keep their detector-specific tables and ALSO upsert a row
+        to the central <code>findings</code> table, which becomes the surface for CLI consumers,
+        SARIF emit, and suppression management.
       </p>
 
       <h3>Schema</h3>
@@ -349,11 +345,15 @@ roam findings count                      # per-detector totals</code></pre>
 
       <h3>Detectors that persist findings</h3>
       <p>
-        28 detectors persist findings to the registry as of 2026-05-18. Run
+        28 detectors persist findings to the registry (the registry stores last-run state per
+        detector, so <code>roam findings count</code> returns 0 for detectors that haven't been
+        run on the current corpus; counts are last-run state, not cumulative). Run
         <code>roam findings count</code> for the live per-detector tally on your workspace.
-        The table below covers the original 16-detector substrate plus two additional
-        substrate detectors (<code>boundary</code>, <code>test-hermeticity</code>) and
-        the consumer / aggregator detectors that re-emit derived findings.
+        The table below covers the original 16-detector substrate plus <code>boundary</code>
+        and <code>test-hermeticity</code>; consumer / aggregator detectors
+        (<code>critique</code>, <code>doctor</code>, <code>fan</code>,
+        <code>fingerprint</code>, <code>health</code>, <code>llm-smells</code>,
+        <code>dark-matter</code>) re-emit derived findings from these upstream detectors.
       </p>
       <table>
         <thead>
@@ -384,13 +384,6 @@ roam findings count                      # per-detector totals</code></pre>
           <tr><td><code>test-hermeticity</code></td><td>&mdash;</td><td>structural / static_analysis</td><td>non-hermetic test calls (network, time, random, fs, env, subprocess)</td></tr>
         </tbody>
       </table>
-      <p>
-        The remaining detectors (<code>critique</code>, <code>doctor</code>, <code>fan</code>,
-        <code>fingerprint</code>, <code>health</code>, <code>llm-smells</code>,
-        <code>dark-matter</code>) are aggregators / consumers that re-emit derived findings
-        from the upstream detectors above.
-      </p>
-
       <h3>Agent loop integration</h3>
       <p>
         The registry slots into the canonical agent loop as step 7a — between <code>roam critique</code>
@@ -411,14 +404,29 @@ roam findings count                      # per-detector totals</code></pre>
     <section id="evidence-compiler">
       <h2>Evidence Compiler</h2>
       <p>
-        Roam is becoming a local evidence compiler for AI-assisted software change. The findings
-        registry above is one input layer; the evidence compiler is the layer that sits on top of
-        it, aggregating findings, run events, policy decisions, tests, and approvals into typed
-        <code>ChangeEvidence</code> packets. The packet is the unit a reviewer, an auditor, or a
-        downstream system consumes &mdash; the same evidence rendered as a PR Replay report, a SARIF
-        file, an in-toto attestation, or an OSCAL-shaped export, all projected from one shared
-        record rather than rebuilt by each emitter.
+        Roam is a local evidence compiler for AI-assisted software change. The findings
+        registry above is one input layer; the evidence compiler aggregates findings, run events,
+        policy decisions, tests, and approvals into typed <code>ChangeEvidence</code> packets.
+        One shared record renders into PR Replay reports, SARIF, in-toto attestations, or
+        OSCAL-shaped exports &mdash; no exporter owns its own data-gathering logic.
       </p>
+
+      <h3 id="eight-evidence-questions">The eight evidence questions</h3>
+      <p>
+        Every sellable Roam report answers these eight questions. If a surface cannot answer
+        one yet, the report says so explicitly via the <code>producer_not_available</code>
+        redaction marker &mdash; never silent omission.
+      </p>
+      <ol>
+        <li><strong>Who acted?</strong> &mdash; human, agent id, MCP client id, tool id (<code>runs</code>, <code>replay</code>, MCP receipt).</li>
+        <li><strong>What authority existed?</strong> &mdash; mode, permits, leases, scopes, policy decision (<code>mode</code>, <code>permit</code>, <code>lease</code>, <code>constitution</code>).</li>
+        <li><strong>What context was read?</strong> &mdash; files, symbols, commands, handles, hashes (<code>pr-bundle</code>, <code>context</code>, <code>retrieve</code>).</li>
+        <li><strong>What changed?</strong> &mdash; diff hash, changed files, changed subjects (<code>diff</code>, <code>graph-diff</code>, <code>pr-analyze</code>).</li>
+        <li><strong>What could break?</strong> &mdash; blast radius, callers, tests, vulnerable paths (<code>impact</code>, <code>preflight</code>, <code>test-impact</code>, <code>vuln-reach</code>).</li>
+        <li><strong>What policy applied?</strong> &mdash; rules, laws, controls, exceptions (<code>rules</code>, <code>laws</code>, <code>constitution</code>).</li>
+        <li><strong>What verified it?</strong> &mdash; tests run / required, gates, attestations (<code>tests</code>, <code>critique</code>, <code>pr-bundle</code>, <code>runs verify</code>).</li>
+        <li><strong>Who accepted risk?</strong> &mdash; approval, accepted risk, reviewer, timestamp (<code>permit</code>, <code>pr-bundle</code>, run ledger).</li>
+      </ol>
 
       <h3>Data model</h3>
       <table>
@@ -614,7 +622,7 @@ roam findings count                      # per-detector totals</code></pre>
       </p>
     </section>
 
-    <section>
+    <section id="why-sqlite">
       <h2>Why SQLite</h2>
       <ul>
         <li><strong>Zero-dep</strong>: ships with Python; no client/server, no infrastructure.</li>

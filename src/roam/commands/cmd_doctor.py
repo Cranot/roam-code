@@ -2209,8 +2209,21 @@ def doctor(ctx, strict, persist):
         # summary_block + envelope_kwargs in one wrapped call so a
         # ``.get`` chain on a degraded sub-envelope does not crash.
         def _assemble_sections():
+            # Pattern-1 family canonical-failure envelope status (CLAUDE.md):
+            #   all_passed         -> "ok"
+            #   advisory_warnings  -> "advisory_warnings"
+            #   blocking_failures  -> "hard_failure"
+            # Distinguishes advisory-only (exit 0) from hard-failure (exit 2)
+            # without forcing consumers to count advisory_failed/blocking_failed.
+            if blocking_failed:
+                _status = "hard_failure"
+            elif advisory_failed:
+                _status = "advisory_warnings"
+            else:
+                _status = "ok"
             _summary_block: dict = {
                 "verdict": verdict,
+                "status": _status,
                 "issue_line": issue_line,
                 "total": total,
                 "passed": passed_count,
@@ -2303,15 +2316,17 @@ def doctor(ctx, strict, persist):
             )
         else:
             click.echo(rendered)
-        # Three-tier exit codes:
-        #   0 = clean
-        #   1 = only advisory failures (CI users who want zero drift use --strict)
-        #   2 = blocking failures
-        # --strict promotes advisory to blocking.
+        # Two-tier exit codes (Pattern-2 advisory-vs-blocker discipline):
+        #   0 = clean OR advisory-only failures (state == "advisory_warnings")
+        #   2 = blocking failures (state == "blocking_failures")
+        # --strict promotes advisory to blocking. Advisory-only failures
+        # MUST NOT exit non-zero on the default path — a fresh-install user
+        # reading "exit 1" interprets it as "roam is broken" when the only
+        # failure was a non-fatal warning. See Pattern-2 silent-fallback
+        # discipline (CLAUDE.md): never emit a hard-failure signal on a
+        # state the verdict explicitly labels advisory.
         if blocking_failed or (strict and advisory_failed):
             ctx.exit(2)
-        elif advisory_failed:
-            ctx.exit(1)
         return
 
     # --- Text output ---
@@ -2347,10 +2362,10 @@ def doctor(ctx, strict, persist):
 
     _run_check_dw("format_text", _format_text, default=None)
 
+    # Two-tier exit codes — see JSON path above. Advisory-only failures
+    # exit 0; only blocking failures or --strict-promoted advisories exit 2.
     if blocking_failed or (strict and advisory_failed):
         ctx.exit(2)
-    elif advisory_failed:
-        ctx.exit(1)
 
 
 def _get_roam_version() -> str:

@@ -331,6 +331,73 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
     </section>
 
     <section>
+      <h2 id="security-stance">MCP security stance: inside-server vs gateway</h2>
+      <p>
+        Roam's MCP server is the <strong>inside-server</strong> half of
+        the agent's trust boundary. It runs locally as the same user as
+        the editor, reads your code, and emits structured evidence on
+        every sensitive call. It does <strong>not</strong> sit as a
+        network gateway between agent and model; it does
+        <strong>not</strong> proxy or rewrite model traffic; and it does
+        <strong>not</strong> introspect prompts or responses on the wire.
+        Gateway-style defences (prompt-injection scanning, response
+        redaction, tool-call interception) are a complementary layer
+        owned by your MCP host, not by Roam.
+      </p>
+      <p>
+        What Roam <em>does</em> contribute to security is local,
+        structural, and tamper-evident:
+      </p>
+      <ul>
+        <li><strong>Cold-start envelope (W296)</strong> &mdash; an agent on a
+        fresh repo gets <code>status: "index_not_built"</code> instead
+        of a hung tool call; the agent's next step is in the envelope,
+        not in a stack trace.</li>
+        <li><strong>Per-call decision receipt</strong> &mdash; the
+        <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/evidence/mcp_receipt.py"><code>McpDecisionReceipt</code></a>
+        dataclass records actor, tool id, sha256 of inputs, policy
+        verdict (<code>allow</code> / <code>deny</code> /
+        <code>escalate</code> / <code>redact</code> /
+        <code>not_evaluated</code>), and a hash of outputs. Raw inputs
+        and outputs are never stored &mdash; only their digests.</li>
+        <li><strong>HMAC-chained run ledger</strong> &mdash; every
+        <code>roam runs start</code>/<code>end</code> writes signed
+        events under <code>.roam/runs/</code>; <code>roam runs verify</code>
+        detects tampering.</li>
+        <li><strong>Proof-carrying PR bundle</strong> &mdash;
+        <code>roam pr-bundle emit</code> binds preflight + impact +
+        critique envelopes into a single <code>ChangeEvidence</code>
+        packet a reviewer (or CI) can validate before merge.</li>
+      </ul>
+      <p>
+        Read the
+        <a href="https://github.com/Cranot/roam-code/discussions/37">inside-server
+        vs gateway discussion</a> for the longer framing of which class
+        of defence Roam owns and which class belongs to the host.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="config-generator">Generate config: don't hand-edit</h2>
+      <p>
+        Every per-client config snippet on
+        <a href="/docs/integration-tutorials">Integration Tutorials</a>
+        comes from one command:
+      </p>
+<pre><code>roam mcp-setup claude-code     # or: cursor, codex-cli, gemini-cli, vscode, windsurf
+roam mcp-setup cursor --preset compliance     # 13-tool AI-governance subset
+roam mcp-setup vscode --write                 # write the file in place
+roam --json mcp-setup vscode                  # structured envelope for scripting</code></pre>
+      <p>
+        Hand-rolled snippets drift the moment a preset changes. The
+        generator reads the live tool registry, so the JSON it emits
+        always matches what the server actually exposes. Treat anything
+        copy-pasted from a blog post as illustrative; trust
+        <code>mcp-setup</code> as the source of truth.
+      </p>
+    </section>
+
+    <section>
       <h2 id="mcp-vs-cli">When to use MCP vs the CLI directly</h2>
       <table>
         <thead><tr><th>Surface</th><th>Use it when</th></tr></thead>
@@ -367,11 +434,11 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
       <ul>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> &mdash; every command, every flag, every JSON envelope.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> &mdash; the five discipline rules behind the canonical flow.</li>
-        <li><strong>MCP server card:</strong> <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/mcp-server-card.json">mcp-server-card.json</a> &mdash; machine-readable capability manifest (224 tools, 6 presets, 10 resources, 6 prompts).</li>
+        <li><strong>MCP server card:</strong> <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/mcp-server-card.json">mcp-server-card.json</a> &mdash; machine-readable capability manifest (227 MCP tools, 7 presets, 10 resources, 6 prompts).</li>
         <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> &mdash; we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
       <p class="footer-meta">
-        Documented against <code>roam-code</code> v13.2 &mdash; 224 MCP tools
+        Documented against <code>roam-code</code> &mdash; 227 MCP tools
         total, 57 in the default <code>core</code> preset. Re-counts are
         AST-derived and pinned by
         <a href="https://github.com/Cranot/roam-code/blob/main/dev/build_readme_counts.py">build_readme_counts.py</a>.

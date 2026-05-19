@@ -28,6 +28,14 @@ on:
       - '.github/workflows/cga-attestation.yml'
   workflow_dispatch:
 
+# Serialize attestation runs against the same ref so two simultaneous
+# pushes to main cannot race the Fulcio / Rekor sign path. The keyless
+# OIDC chain is not idempotent on collision. ``cancel-in-progress: false``
+# preserves any in-flight signing operation.
+concurrency:
+  group: cga-attestation-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write   # required for keyless OIDC signing

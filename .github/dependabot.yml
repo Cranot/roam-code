@@ -10,6 +10,17 @@ updates:
       - dependencies
     commit-message:
       prefix: "deps"
+    # Suppress major-version bumps on deps with a track record of
+    # closed-without-merge PRs (test-budget drift on graph algorithms,
+    # API churn on numerical libraries). Minor + patch bumps stay
+    # unblocked so security advisories still flow weekly.
+    ignore:
+      - dependency-name: "networkx"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "leidenalg"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "onnxruntime"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

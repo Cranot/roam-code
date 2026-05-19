@@ -1,9 +1,9 @@
 <!--
-PR Replay deliverable template.
+PR Replay deliverable template (Roam Code v13.2+).
 
 This file is the **prose-stable reference** for the Markdown report that
 `roam pr-replay --markdown` emits per engagement. The renderer at
-`src/roam/commands/cmd_pr_replay.py::_render_markdown_report` mirrors
+`src/roam/commands/cmd_pr_replay.py::_render_evidence_markdown` mirrors
 this file heading-by-heading; the drift test at
 `tests/test_evidence_pr_replay.py::test_pr_replay_emits_markdown`
 asserts the contract. Any heading change here MUST be reflected in both.
@@ -15,10 +15,26 @@ documentation-only — the renderer constructs the output directly.
 
 Cross-links:
 - Sample post-fill shape: `templates/audit-report/sample-pr-replay-team.md`
-- Reproduction checklist: `templates/audit-report/evidence-checklist.md`
+- Reproduction checklist (Q1-Q8 command index): `templates/audit-report/evidence-checklist.md`
 - Control mapping (Section 6 / policy): `templates/audit-report/control-mapping-README.md`
 - Engagement contract (delivery shape / acceptance window): `templates/legal/sow-pr-replay.md` §3-§6
+- Procurement / security packet (auditor consumption bundle): `templates/legal/security-procurement-packet.md`
+- Public anchor (the eight evidence questions): `templates/distribution/landing-page/audit.html#evidence`
+  and `templates/distribution/landing-page/docs/architecture.html#eight-evidence-questions`
 - Substrate (collector + dataclasses): `src/roam/evidence/` (`ChangeEvidence`, `EvidenceSubject`, `EvidenceLink`, `EvidenceArtifact`)
+
+Section → evidence-question crosswalk (Q1-Q8 from the agentic-assurance
+crosswalk; full mapping in `evidence-checklist.md`):
+- Q1 who acted          → `Actors` section + `**Run IDs**` line
+- Q2 what authority     → `Authorities` section + `**Mode**` line
+- Q3 what context read  → `pr-bundle.context_read[]` (referenced; not rendered as a body section)
+- Q4 what changed       → `Scope` + `Changed subjects (top 20)` + `**Range**` / diff hash
+- Q5 what could break   → `Findings` table (per-detector / per-confidence rollup)
+- Q6 what policy        → `Authorities` section (`policy_decisions[]`) + `Suggested Review configuration`
+- Q7 what verified it   → `Tests` section
+- Q8 who accepted risk  → `Approvals and accepted risks` section
+Q3 and Q8 are emitted as `redactions[].reason = "producer_not_available"`
+when the upstream producer is not yet wired; see `Evidence limitations`.
 
 The non-certification footer is unconditional. Per CLAUDE.md wording
 discipline, the report **supports evidence for** governance review and
@@ -130,17 +146,25 @@ Based on this replay's findings, the following Review configuration would have c
 
 ## Evidence limitations
 
-<!-- Limitations are generated from packet structure at render time
+<!-- W185 — every PR Replay report MUST disclose what's NOT yet covered.
+     Limitations are generated from packet structure at render time
      (W284): per-Q gaps from `ChangeEvidence.evidence_completeness()`,
      redaction reasons from `packet.redactions`, and trust-tier
-     warnings from `actor_refs`. The non-certification statement is
-     always appended.
+     warnings from `actor_refs`.
 
-     Producer gaps (e.g., no approvals harvester yet → Q8 partial) are
-     surfaced explicitly via `redactions[].reason = "producer_not_available"`
-     rather than synthesised. The current synthetic-vs-shipped status
-     is tracked in `CLAUDE.md` under "What's still synthetic / recently
-     sealed". To reproduce the packet that generated this section, see
+     Known producer gaps surfaced via
+     `redactions[].reason = "producer_not_available"` rather than
+     synthesised:
+     - Q3 (context read) — when the run lacks a `pr-bundle.context_read`
+       entry (PR Replay reads merged history only; bundles are produced
+       by Roam Review / runs).
+     - Q8 (approvals / accepted risks) — until an approvals harvester
+       lands (tracked in `CLAUDE.md` under "What's still synthetic /
+       recently sealed"), human approvals recorded outside the run
+       ledger (Slack, email, GitHub UI) are NOT in this packet.
+
+     The non-certification statement is always appended. To reproduce
+     the packet that generated this section, see
      `templates/audit-report/evidence-checklist.md`. -->
 {{evidence_limitations}}
 

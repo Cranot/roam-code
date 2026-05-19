@@ -1,0 +1,44 @@
+# Pre-commit hooks for roam-code.
+#
+# These mirror two structural guards that already exist as CI-level tests:
+#
+#   1. Surface-count drift (W23.1). ``scripts/sync_surface_counts.py`` walks
+#      the live CLI / MCP / language registries and asserts that README,
+#      pyproject.toml, landing-page, and docs all carry the SAME canonical
+#      counts. A drifted count is a silent footgun for users reading docs;
+#      catching it pre-commit beats catching it in CI after the push.
+#
+#   2. Co-author trailer prevention (project policy: Cranot-only authorship
+#      on roam-code). A ``Co-Authored-By:`` trailer added by an editor /
+#      tool / agent slipping past the commit-message review must be rejected
+#      at commit-msg time, not after the push lands on origin.
+#
+# Local install is OPT-IN. Run ``pre-commit install`` (pre-commit-hooks-only)
+# and ``pre-commit install --hook-type commit-msg`` (for the trailer guard)
+# to enable on your machine. CI runs the same checks independently — these
+# hooks are a fast-fail convenience, not the source of truth.
+
+repos:
+  - repo: local
+    hooks:
+      - id: count-drift
+        name: surface count drift check
+        # The script runs as a dry-run by default and exits non-zero when
+        # any README / pyproject / landing-page count diverges from the
+        # live CLI surface. ``--write`` would auto-fix; pre-commit uses
+        # the check-only invocation so drift is surfaced rather than
+        # silently absorbed into the commit.
+        entry: python scripts/sync_surface_counts.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: no-coauthor
+        name: forbid Co-Authored-By trailer
+        # commit-msg stage: pre-commit passes the path to the in-progress
+        # commit message file as the lone argv. Reject any message that
+        # carries a ``Co-Authored-By:`` trailer; project policy is single-
+        # author (Cranot) on this repo.
+        entry: python -c "import sys; msg = open(sys.argv[1], encoding='utf-8').read(); sys.exit(0 if 'Co-Authored-By' not in msg else (print('Co-Authored-By trailer forbidden per project policy', file=sys.stderr) or 1))"
+        language: system
+        stages: [commit-msg]

@@ -79,29 +79,28 @@
       Roam is the local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did. Credential-free, zero network egress, tamper-evident <code>ChangeEvidence</code> packets. Cursor and Cody log the session; Roam gates the change and emits proof.
     </div>
 
-    <section>
+    <section id="why-roam">
       <h2>Why Roam is different</h2>
       <p>
-        IDE-surface tools (Cursor, Cody, Windsurf, Continue, Sweep) and
-        semantic reviewers (CodeRabbit, Greptile, Qodo, SonarQube) mainly
-        help humans write or review code through hosted accounts, LLM
-        endpoints, editor surfaces, or CI services. Roam is the local-CLI
-        surface that gates the change <em>before</em> the diff and emits
-        portable proof <em>after</em>. The dated side-by-side vendor research
-        lives on <a href="/compare">/compare</a>. The Roam moat is three
+        IDE-surface tools (Cursor, Cody, Windsurf, Continue) and semantic reviewers
+        (CodeRabbit, Greptile, Qodo, SonarQube) help humans write or review code through
+        hosted accounts and editor surfaces. Roam is the local-CLI surface that gates the
+        change <em>before</em> the diff and emits portable proof <em>after</em>. Three
         properties no competitor combines today:
       </p>
       <ul>
         <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
         <li><strong>Zero network egress.</strong> Your source code never leaves the machine. Air-gapped repos work the same as cloud repos.</li>
-        <li><strong>Tamper-evident <code>ChangeEvidence</code> packets.</strong> Every AI-assisted change compiles into one portable evidence packet (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle) that answers the eight evidence questions: <em>who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk</em>.</li>
+        <li><strong>Tamper-evident <code>ChangeEvidence</code> packets.</strong> Every AI-assisted change compiles into one portable evidence packet (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle) that answers <a href="/docs/architecture#eight-evidence-questions">the eight evidence questions</a>.</li>
       </ul>
       <p>
-        Underneath sits a SQLite-backed graph of symbols, calls, imports, architecture layers, git history, smells, clones, and algorithmic patterns across 28 languages. Agents and developers query the same local facts before a change, during review, and after the patch lands.
+        Underneath sits a SQLite-backed graph of symbols, calls, imports, architecture layers,
+        git history, smells, clones, and algorithmic patterns across 28 languages. Side-by-side
+        vendor research on <a href="/compare">/compare</a>.
       </p>
     </section>
 
-    <section>
+    <section id="install">
       <h2>Install + first three commands</h2>
       <div class="step-grid">
 
@@ -134,20 +133,20 @@ roam init</code></pre>
       <p><strong>Verify it yourself.</strong> <a href="https://github.com/Cranot/roam-code/blob/main/docs/fresh-install-smoke.md">Fresh-install smoke transcript</a> &mdash; a verbatim capture of these four commands run against a clean venv and a three-file synthetic project. Copy-paste reproducible; no synthetic output.</p>
     </section>
 
-    <section>
+    <section id="whats-next">
       <h2>What's next</h2>
       <p>Pick the path that matches your role:</p>
       <ul>
         <li><strong>See it run end-to-end:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, the moat arc in one sitting.</li>
-        <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>continue</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
+        <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>windsurf</code>, <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> — every command, every flag, every JSON envelope.</li>
-        <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
+        <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the <a href="/docs/architecture#pipeline">index pipeline</a>, <a href="/docs/architecture#findings-registry">findings registry</a>, <a href="/docs/architecture#agent-os-substrate">agent-OS substrate</a>, and <a href="/docs/architecture#evidence-compiler">evidence compiler</a> fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
         <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> — we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
     </section>
 
-    <section>
+    <section id="hands-on">
       <h2>Hands-on Workflow</h2>
 
       <h3>1. Explore the codebase</h3>
@@ -175,16 +174,24 @@ roam impact db                  # blast radius traverses fixture edges</code></p
 roam rules --rules-dir rules/community
 roam health --gate</code></pre>
 
-      <h3>5. Integrate with your agent</h3>
-<pre><code>roam mcp-setup claude-code
-roam mcp --list-tools
-ROAM_MCP_PRESET=core roam mcp</code></pre>
+      <h3 id="mcp-integration">5. Integrate with your agent</h3>
+<pre><code>roam mcp-setup claude-code      # writes ./.mcp.json (or --write to merge)
+roam mcp --list-tools           # 227 tools registered; 57 in the default `core` preset
+ROAM_MCP_PRESET=core roam mcp   # start the server (stdio transport)</code></pre>
       <p>
-        Once the MCP server is wired up, see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope, the canonical agent flow, and the slow-tool patterns.
+        Supported clients: <code>claude-code</code>, <code>cursor</code>, <code>windsurf</code>,
+        <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>. Run
+        <code>roam mcp-setup</code> with no argument to print the full list and config-path
+        per client.
+      </p>
+      <p>
+        Once the MCP server is wired up, see <a href="/docs/mcp-usage#typical-agent-flow">Using
+        Roam via MCP</a> for the cold-start envelope, the canonical agent flow, and the
+        slow-tool patterns.
       </p>
     </section>
 
-    <section>
+    <section id="ci-example">
       <h2>CI Example (GitHub Actions)</h2>
       <p>Minimal gate pipeline:</p>
 <pre><code>roam init
@@ -200,7 +207,7 @@ roam --json test-gaps --changed</code></pre>
       </p>
     </section>
 
-    <section>
+    <section id="troubleshooting">
       <h2>Troubleshooting</h2>
       <table>
         <thead>

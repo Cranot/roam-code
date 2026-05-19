@@ -52,9 +52,10 @@ from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
 #: Closed enumeration of policy-layer decisions on an MCP tool call.
 #:
 #: This is the **authority-gate subset** of the canonical
-#: :data:`roam.evidence._vocabulary.POLICY_DECISIONS` (8 verdicts). MCP
-#: tool-call decisions only span the authority-gate axis (allow / deny /
-#: escalate / redact / not_evaluated); the rule-evaluation verdicts
+#: :data:`roam.evidence._vocabulary.POLICY_DECISIONS` (9 verdicts). MCP
+#: tool-call decisions span the authority-gate axis (allow / deny /
+#: escalate / redact / not_evaluated) plus the MCP-P1.1 shadow-mode
+#: marker (would_deny_dry_run); the rule-evaluation verdicts
 #: (``pass`` / ``fail`` / ``unknown``) belong to the rules-engine layer
 #: and are not produced at the MCP boundary.
 #:
@@ -64,11 +65,20 @@ from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
 #: at module-import time. The membership semantic (subset of canonical)
 #: is enforced by the assertion below.
 #:
-#: * ``allow``        - the call was permitted to run
-#: * ``deny``         - the call was refused outright
-#: * ``escalate``     - the call required human / higher-tier approval
-#: * ``redact``       - the call ran but output was masked
-#: * ``not_evaluated``- no policy layer was active (default)
+#: * ``allow``               - the call was permitted to run
+#: * ``deny``                - the call was refused outright
+#: * ``escalate``            - the call required human / higher-tier approval
+#: * ``redact``              - the call ran but output was masked
+#: * ``not_evaluated``       - no policy layer was active (default)
+#: * ``would_deny_dry_run``  - MCP-P1.1 shadow-mode: the gate WOULD have
+#:                             denied under ``ROAM_MODE_ENFORCEMENT=1``,
+#:                             but ``ROAM_MODE_DRY_RUN=1`` was set so the
+#:                             call proceeded for observe-only rollout.
+#:                             Receipts carrying this verdict also stamp
+#:                             ``extra["shadow_mode"] = True`` +
+#:                             ``extra["would_deny_reason"]`` so an
+#:                             auditor can see why the steady-state
+#:                             policy would have denied.
 _POLICY_DECISIONS: frozenset[str] = (
     frozenset(
         {
@@ -77,6 +87,7 @@ _POLICY_DECISIONS: frozenset[str] = (
             "escalate",
             "redact",
             "not_evaluated",
+            "would_deny_dry_run",
         }
     )
     & POLICY_DECISIONS
@@ -87,9 +98,14 @@ _POLICY_DECISIONS: frozenset[str] = (
 # verdicts from the canonical set, this assertion fires at import time
 # rather than at first construction of a McpDecisionReceipt with that
 # verdict.
-assert _POLICY_DECISIONS == {"allow", "deny", "escalate", "redact", "not_evaluated"}, (
-    f"_POLICY_DECISIONS drift: expected authority-gate subset of POLICY_DECISIONS, got {sorted(_POLICY_DECISIONS)}"
-)
+assert _POLICY_DECISIONS == {
+    "allow",
+    "deny",
+    "escalate",
+    "redact",
+    "not_evaluated",
+    "would_deny_dry_run",
+}, f"_POLICY_DECISIONS drift: expected authority-gate subset of POLICY_DECISIONS, got {sorted(_POLICY_DECISIONS)}"
 
 
 @dataclasses.dataclass(frozen=True)

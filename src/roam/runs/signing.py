@@ -367,3 +367,152 @@ def verify_chain(events: list[dict], key: bytes) -> dict:
         "final_signature": last_good_sig,
         "details": f"chain verified across {len(events)} event(s)",
     }
+
+
+# ---------------------------------------------------------------------------
+# MCP-P0.3 — receipt-integrity verification on top of the HMAC chain
+# ---------------------------------------------------------------------------
+
+
+#: Closed enumeration of receipt-integrity sub-states surfaced as the
+#: ``receipt_integrity`` field on the dict returned by
+#: :func:`verify_chain_with_receipts`. Drift-checked by the W_MCP-P0.3
+#: tests so adding a new sub-state requires a deliberate source edit.
+#:
+#: * ``ok``           - every ``mcp_receipt`` event resolves to an on-disk
+#:                      receipt whose canonical-JSON sha256 matches the
+#:                      ``receipt_hash`` baked into the signed event.
+#: * ``missing``      - the chain references at least one receipt that is
+#:                      no longer on disk (rm'd / never written /
+#:                      filesystem error).
+#: * ``tampered``     - at least one on-disk receipt's recomputed sha256
+#:                      disagrees with the chain-baked hash. The receipt
+#:                      JSON was edited after the event was signed.
+#: * ``not_linked``   - no event carries a ``receipt_hash`` field. Either
+#:                      this is a pre-P0.3 run, or no sensitive tool fired
+#:                      a receipt. Advisory; NOT a failure.
+RECEIPT_INTEGRITY_STATES: frozenset[str] = frozenset(
+    {
+        "ok",
+        "missing",
+        "tampered",
+        "not_linked",
+    }
+)
+
+
+def _receipt_file_for(repo_root: Path, run_id: str, tool_call: str) -> Path:
+    """Mirror the on-disk layout used by ``mcp_server._write_mcp_receipt``.
+
+    Receipts live at ``<repo>/.roam/mcp_receipts/<run_id>/<tool_call>.json``.
+    Pulled here so :func:`verify_chain_with_receipts` does not import the
+    MCP server module (which would create a heavy import-time cycle).
+    """
+    return Path(repo_root) / ".roam" / "mcp_receipts" / run_id / f"{tool_call}.json"
+
+
+def verify_chain_with_receipts(
+    events: list[dict],
+    key: bytes,
+    repo_root: Path,
+    run_id: str,
+) -> dict:
+    """Run :func:`verify_chain` and additionally walk ``mcp_receipt`` events.
+
+    Returns the same dict shape as :func:`verify_chain` with one added
+    field:
+
+      * ``receipt_integrity`` - one of :data:`RECEIPT_INTEGRITY_STATES`.
+
+    Per-receipt walk rules:
+
+      * Every event whose payload carries ``action == "mcp_receipt"`` AND
+        a non-empty ``receipt_hash`` is followed to disk via
+        :func:`_receipt_file_for`. The on-disk bytes are sha256'd and
+        compared to ``receipt_hash``.
+      * Mismatch → ``receipt_integrity = "tampered"`` AND
+        ``first_tamper_at_seq`` is set to the event's ``seq`` (overrides
+        the chain-level result, since a tampered receipt invalidates the
+        run-time integrity claim of the receipt-bearing event).
+      * Missing on disk → ``receipt_integrity = "missing"`` AND a
+        ``first_missing_receipt_at_seq`` field is set. ``state`` is left
+        at its chain-level value (the chain itself is intact; the
+        receipt artefact is gone).
+      * No events carry ``receipt_hash`` at all → ``receipt_integrity =
+        "not_linked"``. ``state`` is left at the chain-level value
+        (typically ``ok``); ``partial_success`` is NOT raised because
+        not-linked is a normal pre-P0.3 / no-sensitive-call state.
+
+    Hash discipline (W210 omit-when-default): events that pre-date
+    receipt-linkage have no ``receipt_hash`` field, so they are skipped
+    silently — the chain bytes are unchanged from a pre-P0.3 chain when
+    no receipts have been emitted.
+    """
+    base = verify_chain(events, key)
+
+    # If the chain is already broken at the HMAC level, propagate the
+    # chain-level state without trying to walk receipts on top — the
+    # tampered chain is the dominant signal.
+    if base["state"] == "tampered":
+        base["receipt_integrity"] = "not_linked"
+        return base
+
+    receipt_events: list[dict] = []
+    for idx, event in enumerate(events, start=1):
+        if event.get("action") != "mcp_receipt":
+            continue
+        rh = event.get("receipt_hash")
+        if isinstance(rh, str) and rh:
+            receipt_events.append(event)
+
+    if not receipt_events:
+        base["receipt_integrity"] = "not_linked"
+        return base
+
+    import hashlib
+
+    first_missing_seq: Optional[int] = None
+    for event in receipt_events:
+        seq = event.get("seq")
+        tool_call = event.get("tool_call")
+        expected = event.get("receipt_hash")
+        if not isinstance(tool_call, str) or not isinstance(expected, str):
+            # Malformed event — treat as not-linked anomaly (don't crash).
+            continue
+        path = _receipt_file_for(repo_root, run_id, tool_call)
+        if not path.exists():
+            if first_missing_seq is None:
+                first_missing_seq = seq if isinstance(seq, int) else None
+            continue
+        try:
+            on_disk = path.read_bytes()
+        except OSError:
+            if first_missing_seq is None:
+                first_missing_seq = seq if isinstance(seq, int) else None
+            continue
+        # The writer appends a trailing newline; strip it to recover the
+        # canonical bytes that produced ``receipt_hash``.
+        canonical = on_disk.rstrip(b"\n")
+        actual = hashlib.sha256(canonical).hexdigest()
+        if actual != expected:
+            base["state"] = "tampered"
+            base["first_tamper_at_seq"] = seq if isinstance(seq, int) else base.get("first_tamper_at_seq")
+            base["partial_success"] = False
+            base["receipt_integrity"] = "tampered"
+            base["details"] = (
+                f"mcp_receipt sha256 mismatch at seq={seq}: "
+                f"on-disk receipt for tool_call={tool_call} was modified after signing"
+            )
+            return base
+
+    if first_missing_seq is not None:
+        base["receipt_integrity"] = "missing"
+        base["first_missing_receipt_at_seq"] = first_missing_seq
+        # Chain itself is fine; the receipt artefact is gone. Surface as
+        # partial_success so callers see "we found a hole" without
+        # collapsing the chain-level integrity verdict.
+        base["partial_success"] = True
+        return base
+
+    base["receipt_integrity"] = "ok"
+    return base

@@ -2396,6 +2396,11 @@ _DOC_LINKS: dict[str, str] = {
     # deleted external drive). Section anchor is fall-through; the
     # surrounding envelope's hint carries the per-config remediation.
     "STALE_DB_DIR": "https://roam-code.com/docs/troubleshooting",
+    # MCP-P0.2 — 4-mode policy denied a destructive tool call at the MCP
+    # boundary. Section anchor falls through to the troubleshooting page;
+    # the envelope's ``hint`` + ``next_command`` carry the per-call remediation
+    # (e.g. ``roam mode migration``).
+    "MODE_BLOCKED": "https://roam-code.com/docs/troubleshooting",
     "UNKNOWN": "https://roam-code.com/docs/troubleshooting",
 }
 
@@ -2478,6 +2483,11 @@ _SEVERITY_MAP: dict[str, str] = {
     # ``error`` because the request fully failed, but ``retryable`` is
     # False so agents stop hammering the same broken path.
     "STALE_DB_DIR": "error",
+    # MCP-P0.2 — mode denied a destructive tool call. Severity is ``error``
+    # (the call did not run), but ``retryable`` is False — the agent must
+    # switch modes (or set ``--override-mode`` equivalent at the CLI side)
+    # rather than hammer the same call.
+    "MODE_BLOCKED": "error",
     "UNKNOWN": "error",
 }
 
@@ -3409,25 +3419,91 @@ def _write_mcp_receipt(
             except (TypeError, ValueError):
                 output_hash = None
 
+    # MCP-P0.1 — surface egress-redaction lineage in the receipt. The
+    # ``redactions`` tuple stays inside the REDACTION_REASONS closed enum
+    # ("secret" / "pii" / …); per-pattern hit counts ride in ``extra`` so
+    # the closed-enum invariant on the dataclass holds.
+    redactions_tuple = tuple(state.get("redactions") or ())
+    redaction_details = state.get("redaction_details") or {}
+    extra: dict[str, object] = {}
+    if redaction_details:
+        extra["redaction_details"] = dict(redaction_details)
+    # MCP-P1.1 — shadow-mode lineage. ``shadow_mode`` + ``would_deny_reason``
+    # only ride in ``extra`` when the gate actually short-circuited a deny
+    # under ``ROAM_MODE_DRY_RUN``. When dry-run is off, neither key is set
+    # on ``state``, so the produced ``extra`` dict is byte-identical to
+    # the pre-P1.1 shape — hash-stability preserved for existing receipts.
+    if state.get("shadow_mode"):
+        extra["shadow_mode"] = True
+        extra["would_deny_reason"] = state.get("would_deny_reason") or ""
+
+    # MCP-P0.2: ``required_mode`` is sourced from the 4-mode policy gate
+    # (closed enum: read_only/safe_edit/migration/autonomous_pr) — not the
+    # ``task_mode`` axis (required/optional/None) which historically poisoned
+    # this field. ``state["required_mode"]`` is set by the gate in
+    # ``_wrap_with_receipt``; fall back to a side-effect-based default when
+    # the receipt was emitted from a code path that bypassed the gate (e.g.
+    # a direct ``_mcp_receipt_for`` use in a test).
+    required_mode = state.get("required_mode")
+    if not required_mode:
+        required_mode = _required_mode_from_side_effects(meta)
+    # MCP-P0.2: ``policy_decision`` defaults to ``"not_evaluated"`` when no
+    # gate ran — the dataclass refuses unknown verbs.
+    decision = state.get("policy_decision") or "not_evaluated"
     receipt = McpDecisionReceipt(
         tool_call=tool_call_id,
         client_id=os.environ.get("ROAM_MCP_CLIENT_ID", "<unknown>"),
         tool_name=tool_name,
         actor_ref_id=os.environ.get("ROAM_AGENT_ID"),
         declared_side_effects=_declared_side_effects_for(meta),
-        required_mode=meta.get("task_mode"),
+        required_mode=required_mode,
         input_hash=input_hash,
-        policy_decision=state.get("policy_decision", "allow"),
+        policy_decision=decision,
         output_ref=output_ref,
         output_hash=output_hash,
         run_event_id=run_id,
-        redactions=(),
-        extra={},
+        redactions=redactions_tuple,
+        extra=extra,
     )
 
     bucket = run_id if run_id else "_no_run"
     target = _mcp_receipts_root() / bucket / f"{tool_call_id}.json"
-    atomic_write_text(target, receipt.to_canonical_json() + "\n")
+    canonical = receipt.to_canonical_json()
+    atomic_write_text(target, canonical + "\n")
+
+    # MCP-P0.3 — HMAC-link the receipt to the signed event stream so the
+    # receipt JSON file becomes tamper-evident. We append ONE ledger event
+    # carrying the sha256 of the canonical receipt bytes; the rolling-HMAC
+    # chain then locks that hash into the chain. ``verify_chain`` (extended
+    # below) walks these events, re-hashes the on-disk receipts, and reports
+    # mismatch / missing / not_linked sub-states.
+    #
+    # Hash stability discipline (W210): the legacy ledger-event shape stays
+    # byte-identical because we only emit this event when a run is active
+    # AND the new ``receipt_hash`` field rides inside the event payload
+    # (not as an addition to existing event shapes). Pre-P0.3 chains have
+    # no ``mcp_receipt`` events, so their canonical bytes are unchanged.
+    if run_id:
+        try:
+            import hashlib as _hashlib
+
+            from roam.db.connection import find_project_root
+            from roam.runs.ledger import log_event
+
+            receipt_hash = _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            log_event(
+                Path(find_project_root()),
+                run_id,
+                action="mcp_receipt",
+                tool_name=tool_name,
+                tool_call=tool_call_id,
+                receipt_hash=receipt_hash,
+            )
+        except Exception:
+            # Best-effort: a ledger-link failure must NEVER break the tool
+            # call. The receipt is still on disk; ``verify_chain`` will
+            # report ``receipt_integrity="not_linked"`` for it.
+            pass
 
 
 import contextlib as _contextlib
@@ -3454,10 +3530,22 @@ def _mcp_receipt_for(
         return
 
     receipt_state: dict = {
-        "policy_decision": "allow",
+        # MCP-P0.2: default "not_evaluated" so an unguarded surface honestly
+        # reports the absence of a policy decision rather than synthesising
+        # "allow". The gate inside ``_wrap_with_receipt`` overwrites this
+        # with the real decision when it runs.
+        "policy_decision": "not_evaluated",
+        # MCP-P0.2: ``required_mode`` is filled by the gate using the
+        # closed enum from :data:`roam.modes.policy.VALID_MODES`
+        # (read_only/safe_edit/migration/autonomous_pr). The legacy field
+        # used to be sourced from ``meta["task_mode"]`` which is the
+        # task-mode taxonomy (required/optional/None) — wrong axis.
+        "required_mode": None,
         "output_ref": None,
         "output_hash": None,
         "result": None,
+        "redactions": (),
+        "redaction_details": {},
     }
     try:
         yield receipt_state
@@ -3524,6 +3612,294 @@ def _wrap_with_cold_start_guard(name: str, fn):
     return _sync_cold_start_wrapped
 
 
+# ---------------------------------------------------------------------------
+# MCP-P0.2 — 4-mode policy enforcement at the MCP boundary
+# ---------------------------------------------------------------------------
+#
+# The 4-mode substrate (read_only / safe_edit / migration / autonomous_pr) is
+# CLI-only via ``cli._enforce_mode_gate``. In-process MCP dispatch bypasses
+# that gate because ``_run_roam_inprocess`` invokes the CLI through Click's
+# CliRunner which DOES re-enter the gate — BUT the gate only fires when a
+# fresh ``ROAM_MODE_ENFORCEMENT=1`` env-var is set. The MCP server needs its
+# own gate so a single ``ROAM_MODE_ENFORCEMENT=1`` toggle covers both
+# surfaces, and so the gate's decision can be folded into the
+# ``McpDecisionReceipt`` (``policy_decision`` field) without going through a
+# CLI subprocess.
+#
+# Naming convention (W961): MCP tool names use ``roam_<name>`` with
+# underscores; the policy / capability registry uses ``<name>`` with dashes.
+# The 4 historical renames live in ``_NAMING_DRIFT_ALIAS`` (see
+# tests/test_w954_core_tools_capability_drift.py); everything else maps via
+# the uniform ``removeprefix("roam_").replace("_", "-")`` rule.
+#
+# Required-mode derivation: walk ``VALID_MODES`` from lowest tier to highest
+# and return the FIRST mode whose allow-list contains the CLI command name.
+# Falls back to side-effect-based defaults when the command isn't in any
+# mode's allow-list (a typo, or a tool whose backing CLI command was renamed
+# without updating the policy).
+
+
+_MODE_BLOCKED_ERROR_CODE = "MODE_BLOCKED"
+
+
+# MCP-P1.1 — shadow-mode flag (``ROAM_MODE_DRY_RUN``).
+#
+# Operators previewing the 4-mode enforcement policy in production need a
+# way to see WHAT the gate would block without actually blocking it. When
+# ``ROAM_MODE_DRY_RUN`` is set to a truthy value, the policy path runs
+# normally (so ``required_mode`` / ``active_mode`` populate as usual) but
+# the deny branch in ``_wrap_with_receipt`` is short-circuited: the tool
+# call proceeds, the receipt records ``policy_decision="would_deny_dry_run"``
+# (extended closed enum), and ``extra["shadow_mode"] = True`` +
+# ``extra["would_deny_reason"]`` capture the original deny reason for
+# audit. A single WARN line per dry-run-blocked call lets operators grep
+# ledgers ahead of flipping enforcement.
+#
+# Allow paths are unchanged under dry-run (no marker, no log) — observe-
+# only rollout cares about what WOULD have been blocked, not what was
+# already allowed. Enforcement-off (the steady-state advisory path) is
+# also unchanged when dry-run is off: pre-P1.1 receipts stay byte-
+# identical, satisfying the hash-stability discipline (W210 omit-when-
+# default pattern, ledger-event layer).
+_DRY_RUN_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
+
+def _is_mode_dry_run() -> bool:
+    """Return True when ``ROAM_MODE_DRY_RUN`` names a truthy value.
+
+    Accepts ``1`` / ``true`` / ``yes`` / ``on`` (case-insensitive,
+    surrounding whitespace stripped). Anything else — empty string,
+    unset, ``0``, ``false`` — returns False. The read is intentionally
+    NOT cached at module-import time because operators flipping the flag
+    mid-process (e.g. in test fixtures) should see the change on the
+    next tool call.
+    """
+    raw = os.environ.get("ROAM_MODE_DRY_RUN", "")
+    return raw.strip().lower() in _DRY_RUN_TRUTHY
+
+
+def _log_mode_dry_run_would_deny(tool_name: str, reason: str) -> None:
+    """Emit a single WARN line per dry-run-blocked call so operators can grep.
+
+    Uses ``logging.getLogger(__name__)`` so the line lands in the same
+    logging surface as the rest of the MCP server. Best-effort: any
+    logging failure is swallowed (the policy path must never break a
+    tool call).
+    """
+    try:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "mcp.mode_policy.dry_run: tool=%s would_deny reason=%s",
+            tool_name,
+            reason,
+        )
+    except Exception:
+        pass
+
+# Mirrors tests/test_w954_core_tools_capability_drift.py. Kept local to
+# avoid coupling production code to a test module; the lint in that test
+# pins both tables in sync.
+_MCP_TO_CLI_RENAME_ALIAS: dict[str, str] = {
+    "roam_dead_code": "dead",
+    "roam_complexity_report": "complexity",
+    "roam_search_symbol": "search",
+    "roam_file_info": "file",
+}
+
+
+def _mcp_tool_to_cli_command(tool_name: str) -> str:
+    """Map an MCP tool name (``roam_<x>``) to its policy / CLI command name.
+
+    The 4 historical renames live in :data:`_MCP_TO_CLI_RENAME_ALIAS`; every
+    other tool follows the uniform "strip ``roam_`` prefix + swap ``_`` for
+    ``-``" convention (W961).
+    """
+    if tool_name in _MCP_TO_CLI_RENAME_ALIAS:
+        return _MCP_TO_CLI_RENAME_ALIAS[tool_name]
+    return tool_name.removeprefix("roam_").replace("_", "-")
+
+
+def _required_mode_from_side_effects(meta: dict) -> str:
+    """Derive the conservative required mode from the tool's metadata flags.
+
+    Closed enum matching :data:`roam.modes.policy.VALID_MODES`:
+
+    * destructive=True → ``migration`` (move/rename/extract live here)
+    * read_only=False (writes but not destructive) → ``safe_edit``
+    * read_only=True, idempotent=True → ``read_only``
+    * read_only=True, idempotent=False → ``safe_edit`` (non-idempotent
+      reads carry hidden state changes — fresh UUID, write to ``.roam/runs/``,
+      etc. — and should not be free in read_only mode)
+    """
+    if meta.get("destructive", False):
+        return "migration"
+    if not meta.get("read_only", True):
+        return "safe_edit"
+    if not meta.get("idempotent", True):
+        return "safe_edit"
+    return "read_only"
+
+
+def _resolve_required_mode_for_tool(tool_name: str, repo_root) -> str:
+    """Return the lowest mode that allows *tool_name* under the active policy.
+
+    Walks :data:`roam.modes.policy.VALID_MODES` in cumulative order. Falls
+    back to :func:`_required_mode_from_side_effects` when no mode allows the
+    underlying CLI command (typo, renamed command, etc.) so the receipt's
+    ``required_mode`` field is never empty.
+    """
+    meta = _TOOL_METADATA.get(tool_name, {})
+    fallback = _required_mode_from_side_effects(meta)
+    try:
+        from roam.modes.policy import VALID_MODES, list_modes
+    except Exception:
+        return fallback
+    cli_name = _mcp_tool_to_cli_command(tool_name)
+    try:
+        policies = list_modes(repo_root)
+    except Exception:
+        return fallback
+    for mode_name in VALID_MODES:
+        policy = policies.get(mode_name)
+        if policy is None:
+            continue
+        if cli_name in policy.allowed_commands:
+            return mode_name
+    return fallback
+
+
+def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
+    """Run the MCP-boundary mode gate for *tool_name*.
+
+    Returns a dict with:
+
+    * ``decision``: one of ``"allow"`` / ``"deny"`` (matches the closed
+      enum in :data:`roam.evidence.mcp_receipt._POLICY_DECISIONS`).
+    * ``enforcement``: bool — whether ``ROAM_MODE_ENFORCEMENT`` is on.
+    * ``active_mode``: name of the resolved active mode (string).
+    * ``required_mode``: lowest mode that allows the underlying command.
+    * ``reason``: human-readable explanation when ``decision`` is ``"deny"``;
+      empty string otherwise.
+
+    All exceptions are swallowed — a policy-check failure must NEVER break
+    the tool call. On any unexpected error the gate fails OPEN
+    (``decision="allow"``).
+    """
+    enforcement_raw = os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip()
+    enforcement = enforcement_raw in {"1", "true", "yes", "on"}
+    try:
+        from roam.db.connection import find_project_root
+        from roam.modes.policy import check_command_allowed, resolve_mode
+    except Exception:
+        return {
+            "decision": "allow",
+            "enforcement": enforcement,
+            "active_mode": "",
+            "required_mode": _required_mode_from_side_effects(_TOOL_METADATA.get(tool_name, {})),
+            "reason": "",
+        }
+    try:
+        repo_root = find_project_root()
+    except Exception:
+        return {
+            "decision": "allow",
+            "enforcement": enforcement,
+            "active_mode": "",
+            "required_mode": _required_mode_from_side_effects(_TOOL_METADATA.get(tool_name, {})),
+            "reason": "",
+        }
+    try:
+        active = resolve_mode(repo_root)
+        active_name = active.name
+    except Exception:
+        active_name = ""
+    cli_name = _mcp_tool_to_cli_command(tool_name)
+    try:
+        allowed, reason = check_command_allowed(repo_root, cli_name)
+    except Exception:
+        allowed, reason = True, ""
+    required_mode = _resolve_required_mode_for_tool(tool_name, repo_root)
+    return {
+        "decision": "allow" if allowed else "deny",
+        "enforcement": enforcement,
+        "active_mode": active_name,
+        "required_mode": required_mode,
+        "reason": "" if allowed else reason,
+    }
+
+
+def _build_mode_blocked_envelope(tool_name: str, policy_result: dict) -> dict:
+    """Pattern-1 canonical envelope for a MODE_BLOCKED denial.
+
+    Shape matches CLAUDE.md ``canonical failure envelope`` (isError inside
+    the result, copy-pasteable ``next_command``, imperative ``hint``,
+    LAW-4 concrete-noun-anchored ``agent_contract.facts``).
+    """
+    required = policy_result.get("required_mode") or "safe_edit"
+    active = policy_result.get("active_mode") or "<unknown>"
+    cli_name = _mcp_tool_to_cli_command(tool_name)
+    reason = policy_result.get("reason") or (
+        f"'{cli_name}' not allowed in {active} mode; run `roam mode {required}` to enable it"
+    )
+    envelope = {
+        "command": tool_name,
+        "status": "hard_failure",
+        "isError": True,
+        "summary": {
+            "verdict": f"BLOCKED: '{cli_name}' requires {required} mode (active: {active})",
+            "level": "blocker",
+            "partial_success": False,
+            "state": "mode_blocked",
+        },
+        "error_code": _MODE_BLOCKED_ERROR_CODE,
+        "error": reason,
+        "hint": f"Run `roam mode {required}` to switch into a mode that allows this tool.",
+        "next_command": f"roam mode {required}",
+        "agent_contract": {
+            "facts": [
+                f"active mode: {active}",
+                f"required mode: {required}",
+                f"blocked tool: {tool_name}",
+            ],
+            "next_commands": [
+                f"roam mode {required}",
+                f"# then re-run {tool_name}",
+            ],
+        },
+        "_meta": {
+            "policy_decision": "deny",
+            "policy_active_mode": active,
+            "policy_required_mode": required,
+        },
+    }
+    return _structured_error(envelope)
+
+
+def _redact_result_for_egress(result):
+    """MCP-P0.1 — scrub secret-shaped strings from a tool result before egress.
+
+    Walks the tool's return value (dict/list/tuple/string) and replaces any
+    string matching a producer-boundary secret pattern with ``[REDACTED]``
+    before the bytes cross the MCP boundary. Returns
+    ``(redacted_result, hit_counts_by_pattern)``; ``hit_counts_by_pattern``
+    is empty when nothing fired. Non-string scalars (int / bool / None /
+    floats — including ``_meta.cli_exit_code``) ride through untouched, so
+    the wrapper-bridge passthrough behavior stays intact.
+
+    Defensive: any exception is swallowed and the original result is
+    returned unredacted (with empty counts). Egress redaction must never
+    break the tool call itself — the audit-trail and security boundary
+    are best-effort, like the rest of ``_wrap_with_receipt``.
+    """
+    try:
+        from roam.security.redact import redact_secrets_in_value
+
+        return redact_secrets_in_value(result)
+    except Exception:
+        return result, {}
+
+
 def _wrap_with_receipt(name: str, fn):
     """Wrap an MCP tool so a decision receipt is emitted per sensitive call.
 
@@ -3533,6 +3909,23 @@ def _wrap_with_receipt(name: str, fn):
     invocation - capturing input args hash, declared side effects, the
     resolved active run id, and the output hash (or handle ref for large
     outputs).
+
+    MCP-P0.1 egress redaction (W195): for sensitive tools, the result is
+    scrubbed of producer-boundary secret patterns BEFORE returning to the
+    MCP client AND before the receipt's ``output_hash`` is computed — so
+    the client never sees a verbatim secret and the hash reflects what
+    the client actually received.
+
+    MCP-P0.2 mode enforcement (W196.2): before invoking ``fn``, run the
+    4-mode policy gate. When ``ROAM_MODE_ENFORCEMENT=1`` AND the active mode
+    does not allow the tool, return a Pattern-1 ``MODE_BLOCKED`` envelope
+    without invoking the tool. When enforcement is off (default), proceed
+    but record ``policy_decision="deny"`` on the receipt (advisory-shadow
+    mode) so an audit trail shows what WOULD have been blocked.
+
+    The redaction wiring (P0.1) is preserved on the allow path; on the deny
+    path the tool never runs, so the egress walk only sees the
+    MODE_BLOCKED envelope (which contains no tool-side payload).
     """
     import functools as _functools
     import inspect as _inspect
@@ -3546,18 +3939,68 @@ def _wrap_with_receipt(name: str, fn):
         @_functools.wraps(fn)
         async def _async_receipt_wrapped(*args, **kwargs):
             with _mcp_receipt_for(name, kwargs) as state:
+                policy = _evaluate_mcp_mode_policy(name)
+                state["policy_decision"] = policy["decision"]
+                state["required_mode"] = policy["required_mode"]
+                # MCP-P1.1 — shadow-mode short-circuit. When dry-run is ON
+                # and the gate would normally deny, stamp the receipt with
+                # the ``would_deny_dry_run`` verdict + shadow markers and
+                # let the tool call proceed for observe-only rollout. The
+                # allow path is untouched.
+                if (
+                    policy["decision"] == "deny"
+                    and policy["enforcement"]
+                    and _is_mode_dry_run()
+                ):
+                    reason = policy.get("reason") or ""
+                    state["policy_decision"] = "would_deny_dry_run"
+                    state["shadow_mode"] = True
+                    state["would_deny_reason"] = reason
+                    _log_mode_dry_run_would_deny(name, reason)
+                elif policy["decision"] == "deny" and policy["enforcement"]:
+                    envelope = _build_mode_blocked_envelope(name, policy)
+                    state["result"] = envelope
+                    return envelope
                 result = await fn(*args, **kwargs)
-                state["result"] = result
-                return result
+                redacted, hits = _redact_result_for_egress(result)
+                state["result"] = redacted
+                if hits:
+                    state["redactions"] = ("secret",)
+                    state["redaction_details"] = hits
+                return redacted
 
         return _async_receipt_wrapped
 
     @_functools.wraps(fn)
     def _sync_receipt_wrapped(*args, **kwargs):
         with _mcp_receipt_for(name, kwargs) as state:
+            policy = _evaluate_mcp_mode_policy(name)
+            state["policy_decision"] = policy["decision"]
+            state["required_mode"] = policy["required_mode"]
+            # MCP-P1.1 — see async branch above for rationale. Both paths
+            # share the same shadow-mode semantics; the only difference is
+            # the ``await`` keyword on the underlying tool call.
+            if (
+                policy["decision"] == "deny"
+                and policy["enforcement"]
+                and _is_mode_dry_run()
+            ):
+                reason = policy.get("reason") or ""
+                state["policy_decision"] = "would_deny_dry_run"
+                state["shadow_mode"] = True
+                state["would_deny_reason"] = reason
+                _log_mode_dry_run_would_deny(name, reason)
+            elif policy["decision"] == "deny" and policy["enforcement"]:
+                envelope = _build_mode_blocked_envelope(name, policy)
+                state["result"] = envelope
+                return envelope
             result = fn(*args, **kwargs)
-            state["result"] = result
-            return result
+            redacted, hits = _redact_result_for_egress(result)
+            state["result"] = redacted
+            if hits:
+                state["redactions"] = ("secret",)
+                state["redaction_details"] = hits
+            return redacted
 
     return _sync_receipt_wrapped
 

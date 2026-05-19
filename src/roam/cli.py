@@ -1483,6 +1483,45 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     ctx.obj["detail"] = detail
     ctx.obj["override_mode"] = bool(override_mode)
 
+    # W1078: under structured-output modes (--json / --sarif / --agent),
+    # make sure `warnings.warn(...)` can never land on stdout. Some
+    # transitive deps (numpy/scipy compatibility shims surfaced via
+    # networkx pagerank/spectral paths) emit warnings that, when stderr
+    # is merged into stdout at the shell layer (`2>&1`, certain CI
+    # pipelines), silently corrupt JSON pipelines like
+    # `roam --json health | jq`.
+    #
+    # Defensive policy: install a stderr-bound showwarning override ONLY
+    # IF the current hook is the stdlib default. This preserves pytest's
+    # warning-capture machinery (`pytest.warns`, the warnings summary,
+    # `recwarn` fixture) and any user-installed handler. The override
+    # writes to `sys.__stderr__` (the original fd) so that even if a
+    # downstream layer replaces `sys.stderr` with a stdout-aliasing
+    # wrapper, warnings still route to the terminal's stderr stream.
+    if json_mode or sarif_mode or agent:
+        import warnings as _warnings
+
+        # The stdlib stores the default handler under several names across
+        # Python versions: `_showwarning_orig` (3.8+) and `_showwarning_impl`
+        # (3.11+). Either one identifies "nobody has installed an override".
+        _default_showwarning = getattr(_warnings, "_showwarning_orig", None) or getattr(
+            _warnings, "_showwarning_impl", None
+        )
+        if _default_showwarning is not None and _warnings.showwarning is _default_showwarning:
+
+            def _stderr_showwarning(message, category, filename, lineno, file=None, line=None):
+                try:
+                    text = _warnings.formatwarning(message, category, filename, lineno, line)
+                    sys.__stderr__.write(text)
+                except Exception:
+                    # last-ditch: never let a warning handler crash the command
+                    try:
+                        sys.__stderr__.write(f"{category.__name__}: {message}\n")
+                    except Exception:
+                        pass
+
+            _warnings.showwarning = _stderr_showwarning
+
     # W21.6: --ci is the single semantic "I'm running in CI" lever. It's a
     # composition over the existing per-command flags (over-fetch
     # --leaks-only, pr-bundle --strict, etc.). Subcommands consult

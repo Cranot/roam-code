@@ -75,19 +75,19 @@
         <strong>no certification theater.</strong>
       </h1>
       <p class="hero-subhead">
-        This page tells procurement reviewers exactly where Roam stands on
-        SOC 2 Type II, ISO/IEC 42001, EU AI Act Article 12 record-keeping,
-        and the NIST AI Risk Management Framework — and what artifacts
-        (DPA, sub-processor list, security contact, vulnerability
-        disclosure, data-flow diagram) we can hand over today. Evidence
-        support and control mapping. Not certification.
+        Where Roam stands on SOC 2 Type II (target Q1 2027), ISO/IEC 42001
+        (target Q3 2027), EU AI Act Article 12 record-keeping, and the
+        NIST AI Risk Management Framework — plus the DPA,
+        sub-processor list, security contact, vulnerability disclosure,
+        and data-flow diagram we hand over today. Evidence support and
+        control mapping. Not certification.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="#today">Where we are today</a>
-        <a class="btn-secondary" href="#artifacts">Procurement artifacts</a>
+        <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md">Download procurement packet</a>
+        <a class="btn-secondary" href="#today">Where we are today</a>
       </div>
       <p class="hero-trust-strip">
-        Built in Athens · Made in the EU · Apache 2.0 CLI · 100% local, no API key, no vendor cloud endpoint · Evidence hash-verifies offline · No analytics · No cookies
+        Built in Athens · Made in the EU · Apache 2.0 CLI · 100% local by default (opt-in metrics-push is the only outbound surface) · No API key · No vendor cloud endpoint · Evidence hash-verifies offline · No analytics · No cookies
       </p>
     </div>
   </header>
@@ -107,21 +107,21 @@
       </p>
       <div class="verbs-grid verbs-grid--3">
         <div class="verb-cell">
-          <code>SOC 2 Type II — in design</code>
+          <code>SOC 2 Type II — in design (target Q1 2027)</code>
           <span>
-            Controls in design. External audit timing is roadmapped but
-            not committed. No current independent attestation. We will
-            publish the auditor name and the report excerpts on this page
-            when the report is issued.
+            Controls in design. Honest target window: Q1 2027 for the
+            first Type II report. No current independent attestation; the
+            window is planning guidance, not a commitment. We will publish
+            the auditor name and report excerpts here when issued.
           </span>
         </div>
         <div class="verb-cell">
-          <code>ISO/IEC 42001 — gap analysis underway</code>
+          <code>ISO/IEC 42001 — gap analysis (target Q3 2027)</code>
           <span>
             AI management system gap assessment in progress against the
-            ISO/IEC 42001:2023 control set. Certification-body engagement
-            is roadmapped, but no certificate date is committed. No
-            current certification.
+            ISO/IEC 42001:2023 control set. Honest target window:
+            Q3 2027 for certificate issue. No current certification; the
+            window is planning guidance, not a commitment.
           </span>
         </div>
         <div class="verb-cell">
@@ -217,9 +217,14 @@
           The CLI's data flow is short enough to inline: your source
           code is read from the local working tree, parsed and indexed
           into a local SQLite database under <code>.roam/</code>, and
-          analyzed by local processes. <strong>100% local, no API key,
+          analyzed by local processes. <strong>100% local by default, no API key,
           no vendor cloud endpoint</strong> — no telemetry, no analytics,
           no model-training upload, and no inbound network listener. The
+          one outbound carve-out is the opt-in <code>metrics-push</code>
+          command, which emits Prometheus-format metrics to a
+          user-configured pushgateway URL when (and only when) you
+          explicitly invoke it; it is off by default and never auto-runs.
+          The
           same local-only stance is contractually committed in
           <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6</a>.
           Roam Review and Roam Cloud data flows are documented inside the
@@ -328,6 +333,18 @@
           A single bundle for vendor reviewers — DPA, NDA template,
           security-procurement packet, and master SOW — is published at
           <a href="https://github.com/Cranot/roam-code/tree/main/templates/legal">templates/legal/</a>.
+          The direct packet file:
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md">security-procurement-packet.md</a>.
+        </span>
+      </div>
+      <div class="trust-cell">
+        <strong>Adjacent pages</strong>
+        <span>
+          The five-page evidence cluster:
+          <a href="/audit">PR Replay audit</a> ·
+          <a href="/governance">Governance</a> ·
+          <a href="/pricing">Pricing</a> ·
+          <a href="/docs/architecture">Architecture</a>.
         </span>
       </div>
     </div>
@@ -366,17 +383,15 @@
       <div class="trust-cell">
         <strong>Timeline candor</strong>
         <span>
-          The SOC 2 and ISO/IEC 42001 roadmap above is planning guidance,
-          not a commitment. Once external partners and dates are signed,
-          we will publish them here. Procurement reviewers who need a
-          binding date should email
-          <a href="mailto:hello@roam-code.com?subject=Trust%20page%20timeline">hello@roam-code.com</a>
-          for the current schedule and the named external partners.
+          Honest target windows: SOC 2 Type II Q1 2027,
+          ISO/IEC 42001 Q3 2027. Planning guidance, not a commitment.
+          Once external partners and dates are signed we will publish
+          them here. Procurement reviewers who need a binding date:
+          <a href="mailto:hello@roam-code.com?subject=Trust%20page%20timeline">hello@roam-code.com</a>.
           Payment-side commitments — refund window, invoicing cadence,
-          and the distinction between Stripe receipt and the legal
-          tax invoice — live on the
-          <a href="/refund">refund policy</a> and the
-          <a href="/audit#tiers">PR Replay audit page</a>.
+          Stripe-receipt vs legal tax-invoice — on the
+          <a href="/refund">refund policy</a> and
+          <a href="/audit#tiers">PR Replay audit</a>.
         </span>
       </div>
       <div class="trust-cell">

@@ -20,6 +20,16 @@ on:
     types: [published]
   workflow_dispatch: {}
 
+# Serialize publish runs against the same ref so a tag-push + release-create
+# pair (or two simultaneous tag pushes) cannot race the SBOM-sign + PyPI
+# Trusted Publishing path. ``skip-existing: true`` only covers the wheel
+# upload collision; the Rekor / cosign sign path is not idempotent.
+# ``cancel-in-progress: false`` is critical — killing an in-flight publish
+# would leave partial state (e.g. wheel on PyPI without signed SBOM).
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   id-token: write   # OIDC token for Trusted Publishing
   contents: read

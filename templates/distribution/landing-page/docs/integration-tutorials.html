@@ -73,13 +73,38 @@
     <p class="eyebrow">Adoption</p>
     <h1>Integration Tutorials</h1>
     <p class="subtitle">
-      End-to-end MCP setup and daily workflow for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Goal: make the first successful query fast, then standardise a repeatable loop.
+      End-to-end setup for the three audiences that integrate Roam: MCP host authors (Claude Code, Cursor, Gemini CLI, Codex CLI, Amp), CI/CD pipeline owners, and MCP gateway operators. Goal: make the first successful query fast, then standardise a repeatable loop with structured evidence falling out the other side.
     </p>
     <div class="callout">
-      Scope: 5 MCP-aware coding platforms. Non-goal: hosted Roam deployment; private-deployment pilots are scoped separately by SOW.
+      Scope: MCP host setup (5 platforms), CI integration (5 platforms via <code>roam ci-setup</code>), gateway integration via the <code>McpDecisionReceipt</code> schema and HMAC-chained run ledger, and the OSCAL v1.2 control-mapping projection. Non-goal: hosted Roam deployment; private-deployment pilots are scoped separately by SOW.
     </div>
+    <p>
+      Surface scale on v13.2: 241 commands, 227 MCP tools (57 in the
+      default <code>core</code> preset, opt into <code>full</code> via
+      <code>ROAM_MCP_PRESET</code>), 28 indexed languages. All local;
+      no API keys.
+    </p>
 
     <section>
+      <h2 id="mcp-host-tutorial">MCP host integration</h2>
+      <p>
+        Wire Roam into your MCP-aware coding agent in one line. The
+        <code>roam mcp-setup</code> generator reads the live tool
+        registry, so the JSON it emits always matches what
+        <code>roam mcp</code> actually exposes &mdash; hand-rolled
+        snippets drift the moment the preset or tool list changes.
+        See <a href="/docs/mcp-usage#config-generator">Generate config:
+        don't hand-edit</a> for the full rationale.
+      </p>
+      <p>
+        Generator targets (live <code>_CONFIGS</code> list):
+        <code>claude-code</code>, <code>cursor</code>,
+        <code>windsurf</code>, <code>vscode</code>,
+        <code>gemini-cli</code>, <code>codex-cli</code>. Amp
+        (Sourcegraph) uses the same JSON shape but is added through
+        Amp's own MCP settings panel.
+      </p>
+
       <h2>Quick Setup Matrix</h2>
       <table>
         <thead>
@@ -173,6 +198,128 @@ roam layers</code></pre>
     </section>
 
     <section>
+      <h2 id="ci-tutorial">CI/CD pipeline integration</h2>
+      <p>
+        Generate a ready-to-commit pipeline for your CI platform. The
+        emitted template runs <code>roam health</code>,
+        <code>roam check-rules</code>, and <code>roam pr-risk</code> on
+        every pull request, posts a sticky comment, and (on GitHub)
+        uploads SARIF to Code Scanning so findings surface in the PR
+        diff UI.
+      </p>
+<pre><code>roam ci-setup                          # auto-detect platform
+roam ci-setup --platform github --write
+roam ci-setup --platform gitlab --gate 70 --write
+roam --json ci-setup --platform azure  # structured envelope</code></pre>
+      <p>
+        Supported platforms: <code>github</code>, <code>gitlab</code>,
+        <code>azure</code>, <code>jenkins</code>,
+        <code>bitbucket</code>. The GitHub Actions template surfaces
+        Roam findings to Code Scanning via SARIF 2.1.0:
+      </p>
+<pre><code>roam --sarif health &gt; roam-health.sarif
+# Upload via github/codeql-action/upload-sarif in the generated workflow.</code></pre>
+      <p>
+        Opt into supply-chain attestation with
+        <code>--with-slsa-l3</code>. The flag emits a second workflow
+        (<code>.github/workflows/roam-slsa-src-l3.yml</code>) that runs
+        <code>roam pr-bundle emit --slsa-l3 --sign --keyless</code> on
+        every PR &mdash; OIDC-anchored cosign signature plus a VSA-shaped
+        predicate, lifting the assurance floor from SRC-L2 to SRC-L3.
+        GitHub-only in v1 (Fulcio + Rekor wire-up). After the workflow
+        is in place, sanity-check the local roam install with
+        <code>roam doctor</code>; it surfaces missing index, stale
+        schema, or missing optional extras before the first CI run.
+      </p>
+      <p>
+        Also bundled (drop-in samples, not auto-emitted by
+        <code>ci-setup</code>):
+        <code>agent-review.yml</code> for <code>roam pr-analyze</code>
+        on every PR, and <code>roam-sarif-with-codeql.yml</code> for
+        running Roam SARIF alongside CodeQL. Sources ship inside the
+        wheel at <code>src/roam/templates/ci/</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="mcp-gateway-tutorial">MCP gateway integration</h2>
+      <p>
+        Gateway operators (Interlock, Lasso, Portkey, custom) consume
+        two structured evidence streams Roam emits per agent session:
+        the per-tool-call <code>McpDecisionReceipt</code> and the
+        HMAC-chained run ledger under <code>.roam/runs/</code>. Roam is
+        the <strong>inside-server</strong> half of the trust boundary;
+        the gateway owns network policy, prompt-injection scanning,
+        and audit aggregation. The split is summarised on
+        <a href="/docs/mcp-usage#security-stance">MCP security stance</a>
+        and discussed in full on
+        <a href="https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163">Discussion #37</a>.
+      </p>
+      <p>
+        Export the receipt schema (JSON Schema Draft 2020-12) for
+        validator wire-up:
+      </p>
+<pre><code>python scripts/export_mcp_receipt_schema.py &gt; mcp-receipt.schema.json</code></pre>
+      <p>
+        The schema is reconstructed at export time from the closed-enum
+        vocabulary in <code>roam.evidence._vocabulary</code>, so a
+        vocabulary change propagates without manual edits. Each
+        receipt records actor identity, tool id, sha256 of inputs,
+        policy verdict (<code>allow</code> / <code>deny</code> /
+        <code>escalate</code> / <code>redact</code> /
+        <code>not_evaluated</code>), and a hash of outputs &mdash; raw
+        payloads are never stored, only digests.
+      </p>
+      <p>
+        Verify the run ledger offline with <code>roam runs verify</code>
+        (4-state verdict: <code>ok</code>, <code>tampered</code>,
+        <code>unsigned</code>, <code>key_missing</code>; exit 5 on
+        <code>tampered</code> so CI can gate on integrity):
+      </p>
+<pre><code>roam runs verify                       # last run
+roam runs verify &lt;run_id&gt;
+roam runs verify --all                 # every run in this repo</code></pre>
+      <p>
+        For the full gateway-vs-inside-server framing, see
+        <a href="https://github.com/Cranot/roam-code/blob/main/dev/MCP-SECURITY-POSTURE.md"><code>dev/MCP-SECURITY-POSTURE.md</code></a>
+        in the repo &mdash; the long-form posture document the public docs
+        condense.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="oscal-audit-tutorial">OSCAL audit integration</h2>
+      <p>
+        Emit an OSCAL v1.2 Control Mapping or Assessment Results
+        document for downstream GRC tooling. Roam <em>maps to</em> and
+        <em>supports evidence for</em> the controls in the bundled
+        crosswalk; it does not certify a customer compliant. The
+        crosswalk lives in the wheel at
+        <code>src/roam/templates/audit_report/control-mapping.yaml</code>
+        and is honoured as an override when present at the project
+        root.
+      </p>
+<pre><code>roam evidence-oscal --kind control-mapping &gt; oscal-controls.json
+roam evidence-oscal --kind assessment-results --evidence change-evidence.json \
+  --import-ap-ref oscal-ap.json &gt; oscal-results.json</code></pre>
+      <p>
+        Persist the OSCAL artefacts on disk with
+        <code>roam ci-setup --with-oscal</code>; the flag materialises
+        <code>.roam/oscal/control-mapping.json</code> and a stub
+        <code>assessment-plan.json</code> so subsequent
+        <code>roam evidence-oscal --kind assessment-results</code>
+        calls can pass <code>--import-ap-ref</code> instead of
+        synthesising the stub inline. The eight evidence questions an
+        Assessment Results document answers are catalogued on
+        <a href="/docs/architecture#eight-evidence-questions">Architecture
+        &mdash; The eight evidence questions</a>; the corresponding
+        <code>ChangeEvidence</code> packet shape is summarised on
+        <a href="/audit#evidence">PR Replay &mdash; Eight questions every
+        packet answers</a>.
+      </p>
+    </section>
+
+    <section>
       <h2>Cross-Platform Validation Checklist</h2>
       <ul>
         <li><code>roam mcp --list-tools</code> shows non-empty tool output.</li>
@@ -186,9 +333,11 @@ roam layers</code></pre>
       <h2>See also</h2>
       <ul>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> &mdash; every command, every flag, every JSON envelope.</li>
-        <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> &mdash; how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
+        <li><strong>MCP security stance:</strong> <a href="/docs/mcp-usage#security-stance">Inside-server vs gateway</a> &mdash; what Roam owns and what your MCP host owns.</li>
+        <li><strong>Config generator rationale:</strong> <a href="/docs/mcp-usage#config-generator">Generate config: don't hand-edit</a> &mdash; why <code>roam mcp-setup</code> is the source of truth.</li>
+        <li><strong>Eight evidence questions:</strong> <a href="/docs/architecture#eight-evidence-questions">Architecture</a> &mdash; how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> &mdash; context before edit, impact before delete, critique before merge.</li>
-        <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> &mdash; we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
+        <li><strong>Worked example on your own repo:</strong> <a href="/audit#evidence">PR Replay &mdash; Eight questions every packet answers</a> &mdash; we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
     </section>
 

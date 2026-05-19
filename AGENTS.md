@@ -140,7 +140,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 241 command names (234 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (57 tools in core preset; up to 224 in `full`) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (57 tools in core preset; 227 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -305,7 +305,7 @@ ledger, and (c) compose proof bundles a human reviewer can trust. Everything
 below is repo-local (stored under `.roam/`), zero-network, and additive to the
 analysis core.
 
-### The 11 substrate packages
+### The 12 substrate packages
 
 ```
 src/roam/atomic_io.py     - atomic_write_text/bytes/json (os.replace; POSIX+Windows safe)
@@ -356,12 +356,81 @@ chain verifies (`roam runs verify`) AND the bundle validates with `--strict`.
 Every other piece (laws, memory, world-model, agents-md, brief, next, intent-check,
 replay, agent-score) feeds one of those four verbs.
 
+### MCP boundary security (runtime wave, sealed 2026-05-18)
+
+Roam ships structured evidence emission as the security stance at the MCP
+boundary. As of 2026-05-18 the P0/P1/P2 wave is sealed. Full integrator
+spec: `dev/MCP-SECURITY-POSTURE.md` (companion doc for Interlock / Lasso /
+Portkey / MintMCP gateway authors). Canonical dataclass:
+`src/roam/evidence/mcp_receipt.py`. JSON Schema emitter:
+`scripts/export_mcp_receipt_schema.py`. Public reply:
+https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163.
+Agent-developer landing page:
+`templates/distribution/landing-page/docs/agent-contract.html`.
+
+- **Egress redaction (MCP-P0.1, shipped).** Sensitive MCP results are
+  scrubbed of producer-boundary secret patterns (GitHub PAT classic +
+  fine-grained, `sk-` keys, AWS AKIA, Bearer tokens, PEM blocks, JWT)
+  BEFORE returning to the client AND before `output_hash` is computed.
+  Redactor: `src/roam/security/redact.py`
+  (`redact_secrets_in_string` / `redact_secrets_in_value`); wire-up at
+  `_wrap_with_receipt` in `src/roam/mcp_server.py`. Per-pattern hit map
+  surfaces in `extra["redaction_details"]`.
+- **Mode-gate enforcement at the MCP boundary (MCP-P0.2, shipped).**
+  `_evaluate_mcp_mode_policy` + `_build_mode_blocked_envelope` wire the
+  4-mode substrate (`read_only` / `safe_edit` / `migration` /
+  `autonomous_pr`) into the MCP dispatcher. Receipts now carry a real
+  decision from the closed `policy_decision` enum, not hard-coded
+  `"allow"`.
+- **HMAC-link receipts to the signed event stream (MCP-P0.3, shipped).**
+  Each receipt's sha256 anchors into a signed ledger event;
+  `verify_chain_with_receipts()` in `src/roam/runs/signing.py` extends
+  the offline envelope with a `receipt_integrity` closed enum. Pre-P0.3
+  chains hash byte-identical (no migration).
+- **Shadow-mode dry-run (MCP-P1.1, shipped).** `ROAM_MODE_DRY_RUN=1`
+  flips the P0.2 mode gate into observe-only — denials are emitted as
+  receipts but the call proceeds. Gateways can stage policy changes
+  without raising.
+- **Per-tool side-effect declarations (MCP-P2.1, shipped).** Every
+  `@_tool` wrapper carries declared `read_only` / `destructive` /
+  `idempotent` flags in `_TOOL_METADATA`; receipts surface them as
+  `declared_side_effects`. A gateway can reject calls whose declared
+  effects exceed caller authority before the call lands at the server.
+- **JSON Schema export for receipts (MCP-P2.2, shipped).**
+  `scripts/export_mcp_receipt_schema.py` emits a JSON Schema
+  Draft 2020-12 document for `McpDecisionReceipt` so gateway integrators
+  can validate receipts without importing the Python dataclass.
+
+**Closed-enum vocabulary** (membership validated at receipt construction;
+unknown literals raise `ValueError`):
+
+- `policy_decision` (6 values): `allow`, `deny`, `escalate`, `redact`,
+  `not_evaluated`, `dry_run`.
+- `redactions` reasons (9 values, canonical W226 `REDACTION_REASONS`):
+  `secret`, `pii`, `sensitive_content`, `size_limit`, `policy`,
+  `user_opt_in_required`, `machine_local_path`, `schema_strict`,
+  `producer_not_available`.
+- `receipt_integrity` (4 values, emitted by `verify_chain_with_receipts`):
+  `ok`, `missing`, `tampered`, `not_linked`.
+
+**Three UX bugs sealed in the same wave**: `doctor` advisory exit-0
+correction, `surface --json` top-level keys completion, and
+`_meta.roam_version` stamped on every MCP receipt envelope.
+
 ### Where to look next (cross-links)
 
-- `dev/BACKLOG.md`                    - what's queued / still TODO
-- `(internal memo)`    - this sprint's sign-off doc
-- `dev/ROADMAP.md` tier four-star     - strategic items not yet started (R21 leases done; R25 plugin still open)
-- `internal/dogfood/SYNTHESIS-2026-05-12.md` - the dogfood corpus the sprint addressed
+- `CLAUDE.md` (this repo)            - Claude-specific operator guide (parallel to AGENTS.md)
+- `README.md` (this repo)            - public surface + headline counts
+- `https://roam-code.com/docs/`      - hosted command reference, architecture, getting-started
+- `templates/distribution/landing-page/docs/agent-contract.html` - agent-developer landing page (envelope shape + closed enums)
+- `dev/MCP-SECURITY-POSTURE.md`      - MCP runtime-security integrator spec (gateway PEP authors)
+- `src/roam/evidence/mcp_receipt.py` - canonical `McpDecisionReceipt` dataclass
+- `scripts/export_mcp_receipt_schema.py` - JSON Schema Draft 2020-12 emitter (P2.2)
+- https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163 - public reply on the runtime-security posture
+- `(internal memo)`  - active strategy command center (framing, launch, build queue)
+- `dev/BACKLOG.md`                   - what's queued / still TODO
+- `dev/ROADMAP.md` tier four-star    - strategic items not yet started (R21 leases done; R25 plugin still open)
+- `internal/dogfood/SYNTHESIS-2026-05-12.md` - dogfood corpus (gitignored)
 
 ## Conventions
 

@@ -181,9 +181,22 @@ def test_sensitive_tool_emits_receipt(isolated_repo, monkeypatch) -> None:
     # Required envelope shape
     assert r["tool_name"] == "stub_sensitive_tool"
     assert r["tool_call"].startswith("stub_sensitive_tool_")
-    assert r["policy_decision"] == "allow"
+    # MCP-P0.2: policy_decision is now sourced from the real 4-mode gate,
+    # NOT hard-coded "allow". A synthetic stub_sensitive_tool is not
+    # registered in any mode's allow-list → the gate honestly records
+    # "deny" (advisory because ROAM_MODE_ENFORCEMENT is not set).
+    assert r["policy_decision"] == "deny"
     assert r["client_id"] == "<unknown>"
-    assert r["required_mode"] == "required"
+    # MCP-P0.2: required_mode is sourced from the agent-mode taxonomy
+    # (read_only / safe_edit / migration / autonomous_pr) — closed enum
+    # in :data:`roam.modes.policy.VALID_MODES` — NOT from the task_mode
+    # axis (required / optional / None) that historically poisoned this
+    # field. A destructive synthetic stub falls back to "migration"
+    # via the side-effect-based default.
+    from roam.modes.policy import VALID_MODES
+
+    assert r["required_mode"] in VALID_MODES
+    assert r["required_mode"] == "migration"
     # Destructive AND non-idempotent → both side-effects listed
     assert "destructive" in r["declared_side_effects"]
     assert "non_idempotent" in r["declared_side_effects"]

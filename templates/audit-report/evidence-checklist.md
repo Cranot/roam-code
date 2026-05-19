@@ -161,9 +161,10 @@ can then compile into an evidence packet.
   drift between "what produced this" and "what's on disk at audit
   time" is detectable.
 - **Use `roam findings list --detector <name>` for per-detector
-  drill-down.** 28 detectors persist findings to the central registry;
-  the same rows feed the customer report and any SARIF / OSCAL
-  projection.
+  drill-down.** 28 detectors can persist findings to the central
+  registry (registry holds rows from each detector's most recent run;
+  counts are last-run state, not cumulative). The same rows feed the
+  customer report and any SARIF / OSCAL projection.
 - **Mark producer gaps explicitly.** Where an axis cannot be produced
   (no approval recorded, no permit issued, no test run), surface
   `redactions[].reason = "producer_not_available"` rather than
