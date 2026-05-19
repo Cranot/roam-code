@@ -72,7 +72,7 @@
         are human-first surfaces that <em>log a session</em>. Cloud semantic
         reviewers (CodeRabbit, Greptile, Qodo) read the diff as text on a vendor
         server. Roam is an agent-first CLI + MCP server that <em>gates the change
-        and emits proof</em> — credential-free, zero network egress, and a
+        and emits proof</em> — credential-free, zero network egress by default (opt-in <code>metrics-push</code> is the only outbound surface), and a
         portable tamper-evident <code>ChangeEvidence</code> packet (optionally
         cosign-signed) answering eight evidence questions per AI-assisted change.
         Among the products surveyed as of <time datetime="2026-05-18">2026-05-18</time>,

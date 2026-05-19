@@ -2,12 +2,12 @@
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "io.github.cranot/roam-code",
     "description": "Local codebase intelligence MCP server for AI coding agents: SQLite graph, 28 languages, change-safety gates, audit evidence, zero API keys.",
-    "version": "13.2",
+    "version": "13.3",
     "packages": [
         {
             "registryType": "pypi",
             "identifier": "roam-code",
-            "version": "13.2",
+            "version": "13.3",
             "runtimeHint": "python",
             "transport": {
                 "type": "stdio"

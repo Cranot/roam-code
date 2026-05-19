@@ -49,7 +49,9 @@ def test_db_schema_error_includes_doctor_hint(tmp_path):
     """
     from roam.db import connection as conn_mod
 
-    def _bad_schema(_conn):
+    def _bad_schema(_conn, **_kwargs):
+        # Accept arbitrary kwargs (e.g., warnings_out=) that production
+        # ensure_schema accepts; this mock just raises regardless.
         raise sqlite3.DatabaseError("simulated schema corruption")
 
     with patch.object(conn_mod, "ensure_schema", _bad_schema):

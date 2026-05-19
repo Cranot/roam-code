@@ -1486,7 +1486,7 @@ roam --json health > report.json
 
 Roam exports analysis results in [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) format for GitHub Code Scanning.
 
-Fourteen commands honour the global `--sarif` flag (the authoritative list is
+37 commands honour the global `--sarif` flag (the authoritative list is
 `_SARIF_CONSUMERS` in `src/roam/cli.py`, drift-guarded by
 `tests/test_sarif_consumer_list.py`). Minimal end-to-end upload:
 
