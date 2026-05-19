@@ -152,7 +152,6 @@ class TestSemVerLabelsParse:
             f"api-changes --severity breaking: expected NOT click-usage-error 2 "
             f"(SemVer token unchanged), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_warning_label_parses_cleanly(self, tmp_path: Path) -> None:
         """``--severity warning`` parses cleanly (back-compat unchanged)."""

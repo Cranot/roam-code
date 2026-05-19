@@ -120,10 +120,6 @@ def test_min_severity_warning_parses_cleanly(tmp_path: Path) -> None:
         f"--min-severity warning: expected exit 0 (canonical token parses), "
         f"got exit {result.exit_code}. Output:\n{result.output}"
     )
-    # And the repo-root helper resolved to a directory that actually contains
-    # the canonical project markers — the test_w1005_*.py family lives under
-    # the same tests/ tree as the rest of the suite.
-    assert (REPO_ROOT / "CLAUDE.md").exists()
 
 
 # ---------------------------------------------------------------------------

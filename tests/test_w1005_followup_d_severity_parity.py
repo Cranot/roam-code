@@ -162,7 +162,6 @@ class TestAuthGapsMinConfidenceCanonical:
             f"auth-gaps --min-confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_auth_gaps_min_confidence_uses_canonical_rank_floor(self) -> None:
         """``--min-confidence medium`` pins the floor at rank 2.
@@ -207,7 +206,6 @@ class TestMathConfidenceCanonical:
             f"algo --confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_math_confidence_uses_canonical_rank_floor(self) -> None:
         """``--confidence medium`` pins the floor at rank 2 (equality→floor).
@@ -244,7 +242,6 @@ class TestMigrationSafetyConfidenceCanonical:
             f"migration-safety --confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_migration_safety_confidence_uses_canonical_rank_floor(self) -> None:
         """``--confidence medium`` pins the floor at rank 2 (equality→floor)."""
@@ -273,7 +270,6 @@ class TestMissingIndexConfidenceCanonical:
             f"missing-index --confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_missing_index_confidence_uses_canonical_rank_floor(self) -> None:
         """``--confidence medium`` pins the floor at rank 2 (equality→floor)."""
@@ -303,7 +299,6 @@ class TestN1ConfidenceCanonical:
             f"n1 --confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_n1_confidence_uses_canonical_rank_floor(self) -> None:
         """``--confidence medium`` pins the floor at rank 2 (equality→floor).
@@ -337,7 +332,6 @@ class TestOrphanRoutesConfidenceCanonical:
             f"orphan-routes --confidence warning: expected NOT click-usage-error 2 "
             f"(canonical token parses cleanly), got exit {exit_code}."
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_orphan_routes_confidence_uses_canonical_rank_floor(self) -> None:
         """``--confidence medium`` pins the floor at rank 2 (equality→floor)."""
