@@ -66,6 +66,7 @@ from __future__ import annotations
 import ast
 import json as _json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -592,9 +593,12 @@ def test_all_substrate_phases_wrapped_in_source():
     for phase in expected_phases:
         # Accept either same-line ``_run_check("phase",`` or a multi-line
         # block where the phase string is the first argument on the next
-        # line -- both are legitimate refactor shapes.
+        # line -- both are legitimate refactor shapes. The multi-line check
+        # is regex-tolerant on leading whitespace (ruff format may pick any
+        # indent depth depending on call-site nesting; ff54 hit a 20-space
+        # case under a triple-nested context).
         same_line = f'_run_check("{phase}"' in src
-        multi_line = f'_run_check(\n            "{phase}"' in src or f'_run_check(\n                "{phase}"' in src
-        assert same_line or multi_line, (
+        multi_line_re = re.compile(r'_run_check\(\s*"' + re.escape(phase) + r'"')
+        assert same_line or multi_line_re.search(src), (
             f"W607-U _run_check wrap missing for phase {phase!r}; substrate boundary is no longer caught."
         )
