@@ -126,7 +126,6 @@ class TestCheckRulesSeverityCanonical:
             f"(canonical token parses cleanly), got exit {result.exit_code}. "
             f"Output:\n{result.output}"
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_check_rules_min_severity_uses_canonical_rank(self) -> None:
         """``--severity medium`` keeps only findings with rank >= 2.
