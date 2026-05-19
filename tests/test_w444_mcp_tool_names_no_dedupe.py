@@ -91,6 +91,14 @@ def test_mcp_tool_names_helper_raises_on_duplicates(monkeypatch, tmp_path) -> No
 
     sc = _load_worktree_surface_counts()
 
+    # ``mcp_tool_names()`` resolves the source path via ``_package_file()`` —
+    # which prefers ``importlib.resources.files("roam")`` and only falls
+    # back to ``_repo_root()`` when the package lookup raises. In CI the
+    # roam package is pip-installed, so the importlib path always wins and
+    # a ``_repo_root`` monkeypatch never gets exercised. Patch the actual
+    # resolver instead.
+    fake_mcp = fake_repo / "src" / "roam" / "mcp_server.py"
+    monkeypatch.setattr(sc, "_package_file", lambda filename: fake_mcp)
     monkeypatch.setattr(sc, "_repo_root", lambda: fake_repo)
     with pytest.raises(ValueError, match=r"roam_dupe"):
         sc.mcp_tool_names()
