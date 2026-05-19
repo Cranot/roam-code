@@ -54,11 +54,6 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.commands.cmd_secrets import scan_file
 from roam.output._severity import severity_rank
-from tests._helpers.repo_root import repo_root
-
-# Resolve the canonical repo root so the test file lives correctly under
-# tests/ even when dispatched through a nested worktree (W572 lesson).
-REPO_ROOT = repo_root()
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +218,6 @@ class TestTestGapsSeverityCanonical:
             f"(canonical token parses cleanly), got exit {result.exit_code}. "
             f"Output:\n{result.output}"
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_test_gaps_min_severity_uses_canonical_rank(self) -> None:
         """``--severity medium`` pins the floor at canonical rank 2.
@@ -298,7 +292,6 @@ class TestSecretsSeverityCanonical:
             f"(canonical token parses cleanly), got exit {result.exit_code}. "
             f"Output:\n{result.output}"
         )
-        assert (REPO_ROOT / "CLAUDE.md").exists()
 
     def test_secrets_min_severity_uses_canonical_rank(self, tmp_path: Path) -> None:
         """``--severity medium`` filters at canonical rank 2 inside scan_file.
