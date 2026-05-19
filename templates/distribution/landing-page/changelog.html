@@ -76,6 +76,7 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.3] — 2026-05-19</h2>
 <h3>MCP runtime security wave (2026-05-18)</h3>
 <ul>
 <li><strong>MCP-P0.1 — egress redaction at the wrapper boundary.</strong> <code>redact_secrets_in_string</code> + recursive <code>redact_secrets_in_value</code> walker now run at the <code>_wrap_with_receipt</code> boundary in <code>src/roam/mcp_server.py</code>, so every tool response is scrubbed before it crosses the MCP transport. Closed-enum <code>redactions=("secret",)</code> flag on the envelope; per-pattern detail under <code>_meta.extra.redaction_details</code>. New tests: <code>tests/test_w_mcp_redact_egress.py</code> (5 tests). Closes the egress half of the "Poison Everywhere" prompt-injection class inside the server, complementing the gateway-side controls described in <code>dev/MCP-SECURITY-POSTURE.md</code>.</li>
