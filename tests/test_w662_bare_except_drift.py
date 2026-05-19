@@ -167,13 +167,6 @@ _PRE_W662_PENDING: dict[str, str] = {
         "an unsigned/legacy chain legitimately yields None here "
         "(W746/W1300; same narrowing path as line 240)"
     ),
-    "catalog/detectors.py:257": (
-        "plugin-isolation perimeter: the plugin-loader iteration that "
-        "appends third-party detector entries must NEVER let a single "
-        "broken plugin block the whole detector roster. Mirrors the "
-        "W746 cryptographic-substrate isolation rationale: a wholly-"
-        "out-of-tree failure must not poison core machinery."
-    ),
 }
 
 
