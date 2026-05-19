@@ -55,7 +55,6 @@ from roam.cli import cli
 from roam.commands.cmd_secrets import scan_file
 from roam.output._severity import severity_rank
 
-
 # ---------------------------------------------------------------------------
 # Tiny git fixture helper -- enough to satisfy ``ensure_index()``'s preflight
 # without requiring a full corpus. The parity contract under test is the
