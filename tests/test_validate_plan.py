@@ -108,6 +108,10 @@ def test_remove_with_callers_blocks(monkeypatch):
     """
     import roam.mcp_server as mcp
 
+    # W1275: stub both the symbol lookup and blast count so the test
+    # exercises ONLY the REMOVE_HAS_CALLERS code path — independent
+    # of whether CI's checkout has a built index for ``analyze_n1``.
+    monkeypatch.setattr(mcp, "_vp_check_symbol_exists", lambda sym, root=".": (True, []))
     monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 5)
     r = validate_plan(operations=[{"kind": "remove", "symbol": "analyze_n1"}])
     op = r["operations"][0]
