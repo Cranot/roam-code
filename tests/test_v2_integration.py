@@ -81,7 +81,9 @@ def test_v2_full_pipeline(real_project, cli_runner):
     assert pr_result.exit_code in (0, 5)
     pr_env = _last_json(pr_result.output)
     assert pr_env["command"] == "pr-analyze"
-    assert pr_env["summary"]["verdict"] in ("INTENTIONAL", "SAFE", "REVIEW", "BLOCK")
+    # Verdict prefix may be followed by " (risk_level <tier>)" annotation (W210).
+    verdict_prefix = pr_env["summary"]["verdict"].split(" (", 1)[0]
+    assert verdict_prefix in ("INTENTIONAL", "SAFE", "REVIEW", "BLOCK")
     # Audit-trail block must be present + chain valid (genesis case: no prior records)
     assert "audit_trail" in pr_env
     assert pr_env["audit_trail"]["chain_status"]["pre_emission_chain_valid"] is True
@@ -148,7 +150,9 @@ def test_v2_full_pipeline(real_project, cli_runner):
     assert metrics_env["payload"]["schema"] == "roam-metrics-v1"
     # last_pr_analysis block must have been folded in (we saved a baseline in step 2)
     assert "last_pr_analysis" in metrics_env["payload"]
-    assert metrics_env["payload"]["last_pr_analysis"]["verdict"] == pr_env["summary"]["verdict"]
+    # metrics-push baseline stores the core verdict; pr-analyze envelope adds an
+    # optional " (risk_level <tier>)" annotation (W210). Compare the prefix only.
+    assert metrics_env["payload"]["last_pr_analysis"]["verdict"] == pr_env["summary"]["verdict"].split(" (", 1)[0]
 
     # ---- Step 8: dogfood rollup ---------------------------------------
     dogfood_result = invoke_cli(cli_runner, ["dogfood", "--no-audit-trail"], json_mode=True)
