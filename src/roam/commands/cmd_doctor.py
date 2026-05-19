@@ -2130,7 +2130,7 @@ def doctor(ctx, strict, persist):
         elif kind == "mixed_blocking":
             return f"{arg[0]} blocking, {arg[1]} advisory"
         elif kind == "only_advisory":
-            return f"{arg} advisory check(s) — non-blocking"
+            return f"{arg} non-blocking advisory check(s) failed"
         else:
             return "DOCTOR — verdict unavailable"
 
