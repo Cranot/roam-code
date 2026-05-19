@@ -252,12 +252,18 @@ def test_key_file_mode_stat_fail_emits_marker(keyed_repo: Path, monkeypatch: pyt
     target_resolved = key_path.resolve()
     original_stat = Path.stat
 
+    # Pre-compute string forms BEFORE installing the monkeypatch — once
+    # the patch is live, any Path.resolve() call would recurse back through
+    # this _raising_stat (Path.resolve internally walks path components via
+    # stat()), causing infinite recursion. Lexical compare against both the
+    # raw and resolved string forms covers the symlink-alias case the
+    # earlier self.resolve() was trying to handle, without touching stat.
+    target_raw_str = str(key_path)
+    target_resolved_str = str(target_resolved)
+
     def _raising_stat(self, *args, **kwargs):
-        try:
-            resolved = self.resolve()
-        except OSError:
-            resolved = self
-        if resolved == target_resolved:
+        self_str = str(self)
+        if self_str == target_raw_str or self_str == target_resolved_str:
             raise PermissionError("synthetic-EACCES on stat")
         return original_stat(self, *args, **kwargs)
 
