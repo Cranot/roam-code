@@ -128,10 +128,14 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     "list_detectors",
     is_flag=True,
     default=False,
-    help=(
-        "A3 — print decorated detectors with metadata "
-        "(task, languages, confidence-basis, query-cost, version) and exit."
-    ),
+    help=("Print runtime detectors with metadata (task, languages, confidence-basis, query-cost, version) and exit."),
+)
+@click.option(
+    "--list-tasks",
+    "list_tasks",
+    is_flag=True,
+    default=False,
+    help="Print task ids, detector counts, categories, and best suggestions; then exit.",
 )
 @click.option(
     "--only",
@@ -139,7 +143,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     multiple=True,
     default=(),
     help=(
-        "A3 — restrict the scan to these decorated detectors (repeatable). "
+        "Restrict the scan to these runtime detector names (repeatable). "
         "Names match `roam math --list-detectors` output."
     ),
 )
@@ -148,7 +152,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     "exclude_detectors",
     multiple=True,
     default=(),
-    help=("A3 — skip these decorated detectors (repeatable). Ignored if `--only` is set with the same name."),
+    help=("Skip these runtime detector names (repeatable). Ignored if `--only` is set with the same name."),
 )
 @click.option(
     "--since",
@@ -183,6 +187,7 @@ def math_cmd(
     framework,
     list_frameworks,
     list_detectors,
+    list_tasks,
     only_detectors,
     exclude_detectors,
     since_baseline,
@@ -260,14 +265,85 @@ def math_cmd(
             return
         click.echo()
         click.echo(
-            f"  {'name':<38s} {'task':<30s} {'source':<14s} {'confidence':<16s} {'cost':<8s} {'version':<8s} languages"
+            f"  {'name':<38s} {'task':<34s} {'source':<14s} {'confidence':<16s} {'cost':<8s} {'version':<8s} languages"
         )
         for e in entries:
             langs = ",".join(e["languages"]) or "any"
             click.echo(
-                f"  {e['name']:<38s} {e['task_id']:<30s} {e.get('source', 'catalog'):<14s} "
+                f"  {e['name']:<38s} {e['task_id']:<34s} {e.get('source', 'catalog'):<14s} "
                 f"{e['confidence_basis']:<16s} {e['query_cost']:<8s} {e['version']:<8s} {langs}"
             )
+        return
+
+    if list_tasks:
+        from collections import Counter
+
+        from roam.catalog.detectors import list_detector_surface
+        from roam.catalog.tasks import CATALOG, best_way
+
+        entries = list_detector_surface()
+        counts = Counter(e["task_id"] for e in entries)
+        sources_by_task: dict[str, set[str]] = defaultdict(set)
+        languages_by_task: dict[str, set[str]] = defaultdict(set)
+        for e in entries:
+            task_id = e["task_id"]
+            sources_by_task[task_id].add(e.get("source", "catalog"))
+            languages_by_task[task_id].update(e.get("languages") or ("any",))
+
+        tasks = []
+        for task_id in sorted(counts):
+            task = get_task(task_id)
+            best = best_way(task_id) if task_id in CATALOG else None
+            tasks.append(
+                {
+                    "task_id": task_id,
+                    "name": task["name"] if task else task_id,
+                    "category": task["category"] if task else "python",
+                    "kind": task["kind"] if task else "idiom",
+                    "detector_count": counts[task_id],
+                    "sources": sorted(sources_by_task[task_id]),
+                    "languages": sorted(languages_by_task[task_id]),
+                    "best_way": best["id"] if best else "",
+                    "best_name": best["name"] if best else "",
+                    "best_time": best["time"] if best else "",
+                }
+            )
+
+        catalog_task_count = sum(1 for t in tasks if t["task_id"] in CATALOG)
+        python_task_count = len(tasks) - catalog_task_count
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "algo",
+                        summary={
+                            "verdict": (
+                                f"{len(tasks)} algo task ids "
+                                f"({catalog_task_count} catalog tasks, "
+                                f"{python_task_count} Python idiom tasks)"
+                            ),
+                            "task_count": len(tasks),
+                            "catalog_task_count": catalog_task_count,
+                            "python_idiom_task_count": python_task_count,
+                            "detector_count": len(entries),
+                        },
+                        tasks=tasks,
+                    )
+                )
+            )
+            return
+
+        click.echo(
+            f"VERDICT: {len(tasks)} algo task ids "
+            f"({catalog_task_count} catalog tasks, {python_task_count} Python idiom tasks)"
+        )
+        if not tasks:
+            return
+        click.echo()
+        click.echo(f"  {'task':<32s} {'category':<15s} {'kind':<10s} {'detectors':<9s} best")
+        for t in tasks:
+            best = t["best_name"] or "-"
+            click.echo(f"  {t['task_id']:<32s} {t['category']:<15s} {t['kind']:<10s} {t['detector_count']:<9d} {best}")
         return
 
     # validate --task against the detector task surface; on typo, show

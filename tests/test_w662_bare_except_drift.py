@@ -146,24 +146,33 @@ _PRE_W662_PENDING: dict[str, str] = {
     # "unsigned event" diagnostic (then we could narrow these to the
     # specific raises of ``ensure_ledger_key`` and
     # ``compute_event_signature``).
-    "runs/ledger.py:238": (
+    "runs/ledger.py:240": (
         "cryptographic-substrate isolation perimeter: ensure_ledger_key "
         "failure on start_run must never block run creation — the "
         "verifier surfaces the absence (W746; consider narrowing to "
         "(OSError, ImportError) once the key-substrate failure modes "
-        "are documented as a closed set)"
+        "are documented as a closed set). Lines shift on every edit to "
+        "the surrounding signing-substrate block; re-pin via grep when "
+        "this drift-guard reports a 2-3 line offset."
     ),
-    "runs/ledger.py:333": (
+    "runs/ledger.py:335": (
         "cryptographic-substrate isolation perimeter: HMAC signing of a "
         "new event must NEVER prevent the event from being recorded; "
         "verify_chain flags unsigned events (W746/W1300; same narrowing "
-        "path as line 238)"
+        "path as line 240)"
     ),
-    "runs/ledger.py:404": (
+    "runs/ledger.py:406": (
         "cryptographic-substrate isolation perimeter: stamping final "
         "signature into meta.json on end_run must not crash the close; "
         "an unsigned/legacy chain legitimately yields None here "
-        "(W746/W1300; same narrowing path as line 238)"
+        "(W746/W1300; same narrowing path as line 240)"
+    ),
+    "catalog/detectors.py:257": (
+        "plugin-isolation perimeter: the plugin-loader iteration that "
+        "appends third-party detector entries must NEVER let a single "
+        "broken plugin block the whole detector roster. Mirrors the "
+        "W746 cryptographic-substrate isolation rationale: a wholly-"
+        "out-of-tree failure must not poison core machinery."
     ),
 }
 

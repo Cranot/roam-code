@@ -130,7 +130,6 @@ _PRE_W594_PENDING: dict[str, str] = {
     "test_w681_taint_engine_positive_smoke.py": "W1301 backlog",
     "test_w703_comment_syntax_coverage.py": "W1301 backlog",
     "test_w792_well_known_card_mirrors.py": "W1301 backlog",
-
     # W1301 ff48 backlog — first time the W588 lint executed past the W444
     # dupe-helper crash, surfacing 170 NEW session-wave test files that
     # landed without repo_root() migration. Bulk-allowlist to unblock v13.3
