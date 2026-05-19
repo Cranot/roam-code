@@ -281,8 +281,7 @@ def test_dry_run_on_deny_lets_tool_proceed(isolated_repo, monkeypatch, caplog) -
     warn_records = [
         rec
         for rec in caplog.records
-        if rec.levelno == logging.WARNING
-        and "mcp.mode_policy.dry_run" in rec.getMessage()
+        if rec.levelno == logging.WARNING and "mcp.mode_policy.dry_run" in rec.getMessage()
     ]
     assert len(warn_records) == 1, (
         f"expected exactly one dry-run WARN line, got {len(warn_records)} "
@@ -332,14 +331,9 @@ def test_dry_run_on_allow_is_unchanged(isolated_repo, monkeypatch, caplog) -> No
     assert "would_deny_reason" not in extra
 
     # No dry-run WARN should fire on the allow path.
-    dry_run_lines = [
-        rec
-        for rec in caplog.records
-        if "mcp.mode_policy.dry_run" in rec.getMessage()
-    ]
+    dry_run_lines = [rec for rec in caplog.records if "mcp.mode_policy.dry_run" in rec.getMessage()]
     assert dry_run_lines == [], (
-        f"dry-run is a no-op on allow paths, got logs: "
-        f"{[r.getMessage() for r in dry_run_lines]}"
+        f"dry-run is a no-op on allow paths, got logs: {[r.getMessage() for r in dry_run_lines]}"
     )
 
 

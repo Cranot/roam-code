@@ -3697,6 +3697,7 @@ def _log_mode_dry_run_would_deny(tool_name: str, reason: str) -> None:
     except Exception:
         pass
 
+
 # Mirrors tests/test_w954_core_tools_capability_drift.py. Kept local to
 # avoid coupling production code to a test module; the lint in that test
 # pins both tables in sync.
@@ -3947,11 +3948,7 @@ def _wrap_with_receipt(name: str, fn):
                 # the ``would_deny_dry_run`` verdict + shadow markers and
                 # let the tool call proceed for observe-only rollout. The
                 # allow path is untouched.
-                if (
-                    policy["decision"] == "deny"
-                    and policy["enforcement"]
-                    and _is_mode_dry_run()
-                ):
+                if policy["decision"] == "deny" and policy["enforcement"] and _is_mode_dry_run():
                     reason = policy.get("reason") or ""
                     state["policy_decision"] = "would_deny_dry_run"
                     state["shadow_mode"] = True
@@ -3980,11 +3977,7 @@ def _wrap_with_receipt(name: str, fn):
             # MCP-P1.1 — see async branch above for rationale. Both paths
             # share the same shadow-mode semantics; the only difference is
             # the ``await`` keyword on the underlying tool call.
-            if (
-                policy["decision"] == "deny"
-                and policy["enforcement"]
-                and _is_mode_dry_run()
-            ):
+            if policy["decision"] == "deny" and policy["enforcement"] and _is_mode_dry_run():
                 reason = policy.get("reason") or ""
                 state["policy_decision"] = "would_deny_dry_run"
                 state["shadow_mode"] = True

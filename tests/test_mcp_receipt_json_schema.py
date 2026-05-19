@@ -73,18 +73,14 @@ def test_policy_decision_enum_matches_canonical() -> None:
     schema = mcp_receipt_json_schema()
     schema_enum = set(schema["$defs"]["PolicyDecision"]["enum"])
     assert schema_enum == set(_POLICY_DECISIONS), (
-        "PolicyDecision enum drift: schema diverged from "
-        "_POLICY_DECISIONS subset"
+        "PolicyDecision enum drift: schema diverged from _POLICY_DECISIONS subset"
     )
 
 
 def test_redaction_reason_enum_matches_canonical() -> None:
     schema = mcp_receipt_json_schema()
     schema_enum = set(schema["$defs"]["RedactionReason"]["enum"])
-    assert schema_enum == set(REDACTION_REASONS), (
-        "RedactionReason enum drift: schema diverged from "
-        "REDACTION_REASONS"
-    )
+    assert schema_enum == set(REDACTION_REASONS), "RedactionReason enum drift: schema diverged from REDACTION_REASONS"
 
 
 # ---------------------------------------------------------------------------
@@ -98,14 +94,10 @@ def test_schema_covers_every_dataclass_field() -> None:
     schema_fields = set(schema["properties"].keys())
     dataclass_fields = {f.name for f in dataclasses.fields(McpDecisionReceipt)}
     missing = dataclass_fields - schema_fields
-    assert not missing, (
-        f"Schema missing dataclass fields: {sorted(missing)}. "
-        "Update mcp_receipt_schema.py."
-    )
+    assert not missing, f"Schema missing dataclass fields: {sorted(missing)}. Update mcp_receipt_schema.py."
     extra = schema_fields - dataclass_fields
     assert not extra, (
-        f"Schema declares fields not on dataclass: {sorted(extra)}. "
-        "Either drop the property or add the field."
+        f"Schema declares fields not on dataclass: {sorted(extra)}. Either drop the property or add the field."
     )
 
 
@@ -171,11 +163,7 @@ def test_schema_rejects_non_hex_input_hash() -> None:
 
 
 def _script_path() -> Path:
-    return (
-        Path(__file__).resolve().parent.parent
-        / "scripts"
-        / "export_mcp_receipt_schema.py"
-    )
+    return Path(__file__).resolve().parent.parent / "scripts" / "export_mcp_receipt_schema.py"
 
 
 def test_export_script_prints_valid_json() -> None:

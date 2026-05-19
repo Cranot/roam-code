@@ -76,12 +76,7 @@ SATELLITE_DOCS: tuple[tuple[Path, re.Pattern[str]], ...] = (
         re.compile(r"\b" + str(LIVE_COUNT) + r"\s+detectors\b"),
     ),
     (
-        REPO_ROOT
-        / "templates"
-        / "distribution"
-        / "landing-page"
-        / "docs"
-        / "architecture.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "architecture.html",
         re.compile(r"\b" + str(LIVE_COUNT) + r"\s+detectors persist findings\b"),
     ),
 )
@@ -115,10 +110,7 @@ def _modules_calling_emit_finding() -> set[str]:
                 if isinstance(func, ast.Name) and func.id == "emit_finding":
                     hits.add(path.stem)
                     break
-                if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "emit_finding"
-                ):
+                if isinstance(func, ast.Attribute) and func.attr == "emit_finding":
                     hits.add(path.stem)
                     break
     return hits
@@ -209,10 +201,6 @@ def test_drift_detection_self_check_count_off_by_one_would_fail() -> None:
     plus_one = live | {"cmd_fake_drift_injection"}
     minus_one = set(list(live)[1:]) if live else set()
     assert len(plus_one) != LIVE_COUNT, (
-        "drift-detection self-check failed: adding a fake module "
-        "did not change the count"
+        "drift-detection self-check failed: adding a fake module did not change the count"
     )
-    assert len(minus_one) != LIVE_COUNT, (
-        "drift-detection self-check failed: removing a module did "
-        "not change the count"
-    )
+    assert len(minus_one) != LIVE_COUNT, "drift-detection self-check failed: removing a module did not change the count"

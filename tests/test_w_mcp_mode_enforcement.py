@@ -168,9 +168,7 @@ def test_mode_enforcement_blocks_destructive_tool_in_read_only_mode(isolated_rep
     assert len(receipts) == 1
     r = receipts[0]
     assert r["policy_decision"] == "deny"
-    assert r["required_mode"] == "migration", (
-        f"required_mode must reflect side-effect tier, got {r['required_mode']!r}"
-    )
+    assert r["required_mode"] == "migration", f"required_mode must reflect side-effect tier, got {r['required_mode']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +214,7 @@ def test_safe_edit_mode_allows_write_tool_under_enforcement(isolated_repo, monke
 
     raw = {"command": "stub_write", "summary": {"verdict": "wrote a thing"}}
     # ``critique`` lives at safe_edit tier (added by _MODE_EXTRAS["safe_edit"]).
-    wrapped, call_count = _register_write_tool(
-        monkeypatch, "roam_write_stub", return_value=raw, backing_cli="critique"
-    )
+    wrapped, call_count = _register_write_tool(monkeypatch, "roam_write_stub", return_value=raw, backing_cli="critique")
 
     result = wrapped()
 

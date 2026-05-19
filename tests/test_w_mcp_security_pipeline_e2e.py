@@ -51,12 +51,10 @@ from tests._helpers.repo_root import repo_root  # noqa: F401 — imported for pa
 #: the receipt dataclass + schema layer and the assertions here.
 _EXPECTED_DECISIONS = {"allow", "deny"}
 assert _EXPECTED_DECISIONS <= set(_POLICY_DECISIONS), (
-    "policy-decision vocabulary drift: composition test assumes 'allow' and "
-    "'deny' are members of _POLICY_DECISIONS"
+    "policy-decision vocabulary drift: composition test assumes 'allow' and 'deny' are members of _POLICY_DECISIONS"
 )
 assert "secret" in REDACTION_REASONS, (
-    "redaction-reason vocabulary drift: composition test assumes 'secret' is "
-    "a member of REDACTION_REASONS"
+    "redaction-reason vocabulary drift: composition test assumes 'secret' is a member of REDACTION_REASONS"
 )
 assert {"ok", "tampered"} <= RECEIPT_INTEGRITY_STATES, (
     "receipt-integrity vocabulary drift: composition test assumes 'ok' and "
@@ -419,6 +417,5 @@ def test_tampered_receipt_schema_valid_chain_detects(isolated_repo, monkeypatch)
     # invariant: the chain commitment is immutable once written.
     tampered_hash = hashlib.sha256(tampered_canonical.encode("utf-8")).hexdigest()
     assert receipt_events[0]["receipt_hash"] != tampered_hash, (
-        "chain hash must remain pinned to the pre-tamper bytes — otherwise "
-        "the integrity check would never fire"
+        "chain hash must remain pinned to the pre-tamper bytes — otherwise the integrity check would never fire"
     )

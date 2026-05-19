@@ -61,18 +61,12 @@ def test_json_stdout_is_parseable(args: tuple[str, ...]) -> None:
     assert stdout.strip(), f"expected non-empty stdout for {args}; rc={rc}"
     # Hard invariant: the FIRST non-whitespace byte must start a JSON value.
     first = stdout.lstrip()[:1]
-    assert first in "{[", (
-        f"stdout for {args} did not start with a JSON value; "
-        f"first 200 chars: {stdout[:200]!r}"
-    )
+    assert first in "{[", f"stdout for {args} did not start with a JSON value; first 200 chars: {stdout[:200]!r}"
     # And the whole thing must round-trip through json.loads.
     try:
         json.loads(stdout)
     except json.JSONDecodeError as exc:
-        pytest.fail(
-            f"json.loads(stdout) failed for {args}: {exc}; "
-            f"first 200 chars: {stdout[:200]!r}"
-        )
+        pytest.fail(f"json.loads(stdout) failed for {args}: {exc}; first 200 chars: {stdout[:200]!r}")
 
 
 def test_warning_redirect_installed_when_default_hook_present() -> None:
@@ -94,9 +88,7 @@ def test_warning_redirect_installed_when_default_hook_present() -> None:
     from roam.cli import cli
 
     original = _warnings.showwarning
-    default = getattr(_warnings, "_showwarning_orig", None) or getattr(
-        _warnings, "_showwarning_impl", None
-    )
+    default = getattr(_warnings, "_showwarning_orig", None) or getattr(_warnings, "_showwarning_impl", None)
     if default is None:
         pytest.skip("no stdlib default showwarning attribute on this Python build")
     try:
@@ -108,8 +100,7 @@ def test_warning_redirect_installed_when_default_hook_present() -> None:
         hook = _warnings.showwarning
         hook_name = getattr(hook, "__name__", "")
         assert hook_name == "_stderr_showwarning", (
-            f"expected _stderr_showwarning override under --json mode; "
-            f"got {hook_name!r}"
+            f"expected _stderr_showwarning override under --json mode; got {hook_name!r}"
         )
     finally:
         _warnings.showwarning = original
@@ -140,8 +131,7 @@ def test_warning_redirect_preserves_existing_hook() -> None:
         runner.invoke(cli, ["--json", "version"], catch_exceptions=False)
         # The CLI must not have clobbered our hook.
         assert _warnings.showwarning is _sentinel_hook, (
-            f"CLI replaced a pre-installed showwarning hook; "
-            f"now is {_warnings.showwarning!r}"
+            f"CLI replaced a pre-installed showwarning hook; now is {_warnings.showwarning!r}"
         )
     finally:
         _warnings.showwarning = original
@@ -165,9 +155,7 @@ def test_warning_redirect_writes_to_stderr_not_stdout(capsys) -> None:
     from roam.cli import cli
 
     original = _warnings.showwarning
-    default = getattr(_warnings, "_showwarning_orig", None) or getattr(
-        _warnings, "_showwarning_impl", None
-    )
+    default = getattr(_warnings, "_showwarning_orig", None) or getattr(_warnings, "_showwarning_impl", None)
     if default is None:
         pytest.skip("no stdlib default showwarning attribute on this Python build")
     try:
@@ -186,8 +174,6 @@ def test_warning_redirect_writes_to_stderr_not_stdout(capsys) -> None:
             1,
         )
         captured = capsys.readouterr()
-        assert "synthetic-test-warning" not in captured.out, (
-            f"warning leaked to stdout: {captured.out!r}"
-        )
+        assert "synthetic-test-warning" not in captured.out, f"warning leaked to stdout: {captured.out!r}"
     finally:
         _warnings.showwarning = original

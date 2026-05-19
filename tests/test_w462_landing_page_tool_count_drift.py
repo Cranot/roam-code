@@ -207,8 +207,7 @@ def test_landing_page_mcp_tool_counts_match_canonical():
     # (e.g. wrong path after a directory rename) would let drift slip
     # through unnoticed -- the W462 leak class itself.
     assert scanned_files > 0, (
-        f"No landing-page assets scanned under {_LANDING_DIR}; "
-        f"check the path or update _LANDING_DIR."
+        f"No landing-page assets scanned under {_LANDING_DIR}; check the path or update _LANDING_DIR."
     )
     assert total_matches > 0, (
         "Scanned landing-page assets but matched zero tool-count phrases; "

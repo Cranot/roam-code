@@ -90,8 +90,7 @@ def mcp_receipt_json_schema() -> dict[str, Any]:
             "actor_ref_id": {
                 "type": ["string", "null"],
                 "description": (
-                    "ActorRef.actor_id when available; null until the "
-                    "producer has populated the identity surface."
+                    "ActorRef.actor_id when available; null until the producer has populated the identity surface."
                 ),
                 "default": None,
             },
@@ -108,18 +107,12 @@ def mcp_receipt_json_schema() -> dict[str, Any]:
             },
             "required_mode": {
                 "type": ["string", "null"],
-                "description": (
-                    "Mode the tool requires: read_only / safe_edit / "
-                    "migration / autonomous_pr."
-                ),
+                "description": ("Mode the tool requires: read_only / safe_edit / migration / autonomous_pr."),
                 "default": None,
             },
             "input_hash": {
                 "type": ["string", "null"],
-                "description": (
-                    "sha256 of canonical-JSON input args. Hex-encoded, "
-                    "64 lowercase hex characters."
-                ),
+                "description": ("sha256 of canonical-JSON input args. Hex-encoded, 64 lowercase hex characters."),
                 "pattern": _SHA256_HEX_PATTERN,
                 "default": None,
             },
@@ -134,10 +127,7 @@ def mcp_receipt_json_schema() -> dict[str, Any]:
             },
             "output_ref": {
                 "type": ["string", "null"],
-                "description": (
-                    "Artifact id or path when the output is large. "
-                    "Mutually exclusive with output_hash."
-                ),
+                "description": ("Artifact id or path when the output is large. Mutually exclusive with output_hash."),
                 "default": None,
             },
             "output_hash": {
@@ -152,9 +142,7 @@ def mcp_receipt_json_schema() -> dict[str, Any]:
             },
             "run_event_id": {
                 "type": ["string", "null"],
-                "description": (
-                    "Link to .roam/runs/<id>/events.jsonl row."
-                ),
+                "description": ("Link to .roam/runs/<id>/events.jsonl row."),
                 "default": None,
             },
             "redactions": {
