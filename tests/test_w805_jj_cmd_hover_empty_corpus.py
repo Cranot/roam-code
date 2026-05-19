@@ -344,25 +344,11 @@ class TestStaleMetricsFabrication:
     reflecting the degradation.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJ REAL BUG: src/roam/commands/cmd_hover.py:162-168 "
-            "(``metrics is None`` fallback) silently zero-fills "
-            "in_d / out_d / pr when a symbol resolves but its "
-            "graph_metrics row is absent. The envelope carries NO "
-            "disclosure -- no metrics_available, no metrics_state, no "
-            "partial_success=True. An agent reading the structured "
-            "fields concludes 'low-risk leaf with no callers' when the "
-            "truth is 'this metric is unavailable'. Pattern-1 Variant D "
-            "(silent success on degraded resolution) crossed with the "
-            "W805-EE fabrication-axis (auto-zero on empty fabricates a "
-            "real-looking metric). Pinned strict so a fix that adds "
-            "metrics_available=False / state='metrics_unavailable' / "
-            "partial_success=True / metrics_state='missing' graduates "
-            "this to PASS."
-        ),
-    )
+    # W805-JJ REAL BUG sealed: cmd_hover.py now emits
+    # ``metrics_available: False`` + ``state="metrics_unavailable"`` +
+    # ``partial_success: True`` when the resolved symbol's graph_metrics
+    # row is missing. The verdict gets a ``[metrics unavailable]`` suffix.
+    # The xfail-strict graduation guard pinned this fix.
     def test_no_fabricated_metrics_on_empty(self, cli_runner, stale_metrics_corpus, monkeypatch):
         """W805-JJ REAL BUG sentinel: stale-metrics envelope is byte-
         indistinguishable from legitimate-zero envelope.
@@ -410,23 +396,11 @@ class TestStaleMetricsFabrication:
             f"Got summary={summary!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJ REAL BUG: src/roam/commands/cmd_hover.py:162-168 "
-            "(``metrics is None`` fallback) silently zero-fills in_d / "
-            "out_d / pr when a symbol resolves but its graph_metrics row "
-            "is absent. The resulting envelope is byte-indistinguishable "
-            "from a legitimate zero-edge leaf -- same blast_bucket='none', "
-            "same partial_success=false, same verdict pattern. This is "
-            "Pattern-1 Variant D (silent success on degraded resolution) "
-            "crossed with the W805-EE fabrication-axis (auto-zero on "
-            "empty fabricates a real-looking metric). Pinned strict so a "
-            "future fix that adds metrics_available=False / "
-            "state='metrics_unavailable' / partial_success=True / "
-            "metrics_state='missing' graduates this to PASS."
-        ),
-    )
+    # W805-JJ REAL BUG sealed (sibling test): cmd_hover.py now disclosure-
+    # stamps the metrics-missing branch with ``metrics_available: False`` /
+    # ``state="metrics_unavailable"`` / ``partial_success: True``. The
+    # stale-metrics envelope is now byte-distinguishable from a legitimate-
+    # zero envelope on the discriminating fields below.
     def test_stale_metrics_envelope_distinguishable_from_legit_zero(
         self, cli_runner, stale_metrics_corpus, leaf_corpus, monkeypatch
     ):

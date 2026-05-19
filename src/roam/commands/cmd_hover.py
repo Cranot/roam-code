@@ -161,6 +161,12 @@ def hover(ctx, symbol: str):
             "SELECT in_degree, out_degree, pagerank FROM graph_metrics WHERE symbol_id = ?",
             (sym_id,),
         ).fetchone()
+        # W805-JJ Pattern-1 Variant D: a resolved symbol whose graph_metrics
+        # row is missing (incomplete index, partial build, post-delete repair)
+        # was previously zero-filled silently — the envelope became byte-
+        # indistinguishable from a legitimate zero-edge leaf. Disclose the
+        # missing-state explicitly so agents can branch on it.
+        metrics_available = metrics is not None
         in_d = metrics["in_degree"] if metrics else 0
         out_d = metrics["out_degree"] if metrics else 0
         pr = float(metrics["pagerank"] or 0) if metrics else 0.0
@@ -179,27 +185,38 @@ def hover(ctx, symbol: str):
     resolution_tier = sym.get("_resolution_tier", "symbol")
     resolution_block = resolution_disclosure(resolution_tier, target=qn)
     fuzzy_suffix = " [fuzzy resolution]" if resolution_tier != "symbol" else ""
+    # W805-JJ Pattern-1 Variant D: when the resolved symbol's
+    # graph_metrics row is missing, the in/out/pr triple is fabricated
+    # zeros. Stamp the disclosure so the envelope is byte-distinguishable
+    # from a legitimate zero-edge leaf and the verdict names the state.
+    metrics_suffix = " [metrics unavailable]" if not metrics_available else ""
 
     if json_mode:
+        summary_payload: dict = {
+            "verdict": (
+                f"{kind_short} {qn} — {bucket} blast radius "
+                f"({in_d} in, {out_d} out){fuzzy_suffix}{metrics_suffix}"
+            ),
+            "kind": sym["kind"],
+            "qualified_name": qn,
+            "file_path": sym["file_path"],
+            "line_start": sym["line_start"],
+            "in_degree": in_d,
+            "out_degree": out_d,
+            "pagerank": round(pr, 6),
+            "blast_bucket": bucket,
+            "metrics_available": metrics_available,
+            # W1245 Pattern-2 variant-D resolution disclosure.
+            **resolution_block,
+        }
+        if not metrics_available:
+            summary_payload["state"] = "metrics_unavailable"
+            summary_payload["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "hover",
-                    summary={
-                        "verdict": (
-                            f"{kind_short} {qn} — {bucket} blast radius ({in_d} in, {out_d} out){fuzzy_suffix}"
-                        ),
-                        "kind": sym["kind"],
-                        "qualified_name": qn,
-                        "file_path": sym["file_path"],
-                        "line_start": sym["line_start"],
-                        "in_degree": in_d,
-                        "out_degree": out_d,
-                        "pagerank": round(pr, 6),
-                        "blast_bucket": bucket,
-                        # W1245 Pattern-2 variant-D resolution disclosure.
-                        **resolution_block,
-                    },
+                    summary=summary_payload,
                     top_caller=top_caller,
                     top_callee=top_callee,
                     **resolution_block,
@@ -209,7 +226,7 @@ def hover(ctx, symbol: str):
         return
 
     click.echo(f"{kind_short}  {qn}  {file_loc}")
-    click.echo(f"  blast radius: {bucket} ({in_d} callers, {out_d} callees, pr={pr:.4f})")
+    click.echo(f"  blast radius: {bucket} ({in_d} callers, {out_d} callees, pr={pr:.4f}){metrics_suffix}")
     if top_caller:
         c_loc = loc(top_caller["file_path"], top_caller["line_start"])
         click.echo(f"  top caller:   {top_caller['name']}  {c_loc}")

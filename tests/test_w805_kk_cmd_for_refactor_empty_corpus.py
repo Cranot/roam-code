@@ -115,6 +115,26 @@ def _disable_handle_off(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_mcp_state():
+    """Reset the MCP error-storm counter + result cache before each test.
+
+    Without this, an earlier test in the same xdist worker can push the
+    USAGE_ERROR storm counter past its threshold, and ``_structured_error``
+    returns a TRIMMED envelope (``first_error_message`` instead of
+    ``error``). The W805-KK USAGE_ERROR assertions read ``error``, so
+    they need the storm counter reset on entry. Mirrors the isolation
+    pattern in tests/test_mcp_json_parse_defense.py.
+    """
+    from roam.mcp_server import _ROAM_RESULT_CACHE, _reset_error_storm
+
+    _ROAM_RESULT_CACHE.clear()
+    _reset_error_storm()
+    yield
+    _ROAM_RESULT_CACHE.clear()
+    _reset_error_storm()
+
+
 # ---------------------------------------------------------------------------
 # Compound-existence guard (BAIL-if-absent shape)
 # ---------------------------------------------------------------------------
