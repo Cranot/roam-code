@@ -84,6 +84,7 @@ concrete-noun-terminal lint.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -564,8 +565,13 @@ def test_w153_critique_findings_registry_persistence_preserved():
     assert "CRITIQUE_DETECTOR_VERSION" in src, (
         "W153 detector version pin missing; the registry-rows version stamp has regressed."
     )
-    # Emit must be W607-Y-wrapped.
-    assert '"emit_findings", _emit_critique_findings' in src or "critique_emit_findings_failed" in src, (
+    # Emit must be W607-Y-wrapped. Use a regex tolerant of whitespace +
+    # newlines between the phase-name string and the function reference —
+    # ruff/black will split _run_check("emit_findings", _emit_critique_findings, ...)
+    # across multiple lines on long argument lists, and a literal `in` check
+    # would fail on the reformatted shape even though the wrap is intact.
+    _emit_wrapped_re = re.compile(r'"emit_findings"\s*,\s*_emit_critique_findings')
+    assert _emit_wrapped_re.search(src) or "critique_emit_findings_failed" in src, (
         "W153 _emit_critique_findings call is not wrapped under W607-Y "
         "emit_findings phase; a raise on registry write will crash the "
         "envelope."
