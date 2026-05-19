@@ -194,8 +194,7 @@ def hover(ctx, symbol: str):
     if json_mode:
         summary_payload: dict = {
             "verdict": (
-                f"{kind_short} {qn} — {bucket} blast radius "
-                f"({in_d} in, {out_d} out){fuzzy_suffix}{metrics_suffix}"
+                f"{kind_short} {qn} — {bucket} blast radius ({in_d} in, {out_d} out){fuzzy_suffix}{metrics_suffix}"
             ),
             "kind": sym["kind"],
             "qualified_name": qn,
