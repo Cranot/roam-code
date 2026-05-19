@@ -21,14 +21,29 @@
 repos:
   - repo: local
     hooks:
-      - id: count-drift
-        name: surface count drift check
-        # The script runs as a dry-run by default and exits non-zero when
-        # any README / pyproject / landing-page count diverges from the
-        # live CLI surface. ``--write`` would auto-fix; pre-commit uses
-        # the check-only invocation so drift is surfaced rather than
-        # silently absorbed into the commit.
+      - id: surface-count-drift
+        name: surface count drift check (scripts/sync_surface_counts.py)
+        # Walks the live CLI surface (commands, MCP tool registry, languages)
+        # and asserts that README / pyproject / landing-page / docs carry the
+        # SAME canonical counts. ``--write`` would auto-fix; pre-commit uses
+        # the check-only invocation so drift is surfaced rather than silently
+        # absorbed into the commit.
         entry: python scripts/sync_surface_counts.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: readme-counts-drift
+        name: README counts drift check (dev/build_readme_counts.py)
+        # Sister script to surface-count-drift: walks AST-parsed cli.py +
+        # mcp_server.py and asserts the prose counts in README / CLAUDE /
+        # llms-install / mcp-server-card all match. Different surface than
+        # sync_surface_counts.py (this one targets the README narrative
+        # numbers; the other targets template-substituted counts), so both
+        # are useful. ``test_pre_commit_config_includes_roam_readme_counts``
+        # enforces this hook's presence whenever .pre-commit-config.yaml
+        # exists.
+        entry: python dev/build_readme_counts.py --check
         language: system
         pass_filenames: false
         stages: [pre-commit]
