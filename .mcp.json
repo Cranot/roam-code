@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"]
+    }
+  }
+}
