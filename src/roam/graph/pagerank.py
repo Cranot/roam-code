@@ -69,8 +69,14 @@ def _pagerank_core(
     matching networkx's ``weight=1.0`` default for it — so per-row nnz IS
     the out-degree.
     """
-    import numpy as np
-    import scipy.sparse as sp
+    # numpy/scipy are optional extras; this core REQUIRES them and is
+    # documented (above) to raise ImportError so compute_pagerank() /
+    # personalized_pagerank() fall back to degree ranking via their own
+    # `except ImportError`. Kept lazy (not module-level) so importing
+    # roam.graph.pagerank stays cheap on a minimal install. The W168 lint
+    # can't see the caller's guard, hence the explicit marker.
+    import numpy as np  # unguarded-import: ok
+    import scipy.sparse as sp  # unguarded-import: ok
 
     nodes = list(G)
     n = len(nodes)
