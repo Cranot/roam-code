@@ -185,3 +185,4 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["T201", "T203"]
 "dev/**/*.py" = ["T201", "T203"]
+"scripts/**/*.py" = ["T201", "T203"]  # CLI scripts print progress/status by design

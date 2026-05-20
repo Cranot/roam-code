@@ -18,6 +18,7 @@ This module pins:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -337,13 +338,17 @@ class TestRoamGuardArgShape:
 
 
 class TestRoamAdversarialArgShape:
+    # B6: roam_adversarial is now ``async def`` (compress_mode dispatch).
+    # The default ``compress_mode="off"`` path returns the deterministic
+    # envelope before any await, so driving it via ``asyncio.run`` leaves
+    # the underlying ``_run_roam`` arg shape unchanged.
     def test_default_invocation(self) -> None:
         from roam.mcp_server import roam_adversarial
 
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             # Defaults: severity='low', output_format='text' per LAW 11.
-            roam_adversarial()
+            asyncio.run(roam_adversarial())
             mock.assert_called_once_with(
                 ["adversarial", "--severity", "low", "--format", "text"],
                 ".",
@@ -354,7 +359,7 @@ class TestRoamAdversarialArgShape:
 
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
-            roam_adversarial(staged=True, severity="high")
+            asyncio.run(roam_adversarial(staged=True, severity="high"))
             args = mock.call_args[0][0]
             assert "--staged" in args
             assert "--severity" in args and "high" in args
@@ -364,15 +369,40 @@ class TestRoamAdversarialArgShape:
 
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
-            roam_adversarial(
-                commit_range="main..HEAD",
-                fail_on_critical=True,
-                output_format="markdown",
+            asyncio.run(
+                roam_adversarial(
+                    commit_range="main..HEAD",
+                    fail_on_critical=True,
+                    output_format="markdown",
+                )
             )
             args = mock.call_args[0][0]
             assert "--range" in args and "main..HEAD" in args
             assert "--fail-on-critical" in args
             assert "--format" in args and "markdown" in args
+
+    def test_compress_mode_off_is_default_passthrough(self) -> None:
+        """Default ``compress_mode='off'`` returns the raw envelope verbatim
+        (pure superset, LAW 11 — no sampling unless opted in)."""
+        from roam.mcp_server import roam_adversarial
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True, "summary": {"verdict": "v"}}
+            out = asyncio.run(roam_adversarial())
+            assert out == {"ok": True, "summary": {"verdict": "v"}}
+            assert "compress_mode_invalid" not in out["summary"]
+
+    def test_compress_mode_invalid_stamps_sentinel(self) -> None:
+        """An unknown ``compress_mode`` is loud, not a silent no-op
+        (Pattern-1 variant D): the deterministic verdict is preserved and
+        ``summary.compress_mode_invalid`` is stamped."""
+        from roam.mcp_server import roam_adversarial
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True, "summary": {"verdict": "v"}}
+            out = asyncio.run(roam_adversarial(compress_mode="bogus"))
+            assert out["summary"]["compress_mode_invalid"] is True
+            assert out["summary"]["verdict"] == "v"
 
 
 class TestRoamMigrationPlanArgShape:

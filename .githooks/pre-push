@@ -1,0 +1,51 @@
+#!/bin/sh
+# pre-push hook -- structural-gate bundle (Lane D, 2026-05-20).
+#
+# Runs the repo-wide structural drift-guards locally before `git push`,
+# the gate that would have prevented this session's ~14 CI fix-forward
+# cascade. Delegates to scripts/prepush_check.py so the gate list lives in
+# exactly ONE place (FAST_PYTEST_GUARDS / FULL_PYTEST_GUARDS there).
+#
+# Design authority: (internal memo)
+#   FAST tier (default, ~43s): ruff format/check + count-drift scripts +
+#   the structural-lint pytest bundle (W547/W564 severity-rank, LAW-4,
+#   fragile-path, bare-except, detector-count, card-hash, compound-recipe).
+#   FULL tier (--full): adds heavy doc-hygiene (test_no_internal_language,
+#   shape-axis, smells-severity-parity).
+#
+# COMPOSITION -- this hook does NOT duplicate the existing surfaces:
+#   * .githooks/pre-commit (W250 / Wave30.1) -- runs the two count scripts
+#     at COMMIT time. prepush_check.py re-runs them as a cheap (~2s)
+#     backstop for `--no-verify` commit bypasses, not as its primary job.
+#   * .githooks/commit-msg + .pre-commit-config.yaml no-coauthor (Wave59) --
+#     reject Co-Authored-By trailers (Cranot-only). NOT touched here.
+#   This hook's unique value-add is the structural-lint pytest bundle that
+#   no commit-time hook runs.
+#
+# INSTALL (same one-liner as the other hooks; no extra step if already run):
+#   git config core.hooksPath .githooks
+#
+# BYPASS for a deliberate one-off push (rare):
+#   git push --no-verify
+#
+# NOT auto-installed. Documented here; opt in via the core.hooksPath one-liner.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+PY="${PYTHON:-python}"
+if ! command -v "$PY" >/dev/null 2>&1; then
+    if command -v python3 >/dev/null 2>&1; then
+        PY=python3
+    else
+        echo "ERROR: pre-push hook (.githooks/pre-push)" >&2
+        echo "  No 'python' or 'python3' on PATH; skipping structural-gate bundle." >&2
+        echo "  Install Python or run 'git push --no-verify' to bypass." >&2
+        exit 1
+    fi
+fi
+
+# FAST tier by default. For a release-prep / doc-heavy push, run the FULL
+# tier manually: python scripts/prepush_check.py --full
+exec "$PY" "$REPO_ROOT/scripts/prepush_check.py" --fast

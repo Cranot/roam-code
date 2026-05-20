@@ -1355,6 +1355,95 @@ class TestDangerousEval:
             hits = detect_dangerous_eval(conn)
             assert hits == []
 
+    def test_skips_regexp_exec_js(self, project_factory, monkeypatch):
+        """RegExp.prototype.exec() is the safe JS regex API, not a sink (union FP)."""
+        proj = project_factory(
+            {
+                "print-period-options.ts": (
+                    "export function ddMmYyyyToIso(s: string) {\n"
+                    "  const m = /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/.exec(s)\n"
+                    "  return m ? m[3] : null\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_dangerous_eval(conn) == []
+
+    def test_skips_exec_declaration_line(self, project_factory, monkeypatch):
+        """`function exec(...)` is a definition, not a dynamic-exec call (deploy.js:60 FP)."""
+        proj = project_factory(
+            {
+                "deploy_helpers.js": ("function exec(command, description = '') {\n  return runShell(command)\n}\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_dangerous_eval(conn) == []
+
+    def test_skips_def_exec_python(self, project_factory, monkeypatch):
+        """`def exec(self, c):` is a Python sink-named wrapper definition, not a call."""
+        proj = project_factory(
+            {
+                "shell.py": ("class Runner:\n    def exec(self, c):\n        return self.run(c)\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_dangerous_eval(conn) == []
+
+    def test_still_detects_new_function(self, project_factory, monkeypatch):
+        """No precision loss: new Function(userInput) MUST still fire."""
+        proj = project_factory(
+            {
+                "renderer.js": ("function build(spec) {\n  const f = new Function('ctx', spec)\n  return f\n}\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert len(detect_dangerous_eval(conn)) >= 1
+
+    def test_still_detects_bare_exec(self, project_factory, monkeypatch):
+        """No precision loss: a bare exec(code) call MUST still fire."""
+        proj = project_factory(
+            {
+                "runner.py": ("def run(code):\n    exec(code)\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert len(detect_dangerous_eval(conn)) >= 1
+
+    def test_still_detects_child_process_exec(self, project_factory, monkeypatch):
+        """No precision loss: child_process.exec(cmd) is a genuine shell-exec sink."""
+        proj = project_factory(
+            {
+                "ops.js": ("function deploy(cmd) {\n  child_process.exec(cmd)\n}\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert len(detect_dangerous_eval(conn)) >= 1
+
 
 class TestBatchIterationGuard:
     """D `for chunk in _chunked(ids):` is not N+1."""

@@ -79,12 +79,20 @@ async def compress_with_sampling(
     target: str = "",
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     include_raw: bool = False,
+    system_prompt: str | None = None,
 ) -> dict[str, Any] | None:
     """Ask the client's LLM for a short briefing on ``payload``.
 
     Returns ``None`` if sampling is unavailable (no Context, no
     ``ctx.sample`` method, transport failure). Callers should treat
     ``None`` as "fall back to the raw payload".
+
+    ``system_prompt`` overrides the neutral "senior engineer
+    summarising" framing (:data:`_BRIEFING_SYSTEM_PROMPT`) when a caller
+    needs a domain-specific role -- e.g. the adversarial "Dungeon Master"
+    prompt from :mod:`roam.mcp_extras.adversarial_compress` defend mode.
+    ``None`` (default) keeps the neutral briefing prompt, so digest-mode
+    and every existing caller are byte-identical.
 
     sending payloads through the client's LLM is OFF by
     default for GDPR / EU AI Act credibility. Set
@@ -115,11 +123,12 @@ async def compress_with_sampling(
 
     payload_text = _shrink_payload(payload)
     user_prompt = _build_user_prompt(payload_text, task, target)
+    effective_system_prompt = system_prompt if system_prompt else _BRIEFING_SYSTEM_PROMPT
 
     try:
         result = await sampler(
             user_prompt,
-            system_prompt=_BRIEFING_SYSTEM_PROMPT,
+            system_prompt=effective_system_prompt,
             max_tokens=max_tokens,
             temperature=0.2,
         )

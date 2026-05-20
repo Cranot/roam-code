@@ -49,6 +49,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Symbol kinds that are *data attributes*, not refactorable units of logic.
+# A dataclass field / class property / module variable can accrue very high
+# reference fan-in (e.g. `EvidenceArtifact.path`, degree 2408) without being a
+# "god component" — there is no logic to decompose. Classification must consult
+# the symbol kind so these never land in the actionable CRITICAL band. The set
+# covers the kind vocabulary the extractors emit for plain attributes across
+# languages (Python `prop`, JS/TS `field`/`property`, generic `var`/`const`).
+_DATA_ATTRIBUTE_KINDS = frozenset({"prop", "property", "field", "attribute", "variable", "var", "const", "constant"})
+
 # Single-line label that should appear in every envelope reporting a
 # god-component count, under the key ``god_components_definition``.
 DEFINITION = (
@@ -185,6 +194,14 @@ def god_components(
     actionable_count = 0
     utility_count = 0
     for g in god_items:
+        # Kind-aware guard: a data attribute (dataclass field / property /
+        # module var) with high fan-in is NOT a refactorable god component —
+        # there is no logic to decompose. Band it non-actionable + cap at INFO
+        # so it never pollutes the CRITICAL count or the refactor headline.
+        if (g["kind"] or "").lower() in _DATA_ATTRIBUTE_KINDS:
+            g["category"] = "data_attribute"
+            g["severity"] = "INFO"
+            continue
         is_util = _is_utility_path(g["file"])
         g["category"] = "utility" if is_util else "actionable"
         if is_util:

@@ -15516,13 +15516,16 @@ def roam_guard(symbol: str, root: str = ".") -> dict:
         "framing for code-review agents."
     ),
 )
-def roam_adversarial(
+async def roam_adversarial(
     staged: bool = False,
     commit_range: str = "",
     severity: str = "low",
     fail_on_critical: bool = False,
     output_format: str = "text",
     root: str = ".",
+    summarize: bool | None = None,
+    compress_mode: str = "off",
+    ctx: _Context | None = None,
 ) -> dict:
     """Generate adversarial architecture challenges on changed files.
 
@@ -15551,6 +15554,21 @@ def roam_adversarial(
         CLI ``--format`` default per LAW 11.
     root:
         Repo root (default current directory).
+    summarize:
+        If True and the client supports MCP sampling, force the
+        ``compress_mode`` round-trip on; False forces it off. ``None``
+        (default) defers to the ``ROAM_AI_ENABLED`` gate inside the
+        sampling layer. Only consulted when ``compress_mode`` != ``off``.
+    compress_mode:
+        How to fold the challenges through MCP sampling. Closed enum:
+        ``off`` (default -- return the deterministic envelope, zero
+        behavior change), ``digest`` (compress the full envelope into a
+        triage briefing under ``briefing``), ``defend`` (collapse the
+        challenges into one "Dungeon Master" defend-this-change brief
+        under ``defend_briefing``). Set ``compress_mode='defend'`` to
+        pressure-test the structural choices; set ``'digest'`` to triage
+        a large challenge set. Inherits the ``ROAM_AI_ENABLED`` opt-in
+        gate -- absent the env var the deterministic envelope is returned.
 
     Returns: ``{summary: {verdict, challenges, critical, high,
     warning, info, changed_files}, challenges: [...]}``.
@@ -15562,7 +15580,31 @@ def roam_adversarial(
         args.extend(["--range", commit_range])
     if fail_on_critical:
         args.append("--fail-on-critical")
-    return _run_roam(args, root)
+    result = _run_roam(args, root)
+
+    if compress_mode == "off":
+        return result
+    if compress_mode not in {"digest", "defend"}:
+        # Pattern-1 variant D: an unknown enum value is loud, not a
+        # silent no-op. Preserve the deterministic envelope + verdict and
+        # stamp the invalid sentinel so a typo surfaces.
+        if isinstance(result, dict):
+            summary = dict(result.get("summary") or {})
+            summary["compress_mode_invalid"] = True
+            result = dict(result)
+            result["summary"] = summary
+        return result
+
+    from roam.mcp_extras import adversarial_compress as _adv
+
+    task = _mcp_session.session_hint(ctx) if _mcp_session is not None else ""
+    return await _adv.compress_adversarial(
+        ctx,
+        result,
+        mode=compress_mode,
+        task=task,
+        summarize=summarize,
+    )
 
 
 # W304: roam_migration_plan

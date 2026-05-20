@@ -318,3 +318,55 @@ class TestForecastCommand:
         assert isinstance(summary["symbols_at_risk"], int)
         # Snapshot count should match what we created in the fixture (4)
         assert summary["snapshots_available"] >= 4, f"Expected >= 4 snapshots, got {summary['snapshots_available']}"
+
+
+class TestForecastSpectral:
+    """B8 (Option-B): one-shot spectral_forecast block on the forecast envelope."""
+
+    def test_spectral_forecast_block_present(self, forecast_project):
+        """JSON envelope carries a spectral_forecast block computed from the graph."""
+        result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
+        data = _parse_json(result)
+        assert "spectral_forecast" in data, "Expected 'spectral_forecast' key in JSON output"
+        block = data["spectral_forecast"]
+        for key in ("instability", "decay", "alert_wording", "compute_degraded", "topology_decay_rate_definition"):
+            assert key in block, f"spectral_forecast missing '{key}'"
+
+    def test_spectral_instability_shape(self, forecast_project):
+        """The instability sub-block exposes the one-shot spectral signal."""
+        result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
+        data = _parse_json(result)
+        inst = data["spectral_forecast"]["instability"]
+        for key in ("spectral_gap", "verdict", "node_count", "component_count", "is_failed"):
+            assert key in inst, f"instability missing '{key}'"
+        assert isinstance(inst["spectral_gap"], (int, float))
+        assert isinstance(inst["is_failed"], bool)
+
+    def test_spectral_decay_insufficient_history_on_the_fly(self, forecast_project):
+        """Option-B computes a single current gap, so decay is insufficient_history."""
+        result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
+        data = _parse_json(result)
+        decay = data["spectral_forecast"]["decay"]
+        # No persisted gap-per-snapshot series exists (no schema column), so the
+        # projection honestly reports insufficient_history rather than faking a trend.
+        assert decay["status"] == "insufficient_history"
+
+    def test_spectral_clause_in_verdict(self, forecast_project):
+        """Verdict appends a self-sufficient spectral clause (LAW 6)."""
+        result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
+        data = _parse_json(result)
+        assert "spectral gap" in data["summary"]["verdict"]
+        assert "topology_decay_rate_definition" in data["summary"]
+
+    def test_spectral_decay_rate_definition_sidecar(self, forecast_project):
+        """Pattern-3a sidecar names the precise decay-rate computation."""
+        result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
+        data = _parse_json(result)
+        defn = data["summary"]["topology_decay_rate_definition"]
+        assert "spectral gap" in defn and "snapshot" in defn
+
+    def test_spectral_section_in_text_output(self, forecast_project):
+        """Text output includes the SPECTRAL FORECAST section by default."""
+        result = _invoke(["forecast"], cwd=forecast_project)
+        assert result.exit_code == 0
+        assert "SPECTRAL FORECAST" in result.output

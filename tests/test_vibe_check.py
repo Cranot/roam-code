@@ -636,3 +636,84 @@ class TestWorstFiles:
             assert "breakdown" in wf
             assert isinstance(wf["total_issues"], int)
             assert wf["total_issues"] > 0
+
+
+# ===========================================================================
+# Tests: pattern-rate unit invariant (dogfood FP #2 — boilerplate >100%)
+# ===========================================================================
+
+
+@pytest.fixture
+def boilerplate_dense_project(tmp_path):
+    """A project whose ONE file carries MULTIPLE boilerplate-inflation hits.
+
+    Two public shallow-wrappers (real docstring + single return call) live in
+    a single file. Pre-fix this produced found=2 occurrences against
+    total_files_scanned=1 → an impossible 200% rate. Post-fix ``found`` counts
+    AFFECTED FILES (1), so the rate stays a proper fraction.
+    """
+    repo = tmp_path / "boiler"
+    repo.mkdir()
+    (repo / ".gitignore").write_text(".roam/\n")
+    (repo / "wrappers.py").write_text(
+        "def fetch_user(uid):\n"
+        '    """Fetch the user record for the given id."""\n'
+        "    return repo_get_user(uid)\n"
+        "\n\n"
+        "def fetch_order(oid):\n"
+        '    """Fetch the order record for the given id."""\n'
+        "    return repo_get_order(oid)\n"
+        "\n\n"
+        "def repo_get_user(uid):\n"
+        "    return uid\n"
+        "\n\n"
+        "def repo_get_order(oid):\n"
+        "    return oid\n"
+    )
+    git_init(repo)
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(repo))
+        out, rc = index_in_process(repo)
+        assert rc == 0, f"index failed: {out}"
+    finally:
+        os.chdir(old_cwd)
+    return repo
+
+
+class TestPatternRateInvariant:
+    """Every vibe-check pattern rate must be a real fraction ∈ [0, 100]%."""
+
+    def test_boilerplate_detector_found_le_total(self, boilerplate_dense_project):
+        """Unit invariant: ``found`` (per-file) never exceeds ``total`` (files scanned)."""
+        from roam.commands.cmd_vibe_check import _detect_boilerplate_inflation
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=boilerplate_dense_project) as conn:
+            found, total, details = _detect_boilerplate_inflation(conn, boilerplate_dense_project)
+
+        # The crafted file has 2 occurrences but counts as 1 affected file.
+        assert found == len(details), "found must equal the affected-file count (per-file unit)"
+        assert found <= total, f"found ({found}) must not exceed files scanned ({total})"
+        # Sanity: the multi-occurrence file is still recorded with its count.
+        if details:
+            assert details[0]["count"] >= 2
+
+    def test_all_pattern_rates_within_bounds(self, cli_runner, boilerplate_dense_project):
+        """No pattern (incl. boilerplate_inflation) may report a >100% rate."""
+        result = _invoke(cli_runner, boilerplate_dense_project, json_mode=True)
+        data = json.loads(result.output)
+        for p in data["patterns"]:
+            rate = p["rate"]
+            assert 0.0 <= rate <= 100.0, f"{p['name']} rate {rate} outside [0, 100]"
+
+    def test_boilerplate_rate_within_bounds_unit(self, boilerplate_dense_project):
+        """Direct check on the boilerplate ratio: found/total ∈ [0, 1]."""
+        from roam.commands.cmd_vibe_check import _detect_boilerplate_inflation
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=boilerplate_dense_project) as conn:
+            found, total, _ = _detect_boilerplate_inflation(conn, boilerplate_dense_project)
+
+        ratio = found / max(total, 1)
+        assert 0.0 <= ratio <= 1.0, f"boilerplate ratio {ratio} outside [0, 1]"

@@ -1103,11 +1103,16 @@ _SHALLOW_WRAPPER_PY = re.compile(
 def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, list[dict]]:
     """Scan source files for boilerplate-inflation occurrences.
 
-    Returns (found, total_files_scanned, details). ``details`` is one
-    record per file with at least one occurrence; each record carries a
-    ``count`` (total occurrences in this file) and ``occurrences``
-    (per-occurrence line/kind/snippet payload). Per-occurrence detail
-    is kept so the finding emit can produce one row per location.
+    Returns (found, total_files_scanned, details). ``found`` is the number
+    of FILES carrying at least one occurrence (== ``len(details)``) — the
+    SAME per-file unit as ``total_files_scanned``, so the downstream rate
+    ``found / total`` stays a proper fraction in ``[0, 1]``. Counting
+    ``found`` per-OCCURRENCE here (multiple per file across sub-heuristics
+    A+B) against a per-FILE denominator produced an impossible >100% rate
+    (W371 unit-mismatch bug). ``details`` is one record per affected file;
+    each record carries a ``count`` (total occurrences in this file) and
+    ``occurrences`` (per-occurrence line/kind/snippet payload), so the
+    finding emit can still produce one registry row per location.
     """
     files = conn.execute("SELECT id, path, language FROM files WHERE language IS NOT NULL").fetchall()
 
@@ -1213,7 +1218,11 @@ def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, l
                 )
 
         if occurrences:
-            found += len(occurrences)
+            # Count this FILE once toward ``found`` (per-file unit, matching
+            # the per-file denominator). The per-occurrence total is kept in
+            # the ``count`` field so the persist path still emits one row per
+            # location and the verdict can report total occurrences.
+            found += 1
             details.append(
                 {
                     "file": path,
@@ -2150,9 +2159,11 @@ def vibe_check(ctx, threshold, persist):
                 "inline or co-locate to remove modular-mirage abstractions"
             )
         if patterns["boilerplate_inflation"]["found"] > 0:
+            _boiler_occurrences = sum(d.get("count", 0) for d in p10_details)
             recommendations.append(
-                f"Trim {patterns['boilerplate_inflation']['found']} boilerplate-inflation "
-                "occurrences (redundant comments + shallow wrappers)"
+                f"Trim {_boiler_occurrences} boilerplate-inflation occurrences across "
+                f"{patterns['boilerplate_inflation']['found']} files "
+                "(redundant comments + shallow wrappers)"
             )
 
         # W805-followup-A: empty-corpus disclosure (Pattern 2 silent-fallback fix).

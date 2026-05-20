@@ -43,6 +43,12 @@ DETECTOR_VERSION_OVERRIDES: dict[str, str] = {
     # with the looser predicate still carry the old findings; consumers
     # comparing manifests can spot the bump and trigger re-detection.
     "nested-lookup": "1.1.0",
+    # dangerous-eval tightened (2026-05-20) to suppress the RegExp.exec()
+    # union FP: dotted `<receiver>.exec(` is the safe JS/TS regex API (kept
+    # firing only for `child_process`/`cp` shell-exec receivers), and
+    # `function exec(`/`def exec(` declaration lines are definitions, not
+    # dynamic-exec call sites. Precision-only patch bump (zero TP loss).
+    "dangerous-eval": "1.1.0",
 }
 
 

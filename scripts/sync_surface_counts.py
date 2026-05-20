@@ -91,7 +91,6 @@ def build_replacements(counts: dict, languages: int) -> None:
 
     cmds = counts["commands"]
     mcp = counts["mcp_tools"]
-    spec = counts["specialised"]
     core = counts["mcp_core_tools"]
     langs = languages
 
@@ -278,9 +277,7 @@ def main() -> int:
     # ``cli._COMMANDS``, the header reflects it without an edit here
     # (W933-class stale-literal hazard).
     with_aliases = counts["canonical"] + counts["alias_names"]
-    print(
-        f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {with_aliases} with aliases)"
-    )
+    print(f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {with_aliases} with aliases)")
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
     print()
 

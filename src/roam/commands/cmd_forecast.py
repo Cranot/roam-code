@@ -221,6 +221,52 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
     return results[:limit]
 
 
+# Pattern-3a sidecar: name the precise computation behind the decay rate so a
+# downstream consumer never confuses it with a count-metric slope.
+_TOPOLOGY_DECAY_RATE_DEFINITION = (
+    "fraction of the current spectral gap (algebraic connectivity, lambda2) lost per snapshot"
+)
+
+
+def _spectral_forecast_block(conn, horizon):
+    """One-shot spectral-instability + decay block (B8, Option-B).
+
+    Computes the spectral gap (algebraic connectivity) of the CURRENT
+    file-level graph and projects it. The historical gap-per-snapshot series
+    is NOT persisted (no schema column), so ``forecast_spectral_decay`` runs
+    over the single current gap and reports ``insufficient_history`` for the
+    decay projection — the one-shot instability signal is the live payload.
+
+    scipy-optional lineage is preserved: ``spectral_gap`` returns a 0.0
+    sentinel + RuntimeWarning on a missing eigensolver, and we flag
+    ``compute_degraded`` so a degraded compute is disclosed, never silent.
+    """
+    from roam.graph.builder import build_file_graph
+    from roam.graph.spectral_forecast import (
+        decay_alert_wording,
+        forecast_spectral_decay,
+        spectral_instability,
+    )
+
+    file_graph = build_file_graph(conn)
+    inst = spectral_instability(file_graph)
+    # On-the-fly: a single current gap. Theil-Sen needs >= 4 points, so this
+    # honestly reports insufficient_history rather than faking a flat trend.
+    fc = forecast_spectral_decay([inst.spectral_gap], horizon=horizon)
+    # Loud-fallback lineage: a non-trivial single connected graph whose gap is
+    # exactly 0.0 means the eigensolver is unavailable, not a real flat blob.
+    compute_degraded = inst.node_count >= 2 and inst.component_count == 1 and inst.spectral_gap == 0.0
+
+    block = {
+        "instability": inst.to_dict(),
+        "decay": fc.to_dict(),
+        "alert_wording": decay_alert_wording(fc),
+        "compute_degraded": compute_degraded,
+        "topology_decay_rate_definition": _TOPOLOGY_DECAY_RATE_DEFINITION,
+    }
+    return inst, fc, block, compute_degraded
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -295,6 +341,11 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
         at_risk = _at_risk_symbols(conn, symbol, min_slope)
 
+        # B8 (Option-B): one-shot spectral-instability block from the current
+        # graph. Always computed (cheap) and carried in the envelope; --alert-only
+        # gates its TEXT visibility, never the JSON payload.
+        spec_inst, spec_fc, spectral_block, spectral_degraded = _spectral_forecast_block(conn, horizon)
+
     # Summary counts
     metrics_trending = sum(1 for t in agg_trends if t["status"] in ("trending", "warning", "alert"))
     symbols_at_risk = len(at_risk)
@@ -318,6 +369,17 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
     verdict = ", ".join(parts)
 
+    # B8: append a self-sufficient spectral clause so the combined verdict still
+    # works standalone (LAW 6). Anchored on `nodes` (a concrete-noun terminal).
+    if spectral_degraded:
+        verdict += "; spectral gap unavailable (eigensolver missing)"
+    elif spec_inst.is_failed:
+        verdict += (
+            f"; spectral gap {spec_inst.spectral_gap:.3f} in the failure band across {spec_inst.node_count} nodes"
+        )
+    else:
+        verdict += f"; spectral gap {spec_inst.spectral_gap:.3f} ({spec_inst.verdict.lower()}) across {spec_inst.node_count} nodes"
+
     # --- JSON output ---
     if json_mode:
         click.echo(
@@ -332,6 +394,8 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                         # W1298 Pattern-3a: at_risk_symbols[*].cognitive_complexity
                         # is the raw symbol_metrics value — disclose the scorer.
                         "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+                        # B8 Pattern-3a: name the precise spectral decay-rate computation.
+                        "topology_decay_rate_definition": _TOPOLOGY_DECAY_RATE_DEFINITION,
                     },
                     # LAW 4 (W17.3): the auto-derive renders
                     # ``symbols_at_risk`` as "N symbols at risk findings"
@@ -343,11 +407,15 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                             f"forecast scope: {n_snapshots} snapshot(s) available, "
                             f"{metrics_trending} metric(s) trending",
                             f"forecast risk: {symbols_at_risk} symbol(s) approaching complexity / churn thresholds",
+                            # B8: terminal-anchored on `nodes` (concrete-noun) per LAW 4.
+                            f"spectral forecast: gap {spec_inst.spectral_gap:.3f} "
+                            f"({spec_inst.verdict.lower()}) across {spec_inst.node_count} nodes",
                         ],
                     },
                     budget=token_budget,
                     aggregate_trends=agg_trends,
                     at_risk_symbols=at_risk,
+                    spectral_forecast=spectral_block,
                 )
             )
         )
@@ -380,6 +448,22 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                 click.echo(f"  {t['metric']:<18s}  {t['current']:.1f}, slope {slope_str}, {forecast_note}{flag}")
 
     click.echo()
+
+    # B8: spectral forecast section. --alert-only suppresses it when the
+    # current topology is healthy (mirrors the stable-metric suppression above).
+    spectral_noteworthy = spectral_degraded or spec_inst.is_failed
+    if not alert_only or spectral_noteworthy:
+        click.echo("SPECTRAL FORECAST (modular separation of the current graph):")
+        if spectral_degraded:
+            click.echo("  spectral gap unavailable -- eigensolver missing (install scipy)")
+        else:
+            flag = "  << ALERT" if spec_inst.is_failed else ""
+            click.echo(
+                f"  gap {spec_inst.spectral_gap:.3f} ({spec_inst.verdict}) "
+                f"across {spec_inst.node_count} nodes, {spec_inst.component_count} component(s){flag}"
+            )
+            click.echo(f"  {spectral_block['alert_wording']}")
+        click.echo()
 
     # At-risk symbols section
     if symbol:

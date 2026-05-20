@@ -289,6 +289,7 @@ async def compress_adversarial(
             task=task,
             target="adversarial-defense",
             max_tokens=max_tokens,
+            system_prompt=defend_system_prompt(),
         )
         if not compressed:
             return envelope

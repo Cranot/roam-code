@@ -3523,6 +3523,12 @@ _RE_EVAL_CALLS = re.compile(
     r"|\bsetTimeout\s*\(\s*['\"]"
     r"|\bsetInterval\s*\(\s*['\"]",
 )
+# Declaration-line skip: `function exec(...)` / `def exec(...)` defines a
+# user function named like a sink — it is a definition, not a call site.
+_RE_EVAL_DECL_LINE = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|def)\s+(?:eval|exec|execfile|compile)\b")
+# Receiver-qualified shell-exec that IS a genuine sink even via a dot —
+# keep these firing through the `.exec(` receiver guard below.
+_RE_SHELL_EXEC_RECEIVER = re.compile(r"(?:child_process|cp)\s*\.\s*exec", re.IGNORECASE)
 
 
 @detector(
@@ -3564,6 +3570,22 @@ def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
         if "literal_eval" in snippet[max(0, m.start() - 20) : m.end()]:
             continue
         if ".compile(" in snippet[max(0, m.start() - 5) : m.end() + 1]:
+            continue
+        # `<regex>.exec(x)` / `<str>.exec(x)` is the standard JS/TS regex API,
+        # NOT a code-injection sink — symmetric to the `.compile(` guard above.
+        # Keep genuine shell-exec receivers (`child_process.exec`, `cp.exec`)
+        # firing; suppress every other dotted `.exec(`.
+        _exec_window = snippet[max(0, m.start() - 30) : m.end() + 1]
+        if ".exec(" in snippet[max(0, m.start() - 5) : m.end() + 1] and not (
+            _RE_SHELL_EXEC_RECEIVER.search(_exec_window)
+        ):
+            continue
+        # Skip declaration lines: `function exec(...)` / `def exec(...)` is a
+        # definition of a sink-named wrapper, not a call to a dynamic-exec sink.
+        _ls = snippet.rfind("\n", 0, m.start()) + 1
+        _le = snippet.find("\n", m.start())
+        _match_line_text = snippet[_ls : (_le if _le != -1 else len(snippet))]
+        if _RE_EVAL_DECL_LINE.match(_match_line_text):
             continue
         line_offset = snippet[: m.start()].count("\n")
         match_line = (r["line_start"] or 1) + line_offset

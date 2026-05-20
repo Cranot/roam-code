@@ -53,9 +53,7 @@ def _pyproject_version() -> str:
 def _pypi_latest() -> str | None:
     """Return the latest version on pypi.org or None on network failure."""
     try:
-        with urllib.request.urlopen(
-            "https://pypi.org/pypi/roam-code/json", timeout=10
-        ) as resp:
+        with urllib.request.urlopen("https://pypi.org/pypi/roam-code/json", timeout=10) as resp:
             data = json.load(resp)
     except urllib.error.URLError as exc:
         print(f"WARN: PyPI fetch failed: {exc}", file=sys.stderr)

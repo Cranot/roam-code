@@ -55,11 +55,7 @@ _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 
 def _escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _inline(text: str) -> str:
@@ -224,7 +220,7 @@ def main() -> int:
     # Show a tight diff summary so dry-run is informative.
     before_versions = re.findall(r"<h2>\[([^\]]+)\]", template)
     after_versions = re.findall(r"<h2>\[([^\]]+)\]", new_template)
-    print(f"Drift detected:")
+    print("Drift detected:")
     print(f"  CHANGELOG.md latest entries: {after_versions[:5]}")
     print(f"  changelog.html currently:    {before_versions[:5]}")
 

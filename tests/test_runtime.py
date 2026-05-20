@@ -519,3 +519,71 @@ class TestCliSecurityHotspots:
         )
         assert result.exit_code != 0
         assert "Cannot combine --security with --runtime or --discrepancy" in result.output
+
+
+class TestHotspotsEvalExecFalsePositive:
+    """py-eval-exec shares the dangerous-eval FP shape — guard mirrors detectors.py."""
+
+    def test_dotted_exec_is_false_positive(self):
+        """`<receiver>.exec(` is the safe regex/method API, not a code-exec sink."""
+        from roam.commands.cmd_hotspots import _is_eval_exec_false_positive
+
+        assert _is_eval_exec_false_positive("    m = pattern.exec(value)") is True
+        assert _is_eval_exec_false_positive("    rx.exec(s)") is True
+
+    def test_def_exec_declaration_is_false_positive(self):
+        """`def exec(...)` defines a sink-named wrapper; it is not a call site."""
+        from roam.commands.cmd_hotspots import _is_eval_exec_false_positive
+
+        assert _is_eval_exec_false_positive("def exec(self, cmd):") is True
+        assert _is_eval_exec_false_positive("    async def eval(self, expr):") is True
+
+    def test_shell_exec_receiver_still_fires(self):
+        """`child_process.exec(` / `cp.exec(` is a genuine shell-exec sink — keep firing."""
+        from roam.commands.cmd_hotspots import _is_eval_exec_false_positive
+
+        assert _is_eval_exec_false_positive("    child_process.exec(cmd)") is False
+        assert _is_eval_exec_false_positive("    cp.exec(userCmd)") is False
+
+    def test_bare_eval_exec_still_fires(self):
+        """A bare eval(...) / exec(...) call is NOT suppressed."""
+        from roam.commands.cmd_hotspots import _is_eval_exec_false_positive
+
+        assert _is_eval_exec_false_positive("    return eval(expr)") is False
+        assert _is_eval_exec_false_positive("    exec(code)") is False
+
+    def test_security_scan_suppresses_regexp_exec(self, project_factory, cli_runner):
+        """End-to-end: a Python `obj.exec(x)` regex call must not be a py-eval-exec hit."""
+        proj = project_factory(
+            {
+                "matcher.py": ("import re\nPAT = re.compile(r'^x$')\ndef parse(value):\n    return PAT.exec(value)\n"),
+            }
+        )
+        result = invoke_cli(
+            cli_runner,
+            ["--detail", "hotspots", "--security"],
+            cwd=proj,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "hotspots")
+        assert not any(h.get("pattern_id") == "py-eval-exec" for h in data.get("hotspots", [])), (
+            "RegExp-style .exec() must not fire py-eval-exec"
+        )
+
+    def test_security_scan_still_flags_bare_eval(self, project_factory, cli_runner):
+        """End-to-end precision check: a real `eval(user_input)` still fires py-eval-exec."""
+        proj = project_factory(
+            {
+                "danger.py": ("def run(user_input):\n    return eval(user_input)\n"),
+            }
+        )
+        result = invoke_cli(
+            cli_runner,
+            ["--detail", "hotspots", "--security"],
+            cwd=proj,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "hotspots")
+        assert any(h.get("pattern_id") == "py-eval-exec" for h in data.get("hotspots", [])), (
+            "Bare eval(user_input) must still fire py-eval-exec"
+        )

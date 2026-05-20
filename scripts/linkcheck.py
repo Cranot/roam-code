@@ -101,7 +101,9 @@ def main() -> int:
                 ids = page_ids.get(target) or _collect_ids(target)
                 page_ids[target] = ids
                 if anchor not in ids:
-                    issues.append(f"{rel}: missing #{anchor} on {target.relative_to(SITE).as_posix()} (full href: {href})")
+                    issues.append(
+                        f"{rel}: missing #{anchor} on {target.relative_to(SITE).as_posix()} (full href: {href})"
+                    )
 
     if args.external:
         try:

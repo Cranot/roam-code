@@ -64,6 +64,7 @@ def _git_tracked_files() -> list[Path]:
 # PDF metadata
 # ---------------------------------------------------------------------------
 
+
 def _scan_pdf(path: Path) -> dict | None:
     try:
         from pypdf import PdfReader
@@ -87,9 +88,9 @@ def _scan_pdf(path: Path) -> dict | None:
         if v_str == NEUTRAL_PDF_METADATA.get(k, ""):
             continue
         # Personal markers worth flagging.
-        if (k == "/Author" and v_str != NEUTRAL_PDF_METADATA["/Author"]):
+        if k == "/Author" and v_str != NEUTRAL_PDF_METADATA["/Author"]:
             leaks[k] = v_str
-        elif (k == "/Creator" and v_str != "pandoc" and "pandoc" not in v_str.lower()):
+        elif k == "/Creator" and v_str != "pandoc" and "pandoc" not in v_str.lower():
             leaks[k] = v_str
         elif k == "/Producer" and v_str != "pandoc" and "pandoc" not in v_str.lower():
             leaks[k] = v_str
@@ -107,7 +108,7 @@ def _strip_pdf(path: Path) -> bool:
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError:
-        print(f"ERROR: pypdf required to strip PDF metadata; pip install pypdf", file=sys.stderr)
+        print("ERROR: pypdf required to strip PDF metadata; pip install pypdf", file=sys.stderr)
         return False
     try:
         reader = PdfReader(str(path))
@@ -153,7 +154,7 @@ def _scan_png(path: Path) -> dict | None:
                 key, _, value = chunk_data.partition(b"\x00")
                 key_str = key.decode("latin-1")
                 # iTXt has more structure; extract first text-after-null chain
-                value_str = value[: 80].decode("utf-8", errors="replace")
+                value_str = value[:80].decode("utf-8", errors="replace")
                 leaks[key_str] = value_str
             except Exception:
                 leaks[chunk_type.decode("ascii", errors="replace")] = "<unreadable>"
@@ -284,9 +285,9 @@ def main() -> int:
         if args.write:
             if stripper(path):
                 written_files += 1
-                print(f"    → stripped")
+                print("    → stripped")
             else:
-                print(f"    → strip FAILED")
+                print("    → strip FAILED")
                 return 2
 
     print()

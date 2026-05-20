@@ -153,6 +153,27 @@ _SECURITY_SINKS = (
 )
 
 
+# `py-eval-exec` shares the dangerous-eval FP shape (detectors.py:3520): a
+# dotted `<receiver>.exec(` is the safe regex/method API, not a code-exec
+# sink, and a `def exec(...)` declaration line is a definition, not a call.
+# Mirror the two guards from `detect_dangerous_eval` so the sibling detector
+# does not re-introduce the union FP.
+_RE_PY_EVAL_DECL_LINE = re.compile(r"^\s*(?:async\s+)?def\s+(?:eval|exec)\b")
+_RE_PY_SHELL_EXEC_RECEIVER = re.compile(r"(?:child_process|cp)\s*\.\s*exec", re.IGNORECASE)
+
+
+def _is_eval_exec_false_positive(line: str) -> bool:
+    """True when a `py-eval-exec` regex hit is a safe `.exec(` / decl-line FP."""
+    # `<receiver>.exec(` is the standard method/regex API — suppress unless the
+    # receiver is a genuine shell-exec sink (`child_process.exec`, `cp.exec`).
+    if ".exec(" in line and not _RE_PY_SHELL_EXEC_RECEIVER.search(line):
+        return True
+    # `def exec(...)` defines a sink-named wrapper; it is not a call site.
+    if _RE_PY_EVAL_DECL_LINE.match(line):
+        return True
+    return False
+
+
 def _is_comment_line(line: str, language: str) -> bool:
     stripped = line.strip()
     if not stripped:
@@ -294,6 +315,8 @@ def _compute_security_hotspots(conn) -> dict:
                 continue
             for sink in sinks:
                 if sink["regex"].search(line) is None:
+                    continue
+                if sink["id"] == "py-eval-exec" and _is_eval_exec_false_positive(line):
                     continue
                 dedupe_key = (rel_path, i, sink["id"])
                 if dedupe_key in seen:
