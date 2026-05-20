@@ -44,7 +44,10 @@ from roam.output.formatter import (
 # 1.3.0 -> 1.4.0 (W647): detect_temporal_coupling now ALSO emits
 # ``temporal-coupling-cluster`` findings rolled up by symbol. The pair
 # findings are unchanged; the new cluster rows are additive.
-SMELLS_DETECTOR_VERSION: str = "1.4.0"
+# 1.4.0 -> 1.5.0 (W1280): detect_feature_envy predicate tightened
+# (test/orchestrator exclusion + single-dominant-foreign-file
+# concentration gate). Far fewer rows; claim shape narrowed.
+SMELLS_DETECTOR_VERSION: str = "1.5.0"
 
 # W370c: per-smell-kind version stamps for the 2 detectors landing in this
 # wave. The composite SMELLS_DETECTOR_VERSION bumps 1.0.0 -> 1.1.0 to mark
@@ -73,6 +76,12 @@ TEMPORAL_COUPLING_DETECTOR_VERSION: str = "1.1.0"
 # W601/W602/W603/W604 stamps above.
 COMMENT_DENSITY_DETECTOR_VERSION: str = "1.0.0"
 
+# W1280: feature-envy predicate tightened from a pure cross-file edge ratio
+# to test/orchestrator exclusion + single-dominant-foreign-file concentration
+# (~88% FP measured pre-fix). Predicate changed -> bump 1.0.0 -> 1.1.0,
+# mirroring the dangerous-eval 1.1.0 precedent. Same call-site discipline.
+FEATURE_ENVY_DETECTOR_VERSION: str = "1.1.0"
+
 
 # W1269 (sibling of W1256): lookup table consumed by
 # ``_emit_smells_findings`` so each finding row stamps its smell kind's own
@@ -89,6 +98,7 @@ _SMELL_KIND_TO_VERSION: dict[str, str] = {
     "switch-statement": SWITCH_STATEMENT_DETECTOR_VERSION,
     "temporal-coupling": TEMPORAL_COUPLING_DETECTOR_VERSION,
     "comment-density": COMMENT_DENSITY_DETECTOR_VERSION,
+    "feature-envy": FEATURE_ENVY_DETECTOR_VERSION,
 }
 
 

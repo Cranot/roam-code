@@ -190,7 +190,11 @@ def _populate_message_chain(conn):
 
 
 def _populate_feature_envy(conn):
-    """Insert a function where most refs are to other files."""
+    """Insert a function whose external refs concentrate on ONE foreign file.
+
+    Genuine feature envy: 5/6 refs reach a single foreign file (src/model.py)
+    — the dominant-foreign-file concentration gate (W1280) passes.
+    """
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/controller.py')")
     conn.execute("INSERT INTO files (id, path) VALUES (2, 'src/model.py')")
     # Function in file 1
@@ -214,6 +218,79 @@ def _populate_feature_envy(conn):
         "VALUES (20, 1, 'local_helper', 'function', 30, 40)"
     )
     conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 20, 'call')")
+    conn.commit()
+
+
+def _populate_feature_envy_orchestrator(conn):
+    """W1280: a `_build_*` orchestrator referencing one foreign file heavily.
+
+    Same edge topology as `_populate_feature_envy` (would fire pre-W1280)
+    but the name matches the orchestrator/assembler skip pattern, so it
+    must NOT be flagged — its cross-file breadth is by-design assembly.
+    """
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/builder.py')")
+    conn.execute("INSERT INTO files (id, path) VALUES (2, 'src/parts.py')")
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (1, 1, '_build_report', 'function', 1, 20)"
+    )
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 2, ?, 'function', ?, ?)",
+            (10 + i, f"part_{i}", i * 10, i * 10 + 5),
+        )
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, ?, 'call')", (10 + i,))
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (20, 1, 'local_helper', 'function', 30, 40)"
+    )
+    conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 20, 'call')")
+    conn.commit()
+
+
+def _populate_feature_envy_spread(conn):
+    """W1280: external refs spread evenly across many foreign files.
+
+    >50% external + >=4 refs (would fire pre-W1280) but no single foreign
+    file dominates — this is orchestration/coupling, not envy, so the
+    concentration gate must reject it.
+    """
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/orchestrator.py')")
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (1, 1, 'run_pipeline', 'function', 1, 20)"
+    )
+    # 6 external refs, one each to 6 distinct foreign files (no dominant file).
+    for i in range(6):
+        fid = 100 + i
+        conn.execute("INSERT INTO files (id, path) VALUES (?, ?)", (fid, f"src/dep_{i}.py"))
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, 'function', 1, 5)",
+            (200 + i, fid, f"dep_fn_{i}"),
+        )
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, ?, 'call')", (200 + i,))
+    conn.commit()
+
+
+def _populate_feature_envy_test_file(conn):
+    """W1280: a function in a test-role file with envy-shaped edges.
+
+    Same topology as the genuine-envy fixture but located under tests/, so
+    the test-path skip must drop it (test bodies call helpers across modules
+    by nature — never envy).
+    """
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'tests/test_controller.py')")
+    conn.execute("INSERT INTO files (id, path) VALUES (2, 'src/model.py')")
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (1, 1, 'helper_under_test', 'function', 1, 20)"
+    )
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 2, ?, 'function', ?, ?)",
+            (10 + i, f"model_fn_{i}", i * 10, i * 10 + 5),
+        )
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, ?, 'call')", (10 + i,))
     conn.commit()
 
 
@@ -415,6 +492,7 @@ class TestGodClass:
 
 class TestFeatureEnvy:
     def test_detects_feature_envy(self, tmp_path):
+        # Genuine envy: external refs concentrated on ONE foreign file.
         conn = _make_db(tmp_path)
         _populate_feature_envy(conn)
         results = detect_feature_envy(conn)
@@ -423,6 +501,32 @@ class TestFeatureEnvy:
         assert results[0]["severity"] == "warning"
         # 5 out of 6 refs are external = 83%
         assert results[0]["metric_value"] > 50
+        conn.close()
+
+    def test_skips_orchestrator_named_functions(self, tmp_path):
+        # W1280: a `_build_*` assembler with envy-shaped edges is by-design
+        # cross-file breadth, not envy — the name-pattern skip must drop it.
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_orchestrator(conn)
+        results = detect_feature_envy(conn)
+        assert results == [], f"orchestrator should not fire, got {results}"
+        conn.close()
+
+    def test_skips_refs_spread_across_many_files(self, tmp_path):
+        # W1280: refs spread evenly across 6 files (no dominant foreign file)
+        # is orchestration; the concentration gate must reject it.
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_spread(conn)
+        results = detect_feature_envy(conn)
+        assert results == [], f"spread refs should not fire, got {results}"
+        conn.close()
+
+    def test_skips_test_role_files(self, tmp_path):
+        # W1280: envy-shaped edges inside a tests/ file must be skipped.
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_test_file(conn)
+        results = detect_feature_envy(conn)
+        assert results == [], f"test-file fn should not fire, got {results}"
         conn.close()
 
 

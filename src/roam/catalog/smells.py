@@ -40,6 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from roam.catalog._shared import find_workspace_root as _find_workspace_root
+from roam.catalog._shared import is_test_path as _is_test_path
 from roam.catalog._shared import loc as _loc
 from roam.catalog._shared import make_smell_finding as _finding
 from roam.catalog.clones_cross_layer import detect_cross_layer_clones
@@ -350,9 +351,44 @@ def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
 # Tier: structural — walks the call-graph edges of each function and checks
 # the cross-file ratio. The signal is graph topology (target file_ids vs
 # source file_id), not name pattern, so the tier is structural.
+#
+# W1280 FP-reduction ((internal memo)): the pre-W1280
+# detector was a pure cross-FILE outbound-edge-ratio heuristic. A 24-sample
+# measured ~88% FP / 0% true-positive — 76% of hits were in tests/ and 82%
+# of the src hits were Click command modules / emit_/build_/collect_/_section_
+# orchestrators that NECESSARILY reference many modules. Two tunings (the
+# memo's preferred (1)+(2)) restore the classic feature-envy signal
+# (a method using ONE foreign unit's members more than its own):
+#   (1) skip test-role files + orchestrator/assembler-named functions, and
+#   (2) require the external refs to be CONCENTRATED on a single foreign
+#       file (true envy) rather than spread across many (orchestration).
+# The min-edges floor (4) and external ratio (0.5) are intentionally left
+# unchanged — that was the memo's lowest-priority option (3), not preferred.
+
+# Functions whose external-ref breadth is structural, not envy: assemblers
+# and orchestrators reference many modules by design. Matches a leading
+# (optional ``_``) assembler verb prefix OR a ``_findings`` suffix OR a
+# ``test_`` prefix (defence-in-depth alongside the file-role test skip).
+_FEATURE_ENVY_ORCHESTRATOR_RE = re.compile(
+    r"^(?:_?(?:emit|build|render|collect|assemble|section)_|test_|_section_)|_findings$"
+)
+# Of an envy candidate's external refs, the single most-referenced foreign
+# file must carry at least this share. A function spreading its external
+# refs across many files (max_single/external below this) is orchestration,
+# not envy; one that hammers a single foreign file's members IS envy.
+_FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE = 0.5
+
+
 @detector("feature-envy", confidence=CONFIDENCE_STRUCTURAL)
 def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
-    """Functions where > 50% of edge targets are in other files (min 4 refs)."""
+    """Functions whose external refs are concentrated on ONE foreign file.
+
+    Fires when > 50% of a function's >=4 outbound edges target other files
+    AND those external refs are dominated by a single foreign file (true
+    feature envy). Skips test-role files and orchestrator/assembler-named
+    functions (emit_/build_/render_/collect_/assemble_/section_/_findings),
+    whose cross-file breadth is by-design coupling, not envy (W1280).
+    """
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.file_id, "
         "f.path as file_path "
@@ -362,6 +398,11 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     ).fetchall()
     results = []
     for r in rows:
+        # (1) Skip test-role files + orchestrator/assembler-named functions.
+        if _is_test_path(r["file_path"]):
+            continue
+        if _FEATURE_ENVY_ORCHESTRATOR_RE.search(r["name"] or ""):
+            continue
         edges = conn.execute(
             "SELECT e.target_id, t.file_id as target_file_id "
             "FROM edges e "
@@ -374,20 +415,29 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
             continue
         external = sum(1 for e in edges if e["target_file_id"] != r["file_id"])
         ratio = external / total
-        if ratio > 0.5:
-            loc_str = _loc(r["file_path"], r["line_start"])
-            results.append(
-                _finding(
-                    "feature-envy",
-                    "warning",
-                    r["name"],
-                    r["kind"],
-                    loc_str,
-                    round(ratio * 100, 1),
-                    50,
-                    f"Feature envy: {external}/{total} refs ({ratio:.0%}) to other files",
-                )
+        if ratio <= 0.5:
+            continue
+        # (2) Concentration gate: the external refs must be dominated by one
+        # foreign file. Spread-across-many-files is orchestration, not envy.
+        foreign_counts = Counter(e["target_file_id"] for e in edges if e["target_file_id"] != r["file_id"])
+        max_foreign = max(foreign_counts.values())
+        dominant_share = max_foreign / external
+        if dominant_share < _FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE:
+            continue
+        loc_str = _loc(r["file_path"], r["line_start"])
+        results.append(
+            _finding(
+                "feature-envy",
+                "warning",
+                r["name"],
+                r["kind"],
+                loc_str,
+                round(ratio * 100, 1),
+                50,
+                f"Feature envy: {external}/{total} refs ({ratio:.0%}) external, "
+                f"{max_foreign} to one foreign file ({dominant_share:.0%} of external)",
             )
+        )
     return results
 
 
