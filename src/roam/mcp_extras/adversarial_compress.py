@@ -42,16 +42,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from roam.output._severity import severity_rank
+
 # Closed enum for the compression intent. The serial follow-up surfaces
 # this as the MCP ``compress_mode`` parameter.
 DEFEND = "defend"
 DIGEST = "digest"
 _MODES = frozenset({DEFEND, DIGEST})
-
-# Highest-severity-first ordering. Mirrors the upper 4-tier vocabulary the
-# adversarial detectors actually EMIT (cmd_adversarial.py emits only
-# CRITICAL / HIGH / WARNING / INFO). Unknown tokens sort last.
-_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "WARNING": 2, "INFO": 3}
 
 _DEFAULT_MAX_CHALLENGES = 12
 
@@ -93,8 +90,13 @@ def _challenges_of(envelope: Any) -> list[dict]:
 
 
 def _severity_key(challenge: dict) -> int:
-    sev = str(challenge.get("severity", "")).upper()
-    return _SEVERITY_ORDER.get(sev, len(_SEVERITY_ORDER))
+    # Delegate ORDER to the canonical rank (W564: no inline severity-rank
+    # tables). ``severity_rank`` is higher=worse (critical=5 ... info=0;
+    # unknown/None collapse to -1), so negate it to sort highest-severity
+    # FIRST under ascending ``sorted``. The adversarial 4-tier vocabulary
+    # (CRITICAL/HIGH/WARNING/INFO) maps onto the canonical rank unchanged,
+    # and unknown tokens (-1 -> +1) still sort last, after info (0).
+    return -severity_rank(challenge.get("severity"))
 
 
 def _sorted_challenges(challenges: list[dict], max_challenges: int) -> list[dict]:
