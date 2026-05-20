@@ -60,6 +60,28 @@ assert {"ok", "tampered"} <= RECEIPT_INTEGRITY_STATES, (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_mcp_module_state():
+    """Reset the module-level error-storm counter before AND after each test.
+
+    ``_structured_error`` keeps a process-wide ``_ERROR_STORM_STATE`` that
+    trims envelope fields (including ``summary``) after the 3rd consecutive
+    same-code error. Several MODE_BLOCKED denials in this file — and in
+    sibling files like ``test_w_mcp_mode_enforcement.py`` / ``test_w_mcp_shadow_mode.py``
+    — share the ``MODE_BLOCKED`` code. Under ``pytest -n auto`` an xdist
+    worker that already saw ≥3 ``MODE_BLOCKED`` errors trims this test's
+    deny envelope, dropping the ``summary`` key and breaking the
+    ``result["summary"]["state"] == "mode_blocked"`` assertion (the
+    3.10/3.11/3.13-only CI flake). Standard pattern across the suite — see
+    ``tests/test_w_mcp_shadow_mode.py`` and ``tests/test_mcp_server.py``.
+    """
+    from roam.mcp_server import _reset_error_storm
+
+    _reset_error_storm()
+    yield
+    _reset_error_storm()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
