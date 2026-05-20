@@ -42,6 +42,7 @@ _EXPECTED_FAST_GUARDS = frozenset(
         "test_law4_anchor_counts.py",
         "test_w588_fragile_path_drift.py",
         "test_w662_bare_except_drift.py",
+        "test_optional_imports_guarded.py",
         "test_findings_detector_count_drift.py",
         "test_detector_registry.py",
         "test_w444_mcp_tool_names_no_dedupe.py",

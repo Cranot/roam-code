@@ -20,8 +20,8 @@ Composition (does NOT duplicate existing hooks):
 - ``.githooks/commit-msg`` + ``.pre-commit-config.yaml`` (Wave59) already
   reject ``Co-Authored-By`` trailers (Cranot-only policy).
 This gate's unique value-add is the **structural-lint pytest bundle**
-(W547/W564 severity-rank, LAW-4, fragile-path, bare-except, detector-count,
-card-hash, compound-recipe) that NO existing hook runs. The ruff + 3 count
+(W547/W564 severity-rank, LAW-4, fragile-path, bare-except, optional-imports,
+detector-count, card-hash, compound-recipe) that NO existing hook runs. The ruff + 3 count
 scripts are re-run here as a cheap (~2s) backstop for ``--no-verify``
 commit-time bypasses.
 
@@ -109,6 +109,7 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     "test_law4_anchor_counts.py",
     "test_w588_fragile_path_drift.py",
     "test_w662_bare_except_drift.py",
+    "test_optional_imports_guarded.py",
     "test_findings_detector_count_drift.py",
     "test_detector_registry.py",
     "test_w444_mcp_tool_names_no_dedupe.py",
