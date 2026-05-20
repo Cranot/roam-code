@@ -213,6 +213,60 @@ def test_db_phase_failure_marker(cli_runner, health_project, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# (2b) Algebraic-connectivity honesty: null export + availability flag when
+#      the numpy+scipy substrate is missing (the real production case). The
+#      pre-fix bug exported a fabricated 0.0 indistinguishable from a
+#      legitimate disconnected-graph reading; a JSON consumer couldn't tell.
+# ---------------------------------------------------------------------------
+
+
+def test_algebraic_connectivity_unavailable_exports_null(cli_runner, health_project, monkeypatch):
+    """When ``algebraic_connectivity`` raises (no numpy/scipy), the JSON
+    export must be ``null`` with ``algebraic_connectivity_available: false``
+    — NOT a fake 0.0 — at both the summary and top-level sites."""
+    from roam.commands import cmd_health
+
+    def _boom_fiedler(G):
+        raise ModuleNotFoundError("No module named 'scipy'")
+
+    monkeypatch.setattr(cmd_health, "algebraic_connectivity", _boom_fiedler)
+
+    result = _invoke_health(cli_runner, health_project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+
+    summary = data.get("summary") or {}
+    assert summary.get("algebraic_connectivity") is None, (
+        f"missing-substrate must export null, not a fake 0.0; got {summary.get('algebraic_connectivity')!r}"
+    )
+    assert summary.get("algebraic_connectivity_available") is False, summary
+    # Top-level mirror must agree.
+    assert data.get("algebraic_connectivity") is None, data.get("algebraic_connectivity")
+    assert data.get("algebraic_connectivity_available") is False
+    # And the failure is still disclosed in warnings_out (loud lineage).
+    top_wo = data.get("warnings_out") or []
+    assert any(m.startswith("health_algebraic_connectivity_failed:") for m in top_wo), top_wo
+
+
+def test_algebraic_connectivity_available_exports_value(cli_runner, health_project, monkeypatch):
+    """When the Fiedler value computes, it is exported verbatim with
+    ``algebraic_connectivity_available: true`` (no false n/a)."""
+    from roam.commands import cmd_health
+
+    monkeypatch.setattr(cmd_health, "algebraic_connectivity", lambda G: 0.0916)
+
+    result = _invoke_health(cli_runner, health_project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+
+    summary = data.get("summary") or {}
+    assert summary.get("algebraic_connectivity") == 0.0916, summary
+    assert summary.get("algebraic_connectivity_available") is True, summary
+    assert data.get("algebraic_connectivity") == 0.0916
+    assert data.get("algebraic_connectivity_available") is True
+
+
+# ---------------------------------------------------------------------------
 # (3) Helper consumption failure disclosed (substrate helper raises)
 # ---------------------------------------------------------------------------
 

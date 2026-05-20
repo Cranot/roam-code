@@ -1704,11 +1704,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # --- Algebraic Connectivity (Fiedler 1973) ---
         # Second-smallest Laplacian eigenvalue; low = fragile architecture
         # W607-M: per-phase substrate guard for algebraic_connectivity.
+        # fiedler_failed distinguishes "couldn't compute" (missing numpy/scipy
+        # substrate) from a legitimate 0.0 reading (genuinely disconnected
+        # graph), so the display can show n/a instead of a misleading 0.0000.
+        fiedler_failed = False
         try:
             fiedler = algebraic_connectivity(G)
         except Exception as exc:
             _w607m_warnings_out.append(f"health_algebraic_connectivity_failed:{type(exc).__name__}:{exc}")
             fiedler = 0.0
+            fiedler_failed = True
 
         # --- Composite health score (0-100) ---
         # Weighted geometric mean: score = 100 * product(h_i ^ w_i)
@@ -2227,7 +2232,15 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     "health_score": health_score,
                     "tangle_ratio": tangle_ratio,
                     "propagation_cost": prop_cost,
-                    "algebraic_connectivity": fiedler,
+                    # W607-M honesty: export null (not a fake 0.0 sentinel) when the
+                    # numpy+scipy substrate is missing, with a companion availability
+                    # flag so a programmatic consumer can tell "couldn't compute"
+                    # apart from a legitimate 0.0 disconnected-graph reading. The text
+                    # display already shows "n/a (requires numpy+scipy)" via
+                    # fiedler_failed; this makes the JSON export equally honest. The
+                    # MCP output schema already declares this field number|null.
+                    "algebraic_connectivity": (None if fiedler_failed else fiedler),
+                    "algebraic_connectivity_available": not fiedler_failed,
                     "issue_count": j_issue_count,
                     "severity": sev_counts,
                     "category_severity": {
@@ -2257,7 +2270,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 health_score=health_score,
                 tangle_ratio=tangle_ratio,
                 propagation_cost=prop_cost,
-                algebraic_connectivity=fiedler,
+                algebraic_connectivity=(None if fiedler_failed else fiedler),
+                algebraic_connectivity_available=not fiedler_failed,
                 issue_count=j_issue_count,
                 severity=sev_counts,
                 category_severity={
@@ -2388,7 +2402,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             f"Health Score: {health_score}/100  |  "
             f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)"
         )
-        click.echo(f"Propagation Cost: {prop_cost:.1%}  |  Algebraic Connectivity: {fiedler:.4f}")
+        _ac_str = "n/a (requires numpy+scipy)" if fiedler_failed else f"{fiedler:.4f}"
+        click.echo(f"Propagation Cost: {prop_cost:.1%}  |  Algebraic Connectivity: {_ac_str}")
         if coverage_import.get("coverable_lines", 0) > 0:
             click.echo(
                 f"Imported Coverage: {coverage_import['coverage_pct']}% "

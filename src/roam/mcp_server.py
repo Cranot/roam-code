@@ -808,6 +808,9 @@ _SCHEMA_HEALTH = {
                 "tangle_ratio_definition": {"type": "string"},
                 "propagation_cost": {"type": ["number", "null"]},
                 "algebraic_connectivity": {"type": ["number", "null"]},
+                # null when numpy+scipy substrate missing; the flag disambiguates
+                # "couldn't compute" from a legitimate 0.0 disconnected reading.
+                "algebraic_connectivity_available": {"type": "boolean"},
                 "issue_count": {"type": "integer", "minimum": 0},
                 "severity": {"type": "object"},
                 "category_severity": {"type": "object"},
@@ -844,6 +847,7 @@ _SCHEMA_HEALTH = {
         "tangle_ratio": {"type": ["number", "null"]},
         "propagation_cost": {"type": ["number", "null"]},
         "algebraic_connectivity": {"type": ["number", "null"]},
+        "algebraic_connectivity_available": {"type": "boolean"},
         "issue_count": {"type": "integer", "minimum": 0},
         "severity": {"type": "object"},
         "category_severity": {"type": "object"},
