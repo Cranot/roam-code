@@ -16,6 +16,11 @@ Current modules:
 - ``god_components`` — Canonical god-component count (degree-thresholded,
   utility-aware). Owned-by: ``cmd_health``'s algorithm. Consumed by:
   ``roam health``, ``roam fingerprint``, ``roam agent-export``.
+- ``health_band`` — Canonical health-score band -> verdict label
+  (>=80 Healthy / >=60 Fair / >=40 Needs attention / <40 Unhealthy).
+  Owned-by: ``cmd_health``'s ``_compose_verdict`` thresholds. Consumed by:
+  ``roam health``, ``roam understand`` (so one score never maps to two
+  different verdict labels — Pattern 3a / LAW 6).
 - ``public_symbols`` — Canonical public-symbol counts under both
   inclusion criteria (``no_underscore_prefix`` and
   ``has_export_marker``). Owned-by: this module (the chasm is real, not

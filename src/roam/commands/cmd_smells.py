@@ -47,7 +47,12 @@ from roam.output.formatter import (
 # 1.4.0 -> 1.5.0 (W1280): detect_feature_envy predicate tightened
 # (test/orchestrator exclusion + single-dominant-foreign-file
 # concentration gate). Far fewer rows; claim shape narrowed.
-SMELLS_DETECTOR_VERSION: str = "1.5.0"
+# 1.5.0 -> 1.6.0 (W1287): detect_shotgun_surgery re-implemented from a pure
+# in_degree>7 predicate (~100% FP — measured inbound-popularity, the wrong
+# axis) onto a conservative distinct-non-test-caller-FILE scatter metric
+# (>=12 caller files; Fowler's file-scatter axis). Predicate + claim shape
+# changed; ~1472 -> ~27 rows on roam-code.
+SMELLS_DETECTOR_VERSION: str = "1.6.0"
 
 # W370c: per-smell-kind version stamps for the 2 detectors landing in this
 # wave. The composite SMELLS_DETECTOR_VERSION bumps 1.0.0 -> 1.1.0 to mark
@@ -82,6 +87,12 @@ COMMENT_DENSITY_DETECTOR_VERSION: str = "1.0.0"
 # mirroring the dangerous-eval 1.1.0 precedent. Same call-site discipline.
 FEATURE_ENVY_DETECTOR_VERSION: str = "1.1.0"
 
+# W1287: shotgun-surgery re-implemented from in_degree>7 (inbound popularity,
+# ~100% FP, the wrong axis) onto a conservative distinct-non-test-caller-FILE
+# scatter metric (Fowler's file-scatter axis). Predicate + metric semantics
+# changed -> bump 1.0.0 -> 1.1.0. Same call-site discipline as W1280.
+SHOTGUN_SURGERY_DETECTOR_VERSION: str = "1.1.0"
+
 
 # W1269 (sibling of W1256): lookup table consumed by
 # ``_emit_smells_findings`` so each finding row stamps its smell kind's own
@@ -99,6 +110,7 @@ _SMELL_KIND_TO_VERSION: dict[str, str] = {
     "temporal-coupling": TEMPORAL_COUPLING_DETECTOR_VERSION,
     "comment-density": COMMENT_DENSITY_DETECTOR_VERSION,
     "feature-envy": FEATURE_ENVY_DETECTOR_VERSION,
+    "shotgun-surgery": SHOTGUN_SURGERY_DETECTOR_VERSION,
 }
 
 

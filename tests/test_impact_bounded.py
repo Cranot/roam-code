@@ -77,6 +77,37 @@ def high_fan_in_project(tmp_path):
 
 
 @pytest.fixture
+def over_cap_project(tmp_path):
+    """Project with one hub called by 120 distinct callers (> the default
+    --max-callers 100 cap).
+
+    Used by the W335/W342 Pattern-3a parity test: with > 100 callers the
+    default-cap impact run truncates the DISPLAYED list but must report the
+    same uncapped total as preflight's blast-radius gate.
+    """
+    proj = tmp_path / "over_cap"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    src = proj / "src"
+    src.mkdir()
+
+    (src / "hub.py").write_text("def hub():\n    return 42\n")
+
+    callers_dir = src / "callers"
+    callers_dir.mkdir()
+    (callers_dir / "__init__.py").write_text("")
+    for i in range(120):
+        (callers_dir / f"caller_{i:03d}.py").write_text(
+            f"from hub import hub\n\ndef caller_{i:03d}():\n    return hub()\n"
+        )
+
+    git_init(proj)
+    out, rc = index_in_process(proj)
+    assert rc == 0, f"index failed:\n{out}"
+    return proj
+
+
+@pytest.fixture
 def deep_chain_project(tmp_path):
     """Project with a 5-level call chain: f0 <- f1 <- f2 <- f3 <- f4 <- f5.
 
@@ -122,8 +153,12 @@ def deep_chain_project(tmp_path):
 
 
 def test_impact_respects_max_callers(cli_runner, high_fan_in_project, monkeypatch):
-    """With 100 callers, ``--max-callers 10`` returns at most 10 dependents
-    and flags truncation.
+    """With 100 callers, ``--max-callers 10`` caps the DISPLAYED list at 10
+    but reports the HONEST uncapped total and flags truncation.
+
+    W335/W342 Pattern-3a — the cap is now a DISPLAY cap only. ``displayed``
+    holds the bounded subset (<=10); ``affected_symbols`` / ``total`` hold the
+    true uncapped count (100) so impact agrees with preflight's blast gate.
     """
     monkeypatch.chdir(high_fan_in_project)
     result = invoke_cli(
@@ -135,10 +170,17 @@ def test_impact_respects_max_callers(cli_runner, high_fan_in_project, monkeypatc
     data = parse_json_output(result, "impact")
     summary = data["summary"]
 
-    # The cap is on dependents (BFS frontier nodes). 10 must hold.
-    assert summary["affected_symbols"] <= 10, (
-        f"Expected <=10 affected symbols under --max-callers 10, got {summary['affected_symbols']}"
+    # The DISPLAY cap is on listed dependents (BFS frontier nodes). 10 holds.
+    assert summary["displayed"] <= 10, (
+        f"Expected <=10 DISPLAYED symbols under --max-callers 10, got {summary['displayed']}"
     )
+    # W335/W342 — the reported COUNT is the honest uncapped total (100 callers).
+    assert summary["affected_symbols"] == 100, (
+        f"Expected honest uncapped total of 100 affected symbols, got {summary['affected_symbols']}"
+    )
+    assert summary["affected_symbols_total"] == 100
+    assert summary["total"] == 100
+    assert summary["cap_applied"] is True
     # Truncation flags must fire — there are 100 real callers, far more
     # than the cap.
     assert summary["truncated"] is True
@@ -148,8 +190,14 @@ def test_impact_respects_max_callers(cli_runner, high_fan_in_project, monkeypatc
 
 
 def test_impact_depth_limit(cli_runner, deep_chain_project, monkeypatch):
-    """With a 5-deep chain anchored on ``f0``, ``--depth 2`` returns only
-    the callers reachable within 2 reverse hops.
+    """With a 5-deep chain anchored on ``f0``, ``--depth 2`` limits the
+    DISPLAYED traversal to callers reachable within 2 reverse hops.
+
+    W335/W342 Pattern-3a — ``--depth`` is a traversal/display cap, so the
+    bounded run's ``displayed`` count drops, while ``affected_symbols`` /
+    ``total`` stay the honest uncapped reach (== preflight's gate). This
+    test now checks the DISPLAYED count for the cap behavior and asserts the
+    reported total is depth-independent.
     """
     monkeypatch.chdir(deep_chain_project)
     # Unbounded baseline first — at most 5 dependents (f1..f5).
@@ -162,9 +210,9 @@ def test_impact_depth_limit(cli_runner, deep_chain_project, monkeypatch):
     full_data = parse_json_output(full_result, "impact")
     full_count = full_data["summary"]["affected_symbols"]
 
-    # Now bounded at depth 2 — should be strictly less than full reach
-    # (assuming the chain extracts > 2 levels of callers, which is
-    # the whole point of the deep-chain fixture).
+    # Now bounded at depth 2 — the DISPLAYED subset should be strictly less
+    # than full reach (assuming the chain extracts > 2 levels of callers,
+    # which is the whole point of the deep-chain fixture).
     bounded_result = invoke_cli(
         cli_runner,
         ["impact", "f0", "--depth", "2", "--max-callers", "0"],
@@ -172,16 +220,25 @@ def test_impact_depth_limit(cli_runner, deep_chain_project, monkeypatch):
         json_mode=True,
     )
     bounded_data = parse_json_output(bounded_result, "impact")
-    bounded_count = bounded_data["summary"]["affected_symbols"]
+    bounded_summary = bounded_data["summary"]
+    bounded_displayed = bounded_summary["displayed"]
 
     # Sanity: full reach should be > 2 for the fixture to exercise depth.
     assert full_count >= 3, (
         f"Fixture should produce >=3 reverse-graph dependents at f0; "
         f"got {full_count}. Adjust the fixture if the parser changed."
     )
-    # Bounded reach must respect depth=2 — at most 2 hops of dependents.
-    assert bounded_count <= 2, f"Expected <=2 dependents at --depth 2, got {bounded_count}"
-    assert bounded_count < full_count
+    # Bounded DISPLAY must respect depth=2 — at most 2 hops of dependents.
+    assert bounded_displayed <= 2, f"Expected <=2 DISPLAYED dependents at --depth 2, got {bounded_displayed}"
+    assert bounded_displayed < full_count
+    # W335/W342 — the reported total is HONEST + depth-independent: the
+    # depth-2 run still reports the full uncapped reach, and discloses the cap.
+    assert bounded_summary["affected_symbols"] == full_count, (
+        f"Reported total must be depth-independent (honest uncapped reach); "
+        f"got {bounded_summary['affected_symbols']} vs full {full_count}"
+    )
+    assert bounded_summary["cap_applied"] is True
+    assert bounded_summary["total"] == full_count
 
 
 def test_weighted_impact_not_truncated_to_zero_on_real_data(cli_runner, high_fan_in_project, monkeypatch):
@@ -264,8 +321,80 @@ def test_impact_truncation_flag(cli_runner, high_fan_in_project, monkeypatch):
     # Top-level mirrors (envelope-level consumers also see truncation).
     assert data.get("truncated") is True
     assert data.get("partial_success") is True
-    # Verdict must name a concrete limit for the agent to act on.
-    assert "partial" in summary["verdict"].lower()
+    # W335/W342 — verdict reports the honest total AND discloses the display
+    # cap ("listing N of TOTAL ... raise --max-callers"). Concrete + imperative.
+    _v = summary["verdict"].lower()
+    assert "listing" in _v and "max-callers" in _v, (
+        f"Verdict must disclose the display cap loudly; got {summary['verdict']!r}"
+    )
     # ``limits`` block must echo what was applied.
     assert "limits" in summary
     assert summary["limits"]["max_callers"] == 5
+
+
+def test_impact_total_agrees_with_preflight_over_cap(cli_runner, over_cap_project, monkeypatch):
+    """W335/W342 Pattern-3a — impact's emitted TOTAL must equal preflight's
+    blast-radius affected count even when the display cap fires.
+
+    With 120 callers (> the default --max-callers 100) the DISPLAYED list is
+    capped, but the reported COUNT must agree with preflight so the two
+    change-safety commands never silently contradict each other. Also asserts
+    the loud-truncation sentinels (cap_applied + displayed + total) and the
+    affected_metric_definition sidecar are present when the cap applies.
+    """
+    monkeypatch.chdir(over_cap_project)
+
+    # impact with the DEFAULT cap (--max-callers 100) — must truncate display.
+    imp_result = invoke_cli(
+        cli_runner,
+        # depth must reach the callers (1 hop) — default depth 3 is fine, but
+        # be explicit so the fixture's intent is locked.
+        ["impact", "hub", "--depth", "10"],
+        cwd=over_cap_project,
+        json_mode=True,
+    )
+    imp = parse_json_output(imp_result, "impact")
+    imp_summary = imp["summary"]
+
+    # preflight on the same symbol — uncapped blast-radius gate.
+    pf_result = invoke_cli(
+        cli_runner,
+        ["preflight", "hub"],
+        cwd=over_cap_project,
+        json_mode=True,
+    )
+    pf = parse_json_output(pf_result, "preflight")
+    pf_blast = (pf.get("checks") or {}).get("blast_radius") or pf.get("blast_radius") or {}
+
+    # --- The core parity assertion: impact total == preflight affected count.
+    assert imp_summary["affected_symbols"] == pf_blast["affected_symbols"], (
+        f"impact total ({imp_summary['affected_symbols']}) must equal preflight "
+        f"affected_symbols ({pf_blast['affected_symbols']}) — Pattern-3a divergence"
+    )
+    assert imp_summary["affected_files"] == pf_blast["affected_files"], (
+        f"impact total files ({imp_summary['affected_files']}) must equal preflight "
+        f"affected_files ({pf_blast['affected_files']})"
+    )
+    # The 120 callers must actually exceed the cap so this test exercises it.
+    assert imp_summary["affected_symbols"] >= 120, (
+        f"Fixture should produce >=120 dependents; got {imp_summary['affected_symbols']}"
+    )
+
+    # --- Loud truncation sentinels (Pattern-1 variant-D lineage disclosure).
+    assert imp_summary["cap_applied"] is True
+    assert imp_summary["displayed"] == 100, (
+        f"Default --max-callers 100 must cap the displayed list at 100, got {imp_summary['displayed']}"
+    )
+    assert imp_summary["total"] == imp_summary["affected_symbols"]
+    assert imp_summary["affected_symbols_total"] == imp_summary["affected_symbols"]
+    assert imp_summary["affected_files_total"] == imp_summary["affected_files"]
+
+    # --- Pattern-3a definition sidecar present + matches the shared constant.
+    from roam.output.metric_definitions import BLAST_RADIUS_AFFECTED_TOTAL
+
+    assert imp_summary.get("affected_metric_definition") == BLAST_RADIUS_AFFECTED_TOTAL, (
+        "affected_metric_definition sidecar must name the shared uncapped computation"
+    )
+    # Top-level mirror present too.
+    assert imp["affected_symbols"] == imp_summary["affected_symbols"]
+    assert imp.get("affected_metric_definition") == BLAST_RADIUS_AFFECTED_TOTAL

@@ -61,7 +61,7 @@ def _make_db(tmp_path: Path) -> sqlite3.Connection:
             signature TEXT, line_start INTEGER, line_end INTEGER,
             docstring TEXT, visibility TEXT DEFAULT 'public',
             is_exported INTEGER DEFAULT 1, parent_id INTEGER,
-            default_value TEXT,
+            default_value TEXT, decorators TEXT DEFAULT '',
             FOREIGN KEY(file_id) REFERENCES files(id)
         );
         CREATE TABLE IF NOT EXISTS edges (
@@ -167,14 +167,41 @@ def _populate_long_params(conn):
     conn.commit()
 
 
-def _populate_shotgun_surgery(conn):
-    """Insert a symbol with high in_degree."""
-    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
+def _populate_shotgun_surgery(conn, *, symbol_name="hub_fn", n_caller_files=14, file_start=1):
+    """Insert a symbol referenced from many DISTINCT non-test files (W1287).
+
+    Genuine shotgun surgery: ``symbol_name`` lives in ``src/core.py`` and is
+    referenced (incoming call edges) from ``n_caller_files`` separate
+    non-test source files — so changing it ripples across all of them. The
+    target file id is ``file_start`` and the caller files are the next
+    ``n_caller_files`` ids. The detector fires when the distinct caller-file
+    count >= ``_SHOTGUN_MIN_CALLER_FILES`` (12).
+    """
+    target_file_id = file_start
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-        "VALUES (1, 1, 'helper_fn', 'function', 1, 10)"
+        "INSERT INTO files (id, path) VALUES (?, ?)",
+        (target_file_id, f"src/core_{file_start}.py"),
     )
-    conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)")
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, 'function', 1, 30)",
+        (target_file_id, target_file_id, symbol_name),
+    )
+    # One distinct caller FILE per incoming edge.
+    for i in range(n_caller_files):
+        cf_id = file_start + 1 + i
+        caller_sym_id = 1000 + file_start * 100 + i
+        conn.execute(
+            "INSERT INTO files (id, path) VALUES (?, ?)",
+            (cf_id, f"src/caller_{file_start}_{i}.py"),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, 'function', 1, 8)",
+            (caller_sym_id, cf_id, f"caller_{file_start}_{i}"),
+        )
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind, source_file_id) VALUES (?, ?, 'call', ?)",
+            (caller_sym_id, target_file_id, cf_id),
+        )
     conn.commit()
 
 
@@ -531,13 +558,90 @@ class TestFeatureEnvy:
 
 
 class TestShotgunSurgery:
-    def test_detects_shotgun_surgery(self, tmp_path):
+    """W1287: shotgun-surgery now fires on distinct-non-test-caller-FILE
+    scatter (Fowler's file-scatter axis), NOT raw in_degree popularity.
+    """
+
+    def test_detects_genuine_file_scatter(self, tmp_path):
+        """A symbol referenced from many DISTINCT non-test files fires."""
         conn = _make_db(tmp_path)
-        _populate_shotgun_surgery(conn)
+        _populate_shotgun_surgery(conn, symbol_name="hub_fn", n_caller_files=14)
         results = detect_shotgun_surgery(conn)
         assert len(results) == 1
         assert results[0]["smell_id"] == "shotgun-surgery"
-        assert results[0]["metric_value"] == 12
+        assert results[0]["symbol_name"] == "hub_fn"
+        # metric is the distinct-caller-FILE count, not in_degree.
+        assert results[0]["metric_value"] == 14
+        assert "distinct non-test files" in results[0]["description"]
+        conn.close()
+
+    def test_popular_but_concentrated_does_not_fire(self, tmp_path):
+        """A symbol called MANY times from only 1-2 files must NOT fire.
+
+        High raw reference count concentrated in few files is good
+        factoring (a fixture / single-source-of-truth helper), the
+        OPPOSITE of shotgun surgery. This is the pre-W1287 FP class.
+        """
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
+        conn.execute("INSERT INTO files (id, path) VALUES (2, 'src/big_caller.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, 'popular_helper', 'function', 1, 30)"
+        )
+        # 50 incoming edges, but all from a single file (id=2).
+        for i in range(50):
+            caller_id = 100 + i
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+                "VALUES (?, 2, ?, 'function', ?, ?)",
+                (caller_id, f"c_{i}", i * 5, i * 5 + 3),
+            )
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind, source_file_id) VALUES (?, 1, 'call', 2)",
+                (caller_id,),
+            )
+        conn.commit()
+        results = detect_shotgun_surgery(conn)
+        assert results == [], "concentrated-popularity symbol must NOT be flagged"
+        conn.close()
+
+    def test_test_role_target_does_not_fire(self, tmp_path):
+        """A symbol defined in a test-role file must NOT fire (conftest class)."""
+        conn = _make_db(tmp_path)
+        # Target lives in tests/ — must be excluded even with wide scatter.
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'tests/conftest.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, 'invoke_cli', 'function', 1, 30)"
+        )
+        for i in range(20):
+            cf_id = 2 + i
+            caller_id = 100 + i
+            conn.execute(
+                "INSERT INTO files (id, path) VALUES (?, ?)",
+                (cf_id, f"tests/test_mod_{i}.py"),
+            )
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+                "VALUES (?, ?, ?, 'function', 1, 8)",
+                (caller_id, cf_id, f"test_thing_{i}"),
+            )
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind, source_file_id) VALUES (?, 1, 'call', ?)",
+                (caller_id, cf_id),
+            )
+        conn.commit()
+        results = detect_shotgun_surgery(conn)
+        assert results == [], "test-role target must NOT be flagged"
+        conn.close()
+
+    def test_caller_files_below_threshold_does_not_fire(self, tmp_path):
+        """Scatter below the conservative threshold (12) must NOT fire."""
+        conn = _make_db(tmp_path)
+        _populate_shotgun_surgery(conn, symbol_name="narrow_fn", n_caller_files=8)
+        results = detect_shotgun_surgery(conn)
+        assert results == [], "8 distinct caller files is below the 12 threshold"
         conn.close()
 
 
@@ -2503,13 +2607,8 @@ class TestRunAllDetectors:
             "VALUES (1, 1, 'mega_fn', 'function', 1, 200, '(a, b, c, d, e, f, g)')"
         )
         conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 80, 8)")
-        # Shotgun surgery target
-        conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (2, 1, 'helper', 'function', 210, 220)"
-        )
-        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (2, 15, 1)")
-        conn.commit()
+        # Shotgun surgery target (W1287: distinct-caller-FILE scatter, file ids 100+)
+        _populate_shotgun_surgery(conn, symbol_name="scattered_hub", n_caller_files=14, file_start=100)
         results = run_all_detectors(conn)
         smell_ids = [r["smell_id"] for r in results]
         assert "brain-method" in smell_ids
@@ -3116,16 +3215,14 @@ class TestSmellsSuppressCLI:
         (roam_dir / "smells.suppress.yml").write_text(body, encoding="utf-8")
 
     def _make_shotgun_project(self, tmp_path: Path, symbol_name: str = "hub_fn") -> Path:
-        """Create a project with one shotgun-surgery finding for *symbol_name*."""
+        """Create a project with one shotgun-surgery finding for *symbol_name*.
+
+        W1287: a genuine file-scatter target (referenced from 14 distinct
+        non-test files), not the retired in_degree popularity signal.
+        """
         _git_init(tmp_path)
         conn = _make_db(tmp_path)
-        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
-        conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (1, 1, ?, 'function', 1, 10)",
-            (symbol_name,),
-        )
-        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)")
-        conn.commit()
+        _populate_shotgun_surgery(conn, symbol_name=symbol_name, n_caller_files=14)
         conn.close()
         return tmp_path
 

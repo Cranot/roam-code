@@ -341,6 +341,21 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
         at_risk = _at_risk_symbols(conn, symbol, min_slope)
 
+        # W837 (Pattern 2 empty-corpus disclosure): forecast draws on three
+        # data layers — snapshot history (aggregate trends), per-symbol
+        # complexity/churn (at-risk ranking), and the current file graph
+        # (spectral block). On a freshly-indexed but symbol-less corpus all
+        # three are vacuous: zero snapshots, zero symbols, and a degenerate
+        # 2-node file graph that ``spectral_instability`` flags as
+        # ``is_failed`` (gap 0.0 < failure band) — producing a verdict that
+        # reads like a real "failure band" finding. That is a silent
+        # Pattern-2 success: an agent reading ``partial_success`` saw a clean
+        # run when there was nothing to forecast. Probe ``symbols`` directly
+        # so we distinguish "no data to forecast on" (empty corpus) from a
+        # real repo that simply lacks >= 3 snapshots yet (legitimate
+        # partial-history state the verdict already discloses honestly).
+        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
         # B8 (Option-B): one-shot spectral-instability block from the current
         # graph. Always computed (cheap) and carried in the envelope; --alert-only
         # gates its TEXT visibility, never the JSON payload.
@@ -349,6 +364,18 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
     # Summary counts
     metrics_trending = sum(1 for t in agg_trends if t["status"] in ("trending", "warning", "alert"))
     symbols_at_risk = len(at_risk)
+
+    # W837: empty-corpus disclosure. Zero symbols indexed means there is
+    # genuinely nothing to forecast — no per-symbol complexity/churn risk,
+    # and the file graph degenerates to disconnected nodes whose 0.0
+    # spectral gap ``spectral_instability`` flags as ``is_failed`` (an
+    # artefact, not a real architectural signal). ``roam index`` writes a
+    # snapshot row even for an empty corpus, so the snapshot count is NOT a
+    # reliable empty signal — gate purely on the symbol count. A repo WITH
+    # symbols but < 3 snapshots is NOT empty-corpus; its verdict
+    # ("insufficient snapshot history") is honest and keeps partial_success
+    # unset.
+    empty_corpus = symbol_count == 0
 
     # Build verdict
     parts = []
@@ -369,9 +396,19 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
     verdict = ", ".join(parts)
 
+    # W837: on an empty corpus, replace the misleading composite verdict with
+    # an explicit empty-state line that names the absent corpus (Pattern 2 /
+    # Pattern-1 variant D). The spectral "failure band" clause is suppressed
+    # because a degenerate 2-node graph carries no real forecast signal.
+    if empty_corpus:
+        verdict = (
+            "no data to forecast — corpus empty "
+            "(0 symbols indexed; run `roam index --force` over a populated "
+            "repo, then `roam health` over time to accrue history)"
+        )
     # B8: append a self-sufficient spectral clause so the combined verdict still
     # works standalone (LAW 6). Anchored on `nodes` (a concrete-noun terminal).
-    if spectral_degraded:
+    elif spectral_degraded:
         verdict += "; spectral gap unavailable (eigensolver missing)"
     elif spec_inst.is_failed:
         verdict += (
@@ -382,21 +419,28 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
     # --- JSON output ---
     if json_mode:
+        _summary: dict = {
+            "verdict": verdict,
+            "snapshots_available": n_snapshots,
+            "metrics_trending": metrics_trending,
+            "symbols_at_risk": symbols_at_risk,
+            # W1298 Pattern-3a: at_risk_symbols[*].cognitive_complexity
+            # is the raw symbol_metrics value — disclose the scorer.
+            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+            # B8 Pattern-3a: name the precise spectral decay-rate computation.
+            "topology_decay_rate_definition": _TOPOLOGY_DECAY_RATE_DEFINITION,
+        }
+        # W837: stamp the empty-corpus state so consumers reading
+        # ``summary.partial_success`` / ``summary.state`` can tell a vacuous
+        # forecast from a real one. Closed-enum state: ``no_data``.
+        if empty_corpus:
+            _summary["partial_success"] = True
+            _summary["state"] = "no_data"
         click.echo(
             to_json(
                 json_envelope(
                     "forecast",
-                    summary={
-                        "verdict": verdict,
-                        "snapshots_available": n_snapshots,
-                        "metrics_trending": metrics_trending,
-                        "symbols_at_risk": symbols_at_risk,
-                        # W1298 Pattern-3a: at_risk_symbols[*].cognitive_complexity
-                        # is the raw symbol_metrics value — disclose the scorer.
-                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-                        # B8 Pattern-3a: name the precise spectral decay-rate computation.
-                        "topology_decay_rate_definition": _TOPOLOGY_DECAY_RATE_DEFINITION,
-                    },
+                    summary=_summary,
                     # LAW 4 (W17.3): the auto-derive renders
                     # ``symbols_at_risk`` as "N symbols at risk findings"
                     # (terminal "risk" isn't a concrete plural). Pin a

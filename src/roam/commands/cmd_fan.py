@@ -9,6 +9,7 @@ import sqlite3
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.file_role_hints import is_excluded_path
@@ -250,6 +251,38 @@ def _filter_tooling_rows(rows):
     return [r for r in rows if not is_excluded_path(r["file_path"])]
 
 
+# F3 (DOGFOOD-CORE-2026-05-20, MED): test/prod role split mirrored from
+# ``cmd_uses``. Both commands now classify each subject's location via the
+# canonical ``is_test_file`` helper (``roam.commands.changed_files``) so the
+# two stay vocabulary-consistent (Pattern 3a: no new divergence). ``uses``
+# labels every consumer with ``scope`` and splits production_consumers /
+# test_consumers in its summary; ``fan`` does the same for its ranked items
+# (``scope`` field) and, additionally, drops test-role rows from the headline
+# ranking by default — without it the #1 fan-in on roam-code is the
+# ``invoke_cli`` conftest fixture (2438 refs), pure test noise that crowds out
+# real production coupling. ``--include-tests`` opts the rows back in. The
+# split is disclosed in the summary (test_items / test_filtered) so the drop
+# is loud, never silent (Pattern-1-variant-D / Pattern-2 lineage).
+def _row_scope(file_path) -> str:
+    """Classify one subject's file path as ``test`` or ``production``.
+
+    Same mechanism as ``cmd_uses._scope`` — delegates to the canonical
+    ``is_test_file`` helper so test-path detection is single-sourced.
+    """
+    return "test" if is_test_file(file_path) else "production"
+
+
+def _split_test_rows(rows, path_key: str):
+    """Partition ``rows`` into (production_rows, test_rows) by file path.
+
+    ``path_key`` is the row column carrying the file path (``file_path`` for
+    symbol-mode graph_metrics rows, ``path`` for file-mode rows).
+    """
+    production = [r for r in rows if _row_scope(r[path_key]) == "production"]
+    test = [r for r in rows if _row_scope(r[path_key]) == "test"]
+    return production, test
+
+
 _CROSS_FILE_HUB_THRESHOLD = 3
 
 
@@ -386,6 +419,18 @@ def _scope_flag(meta_entry, in_deg, out_deg):
     ),
 )
 @click.option(
+    "--include-tests",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include test-role symbols/files in the headline ranking. Excluded "
+        "by default — a conftest fixture (e.g. invoke_cli) routinely tops "
+        "fan-in and crowds out real production coupling. Test-role rows are "
+        "always classified (scope field) and disclosed in the summary "
+        "(test_items / test_filtered) whether shown or not."
+    ),
+)
+@click.option(
     "--persist",
     is_flag=True,
     default=False,
@@ -399,7 +444,7 @@ def _scope_flag(meta_entry, in_deg, out_deg):
     ),
 )
 @click.pass_context
-def fan(ctx, mode, count, no_framework, include_tooling, persist):
+def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist):
     """Show fan-in/fan-out: most connected symbols or files.
 
     Unlike ``coupling`` (which measures temporal co-change frequency), this
@@ -544,6 +589,16 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             if not include_tooling:
                 rows = _run_check("filter_tooling", _filter_tooling_rows, rows, default=rows) or []
             _after_tooling = len(rows)
+
+            # F3: split test-role rows out of the headline ranking by default.
+            # Mirror of cmd_uses' production/test scope split — both use the
+            # canonical is_test_file helper. Test-role count is disclosed in
+            # the summary (test_filtered) so the drop is loud, not silent.
+            _prod_rows, _test_rows = _split_test_rows(rows, "file_path")
+            _test_filtered = 0 if include_tests else len(_test_rows)
+            if not include_tests:
+                rows = _prod_rows
+            _after_tests = len(rows)
             rows = rows[:count]
 
             if no_framework:
@@ -574,6 +629,14 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                         "re-run with --include-tooling to see CI/dev/generated files)"
                     )
                     _empty_hint = "Re-run with `--include-tooling` to include CI/dev/generated files."
+                elif _after_tests == 0:
+                    # F3: all surviving rows were test-role and got filtered.
+                    _empty_state = "all_filtered_tests"
+                    _empty_verdict = (
+                        f"no production symbols ({_test_filtered} test-role rows filtered; "
+                        "re-run with --include-tests to see test fixtures)"
+                    )
+                    _empty_hint = "Re-run with `--include-tests` to include test-role symbols."
                 else:
                     _empty_state = "all_filtered_framework"
                     _empty_verdict = (
@@ -629,6 +692,12 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     "betweenness": round(r["betweenness"] or 0, 1),
                     "pagerank": round(r["pagerank"] or 0, 4),
                     "location": loc(r["file_path"], r["line_start"]),
+                    # F3: per-item test/prod role annotation (mirror of
+                    # cmd_uses' ``scope`` field). With the default headline
+                    # filter every shown row is "production"; under
+                    # --include-tests both scopes appear so consumers can
+                    # still filter client-side.
+                    "scope": _row_scope(r["file_path"]),
                     "fan_in_intra": scope_meta.get(r["id"], {}).get("fan_in_intra", 0),
                     "fan_in_inter": scope_meta.get(r["id"], {}).get("fan_in_inter", 0),
                     "fan_in_files": scope_meta.get(r["id"], {}).get("fan_in_files", 0),
@@ -816,6 +885,15 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     "mode": mode,
                     "items": len(rows),
                     "caller_metric_definition": "direct_in_degree",
+                    # F3: test/prod split disclosure (mirror of cmd_uses'
+                    # production_consumers / test_consumers). ``test_filtered``
+                    # names how many test-role rows the headline dropped so the
+                    # exclusion is loud, not silent (Pattern-1-D / Pattern-2).
+                    "test_split": True,
+                    "include_tests": include_tests,
+                    "production_items": sum(1 for it in symbol_items if it["scope"] == "production"),
+                    "test_items": sum(1 for it in symbol_items if it["scope"] == "test"),
+                    "test_filtered": _test_filtered,
                     # W607-CY (W607-DJ extension): surface score_classify
                     # result on the envelope so consumers can read the
                     # run state without re-deriving from the flag column.
@@ -913,6 +991,7 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                         bw_str,
                         pr_str,
                         flag,
+                        _row_scope(r["file_path"]),
                         loc(r["file_path"], r["line_start"]),
                     ]
                 )
@@ -924,6 +1003,13 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 f"top fan-out: {_top_out_r['name']}({_top_out_r['out_degree'] or 0})"
             )
             click.echo(f"VERDICT: {_verdict}\n")
+            # F3: name the test-role rows dropped from the headline so the
+            # split is visible in text mode too (loud lineage).
+            if not include_tests and _test_filtered:
+                click.echo(
+                    f"NOTE: {_test_filtered} test-role symbol(s) excluded from ranking; "
+                    "re-run with --include-tests to show them.\n"
+                )
             click.echo("=== Fan-in/Fan-out (symbol level) ===")
             click.echo(
                 format_table(
@@ -936,6 +1022,7 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                         "btwn",
                         "PR",
                         "flag",
+                        "scope",
                         "location",
                     ],
                     table_rows,
@@ -945,6 +1032,11 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
         else:  # file mode
 
             def _fetch_file_rows():
+                # F3: oversample so the headline still has ``count`` entries
+                # after test-role files are dropped (mirror of symbol mode's
+                # 5x tooling-filter headroom). When tests are included no
+                # filter runs, so the bare ``count`` limit is fine.
+                _file_limit = count * 5 if not include_tests else count
                 return conn.execute(
                     """
                     SELECT f.path,
@@ -958,12 +1050,36 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     ORDER BY fan_in + fan_out DESC
                     LIMIT ?
                 """,
-                    (count,),
+                    (_file_limit,),
                 ).fetchall()
 
             rows = _run_check("fetch_file_rows", _fetch_file_rows, default=[]) or []
 
+            # F3: split test-role files out of the headline ranking by default.
+            # Same canonical is_test_file mechanism as symbol mode + cmd_uses.
+            _file_prod_rows, _file_test_rows = _split_test_rows(rows, "path")
+            _file_test_filtered = 0 if include_tests else len(_file_test_rows)
+            if not include_tests:
+                rows = _file_prod_rows
+            rows = rows[:count]
+
             if not rows:
+                # F3: distinguish "all surviving files were test-role and
+                # got filtered" from a genuinely empty file_edges corpus, so
+                # the verdict/hint name the real cause (Pattern 2 lineage).
+                if not include_tests and _file_test_filtered:
+                    _file_empty_state = "all_filtered_tests"
+                    _file_empty_verdict = (
+                        f"no production files ({_file_test_filtered} test-role files filtered; "
+                        "re-run with --include-tests to see test files)"
+                    )
+                    _file_empty_hint = "Re-run with `--include-tests` to include test-role files."
+                else:
+                    _file_empty_state = "no_file_edges"
+                    _file_empty_verdict = (
+                        "no file edges available (corpus empty — run `roam index --force` to populate)"
+                    )
+                    _file_empty_hint = "Run `roam index` first."
                 if sarif_mode:
                     # W1209: SARIF output with empty results.
                     from roam.output.sarif import fan_to_sarif, write_sarif
@@ -981,19 +1097,21 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                                 "fan",
                                 budget=token_budget,
                                 summary={
-                                    "verdict": "no file edges available (corpus empty — run `roam index --force` to populate)",
+                                    "verdict": _file_empty_verdict,
                                     "mode": mode,
                                     "items": 0,
                                     "partial_success": True,
-                                    "state": "no_file_edges",
+                                    "state": _file_empty_state,
                                 },
                                 mode=mode,
                                 items=[],
+                                hint=_file_empty_hint,
                             )
                         )
                     )
                 else:
-                    click.echo("No file edges available. Run `roam index` first.")
+                    click.echo(_file_empty_verdict)
+                    click.echo(f"HINT: {_file_empty_hint}")
                 return
 
             def _file_flag(fan_in: int, fan_out: int) -> str:
@@ -1014,6 +1132,9 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     "fan_out": r["fan_out"],
                     "total": r["fan_in"] + r["fan_out"],
                     "flag": _file_flag(r["fan_in"], r["fan_out"]),
+                    # F3: per-item test/prod role annotation (mirror of
+                    # cmd_uses' ``scope`` field + symbol-mode above).
+                    "scope": _row_scope(r["path"]),
                 }
                 for r in rows
             ]
@@ -1172,6 +1293,14 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     "mode": mode,
                     "items": len(rows),
                     "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
+                    # F3: test/prod split disclosure (mirror of symbol mode +
+                    # cmd_uses). test_filtered names the dropped test-role
+                    # files so the headline exclusion stays loud.
+                    "test_split": True,
+                    "include_tests": include_tests,
+                    "production_items": sum(1 for it in file_items if it["scope"] == "production"),
+                    "test_items": sum(1 for it in file_items if it["scope"] == "test"),
+                    "test_filtered": _file_test_filtered,
                     # W607-CY (W607-DJ extension): surface score_classify
                     # result. Bare ``_score_dict["state"]`` lookup (floor
                     # dict guarantees the key) per W978 7th-discipline.
@@ -1237,6 +1366,7 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                         str(item["fan_out"]),
                         str(item["total"]),
                         item["flag"],
+                        item["scope"],
                     ]
                 )
 
@@ -1249,10 +1379,16 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 f"top fan-out: {_top_out_name}({_top_out_r['fan_out']})"
             )
             click.echo(f"VERDICT: {_verdict}\n")
+            # F3: name the test-role files dropped from the headline.
+            if not include_tests and _file_test_filtered:
+                click.echo(
+                    f"NOTE: {_file_test_filtered} test-role file(s) excluded from ranking; "
+                    "re-run with --include-tests to show them.\n"
+                )
             click.echo("=== Fan-in/Fan-out (file level) ===")
             click.echo(
                 format_table(
-                    ["path", "fan-in", "fan-out", "total", "flag"],
+                    ["path", "fan-in", "fan-out", "total", "flag", "scope"],
                     table_rows,
                 )
             )

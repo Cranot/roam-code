@@ -36,6 +36,20 @@ BLAST_RADIUS_AFFECTED_SYMBOLS = "transitive reverse-BFS over edges; bounded by -
 
 BLAST_RADIUS_AFFECTED_FILES = "distinct file_path values of every symbol reached by the reverse-BFS."
 
+# W335/W342 Pattern-3a — the UNCAPPED blast-radius metric shared by
+# cmd_impact's ``affected_symbols_total`` / ``affected_files_total`` and
+# cmd_preflight's ``_check_blast_radius`` (``nx.descendants`` over the
+# reverse graph). Both commands MUST report the same number for the same
+# target; this string names the exact computation so the parity is
+# provable and cannot drift. The capped display list (``--max-callers``)
+# is a presentation cap only — the total is always this full transitive
+# closure, matching preflight's gate so the two read identically when
+# used together for change-safety.
+BLAST_RADIUS_AFFECTED_TOTAL = (
+    "full transitive reverse-reachability (nx.descendants) over call+ref edges from the target,"
+    " excluding the target's own file; identical to preflight's blast-radius gate (uncapped)."
+)
+
 WEIGHTED_IMPACT_DEFINITION = (
     "sum of personalized PageRank (alpha=0.85) over the reverse-graph from the target, rounded to 6 decimals."
 )
@@ -157,6 +171,7 @@ ARTICLE_12_READINESS_DEFINITION = (
 ALL_DEFINITIONS: dict[str, str] = {
     "BLAST_RADIUS_AFFECTED_SYMBOLS": BLAST_RADIUS_AFFECTED_SYMBOLS,
     "BLAST_RADIUS_AFFECTED_FILES": BLAST_RADIUS_AFFECTED_FILES,
+    "BLAST_RADIUS_AFFECTED_TOTAL": BLAST_RADIUS_AFFECTED_TOTAL,
     "WEIGHTED_IMPACT_DEFINITION": WEIGHTED_IMPACT_DEFINITION,
     "REACH_PCT_DEFINITION": REACH_PCT_DEFINITION,
     "COGNITIVE_COMPLEXITY_DEFINITION": COGNITIVE_COMPLEXITY_DEFINITION,

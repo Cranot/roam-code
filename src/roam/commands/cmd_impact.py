@@ -28,6 +28,7 @@ from roam.output.formatter import (
 from roam.output.metric_definitions import (
     BLAST_RADIUS_AFFECTED_FILES,
     BLAST_RADIUS_AFFECTED_SYMBOLS,
+    BLAST_RADIUS_AFFECTED_TOTAL,
     REACH_PCT_DEFINITION,
     WEIGHTED_IMPACT_DEFINITION,
 )
@@ -209,6 +210,33 @@ def _collect_dependents(
     return dependents, affected_files, direct_callers, by_kind, sf_test_files, state
 
 
+def _uncapped_blast_total(G, RG, sym_id, own_file_path):
+    """Compute the TRUE uncapped blast radius for ``sym_id``.
+
+    W335/W342 Pattern-3a — ``impact``'s default ``--max-callers 100`` caps
+    the DISPLAYED dependents list for response-size sanity, but the reported
+    COUNT must be honest and AGREE with ``preflight``'s blast-radius gate.
+    This helper runs the IDENTICAL computation ``cmd_preflight._check_blast_radius``
+    uses (``nx.descendants`` over the reverse graph, excluding the target's
+    own file from affected_files) so the two commands are provably reporting
+    the same metric when used together for change-safety.
+
+    Returns ``(total_symbols, total_files)``. On any failure the caller's
+    ``_run_check`` floor handles disclosure; here we just compute.
+    """
+    import networkx as nx
+
+    if sym_id not in RG:
+        return 0, 0
+    deps = nx.descendants(RG, sym_id)
+    files: set = set()
+    for d in deps:
+        fp = G.nodes.get(d, {}).get("file_path")
+        if fp and fp != own_file_path:
+            files.add(fp)
+    return len(deps), len(files)
+
+
 def _find_indirect_refs(conn, sym, already_affected_files: set, *, limit: int = 50) -> list[dict]:
     """Scan source files for string-literal references to a symbol.
 
@@ -266,22 +294,33 @@ def _find_indirect_refs(conn, sym, already_affected_files: set, *, limit: int = 
     return refs
 
 
-def _impact_verdict(dependents, affected_files, total_syms):
-    """Generate blast radius verdict string."""
-    reach_pct = (len(dependents) / total_syms * 100) if total_syms > 0 else 0
-    if reach_pct >= 10 or len(dependents) >= 50:
+def _impact_verdict(dependents, affected_files, total_syms, *, affected_count=None, affected_files_count=None):
+    """Generate blast radius verdict string.
+
+    W335/W342 Pattern-3a — the verdict COUNT must reflect the TRUE uncapped
+    blast radius so it agrees with ``preflight``. When ``affected_count`` /
+    ``affected_files_count`` are supplied (the honest uncapped totals), the
+    verdict reports them instead of the bounded ``len(dependents)`` /
+    ``len(affected_files)``. Reach-pct is likewise computed from the true
+    total. Callers that don't pass the counts (legacy / floored paths) fall
+    back to the bounded set lengths so behavior is unchanged on those paths.
+    """
+    sym_count = affected_count if affected_count is not None else len(dependents)
+    file_count = affected_files_count if affected_files_count is not None else len(affected_files)
+    reach_pct = (sym_count / total_syms * 100) if total_syms > 0 else 0
+    if reach_pct >= 10 or sym_count >= 50:
         return (
-            f"Large blast radius — {len(dependents)} symbols ({reach_pct:.1f}%) in {len(affected_files)} files affected",
+            f"Large blast radius — {sym_count} symbols ({reach_pct:.1f}%) in {file_count} files affected",
             reach_pct,
         )
-    if reach_pct >= 2 or len(dependents) >= 10:
+    if reach_pct >= 2 or sym_count >= 10:
         return (
-            f"Moderate blast radius — {len(dependents)} symbols ({reach_pct:.1f}%) in {len(affected_files)} files affected",
+            f"Moderate blast radius — {sym_count} symbols ({reach_pct:.1f}%) in {file_count} files affected",
             reach_pct,
         )
-    if len(dependents) > 0:
+    if sym_count > 0:
         return (
-            f"Small blast radius — {len(dependents)} symbols in {len(affected_files)} files affected",
+            f"Small blast radius — {sym_count} symbols in {file_count} files affected",
             reach_pct,
         )
     return "No dependents — safe to change", reach_pct
@@ -735,6 +774,37 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         else:
             run_state = "ok"
 
+        # W335/W342 Pattern-3a — HONEST UNCAPPED TOTAL. The BFS above is
+        # bounded by ``--depth`` / ``--max-callers`` / ``--timeout`` so the
+        # ``dependents`` SET (and every displayed list derived from it) stays
+        # response-size-safe. But the reported COUNT must agree with
+        # ``preflight``'s blast-radius gate, which runs the FULL transitive
+        # ``nx.descendants`` reverse-reachability. Compute that uncapped total
+        # here using the IDENTICAL computation preflight uses
+        # (cmd_preflight._check_blast_radius) so the two commands are provably
+        # reporting the same metric for the same target. The verdict + summary
+        # counts below reflect this TRUE total; only the listed dependents stay
+        # capped. ``cap_applied`` makes the truncation LOUD (Pattern-1 variant-D
+        # lineage disclosure) instead of silently contradicting preflight.
+        own_file_path = sym["file_path"]
+        total_symbols, total_files = _run_check(
+            "blast_total",
+            _uncapped_blast_total,
+            G,
+            RG,
+            sym_id,
+            own_file_path,
+            default=(len(dependents), len(affected_files)),
+        )
+        # Floor: the uncapped total can never be SMALLER than what the bounded
+        # BFS already reached (a depth/caller cap only ever drops dependents).
+        # If the uncapped pass floored (raise -> default), keep it consistent.
+        total_symbols = max(total_symbols, len(dependents))
+        total_files = max(total_files, len(affected_files))
+        displayed_symbols = len(dependents)
+        displayed_files = len(affected_files)
+        cap_applied = total_symbols > displayed_symbols or total_files > displayed_files
+
         # Personalized PageRank for distance-weighted importance (Gleich 2015).
         # W336 — use the shared ``personalized_pagerank`` helper so we get the
         # numpy-free degree-based fallback when scipy/numpy aren't installed.
@@ -882,19 +952,36 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             dependents,
             affected_files,
             len(G),
+            affected_count=total_symbols,
+            affected_files_count=total_files,
             default=("No dependents — safe to change", 0.0),
         )
-        if truncated:
-            # Name the limit(s) that fired so an agent can decide to re-run
-            # with a larger budget. Imperative, concrete (LAWs 2, 4).
+        if cap_applied:
+            # W335/W342 Pattern-3a — the verdict COUNT above is the honest
+            # uncapped total (agrees with preflight); the LISTED dependents are
+            # capped for response size. Disclose the display cap LOUDLY so an
+            # agent reading only the verdict knows the symbol/file lists are a
+            # subset, NOT that the count itself is partial (Pattern-1 variant-D
+            # lineage disclosure). Imperative, concrete (LAWs 2, 4).
             _limit_notes = []
+            _raise_flags = []
             if bfs_state["hit_timeout"]:
                 _limit_notes.append(f"timeout={timeout}s")
+                _raise_flags.append("--timeout")
             if bfs_state["hit_caller_cap"]:
                 _limit_notes.append(f"max-callers={effective_max_callers}")
+                _raise_flags.append("--max-callers")
             if bfs_state["hit_depth_cap"]:
                 _limit_notes.append(f"depth={effective_depth}")
-            verdict = f"{verdict} (partial: {', '.join(_limit_notes)} — re-run with larger limits for full radius)"
+                _raise_flags.append("--depth")
+            _cap_cause = f" ({', '.join(_limit_notes)})" if _limit_notes else ""
+            # Name the exact flag(s) that capped the display so the next step is
+            # executable (CONSTRAINT 12, LAW 2). Falls back to --max-callers.
+            _raise = "/".join(_raise_flags) if _raise_flags else "--max-callers"
+            verdict = (
+                f"{verdict} — listing {displayed_symbols} of {total_symbols} affected symbols"
+                f"{_cap_cause}; raise {_raise} to list more"
+            )
         # W1242 — Pattern-2 variant-D: surface fuzzy-resolution in the verdict
         # so text-only consumers see the degradation. The exact target the
         # resolver landed on goes into the suffix so an agent can decide to
@@ -924,10 +1011,13 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         # ``risk_level_canonical: "low"`` sentinel and a
         # ``risk_classification: "unknown"`` summary mirror (set below
         # only if classify or normalize raised).
+        # W335/W342 — classify on the HONEST uncapped total + true reach_pct
+        # so the risk tier agrees with preflight's blast severity rather than
+        # being understated by the display cap.
         _impact_domain_level = _run_check_bb(
             "risk_classify",
             _impact_risk_level,
-            len(dependents),
+            total_symbols,
             reach_pct,
             default=None,
         )
@@ -985,10 +1075,29 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         # conditions degrade the verdict's reliability; agents need to see
         # both via one flag.
         is_partial = truncated or resolution_tier != "symbol"
+        # W335/W342 Pattern-3a — cap-disclosure block. The reported COUNT
+        # (``affected_symbols`` / ``affected_files``) is now the TRUE uncapped
+        # total so it AGREES with preflight; the displayed lists stay capped.
+        # ``cap_applied`` + ``displayed`` + ``total`` make the truncation LOUD
+        # (Pattern-1 variant-D lineage disclosure) so a consumer comparing
+        # impact↔preflight sees the same number AND knows the listed subset is
+        # capped. Stamped on both summary and top-level for either reader.
+        _cap_block: dict = {
+            "affected_symbols_total": total_symbols,
+            "affected_files_total": total_files,
+            "cap_applied": cap_applied,
+            "displayed": displayed_symbols,
+            "total": total_symbols,
+            "displayed_files": displayed_files,
+        }
         _success_summary: dict = {
             "verdict": verdict,
-            "affected_symbols": len(dependents),
-            "affected_files": len(affected_files),
+            # W335/W342 — TRUE uncapped totals (match preflight). The capped
+            # display subset is surfaced via ``displayed`` / ``displayed_files``
+            # in the cap-disclosure block below.
+            "affected_symbols": total_symbols,
+            "affected_files": total_files,
+            **_cap_block,
             # W336 — widen rounding from 4 -> 6 decimals. Per-node PageRank
             # values on a 20k-symbol graph fall in the 1e-5 to 1e-3 range,
             # so 4-decimal rounding truncated legitimate small sums to 0
@@ -1023,6 +1132,10 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             # between cmd_impact and cmd_preflight.
             "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
             "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+            # W335/W342 Pattern-3a — name the EXACT computation behind the
+            # uncapped totals so impact↔preflight are provably the same
+            # metric. Both run nx.descendants over the reverse graph.
+            "affected_metric_definition": BLAST_RADIUS_AFFECTED_TOTAL,
             "weighted_impact_definition": WEIGHTED_IMPACT_DEFINITION,
             "reach_pct_definition": REACH_PCT_DEFINITION,
             # W1242 — Pattern-2 variant-D resolution disclosure. The
@@ -1034,8 +1147,12 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             "budget": token_budget,
             "summary": _success_summary,
             "symbol": sym["qualified_name"] or sym["name"],
-            "affected_symbols": len(dependents),
-            "affected_files": len(affected_files),
+            # W335/W342 — TRUE uncapped totals (match preflight) at top-level
+            # too; cap-disclosure block names the displayed subset.
+            "affected_symbols": total_symbols,
+            "affected_files": total_files,
+            **_cap_block,
+            "affected_metric_definition": BLAST_RADIUS_AFFECTED_TOTAL,
             "weighted_impact": round(weighted_impact, 6),
             "reach_pct": round(reach_pct, 1),
             # W641-followup-A — top-level mirror of summary.risk_level_canonical
@@ -1135,7 +1252,16 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             return
 
         click.echo(f"VERDICT: {verdict}\n")
-        click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")
+        # W335/W342 Pattern-3a — report the HONEST uncapped totals (agree with
+        # preflight) and disclose the display cap so the counts never silently
+        # contradict the peer command. "100 of 1847 affected symbols (capped)".
+        if cap_applied:
+            click.echo(
+                f"Affected symbols: {displayed_symbols} of {total_symbols} (capped)  "
+                f"Affected files: {displayed_files} of {total_files} (capped)"
+            )
+        else:
+            click.echo(f"Affected symbols: {total_symbols}  Affected files: {total_files}")
         if indirect_refs:
             click.echo(
                 f"Indirect refs (registry / string-dispatch): {len(indirect_refs)} site(s) — "
@@ -1174,7 +1300,9 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 if pr_val > _file_pr.get(fp, 0.0):
                     _file_pr[fp] = pr_val
             ranked_files = sorted(affected_files, key=lambda fp: -_file_pr.get(fp, 0.0))
-            click.echo(f"\nAffected files ({len(affected_files)} — ranked by impact):")
+            # W335/W342 — show displayed/total when the BFS cap dropped files.
+            _files_hdr = f"{len(affected_files)} of {total_files} (capped)" if cap_applied else str(len(affected_files))
+            click.echo(f"\nAffected files ({_files_hdr} — ranked by impact):")
             for fp in ranked_files[:20]:
                 click.echo(f"  {fp}")
             if len(affected_files) > 20:

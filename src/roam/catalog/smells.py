@@ -441,21 +441,93 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# Tier: structural — in_degree comes from the precomputed graph_metrics
-# table; threshold over a graph-edge count, no name heuristic.
+# Tier: structural — caller-FILE scatter over the call-graph edges
+# (distinct source files of incoming edges), not a name heuristic. The
+# signal is graph topology, so the tier stays structural.
+#
+# W1287 RE-IMPLEMENTATION ((internal memo)): the pre-W1287
+# detector fired on ``graph_metrics.in_degree > 7`` — pure INBOUND
+# popularity. An 18-sample dogfood measured ~100% FP / 0 TP: the top hits
+# were the codebase's BEST shared symbols (conftest fixtures invoke_cli/
+# cli_runner, helpers open_db/json_envelope/to_json, dataclass field
+# EvidenceArtifact.path), 69% in tests/. High inbound reference count is
+# good factoring — the OPPOSITE of the smell. The module comment at the
+# ``message-chain`` registration confirms message-chain is the out_degree
+# axis, so the in_degree impl was the wrong axis entirely.
+#
+# Fowler's shotgun surgery = ONE change forcing edits across MANY DISTINCT
+# FILES — file-SCATTER, not raw reference count. The metric is now the
+# count of DISTINCT NON-TEST CALLER FILES referencing the symbol. To keep
+# the detector from re-discovering the same well-factored-hub FP class
+# (re-measurement on roam-code at threshold 8 still surfaced to_json /
+# open_db / ensure_index / find_project_root — single-source-of-truth
+# utilities whose high scatter is *centralization*, not surgery; estimated
+# new FP still > 60%), the detector is deliberately CONSERVATIVE: it fires
+# rarely-but-precisely behind (1) a high threshold and (2) the same
+# test-role / property / trivial-accessor exclusions the W1280 feature-envy
+# fix used. A well-factored repo SHOULD report ~zero shotgun-surgery rows;
+# the conservative gate makes that the expected state rather than emitting
+# ~1472 popularity-artifact FPs. The kind stays registered (retiring it
+# triggers count-drift / registry ripple). Tune ``_SHOTGUN_MIN_CALLER_FILES``
+# up, never down, if a future corpus re-introduces FPs.
+_SHOTGUN_MIN_CALLER_FILES = 12
+
+
 @detector("shotgun-surgery", confidence=CONFIDENCE_STRUCTURAL)
 def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
-    """Symbols with in_degree > 7 in graph_metrics."""
+    """Symbols referenced from many DISTINCT non-test caller files.
+
+    Fires when a function/method is referenced (incoming call/use edges)
+    from at least ``_SHOTGUN_MIN_CALLER_FILES`` (12) DISTINCT files that
+    are NOT the symbol's own file and NOT test-role files — i.e. changing
+    this one symbol ripples across many separate files (Fowler's shotgun
+    surgery: file-SCATTER, not raw inbound-reference count). Excludes
+    test-role target files, ``@property`` / dataclass-field symbols, and
+    trivial 1-3 line accessors (mirrors the W1280 feature-envy exclusion
+    style). Deliberately conservative — see the W1287 comment above for
+    why high inbound popularity alone is NOT this smell.
+    """
     rows = conn.execute(
-        "SELECT s.name, s.kind, s.line_start, f.path as file_path, "
-        "gm.in_degree "
+        "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, s.file_id, "
+        "s.decorators, f.path as file_path "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
-        "JOIN graph_metrics gm ON gm.symbol_id = s.id "
-        "WHERE gm.in_degree > 7"
+        "WHERE s.kind IN ('function', 'method')"
     ).fetchall()
     results = []
     for r in rows:
+        # (1) Skip test-role target files.
+        if _is_test_path(r["file_path"]):
+            continue
+        # (2) Skip @property / dataclass-field symbols and trivial 1-3 line
+        #     accessors — their high scatter is by-design surface, not the
+        #     ripple-on-change signal (mirrors W1280 feature-envy exclusions).
+        dec = r["decorators"] or ""
+        if "@property" in dec or "@cached_property" in dec:
+            continue
+        ls, le = r["line_start"], r["line_end"]
+        if ls is not None and le is not None and (le - ls) <= 2:
+            continue
+        # (3) Count DISTINCT non-test caller files (incoming edges), excluding
+        #     the symbol's own file. This is the file-SCATTER metric: how many
+        #     separate files a change to this symbol would ripple across.
+        caller_rows = conn.execute(
+            "SELECT DISTINCT COALESCE(e.source_file_id, ss.file_id) AS cf, "
+            "cf2.path AS cpath "
+            "FROM edges e "
+            "JOIN symbols ss ON e.source_id = ss.id "
+            "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id) "
+            "WHERE e.target_id = ?",
+            (r["id"],),
+        ).fetchall()
+        caller_files = {
+            cr["cpath"]
+            for cr in caller_rows
+            if cr["cf"] is not None and cr["cf"] != r["file_id"] and not _is_test_path(cr["cpath"])
+        }
+        scatter = len(caller_files)
+        if scatter < _SHOTGUN_MIN_CALLER_FILES:
+            continue
         loc_str = _loc(r["file_path"], r["line_start"])
         results.append(
             _finding(
@@ -464,9 +536,10 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
                 r["name"],
                 r["kind"],
                 loc_str,
-                r["in_degree"],
-                7,
-                f"Shotgun surgery: {r['in_degree']} incoming dependencies",
+                scatter,
+                _SHOTGUN_MIN_CALLER_FILES,
+                f"Shotgun surgery: referenced from {scatter} distinct non-test files; "
+                f"a change ripples across all of them",
             )
         )
     return results
@@ -1031,9 +1104,12 @@ def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# Tier: structural — mirror of ``shotgun-surgery`` on the outgoing axis.
-# out_degree comes from precomputed graph_metrics; threshold over graph
-# topology, no name signal.
+# Tier: structural — out_degree comes from precomputed graph_metrics;
+# threshold over graph topology, no name signal. (Historically labelled the
+# "outgoing-axis mirror of shotgun-surgery"; that framing predated the W1287
+# shotgun-surgery re-implementation onto distinct-caller-FILE scatter, so the
+# mirror note is dropped — message-chain is an out_degree-per-symbol count,
+# shotgun-surgery is now a distinct-caller-file-scatter count; different axes.)
 @detector("message-chain", confidence=CONFIDENCE_STRUCTURAL)
 def detect_message_chain(conn: sqlite3.Connection) -> list[dict]:
     """Functions with out_degree > 10 in graph_metrics."""

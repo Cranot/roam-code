@@ -561,31 +561,59 @@ def coverage_gaps(
         gates, gate_info = _find_gates(conn, gate_names, gate_pattern)
 
         if not gates:
+            # W837 (Pattern 2 empty-state disclosure): the pre-W837 envelope
+            # carried only ``summary.error`` — no ``verdict`` (LAW 6: the
+            # verdict must stand alone) and no ``partial_success`` / ``state``
+            # flag. A consumer reading ``summary.verdict`` saw ``None``,
+            # indistinguishable from a malformed envelope. On an empty corpus
+            # (or a gate filter that matches nothing) there is genuinely no
+            # gate to compute coverage against — disclose that explicitly
+            # rather than emitting a verdict-less envelope.
+            verdict = "no gate symbols matched — coverage cannot be computed (broaden --gate / --gate-pattern or index a populated repo)"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "coverage-gaps",
-                            summary={"error": "No gate symbols found"},
+                            summary={
+                                "verdict": verdict,
+                                "error": "No gate symbols found",
+                                "partial_success": True,
+                                "state": "no_gates",
+                            },
+                            agent_contract={"facts": [verdict]},
                         )
                     )
                 )
             else:
+                click.echo(f"VERDICT: {verdict}")
                 click.echo("No gate symbols found matching the criteria.")
             return
 
         entries = _find_entries(conn, scope, entry_pattern)
         if not entries:
+            # W837 (Pattern 2): mirror the no-gates disclosure for the
+            # no-entry-points branch. A real gate may exist but an empty /
+            # entry-point-less corpus has nothing reaching it, so coverage is
+            # vacuous — name the absent entry points explicitly.
+            verdict = "no entry points in scope — coverage cannot be computed (widen --scope / --entry-pattern or index a populated repo)"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "coverage-gaps",
-                            summary={"error": "No entry points found"},
+                            summary={
+                                "verdict": verdict,
+                                "error": "No entry points found",
+                                "partial_success": True,
+                                "state": "no_entries",
+                            },
+                            agent_contract={"facts": [verdict]},
                         )
                     )
                 )
             else:
+                click.echo(f"VERDICT: {verdict}")
                 click.echo("No entry points found in scope.")
             return
 

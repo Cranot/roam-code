@@ -28,6 +28,8 @@ from roam.db.connection import find_project_root, open_db
 from roam.db.edge_kinds import inheritance_in_clause
 from roam.output.formatter import abbrev_kind, json_envelope, loc, resolution_disclosure, to_json
 from roam.output.framework_filter import is_framework_alias
+from roam.quality.health_band import definition as health_band_definition
+from roam.quality.health_band import health_band
 
 # ---------------------------------------------------------------------------
 # Framework / build-tool detection
@@ -914,13 +916,13 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             _lang_names = "+".join(l["name"] for l in languages[:3])
             if len(languages) > 3:
                 _lang_names += f"+{len(languages) - 3}more"
-            _health_label = (
-                "healthy"
-                if health["health_score"] >= 70
-                else "moderate"
-                if health["health_score"] >= 40
-                else "unhealthy"
-            )
+            # Pattern 3a / LAW 6 fix: route the score->label decision through
+            # the canonical band map shared with ``roam health`` so the SAME
+            # score never maps to two different verdict labels across
+            # commands. ``health_band(75)`` == "Fair" exactly as
+            # ``roam health`` prints it. (Was a divergent inline >=70
+            # "healthy" cutoff — F2 in (internal memo).)
+            _health_label = health_band(health["health_score"])
             _understand_verdict = (
                 f"{_health_label} {len(languages)}-lang project "
                 f"({health['health_score']}/100), "
@@ -1004,6 +1006,10 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
                 "files": file_count,
                 "symbols": sym_count,
                 "health_score": health["health_score"],
+                "health_band": _health_label,
+                # Pattern 3a sidecar: name the precise score->label source so
+                # agents can see understand + health share the band map.
+                "health_band_definition": health_band_definition(),
                 "languages": len(languages),
                 "caller_metric_definition": "direct_in_degree (architecture.key_abstractions[*].fan_in)",
             }
