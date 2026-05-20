@@ -274,18 +274,16 @@ class TestRelateAlwaysOn:
 
 
 class TestRelateRealBugsXfail:
-    """Pin two REAL bugs found by W978 probe; xfail(strict=True) means flip-to-pass on fix."""
+    """Pin REAL bugs found by W978 probe; xfail(strict=True) means flip-to-pass on fix.
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG #1 Pattern-1 Variant C: cmd_relate.py:274-280 emits plain-text "
-            "'No symbols to analyze.' on empty corpus in --json mode instead of a "
-            "JSON envelope. MCP wrapper-bridge cannot parse this. Fix: always emit "
-            "json_envelope('relate', summary={state: 'no_input_resolved', "
-            "partial_success: True, verdict: '...'}, ...) before SystemExit(1)."
-        ),
-    )
+    BUG #1 (Pattern-1 Variant C/D, empty-corpus JSON-mode emission) is now FIXED
+    in ``cmd_relate.py``: the ``not input_ids`` branch emits a JSON envelope, and
+    when names were given but unresolved it carries ``state="no_input_resolved"``
+    + ``partial_success=True`` + a verdict naming the inputs. The two
+    BUG-#1 tests below are therefore plain (non-xfail) regression pins now.
+    BUG #2 (Pattern-2 silent SAFE on no-relation-found) remains xfail(strict).
+    """
+
     def test_empty_corpus_emits_json_envelope(self, empty_corpus_repo):
         """Empty corpus + --json mode MUST emit a parseable JSON envelope.
 
@@ -297,16 +295,6 @@ class TestRelateRealBugsXfail:
         env = _parse_envelope(result)
         assert env["command"] == "relate", env
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG #1 Pattern-1 Variant C continued: even if a JSON envelope IS "
-            "emitted on the empty-corpus branch, it must carry explicit "
-            "summary.state + summary.partial_success=True + a LAW-6 verdict "
-            "naming the unresolved inputs. Currently no envelope at all is "
-            "emitted (see test_empty_corpus_emits_json_envelope above)."
-        ),
-    )
     def test_empty_corpus_envelope_state_partial_success_verdict(self, empty_corpus_repo):
         """Empty corpus envelope MUST disclose state + partial_success + named verdict."""
         result = _invoke_relate("foo", "bar", json_mode=True)

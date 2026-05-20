@@ -270,6 +270,17 @@ def uses(ctx, name, full):
                 )
                 raise SystemExit(1)
             click.echo(symbol_not_found_hint(name))
+            # "Make fallback chains loud": if resolution RAISED (rather than
+            # cleanly returning zero rows), the exception was captured in
+            # _w607u_warnings_out by _run_check and would otherwise be
+            # invisible in text mode -- the user sees only "Symbol not found",
+            # masking a degraded-resolution failure as a clean miss (Pattern-2
+            # silent fallback). Surface the captured marker(s) on stderr so the
+            # underlying cause is diagnosable without losing the existing
+            # human-facing hint on stdout.
+            if _w607u_warnings_out:
+                for _marker in _w607u_warnings_out:
+                    click.echo(_marker, err=True)
             raise SystemExit(1)
 
         target_ids = [t["id"] for t in targets]

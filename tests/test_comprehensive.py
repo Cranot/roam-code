@@ -24,6 +24,57 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_commit, git_init, index_in_process, roam
 
+
+def _index_diagnostics(project_dir, symbol_name: str) -> str:
+    """Dump the index state for *symbol_name* to enrich a flaky assertion.
+
+    Queries the project's SQLite index directly (read-only) for the symbol
+    row(s) and any edges pointing to it. Used only on the failure path of a
+    membership assertion so an opaque "Symbol not found" surfaces the actual
+    index contents (does the row exist? what are the exact name bytes? do
+    edges resolve?) on the next CI failure. Returns a best-effort string;
+    never raises (diagnostics must not mask the real assertion).
+    """
+    import os
+
+    lines: list[str] = []
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(project_dir))
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True) as conn:
+            exact = conn.execute(
+                "SELECT id, name, kind, qualified_name FROM symbols WHERE name = ?",
+                (symbol_name,),
+            ).fetchall()
+            lines.append(f"exact name={symbol_name!r}: {len(exact)} row(s)")
+            for r in exact:
+                lines.append(f"  id={r['id']} name={r['name']!r} kind={r['kind']} qn={r['qualified_name']!r}")
+            like = conn.execute(
+                "SELECT id, name, kind FROM symbols WHERE name LIKE ? COLLATE NOCASE",
+                (f"%{symbol_name}%",),
+            ).fetchall()
+            lines.append(f"LIKE %{symbol_name}%: {len(like)} row(s)")
+            for r in like:
+                lines.append(f"  id={r['id']} name={r['name']!r} kind={r['kind']}")
+            edges = conn.execute(
+                "SELECT e.kind, s.name AS src, t.name AS tgt "
+                "FROM edges e JOIN symbols s ON e.source_id = s.id "
+                "JOIN symbols t ON e.target_id = t.id "
+                "WHERE t.name = ?",
+                (symbol_name,),
+            ).fetchall()
+            lines.append(f"edges -> {symbol_name}: {len(edges)} row(s)")
+            for r in edges:
+                lines.append(f"  {r['src']} --{r['kind']}--> {r['tgt']}")
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never mask the assertion
+        lines.append(f"(diagnostics unavailable: {type(exc).__name__}: {exc})")
+    finally:
+        os.chdir(old_cwd)
+    return "\n".join(lines)
+
+
 # ============================================================================
 # Polyglot project fixture (indexed ONCE, shared across many tests)
 # ============================================================================
@@ -967,7 +1018,20 @@ class TestJava:
 
     def test_implements_edge(self, polyglot):
         out, _ = roam("uses", "Pet", cwd=polyglot)
-        assert "Dog" in out or "Cat" in out
+        if "Dog" not in out and "Cat" not in out:
+            # Self-diagnosing failure: this assertion has flaked on Linux CI
+            # with an opaque "Symbol not found: Pet" while passing locally with
+            # CI-identical Python/tree-sitter versions. Dump the actual index
+            # state so the next failure is actionable (does the Pet symbol row
+            # exist? do implements edges point to it?) instead of a bare
+            # string-membership miss. The assertion below is unchanged — this
+            # only enriches the failure message.
+            diag = _index_diagnostics(polyglot, "Pet")
+            raise AssertionError(
+                "uses Pet returned neither Dog nor Cat.\n"
+                f"--- roam uses Pet output ---\n{out}\n"
+                f"--- index diagnostics ---\n{diag}"
+            )
 
     def test_multi_implements(self, polyglot):
         """Dog implements Pet AND Trainable."""

@@ -420,20 +420,47 @@ def relate(ctx, symbols, files, depth):
 
         if not input_ids:
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "relate",
-                            summary={
-                                "verdict": "no symbols to analyze — provide a symbol name or --path",
-                                "state": "usage_error",
-                                "partial_success": True,
-                            },
-                            hint="Provide at least one valid symbol name or --path path. "
-                            "Use `roam search <partial-name>` to find symbol names.",
+                if unresolved:
+                    # Names WERE given but none resolved (empty corpus, typos,
+                    # stale index). Pattern-1 Variant D: disclose the degraded
+                    # resolution explicitly rather than emitting a generic
+                    # usage error. State is the closed-enum no-input signal and
+                    # the verdict names the unresolved inputs (LAW 6).
+                    _names = ", ".join(unresolved)
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "relate",
+                                summary={
+                                    "verdict": f"no input symbols resolved: {_names}",
+                                    "state": "no_input_resolved",
+                                    "partial_success": True,
+                                    "resolution": "unresolved",
+                                },
+                                resolutions=per_input_resolutions,
+                                hint="None of the given names matched an indexed symbol. "
+                                "Run `roam search <partial-name>` to find symbol names, "
+                                "or `roam index` if the symbol was added recently.",
+                            )
                         )
                     )
-                )
+                else:
+                    # No symbol names and no --path resolved anything: a genuine
+                    # usage error (the argless-invocation path).
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "relate",
+                                summary={
+                                    "verdict": "no symbols to analyze — provide a symbol name or --path",
+                                    "state": "usage_error",
+                                    "partial_success": True,
+                                },
+                                hint="Provide at least one valid symbol name or --path path. "
+                                "Use `roam search <partial-name>` to find symbol names.",
+                            )
+                        )
+                    )
             else:
                 click.echo(
                     "No symbols to analyze.\n"
