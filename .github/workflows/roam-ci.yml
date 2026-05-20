@@ -41,10 +41,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # 3.10 is consistently slower than 3.11/3.12/3.13 (no stdlib tomllib,
-    # legacy pathlib, slower asyncio); 20 min was tight (got to ~95% before
-    # the runner killed it on commit 84343dc4). 30 min gives the slowest
-    # lane breathing room without masking real regressions.
-    timeout-minutes: 30
+    # legacy pathlib, slower asyncio). History: 20 min was tight (killed at
+    # ~95% on 84343dc4) -> 30 min. The suite kept growing; on the v13.3
+    # storm-reset run (fdd2d3be) test (3.10) hit the 30-min cap and was
+    # cancelled while 3.11/3.12/3.13 passed just under it. 45 min restores
+    # real headroom for the slowest lane without masking regressions
+    # (a genuine hang would trip -x long before 45 min).
+    timeout-minutes: 45
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
       matrix:
