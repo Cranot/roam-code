@@ -310,11 +310,20 @@ class TestForRefactorUsageError:
         # Structured-error shape, not a compound envelope.
         assert r.get("isError") is True, r
         assert "USAGE_ERROR" in (r.get("error_code") or ""), r.get("error_code")
-        # The error string names the parameter the caller missed.
-        assert "symbol" in (r.get("error") or "").lower(), r.get("error")
-        # The hint is imperative + actionable (LAW 2).
-        hint = r.get("hint") or ""
-        assert hint and isinstance(hint, str), hint
+        # The error string names the parameter the caller missed. Under
+        # xdist a sibling test in the same worker can push the USAGE_ERROR
+        # storm counter past _ERROR_STORM_THRESHOLD before this test runs,
+        # so _structured_error legitimately returns the canonical TRIMMED
+        # shape (first_error_message + trimmed_hint, NO top-level error/hint
+        # keys -- a contract pinned by test_w805_ttttt / test_w805_uuuuu).
+        # Tolerate both shapes: the user-facing reason lives in error OR
+        # first_error_message; the actionable next-step in hint OR trimmed_hint.
+        err_text = (r.get("error") or r.get("first_error_message") or "").lower()
+        assert "symbol" in err_text, r
+        # The hint is imperative + actionable (LAW 2); trimmed envelopes
+        # carry trimmed_hint instead.
+        hint = r.get("hint") or r.get("trimmed_hint") or ""
+        assert hint and isinstance(hint, str), r
 
 
 # ---------------------------------------------------------------------------
