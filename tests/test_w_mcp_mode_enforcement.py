@@ -30,6 +30,28 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _reset_mcp_module_state():
+    """Reset the module-level error-storm counter before AND after each test.
+
+    ``_structured_error`` keeps a process-wide ``_ERROR_STORM_STATE`` that
+    trims envelope fields (including ``summary``) after the 3rd consecutive
+    same-code error. The 7 ``MODE_BLOCKED`` assertions in this file share that
+    error_code with sibling files (``test_w_mcp_security_pipeline_e2e.py`` /
+    ``test_w_mcp_shadow_mode.py``); under ``pytest -n auto`` a worker that
+    already saw >=3 ``MODE_BLOCKED`` errors would trim this file's deny
+    envelope and drop the ``summary`` key (KeyError). Standard pattern across
+    the suite — see ``tests/test_w_mcp_security_pipeline_e2e.py`` (fdd2d3be)
+    and ``tests/test_w_mcp_shadow_mode.py``.
+    """
+    from roam.mcp_server import _reset_error_storm
+
+    _reset_error_storm()
+    yield
+    _reset_error_storm()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
