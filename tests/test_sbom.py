@@ -106,3 +106,119 @@ class TestSbomOutputFile:
         if out_path.exists():
             content = json.loads(out_path.read_text(encoding="utf-8"))
             assert isinstance(content, dict)
+
+
+class TestSbomReachabilityGraph:
+    """Hand-built-graph unit tests for the reverse-BFS reachability helpers.
+
+    Pins the O(V+E)-per-matched-node reverse traversal (``_entry_ancestors`` /
+    ``_trace_entry_reach``) against the historical per-(entry, node)
+    ``nx.has_path`` semantics: a node is reachable iff SOME in-degree-0 entry
+    has a path to it, and ``entry_points`` is the reaching-entry set in
+    canonical entry order. Replaces the quadratic loop that timed out on the
+    ~14k-symbol roam-code corpus (>45s).
+    """
+
+    @staticmethod
+    def _graph():
+        import networkx as nx
+
+        # Two entry points (in-degree 0): 1 and 2.
+        #   1 -> 3 -> 4        (4 reachable from entry 1)
+        #   2 -> 5             (5 reachable from entry 2)
+        #   6                  (isolated: in-degree 0 AND out-degree 0 -> entry,
+        #                        trivially reaches only itself)
+        #   7 -> 8, 8 unreachable from any entry because 7 has an incoming edge
+        #                        from 5 (so 7 is NOT an entry) and nothing else
+        #                        feeds 9
+        #   9                  (in-degree 1 from 8 -> reachable via 2 -> 5 -> 7 -> 8 -> 9)
+        G = nx.DiGraph()
+        for nid in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+            G.add_node(nid, name=f"n{nid}", qualified_name=f"q{nid}", file_path=f"f{nid}.py")
+        G.add_edges_from([(1, 3), (3, 4), (2, 5), (5, 7), (7, 8), (8, 9)])
+        return G
+
+    def _entries(self, G):
+        return [n for n in G.nodes() if G.in_degree(n) == 0]
+
+    def test_entries_are_indegree_zero(self):
+        from roam.commands.cmd_sbom import _entry_ancestors
+
+        G = self._graph()
+        entries = self._entries(G)
+        # 1, 2, 6 have no incoming edges.
+        assert set(entries) == {1, 2, 6}
+        # Sanity: helper agrees with the membership it filters against.
+        assert _entry_ancestors(G, 4, set(entries)) == {1}
+
+    def test_reverse_bfs_matches_has_path(self):
+        """The reverse-BFS reaching set must equal the brute-force has_path set."""
+        import networkx as nx
+
+        from roam.commands.cmd_sbom import _entry_ancestors
+
+        G = self._graph()
+        entries = self._entries(G)
+        entry_set = set(entries)
+        for nid in G.nodes():
+            expected = {e for e in entries if nx.has_path(G, e, nid)}
+            assert _entry_ancestors(G, nid, entry_set) == expected, f"mismatch at node {nid}"
+
+    def test_entry_points_ordered_by_entry_id(self):
+        from roam.commands.cmd_sbom import _trace_entry_reach
+
+        G = self._graph()
+        entries = self._entries(G)  # [1, 2, 6] in node-iteration (id) order
+        # Node 9 is reachable only from entry 2 (2 -> 5 -> 7 -> 8 -> 9).
+        assert _trace_entry_reach(G, entries, 9) == [2]
+        # Node 4 is reachable only from entry 1.
+        assert _trace_entry_reach(G, entries, 4) == [1]
+
+    def test_entry_is_self_reachable(self):
+        """An entry node that is itself the matched node is trivially reachable
+        (parity with the old ``nx.has_path(G, eid, eid) is True``)."""
+        from roam.commands.cmd_sbom import _entry_ancestors
+
+        G = self._graph()
+        entries = self._entries(G)
+        assert _entry_ancestors(G, 6, set(entries)) == {6}
+        assert _entry_ancestors(G, 1, set(entries)) == {1}
+
+    def test_record_match_short_circuits_on_first_reachable(self):
+        """``_record_match`` populates entry_points from the first reachable
+        matched node and short-circuits afterward — preserve that exactly."""
+        from roam.commands.cmd_sbom import _record_match
+
+        G = self._graph()
+        entries = self._entries(G)
+        entry_set = set(entries)
+        info = {"reachable": False, "entry_points": [], "matched_symbols": []}
+        # First matched node 4 -> reachable from entry 1 (q1).
+        _record_match(info, "q4", G, entries, 4, entry_set)
+        assert info["reachable"] is True
+        assert info["entry_points"] == ["q1"]
+        # Second matched node 9 -> reachable from entry 2 (q2), but short-circuit
+        # means entry_points is unchanged; matched_symbols still grows.
+        _record_match(info, "q9", G, entries, 9, entry_set)
+        assert info["entry_points"] == ["q1"]
+        assert info["matched_symbols"] == ["q4", "q9"]
+
+    def test_unreachable_node_reports_no_entries(self):
+        import networkx as nx
+
+        from roam.commands.cmd_sbom import _record_match
+
+        # A node with no incoming path from any entry: a lone cycle with no
+        # entry feeding it.
+        G = nx.DiGraph()
+        for nid in (1, 10, 11):
+            G.add_node(nid, name=f"n{nid}", qualified_name=f"q{nid}", file_path=f"f{nid}.py")
+        # 10 <-> 11 cycle, neither is an entry (both have in-degree 1); 1 is an
+        # isolated entry that does NOT reach the cycle.
+        G.add_edges_from([(10, 11), (11, 10)])
+        entries = [n for n in G.nodes() if G.in_degree(n) == 0]
+        assert entries == [1]
+        info = {"reachable": False, "entry_points": [], "matched_symbols": []}
+        _record_match(info, "q10", G, entries, 10, set(entries))
+        assert info["reachable"] is False
+        assert info["entry_points"] == []

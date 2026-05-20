@@ -76,18 +76,46 @@ def _matches_dep(qname: str, name_lower: str, file_path: str, norm: str) -> bool
     return False
 
 
-def _trace_entry_reach(G, entries, nid):
-    """return the entry-point node IDs that can reach ``nid``."""
-    import networkx as nx
+def _entry_ancestors(G, nid, entry_set: set) -> set:
+    """Return the entry-point node IDs (subset of ``entry_set``) that can reach ``nid``.
 
-    reach: list = []
-    for eid in entries:
-        try:
-            if nx.has_path(G, eid, nid):
-                reach.append(eid)
-        except (nx.NetworkXError, nx.NodeNotFound):
-            continue
-    return reach
+    A node ``eid`` can reach ``nid`` iff ``eid`` is an ancestor of ``nid``
+    (or ``eid == nid``). Computed via a SINGLE reverse traversal (BFS over
+    predecessors) seeded at ``nid`` — O(V+E) per matched node — instead of
+    the historical per-(entry, node) ``nx.has_path`` probe which was
+    O(entries x (V+E)) per node. The reverse-reachable closure is intersected
+    with the entry set to recover the reaching entries.
+
+    The result is set-valued; callers iterate the canonical entry order to
+    preserve deterministic ``entry_points`` ordering.
+    """
+    if nid not in G:
+        return set()
+    # Reverse BFS: walk predecessors from nid to find all ancestors. The
+    # closure includes nid itself, so an entry that *is* the matched node
+    # (trivially reachable from itself, like the old has_path with eid==nid)
+    # is captured too.
+    visited = {nid}
+    stack = [nid]
+    while stack:
+        cur = stack.pop()
+        for pred in G.predecessors(cur):
+            if pred not in visited:
+                visited.add(pred)
+                stack.append(pred)
+    return visited & entry_set
+
+
+def _trace_entry_reach(G, entries, nid):
+    """Return the entry-point node IDs that can reach ``nid``, in ``entries`` order.
+
+    ``entries`` is the canonical ordered list of in-degree-0 nodes. Membership
+    is resolved via a single reverse traversal (see ``_entry_ancestors``) and
+    filtered back through ``entries`` so ordering matches the historical
+    per-entry ``nx.has_path`` scan exactly.
+    """
+    reaching = _entry_ancestors(G, nid, set(entries))
+    return [eid for eid in entries if eid in reaching]
 
 
 def _build_norm_lookup(dep_names: list[str]) -> dict[str, list[str]]:
@@ -100,13 +128,23 @@ def _build_norm_lookup(dep_names: list[str]) -> dict[str, list[str]]:
     return norm_to_dep
 
 
-def _record_match(info: dict, display_name: str, G, entries, nid) -> None:
-    """update a single dep's reachability record."""
+def _record_match(info: dict, display_name: str, G, entries, nid, entry_set: set | None = None) -> None:
+    """update a single dep's reachability record.
+
+    ``entry_set`` is the precomputed in-degree-0 node set (passed by the
+    orchestrator to avoid rebuilding it per matched node). When omitted it is
+    derived from ``entries`` so the helper stays callable standalone.
+    """
     if display_name not in info["matched_symbols"]:
         info["matched_symbols"].append(display_name)
     if info["reachable"]:
         return
-    for eid in _trace_entry_reach(G, entries, nid):
+    if entry_set is None:
+        entry_set = set(entries)
+    reaching = _entry_ancestors(G, nid, entry_set)
+    for eid in entries:
+        if eid not in reaching:
+            continue
         info["reachable"] = True
         entry_name = G.nodes[eid].get("qualified_name") or G.nodes[eid].get("name", str(eid))
         if entry_name not in info["entry_points"]:
@@ -127,7 +165,14 @@ def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
     orchestrator only. this function had cc=150
     and nesting depth 8 (the deepest in the repo). Per-symbol logic now
     lives in ``_node_match_keys``, ``_matches_dep``,
-    ``_trace_entry_reach``, ``_build_norm_lookup``, ``_record_match``.
+    ``_entry_ancestors`` / ``_trace_entry_reach``, ``_build_norm_lookup``,
+    ``_record_match``.
+
+    Reachability is computed via a per-matched-node reverse traversal
+    (``_entry_ancestors``) rather than a per-(entry, node) ``nx.has_path``
+    probe: the old O(entries x matched x (V+E)) loop went quadratic on
+    large repos (thousands of in-degree-0 entries). The reverse BFS is
+    O(V+E) per matched node and yields an identical reaching-entry set.
     """
     from roam.graph.builder import build_symbol_graph
 
@@ -144,6 +189,7 @@ def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
         return result
 
     entries = [n for n in G.nodes() if G.in_degree(n) == 0]
+    entry_set = set(entries)
     norm_to_dep = _build_norm_lookup(dep_names)
 
     for nid, data in G.nodes(data=True):
@@ -153,7 +199,7 @@ def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
                 continue
             display_name = data.get("qualified_name") or data.get("name", str(nid))
             for dep_name in orig_deps:
-                _record_match(result[dep_name], display_name, G, entries, nid)
+                _record_match(result[dep_name], display_name, G, entries, nid, entry_set)
     return result
 
 
