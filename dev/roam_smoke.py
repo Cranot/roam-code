@@ -25,32 +25,60 @@ import argparse
 import concurrent.futures
 import datetime as _dt
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 
+_WIN = sys.platform == "win32"
+
+
+def _tree_kill(pid: int) -> None:
+    """Kill the whole process tree of ``pid`` (Windows: taskkill /T; POSIX: killpg).
+
+    ``subprocess`` only kills the direct child on timeout; a roam command that
+    spawned a detached grandchild (git, an index worker, a server) would leak it
+    and — worse — its inherited stdout/stderr pipe stays open, so ``communicate``
+    blocks forever and the ThreadPoolExecutor never shuts down. Tree-killing on
+    timeout is what makes this a true HANG detector instead of a hang itself.
+    """
+    try:
+        if _WIN:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+        else:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        pass
+
+
 # Destructive / daemon / interactive / setup commands: NEVER auto-run argless.
 # Skipping a few is far cheaper than mutating state or hanging on a daemon.
 _SKIP = {
-    "init",            # rebuilds index (mutates .roam)
-    "mcp",             # long-running server
-    "watch",           # daemon
-    "ci-setup",        # writes workflow files
-    "mcp-setup",       # writes client config
-    "hooks",           # writes git hooks
-    "pre-commit",      # writes hook
-    "repl",            # interactive
-    "dashboard",       # interactive/long
-    "config",          # may write config
-    "index-export",    # writes large artifact
-    "index-bundle",    # writes large artifact
-    "graph-export",    # writes large artifact
-    "agent-export",    # writes artifact
-    "index",           # rebuilds the index (mutating) — alias of init-family
-    "metrics-push",    # pushes metrics; needs --dry-run, not argless
-    "lsp",             # language-server daemon mode
+    "init",  # rebuilds index (mutates .roam)
+    "mcp",  # long-running server
+    "watch",  # daemon
+    "ci-setup",  # writes workflow files
+    "mcp-setup",  # writes client config
+    "hooks",  # writes git hooks
+    "pre-commit",  # writes hook
+    "repl",  # interactive
+    "dashboard",  # interactive/long
+    "config",  # may write config
+    "index-export",  # writes large artifact
+    "index-bundle",  # writes large artifact
+    "graph-export",  # writes large artifact
+    "agent-export",  # writes artifact
+    "index",  # rebuilds the index (mutating) — alias of init-family
+    "metrics-push",  # pushes metrics; needs --dry-run, not argless
+    "lsp",  # language-server daemon mode
 }
 
 
@@ -87,32 +115,51 @@ def _classify(rc: int | None, stdout: str, stderr: str, timed_out: bool) -> tupl
         if rc == 0:
             return "OK", ""
         is_err = isinstance(obj, dict) and (obj.get("isError") or obj.get("status"))
-        return ("STRUCTURED_ERR", f"exit {rc}, structured envelope (healthy)") if is_err else (
-            "ERROR_NO_ENVELOPE", f"exit {rc}, JSON but no isError/status",
+        return (
+            ("STRUCTURED_ERR", f"exit {rc}, structured envelope (healthy)")
+            if is_err
+            else (
+                "ERROR_NO_ENVELOPE",
+                f"exit {rc}, JSON but no isError/status",
+            )
         )
     first = stderr.strip().splitlines()[0] if stderr.strip() else ""
     return "USAGE_ERR", f"exit {rc}, stderr: {first[:120]}"
 
 
 def _run_one(cmd: str, timeout: int) -> dict:
-    """Run one ``roam --json <cmd>`` in an isolated subprocess with stdin closed."""
+    """Run one ``roam --json <cmd>`` in an isolated process GROUP with stdin closed.
+
+    Uses Popen in a fresh process group so a timeout tree-kills any detached
+    grandchild (see ``_tree_kill``); ``subprocess.run``'s timeout would only kill
+    the direct child and then block on the orphan's still-open pipe.
+    """
     t0 = time.monotonic()
     timed_out = False
     rc: int | None = None
     so = se = ""
+    popen_kwargs: dict = {
+        "stdin": subprocess.DEVNULL,  # critical: stdin readers get EOF, never block
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if _WIN:
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True  # own pgid for killpg
     try:
-        p = subprocess.run(
-            ["roam", "--json", cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,  # critical: stdin readers get EOF, never block
-        )
-        rc, so, se = p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired as e:
-        timed_out = True
-        so = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        se = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        p = subprocess.Popen(["roam", "--json", cmd], **popen_kwargs)
+        try:
+            so, se = p.communicate(timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _tree_kill(p.pid)
+            try:  # reap so no zombie / pipe lingers
+                so, se = p.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                so = se = ""
     except Exception as e:  # harness must never die mid-run
         rc, se = -999, f"harness-exception: {type(e).__name__}: {e}"
     dur = round(time.monotonic() - t0, 1)
@@ -136,17 +183,14 @@ def main() -> int:
         wanted = {c.strip() for c in args.only.split(",") if c.strip()}
         cmds = [c for c in cmds if c in wanted]
     print(
-        f"[smoke] {len(cmds)} commands, {args.timeout}s timeout, "
-        f"stdin=DEVNULL, {args.workers} workers, argless --json",
+        f"[smoke] {len(cmds)} commands, {args.timeout}s timeout, stdin=DEVNULL, {args.workers} workers, argless --json",
         flush=True,
     )
 
     rows: list[dict] = []
     lock = threading.Lock()
     n = len(cmds)
-    with jsonl.open("a", encoding="utf-8") as fh, concurrent.futures.ThreadPoolExecutor(
-        max_workers=args.workers
-    ) as ex:
+    with jsonl.open("a", encoding="utf-8") as fh, concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {ex.submit(_run_one, c, args.timeout): c for c in cmds}
         for fut in concurrent.futures.as_completed(futs):
             row = fut.result()
@@ -161,8 +205,7 @@ def main() -> int:
     for r in rows:
         by_kind.setdefault(r["kind"], []).append(r["cmd"])
     actionable = {
-        k: v for k, v in by_kind.items()
-        if k in ("HANG", "CRASH", "BAD_JSON", "EMPTY_STDOUT", "ERROR_NO_ENVELOPE")
+        k: v for k, v in by_kind.items() if k in ("HANG", "CRASH", "BAD_JSON", "EMPTY_STDOUT", "ERROR_NO_ENVELOPE")
     }
 
     date = _dt.date.today().isoformat()

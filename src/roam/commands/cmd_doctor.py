@@ -2145,12 +2145,25 @@ def doctor(ctx, strict, persist):
     # Issue-template-ready summary line: a single string capturing the
     # diagnostic in copy-paste form, so users filing GitHub bugs can
     # paste one line that contains all the relevant context.
-    import platform as _platform
+    #
+    # WMI-hang guard: do NOT use platform.system()/platform.release() on
+    # Windows. On CPython 3.12 they route through platform.uname() ->
+    # win32_ver() -> _wmi_query(), a WMI COM call that hangs indefinitely
+    # when the WMI service is slow/contended — observed wedging `roam doctor`
+    # past a 90s budget on Win11 (all checks complete; only this cosmetic
+    # line blocked). sys.getwindowsversion() and sys.platform are WMI-free.
+    if sys.platform == "win32":
+        _wv = sys.getwindowsversion()
+        _os_label = f"Windows {_wv.major}.{_wv.minor}.{_wv.build}"
+    else:
+        import platform as _platform
+
+        _os_label = f"{_platform.system()} {_platform.release()}"
 
     issue_line = (
         f"Roam {_get_roam_version()} · "
         f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} · "
-        f"{_platform.system()} {_platform.release()} · "
+        f"{_os_label} · "
         f"{passed_count}/{total} checks pass · "
         f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
     )

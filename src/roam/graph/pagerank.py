@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import networkx as nx
@@ -23,6 +24,102 @@ def _optimal_alpha(G: nx.DiGraph) -> float:
     return round(0.92 - 0.10 * cycle_ratio, 3)
 
 
+# Hard iteration cap for the power method. networkx's default is 100; we
+# keep the same default and NEVER raise on non-convergence (we return the
+# best-so-far vector) so a graph can never wedge a command. Tunable via
+# env for the rare pathological-cyclicity case.
+_PAGERANK_MAX_ITER: int = int(os.environ.get("ROAM_PAGERANK_MAX_ITER", "100"))
+_PAGERANK_TOL: float = 1.0e-6
+
+
+def _pagerank_core(
+    G: nx.DiGraph,
+    alpha: float,
+    personalization: dict[int, float] | None = None,
+    *,
+    max_iter: int = _PAGERANK_MAX_ITER,
+    tol: float = _PAGERANK_TOL,
+) -> dict[int, float]:
+    """Roam-owned scipy power-iteration PageRank.
+
+    Mathematically identical to ``networkx.pagerank`` — same damping,
+    dangling-mass redistribution, uniform start, and ``err < N*tol`` stop
+    rule — so ``fingerprint`` / ``visualize`` / the retrieve reranker get
+    the same ranking. It deliberately AVOIDS the two scipy/numpy idioms
+    networkx uses internally that regressed to a multi-minute hang on
+    large, dangling-heavy graphs under numpy>=2.4 / scipy>=1.17 (observed
+    wedging ``roam fingerprint`` / ``roam visualize`` on roam-code's own
+    33k-node, 39%-dangling symbol graph — a single iteration did not
+    finish in 90s):
+
+      * out-degree via ``np.diff(indptr)`` (pure index arithmetic on the
+        CSR row pointers) instead of ``A.sum(axis=1)`` — the latter
+        densified / stalled under the new sparse-array API;
+      * the transition step as ``Mt @ x`` (CSR sparse @ dense vector — the
+        bedrock, O(nnz) matvec) instead of the ``x @ A`` (dense @ sparse)
+        idiom networkx applies each iteration.
+
+    The hard ``max_iter`` cap guarantees termination regardless of
+    convergence, so the command can never hang; on non-convergence we
+    return the best-so-far vector rather than raising (a Gini summary or a
+    relative re-rank tolerates an approximate tail). Raises ``ImportError``
+    when numpy/scipy are absent so callers fall back to degree ranking.
+
+    The symbol graph is unweighted (edges carry ``kind``, not ``weight``),
+    matching networkx's ``weight=1.0`` default for it — so per-row nnz IS
+    the out-degree.
+    """
+    import numpy as np
+    import scipy.sparse as sp
+
+    nodes = list(G)
+    n = len(nodes)
+    if n == 0:
+        return {}
+    index = {node: i for i, node in enumerate(nodes)}
+
+    m = G.number_of_edges()
+    rows = np.empty(m, dtype=np.int64)
+    cols = np.empty(m, dtype=np.int64)
+    for k, (u, v) in enumerate(G.edges()):
+        rows[k] = index[u]
+        cols[k] = index[v]
+    A = sp.csr_array((np.ones(m, dtype=float), (rows, cols)), shape=(n, n))
+
+    # Out-degree from CSR row pointers — no A.sum(axis=1) (the regressing op).
+    out = np.diff(A.indptr).astype(float)
+    inv = np.zeros(n, dtype=float)
+    nz = out != 0.0
+    inv[nz] = 1.0 / out[nz]
+    # Row-stochastic transition matrix, built by scaling each stored entry
+    # by its row's 1/out-degree (stays sparse; no diag-matrix product).
+    M = sp.csr_array(
+        (A.data * np.repeat(inv, np.diff(A.indptr)), A.indices, A.indptr.copy()),
+        shape=(n, n),
+    )
+    Mt = M.T.tocsr()
+    is_dangling = ~nz
+
+    # Teleport / personalisation vector (defaults to uniform).
+    p = np.full(n, 1.0 / n, dtype=float)
+    if personalization:
+        p = np.zeros(n, dtype=float)
+        for node, weight in personalization.items():
+            i = index.get(node)
+            if i is not None:
+                p[i] = float(weight)
+        s = float(p.sum())
+        p = (p / s) if s > 0 else np.full(n, 1.0 / n, dtype=float)
+
+    x = np.full(n, 1.0 / n, dtype=float)
+    for _ in range(max_iter):
+        xlast = x
+        x = alpha * (Mt @ xlast + float(xlast[is_dangling].sum()) * p) + (1.0 - alpha) * p
+        if float(np.abs(x - xlast).sum()) < n * tol:
+            break
+    return {nodes[i]: float(x[i]) for i in range(n)}
+
+
 def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, float]:
     """Compute PageRank scores for every node in *G*.
 
@@ -32,15 +129,16 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
     When *alpha* is ``None`` (default) the damping factor is chosen
     adaptively based on graph cyclicity via ``_optimal_alpha()``.
 
-    Falls back to degree-based ranking when numpy is not available
-    (networkx < 3.2 requires numpy for pagerank).
+    Uses the roam-owned :func:`_pagerank_core` power iteration (bounded,
+    hang-proof). Falls back to degree-based ranking when numpy/scipy are
+    not available (minimal install).
     """
     if len(G) == 0:
         return {}
     if alpha is None:
         alpha = _optimal_alpha(G)
     try:
-        return nx.pagerank(G, alpha=alpha)
+        return _pagerank_core(G, alpha)
     except ImportError:
         # numpy/scipy not installed — degree-based fallback. Normalise
         # so the result still satisfies the "scores sum to ~1" contract
@@ -50,12 +148,6 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
         raw = {n: G.degree(n) for n in G}
         total = sum(raw.values()) or 1.0
         return {n: v / total for n, v in raw.items()}
-    except nx.PowerIterationFailedConvergence:
-        # Rare on real graphs but possible on pathological cyclic
-        # topologies when ``_optimal_alpha`` picks a low damping factor.
-        # Mirror the ``personalized_pagerank`` fallback (lineage rule):
-        # retry with a more tolerant solver before propagating the error.
-        return nx.pagerank(G, alpha=alpha, max_iter=300, tol=1e-04)
 
 
 def personalized_pagerank(
