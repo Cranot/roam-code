@@ -59,7 +59,13 @@ def test_mcp_server_card_hash_pinned():
     """
     path = _card_path()
     assert path.exists(), f"card file missing at {path}"
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    # Hash LF-normalized bytes: the pin is computed on LF bytes by the W844
+    # substrate (dev/build_readme_counts.py), so reading raw bytes diverges on
+    # a Windows CRLF checkout (digest 178444dc...) from the LF pin (5d77810b...)
+    # even when the card content is byte-identical. Normalizing here makes the
+    # gate platform-stable; tamper-detection is unaffected (content, not line
+    # endings, is what an attacker would change).
+    actual = hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     assert actual == _EXPECTED_CARD_SHA256, (
         f"\nmcp-server-card.json digest drift detected.\n"
         f"  expected: {_EXPECTED_CARD_SHA256}\n"
