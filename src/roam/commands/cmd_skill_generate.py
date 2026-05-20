@@ -28,6 +28,7 @@ from typing import Iterable
 import click
 
 from roam.capability import REGISTRY, roam_capability
+from roam.output.formatter import json_envelope, to_json
 
 
 @roam_capability(
@@ -73,6 +74,8 @@ def skill_generate_cmd(ctx, target: str, output_path: str | None, ai_safe_only: 
     change shape, the manifest stays in sync because it derives from the
     @roam_capability decorators.
     """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+
     # Force-load known capability modules
     from roam.commands.cmd_capabilities import _populate_registry
 
@@ -83,13 +86,13 @@ def skill_generate_cmd(ctx, target: str, output_path: str | None, ai_safe_only: 
         caps = [c for c in caps if c.ai_safe]
 
     if target == "claude":
-        text, _default_path = _emit_claude_skill(caps), "skills/roam/SKILL.md"
+        text, _default_path, fmt = _emit_claude_skill(caps), "skills/roam/SKILL.md", "markdown"
     elif target == "cursor":
-        text, _default_path = _emit_cursor_rule(caps), ".cursor/rules/roam.mdc"
+        text, _default_path, fmt = _emit_cursor_rule(caps), ".cursor/rules/roam.mdc", "markdown"
     elif target == "continue":
-        text, _default_path = _emit_continue_snippet(caps), "continue-roam-snippet.json"
+        text, _default_path, fmt = _emit_continue_snippet(caps), "continue-roam-snippet.json", "json"
     elif target == "aider":
-        text, _default_path = _emit_aider_snippet(caps), ".aiderrc"
+        text, _default_path, fmt = _emit_aider_snippet(caps), ".aiderrc", "config"
     else:
         raise click.ClickException(f"unknown target: {target}")
 
@@ -98,6 +101,21 @@ def skill_generate_cmd(ctx, target: str, output_path: str | None, ai_safe_only: 
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
         click.echo(f"wrote {len(text)} bytes to {out}")
+    elif json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "skill-generate",
+                    summary={
+                        "verdict": f"generated roam skill ({len(text)} chars)",
+                        "state": "generated",
+                    },
+                    skill=text,
+                    target=target,
+                    format=fmt,
+                )
+            )
+        )
     else:
         click.echo(text)
 

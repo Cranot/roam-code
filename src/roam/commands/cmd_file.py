@@ -241,8 +241,26 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         # Always include the deps-of file itself, plus its imports
         target_paths.append(deps_of)
 
-    # If nothing to do, print help
+    # If nothing to do, print help.
+    # Pattern-1C: in --json mode emit a structured usage-error envelope
+    # instead of Click help text so JSON consumers never receive
+    # unparseable USAGE/HELP output.
     if not target_paths and not deps_of:
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "file",
+                        summary={
+                            "verdict": "Pass a file PATH (or --changed / --deps-of PATH) to show a skeleton.",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass one or more file PATHS, or use --changed / --deps-of PATH.",
+                    )
+                )
+            )
+            raise SystemExit(2)
         click.echo(ctx.get_help())
         return
 

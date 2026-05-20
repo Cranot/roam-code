@@ -286,6 +286,22 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
         return
 
     if not preset:
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "report",
+                        summary={
+                            "verdict": "no report preset provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a preset name, e.g. 'roam report <preset>'.",
+                        available_presets=list(all_presets.keys()),
+                    )
+                )
+            )
+            raise SystemExit(1)
         click.echo("Usage: roam report <preset>")
         click.echo("Available presets: " + ", ".join(all_presets.keys()))
         click.echo("Use --list for details.")

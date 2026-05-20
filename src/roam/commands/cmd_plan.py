@@ -597,7 +597,22 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if not target and not symbol_name and not file_path and not staged:
-        click.echo("Provide a TARGET symbol/file, --symbol, --path, or --staged.")
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "plan",
+                        summary={
+                            "verdict": "no TARGET symbol/file, --symbol, --path, or --staged provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a TARGET symbol/file, --symbol, --path, or --staged.",
+                    )
+                )
+            )
+        else:
+            click.echo("Provide a TARGET symbol/file, --symbol, --path, or --staged.")
         raise SystemExit(1)
 
     ensure_index()

@@ -419,11 +419,27 @@ def relate(ctx, symbols, files, depth):
                         input_names[sid] = info["name"]
 
         if not input_ids:
-            click.echo(
-                "No symbols to analyze.\n"
-                "  Tip: Provide at least one valid symbol name or --path path.\n"
-                "       Use `roam search <partial-name>` to find symbol names."
-            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "relate",
+                            summary={
+                                "verdict": "no symbols to analyze — provide a symbol name or --path",
+                                "state": "usage_error",
+                                "partial_success": True,
+                            },
+                            hint="Provide at least one valid symbol name or --path path. "
+                            "Use `roam search <partial-name>` to find symbol names.",
+                        )
+                    )
+                )
+            else:
+                click.echo(
+                    "No symbols to analyze.\n"
+                    "  Tip: Provide at least one valid symbol name or --path path.\n"
+                    "       Use `roam search <partial-name>` to find symbol names."
+                )
             raise SystemExit(1)
 
         # Analysis -- each substrate goes through ``_run_check`` so a

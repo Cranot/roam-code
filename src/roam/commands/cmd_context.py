@@ -1595,8 +1595,26 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
         )
         return
 
-    # Require at least one symbol name if --for-file is not used
+    # Require at least one symbol name if --for-file is not used.
+    # Pattern-1C: in --json mode emit a structured usage-error envelope
+    # instead of Click help text so JSON consumers never receive
+    # unparseable USAGE/HELP output.
     if not names:
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "context",
+                        summary={
+                            "verdict": "Pass a symbol NAME (or --for-file PATH) to gather context.",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a symbol NAME, multiple names for batch mode, or --for-file PATH.",
+                    )
+                )
+            )
+            raise SystemExit(2)
         click.echo(ctx.get_help())
         return
 

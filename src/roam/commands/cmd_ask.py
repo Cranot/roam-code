@@ -79,7 +79,24 @@ def _emit_recipe_list(json_mode: bool) -> None:
     click.echo('Run `roam ask "<question>"` to dispatch.')
 
 
-def _emit_no_query() -> None:
+def _emit_no_query(json_mode: bool) -> None:
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ask",
+                    summary={
+                        "verdict": "type a question or use --list to see recipes",
+                        "state": "usage_error",
+                        "partial_success": True,
+                    },
+                    hint='Run `roam ask "<question>"` or `roam ask --list`.',
+                    recipes=[r.name for r in RECIPES[:3]],
+                )
+            )
+        )
+        return
+
     click.echo("VERDICT: type a question or use --list")
     click.echo()
     for recipe in RECIPES[:3]:
@@ -274,7 +291,7 @@ def ask(ctx, query, list_recipes, explain, recipe_override):
     query_text = " ".join(query).strip()
     if not query_text and not recipe_override:
         # Lazygit `?` moment — no query, no recipe → show shortlist.
-        _emit_no_query()
+        _emit_no_query(json_mode)
         return
 
     ranked = _rank_recipes(query_text, recipe_override)

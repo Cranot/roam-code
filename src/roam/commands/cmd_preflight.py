@@ -811,7 +811,22 @@ def preflight(ctx, target, staged):
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     if not target and not staged:
-        click.echo("Provide a TARGET symbol/file or use --staged.")
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "preflight",
+                        summary={
+                            "verdict": "no TARGET symbol/file or --staged provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a TARGET symbol/file or use --staged.",
+                    )
+                )
+            )
+        else:
+            click.echo("Provide a TARGET symbol/file or use --staged.")
         raise SystemExit(1)
 
     ensure_index()

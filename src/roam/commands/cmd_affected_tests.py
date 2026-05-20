@@ -309,7 +309,22 @@ def affected_tests(ctx, target, staged, show_command):
     ensure_index()
 
     if not target and not staged:
-        click.echo("Provide a TARGET symbol/file or use --staged.")
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "affected-tests",
+                        summary={
+                            "verdict": "no TARGET symbol/file or --staged provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a TARGET symbol/file or use --staged.",
+                    )
+                )
+            )
+        else:
+            click.echo("Provide a TARGET symbol/file or use --staged.")
         raise SystemExit(1)
 
     with open_db(readonly=True) as conn:

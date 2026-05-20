@@ -236,8 +236,25 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
     pats.extend(patterns)
     pats = [p for p in pats if p]
     if not pats:
-        click.echo("VERDICT: no patterns provided")
-        click.echo("Pass a positional pattern or -e/--regex.")
+        # Pattern 1B/1C discipline: emit a structured envelope in JSON mode
+        # so MCP wrappers see actionable state, not a raw COMMAND_FAILED.
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "history-grep",
+                        summary={
+                            "verdict": "no patterns provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a positional pattern or -e/--regex.",
+                    )
+                )
+            )
+        else:
+            click.echo("VERDICT: no patterns provided")
+            click.echo("Pass a positional pattern or -e/--regex.")
         raise SystemExit(2)
 
     ensure_index()

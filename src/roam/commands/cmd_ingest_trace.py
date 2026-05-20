@@ -140,9 +140,26 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
             ctx.exit(EXIT_ERROR)
             return
     else:
-        click.echo("Error: provide a trace file (positional or via --otel/--jaeger/--zipkin/--generic)")
         from roam.exit_codes import EXIT_USAGE
 
+        # Pattern 1B/1C discipline: emit a structured envelope in JSON mode
+        # so MCP wrappers see actionable state, not a raw COMMAND_FAILED.
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "ingest-trace",
+                        summary={
+                            "verdict": "no trace file provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                        },
+                        hint="Pass a positional trace file or use --otel/--jaeger/--zipkin/--generic.",
+                    )
+                )
+            )
+        else:
+            click.echo("Error: provide a trace file (positional or via --otel/--jaeger/--zipkin/--generic)")
         ctx.exit(EXIT_USAGE)
         return
 
