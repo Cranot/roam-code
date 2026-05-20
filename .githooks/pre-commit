@@ -1,26 +1,33 @@
 #!/bin/sh
-# pre-commit hook -- doc-hygiene drift gate (W250 / Wave30.1).
+# pre-commit hook -- anti-leak + doc-hygiene drift gate.
 #
-# Re-runs the same two doc-hygiene checks that gate the `doc-hygiene` job
-# in .github/workflows/roam-ci.yml, so a developer catches count drift
-# locally before the PR fails in CI.
+# Runs at COMMIT time, on the STAGED changes, before anything reaches the
+# public repo. Two independent gates:
 #
-# Checks:
+#   0. python scripts/scan_internal_language.py --staged
+#        Anti-leak gate. Scans the staged content of staged files for
+#        internal-language leaks (day-job customer name, session markers,
+#        sales-positioning shorthand, personal paths, etc). Pattern
+#        catalogue + this scanner are stdlib-only and share a single source
+#        of truth with the CI gate tests/test_no_internal_language.py.
+#        ROOT CAUSE this closes: the leak gate used to run ONLY in CI, so
+#        leaks reached the public repo before being caught. Now it blocks
+#        the commit locally.
 #   1. python dev/build_readme_counts.py --check
-#        Marker-protected blocks in README.md / CLAUDE.md /
+#        Marker-protected count blocks in README.md / CLAUDE.md /
 #        llms-install.md and both mcp-server-card.json files.
-#        Exits non-zero on drift.
 #   2. python scripts/sync_surface_counts.py
 #        Free-form prose surfaces (landing-page HTML, llms.txt,
-#        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run
-#        and exits non-zero on drift.
+#        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run.
 #
 # To install on a fresh clone (same one-liner as the commit-msg hook):
 #   git config core.hooksPath .githooks
 #
 # To bypass for a one-off legitimate commit (rare): commit with
-# --no-verify, then run the counts script with --apply / --write
-# and commit the regenerated counts as a follow-up.
+# --no-verify. For a real leak, prefer fixing it or (if intentional)
+# adding the file to WHITELIST_FILES in
+# scripts/internal_language_patterns.py. The pre-push hook re-runs the
+# anti-leak scan over the whole tree as a backstop for --no-verify.
 
 set -e
 
@@ -29,14 +36,25 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 PY="${PYTHON:-python}"
 if ! command -v "$PY" >/dev/null 2>&1; then
-    if command -v python3 >/dev/null 2>&1; then
+    if command -v py >/dev/null 2>&1; then
+        PY="py -3"
+    elif command -v python3 >/dev/null 2>&1; then
         PY=python3
     else
         echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
-        echo "  No 'python' or 'python3' on PATH; skipping doc-hygiene check." >&2
+        echo "  No 'python', 'py -3', or 'python3' on PATH." >&2
         echo "  Install Python or run 'git commit --no-verify' to bypass." >&2
         exit 1
     fi
+fi
+
+# --- 0. Anti-leak gate (STAGED changes) -------------------------------------
+if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --staged; then
+    echo "" >&2
+    echo "BLOCKED: internal-language leak in staged changes -- see above." >&2
+    echo "  Fix the offending line(s), or (if intentional) add the file to" >&2
+    echo "  WHITELIST_FILES in scripts/internal_language_patterns.py." >&2
+    exit 1
 fi
 
 # --- 1. Marker-protected count blocks (README/CLAUDE/llms-install/cards) ----

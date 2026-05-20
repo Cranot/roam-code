@@ -43,6 +43,34 @@ The local hooks live in `.pre-commit-config.yaml` and mirror two CI gates:
 - **`no-coauthor`** parses the commit message and rejects any
   `Co-Authored-By:` trailer — project policy is single-author on this repo.
 
+## Git hooks (required)
+
+roam-code keeps its git hooks under version control in `.githooks/` so every
+clone runs the same gates. Enable them once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+That single command activates all three tracked hooks:
+
+| Hook | When | What it does |
+|---|---|---|
+| `pre-commit` | every `git commit` | **Anti-leak scan** of the *staged* changes (`scripts/scan_internal_language.py --staged`) + count-drift checks. Blocks the commit on any internal-language leak (day-job customer name, session markers, sales-positioning shorthand, personal paths, etc). |
+| `pre-push` | every `git push` | **Anti-leak scan** of *every tracked file* (`--all`) as a `--no-verify` backstop + the structural-gate bundle (`scripts/prepush_check.py`). |
+| `commit-msg` | every `git commit` | Rejects `Co-Authored-By:` trailers and AI-attribution lines (single-author project policy). |
+
+**Why required:** the anti-leak gate used to run *only* in CI. With no
+installed hook, a leak could reach the public repo before CI caught it. The
+commit-time and push-time hooks now block leaks locally, on the staged content
+and the whole tree respectively.
+
+The forbidden-pattern catalogue is a single source of truth at
+`scripts/internal_language_patterns.py` (stdlib-only), shared by the hooks
+*and* the CI gate `tests/test_no_internal_language.py`. If a hit is
+intentional, add the file to `WHITELIST_FILES` there (with a comment) or
+tighten the offending regex — do not bypass with `--no-verify`.
+
 ### Running Tests
 
 ```bash

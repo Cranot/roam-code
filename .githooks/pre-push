@@ -1,10 +1,17 @@
 #!/bin/sh
-# pre-push hook -- structural-gate bundle (Lane D, 2026-05-20).
+# pre-push hook -- anti-leak (whole-tree) + structural-gate bundle.
 #
-# Runs the repo-wide structural drift-guards locally before `git push`,
-# the gate that would have prevented this session's ~14 CI fix-forward
-# cascade. Delegates to scripts/prepush_check.py so the gate list lives in
-# exactly ONE place (FAST_PYTEST_GUARDS / FULL_PYTEST_GUARDS there).
+# Runs before `git push`. Two stages:
+#   A. python scripts/scan_internal_language.py --all
+#        Anti-leak gate over EVERY tracked file (not just staged). This is
+#        the whole-tree backstop for the pre-commit staged scan: it catches
+#        a leak that slipped past commit time (e.g. `git commit --no-verify`)
+#        before it reaches the public remote. Same stdlib-only scanner and
+#        single-source pattern catalogue as the commit-time gate.
+#   B. python scripts/prepush_check.py --fast
+#        Repo-wide structural drift-guards (the gate that would have
+#        prevented this session's ~14 CI fix-forward cascade). Delegates so
+#        the gate list lives in ONE place (FAST_/FULL_PYTEST_GUARDS there).
 #
 # Design authority: (internal memo)
 #   FAST tier (default, ~43s): ruff format/check + count-drift scripts +
@@ -14,13 +21,12 @@
 #   shape-axis, smells-severity-parity).
 #
 # COMPOSITION -- this hook does NOT duplicate the existing surfaces:
-#   * .githooks/pre-commit (W250 / Wave30.1) -- runs the two count scripts
-#     at COMMIT time. prepush_check.py re-runs them as a cheap (~2s)
-#     backstop for `--no-verify` commit bypasses, not as its primary job.
+#   * .githooks/pre-commit -- anti-leak STAGED scan + count scripts at
+#     COMMIT time. Stage A here re-runs the anti-leak scan over the WHOLE
+#     tree (not just staged) as the --no-verify backstop; prepush_check.py
+#     re-runs the count scripts as a cheap (~2s) backstop too.
 #   * .githooks/commit-msg + .pre-commit-config.yaml no-coauthor (Wave59) --
 #     reject Co-Authored-By trailers (Cranot-only). NOT touched here.
-#   This hook's unique value-add is the structural-lint pytest bundle that
-#   no commit-time hook runs.
 #
 # INSTALL (same one-liner as the other hooks; no extra step if already run):
 #   git config core.hooksPath .githooks
@@ -36,16 +42,28 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 PY="${PYTHON:-python}"
 if ! command -v "$PY" >/dev/null 2>&1; then
-    if command -v python3 >/dev/null 2>&1; then
+    if command -v py >/dev/null 2>&1; then
+        PY="py -3"
+    elif command -v python3 >/dev/null 2>&1; then
         PY=python3
     else
         echo "ERROR: pre-push hook (.githooks/pre-push)" >&2
-        echo "  No 'python' or 'python3' on PATH; skipping structural-gate bundle." >&2
+        echo "  No 'python', 'py -3', or 'python3' on PATH." >&2
         echo "  Install Python or run 'git push --no-verify' to bypass." >&2
         exit 1
     fi
 fi
 
-# FAST tier by default. For a release-prep / doc-heavy push, run the FULL
-# tier manually: python scripts/prepush_check.py --full
-exec "$PY" "$REPO_ROOT/scripts/prepush_check.py" --fast
+# --- A. Anti-leak gate (WHOLE tracked tree) ---------------------------------
+if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
+    echo "" >&2
+    echo "BLOCKED: internal-language leak in tracked files -- see above." >&2
+    echo "  Fix the offending line(s), or (if intentional) add the file to" >&2
+    echo "  WHITELIST_FILES in scripts/internal_language_patterns.py." >&2
+    exit 1
+fi
+
+# --- B. Structural-gate bundle (FAST tier) ----------------------------------
+# For a release-prep / doc-heavy push, run the FULL tier manually:
+#   python scripts/prepush_check.py --full
+exec $PY "$REPO_ROOT/scripts/prepush_check.py" --fast
