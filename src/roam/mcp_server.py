@@ -4079,6 +4079,13 @@ def _structured_error(error_dict: dict) -> dict:
             first_msg = _first_error_message.get(code)
         if first_msg:
             trimmed["first_error_message"] = first_msg
+            # CLAUDE.md Pattern-1 canonical envelope mandates ``error``
+            # always be present (human-readable text). The storm-trim
+            # used to drop it, leaving downstream consumers (and tests
+            # that read ``r["error"]``) with KeyError. Repopulate from
+            # the captured first-fire message so the trimmed envelope
+            # still honors the canonical shape.
+            trimmed["error"] = first_msg
         return trimmed
     return error_dict
 
