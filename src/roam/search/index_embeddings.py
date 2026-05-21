@@ -8,6 +8,7 @@ import re
 import sqlite3
 from typing import Any, TypeAlias
 
+from roam.observability import log_swallowed
 from roam.search.framework_packs import search_pack_symbols
 from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarity, tokenize
 
@@ -195,13 +196,16 @@ def build_fts_index(
         build_and_store_tfidf(conn)
         try:
             build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except (ImportError, RuntimeError, OSError, sqlite3.Error):
+        except (ImportError, RuntimeError, OSError, sqlite3.Error) as exc:
             # ImportError/RuntimeError: ONNX backend optional and may be
             # absent (line 119 of onnx_embeddings.py raises RuntimeError on
             # missing deps). OSError: missing model/tokenizer files.
             # sqlite3.Error: embedding table write conflict.
             # Programmer errors propagate per W531 fail-loud discipline.
-            pass
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+            # TF-IDF path stays authoritative, but a genuine ONNX build error
+            # (vs documented absence) gets a discoverable lineage signal.
+            log_swallowed(f"search.index_embeddings:build_fts:onnx:no_fts5:{type(exc).__name__}", exc)
         return
 
     # The symbol_fts schema now includes a ``docstring`` column (audit B8); the
@@ -240,9 +244,11 @@ def build_fts_index(
         build_and_store_tfidf(conn)
         try:
             build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except (ImportError, RuntimeError, OSError, sqlite3.Error):
+        except (ImportError, RuntimeError, OSError, sqlite3.Error) as exc:
             # See narrowing rationale on the cold-start branch above.
-            pass
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+            # genuine ONNX build error is surfaced even on the no-diff path.
+            log_swallowed(f"search.index_embeddings:build_fts:onnx:no_diff:{type(exc).__name__}", exc)
         return
 
     from roam.db.connection import batched_in
@@ -292,9 +298,12 @@ def build_fts_index(
     # Optional dense local embeddings (ONNX) for semantic search (#56).
     try:
         build_and_store_onnx_embeddings(conn, project_root=project_root)
-    except Exception:
+    except Exception as exc:
         # ONNX is optional; TF-IDF path remains authoritative fallback.
-        pass
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a genuine
+        # ONNX build error (vs documented backend absence) is surfaced so a
+        # silently-missing semantic index has a discoverable cause.
+        log_swallowed(f"search.index_embeddings:build_fts:onnx:fts5:{type(exc).__name__}", exc)
 
 
 # ---------------------------------------------------------------------------

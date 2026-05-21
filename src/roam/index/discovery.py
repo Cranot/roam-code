@@ -7,6 +7,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from roam.observability import log_swallowed
+
 # 53 extensions the discovery walker skips as non-source: binaries, lockfiles,
 # minified bundles, source-maps, archives, media, fonts, compiled artefacts, and
 # document formats. Single source of truth — cmd_secrets._BINARY_EXTENSIONS is
@@ -226,8 +228,12 @@ def _is_generated_content(full_path: Path) -> bool:
             for marker in _GENERATED_MARKERS:
                 if marker in line:
                     return True
-    except OSError:
-        pass
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+        # unreadable file silently classifies as "not generated", so a
+        # generated file may be indexed as hand-written. Surface the lineage
+        # so the misclassification has a discoverable cause.
+        log_swallowed(f"index.discovery:is_generated:read:{full_path}", exc)
     return False
 
 

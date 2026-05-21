@@ -16,7 +16,12 @@ def _git_head_short() -> str | None:
     """Return current ``HEAD`` short SHA, or ``None`` if git is unavailable."""
     try:
         root = find_project_root()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Expected absence (no .git / outside a repo) returns None below;
+        # surface unexpected failures via the observability hook.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:_git_head_short:find_project_root", _exc)
         return None
     try:
         result = subprocess.run(
@@ -27,7 +32,12 @@ def _git_head_short() -> str | None:
             timeout=5,
             check=False,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as _exc:
+        # Git missing / rev-parse timed out -> None. A TimeoutExpired is a
+        # real failure masquerading as "git unavailable" — surface it.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:_git_head_short:git_rev_parse", _exc)
         return None
     if result.returncode != 0:
         return None
@@ -61,7 +71,12 @@ def _git_dirty_count() -> int | None:
     """
     try:
         root = find_project_root()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Expected absence (no .git / outside a repo) returns None below;
+        # surface unexpected failures via the observability hook.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:_git_dirty_count:find_project_root", _exc)
         return None
     try:
         result = subprocess.run(
@@ -72,7 +87,12 @@ def _git_dirty_count() -> int | None:
             timeout=5,
             check=False,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as _exc:
+        # Git missing / status timed out -> None. A TimeoutExpired is a
+        # real failure masquerading as "git unavailable" — surface it.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:_git_dirty_count:git_status", _exc)
         return None
     if result.returncode != 0:
         return None
@@ -109,7 +129,12 @@ def index_status() -> dict | None:
             if row is None:
                 return None
             indexed_short = (row[0] or "")[:12]
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Expected absence (no DB, no git_commits table on an older index)
+        # collapses to "staleness unknown" -> None; surface anything else.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:index_status:git_commits_query", _exc)
         return None
     if not indexed_short:
         return None
@@ -625,7 +650,12 @@ def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:
             "LIMIT ?",
             (fts_query, limit),
         ).fetchall()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # FTS5 unavailable / MATCH-syntax error is the documented trigger
+        # for the LIKE fallback below — make the degradation loud.
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:fts_suggestions:fts5_query", _exc)
         rows = []
 
     # --- Fallback: LIKE match when FTS5 is unavailable or returned nothing ---
@@ -639,7 +669,12 @@ def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:
                 "LIMIT ?",
                 (f"%{symbol_name}%", limit),
             ).fetchall()
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            # Both lookup paths failed -> zero suggestions returned;
+            # surface the cause so it isn't mistaken for "no matches".
+            from roam.observability import log_swallowed
+
+            log_swallowed("resolve:fts_suggestions:like_fallback", _exc)
             rows = []
 
     return [

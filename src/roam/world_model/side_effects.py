@@ -56,6 +56,7 @@ from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.db.edge_kinds import CALL_OR_REF_KINDS
+from roam.observability import log_swallowed
 
 # ---------------------------------------------------------------------------
 # Taxonomy
@@ -555,7 +556,12 @@ def classify_side_effects(
             else:
                 all_text = ""
                 all_lines = []
-        except OSError:
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+            # unreadable file yields empty-body classifications that look
+            # identical to genuinely effect-free symbols. Surface the
+            # lineage (rate-limited per-scope; visible under ROAM_VERBOSE=1).
+            log_swallowed(f"world_model.side_effects:file_read:{file_path}", exc)
             all_text = ""
             all_lines = []
 

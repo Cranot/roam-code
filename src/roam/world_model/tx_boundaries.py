@@ -62,11 +62,13 @@ Confidence is calibrated as:
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.observability import log_swallowed
 from roam.world_model.side_effects import (
     SideEffectClassification,
     classify_side_effects,
@@ -668,7 +670,20 @@ def classify_tx_boundaries(
 
     try:
         repo_root = find_project_root()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing project root downgrades per-symbol body reads to a
+        # CWD-relative path; an unreadable body classifies as ``unknown``,
+        # so a silent fallback would mask real transactions as unknown.
+        # Surface the lineage (mirrors classify_side_effects /
+        # classify_idempotency / classify_causal_graph).
+        warnings.warn(
+            f"find_project_root() failed in classify_tx_boundaries "
+            f"({type(exc).__name__}: {exc}); falling back to Path('.') — "
+            "function bodies may classify as 'unknown' if CWD isn't the repo root",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         repo_root = Path(".")
 
     # Group SE records by file so we read each file at most once.
@@ -685,7 +700,13 @@ def classify_tx_boundaries(
                     all_lines = f.readlines()
             else:
                 all_lines = []
-        except OSError:
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+            # unreadable body classifies as ``unknown``, which a silent
+            # fallback masks as "we read it and found no transaction".
+            # Surface the lineage (rate-limited per-scope; visible under
+            # ROAM_VERBOSE=1).
+            log_swallowed(f"world_model.tx_boundaries:body_read:{file_path}", exc)
             all_lines = []
 
         for se in items:

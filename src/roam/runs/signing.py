@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.atomic_io import atomic_write_bytes
+from roam.observability import log_swallowed
 from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
@@ -497,7 +498,13 @@ def verify_chain_with_receipts(
             continue
         try:
             on_disk = path.read_bytes()
-        except OSError:
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+            # unreadable receipt (permission error) is folded into the
+            # ``missing`` verdict, which a silent except would conflate
+            # with a genuinely-absent file. Surface the lineage so an
+            # OSError-as-missing has a discoverable cause.
+            log_swallowed(f"runs.signing:verify_receipts:read:{tool_call}", exc)
             if first_missing_seq is None:
                 first_missing_seq = seq if isinstance(seq, int) else None
             continue

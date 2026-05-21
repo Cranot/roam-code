@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.observability import log_swallowed
 from roam.world_model.side_effects import (
     SideEffectClassification,
     classify_side_effects,
@@ -310,7 +311,13 @@ def classify_idempotency(
                     lines = f.readlines()
             else:
                 lines = []
-        except OSError:
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+            # unreadable body yields empty-body classifications that are
+            # indistinguishable from genuinely clean symbols. Surface the
+            # lineage (rate-limited per-scope so a many-file repo won't
+            # flood; visible under ROAM_VERBOSE=1).
+            log_swallowed(f"world_model.idempotency:body_read:{file_path}", exc)
             lines = []
         for se in items:
             ls = se.line_start or 1

@@ -28,6 +28,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from roam.observability import log_swallowed
+
 # Optional extras roam can take advantage of when present. Listed in
 # preference order — `enabled_extras` in the manifest preserves this order.
 _OPTIONAL_EXTRAS = (
@@ -133,6 +135,9 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 version = getattr(type(bridge), "VERSION", LanguageBridge.VERSION)
                 out["bridges"][str(name)] = str(version)
             except Exception:
+                # Per-bridge probe failure — one bridge's VERSION is absent;
+                # the documented "partial map" behaviour keeps the rest. The
+                # section-level catch below surfaces a wholesale loss.
                 continue
         # Laravel post-resolver is bridge-shaped but module-level; pull
         # its VERSION alongside so the drift map covers every edge
@@ -141,10 +146,16 @@ def _component_versions() -> dict[str, dict[str, str]]:
             from roam.index.laravel_post import VERSION as _laravel_version
 
             out["bridges"]["laravel"] = str(_laravel_version)
-        except Exception:
-            pass
-    except Exception:
-        pass
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+            # Laravel post-resolver VERSION dropped out of the drift map; a
+            # bridge version bump would then go undetected. Surface the lineage.
+            log_swallowed("index.manifest:component_versions:laravel", exc)
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
+        # bridges drift sub-map is missing (registry import/discovery failed).
+        # A partial map is intentional, but the omission must be discoverable.
+        log_swallowed("index.manifest:component_versions:bridges", exc)
 
     # Detectors — function-based registry. The version map lives in
     # :mod:`roam.catalog.versions` (keyed by task_id), kept separate so
@@ -159,8 +170,11 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 continue
             seen.add(task_id)
             out["detectors"][str(task_id)] = detector_version(str(task_id))
-    except Exception:
-        pass
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
+        # detectors drift sub-map is missing (catalog import failed). A partial
+        # map is intentional, but the omission must be discoverable.
+        log_swallowed("index.manifest:component_versions:detectors", exc)
 
     # Extractors — instantiate each supported language to pull its
     # class-level VERSION. Constructors are pure; the import cost is
@@ -175,9 +189,15 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 version = getattr(type(ext), "VERSION", LanguageExtractor.VERSION)
                 out["extractors"][str(lang)] = str(version)
             except Exception:
+                # Per-language probe failure — one extractor's VERSION is
+                # absent; the documented "partial map" behaviour keeps the
+                # rest. The section-level catch below surfaces a wholesale loss.
                 continue
-    except Exception:
-        pass
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
+        # extractors drift sub-map is missing (registry import failed). A
+        # partial map is intentional, but the omission must be discoverable.
+        log_swallowed("index.manifest:component_versions:extractors", exc)
 
     return out
 
@@ -195,16 +215,23 @@ def _config_hash(project_root: Path) -> str:
             h.update(b"config.json:")
             h.update(config_path.read_bytes())
             h.update(b"\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+            # is_file() passed but the read failed, so the hash silently omits
+            # real config content and drift detection may miss a config change.
+            # Surface the lineage so a missed-rebuild has a discoverable cause.
+            log_swallowed(f"index.manifest:config_hash:read_config:{config_path}", exc)
     ignore_path = project_root / ".roamignore"
     if ignore_path.is_file():
         try:
             h.update(b"roamignore:")
             h.update(ignore_path.read_bytes())
             h.update(b"\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — see
+            # the config.json branch above; an unreadable .roamignore silently
+            # drops out of the drift hash.
+            log_swallowed(f"index.manifest:config_hash:read_ignore:{ignore_path}", exc)
     return h.hexdigest()
 
 
@@ -261,13 +288,21 @@ def _schema_version(conn: sqlite3.Connection | None) -> int:
             row = conn.execute("PRAGMA user_version").fetchone()
             if row is not None:
                 return int(row[0])
-        except sqlite3.DatabaseError:
-            pass
+        except sqlite3.DatabaseError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+            # live PRAGMA read failed, so the manifest records the compiled-in
+            # USER_VERSION constant instead of the DB's actual schema version.
+            # A drift between the two would otherwise be invisible.
+            log_swallowed("index.manifest:schema_version:pragma_read", exc)
     try:
         from roam.db.connection import USER_VERSION
 
         return int(USER_VERSION)
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+        # USER_VERSION constant could not even be imported; 0 is a sentinel,
+        # not a real schema version. Surface the lineage.
+        log_swallowed("index.manifest:schema_version:constant_import", exc)
         return 0
 
 

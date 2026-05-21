@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from roam.commands.resolve import find_symbol
+from roam.observability import log_swallowed
 from roam.refactor.codegen import detect_language, generate_import
 
 
@@ -337,10 +338,14 @@ def _apply_move(
                 original = snapshots.get(path)
                 if original is not None:
                     _write_file(path, original)
-            except OSError:
+            except OSError as exc:
                 # Best-effort rollback: ignore secondary failures so the
                 # original error is what surfaces to the caller.
-                pass
+                # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+                # failed rollback leaves the repo in a PARTIALLY-MODIFIED state;
+                # surface the lineage so the user knows which file was not
+                # restored, even though the primary OSError still propagates.
+                log_swallowed(f"refactor.transforms:apply_move:rollback:{path}", exc)
         raise
 
 

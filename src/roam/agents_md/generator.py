@@ -52,6 +52,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from roam.observability import log_swallowed
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -146,7 +148,11 @@ class AgentsMd:
 def _project_name(repo_root: Path) -> str:
     try:
         return Path(repo_root).resolve().name
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # path-resolution failure degrades the AGENTS.md headline to a
+        # generic placeholder; surface the lineage so the cause is known.
+        log_swallowed("agents_md.generator:project_name", exc)
         return "this repository"
 
 
@@ -164,7 +170,13 @@ def section_stack(conn) -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT COALESCE(language, '') AS language, COUNT(*) AS n FROM files GROUP BY language"
         ).fetchall()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a SQL
+        # failure (missing table, schema drift) produces the same empty
+        # Stack section as a genuinely unindexed tree. Surface the lineage
+        # so a broken query has a discoverable cause (visible under
+        # ROAM_VERBOSE=1).
+        log_swallowed("agents_md.generator:section_stack:sql", exc)
         return []
 
     total = 0
@@ -189,11 +201,20 @@ def _section_conventions(conn) -> dict[str, Any]:
     """Per-kind naming summary via the canonical detector."""
     try:
         from roam.commands.conventions_helper import compute_conventions
-    except Exception:
+    except Exception as exc:
+        # Lazy import: defers loading the conventions helper until a
+        # generator caller actually needs it. ImportError here means a
+        # partial install — surface the lineage rather than masking it.
+        log_swallowed("agents_md.generator:section_conventions:import", exc)
         return {}
     try:
         result = compute_conventions(conn)
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # detector EXECUTION failure produces the same empty section as a
+        # repo with no symbols. Surface the lineage so a broken detector
+        # has a discoverable cause.
+        log_swallowed("agents_md.generator:section_conventions:compute", exc)
         return {}
 
     by_kind = result.get("by_kind", {}) or {}
@@ -275,7 +296,12 @@ def section_danger_zones(conn, *, limit: int) -> list[dict[str, Any]]:
                AND COALESCE(fs.complexity, 0)   > 0
             """
         ).fetchall()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a SQL
+        # failure produces the same empty danger-zone table as a repo
+        # with no churn history. Surface the lineage so a broken
+        # multi-table join has a discoverable cause.
+        log_swallowed("agents_md.generator:section_danger_zones:sql", exc)
         return []
 
     out: list[dict[str, Any]] = []
@@ -312,7 +338,10 @@ def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Op
             constitution_path,
             load_constitution,
         )
-    except Exception:
+    except Exception as exc:
+        # Lazy import: defers the constitution loader until a caller needs
+        # it. ImportError signals a partial install — surface the lineage.
+        log_swallowed("agents_md.generator:section_gates:import", exc)
         return [], [], [], None
 
     path: Optional[str] = None
@@ -320,7 +349,12 @@ def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Op
 
     try:
         loaded = load_constitution(Path(repo_root))
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # load FAILURE falls through to default gates below, the same as
+        # a repo with no constitution.yml. Surface the lineage so a
+        # corrupt constitution file isn't read as "no constitution".
+        log_swallowed("agents_md.generator:section_gates:load", exc)
         loaded = None
 
     if loaded is not None and loaded.required_checks:
@@ -329,12 +363,18 @@ def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Op
             cp = constitution_path(Path(repo_root))
             if cp.exists():
                 path = str(cp)
-        except Exception:
+        except Exception as exc:
+            # Loud-fallback: a path-resolution failure drops the
+            # constitution_path attribution. Surface the lineage.
+            log_swallowed("agents_md.generator:section_gates:path", exc)
             path = None
     else:
         try:
             required = _default_required_checks()
-        except Exception:
+        except Exception as exc:
+            # Loud-fallback: the loader's own default-gate set failed —
+            # this should never happen, so surface it loudly.
+            log_swallowed("agents_md.generator:section_gates:defaults", exc)
             required = {}
 
     pre_edit = list(required.get("before_edit", []) or [])
@@ -367,12 +407,19 @@ def _section_current_mode(repo_root: Path) -> dict[str, Any]:
             list_modes,
             resolve_mode,
         )
-    except Exception:
+    except Exception as exc:
+        # Lazy import: defers the modes policy module until a caller needs
+        # it. ImportError signals a partial install — surface the lineage.
+        log_swallowed("agents_md.generator:section_current_mode:import", exc)
         return {}
     try:
         active = resolve_mode(Path(repo_root))
         policies = list_modes(Path(repo_root))
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # mode-resolution FAILURE produces the same empty Current-mode
+        # section as a partial install. Surface the lineage.
+        log_swallowed("agents_md.generator:section_current_mode:resolve", exc)
         return {}
 
     allowed = sorted(active.allowed_commands)
@@ -426,7 +473,12 @@ def _section_current_mode(repo_root: Path) -> dict[str, Any]:
             # Commands NEW at the upgrade tier (not allowed now).
             new_at_upgrade = sorted(upgrade_allowed - active.allowed_commands)
             blocked_examples = new_at_upgrade[:6]
-        except Exception:
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+            # missing upgrade-tier policy drops the "blocked commands"
+            # sub-section. Surface the lineage so a policy-table gap is
+            # discoverable rather than read as "nothing is blocked".
+            log_swallowed("agents_md.generator:section_current_mode:blocked", exc)
             blocked_examples = []
 
     return {
@@ -455,7 +507,13 @@ def _section_test_conventions(conn) -> dict[str, Any]:
              WHERE COALESCE(file_role, '') = 'test'
             """
         ).fetchall()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a SQL
+        # failure returns {} (no Test-conventions section), distinct from
+        # the empty-but-present {"test_file_count": 0, ...} below which is
+        # the honest "queried, found no test files" answer. Surface the
+        # lineage so a broken query isn't read as "no tests".
+        log_swallowed("agents_md.generator:section_test_conventions:sql", exc)
         return {}
     if not rows:
         return {"test_file_count": 0, "test_dirs": [], "languages": {}}
@@ -487,18 +545,29 @@ def section_laws(conn, *, top_n: int) -> list[dict[str, Any]]:
     """
     try:
         from roam.laws.miner import mine_laws
-    except Exception:
+    except Exception as exc:
+        # Lazy import: defers the laws miner until a caller needs it.
+        # ImportError signals a partial install — surface the lineage.
+        log_swallowed("agents_md.generator:section_laws:import", exc)
         return []
     try:
         laws = mine_laws(conn, top=top_n)
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # miner EXECUTION failure produces the same empty invariants
+        # section as a repo with no mined laws. Surface the lineage.
+        log_swallowed("agents_md.generator:section_laws:mine", exc)
         return []
 
     out: list[dict[str, Any]] = []
     for law in laws:
         try:
             d = law.to_dict()
-        except Exception:
+        except Exception as exc:
+            # Loud-fallback: a single law that fails to serialise is
+            # skipped (the rest of the section still renders), but surface
+            # the lineage so a broken Law.to_dict() is discoverable.
+            log_swallowed("agents_md.generator:section_laws:to_dict", exc)
             continue
         # Only surface the small set of fields the AGENTS.md section
         # actually renders -- agent-readability over completeness.
@@ -527,10 +596,17 @@ def _section_rules_files(repo_root: Path) -> list[str]:
             try:
                 rel = p.relative_to(Path(repo_root))
             except ValueError:
+                # ``relative_to`` raises ValueError when the path is not
+                # under repo_root — expected for an unusual layout; the
+                # absolute path is a fine fallback. Not a swallowed bug.
                 rel = p
             out.append(str(rel).replace("\\", "/"))
         return out
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # glob/is_dir failure produces the same empty section as a repo
+        # with no .roam/rules/. Surface the lineage.
+        log_swallowed("agents_md.generator:section_rules_files", exc)
         return []
 
 
@@ -546,7 +622,10 @@ def _section_capability_summary() -> dict[str, Any]:
 
     try:
         from roam.capability import REGISTRY
-    except Exception:
+    except Exception as exc:
+        # Lazy import: defers the capability registry until a caller needs
+        # it. ImportError signals a partial install — surface the lineage.
+        log_swallowed("agents_md.generator:section_capability:import", exc)
         return {}
 
     # Mirrors cmd_capabilities._populate_registry; the registry is a
@@ -564,12 +643,21 @@ def _section_capability_summary() -> dict[str, Any]:
     for mod in decorated_modules:
         try:
             importlib.import_module(mod)
-        except Exception:
-            pass
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+            # module that fails to import silently drops its decorated
+            # capabilities from the "57 core / N full" counts below.
+            # Surface the lineage so a count drift has a discoverable
+            # cause (rate-limited per-scope; visible under ROAM_VERBOSE=1).
+            log_swallowed(f"agents_md.generator:section_capability:import_module:{mod}", exc)
 
     try:
         caps = REGISTRY.all()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # registry-read failure produces the same empty Capability-roster
+        # section as a registry that was never populated.
+        log_swallowed("agents_md.generator:section_capability:registry_all", exc)
         return {}
 
     core = sum(1 for c in caps if "core" in c.mcp_preset and c.mcp_expose)
@@ -585,7 +673,11 @@ def _section_capability_summary() -> dict[str, Any]:
         from roam.surface_counts import cli_surface_counts
 
         cli_total = int(cli_surface_counts().get("command_names") or 0) or None
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+        # CLI count is optional enrichment (None renders cleanly), but a
+        # FAILURE differs from a genuine zero; surface the lineage.
+        log_swallowed("agents_md.generator:section_capability:cli_surface_counts", exc)
         cli_total = None
 
     mcp_total: Optional[int] = None
@@ -593,7 +685,10 @@ def _section_capability_summary() -> dict[str, Any]:
         from roam.surface_counts import mcp_surface_counts
 
         mcp_total = int(mcp_surface_counts().get("registered_tools") or 0) or None
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — same
+        # rationale as cli_surface_counts: a FAILURE differs from a zero.
+        log_swallowed("agents_md.generator:section_capability:mcp_surface_counts", exc)
         mcp_total = None
 
     return {

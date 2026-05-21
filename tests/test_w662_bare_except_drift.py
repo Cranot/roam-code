@@ -128,46 +128,17 @@ _GUARDED_DIRS: tuple[str, ...] = (
 # Re-audit during periodic dogfood passes; the
 # ``test_pre_w662_pending_entries_still_have_pattern`` assertion below
 # will catch entries that have already been migrated.
-_PRE_W662_PENDING: dict[str, str] = {
-    # W1300 — entries refreshed after session edits to runs/ledger.py + the
-    # W746 plugin-isolation migration. Two changes:
-    #   1. ``catalog/detectors.py:2044`` + ``:2048`` were the plugin-loop
-    #      perimeters — those sites were migrated to ``except Exception as
-    #      err: log.warning(...)`` (no longer bare-swallow). Dropped.
-    #   2. ``runs/ledger.py`` lines shifted +18/+18/+18 after W1255
-    #      config-hash stamping was inserted around line 250; the same
-    #      cryptographic-substrate isolation rationale applies. Refresh
-    #      :315 -> :333 and :386 -> :404. :238 is unshifted.
-    # ------------------------------------------------------------------
-    # W746-original rationale carried over: the surrounding comments in
-    # runs/ledger.py explicitly mandate that ANY failure of the signing
-    # subsystem must not block ledger writes — narrowing would contradict
-    # the intent. Re-audit when ``verify_chain`` grows a structured
-    # "unsigned event" diagnostic (then we could narrow these to the
-    # specific raises of ``ensure_ledger_key`` and
-    # ``compute_event_signature``).
-    "runs/ledger.py:240": (
-        "cryptographic-substrate isolation perimeter: ensure_ledger_key "
-        "failure on start_run must never block run creation — the "
-        "verifier surfaces the absence (W746; consider narrowing to "
-        "(OSError, ImportError) once the key-substrate failure modes "
-        "are documented as a closed set). Lines shift on every edit to "
-        "the surrounding signing-substrate block; re-pin via grep when "
-        "this drift-guard reports a 2-3 line offset."
-    ),
-    "runs/ledger.py:335": (
-        "cryptographic-substrate isolation perimeter: HMAC signing of a "
-        "new event must NEVER prevent the event from being recorded; "
-        "verify_chain flags unsigned events (W746/W1300; same narrowing "
-        "path as line 240)"
-    ),
-    "runs/ledger.py:406": (
-        "cryptographic-substrate isolation perimeter: stamping final "
-        "signature into meta.json on end_run must not crash the close; "
-        "an unsigned/legacy chain legitimately yields None here "
-        "(W746/W1300; same narrowing path as line 240)"
-    ),
-}
+# W1078 — the 2026-05-21 loud-fallback campaign ("make fallback chains
+# loud") migrated the last three entries: the ``runs/ledger.py``
+# signing-substrate perimeters (ensure_ledger_key on start_run, HMAC
+# event signing, final-signature stamping on end_run). Each bare
+# ``except: pass`` there now emits ``roam.observability.log_swallowed``
+# lineage before continuing — the failure-isolation behaviour is
+# unchanged (a signing failure still never blocks a ledger write) but
+# it is no longer SILENT. ``catalog/detectors.py:2044``/``:2048`` were
+# migrated in an earlier pass. The pending list is now empty: any
+# bare-swallow handler in a W662-guarded file is a hard violation.
+_PRE_W662_PENDING: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------

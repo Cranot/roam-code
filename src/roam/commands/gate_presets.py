@@ -199,24 +199,40 @@ def load_gates_config(config_path: str) -> list[GateRule]:
             min_tests: 3
             severity: error
 
-    W706 family: every fallback path is loud. Missing PyYAML, missing
-    file, malformed YAML, wrong top-level shape, and per-rule type
-    errors all return ``[]`` rather than raise. Callers that need to
+    W706 family: every fallback path is non-crashing. Missing PyYAML,
+    missing file, malformed YAML, wrong top-level shape, and per-rule
+    type errors all return ``[]`` rather than raise. Callers that need to
     distinguish "no rules" from "config broken" should ``Path.exists()``
-    check first. Encoding is pinned to UTF-8 so non-ASCII descriptions
-    on Windows don't blow up on the system codepage.
+    check first. Each fallback also emits an observability lineage signal
+    (visible under ``ROAM_VERBOSE=1``) so a broken config isn't silently
+    indistinguishable from an empty one. Encoding is pinned to UTF-8 so
+    non-ASCII descriptions on Windows don't blow up on the system codepage.
     """
     try:
         import yaml
-    except ImportError:
+    except ImportError as _exc:
+        # PyYAML absent -> no rules loadable. Surface the cause so a
+        # missing optional dep isn't mistaken for "no rules configured".
+        from roam.observability import log_swallowed
+
+        log_swallowed("gate_presets:load_gates_config:pyyaml_missing", _exc)
         return []
 
     try:
         with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as _exc:
+        # File missing / unreadable / bad encoding -> empty rule set.
+        from roam.observability import log_swallowed
+
+        log_swallowed("gate_presets:load_gates_config:file_read", _exc)
         return []
-    except yaml.YAMLError:
+    except yaml.YAMLError as _exc:
+        # Malformed YAML -> empty rule set. Surface the parse error so a
+        # broken config isn't silently treated as "no rules".
+        from roam.observability import log_swallowed
+
+        log_swallowed("gate_presets:load_gates_config:yaml_parse", _exc)
         return []
 
     # W886/W1029 family: data may be None (empty YAML), a list, a scalar,
@@ -241,6 +257,8 @@ def load_gates_config(config_path: str) -> list[GateRule]:
         try:
             min_tests = int(r.get("min_tests", 1))
         except (TypeError, ValueError):
+            # Expected: a non-numeric ``min_tests`` in user YAML falls
+            # back to the documented default of 1 (per-rule, not fatal).
             min_tests = 1
         severity = r.get("severity", "warning")
         if severity not in _VALID_SEVERITIES:

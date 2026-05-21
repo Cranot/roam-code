@@ -406,6 +406,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
             try:
                 src, tgt = row["source_id"], row["target_id"]
             except (KeyError, TypeError):
+                # Expected branch: positional tuple rows (no key access).
                 src, tgt = row[0], row[1]
             forward.setdefault(src, set()).add(tgt)
             backward.setdefault(tgt, set()).add(src)
@@ -421,6 +422,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
             try:
                 src, tgt = row["source_id"], row["target_id"]
             except (KeyError, TypeError):
+                # Expected branch: positional tuple rows (no key access).
                 src, tgt = row[0], row[1]
             forward.setdefault(src, set()).add(tgt)
             backward.setdefault(tgt, set()).add(src)
@@ -464,8 +466,13 @@ def gather_annotations(conn: sqlite3.Connection, sym: dict | None = None, file_p
             f"SELECT * FROM annotations WHERE {where} ORDER BY created_at DESC",
             params,
         ).fetchall()
-    except Exception:
-        # Table may not exist in older DBs
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Expected absence: the annotations table may not exist on an
+        # older index. Surface anything else so a real query bug isn't
+        # mistaken for "no annotations".
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_annotations:annotations_query", _exc)
         return []
 
     return [
@@ -617,10 +624,14 @@ def get_affected_tests_bfs(conn: sqlite3.Connection, sym_id: int, max_hops: int 
             except (KeyError, TypeError):
                 tgt, src, name = row[0], row[1], row[2]
             rev_adj.setdefault(tgt, []).append((src, name))
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
         # If anything goes wrong with the bulk load, fall back to an
         # empty adjacency — we'll just return no affected tests rather
-        # than re-introducing per-hop queries.
+        # than re-introducing per-hop queries. Surface the cause so an
+        # empty result isn't mistaken for "no tests depend on this".
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:get_affected_tests_bfs:rev_adj_load", _exc)
         rev_adj = {}
 
     visited: dict[int, tuple[int, str | None]] = {sym_id: (0, None)}
@@ -696,7 +707,13 @@ def get_blast_radius(conn: sqlite3.Connection, sym_id: int):
             except (KeyError, TypeError):
                 src, tgt = row[0], row[1]
             rev_adj.setdefault(tgt, []).append(src)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Bulk edge load failed -> empty adjacency -> blast radius of 0.
+        # Surface the cause so a query bug isn't mistaken for "no
+        # downstream dependents".
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:get_blast_radius:rev_adj_load", _exc)
         rev_adj = {}
 
     visited = {sym_id}

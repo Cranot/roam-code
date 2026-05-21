@@ -142,7 +142,12 @@ def get_changed_files(
         if result.returncode != 0:
             return []
         paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+        # Git missing / diff timed out -> empty changeset. A TimeoutExpired
+        # here is a real failure masquerading as "no changes" — surface it.
+        from roam.observability import log_swallowed
+
+        log_swallowed("changed_files:get_changed_files:git_diff", _exc)
         return []
 
     if untracked:
@@ -162,8 +167,13 @@ def get_changed_files(
                     line = line.strip()
                     if line:
                         paths.append(line.replace("\\", "/"))
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+            # Untracked-file enrichment is best-effort: the tracked-diff
+            # paths are still returned. Surface the cause so a missing
+            # git binary / slow repo isn't silently dropped.
+            from roam.observability import log_swallowed
+
+            log_swallowed("changed_files:get_changed_files:untracked_ls_files", _exc)
 
     return paths
 
@@ -232,7 +242,12 @@ def git_changed_files_against_ref(root: Path, ref: str) -> list[str]:
         if result.returncode != 0:
             return []
         return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+        # Git missing / diff-against-ref timed out -> empty changeset.
+        # A TimeoutExpired masquerades as "no changes" — surface it.
+        from roam.observability import log_swallowed
+
+        log_swallowed("changed_files:git_changed_files_against_ref:git_diff", _exc)
         return []
 
 
@@ -246,10 +261,16 @@ def git_show_at_ref(root: Path, ref: str, filepath: str) -> bytes | None:
             capture_output=True,
             timeout=10,
         )
+        # returncode != 0 is the expected "file absent at ref" path.
         if result.returncode != 0:
             return None
         return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+        # Git missing / git-show timed out -> None. Distinct from the
+        # expected "absent at ref" miss above — surface the real failure.
+        from roam.observability import log_swallowed
+
+        log_swallowed("changed_files:git_show_at_ref:git_show", _exc)
         return None
 
 
@@ -269,12 +290,22 @@ def parse_source_with_grammar(source: bytes, language: str):
         from tree_sitter_language_pack import get_parser
 
         parser = get_parser(grammar)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Grammar unavailable -> documented (None, None, None) sentinel;
+        # surface the cause so a missing grammar isn't silently dropped.
+        from roam.observability import log_swallowed
+
+        log_swallowed(f"changed_files:parse_source_with_grammar:get_parser:{grammar}", _exc)
         return None, None, None
 
     try:
         tree = parser.parse(source)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # Parse failure -> documented (None, None, None) sentinel; surface
+        # the cause so a malformed source isn't mistaken for "no symbols".
+        from roam.observability import log_swallowed
+
+        log_swallowed(f"changed_files:parse_source_with_grammar:parse:{language}", _exc)
         return None, None, None
 
     return tree, source, language

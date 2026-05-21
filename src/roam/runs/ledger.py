@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from roam.observability import log_swallowed
 from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
@@ -237,8 +238,12 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
         from roam.runs.signing import ensure_ledger_key
 
         ensure_ledger_key(Path(repo_root))
-    except Exception:
-        pass
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+        # run still proceeds (signing is best-effort) but a silent pass
+        # here masks the cause of every later unsigned event. Surface the
+        # lineage; verify_chain will still flag the unsigned events.
+        log_swallowed("runs.ledger:start_run:ensure_ledger_key", exc)
 
     # W14.2 Synergy 4 — resolve active mode at start time. Best-effort:
     # mode subsystem failures must NEVER abort run creation.
@@ -247,7 +252,12 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
         from roam.modes.policy import get_active_mode
 
         active_mode = get_active_mode(Path(repo_root))
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # mode-subsystem FAILURE produces the same ``None`` as a
+        # legitimately-unset mode; surface the lineage so the two are
+        # distinguishable (the run's meta.mode stays None either way).
+        log_swallowed("runs.ledger:start_run:get_active_mode", exc)
         active_mode = None
 
     # W1255 — stamp the three canonical config-file hashes into the
@@ -264,7 +274,14 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
         from roam.evidence.config_hashes import stamp_all
 
         config_hashes = stamp_all(Path(repo_root))
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # silent {} here means the W210 rules_config_hash /
+        # constitution_hash / control_map_hash fields are unstamped, so
+        # the collector cannot detect config drift at audit time.
+        # Surface the lineage so a hashing bug doesn't masquerade as
+        # "no config files present".
+        log_swallowed("runs.ledger:start_run:stamp_all", exc)
         config_hashes = {}
 
     meta = RunMeta(
@@ -332,10 +349,14 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
         key = ensure_ledger_key(Path(repo_root))
         prev_sig = _last_event_signature(events_path) or SEED_SIGNATURE
         event["signature"] = compute_event_signature(prev_sig, event, key)
-    except Exception:
-        # Best-effort: a missing key or filesystem error must not prevent
-        # the event from being recorded. The verifier will flag it.
-        pass
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing key or filesystem error must not prevent the event from
+        # being recorded (append-only is the higher invariant). The event
+        # is still written unsigned and verify_chain flags it as
+        # ``tampered``; surface the lineage so the unsigned event has a
+        # discoverable cause rather than a silent gap.
+        log_swallowed("runs.ledger:log_event:sign", exc)
 
     line = json.dumps(event, ensure_ascii=False, sort_keys=True)
     with events_path.open("a", encoding="utf-8") as fh:
@@ -367,7 +388,13 @@ def _last_event_signature(events_path: Path) -> Optional[str]:
         return None
     try:
         parsed = json.loads(last_line)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # corrupt last line returns None, which makes log_event re-seed
+        # the HMAC chain from SEED_SIGNATURE (a chain break). Surface the
+        # lineage so a corrupt ledger has a discoverable cause;
+        # verify_chain still flags the break independently.
+        log_swallowed("runs.ledger:last_event_signature:corrupt", exc)
         return None
     sig = parsed.get("signature") if isinstance(parsed, dict) else None
     return sig if isinstance(sig, str) else None
@@ -403,10 +430,13 @@ def end_run(
         events_path = _events_path(repo_root, run_id)
         meta.event_count = _count_events(events_path)
         meta.final_signature = _read_final_signature(events_path)
-    except Exception:
-        # Reading the ledger failed — leave the fields blank rather than
-        # crashing the close. The run still ends cleanly.
-        pass
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+        # reading the ledger failed, so the integrity-fingerprint fields
+        # stay blank rather than crashing the close. Surface the lineage
+        # so a missing final_signature has a discoverable cause instead
+        # of looking like a legacy/unsigned run.
+        log_swallowed("runs.ledger:end_run:final_signature", exc)
 
     _write_meta(repo_root, meta)
     return meta

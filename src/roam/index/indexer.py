@@ -24,6 +24,7 @@ from roam.index.parser import (
 from roam.index.relations import build_file_edges, resolve_references
 from roam.index.symbols import extract_references, extract_symbols
 from roam.languages.generic_lang import GenericExtractor
+from roam.observability import log_swallowed
 
 
 def _format_count(n: int) -> str:
@@ -188,11 +189,17 @@ def _release_index_lock(lock_path: Path) -> None:
         lock_path.unlink()
         return
     except OSError:
+        # Expected on Windows/cloud-sync folders that deny deletes — the
+        # write-text fallback below handles it. Not surfaced because the
+        # fallback fully recovers; only the fallback's own failure is loud.
         pass
     try:
         lock_path.write_text("released")
-    except OSError:
-        pass
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — if BOTH
+        # unlink and write fail the lock file is now stale-and-stuck; the
+        # next index run will treat it as a live lock. Surface the lineage.
+        log_swallowed(f"index.indexer:release_lock:{lock_path}", exc)
 
 
 def _semantic_activation_advice(conn, project_root: Path) -> str | None:
@@ -609,8 +616,13 @@ def _relink_annotations(conn):
             "  LIMIT 1"
             ") WHERE qualified_name IS NOT NULL"
         )
-    except Exception:
-        pass  # Table may not exist yet
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a missing
+        # annotations table is expected (fresh DB), but a sqlite error here
+        # silently leaves annotations unlinked to the new symbol IDs. Surface
+        # the lineage so a genuine relink failure is not mistaken for "no
+        # annotations to relink".
+        log_swallowed("index.indexer:relink_annotations", exc)
 
 
 class Indexer:
@@ -750,6 +762,9 @@ class Indexer:
         try:
             bar_ctx.__exit__(None, None, None)
         except Exception:
+            # Intentional silent guard: closing a click progress bar is a
+            # cosmetic UI teardown — a failure here has no effect on the
+            # index result and would only add noise to surface.
             pass
 
     def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
@@ -1011,6 +1026,9 @@ class Indexer:
             row = conn.execute("SELECT source_file_id FROM edges LIMIT 1").fetchone()
             has_source_file_id = row is not None and row["source_file_id"] is not None
         except Exception:
+            # Intentional capability probe: a failed SELECT means the column
+            # is absent (pre-v11 DB). `has_source_file_id` stays False and the
+            # slow-path branch runs — expected absence, not a broken state.
             pass
 
         affected = set()
@@ -1145,6 +1163,9 @@ class Indexer:
                 try:
                     conn.close()
                 except Exception:
+                    # Intentional silent guard: best-effort close in a finally
+                    # block — the real error (if any) was already surfaced by
+                    # the try-body's WARN above; a close failure must not mask it.
                     pass
             del conn
             gc.collect()  # Release file handles on Windows
@@ -1233,8 +1254,14 @@ class Indexer:
         ]:
             try:
                 conn.execute(cleanup_sql, sym_ids)
-            except Exception:
-                pass  # Table may not exist in older DBs
+            except Exception as exc:
+                # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+                # missing runtime_stats / vulnerabilities table is expected on
+                # older DBs, but a genuine sqlite error silently leaves dangling
+                # symbol_id references after the file's symbols are deleted.
+                # Surface the lineage to distinguish expected-absence from a
+                # broken cascade.
+                log_swallowed("index.indexer:clear_nullable_symbol_refs", exc)
 
     def _delete_changed_files(self, conn, paths: list[str]) -> None:
         for path in paths:
@@ -1794,8 +1821,12 @@ class Indexer:
         if not force:
             try:
                 _relink_annotations(conn)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+                # incremental reindex relinks annotations to new symbol IDs;
+                # a silent failure here is the W324 "annotations relink on
+                # reindex" degraded-resolution path. Surface the lineage.
+                log_swallowed("index.indexer:restore_or_relink:incremental", exc)
 
     def _build_search_indexes(self, conn, force: bool = False) -> None:
         # Phase header emitted by _begin_phase in _do_run.
@@ -1818,6 +1849,10 @@ class Indexer:
                 if onnx_count:
                     self._log(f"  ONNX vectors for {_format_count(onnx_count)} symbols")
             except Exception:
+                # Intentional silent guard: ONNX is optional — a missing
+                # symbol_embeddings table or empty count is expected when the
+                # ONNX backend was never installed. This is a cosmetic log
+                # line; absence is the documented default, not a broken state.
                 pass
             advice = _semantic_activation_advice(conn, self.root)
             if advice:
@@ -2101,5 +2136,9 @@ class Indexer:
             from roam.graph.builder import clear_graph_cache
 
             clear_graph_cache()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — if the
+            # post-index cache invalidation fails, an in-process caller could
+            # read a stale graph built against the pre-reindex symbol set.
+            # Surface the lineage so a stale-graph bug has a discoverable cause.
+            log_swallowed("index.indexer:clear_graph_cache", exc)

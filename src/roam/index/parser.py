@@ -12,6 +12,8 @@ log = logging.getLogger(__name__)
 
 from tree_sitter_language_pack import get_parser
 
+from roam.observability import log_swallowed
+
 # Map file extensions to tree-sitter language names.
 # This is the single canonical source of truth for extension → language mapping.
 # registry.py's _EXTENSION_MAP is derived from this dict (see registry.py).
@@ -161,8 +163,12 @@ def _find_sct_path(scx_path: Path) -> Path | None:
         for f in parent.iterdir():
             if f.stem.lower() == stem_lower and f.suffix.lower() == ".sct":
                 return f
-    except OSError:
-        pass
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+        # unreadable directory yields a None .sct path, which packs the .scx
+        # with an empty memo and silently produces an under-extracted FoxPro
+        # form. Surface the lineage so the missing memo has a discoverable cause.
+        log_swallowed(f"index.parser:find_sct:scan:{parent}", exc)
     return None
 
 
@@ -179,8 +185,12 @@ def _pack_scx_sct(scx_path: Path, scx_bytes: bytes) -> bytes:
         try:
             with open(sct_path, "rb") as f:
                 sct_bytes = f.read()
-        except OSError:
-            pass
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+            # .sct path resolved but is unreadable; the blob is packed with an
+            # empty memo and the FoxPro form is silently under-extracted.
+            # Surface the lineage to distinguish this from a genuinely-absent .sct.
+            log_swallowed(f"index.parser:pack_scx:read_sct:{sct_path}", exc)
     return struct.pack(">I", len(scx_bytes)) + scx_bytes + sct_bytes
 
 

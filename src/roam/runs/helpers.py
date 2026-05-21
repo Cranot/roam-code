@@ -94,6 +94,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
+from roam.observability import log_swallowed
 from roam.runs.ledger import latest_in_progress_run, log_event
 
 # W294 - closed-allowlist of authority-shaped event fields that callers
@@ -139,7 +140,12 @@ def get_active_run_id(repo_root: Path) -> Optional[str]:
         return env_id
     try:
         meta = latest_in_progress_run(repo_root)
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # disk-scan FAILURE produces the same ``None`` as a legitimate
+        # "no active run"; surface the lineage so a broken ledger
+        # directory isn't silently read as "auto-logging is off".
+        log_swallowed("runs.helpers:get_active_run_id:latest_in_progress", exc)
         return None
     return meta.run_id if meta else None
 
@@ -192,11 +198,19 @@ def auto_log(
             from roam.db.connection import find_project_root
 
             repo_root = find_project_root()
-        except Exception:
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+            # auto_log is opportunistic, but a find_project_root() failure
+            # silently drops the event from the run ledger. Surface the
+            # lineage so a missing timeline entry has a discoverable cause.
+            log_swallowed("runs.helpers:auto_log:find_project_root", exc)
             return None
     try:
         run_id = get_active_run_id(repo_root)
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — same
+        # rationale: a resolution failure silently drops the ledger event.
+        log_swallowed("runs.helpers:auto_log:get_active_run_id", exc)
         return None
     if not run_id:
         return None
@@ -235,7 +249,11 @@ def auto_log(
             },
             **extra_fields_safe,
         )
-    except Exception:
-        # Auto-logging is OPPORTUNISTIC. We must never crash the gate
-        # command that called us.
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+        # auto-logging is OPPORTUNISTIC and must never crash the gate
+        # command that called us, but a silent pass here means a gate
+        # event vanishes from the run ledger with no trace. Surface the
+        # lineage so a broken auto-log path is discoverable.
+        log_swallowed("runs.helpers:auto_log:log_event", exc)
         return None

@@ -54,11 +54,13 @@ on which lines are side-effecting.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.observability import log_swallowed
 from roam.output.confidence import confidence_level_rank
 from roam.world_model.side_effects import (
     KNOWN_SIDE_EFFECTING_PREFIXES,
@@ -676,7 +678,19 @@ def classify_causal_graph(
 
     try:
         repo_root = find_project_root()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing project root downgrades per-symbol source slicing to a
+        # CWD-relative read; surface the lineage so callers see the
+        # degraded resolution instead of inferring it from empty causal
+        # graphs (mirrors classify_side_effects / classify_idempotency).
+        warnings.warn(
+            f"find_project_root() failed in classify_causal_graph "
+            f"({type(exc).__name__}: {exc}); falling back to Path('.') — "
+            "per-symbol source slices may be empty if CWD isn't the repo root",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         repo_root = Path(".")
 
     # Group rows by file so we read each file once.
@@ -695,7 +709,12 @@ def classify_causal_graph(
             else:
                 all_text = ""
                 all_lines = []
-        except OSError:
+        except OSError as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+            # unreadable file yields zero causal edges that look identical
+            # to a genuinely flow-free function. Surface the lineage
+            # (rate-limited per-scope; visible under ROAM_VERBOSE=1).
+            log_swallowed(f"world_model.causal_graph:file_read:{file_path}", exc)
             all_text = ""
             all_lines = []
 
