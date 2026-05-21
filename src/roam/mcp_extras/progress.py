@@ -21,6 +21,8 @@ import sys
 import threading
 from typing import Any
 
+from roam.observability import log_swallowed
+
 # Recognised phase markers in indexer output. Order = monotonic
 # progress so we never report a smaller value than we already
 # emitted. Values are percentages.
@@ -66,8 +68,8 @@ async def _ctx_report_progress(
         return
     try:
         await ctx.report_progress(progress=progress, total=total, message=message)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — progress is best-effort affordance; tool result is unaffected
+        log_swallowed("progress:_ctx_report_progress", exc)
 
 
 async def _ctx_info(ctx: Any, message: str) -> None:
@@ -75,8 +77,8 @@ async def _ctx_info(ctx: Any, message: str) -> None:
         return
     try:
         await ctx.info(message)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — info logging is best-effort; tool result is unaffected
+        log_swallowed("progress:_ctx_info", exc)
 
 
 async def run_with_phase_progress(
@@ -196,8 +198,8 @@ def run_with_phase_progress_sync(
                 if callable(on_phase):
                     try:
                         on_phase(pct, name)
-                    except Exception:
-                        pass
+                    except Exception as exc:  # noqa: BLE001 — phase callback is best-effort; stderr capture continues
+                        log_swallowed("progress:on_phase", exc)
 
     t1 = threading.Thread(target=reader_stdout, daemon=True)
     t2 = threading.Thread(target=reader_stderr, daemon=True)

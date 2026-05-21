@@ -1103,6 +1103,9 @@ def _index_age_seconds() -> int | None:
         if db_path.exists():
             return int(time.time() - db_path.stat().st_mtime)
     except (OSError, FileNotFoundError):
+        # Expected-signal guard: a stat() race after exists() (TOCTOU) or
+        # a missing index just means "age unknown" — the None return IS
+        # the disclosed signal to the caller. No lineage needed.
         pass
     return None
 

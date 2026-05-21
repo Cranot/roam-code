@@ -17,8 +17,12 @@ test is the structural guard that CLOSES the campaign (per the
 silent ``except: pass`` handlers so new ones cannot be introduced
 unnoticed.
 
-Baseline: 196 silent handlers across ``src/roam``, measured 2026-05-21
-immediately after the campaign's four batches landed.
+Baseline: 183 silent handlers across ``src/roam``, measured 2026-05-21
+after the fifth batch swept the ``db`` / ``output`` / ``mcp_extras`` /
+``languages`` / ``catalog`` packages (down from 196 — 12 watcher /
+session / progress / completions sites converted to
+``log_swallowed`` lineage emission; the remaining genuine
+optional-import / expected-signal guards annotated in place).
 
 The ratchet moves DOWN only. If this test fails because the count went
 UP, do NOT bump the baseline to paper over it — make the new handler
@@ -37,9 +41,9 @@ import ast
 
 from tests._helpers.repo_root import repo_root
 
-# Measured 2026-05-21 after the loud-fallback campaign's four batches.
+# Measured 2026-05-21 after the loud-fallback campaign's fifth batch.
 # Ratchet DOWN as cleanup continues; never UP without justification.
-SILENT_EXCEPT_BASELINE = 196
+SILENT_EXCEPT_BASELINE = 183
 
 
 def _silent_except_sites() -> list[str]:

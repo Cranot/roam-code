@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from roam.observability import log_swallowed
+
 # Resources that depend on indexed code state. When any source file
 # changes we re-emit updates for these so subscribed clients refresh.
 _DEPENDENT_RESOURCES = (
@@ -138,7 +140,8 @@ class _DebouncedReindexer:
             return
         try:
             self._do_reindex(files)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — background thread, never crash the observer
+            log_swallowed("watcher:_fire.reindex", exc)
             return
         self._dispatch_notify()
 
@@ -150,8 +153,8 @@ class _DebouncedReindexer:
             from roam.cli import cli as _cli
 
             CliRunner().invoke(_cli, ["index"], catch_exceptions=True)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort reindex; stale resources are tolerable
+            log_swallowed("watcher:_do_reindex", exc)
 
     def _dispatch_notify(self) -> None:
         if self._notify is None or self._loop is None:
@@ -159,8 +162,8 @@ class _DebouncedReindexer:
         try:
             for uri in _DEPENDENT_RESOURCES:
                 asyncio.run_coroutine_threadsafe(self._notify(uri), self._loop)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — notification is best-effort; client refresh degrades gracefully
+            log_swallowed("watcher:_dispatch_notify", exc)
 
     def stop(self) -> None:
         self._stopped = True
@@ -183,8 +186,8 @@ class _Watcher:
             try:
                 self.observer.stop()
                 self.observer.join(timeout=2.0)
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — observer teardown is best-effort
+                log_swallowed("watcher:stop", exc)
         if self.reindexer is not None:
             self.reindexer.stop()
 
@@ -196,6 +199,10 @@ def _try_import_watchdog() -> tuple[Any, Any] | None:
 
         return Observer, FileSystemEventHandler
     except Exception:
+        # Genuine optional-dependency guard: watchdog is not a hard
+        # dependency. Returning None disables the watcher entirely (the
+        # caller's documented fall-through). No lineage needed — absence
+        # of watchdog is an expected, user-visible config state.
         return None
 
 
@@ -221,8 +228,8 @@ def _make_resources_updated_notifier(fastmcp_server: Any):
                 if session_obj is not None and hasattr(session_obj, "send_resource_updated"):
                     await session_obj.send_resource_updated(uri)
                     return
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Path-1 probe; falls through to Path-2 below
+            log_swallowed("watcher:_notify.path1", exc)
         # Path 2: server-level notification helper
         try:
             from mcp.types import ResourceUpdatedNotification, ResourceUpdatedNotificationParams
@@ -234,8 +241,8 @@ def _make_resources_updated_notifier(fastmcp_server: Any):
             sender = getattr(low_level, "send_notification", None)
             if callable(sender):
                 await sender(payload)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Path-2 probe; no notification path on this build
+            log_swallowed("watcher:_notify.path2", exc)
 
     return _notify
 

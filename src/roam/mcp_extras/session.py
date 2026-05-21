@@ -26,6 +26,8 @@ import time
 from collections import deque
 from typing import Any
 
+from roam.observability import log_swallowed
+
 # Per-process fallback store: {session_id: SessionState}
 _FALLBACK_STORE: dict[str, dict[str, Any]] = {}
 _MAX_SESSIONS = 256
@@ -56,8 +58,8 @@ def _get_state(ctx: Any) -> dict[str, Any] | None:
             state = getter(_STATE_KEY)
             if isinstance(state, dict):
                 return state
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Context API varies by FastMCP version; falls through to fallback store
+            log_swallowed("session:_get_state.context_api", exc)
 
     sid = _get_session_id(ctx)
     if not sid:
@@ -75,8 +77,8 @@ def _set_state(ctx: Any, state: dict[str, Any]) -> None:
         try:
             setter(_STATE_KEY, state)
             return
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Context API varies by FastMCP version; falls through to fallback store
+            log_swallowed("session:_set_state.context_api", exc)
 
     sid = _get_session_id(ctx)
     if not sid:
@@ -118,7 +120,9 @@ def remember_symbol(ctx: Any, symbol: str) -> None:
     if not isinstance(syms, deque):
         syms = deque(syms or [], maxlen=_MAX_SYMBOLS_PER_SESSION)
         state["symbols"] = syms
-    # Move-to-front: drop existing, append.
+    # Move-to-front: drop existing, append. A ValueError here is the
+    # expected first-touch signal — the symbol isn't in the deque yet,
+    # so there is nothing to move. Not a fallback; no lineage needed.
     try:
         syms.remove(symbol)
     except ValueError:
@@ -165,8 +169,8 @@ def reset_session(ctx: Any) -> None:
     if callable(deleter):
         try:
             deleter(_STATE_KEY)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Context API varies by FastMCP version; fallback-store pop below still clears state
+            log_swallowed("session:reset_session.context_api", exc)
     sid = _get_session_id(ctx)
     if sid:
         _FALLBACK_STORE.pop(sid, None)

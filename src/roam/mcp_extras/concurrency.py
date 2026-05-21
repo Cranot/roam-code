@@ -167,6 +167,11 @@ def _try_acquire(name: str) -> tuple[bool, threading.BoundedSemaphore | None]:
 
 
 def _release(per_tool: threading.BoundedSemaphore | None) -> None:
+    # A ValueError from BoundedSemaphore.release() is the expected
+    # idempotency signal — a double-release past the initial value. The
+    # _release contract is deliberately idempotent so a caller that
+    # releases twice (or after a busy_envelope short-circuit) is safe.
+    # Not a fallback; no lineage needed.
     if per_tool is not None:
         try:
             per_tool.release()

@@ -234,6 +234,9 @@ def list_detector_surface() -> list[dict[str, Any]]:
                 }
             )
     except ImportError:
+        # Genuine optional-module guard: python_idioms is an optional
+        # detector pack. Its absence simply yields fewer surface entries
+        # — an expected, non-error state. No lineage needed.
         pass
 
     return entries
@@ -4737,6 +4740,9 @@ def _iter_registered_detectors():
         for det in PYTHON_IDIOM_DETECTORS:
             yield det
     except ImportError:
+        # Genuine optional-module guard: python_idioms is an optional
+        # detector pack; its absence just yields the built-in set. No
+        # lineage needed — expected non-error state.
         pass
 
     try:

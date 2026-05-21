@@ -1061,6 +1061,9 @@ def _apply_suppressions(results: list[dict], suppressions: list[dict]) -> list[d
             line = phys.get("region", {}).get("startLine")
             loc_key = f"{uri}:{line}" if line else uri
         except (KeyError, IndexError, TypeError):
+            # Expected-signal guard: a SARIF result without a physical
+            # location keeps loc_key="" — the suppression match below
+            # simply falls back to rule-id-only keying. No lineage needed.
             pass
         match = suppression_map.get((rule_id, loc_key))
         if match:
@@ -1119,6 +1122,9 @@ def _apply_suppressions_typed(results: list[dict], suppressions: list) -> list[d
             line = phys.get("region", {}).get("startLine")
             loc_key = f"{uri}:{line}" if line else uri
         except (KeyError, IndexError, TypeError):
+            # Expected-signal guard: a SARIF result without a physical
+            # location keeps loc_key="" — the suppression match below
+            # simply falls back to rule-id-only keying. No lineage needed.
             pass
         match = suppression_map.get((rule_id, loc_key))
         if match is not None:

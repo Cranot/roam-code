@@ -60,6 +60,9 @@ def _decode_source(source: bytes) -> str:
     try:
         return source.decode("utf-8")
     except UnicodeDecodeError:
+        # Expected-signal probe, not a fallback failure: a UnicodeDecodeError
+        # here just means the file is not UTF-8, so we cascade to the
+        # codepage heuristic below. No lineage needed.
         pass
 
     # 3. Heuristic codepage selection — try each and score by printability
@@ -82,6 +85,9 @@ def _decode_source(source: bytes) -> str:
         try:
             return source.decode(best_text)
         except UnicodeDecodeError:
+            # Expected-signal probe: the codepage that scored best on an
+            # 8 KB sample can still fail on the full file. Cascade to the
+            # latin-1 total fallback below. No lineage needed.
             pass
 
     # 4. Latin-1 always works (every byte maps to a codepoint)

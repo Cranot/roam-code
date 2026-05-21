@@ -25,6 +25,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from roam.observability import log_swallowed
+
 # Argument-name conventions we'll auto-complete on. If a prompt or
 # resource template uses an arg with one of these names, we treat its
 # value as the partial.
@@ -164,8 +166,8 @@ def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None
     finally:
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — read-only conn cleanup; result already returned
+            log_swallowed("completions:complete_prefix.close", exc)
 
 
 def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None = None) -> list[str]:
@@ -186,8 +188,8 @@ def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None =
     finally:
         try:
             conn.close()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — read-only conn cleanup; result already returned
+            log_swallowed("completions:complete_paths.close", exc)
 
 
 def complete_commands(prefix: str, *, limit: int = _MAX_RESULTS) -> list[str]:
