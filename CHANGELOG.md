@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.4] — 2026-05-21
+
+### Perf + polish follow-up (2026-05-21)
+
+#### Performance
+
+- **`roam clones` 43.8s → 13.1s.** `_jaccard_bags` was effectively the entire cost of clone detection; rewritten single-pass via the multiset inclusion-exclusion identity `|A∪B| = |A| + |B| − |A∩B|` (iterating only the smaller bag) — 13.4x faster per call. Output byte-identical (verified over 300K real function-bag pairs, 0 mismatches); the serial/parallel break-even moved, so `parallel_threshold` is re-derived 100k → 1.5M.
+- **`roam smells` — shared per-run AST cache.** Three AST-walking detectors (magic-numbers, boolean-parameter, switch-statement) each independently `read_text()` + `ast.parse()`'d every Python file. A shared mtime+size-keyed `lru_cache` parses each file once. Output byte-identical (`total_smells` 4441; all per-kind counts unchanged); ~7.4s saved on the parse-dominated detector slice.
+
+#### Fixed
+
+- **`roam preflight` showed an empty `()` in its Fitness line.** The sibling-only branch named rules from `failed_rules`, which is target-attributed by design and so legitimately empty when the target itself is clean. `_check_fitness` now also returns `failed_rules_on_siblings` (sourced from `rule_details`); the text line and JSON envelope name the sibling-failing rules from it. `failed_rules` stays accurately target-scoped.
+
+#### Changed
+
+- **Loud-fallback campaign — fifth batch.** Extended the "make fallback chains loud" sweep to `mcp_extras` (watcher / session / progress / completions / concurrency), `catalog/detectors`, `languages/foxpro_lang` and `output` (formatter / sarif) — 12 more silent `except: pass` sites now emit `log_swallowed` lineage. The ratchet guard's `SILENT_EXCEPT_BASELINE` drops 196 → 183.
+
 ### Hardening + assurance wave (2026-05-21)
 
 #### Added

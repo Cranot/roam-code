@@ -76,6 +76,21 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.4] — 2026-05-21</h2>
+<h3>Perf + polish follow-up (2026-05-21)</h3>
+<h4>Performance</h4>
+<ul>
+<li><strong><code>roam clones</code> 43.8s → 13.1s.</strong> <code>_jaccard_bags</code> was effectively the entire cost of clone detection; rewritten single-pass via the multiset inclusion-exclusion identity <code>|A∪B| = |A| + |B| − |A∩B|</code> (iterating only the smaller bag) — 13.4x faster per call. Output byte-identical (verified over 300K real function-bag pairs, 0 mismatches); the serial/parallel break-even moved, so <code>parallel_threshold</code> is re-derived 100k → 1.5M.</li>
+<li><strong><code>roam smells</code> — shared per-run AST cache.</strong> Three AST-walking detectors (magic-numbers, boolean-parameter, switch-statement) each independently <code>read_text()</code> + <code>ast.parse()</code>'d every Python file. A shared mtime+size-keyed <code>lru_cache</code> parses each file once. Output byte-identical (<code>total_smells</code> 4441; all per-kind counts unchanged); ~7.4s saved on the parse-dominated detector slice.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li><strong><code>roam preflight</code> showed an empty <code>()</code> in its Fitness line.</strong> The sibling-only branch named rules from <code>failed_rules</code>, which is target-attributed by design and so legitimately empty when the target itself is clean. <code>_check_fitness</code> now also returns <code>failed_rules_on_siblings</code> (sourced from <code>rule_details</code>); the text line and JSON envelope name the sibling-failing rules from it. <code>failed_rules</code> stays accurately target-scoped.</li>
+</ul>
+<h4>Changed</h4>
+<ul>
+<li><strong>Loud-fallback campaign — fifth batch.</strong> Extended the "make fallback chains loud" sweep to <code>mcp_extras</code> (watcher / session / progress / completions / concurrency), <code>catalog/detectors</code>, <code>languages/foxpro_lang</code> and <code>output</code> (formatter / sarif) — 12 more silent <code>except: pass</code> sites now emit <code>log_swallowed</code> lineage. The ratchet guard's <code>SILENT_EXCEPT_BASELINE</code> drops 196 → 183.</li>
+</ul>
 <h3>Hardening + assurance wave (2026-05-21)</h3>
 <h4>Added</h4>
 <ul>
