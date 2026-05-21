@@ -124,6 +124,11 @@ def cold_start_envelope(tool_name: str) -> dict[str, Any]:
     verdict = "Index not built. Run `roam init` in a terminal first, then retry MCP tools."
     return {
         "command": tool_name,
+        # Pattern-1 conformance — the cold-start envelope is a failure
+        # envelope (a required prerequisite is unmet): pair the canonical
+        # closed-enum ``status`` with ``isError: true`` so consumers
+        # branch on it like every other error path.
+        "isError": True,
         "status": "index_not_built",
         "summary": {
             "verdict": verdict,

@@ -170,8 +170,12 @@ def test_mcp_concurrency_guard_returns_busy_envelope_when_at_capacity(monkeypatc
     assert held is True
     try:
         out = wrapped(arg="while_busy")
-        assert out["summary"]["error_code"] == "RATE_LIMITED"
-        assert out["summary"]["retryable"] is True
+        # Pattern-1 canonical failure envelope: error_code / retryable
+        # live at the TOP LEVEL alongside isError + closed-enum status.
+        assert out["error_code"] == "RATE_LIMITED"
+        assert out["retryable"] is True
+        assert out["isError"] is True
+        assert out["status"] == "rate_limited"
         assert invocations["count"] == 0  # tool was NOT invoked
     finally:
         concurrency_mod._release(None)

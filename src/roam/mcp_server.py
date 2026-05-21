@@ -2187,6 +2187,19 @@ def _tool(
         # response the client can act on.
         fn = _wrap_with_cold_start_guard(name, fn)
 
+        # Pattern-1 conformance — outermost-of-the-tool-body exception
+        # backstop. No other layer in this decorator stack converts a
+        # generic uncaught ``Exception`` raised inside the tool body
+        # (or the receipt / cold-start wrappers) into a structured
+        # envelope; without this a raising tool propagates as a
+        # protocol-level error that does not reliably reach the LLM
+        # context window. Applied here (before the ``if mcp is None``
+        # gate) so EVERY return path — fastmcp-absent, preset-filtered,
+        # and registered — inherits the backstop. Every existing
+        # per-tool / per-helper ``except`` block still runs first; this
+        # only catches what escapes all of them.
+        fn = _wrap_with_exception_envelope(name, fn)
+
         # Wave C1 (W767): populate the ``output_schema_stripped`` sidecar
         # on ``_TOOL_METADATA`` UNCONDITIONALLY — before the
         # ``if mcp is None`` early-return — so the catalog surface
@@ -2493,6 +2506,50 @@ _SEVERITY_MAP: dict[str, str] = {
     # rather than hammer the same call.
     "MODE_BLOCKED": "error",
     "UNKNOWN": "error",
+}
+
+
+# Pattern-1 conformance — map every ``error_code`` ``_structured_error``
+# can receive onto the CLAUDE.md canonical ``status`` closed enum
+# (``index_not_built | advisory_warnings | partial_failure |
+# hard_failure | usage_error | rate_limited | stale_index``). The
+# canonical failure envelope pairs ``isError: true`` with a
+# closed-enum ``status``; before this map, error envelopes carried
+# ``isError`` + ``error_code`` but never ``status``. Every code listed
+# in ``_SEVERITY_MAP`` / ``_DOC_LINKS`` / ``_classify_error`` is covered
+# here; codes absent from the map fall through to ``hard_failure`` via
+# the ``.get(code, "hard_failure")`` default in ``_structured_error``.
+_ERROR_CODE_TO_STATUS: dict[str, str] = {
+    # usage-error class — invalid arguments / missing required input.
+    "USAGE_ERROR": "usage_error",
+    "EMPTY_INPUT": "usage_error",
+    "INVALID_DIFF": "usage_error",
+    "ELICITATION_REQUIRED": "usage_error",
+    # index-missing class.
+    "INDEX_NOT_FOUND": "index_not_built",
+    # stale-index class.
+    "INDEX_STALE": "stale_index",
+    "STALE_DB_DIR": "stale_index",
+    # rate-limited class.
+    "RATE_LIMITED": "rate_limited",
+    # partial-failure class — degraded but recoverable signal.
+    "PARTIAL_FAILURE": "partial_failure",
+    "INVALID_JSON": "partial_failure",
+    "JSON_DECODE": "partial_failure",
+    # hard-failure class — the request fully failed, agent must change
+    # something material (perms, repo state, mode) before retrying.
+    "COMMAND_FAILED": "hard_failure",
+    "RUN_FAILED": "hard_failure",
+    "NOT_GIT_REPO": "hard_failure",
+    "DB_LOCKED": "hard_failure",
+    "PERMISSION_DENIED": "hard_failure",
+    "GATE_FAILURE": "hard_failure",
+    "NO_RESULTS": "hard_failure",
+    "FILE_NOT_FOUND": "hard_failure",
+    "DIRTY_TREE": "hard_failure",
+    "APPLY_FAILED": "hard_failure",
+    "MODE_BLOCKED": "hard_failure",
+    "UNKNOWN": "hard_failure",
 }
 
 
@@ -3616,6 +3673,65 @@ def _wrap_with_cold_start_guard(name: str, fn):
     return _sync_cold_start_wrapped
 
 
+def _wrap_with_exception_envelope(name: str, fn):
+    """Backstop: convert an uncaught tool-body exception into a structured envelope.
+
+    Pattern-1 conformance (CLAUDE.md "canonical failure envelope"): no
+    other layer in the ``@_tool`` decorator stack converts a generic
+    uncaught ``Exception`` raised inside a tool body into a structured
+    envelope the MCP client can branch on. Without this backstop a tool
+    that raises propagates as a protocol-level error, which does NOT
+    reliably reach the LLM context window.
+
+    This is a BACKSTOP, not a replacement — every existing per-tool /
+    per-helper ``except`` block runs first and only an exception that
+    escapes ALL of them reaches here. The result is a
+    ``_structured_error`` envelope with ``error_code="UNKNOWN"`` (which
+    maps to ``status="hard_failure"``), so the agent gets ``isError`` +
+    ``status`` + a copy-pasteable ``command`` instead of a dropped call.
+
+    Catches :class:`Exception` only — :class:`SystemExit` /
+    :class:`KeyboardInterrupt` (which subclass ``BaseException``) pass
+    through untouched so process-control signals are never swallowed.
+    """
+    import functools as _functools
+    import inspect as _inspect
+
+    if _inspect.iscoroutinefunction(fn):
+
+        @_functools.wraps(fn)
+        async def _async_exception_wrapped(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 — deliberate backstop
+                return _structured_error(
+                    {
+                        "command": name,
+                        "error": str(exc) or exc.__class__.__name__,
+                        "error_code": "UNKNOWN",
+                        "hint": "an unexpected error occurred inside the tool — retry or report it.",
+                    }
+                )
+
+        return _async_exception_wrapped
+
+    @_functools.wraps(fn)
+    def _sync_exception_wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — deliberate backstop
+            return _structured_error(
+                {
+                    "command": name,
+                    "error": str(exc) or exc.__class__.__name__,
+                    "error_code": "UNKNOWN",
+                    "hint": "an unexpected error occurred inside the tool — retry or report it.",
+                }
+            )
+
+    return _sync_exception_wrapped
+
+
 # ---------------------------------------------------------------------------
 # MCP-P0.2 — 4-mode policy enforcement at the MCP boundary
 # ---------------------------------------------------------------------------
@@ -4022,6 +4138,11 @@ def _structured_error(error_dict: dict) -> dict:
     error_dict["suggested_action"] = error_dict.get("hint", "check the error message")
     error_dict.setdefault("doc_link", _DOC_LINKS.get(code, _DOC_LINKS["UNKNOWN"]))
     error_dict.setdefault("severity", _SEVERITY_MAP.get(code, "error"))
+    # Pattern-1 conformance — stamp the canonical closed-enum ``status``.
+    # ``setdefault`` so an explicit caller-supplied status (e.g.
+    # ``partial_failure`` on a COMMAND_FAILED envelope that completed
+    # partially) wins over the code-derived default.
+    error_dict.setdefault("status", _ERROR_CODE_TO_STATUS.get(code, "hard_failure"))
 
     if _ERROR_STORM_STATE.get("_last_code") == code:
         _ERROR_STORM_STATE["_count"] = int(_ERROR_STORM_STATE.get("_count", 0)) + 1
@@ -4060,6 +4181,10 @@ def _structured_error(error_dict: dict) -> dict:
         trimmed = {
             "isError": True,
             "error_code": code,
+            # Pattern-1 conformance — keep the canonical ``status`` in the
+            # storm-trimmed envelope too, so a recurring error stays
+            # branchable on the closed enum without re-inflating it.
+            "status": error_dict["status"],
             "severity": error_dict["severity"],
             "retryable": error_dict["retryable"],
             "doc_link": error_dict["doc_link"],
@@ -4392,6 +4517,14 @@ def _build_invalid_json_envelope(args: list[str], error_message: str, preview: s
     cmd_name = args[0] if args else ""
     return {
         "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+        # Pattern-1 conformance — INVALID_JSON is a degraded-but-
+        # recoverable failure envelope: stamp ``isError`` + the canonical
+        # closed-enum ``status`` so it branches like any other error path.
+        # ``partial_failure`` (not ``hard_failure``) because the agent CAN
+        # still recover — the CLI exited cleanly, only the output was
+        # unparseable, and the raw preview is surfaced for inspection.
+        "isError": True,
+        "status": "partial_failure",
         "summary": {
             "verdict": "invalid output from underlying command",
             "state": "invalid_output",
@@ -4960,6 +5093,12 @@ def _compound_envelope(
         # already get the count-in-the-verdict treatment above.)
         prefix = f"PARTIAL ({len(failed_subcommands)} failed: {', '.join(failed_subcommands)}) — "
         result["summary"]["verdict"] = prefix + result["summary"]["verdict"]
+    if all_failed:
+        # Pattern-1 conformance — an all-subcommands-failed compound is a
+        # failure envelope: stamp ``isError`` + the canonical closed-enum
+        # ``status`` so consumers branch on it like any other error path.
+        result["isError"] = True
+        result["status"] = "partial_failure"
     workflow = workflow_metadata_for_recipe(str(workflow_recipe)) if workflow_recipe else None
     if workflow:
         result["workflow"] = workflow

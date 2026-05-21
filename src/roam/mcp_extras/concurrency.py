@@ -188,6 +188,13 @@ def busy_envelope(name: str) -> dict:
 
     Returned in place of executing the tool — callers (agents) should
     branch on ``error_code == "RATE_LIMITED"`` and back off.
+
+    Pattern-1 conformance (CLAUDE.md "canonical failure envelope"): the
+    ``error`` / ``error_code`` / ``hint`` / ``retryable`` fields live at
+    the TOP LEVEL alongside ``isError: true`` and the closed-enum
+    ``status: "rate_limited"`` — not nested under ``summary``. ``summary``
+    keeps a single-line ``verdict`` so a consumer reading only the
+    verdict still gets the answer (LAW 6).
     """
     global _busy_responses
     with _metrics_lock:
@@ -200,16 +207,18 @@ def busy_envelope(name: str) -> dict:
     )
     return {
         "command": name,
+        "isError": True,
+        "status": "rate_limited",
         "summary": {
             "verdict": f"BUSY: {name} declined — server at capacity ({limit_text})",
-            "error": "server at capacity",
-            "error_code": "RATE_LIMITED",
-            "hint": (
-                f"retry in 100-500ms with exponential backoff. Current limit: {limit_text}. "
-                f"Tune via ROAM_MCP_MAX_CONCURRENT or ROAM_MCP_LIMITS env vars."
-            ),
-            "retryable": True,
         },
+        "error": "server at capacity",
+        "error_code": "RATE_LIMITED",
+        "hint": (
+            f"retry in 100-500ms with exponential backoff. Current limit: {limit_text}. "
+            f"Tune via ROAM_MCP_MAX_CONCURRENT or ROAM_MCP_LIMITS env vars."
+        ),
+        "retryable": True,
         "_meta": {
             "max_concurrent": _max_concurrent,
             "per_tool_limit": per_tool_limit,
