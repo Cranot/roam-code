@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sqlite3
 from collections import Counter, defaultdict
@@ -512,7 +513,17 @@ def _bucket_funcs_by_size(funcs: list[_FuncInfo]) -> dict[int, list[_FuncInfo]]:
     to functions of similar size."""
 
     def _bucket(f: _FuncInfo) -> int:
-        return f.node_count // max(f.node_count // 3, 5)
+        # Geometric (base-2) AST-node-count band: floor(log2(node_count)).
+        # _compare_func_pair gates on node-count ratio >= 0.5 (counts within
+        # 2x), and log2 places any two such functions in the same or an
+        # adjacent band, so the band +/-1 scan in _enumerate_candidate_pairs
+        # still enumerates EVERY gate-passing pair -- output is byte-identical
+        # to the old bucketing, just without the blow-up. The replaced
+        # ``node_count // max(node_count // 3, 5)`` collapsed every function
+        # with >= 15 AST nodes into a single band (~3 bands total), so nearly
+        # all large functions were compared pairwise (O(n^2)).
+        nc = f.node_count
+        return int(math.log2(nc)) if nc > 0 else 0
 
     by_bucket: dict[int, list[_FuncInfo]] = defaultdict(list)
     for f in funcs:
