@@ -36,6 +36,7 @@ Consumers can choose to surface or hide low-confidence reachability claims.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Iterable
@@ -254,6 +255,26 @@ def _safe_read(path: Path, limit: int = 5_000_000) -> str:
         return ""
 
 
+def _walk_pruned(project_root: Path, skip_dirs: Iterable[str]) -> Iterable[Path]:
+    """Yield files under ``project_root``, pruning ``skip_dirs`` during descent.
+
+    Unlike ``Path.rglob('*')`` -- which descends into heavy artifact dirs
+    (``.roam`` is ~56K paths on roam-code itself, plus ``.git`` /
+    ``node_modules``) and discards them only via a post-hoc
+    ``any(part in skip_dirs ...)`` filter -- this prunes those subtrees
+    in-place (``dirnames[:] = ...``) so they are never walked or stat'd. It
+    yields the same set of files the post-hoc filter produced (the skip names
+    never appear among ``project_root``'s own ancestors in practice), so every
+    caller stays output-identical while shedding the dominant traversal cost.
+    """
+    skip = set(skip_dirs)
+    for dirpath, dirnames, filenames in os.walk(project_root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        base = Path(dirpath)
+        for fn in filenames:
+            yield base / fn
+
+
 def _iter_files(
     project_root: Path,
     exts: Iterable[str],
@@ -265,22 +286,14 @@ def _iter_files(
 ) -> list[Path]:
     """Walk ``project_root`` for files with any of ``exts``.
 
-    Skips heavy artifact directories. Capped at ``max_files`` to keep the
-    scan cheap on large monorepos.
+    Skips heavy artifact directories (pruned during descent). Capped at
+    ``max_files`` to keep the scan cheap on large monorepos.
     """
     exts_set = {e.lower() for e in exts}
     results: list[Path] = []
-    for path in project_root.rglob("*"):
+    for path in _walk_pruned(project_root, skip_dirs):
         if len(results) >= max_files:
             break
-        try:
-            if not path.is_file():
-                continue
-        except OSError:
-            continue
-        # Skip directories anywhere in the path
-        if any(part in skip_dirs for part in path.parts):
-            continue
         if path.suffix.lower() in exts_set:
             results.append(path)
     return results
@@ -301,16 +314,9 @@ def _iter_named_files(
     results: list[Path] = []
     root_depth = len(project_root.parts)
     skip_dirs = {"node_modules", ".git", ".roam", "dist", "build", "out", "coverage"}
-    for path in project_root.rglob("*"):
-        try:
-            if not path.is_file():
-                continue
-        except OSError:
-            continue
+    for path in _walk_pruned(project_root, skip_dirs):
         depth = len(path.parts) - root_depth
         if depth > max_depth:
-            continue
-        if any(part in skip_dirs for part in path.parts):
             continue
         if path.name.lower() in name_set:
             results.append(path)
@@ -322,16 +328,12 @@ def _find_tsconfigs(project_root: Path, *, max_depth: int = 4) -> list[Path]:
     results: list[Path] = []
     root_depth = len(project_root.parts)
     skip_dirs = {"node_modules", ".git", ".roam", "dist", "build", "out"}
-    for path in project_root.rglob("tsconfig*.json"):
-        try:
-            if not path.is_file():
-                continue
-        except OSError:
+    for path in _walk_pruned(project_root, skip_dirs):
+        name = path.name
+        if not (name.startswith("tsconfig") and name.endswith(".json")):
             continue
         depth = len(path.parts) - root_depth
         if depth > max_depth:
-            continue
-        if any(part in skip_dirs for part in path.parts):
             continue
         results.append(path)
     return results
@@ -601,11 +603,10 @@ def _scan_loader_deps(project_root: Path, declared_deps: set[str]) -> dict[str, 
 
     # Detect TS presence: any .ts/.tsx in project (cheap rglob check)
     has_ts = False
-    for path in project_root.rglob("*.ts"):
-        if "node_modules" in path.parts or ".roam" in path.parts:
-            continue
-        has_ts = True
-        break
+    for path in _walk_pruned(project_root, ("node_modules", ".roam")):
+        if path.suffix == ".ts":
+            has_ts = True
+            break
     if not has_ts:
         # Fall back: check for any TS config
         for cfg in ("tsconfig.json", "eslint.config.ts", "vite.config.ts"):
