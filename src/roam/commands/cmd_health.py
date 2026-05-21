@@ -1707,9 +1707,35 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # fiedler_failed distinguishes "couldn't compute" (missing numpy/scipy
         # substrate) from a legitimate 0.0 reading (genuinely disconnected
         # graph), so the display can show n/a instead of a misleading 0.0000.
+        #
+        # UFS3 — JSON-mode stdout-leak fix. ``algebraic_connectivity`` does
+        # NOT raise on a missing-numpy/scipy substrate or eigensolver
+        # divergence; it RETURNS the 0.0 sentinel and emits a
+        # ``RuntimeWarning`` (graph/cycles.py). The ``except`` below only
+        # catches genuine exceptions — the warning escapes it. Relying on
+        # cli.py's global ``warnings.showwarning`` override is unsafe: that
+        # override only installs when the current hook is the stdlib
+        # default, so a leaked / non-default ``showwarning`` (sibling-test
+        # leak, pytest capture, a host that routes warnings to stdout) lets
+        # the free-form ``RuntimeWarning`` text land on stdout and corrupt
+        # the ``--json`` envelope. Capture the warning at the call site with
+        # ``catch_warnings(record=True)`` so it can NEVER reach
+        # ``showwarning``, and fold any captured warning into the structured
+        # ``_w607m_warnings_out`` channel that already feeds ``warnings_out``.
+        import warnings as _warnings  # local — keeps the import surface lazy
+
         fiedler_failed = False
         try:
-            fiedler = algebraic_connectivity(G)
+            with _warnings.catch_warnings(record=True) as _fiedler_warns:
+                _warnings.simplefilter("always")
+                fiedler = algebraic_connectivity(G)
+            for _w in _fiedler_warns:
+                _w607m_warnings_out.append(f"health_algebraic_connectivity_warning:{_w.category.__name__}:{_w.message}")
+                # A RuntimeWarning from algebraic_connectivity means the
+                # spectral solve was unavailable/diverged — the 0.0 is a
+                # sentinel, not a real disconnected-graph reading.
+                if issubclass(_w.category, RuntimeWarning):
+                    fiedler_failed = True
         except Exception as exc:
             _w607m_warnings_out.append(f"health_algebraic_connectivity_failed:{type(exc).__name__}:{exc}")
             fiedler = 0.0

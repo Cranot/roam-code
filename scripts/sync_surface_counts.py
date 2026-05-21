@@ -3,25 +3,31 @@
 
 Single source of truth: ``roam.surface_counts.collect_surface_counts()``.
 This script reads the live counts and rewrites every doc-surface that
-quotes them: README.md, llms-install.md, server.json, mcp-server-card
-(both copies; see note below), the Cloudflare-served landing-page HTML /
-llms.txt, the Claude Code skill, and the in-repo CI integration doc.
+quotes them: server.json, mcp-server-card (both copies; see note below),
+the Cloudflare-served landing-page HTML / llms.txt / docs pages, the
+Claude Code skill, the in-repo CI integration doc, AND the **free-form
+(non-marker) count phrases** in README.md / CLAUDE.md / AGENTS.md /
+CONTRIBUTING.md (directory-tree comments, MCP-section prose, the
+contributor reference table).
 
 See also: ``dev/build_readme_counts.py``
     The two scripts are intentional cousins, not duplicates. This one
     (``sync_surface_counts.py``) handles **free-form prose surfaces**
     via regex substitution: the landing-page HTML pages, llms.txt,
     ``server.json``, ``skills/roam/SKILL.md``, ``competitor_site_data.py``,
-    and ``docs/ci-integration.md``. ``dev/build_readme_counts.py``
-    handles **marker-protected Markdown blocks** (README, CLAUDE,
+    ``docs/ci-integration.md``, and the prose count phrases in
+    README/CLAUDE/AGENTS/CONTRIBUTING that fall OUTSIDE the auto-count
+    marker blocks. ``dev/build_readme_counts.py`` handles the
+    **marker-protected Markdown blocks** (README, CLAUDE, AGENTS,
     llms-install) and the **two mcp-server-card.json files** (byte-
     identical, required by ``test_bundled_card_matches_public_card``).
-    The mcp-server-card entries below are intentionally no-op
-    (``repl=None``) — those cards are owned by ``build_readme_counts.py``;
-    the entries are retained here only so reviewers can see the file is
-    explicitly covered elsewhere. README/llms-install overlap is benign
-    because the legacy regexes do not match the marker-block prose
-    shape that ``build_readme_counts.py`` writes.
+    To keep the two scripts strictly non-overlapping, the README /
+    CLAUDE / AGENTS entries here are flagged ``marker_aware=True`` — they
+    substitute on a marker-MASKED copy so they can never rewrite a byte
+    the cousin script owns. The mcp-server-card entries below are
+    intentionally no-op (``repl=None``) — those cards are owned by
+    ``build_readme_counts.py``; the entries are retained here only so
+    reviewers can see the file is explicitly covered elsewhere.
 
 CI runs both scripts back-to-back in the ``doc-hygiene`` job
 (.github/workflows/roam-ci.yml). Either failing is a hard gate.
@@ -82,32 +88,133 @@ def _live_languages() -> int:
     return len(get_supported_languages())
 
 
-REPLACEMENTS: list[tuple[Path, list[tuple[re.Pattern, str]]]] = []
+# Each entry is one of:
+#   (path, [(pattern, replacement)...])              -- legacy whole-file path
+#   (path, [(pattern, replacement)...], marker_aware) -- marker-masked path
+# ``marker_aware=True`` runs substitution on a copy with the auto-count
+# marker blocks masked out, so this script never rewrites bytes owned by
+# the cousin ``dev/build_readme_counts.py``. Surfaces with no marker blocks
+# use the 2-tuple legacy form. ``main()`` tolerates both.
+REPLACEMENTS: list[tuple] = []
 
 
 def build_replacements(counts: dict, languages: int) -> None:
-    """Build the (file, [(pattern, replacement)...]) list."""
+    """Build the (file, [(pattern, replacement)...], marker_aware) list."""
     REPLACEMENTS.clear()
 
     cmds = counts["commands"]
+    canon = counts["canonical"]
+    aliases = counts["alias_names"]
     mcp = counts["mcp_tools"]
     core = counts["mcp_core_tools"]
     langs = languages
 
-    # README.md and llms-install.md — owned by dev/build_readme_counts.py
-    # (marker-block writer). Retained here as inert (repl=None) entries
-    # so reviewers can see the files ARE covered. Same pattern as the
-    # mcp-server-card.json entries below. W23.1 reconciliation, 2026-05-13.
+    # README.md — the auto-count MARKER blocks (headline / canonical-mention
+    # / default-preset / tool-table) are owned by dev/build_readme_counts.py;
+    # those entries below stay inert (repl=None). The FREE-FORM count phrases
+    # OUTSIDE the markers — the MCP-section prose ("N tools, 10 resources"),
+    # the directory-tree comments ("MCP server (N tools, ...)"), and the
+    # "M canonical + K aliases" CLI annotation — had no guard at all and are
+    # the surfaces this extension adds. marker_aware=True masks the cousin
+    # script's territory so the two scripts cannot fight over bytes.
     REPLACEMENTS.append(
         (
             REPO_ROOT / "README.md",
             [
-                # All None — see dev/build_readme_counts.py for the real writer.
+                # --- Inert: owned by dev/build_readme_counts.py marker blocks.
                 (re.compile(r"\*\d+ commands · \d+ MCP tools · \d+ languages"), None),
                 (re.compile(r"\bother \d+ specialised commands\b"), None),
                 (re.compile(r"\bremaining ~\d+ commands\b"), None),
                 (re.compile(r"canonical surface is \*\*\d+ commands"), None),
+                # --- Active: free-form prose OUTSIDE the marker blocks.
+                # "N tools, 10 resources, and 5 prompts are available in the full preset."
+                (
+                    re.compile(r"\b\d+ tools, (\d+ resources, and \d+ prompts are available)"),
+                    rf"{mcp} tools, \1",
+                ),
+                # Directory-tree comment: "MCP server (N tools, 10 resources, 6 prompts)".
+                (
+                    re.compile(r"MCP server \(\d+ tools(, \d+ resources, \d+ prompts\))"),
+                    rf"MCP server ({mcp} tools\1",
+                ),
+                # Directory-tree comment: "Click CLI (M canonical + K aliases)".
+                (
+                    re.compile(r"Click CLI \(\d+ canonical \+ \d+ aliases\)"),
+                    f"Click CLI ({canon} canonical + {aliases} aliases)",
+                ),
+                # NOTE: the "are 90 of the N tools dead weight?" phrase in the
+                # README MCP-tool table is NOT guarded here. It lives inside the
+                # auto-count `readme-mcp-tool-list-table` marker block, sourced
+                # verbatim from the `roam_session_metrics` docstring in
+                # src/roam/mcp_server.py. Its `224` is stale vs the live 227,
+                # but the fix belongs in mcp_server.py's docstring — the cousin
+                # script regenerates the table from it. A pattern here could
+                # only ever match inside the marker block (which marker-aware
+                # masking skips), so it would be dead. Fix at the source.
             ],
+            True,
+        )
+    )
+
+    # CLAUDE.md — headline + authoritative blocks are marker-protected (owned
+    # by build_readme_counts.py's claude-* blocks). The free-form architecture
+    # prose ("N command names (M canonical + K aliases)", "57 tools in core
+    # preset; up to N in full", "all N command names") had no guard.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "CLAUDE.md",
+            [
+                (
+                    re.compile(r"\b\d+ command names \(\d+ canonical \+ \d+ aliases\)"),
+                    f"{cmds} command names ({canon} canonical + {aliases} aliases)",
+                ),
+                (
+                    re.compile(r"FastMCP server \(\d+ tools in core preset; up to \d+ in `full`\)"),
+                    f"FastMCP server ({core} tools in core preset; up to {mcp} in `full`)",
+                ),
+                (
+                    re.compile(r"\bfor all \d+ command names\b"),
+                    f"for all {cmds} command names",
+                ),
+            ],
+            True,
+        )
+    )
+
+    # AGENTS.md — same shape as CLAUDE.md. Codex-headline + Codex-authoritative
+    # blocks are marker-protected; the free-form prose below is not.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "AGENTS.md",
+            [
+                (
+                    re.compile(r"\b\d+ command names \(\d+ canonical \+ \d+ aliases\)"),
+                    f"{cmds} command names ({canon} canonical + {aliases} aliases)",
+                ),
+                (
+                    re.compile(r"FastMCP server \(\d+ tools in core preset; \d+ in `full`\)"),
+                    f"FastMCP server ({core} tools in core preset; {mcp} in `full`)",
+                ),
+                (
+                    re.compile(r"\bfor all \d+ command names\b"),
+                    f"for all {cmds} command names",
+                ),
+            ],
+            True,
+        )
+    )
+
+    # CONTRIBUTING.md — no marker blocks; one count-bearing reference-table row.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "CONTRIBUTING.md",
+            [
+                (
+                    re.compile(r"MCP server with \d+ tools \(\d+ in the default `core` preset\)"),
+                    f"MCP server with {mcp} tools ({core} in the default `core` preset)",
+                ),
+            ],
+            False,
         )
     )
 
@@ -181,6 +288,13 @@ def build_replacements(counts: dict, languages: int) -> None:
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "index.html",
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "command-reference.html",
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "getting-started.html",
+        # Added 2026-05-21: docs pages that quote the same hard counts but
+        # were never walked by this script — the gap the 224-vs-227 drift
+        # cascade exposed. mcp-usage.html also gets the cardinal patterns
+        # here (the explicit ``exposes all N`` pin below is additive).
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "mcp-usage.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "integration-tutorials.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "canonical-demo.html",
     ]
     for p in landing_pages:
         if p in SOFT_COUNT_PAGES:
@@ -220,6 +334,43 @@ def build_replacements(counts: dict, languages: int) -> None:
             REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "mcp-usage.html",
             [
                 (re.compile(r"exposes all\s+\d+(?: tools)?\."), f"exposes all\n        {mcp} tools."),
+            ],
+        )
+    )
+
+    # agent-contract.html — the "Surface scale" count table has one labeled
+    # row per count, so each substitution is anchored on the row label
+    # (``<td>LABEL</td><td>N</td>``). Anchoring on the label keeps the
+    # 1-row ("Canonical envelope" -> 1) untouched.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "agent-contract.html",
+            [
+                (
+                    re.compile(r"(<td>CLI commands</td><td>)\d+(</td>)"),
+                    rf"\g<1>{cmds}\g<2>",
+                ),
+                (
+                    re.compile(r"(<td>MCP tools registered</td><td>)\d+(</td>)"),
+                    rf"\g<1>{mcp}\g<2>",
+                ),
+                (
+                    re.compile(r"(<td>MCP tools in <code>core</code> preset</td><td>)\d+(</td>)"),
+                    rf"\g<1>{core}\g<2>",
+                ),
+                (
+                    re.compile(r"(<td>Languages</td><td>)\d+(</td>)"),
+                    rf"\g<1>{langs}\g<2>",
+                ),
+                # "234 canonical + 7 aliases." note cell + "all 227 tools" prose.
+                (
+                    re.compile(r"\b\d+ canonical \+ \d+ aliases\b"),
+                    f"{canon} canonical + {aliases} aliases",
+                ),
+                (
+                    re.compile(r"\ball \d+ tools\b"),
+                    f"all {mcp} tools",
+                ),
             ],
         )
     )
@@ -265,6 +416,80 @@ def _scrape(text: str, pat: re.Pattern) -> str | None:
     return m.group(0) if m else None
 
 
+def iter_replacements() -> "list[tuple[Path, list, bool]]":
+    """Yield every REPLACEMENTS entry normalised to ``(path, patterns, marker_aware)``.
+
+    ``build_replacements`` must have been called first. Entries are stored
+    as either 2-tuples (legacy whole-file) or 3-tuples (marker-aware); this
+    helper hides that distinction so callers — including tests — iterate one
+    stable shape. Adding a new ``marker_aware`` surface no longer breaks any
+    consumer that unpacks the list.
+    """
+    out: list[tuple[Path, list, bool]] = []
+    for entry in REPLACEMENTS:
+        if len(entry) == 3:
+            path, patterns, marker_aware = entry
+        else:
+            path, patterns = entry
+            marker_aware = False
+        out.append((path, patterns, marker_aware))
+    return out
+
+
+# Files whose count phrases live OUTSIDE the auto-count marker blocks owned by
+# ``dev/build_readme_counts.py``. The cousin script writes the marker-protected
+# headline / authoritative blocks; this script owns the free-form prose count
+# phrases scattered through the rest of the same Markdown files (directory-tree
+# comments, MCP-section prose, the contributor reference table). To keep the
+# two scripts strictly non-overlapping, every substitution below is applied to
+# a *marker-masked* copy of the text — see ``_apply_marker_aware``.
+_MARKER_BLOCK = re.compile(
+    r"<!--\s*BEGIN auto-count:.*?-->.*?<!--\s*END auto-count:.*?-->",
+    flags=re.DOTALL,
+)
+
+
+def _marker_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) char spans of every auto-count marker block."""
+    return [(m.start(), m.end()) for m in _MARKER_BLOCK.finditer(text)]
+
+
+def _apply_marker_aware(text: str, patterns: list[tuple[re.Pattern, str | None]]) -> tuple[str, list[tuple[str, str]]]:
+    """Apply (pattern, replacement) substitutions OUTSIDE marker blocks only.
+
+    Returns ``(new_text, hits)`` where ``hits`` is a list of
+    ``(before, after)`` pairs for reporting. Substitutions whose only
+    match falls inside an auto-count marker block are skipped — those
+    sites are owned by ``dev/build_readme_counts.py`` and rewriting them
+    here would make the two scripts fight over the same bytes.
+    """
+    spans = _marker_spans(text)
+
+    def _in_marker(pos: int) -> bool:
+        return any(start <= pos < end for start, end in spans)
+
+    hits: list[tuple[str, str]] = []
+    for pat, repl in patterns:
+        if repl is None:
+            continue
+        # Re-scan from scratch each iteration so positions stay valid.
+        out: list[str] = []
+        last = 0
+        spans = _marker_spans(text)
+        for m in pat.finditer(text):
+            if _in_marker(m.start()):
+                continue
+            out.append(text[last : m.start()])
+            replaced = m.expand(repl)
+            out.append(replaced)
+            if replaced != m.group(0):
+                hits.append((m.group(0), replaced))
+            last = m.end()
+        out.append(text[last:])
+        text = "".join(out)
+    return text, hits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write", action="store_true", help="Rewrite files in place (default: dry-run)")
@@ -284,7 +509,7 @@ def main() -> int:
     build_replacements(counts, langs)
 
     drift_found = 0
-    for path, patterns in REPLACEMENTS:
+    for path, patterns, marker_aware in iter_replacements():
         if not path.exists():
             continue
         try:
@@ -294,17 +519,25 @@ def main() -> int:
             continue
         original = text
         rel = path.relative_to(REPO_ROOT).as_posix()
-        for pat, repl in patterns:
-            if repl is None:
-                continue
-            new_text = pat.sub(repl, text)
-            if new_text != text:
+        if marker_aware:
+            # Substitute only OUTSIDE auto-count marker blocks — those are
+            # owned by dev/build_readme_counts.py.
+            text, hits = _apply_marker_aware(text, patterns)
+            for before, after in hits:
                 drift_found += 1
-                # Show before / after of the first match
-                m_before = pat.search(text)
-                if m_before:
-                    print(f"  {rel}: '{m_before.group(0)}' -> '{repl}'")
-                text = new_text
+                print(f"  {rel}: '{before}' -> '{after}'")
+        else:
+            for pat, repl in patterns:
+                if repl is None:
+                    continue
+                new_text = pat.sub(repl, text)
+                if new_text != text:
+                    drift_found += 1
+                    # Show before / after of the first match
+                    m_before = pat.search(text)
+                    if m_before:
+                        print(f"  {rel}: '{m_before.group(0)}' -> '{repl}'")
+                    text = new_text
         if args.write and text != original:
             path.write_text(text, encoding="utf-8")
             print(f"  -> wrote {rel}")

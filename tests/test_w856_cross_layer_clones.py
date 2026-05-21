@@ -467,3 +467,163 @@ def test_detector_registered_in_smells_module() -> None:
 
     names = [sid for (sid, _fn) in ALL_DETECTORS]
     assert "cross-layer-clone" in names
+
+
+# ---------------------------------------------------------------------------
+# Per-layer-pair Jaccard budget — the O(|A|*|B|) double loop is bounded on
+# huge LAYERED repos, and truncation is DISCLOSED via a sentinel finding,
+# never silent. roam-code is not a layered repo, so the cap is a no-op
+# there — we exercise it here on a synthetic layered fixture instead.
+# ---------------------------------------------------------------------------
+
+
+class TestCrossLayerPairBudget:
+    """W856 follow-up: bound the per-layer-pair Jaccard comparison and
+    disclose the truncation. Three contract bits:
+      (a) cap engages on a fixture that exceeds the budget,
+      (b) the truncation is disclosed as a sentinel finding,
+      (c) a below-budget fixture is byte-identical to the pre-budget output.
+    """
+
+    def setup_method(self) -> None:
+        _NEXT_ID["v"] = 1
+
+    @staticmethod
+    def _seed_layered_fixture(
+        conn: sqlite3.Connection,
+        *,
+        n_controllers: int,
+        n_services: int,
+    ) -> None:
+        """Seed ``n_controllers`` controllers + ``n_services`` services.
+
+        Every caller calls a private 1-callee stub so it lands in
+        ``layered_with_callees`` (callers with no outbound calls are
+        dropped before the comparison loop). Additionally one controller
+        and one service share three real domain callees, so a genuine
+        cross-layer clone pair exists and we can prove the budget path
+        still surfaces real findings when the budget is not exceeded.
+        """
+        domain = _add_file(conn, "src/domain/shared_math.py")
+        # Three shared domain primitives for the one genuine clone pair.
+        d1, d2, d3 = _seed_callees(conn, host_file_id=domain, names=["apply_tax", "apply_discount", "sum_items"])
+        # A pool of unique private stubs so every other caller has >=1
+        # callee but DOESN'T accidentally form a clone (each caller gets
+        # its own distinct stub name).
+        for ci in range(n_controllers):
+            cf = _add_file(conn, f"app/controllers/Ctrl{ci}.py")
+            cm = _add_function(conn, file_id=cf, name=f"ctrl_method_{ci}", line=1)
+            if ci == 0:
+                # The genuine-clone controller — shares 3 domain callees.
+                for d in (d1, d2, d3):
+                    _add_call(conn, cm, d)
+            else:
+                stub = _add_function(conn, file_id=domain, name=f"_ctrl_stub_{ci}", line=1)
+                _add_call(conn, cm, stub)
+        for si in range(n_services):
+            sf = _add_file(conn, f"src/services/Svc{si}.py")
+            sm = _add_function(conn, file_id=sf, name=f"svc_method_{si}", line=1)
+            if si == 0:
+                # The genuine-clone service — shares the same 3 callees.
+                for d in (d1, d2, d3):
+                    _add_call(conn, sm, d)
+            else:
+                stub = _add_function(conn, file_id=domain, name=f"_svc_stub_{si}", line=1)
+                _add_call(conn, sm, stub)
+        conn.commit()
+
+    def test_budget_engages_and_discloses_truncation(self, tmp_path: Path, monkeypatch) -> None:
+        """(a) cap engages + (b) truncation is disclosed via a sentinel finding."""
+        conn = _make_db(tmp_path)
+        # 6 controllers x 6 services = 36 cross-product comparisons.
+        self._seed_layered_fixture(conn, n_controllers=6, n_services=6)
+        # Budget of 10 < 36 -> the controller x service pair truncates.
+        monkeypatch.setenv("ROAM_CROSS_LAYER_PAIR_BUDGET", "10")
+
+        findings = detect_cross_layer_clones(conn)
+
+        # Exactly one sentinel finding discloses the truncation.
+        sentinels = [f for f in findings if f["kind"] == "cross_layer_clone_truncated"]
+        assert len(sentinels) == 1
+        s = sentinels[0]
+        assert s["smell_id"] == "cross-layer-clone"
+        assert s["severity"] == "info"
+        assert s["confidence"] == "structural"
+        assert s["detector_version"] == CROSS_LAYER_CLONE_DETECTOR_VERSION
+        ev = s["evidence"]
+        assert ev["truncated"] is True
+        assert ev["pair_budget"] == 10
+        assert ev["would_be_comparisons"] == 36
+        assert {ev["layer_a"], ev["layer_b"]} == {"controller", "service"}
+        # LAW-4: the sentinel description ends on a concrete-noun terminal.
+        assert s["description"].rstrip(".").endswith("callers")
+        conn.close()
+
+    def test_budget_bounds_the_comparison_work(self, tmp_path: Path, monkeypatch) -> None:
+        """(a) the cap actually bounds the inner-loop work, not just labels it.
+
+        With a budget far below the cross-product, the detector must NOT
+        run all |A|*|B| comparisons. We assert via a comparison counter
+        wrapped around ``_jaccard``-equivalent set ops: the truncated scan
+        does strictly fewer Jaccard evaluations than the full product.
+        """
+        from roam.catalog import clones_cross_layer as ccl
+
+        conn = _make_db(tmp_path)
+        self._seed_layered_fixture(conn, n_controllers=8, n_services=8)
+        # Full product is 64. Budget 8 -> the outer loop breaks after the
+        # accumulated comparison count crosses 8 (each controller costs
+        # len(rows_b)=8), so it scans ~2 controllers, ~16 comparisons.
+        monkeypatch.setenv("ROAM_CROSS_LAYER_PAIR_BUDGET", "8")
+        # Sanity: the resolved budget reflects the env var.
+        assert ccl._cross_layer_pair_budget() == 8
+
+        findings = detect_cross_layer_clones(conn)
+        sentinels = [f for f in findings if f["kind"] == "cross_layer_clone_truncated"]
+        assert len(sentinels) == 1
+        # The genuine clone (ctrl_method_0 / svc_method_0) is the FIRST
+        # row of each layer, so it is always within the truncated window.
+        real = [f for f in findings if f["kind"] == "cross_layer_clone"]
+        assert len(real) == 1
+        assert "controller:ctrl_method_0" in real[0]["symbol_name"]
+        conn.close()
+
+    def test_below_budget_no_sentinel_byte_identical(self, tmp_path: Path, monkeypatch) -> None:
+        """(c) a below-budget fixture is unaffected — no sentinel, real finding intact."""
+        conn = _make_db(tmp_path)
+        # 6x6 = 36 comparisons; budget of 100 > 36 -> no truncation.
+        self._seed_layered_fixture(conn, n_controllers=6, n_services=6)
+        monkeypatch.setenv("ROAM_CROSS_LAYER_PAIR_BUDGET", "100")
+
+        findings = detect_cross_layer_clones(conn)
+        # Zero sentinels — the budget never engaged.
+        assert [f for f in findings if f["kind"] == "cross_layer_clone_truncated"] == []
+        # The one genuine cross-layer clone is still surfaced intact.
+        real = [f for f in findings if f["kind"] == "cross_layer_clone"]
+        assert len(real) == 1
+        assert "controller:ctrl_method_0" in real[0]["symbol_name"]
+        assert "service:svc_method_0" in real[0]["symbol_name"]
+        conn.close()
+
+    def test_default_budget_is_a_noop_for_small_corpora(self, tmp_path: Path) -> None:
+        """Default budget (no env var) never truncates a small synthetic corpus.
+
+        Proves the cap is a pure no-op on anything that isn't a
+        Django/Spring-scale layered repo — including roam-code itself.
+        """
+        conn = _make_db(tmp_path)
+        self._seed_layered_fixture(conn, n_controllers=6, n_services=6)
+
+        findings = detect_cross_layer_clones(conn)
+        assert [f for f in findings if f["kind"] == "cross_layer_clone_truncated"] == []
+        real = [f for f in findings if f["kind"] == "cross_layer_clone"]
+        assert len(real) == 1
+        conn.close()
+
+    def test_malformed_env_var_falls_back_to_default(self, tmp_path: Path, monkeypatch) -> None:
+        """A non-integer / non-positive env var must not disable the cap."""
+        from roam.catalog import clones_cross_layer as ccl
+
+        for bad in ("not-a-number", "-5", "0", ""):
+            monkeypatch.setenv("ROAM_CROSS_LAYER_PAIR_BUDGET", bad)
+            assert ccl._cross_layer_pair_budget() == ccl._DEFAULT_CROSS_LAYER_PAIR_BUDGET

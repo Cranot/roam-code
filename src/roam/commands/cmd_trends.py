@@ -235,6 +235,23 @@ def _trend_verdict(analysis):
     return "stable"
 
 
+def _insufficient_history_verdict(n_snapshots):
+    """Verdict for the timeline mode when there's no trend ``analysis``.
+
+    Trend analysis needs >= 4 chronological snapshots; with 0 or 1
+    recorded snapshots the analysis block is skipped entirely. LAW 6
+    still requires a verdict, so return an honest insufficient-history
+    line. Terminal tokens (``analysis`` / ``snapshots``) are LAW-4
+    concrete-noun anchors. Wording mirrors ``roam forecast``'s
+    "insufficient snapshot history" path.
+    """
+    if n_snapshots == 0:
+        return "No snapshots recorded yet — run `roam index` to begin trend analysis"
+    if n_snapshots == 1:
+        return "1 snapshot recorded — insufficient history for trend analysis"
+    return f"{n_snapshots} snapshots recorded — insufficient history for trend analysis"
+
+
 # ---------------------------------------------------------------------------
 # Metric definitions for --metric mode (broader metrics via metric_snapshots)
 # ---------------------------------------------------------------------------
@@ -835,6 +852,14 @@ def _render_timeline_json(
         summary["verdict"] = verdict
         summary["anomaly_count"] = len(analysis["anomalies"])
         summary["trend_direction"] = verdict
+    else:
+        # LAW 6: ``verdict`` must work without any other field. A single
+        # (or sub-4) snapshot history can't yield a trend ``analysis`` —
+        # emit an honest insufficient-history verdict instead of leaving
+        # ``verdict`` unset. Wording mirrors ``roam forecast``'s
+        # "insufficient snapshot history" path; terminal token
+        # ``analysis`` is a LAW-4 concrete-noun anchor.
+        summary["verdict"] = _insufficient_history_verdict(len(snap_dicts))
 
     envelope = json_envelope(
         cmd_name,
@@ -941,6 +966,10 @@ def _render_timeline_text(snap_dicts, chrono, assertions, assertion_results, ana
 
         verdict = _trend_verdict(analysis)
         click.echo(f"\nVERDICT: {verdict}")
+    else:
+        # LAW 6: emit a verdict even when there's no trend ``analysis``
+        # (single / sub-4 snapshot history). Mirrors the JSON renderer.
+        click.echo(f"\nVERDICT: {_insufficient_history_verdict(len(snap_dicts))}")
 
     # Assertions
     if assertions:
@@ -1705,7 +1734,12 @@ def _handle_timeline(
                     to_json(
                         json_envelope(
                             cmd_name,
-                            summary={"snapshots": 0},
+                            summary={
+                                "snapshots": 0,
+                                # LAW 6: verdict present even on the
+                                # no-snapshot path.
+                                "verdict": _insufficient_history_verdict(0),
+                            },
                             budget=token_budget,
                             snapshots=[],
                         )

@@ -1510,13 +1510,31 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
         if _default_showwarning is not None and _warnings.showwarning is _default_showwarning:
 
             def _stderr_showwarning(message, category, filename, lineno, file=None, line=None):
+                # W1078: emit the warning as a single structured JSON line on
+                # `sys.__stderr__` (NOT stdout). A consumer merging streams
+                # (`2>&1`) then still sees only JSON — free-form
+                # `formatwarning` text would corrupt that combined stream.
+                # Shape matches the CLAUDE.md "MCP runtime security" contract:
+                # `{"warning": ..., "category": ...}` (plus filename/lineno).
+                import json as _json
+
                 try:
-                    text = _warnings.formatwarning(message, category, filename, lineno, line)
-                    sys.__stderr__.write(text)
+                    line_json = _json.dumps(
+                        {
+                            "warning": str(message),
+                            "category": getattr(category, "__name__", str(category)),
+                            "filename": str(filename),
+                            "lineno": int(lineno),
+                        }
+                    )
+                    sys.__stderr__.write(line_json + "\n")
                 except Exception:
                     # last-ditch: never let a warning handler crash the command
                     try:
-                        sys.__stderr__.write(f"{category.__name__}: {message}\n")
+                        sys.__stderr__.write(
+                            f'{{"warning": {str(message)!r}, '
+                            f'"category": {getattr(category, "__name__", str(category))!r}}}\n'
+                        )
                     except Exception:
                         pass
 

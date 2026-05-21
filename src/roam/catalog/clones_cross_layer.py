@@ -67,6 +67,40 @@ from roam.db.edge_kinds import CALL_EDGE_KINDS
 CROSS_LAYER_CLONE_DETECTOR = "cross-layer-clone"
 CROSS_LAYER_CLONE_DETECTOR_VERSION = 1
 
+# Defensive per-layer-pair Jaccard budget. The cross-layer scan compares
+# every caller in layer A against every caller in layer B — an O(|A|*|B|)
+# double loop per layer pair. On a LAYERED repo at Django / Spring scale
+# (thousands of controllers and services), that product explodes. This cap
+# bounds the comparisons performed for ONE layer pair; when a pair would
+# exceed it, the scan truncates that pair's comparison and emits a sentinel
+# finding (kind ``cross_layer_clone_truncated``) so the truncation is
+# DISCLOSED, never silent (Pattern-1 "structured signal lost" discipline).
+# 4_000_000 = a 2000x2000 layer pair — comfortably above any real layered
+# repo while still bounding worst-case work. Tunable via the
+# ``ROAM_CROSS_LAYER_PAIR_BUDGET`` env var for operators on pathological
+# corpora. roam-code itself is not a layered repo, so this is a no-op here.
+_DEFAULT_CROSS_LAYER_PAIR_BUDGET = 4_000_000
+
+
+def _cross_layer_pair_budget() -> int:
+    """Resolve the per-layer-pair comparison budget.
+
+    Reads ``ROAM_CROSS_LAYER_PAIR_BUDGET`` when set to a positive integer;
+    falls back to ``_DEFAULT_CROSS_LAYER_PAIR_BUDGET`` on absent / malformed
+    / non-positive values (defensive default discipline — a bad env var must
+    not disable the cap entirely).
+    """
+    import os
+
+    raw = os.environ.get("ROAM_CROSS_LAYER_PAIR_BUDGET")
+    if raw is None:
+        return _DEFAULT_CROSS_LAYER_PAIR_BUDGET
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_CROSS_LAYER_PAIR_BUDGET
+    return val if val > 0 else _DEFAULT_CROSS_LAYER_PAIR_BUDGET
+
 
 # ---------------------------------------------------------------------------
 # Layer classification
@@ -314,6 +348,57 @@ def _make_finding(
     )
 
 
+def _make_truncation_finding(
+    *,
+    layer_a: str,
+    layer_b: str,
+    rows_a: int,
+    rows_b: int,
+    budget: int,
+) -> dict:
+    """Build a sentinel finding disclosing a per-layer-pair budget truncation.
+
+    Emitted when one ``(layer_a, layer_b)`` comparison would exceed
+    ``budget`` (``rows_a * rows_b > budget``). The cross-layer scan stops
+    enumerating that layer pair partway through; this finding makes the
+    incompleteness LOUD so consumers never read the result as an
+    exhaustive scan (Pattern-1 "structured signal lost" / "make fallback
+    chains loud" discipline). ``kind`` is the dedicated
+    ``cross_layer_clone_truncated`` so callers can filter sentinels from
+    real clone findings; ``severity`` is ``info`` (it is a coverage caveat,
+    not a code smell). The description ends on the LAW-4 concrete-noun
+    terminal ``callers``.
+    """
+    description = (
+        f"Cross-layer scan truncated: the {layer_a} x {layer_b} layer pair has "
+        f"{rows_a} x {rows_b} callers, exceeding the {budget} per-pair comparison "
+        f"budget. Some cross-layer clones in this pair may be unreported — raise "
+        f"ROAM_CROSS_LAYER_PAIR_BUDGET to scan all {layer_a}/{layer_b} callers."
+    )
+    evidence = {
+        "truncated": True,
+        "layer_a": layer_a,
+        "layer_b": layer_b,
+        "rows_a": rows_a,
+        "rows_b": rows_b,
+        "pair_budget": budget,
+        "would_be_comparisons": rows_a * rows_b,
+    }
+    return make_smell_finding(
+        "cross-layer-clone",
+        "info",
+        f"{layer_a} x {layer_b} (budget truncated)",
+        "cross_layer_clone_truncated",
+        f"{layer_a} x {layer_b}",
+        rows_a * rows_b,
+        budget,
+        description,
+        evidence=evidence,
+        confidence="structural",
+        detector_version=CROSS_LAYER_CLONE_DETECTOR_VERSION,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -395,14 +480,42 @@ def detect_cross_layer_clones(
     layers = sorted(layered_with_callees.keys())
     seen_pairs: set[tuple[int, int]] = set()
     findings: list[dict] = []
+    truncation_findings: list[dict] = []
+
+    # Defensive per-layer-pair comparison budget — bounds the O(|A|*|B|)
+    # double loop on huge LAYERED repos. Below the budget the loop runs
+    # exactly as before, so output stays byte-identical on any repo whose
+    # layer pairs fit. roam-code is not layered, so this never engages here.
+    pair_budget = _cross_layer_pair_budget()
 
     for i in range(len(layers)):
         for j in range(i + 1, len(layers)):
             layer_a, layer_b = layers[i], layers[j]
             rows_a = layered_with_callees[layer_a]
             rows_b = layered_with_callees[layer_b]
+            # Truncate this layer pair when the full cross-product would
+            # exceed the budget. We still scan as much of layer A as the
+            # budget allows (each layer-A caller costs len(rows_b)
+            # comparisons), then emit a sentinel so the truncation is
+            # disclosed rather than silent.
+            full_comparisons = len(rows_a) * len(rows_b)
+            truncated = full_comparisons > pair_budget
+            if truncated:
+                truncation_findings.append(
+                    _make_truncation_finding(
+                        layer_a=layer_a,
+                        layer_b=layer_b,
+                        rows_a=len(rows_a),
+                        rows_b=len(rows_b),
+                        budget=pair_budget,
+                    )
+                )
+            comparisons_done = 0
             for sid_a, name_a, _ka, line_a, path_a, callees_a in rows_a:
+                if truncated and comparisons_done >= pair_budget:
+                    break
                 for sid_b, name_b, _kb, _lb, path_b, callees_b in rows_b:
+                    comparisons_done += 1
                     # Skip same-symbol self-pairs (cannot happen across
                     # different layers but guards against degenerate
                     # rows with mis-classified paths).
@@ -441,7 +554,12 @@ def detect_cross_layer_clones(
     # on ``symbol_name`` so two pairs with identical Jaccard scores still
     # ship in a stable order across runs.
     findings.sort(key=lambda f: (-f["metric_value"], f["symbol_name"]))
-    return findings
+    # Sentinel truncation findings (if any) ride at the END of the list,
+    # ordered by layer pair, so they never perturb the ordering of real
+    # clone findings — a below-budget scan produces zero of these and the
+    # output is byte-identical to the pre-budget detector.
+    truncation_findings.sort(key=lambda f: f["symbol_name"])
+    return findings + truncation_findings
 
 
 __all__ = [

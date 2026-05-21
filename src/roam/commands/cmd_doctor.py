@@ -764,7 +764,7 @@ def _check_index_manifest() -> dict:
 
     Drift between the recorded parser / grammar / roam version and what's
     currently installed means the index was built with a different
-    toolchain — agents should ``roam index --rebuild`` before trusting it.
+    toolchain — agents should ``roam index --force`` before trusting it.
     """
     try:
         from roam.db.connection import db_exists, find_project_root, open_db
@@ -797,7 +797,7 @@ def _check_index_manifest() -> dict:
         return {
             "name": "Index manifest",
             "passed": False,
-            "detail": "no manifest recorded — run `roam index --rebuild` to refresh",
+            "detail": "no manifest recorded — run `roam index --force` to refresh",
         }
 
     # Build a "current state" manifest and diff it. conn=None makes the
@@ -817,7 +817,7 @@ def _check_index_manifest() -> dict:
     hints: list[str] = []
     parser_drift = "parser_versions" in drift or "grammar_versions" in drift
     if parser_drift or "schema_version" in drift or "roam_version" in drift:
-        hints.append("WARN: parser version drift since last index — run `roam index --rebuild`")
+        hints.append("WARN: parser version drift since last index — run `roam index --force`")
 
     if "git_head" in drift:
         old_head = drift["git_head"][0]
@@ -839,7 +839,7 @@ def _check_index_manifest() -> dict:
             hints.append("INFO: working-tree dirty-hash differs from index time — uncommitted state has changed")
 
     if "config_hash" in drift:
-        hints.append("WARN: roam config or .roamignore changed since last index — run `roam index --rebuild`")
+        hints.append("WARN: roam config or .roamignore changed since last index — run `roam index --force`")
 
     if hints:
         detail = base + "; " + "; ".join(hints)
@@ -1113,7 +1113,7 @@ def _check_index_step_failures() -> dict:
     detail = (
         f"{len(failures)}/{total} sub-step(s) failed in the last index run "
         f"({fail_names}). Your index is missing data because these steps "
-        f"failed: {head_text}{remainder}. Run `roam index --rebuild` to retry."
+        f"failed: {head_text}{remainder}. Run `roam index --force` to retry."
     )
     return {
         "name": "Index step manifest",

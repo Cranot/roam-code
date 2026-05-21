@@ -177,3 +177,115 @@ def test_warning_redirect_writes_to_stderr_not_stdout(capsys) -> None:
         assert "synthetic-test-warning" not in captured.out, f"warning leaked to stdout: {captured.out!r}"
     finally:
         _warnings.showwarning = original
+
+
+def test_warning_redirect_emits_structured_json_line(capfd) -> None:
+    """The override emits a STRUCTURED JSON line on stderr, not free-form text.
+
+    CLAUDE.md ("MCP runtime security" section) states `--json` mode routes
+    `warnings.warn()` to stderr as structured `{"warning": ...,
+    "category": ...}` JSON. Pattern caught: the override reverting to
+    `warnings.formatwarning(...)` raw text — a consumer merging streams
+    (`2>&1`) would then still see non-JSON on the combined stream. The
+    structured line keeps the combined stream JSON-parseable line-by-line.
+    """
+    import warnings as _warnings
+
+    from click.testing import CliRunner
+
+    from roam.cli import cli
+
+    original = _warnings.showwarning
+    default = getattr(_warnings, "_showwarning_orig", None) or getattr(_warnings, "_showwarning_impl", None)
+    if default is None:
+        pytest.skip("no stdlib default showwarning attribute on this Python build")
+    try:
+        _warnings.showwarning = default
+        runner = CliRunner()
+        runner.invoke(cli, ["--json", "version"], catch_exceptions=False)
+        hook = _warnings.showwarning
+        assert getattr(hook, "__name__", "") == "_stderr_showwarning"
+        # capfd (fd-level), not capsys: the override writes to
+        # sys.__stderr__ (fd 2 directly), which capsys does not see.
+        capfd.readouterr()
+        hook(  # invoke directly — bypass any pytest warnings filter
+            "synthetic-structured-warning",
+            RuntimeWarning,
+            __file__,
+            42,
+        )
+        captured = capfd.readouterr()
+        line = captured.err.strip()
+        assert line, "override emitted nothing on stderr"
+        # The whole stderr line must round-trip through json.loads — a
+        # `formatwarning` regression would fail here.
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            pytest.fail(f"stderr line is not JSON ({exc}); got {line!r}")
+        assert payload["warning"] == "synthetic-structured-warning", payload
+        assert payload["category"] == "RuntimeWarning", payload
+        # filename / lineno carried per the documented contract shape.
+        assert payload["lineno"] == 42, payload
+        assert payload["filename"] == __file__, payload
+        # stdout must stay clean — no warning bytes there.
+        assert "synthetic-structured-warning" not in captured.out, captured.out
+    finally:
+        _warnings.showwarning = original
+
+
+def test_json_stderr_warning_line_is_structured_subprocess() -> None:
+    """End-to-end: a `--json` command emitting a warning yields JSON stderr.
+
+    Runs `python -m roam --json version` as a real subprocess with a
+    shim that fires a `warnings.warn()` immediately after the command (the
+    `--json` override is process-global, so a later warning still routes
+    through it), then asserts: stdout round-trips through `json.loads`, AND the
+    stderr warning line round-trips through `json.loads` with `warning` +
+    `category` keys. This is the `2>&1`-merge-safety guarantee.
+    """
+    import os
+
+    # The `roam --json` override installs a process-global structured
+    # showwarning hook (cli.py W1078; not restored on command exit). Fire
+    # the synthetic warning AFTER `run_module` returns so it routes through
+    # that installed hook — firing it before would hit the stdlib default
+    # handler (free-form text). PYTHONWARNINGS=always (set below) keeps the
+    # warning from being dedup-filtered.
+    shim = (
+        "import warnings, runpy, sys\n"
+        "sys.argv = ['roam', '--json', 'version']\n"
+        "try:\n"
+        "    runpy.run_module('roam', run_name='__main__')\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "warnings.warn('synthetic-subprocess-warning', RuntimeWarning)\n"
+    )
+    env = dict(os.environ)
+    env["PYTHONWARNINGS"] = "always"
+    proc = subprocess.run(  # noqa: S603 — explicit args, no shell
+        [sys.executable, "-c", shim],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root()),
+        timeout=120,
+        env=env,
+    )
+    # stdout: clean JSON envelope.
+    assert proc.stdout.strip(), f"empty stdout; stderr={proc.stderr!r}"
+    json.loads(proc.stdout)  # raises on regression
+    # stderr: at least one line must be the structured warning JSON.
+    structured = []
+    for raw in proc.stderr.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "warning" in obj and "category" in obj:
+            structured.append(obj)
+    assert any(o["warning"] == "synthetic-subprocess-warning" for o in structured), (
+        f"no structured JSON warning line on stderr; stderr={proc.stderr!r}"
+    )

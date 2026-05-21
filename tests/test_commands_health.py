@@ -105,6 +105,69 @@ class TestHealth:
         result = invoke_cli(cli_runner, ["health", "--no-framework"], cwd=indexed_project)
         assert result.exit_code == 0, f"health --no-framework failed: {result.output}"
 
+    def test_health_json_no_runtimewarning_leak(self, cli_runner, indexed_project, monkeypatch):
+        """UFS3 — algebraic_connectivity RuntimeWarning must not corrupt --json stdout.
+
+        ``algebraic_connectivity`` does not RAISE on a missing-numpy/scipy
+        substrate or a diverged eigensolver — it returns the 0.0 sentinel and
+        emits a ``RuntimeWarning``. cmd_health must capture that warning at
+        the call site (``catch_warnings(record=True)``) so it can never reach
+        ``warnings.showwarning`` — relying on cli.py's global override is
+        unsafe because that override only installs when the current hook is
+        the stdlib default. This test installs a NON-default ``showwarning``
+        that routes to stdout (the leaked-override scenario) and asserts the
+        warning is folded into the structured ``warnings_out`` channel
+        instead of polluting the JSON envelope.
+        """
+        import warnings
+
+        import roam.commands.cmd_health as ch
+
+        monkeypatch.chdir(indexed_project)
+
+        def _boom(_graph):
+            warnings.warn(
+                "algebraic_connectivity compute failed (RuntimeError): simulated; returning 0.0 sentinel",
+                category=RuntimeWarning,
+                stacklevel=2,
+            )
+            return 0.0
+
+        monkeypatch.setattr(ch, "algebraic_connectivity", _boom)
+
+        # Install a non-default showwarning that routes to stdout — this is
+        # exactly the leaked-override case where cli.py's guarded global
+        # override is skipped. monkeypatch restores it after the test.
+        def _leaky_showwarning(message, category, filename, lineno, file=None, line=None):
+            sys.stdout.write(f"{category.__name__}: {message}\n")
+
+        monkeypatch.setattr(warnings, "showwarning", _leaky_showwarning)
+
+        result = invoke_cli(cli_runner, ["health"], cwd=indexed_project, json_mode=True)
+        # stdout must parse as a single clean JSON envelope — the leak shape
+        # is a free-form warning line that breaks json.loads (the warning
+        # text prepended/appended to the envelope), so a successful parse of
+        # the WHOLE stdout is the primary leak guard.
+        data = parse_json_output(result, "health")
+        assert_json_envelope(data, "health")
+        # stdout must begin with the JSON envelope, not a leaked warning line.
+        assert result.output.lstrip().startswith("{"), (
+            f"stdout does not start with the JSON envelope (leaked prefix?):\n{result.output[:400]}"
+        )
+        # The leak signature is the stdlib ``formatwarning`` shape — a
+        # ``<file>:<lineno>: RuntimeWarning:`` line OR the bare
+        # ``RuntimeWarning: <message>`` line emitted by a leaked showwarning.
+        # Neither may appear outside the structured ``warnings_out`` markers.
+        assert "RuntimeWarning: algebraic_connectivity" not in result.output, (
+            f"free-form RuntimeWarning text leaked into --json stdout:\n{result.output[:400]}"
+        )
+        # The warning must instead be disclosed via the structured channel,
+        # where the category name appears intentionally inside the marker.
+        markers = data.get("warnings_out") or data.get("summary", {}).get("warnings_out") or []
+        assert any("algebraic_connectivity_warning" in m for m in markers), (
+            f"algebraic_connectivity RuntimeWarning not folded into warnings_out: {markers}"
+        )
+
 
 # ============================================================================
 # TestWeather

@@ -928,3 +928,51 @@ class TestDoctorIndexManifestHistoryCheck:
         from roam.commands.cmd_doctor import _ADVISORY_CHECK_NAMES
 
         assert "Index manifest history" in _ADVISORY_CHECK_NAMES
+
+
+class TestDoctorIndexFlagHints:
+    """UFS5 — every ``roam index --<flag>`` string in cmd_doctor.py must
+    reference a flag that actually exists on the live ``roam index`` command.
+
+    cmd_doctor's check-detail / hint strings tell the user to re-run the
+    indexer to clear drift. The historical strings said ``roam index
+    --rebuild`` — a flag that does not exist (the real flag is ``--force``),
+    so an agent or user copy-pasting the hint hit ``No such option``. This
+    drift-guard scans the module source for the hint pattern and validates
+    every flag against Click's real option set.
+    """
+
+    def _doctor_index_flags(self) -> set[str]:
+        """Return every ``--flag`` mentioned after ``roam index`` in the module."""
+        import re
+        from pathlib import Path
+
+        import roam.commands.cmd_doctor as doctor_mod
+
+        src = Path(doctor_mod.__file__).read_text(encoding="utf-8")
+        # Match `roam index --flag` (backtick-quoted or bare) and capture the flag.
+        return set(re.findall(r"roam index\s+(--[a-z][a-z-]*)", src))
+
+    def test_doctor_index_hints_use_real_flags(self):
+        """No ``roam index --<flag>`` hint may reference a non-existent flag."""
+        from roam.commands.cmd_index import index as index_cmd
+
+        real_flags: set[str] = set()
+        for param in index_cmd.params:
+            for opt in getattr(param, "opts", []):
+                if opt.startswith("--"):
+                    real_flags.add(opt)
+
+        mentioned = self._doctor_index_flags()
+        assert mentioned, "expected at least one `roam index --flag` hint in cmd_doctor.py"
+        bogus = mentioned - real_flags
+        assert not bogus, (
+            f"cmd_doctor.py references non-existent `roam index` flag(s): "
+            f"{sorted(bogus)}; real flags are {sorted(real_flags)}"
+        )
+
+    def test_doctor_does_not_mention_rebuild_flag(self):
+        """The historical bogus ``--rebuild`` flag string must stay gone (UFS5)."""
+        assert "--rebuild" not in self._doctor_index_flags(), (
+            "`roam index --rebuild` is not a real flag — use `roam index --force`"
+        )
