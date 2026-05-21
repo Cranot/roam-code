@@ -168,6 +168,18 @@ class GateRunner:
             fix_hint="python -m ruff check --fix src/roam tests",
         )
 
+    def run_leak_gate(self) -> None:
+        # Anti-leak gate: the internal-language scan runs in CI
+        # (roam-ci.yml) too, but a leak that reaches the public repo
+        # before CI catches it is exactly the 2026-05-20 incident — so
+        # run it here, so a leak fails the push LOCALLY before anything
+        # leaves the machine.
+        self._run(
+            "scan_internal_language.py --all",
+            [sys.executable, "scripts/scan_internal_language.py", "--all"],
+            fix_hint="remove the flagged internal-language term (see scripts/internal_language_patterns.py)",
+        )
+
     def run_count_scripts(self) -> None:
         # Cheap (~2s) backstop for --no-verify commit-time bypasses; the
         # canonical commit-time gate lives in .githooks/pre-commit (W250).
@@ -241,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[prepush] tier: {'FULL' if full else 'FAST'}")
 
     runner = GateRunner(root=root)
+    runner.run_leak_gate()
     runner.run_ruff()
     runner.run_count_scripts()
     runner.run_pytest_bundle(FAST_PYTEST_GUARDS, "FAST")
