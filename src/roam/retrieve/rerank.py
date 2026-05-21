@@ -29,7 +29,7 @@ from typing import Iterable
 from roam.config import get_retrieve_config
 from roam.db.connection import batched_in
 from roam.graph.clone_detect import get_clone_siblings
-from roam.graph.dark_matter import co_change_score_to_seed_set
+from roam.graph.dark_matter import co_change_scores_to_seed_set_bulk
 from roam.runtime.hotspots import runtime_score
 
 #: Default lexical-baseline coefficient when config is unavailable.
@@ -675,15 +675,19 @@ def _cochange_scores(
     if not seeds:
         return {}
     seed_ids = list(seeds.keys())
-    out: dict[int, float] = {}
-    for sid in candidate_ids:
-        try:
-            score = co_change_score_to_seed_set(conn, sid, seed_ids)
-        except sqlite3.OperationalError:
-            score = 0.0
-        if score > 0:
-            out[sid] = score
-    return out
+    cand_list = list(candidate_ids)
+    if not cand_list:
+        return {}
+    # Bulk path: pre-fetch the whole (candidate-file x seed-file) co-change
+    # matrix in a bounded number of SQL round-trips, then score in-memory.
+    # Output-identical to the old per-candidate co_change_score_to_seed_set
+    # loop; replaces the latent O(C x S x 2 SQL) N+1 (W: rerank β fix).
+    try:
+        return co_change_scores_to_seed_set_bulk(conn, cand_list, seed_ids)
+    except sqlite3.OperationalError:
+        # Missing git_cochange / file_stats / symbols table — the old loop
+        # treated this as score 0.0 for every candidate (empty β dict).
+        return {}
 
 
 def _runtime_scores(

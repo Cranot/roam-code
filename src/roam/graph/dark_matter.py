@@ -16,8 +16,11 @@ from __future__ import annotations
 import math
 import re
 import sqlite3
+from collections.abc import Iterable
 from difflib import SequenceMatcher
 from pathlib import Path
+
+from roam.db.connection import batched_in
 
 
 def _npmi(p_ab: float, p_a: float, p_b: float) -> float:
@@ -155,6 +158,178 @@ def file_co_change_score(
     if union <= 0:
         return 0.0
     return min(1.0, cochanges / union)
+
+
+def file_co_change_scores_bulk(
+    conn: sqlite3.Connection,
+    candidate_file_ids: Iterable[int],
+    seed_file_ids: Iterable[int],
+) -> dict[tuple[int, int], float]:
+    """Bulk co-change scores for every ``(candidate_file, seed_file)`` pair.
+
+    Output-identical drop-in for calling :func:`file_co_change_score`
+    once per pair, but issues a *bounded* number of SQL round-trips
+    (two batched IN-queries) instead of ``~2 x C x S``. The retrieve
+    reranker uses this so the ``C x S`` β loop becomes in-memory dict
+    lookups (W: latent N+1 fix).
+
+    Returns a dict keyed by the **original** ``(candidate_file_id,
+    seed_file_id)`` pair. A pair is present only when its score would be
+    ``> 0`` under :func:`file_co_change_score`; absent pairs score 0.0.
+    Same-file pairs are never inserted (the per-pair helper short-circuits
+    those to 0.0).
+
+    The per-pair score is replicated byte-for-byte:
+    * ``git_cochange`` is canonically stored with ``file_id_a < file_id_b``
+      (see ``index/git_stats.py:compute_cochange``), so a single
+      canonical ``(min, max)`` lookup matches the per-pair
+      ``OR ... LIMIT 1`` query exactly;
+    * ``file_stats.commit_count`` defaults to 0 when a file id is absent,
+      mirroring ``commit_map.get(..., 0)``;
+    * ``union = ca + cb - cochanges``; ``min(1.0, cochanges / union)``.
+    """
+    cand_list = [int(c) for c in candidate_file_ids]
+    seed_list = [int(s) for s in seed_file_ids]
+    if not cand_list or not seed_list:
+        return {}
+
+    # Canonical (min, max) pairs we actually need a cochange row for.
+    # Skip same-file pairs — file_co_change_score short-circuits those.
+    canon_pairs: set[tuple[int, int]] = set()
+    for c in cand_list:
+        for s in seed_list:
+            if c == s:
+                continue
+            canon_pairs.add((c, s) if c < s else (s, c))
+    if not canon_pairs:
+        return {}
+
+    # The union of every file id we may need a commit_count for.
+    file_ids: set[int] = set()
+    for a, b in canon_pairs:
+        file_ids.add(a)
+        file_ids.add(b)
+
+    # --- Bulk query 1: git_cochange rows. ----------------------------------
+    # git_cochange is canonically stored with file_id_a < file_id_b, so a
+    # double-IN over the same id set captures every needed row. batched_in
+    # keeps each IN-clause <= 400 ids.
+    cochange_map: dict[tuple[int, int], float] = {}
+    for row in batched_in(
+        conn,
+        "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange "
+        "WHERE file_id_a IN ({ph}) AND file_id_b IN ({ph})",
+        sorted(file_ids),
+    ):
+        fa, fb, cnt = int(row[0]), int(row[1]), row[2]
+        if not cnt:
+            continue
+        key = (fa, fb) if fa < fb else (fb, fa)
+        cochange_map[key] = float(cnt)
+
+    if not cochange_map:
+        return {}
+
+    # --- Bulk query 2: file_stats.commit_count. ----------------------------
+    commit_map: dict[int, int] = {}
+    for row in batched_in(
+        conn,
+        "SELECT file_id, commit_count FROM file_stats WHERE file_id IN ({ph})",
+        sorted(file_ids),
+    ):
+        commit_map[int(row[0])] = row[1] or 0
+
+    # --- In-memory scoring (replicates file_co_change_score 1:1). ----------
+    out: dict[tuple[int, int], float] = {}
+    for c in cand_list:
+        for s in seed_list:
+            if c == s:
+                continue
+            key = (c, s) if c < s else (s, c)
+            cochanges = cochange_map.get(key)
+            if not cochanges:
+                continue
+            ca = float(commit_map.get(key[0], 0))
+            cb = float(commit_map.get(key[1], 0))
+            union = ca + cb - cochanges
+            if union <= 0:
+                continue
+            score = min(1.0, cochanges / union)
+            if score > 0:
+                out[(c, s)] = score
+    return out
+
+
+def co_change_scores_to_seed_set_bulk(
+    conn: sqlite3.Connection,
+    candidate_symbol_ids: Iterable[int],
+    seed_symbol_ids: list[int] | set[int],
+) -> dict[int, float]:
+    """Bulk version of :func:`co_change_score_to_seed_set` for many candidates.
+
+    Output-identical to calling :func:`co_change_score_to_seed_set` once
+    per candidate symbol, but resolves all symbol→file ids in two batched
+    queries and pre-fetches the whole ``(candidate_file x seed_file)``
+    co-change matrix in one bulk pass (see
+    :func:`file_co_change_scores_bulk`).
+
+    Returns a dict ``{candidate_symbol_id: best_score}`` containing only
+    candidates whose max co-change score against any seed file is ``> 0``
+    — matching the ``if score > 0`` filter the reranker applies to the
+    per-candidate path.
+    """
+    cand_list = [int(c) for c in candidate_symbol_ids]
+    seed_list = list(seed_symbol_ids)
+    if not cand_list or not seed_list:
+        return {}
+
+    # Resolve candidate symbol -> file id (bulk). co_change_score_to_seed_set
+    # reads exactly one file_id per candidate symbol; preserve "missing or
+    # NULL file_id => candidate absent" semantics.
+    cand_file: dict[int, int] = {}
+    for row in batched_in(
+        conn,
+        "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
+        sorted(set(cand_list)),
+    ):
+        if row[1] is not None:
+            cand_file[int(row[0])] = int(row[1])
+
+    # Resolve seed symbol -> distinct file ids (bulk). The per-candidate
+    # path builds an identical set via `SELECT DISTINCT file_id`.
+    seed_files: set[int] = set()
+    for row in batched_in(
+        conn,
+        "SELECT DISTINCT file_id FROM symbols WHERE id IN ({ph})",
+        sorted(set(seed_list)),
+    ):
+        if row[0] is not None:
+            seed_files.add(int(row[0]))
+    if not seed_files:
+        return {}
+
+    candidate_files = sorted(set(cand_file.values()))
+    pair_scores = file_co_change_scores_bulk(conn, candidate_files, sorted(seed_files))
+
+    out: dict[int, float] = {}
+    for cand_sym in cand_list:
+        cfile = cand_file.get(cand_sym)
+        if cfile is None:
+            continue
+        # Mirror the per-candidate short-circuit: seed set equal to just
+        # the candidate's own file scores 0.0.
+        if seed_files == {cfile}:
+            continue
+        best = 0.0
+        for sf in seed_files:
+            if sf == cfile:
+                continue
+            score = pair_scores.get((cfile, sf), 0.0)
+            if score > best:
+                best = score
+        if best > 0:
+            out[cand_sym] = best
+    return out
 
 
 def co_change_score(

@@ -13,7 +13,9 @@ import sqlite3
 from roam.graph.dark_matter import (
     co_change_score,
     co_change_score_to_seed_set,
+    co_change_scores_to_seed_set_bulk,
     file_co_change_score,
+    file_co_change_scores_bulk,
 )
 
 
@@ -174,3 +176,159 @@ class TestCoChangeScoreToSeedSet:
         conn = _make_db_with_cochange(cochanges_ab=5, commits_a=10, commits_b=10)
         # Seed = the candidate's own symbol — should contribute 0 (same file).
         assert co_change_score_to_seed_set(conn, 10, [10]) == 0.0
+
+
+def _make_matrix_db(
+    *,
+    n_files: int,
+    cochange_rows: list[tuple[int, int, int]],
+    commit_counts: dict[int, int],
+) -> sqlite3.Connection:
+    """Build an in-memory DB with ``n_files`` files, one symbol per file
+    (symbol id == ``file_id * 10``), and the supplied co-change rows.
+
+    Used by the bulk-equivalence tests so the per-pair path and the bulk
+    path can be diffed against each other on a non-trivial C x S matrix.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT);
+        CREATE TABLE file_stats (file_id INTEGER PRIMARY KEY, commit_count INTEGER);
+        CREATE TABLE git_cochange (
+            file_id_a INTEGER, file_id_b INTEGER, cochange_count INTEGER,
+            PRIMARY KEY (file_id_a, file_id_b)
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO files(id, path) VALUES (?, ?)",
+        [(fid, f"src/f{fid}.py") for fid in range(1, n_files + 1)],
+    )
+    conn.executemany(
+        "INSERT INTO symbols(id, file_id, name) VALUES (?, ?, ?)",
+        [(fid * 10, fid, f"sym{fid}") for fid in range(1, n_files + 1)],
+    )
+    conn.executemany(
+        "INSERT INTO file_stats(file_id, commit_count) VALUES (?, ?)",
+        [(fid, commit_counts.get(fid, 0)) for fid in range(1, n_files + 1)],
+    )
+    # git_cochange is canonically stored with file_id_a < file_id_b.
+    conn.executemany(
+        "INSERT INTO git_cochange(file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
+        [(min(a, b), max(a, b), c) for a, b, c in cochange_rows],
+    )
+    conn.commit()
+    return conn
+
+
+class TestFileCoChangeScoresBulk:
+    """`file_co_change_scores_bulk` must be byte-identical to per-pair calls."""
+
+    def test_matches_per_pair_on_full_matrix(self):
+        conn = _make_matrix_db(
+            n_files=6,
+            cochange_rows=[
+                (1, 4, 8),
+                (1, 5, 2),
+                (2, 4, 5),
+                (2, 6, 9),
+                (3, 5, 1),
+                (3, 6, 6),
+            ],
+            commit_counts={1: 10, 2: 12, 3: 8, 4: 10, 5: 14, 6: 9},
+        )
+        candidates = [1, 2, 3]
+        seeds = [4, 5, 6]
+        bulk = file_co_change_scores_bulk(conn, candidates, seeds)
+        for c in candidates:
+            for s in seeds:
+                expected = file_co_change_score(conn, c, s)
+                got = bulk.get((c, s), 0.0)
+                assert got == expected, f"({c},{s}): bulk={got} per-pair={expected}"
+        # Bulk only stores > 0 pairs — never a zero entry.
+        assert all(v > 0 for v in bulk.values())
+
+    def test_empty_inputs_return_empty(self):
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 5)], commit_counts={1: 10, 2: 10})
+        assert file_co_change_scores_bulk(conn, [], [2]) == {}
+        assert file_co_change_scores_bulk(conn, [1], []) == {}
+
+    def test_same_file_pairs_skipped(self):
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 5)], commit_counts={1: 10, 2: 10})
+        bulk = file_co_change_scores_bulk(conn, [1, 2], [1, 2])
+        # (1,1) and (2,2) must be absent — per-pair short-circuits same-file to 0.
+        assert (1, 1) not in bulk
+        assert (2, 2) not in bulk
+
+    def test_no_cochange_rows_returns_empty(self):
+        conn = _make_matrix_db(n_files=3, cochange_rows=[], commit_counts={1: 5, 2: 5, 3: 5})
+        assert file_co_change_scores_bulk(conn, [1, 2], [3]) == {}
+
+    def test_degenerate_union_excluded(self):
+        # cochanges=10 > commits → union <= 0 → per-pair returns 0.0 → absent.
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 10)], commit_counts={1: 5, 2: 5})
+        bulk = file_co_change_scores_bulk(conn, [1], [2])
+        assert bulk == {}
+        assert file_co_change_score(conn, 1, 2) == 0.0
+
+
+class TestCoChangeScoresToSeedSetBulk:
+    """`co_change_scores_to_seed_set_bulk` must match per-candidate calls."""
+
+    def test_matches_per_candidate_loop(self):
+        conn = _make_matrix_db(
+            n_files=6,
+            cochange_rows=[
+                (1, 4, 8),
+                (1, 5, 2),
+                (2, 4, 5),
+                (2, 6, 9),
+                (3, 5, 1),
+                (3, 6, 6),
+            ],
+            commit_counts={1: 10, 2: 12, 3: 8, 4: 10, 5: 14, 6: 9},
+        )
+        cand_syms = [10, 20, 30]  # files 1, 2, 3
+        seed_syms = [40, 50, 60]  # files 4, 5, 6
+        bulk = co_change_scores_to_seed_set_bulk(conn, cand_syms, seed_syms)
+        # Replicate the old per-candidate loop with the > 0 filter.
+        expected = {}
+        for sid in cand_syms:
+            score = co_change_score_to_seed_set(conn, sid, seed_syms)
+            if score > 0:
+                expected[sid] = score
+        assert bulk == expected
+
+    def test_empty_inputs_return_empty(self):
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 5)], commit_counts={1: 10, 2: 10})
+        assert co_change_scores_to_seed_set_bulk(conn, [], [20]) == {}
+        assert co_change_scores_to_seed_set_bulk(conn, [10], []) == {}
+
+    def test_candidate_own_file_is_seed(self):
+        """When seeds resolve only to the candidate's own file, score is 0
+        and the candidate is absent — matching the per-candidate short-circuit.
+        """
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 5)], commit_counts={1: 10, 2: 10})
+        # candidate sym 10 (file 1), seed sym 10 (file 1) -> same file only.
+        assert co_change_scores_to_seed_set_bulk(conn, [10], [10]) == {}
+        assert co_change_score_to_seed_set(conn, 10, [10]) == 0.0
+
+    def test_missing_candidate_symbol_absent(self):
+        conn = _make_matrix_db(n_files=2, cochange_rows=[(1, 2, 5)], commit_counts={1: 10, 2: 10})
+        bulk = co_change_scores_to_seed_set_bulk(conn, [10, 9999], [20])
+        assert 9999 not in bulk
+        # The resolvable candidate still scores.
+        assert bulk.get(10) == co_change_score_to_seed_set(conn, 10, [20])
+
+    def test_picks_max_across_seeds(self):
+        conn = _make_matrix_db(
+            n_files=3,
+            cochange_rows=[(1, 2, 9), (1, 3, 1)],
+            commit_counts={1: 10, 2: 10, 3: 10},
+        )
+        bulk = co_change_scores_to_seed_set_bulk(conn, [10], [20, 30])
+        # Strongest link (file 2) wins.
+        assert bulk[10] == co_change_score_to_seed_set(conn, 10, [20])
