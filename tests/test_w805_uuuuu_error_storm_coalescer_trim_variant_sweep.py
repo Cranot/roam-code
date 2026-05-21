@@ -56,7 +56,8 @@ single-line widening would be insufficient.
 DISCONFIRMED single-shape. The coalescer's trim shape at lines 3607-3626 is
 a STATIC dict literal — no branching on ``error_code``. The only per-code
 variations are field VALUES (``severity`` via ``_SEVERITY_MAP``, ``retryable``
-via ``_RETRYABLE_CODES``, ``doc_link`` via ``_DOC_LINKS``), not field SET. The
+via ``_RETRYABLE_CODES``, ``doc_link`` via ``_DOC_LINKS``, ``status`` via
+``_ERROR_CODE_TO_STATUS``), not field SET. The
 ONLY conditional field is ``first_error_message``, gated on the first-fire
 envelope having a non-empty ``error`` string. So the trim shape produces at
 most TWO topologies: (A) with ``first_error_message`` and (B) without. Both
@@ -135,9 +136,15 @@ _ALL_CODES = sorted(_SEVERITY_MAP.keys())
 
 
 # Always-present keys in the trim shape (the static dict literal).
+# ``status`` (closed-enum, mapped per error_code via _ERROR_CODE_TO_STATUS)
+# was added to the trimmed shape for Pattern-1 conformance — every error
+# envelope, trimmed or not, pairs ``isError`` with a canonical ``status``.
+# It is a per-code VALUE variation (like severity/retryable/doc_link), not a
+# per-code field-SET branch, so the single-shape verdict still holds.
 _EXPECTED_TRIM_KEYS = frozenset(
     {
         "isError",
+        "status",
         "error_code",
         "severity",
         "retryable",
