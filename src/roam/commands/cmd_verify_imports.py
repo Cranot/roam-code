@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import sys
+from collections import defaultdict
 
 import click
 
@@ -190,12 +191,107 @@ def _get_file_language(
     return row["language"] if row else None
 
 
+class _FilePathIndex:
+    """In-memory index over ``files.path`` mirroring the ``path LIKE`` fallbacks.
+
+    Built ONCE per run from the same ``files`` rows the per-miss ``path LIKE``
+    queries scanned. Every miss in :func:`_check_name_exists` otherwise fired a
+    LEADING-wildcard ``LIKE`` (``%/{name}.%`` etc.) — un-indexable, so a full
+    scan of ``files`` per unresolved import (~9.6k scans on roam-code). These
+    structures make each check an O(1) set hit (O(bucket) for the rare
+    underscore case).
+
+    SQLite ``LIKE`` semantics replicated exactly:
+      * ASCII-case-insensitive — keys are lowercased; the matcher lowercases
+        the probe name.
+      * ``_`` in the probe name is a single-char wildcard — handled via
+        length-bucketed char-by-char compare (``_`` matches any one char).
+      * ``%`` cannot appear in an import name (the extractor regexes restrict
+        names to ``[\\w.]`` / path last-segments), and ``/`` likewise — names
+        carrying either route to the caller's SQL fallback so correctness is
+        never traded for the fast path.
+    """
+
+    def __init__(self, paths: list[str]) -> None:
+        # path LIKE '%/{name}.%' : a '/'-preceded segment whose text up to its
+        #   first '.' equals {name} (as a LIKE pattern).
+        # path LIKE '{name}.%'   : the whole path's text up to its first '.'
+        #   equals {name} (root-relative; '%' prefix absent).
+        # Both reduce to: {name} == <stem before first '.'> of some segment,
+        # so one stem set serves the OR of the two patterns.
+        seg_stems: set[str] = set()
+        # path LIKE '%/{name}' : basename (segment after last '/') equals {name}.
+        basenames: set[str] = set()
+        # path = {name} : exact, case-SENSITIVE equality (no LIKE, no wildcard).
+        exact: set[str] = set()
+        for p in paths:
+            exact.add(p)
+            pl = p.lower()
+            sl = pl.rfind("/")
+            basenames.add(pl[sl + 1 :] if sl >= 0 else pl)
+            # whole-path stem (pattern '{name}.%')
+            dot = pl.find(".")
+            if dot > 0:
+                seg_stems.add(pl[:dot])
+            # per-'/'-segment stems (pattern '%/{name}.%')
+            start = 0
+            while True:
+                j = pl.find("/", start)
+                if j < 0:
+                    break
+                seg = pl[j + 1 :]
+                k = seg.find(".")
+                if k > 0:
+                    seg_stems.add(seg[:k])
+                start = j + 1
+        self._seg_stems = seg_stems
+        self._basenames = basenames
+        self._exact = exact
+        self._seg_stems_by_len: dict[int, list[str]] = defaultdict(list)
+        for s in seg_stems:
+            self._seg_stems_by_len[len(s)].append(s)
+        self._basenames_by_len: dict[int, list[str]] = defaultdict(list)
+        for b in basenames:
+            self._basenames_by_len[len(b)].append(b)
+
+    @staticmethod
+    def _like_set_match(name_lower: str, exact_set: set[str], by_len: dict[int, list[str]]) -> bool:
+        """True iff *name_lower* matches an entry treating ``_`` as a wildcard."""
+        if "_" not in name_lower:
+            return name_lower in exact_set
+        bucket = by_len.get(len(name_lower))
+        if not bucket:
+            return False
+        for cand in bucket:
+            if all(a == "_" or a == c for a, c in zip(name_lower, cand)):
+                return True
+        return False
+
+    def module_file_match(self, name: str) -> bool:
+        """Mirror ``path LIKE '%/{name}.%' OR path LIKE '{name}.%'``."""
+        return self._like_set_match(name.lower(), self._seg_stems, self._seg_stems_by_len)
+
+    def sfc_file_match(self, name: str) -> bool:
+        """Mirror ``path LIKE '%/{name}' OR path = {name}`` (Vue/Svelte SFC)."""
+        if self._like_set_match(name.lower(), self._basenames, self._basenames_by_len):
+            return True
+        # path = ? is exact case-sensitive equality.
+        return name in self._exact
+
+
+def _build_file_path_index(conn: sqlite3.Connection) -> _FilePathIndex:
+    """Load every ``files.path`` once into a :class:`_FilePathIndex`."""
+    paths = [r["path"] for r in conn.execute("SELECT path FROM files")]
+    return _FilePathIndex(paths)
+
+
 def _check_name_exists(
     conn: sqlite3.Connection,
     name: str,
     *,
     symbol_names: set[str] | None = None,
     symbol_qnames: set[str] | None = None,
+    file_index: _FilePathIndex | None = None,
 ) -> bool:
     """Check if a name exists as a symbol name, qualified_name, or file path.
 
@@ -203,8 +299,14 @@ def _check_name_exists(
     (built once per run), the dominant ``name = ? OR qualified_name = ?`` probe
     — which runs for every import name — becomes an O(1) set membership instead
     of a per-name SELECT. This is exact: membership in either set is true iff
-    the query would return a row. The rarer file-path / dotted-module fallbacks
-    below only fire on a miss, so they stay as direct queries.
+    the query would return a row.
+
+    The file-path fallbacks fire on a symbol-table miss. When ``file_index``
+    (a :class:`_FilePathIndex` built once per run) is supplied, those
+    leading-wildcard ``path LIKE`` queries — a full scan of ``files`` per miss —
+    become in-memory set lookups with semantics identical to the SQL. Callers
+    without the index fall back to the direct queries. The dotted-module
+    fallback stays a symbol-table query (cheap, indexable).
     """
     # Check symbols table (set fast-path when both preloaded; else query)
     if symbol_names is not None and symbol_qnames is not None:
@@ -225,11 +327,20 @@ def _check_name_exists(
     # symbol by the TypeScript extractor for every .vue / .svelte file).
     lower = name.lower()
     if lower.endswith(".vue") or lower.endswith(".svelte"):
-        row = conn.execute(
-            "SELECT 1 FROM files WHERE path LIKE ? OR path = ? LIMIT 1",
-            (f"%/{name}", name),
-        ).fetchone()
-        if row:
+        # A '/' or '%' in the name escapes the in-memory index's segment model
+        # (import names never carry either, so this fallback is effectively
+        # dead — but it keeps the fast path provably exact).
+        if file_index is not None and "/" not in name and "%" not in name:
+            sfc_hit = file_index.sfc_file_match(name)
+        else:
+            sfc_hit = (
+                conn.execute(
+                    "SELECT 1 FROM files WHERE path LIKE ? OR path = ? LIMIT 1",
+                    (f"%/{name}", name),
+                ).fetchone()
+                is not None
+            )
+        if sfc_hit:
             return True
         # Fallback: synthesised component symbol uses the stem
         stem = name.rsplit(".", 1)[0]
@@ -242,12 +353,16 @@ def _check_name_exists(
 
     # Check if it matches a file path (module name -> file)
     # e.g. "models" -> "models.py" or "src/models.py"
-    row = conn.execute(
-        "SELECT 1 FROM files WHERE path LIKE ? OR path LIKE ? LIMIT 1",
-        (f"%/{name}.%", f"{name}.%"),
-    ).fetchone()
-    if row:
-        return True
+    if file_index is not None and "/" not in name and "%" not in name:
+        if file_index.module_file_match(name):
+            return True
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE path LIKE ? OR path LIKE ? LIMIT 1",
+            (f"%/{name}.%", f"{name}.%"),
+        ).fetchone()
+        if row:
+            return True
 
     # Check for dotted module path (e.g. "os.path" -> look for "path" in symbols)
     if "." in name:
@@ -353,6 +468,7 @@ def _scan_file_imports(
     symbol_names: set[str] | None = None,
     symbol_qnames: set[str] | None = None,
     lang_by_path: dict[str, str | None] | None = None,
+    file_index: _FilePathIndex | None = None,
 ) -> list[dict]:
     """Scan a source file for import statements and validate each one.
 
@@ -390,7 +506,13 @@ def _scan_file_imports(
                         )
                         continue
 
-                    resolved = _check_name_exists(conn, name, symbol_names=symbol_names, symbol_qnames=symbol_qnames)
+                    resolved = _check_name_exists(
+                        conn,
+                        name,
+                        symbol_names=symbol_names,
+                        symbol_qnames=symbol_qnames,
+                        file_index=file_index,
+                    )
                     entry: dict = {
                         "file": file_path,
                         "line": line_num,
@@ -460,6 +582,11 @@ def verify_imports(
     lang_by_path: dict[str, str | None] = {
         r["path"]: r["language"] for r in conn.execute("SELECT path, language FROM files")
     }
+    # Pre-load the file-path index ONCE so the per-miss ``path LIKE`` fallbacks
+    # in ``_check_name_exists`` (leading-wildcard -> un-indexable full scan of
+    # ``files`` per unresolved import) become in-memory set lookups. Semantics
+    # are identical to the SQL (see _FilePathIndex docstring).
+    file_index = _build_file_path_index(conn)
 
     # 2. Scan each file
     all_imports: list[dict] = []
@@ -473,6 +600,7 @@ def verify_imports(
             symbol_names=symbol_names,
             symbol_qnames=symbol_qnames,
             lang_by_path=lang_by_path,
+            file_index=file_index,
         )
         if file_imports:
             files_checked.add(fp)
@@ -511,7 +639,11 @@ def verify_imports(
             continue
 
         resolved = edge["target_id"] is not None and _check_name_exists(
-            conn, target_name, symbol_names=symbol_names, symbol_qnames=symbol_qnames
+            conn,
+            target_name,
+            symbol_names=symbol_names,
+            symbol_qnames=symbol_qnames,
+            file_index=file_index,
         )
         entry: dict = {
             "file": fp,
