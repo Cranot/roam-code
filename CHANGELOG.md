@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Hardening + assurance wave (2026-05-21)
+
+#### Added
+
+- **B8 — persisted per-snapshot spectral gap (`roam forecast` Option-A).** A new `snapshots.spectral_gap` column (schema migration #60, `USER_VERSION` 17 → 18) records the file-graph's algebraic connectivity on every health snapshot via a single shared `compute_current_spectral_gap` path. `roam forecast` now projects the persisted gap series with Theil-Sen into a real "<N> snapshots to structural failure" budget instead of the Option-B one-shot signal; legacy NULL rows are skipped so a partial-history series stays honest.
+- **MCP-P1.2 — prompt-injection marker scan on tool-call egress.** A conservative four-family marker set (instruction-override phrases, chat-template control tokens, spoofed turn headers, tool-result-spoof tags) is scanned at the `_wrap_with_receipt` egress boundary; a hit tags the decision receipt's `redactions[]` with the new `prompt_injection_marker` reason (`REDACTION_REASONS` 9 → 10, append-only). Output bytes are unchanged — the scan annotates the receipt, never the response.
+- **MCP receipt JSON-schema export reachable from an installed wheel.** `python -m roam.evidence.mcp_receipt_schema` now emits the versioned Draft 2020-12 schema from a `pip install`ed package (the generator lives in-package; `scripts/` is not shipped). Verified against a real wheel build + install into a clean venv.
+- **Release supply-chain hardening (`publish.yml`).** The published artifact is bound to the tagged commit (a `resolve-ref` job — no build-from-trunk-then-publish path); PEP 740 attestations, a tag-keyed concurrency group and an environment-reviewer gate are added; the SBOM is bound to the real published-wheel SHA with a wheel-vs-tag version-drift guard. `cga-attestation.yml` additionally emits a Verifiable Software Attestation alongside the CGA (`roam cga emit --also-vsa`, W472).
+- **Loud-fallback ratchet drift-guard.** `tests/test_loud_fallback_no_new_silent_except.py` AST-counts silent `except: pass` handlers in `src/roam` and pins the post-campaign baseline so a new silent handler fails the suite.
+
+#### Fixed
+
+- **W805-OCTET — compound aggregator silent-SAFE seal.** `_compound_envelope` routed a child carrying `isError: true` (a trimmed error-storm envelope with no top-level `error` key) into the success bucket instead of `failed_subcommands` — a Pattern-2 class where a compound reported success while a child failed. The aggregator check is widened to also catch `isError`; the cascade is closed across the W805 family and `test_situation_compounds` (children are now accounted for across both buckets).
+- **W1300 — shotgun-surgery co-change coherence gate.** The W1287 caller-scatter rewrite left ~27 rows that were all well-factored reuse hubs (`to_json`, `open_db`, ...) — distinct-caller-file count alone cannot tell "one change ripples across many files" from "many files reuse one helper". A git co-change coherence gate now requires the scattered caller files to actually co-evolve; shotgun-surgery drops 27 → 13 genuine rows, graceful-degrading to scatter-only when co-change data is unavailable.
+- **`roam doctor` pointed at a non-existent flag.** Five check hints told users to run `roam index --rebuild`; the real flag is `--force`. Corrected, with an AST drift-guard validating every `roam index --<flag>` hint against the live CLI.
+- **`roam health --json` could leak a RuntimeWarning onto stdout.** `algebraic_connectivity()` returns a sentinel and *warns* rather than raising, so the warning escaped `cmd_health`'s `try/except` and could corrupt the JSON envelope. It is now captured at the call site and folded into the structured `warnings_out` channel.
+- **W1078 — `--json`-mode warnings now structured.** The `--json` `showwarning` override emitted free-form `formatwarning` text on stderr, so a stream-merging consumer (`2>&1`) still saw non-JSON; it now emits a structured `{"warning", "category", "filename", "lineno"}` JSON line.
+- **`roam trends` emitted no verdict on the single-snapshot path.** With fewer than four snapshots the trend `analysis` block is skipped, which previously left `summary.verdict` unset (LAW 6 violation); it now emits an explicit insufficient-history verdict.
+- **`clones` cross-layer scan unbounded on huge layered repos.** A per-layer Jaccard pair budget now bounds the O(S²) cross-layer comparison and discloses truncation rather than capping silently.
+
+#### Changed
+
+- **"Make fallback chains loud" — four-batch campaign.** Silent `except: pass` / swallowed-exception sites across the agent-OS substrate (`agents_md` / `world_model` / `runs`), the MCP server, the analysis core (`index` / `refactor` / `search`) and the shared command helpers now emit `roam.observability.log_swallowed` lineage before continuing. Behaviour is identical — the exception is still swallowed, it is just no longer silent. Optional-dependency import failures in the MCP server surface in the `roam://health` resource; the W662 bare-except pending list is emptied.
+- **`sync_surface_counts` coverage extended.** The count-drift guard now also walks the README body, `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md` and `templates/` so every count-bearing public surface is structurally checked.
+
 ### Perf + Pattern-1 stabilisation campaign (2026-05-21)
 
 #### Performance
