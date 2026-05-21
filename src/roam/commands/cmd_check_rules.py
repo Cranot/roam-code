@@ -1019,6 +1019,15 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
                 "next_commands": ["roam check-rules"],
             }
 
+        # Pattern-1 machine-gate: only flag a run with error-severity
+        # violations (exit_code != 0 -> FAIL). PASS/WARN both return exit 0
+        # and must stay clean — gate strictly on the computed exit code.
+        if exit_code != 0:
+            envelope_kwargs["status"] = "partial_failure"
+            envelope_kwargs["isError"] = True
+            envelope_kwargs["error_code"] = "PARTIAL_FAILURE"
+            envelope_kwargs["error"] = verdict
+
         envelope = json_envelope("check-rules", **envelope_kwargs)
         click.echo(to_json(envelope))
         if exit_code != 0:

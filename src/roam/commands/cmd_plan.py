@@ -607,6 +607,10 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no TARGET symbol/file, --symbol, --path, or --staged provided",
                         hint="Pass a TARGET symbol/file, --symbol, --path, or --staged.",
                     )
                 )

@@ -478,6 +478,10 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                 }
                 usage_envelope_kwargs: dict = dict(
                     summary=usage_summary,
+                    status="usage_error",
+                    isError=True,
+                    error_code="USAGE_ERROR",
+                    error=verdict,
                     symbols=[],
                     agent_contract={
                         "facts": [verdict],

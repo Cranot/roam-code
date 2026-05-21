@@ -97,6 +97,10 @@ def reset(ctx, force, root, dry_run):
                             "removed": False,
                             "force_required": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="aborted -- use --force to confirm destructive reset",
                     )
                 )
             )

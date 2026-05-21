@@ -943,6 +943,14 @@ def _emit_fitness_json(
             "facts": [enriched_summary.get("verdict", "fitness check"), *_state_facts],
             "next_commands": ["roam fitness --init"],
         }
+    # Pattern-1 machine-gate: only flag a fitness run that actually failed a
+    # rule. A clean all-pass run (exit 0) must NOT carry isError/status — gate
+    # strictly on the failed-rule count so consumers branch correctly.
+    if enriched_summary.get("failed", 0) > 0:
+        envelope_kwargs["status"] = "partial_failure"
+        envelope_kwargs["isError"] = True
+        envelope_kwargs["error_code"] = "PARTIAL_FAILURE"
+        envelope_kwargs["error"] = enriched_summary.get("verdict", "fitness rules failed")
     click.echo(to_json(json_envelope("fitness", **envelope_kwargs)))
 
 

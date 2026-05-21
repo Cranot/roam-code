@@ -296,6 +296,10 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no report preset provided",
                         hint="Pass a preset name, e.g. 'roam report <preset>'.",
                         available_presets=list(all_presets.keys()),
                     )

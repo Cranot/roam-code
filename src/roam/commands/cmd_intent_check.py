@@ -96,6 +96,10 @@ def intent_check_cmd(ctx, intended_command: Optional[str]):
                 "allowed": False,
                 "reason": "missing INTENDED_COMMAND argument",
             },
+            status="usage_error",
+            isError=True,
+            error_code="USAGE_ERROR",
+            error=verdict,
             agent_contract={
                 "facts": ["intent-check requires a command name to query"],
                 "next_commands": ["roam intent-check <command>"],

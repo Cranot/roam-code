@@ -1610,6 +1610,10 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="Pass a symbol NAME (or --for-file PATH) to gather context.",
                         hint="Pass a symbol NAME, multiple names for batch mode, or --for-file PATH.",
                     )
                 )

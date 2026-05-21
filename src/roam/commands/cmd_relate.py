@@ -456,6 +456,10 @@ def relate(ctx, symbols, files, depth):
                                     "state": "usage_error",
                                     "partial_success": True,
                                 },
+                                status="usage_error",
+                                isError=True,
+                                error_code="USAGE_ERROR",
+                                error="no symbols to analyze — provide a symbol name or --path",
                                 hint="Provide at least one valid symbol name or --path path. "
                                 "Use `roam search <partial-name>` to find symbol names.",
                             )

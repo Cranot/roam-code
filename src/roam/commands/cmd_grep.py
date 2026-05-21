@@ -430,6 +430,10 @@ def grep_cmd(
                             "partial_success": True,
                             "total": 0,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no patterns provided",
                         hint="Pass a positional pattern, -e/--regex, or --patterns-from FILE.",
                         matches=[],
                     )

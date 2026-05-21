@@ -154,6 +154,10 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no trace file provided",
                         hint="Pass a positional trace file or use --otel/--jaeger/--zipkin/--generic.",
                     )
                 )

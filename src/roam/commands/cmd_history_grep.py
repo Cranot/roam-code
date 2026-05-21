@@ -248,6 +248,10 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no patterns provided",
                         hint="Pass a positional pattern or -e/--regex.",
                     )
                 )

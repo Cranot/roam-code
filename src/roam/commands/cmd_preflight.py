@@ -821,6 +821,10 @@ def preflight(ctx, target, staged):
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="no TARGET symbol/file or --staged provided",
                         hint="Pass a TARGET symbol/file or use --staged.",
                     )
                 )

@@ -539,6 +539,10 @@ def coverage_gaps(
                     json_envelope(
                         "coverage-gaps",
                         summary={"verdict": verdict, "error": "missing_filter"},
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error=verdict,
                         usage={
                             "--gate": "single gate symbol (e.g. handle_login)",
                             "--gate-pattern": "regex over symbol names (e.g. '^auth_.*')",

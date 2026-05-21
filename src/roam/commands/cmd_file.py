@@ -256,6 +256,10 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                             "state": "usage_error",
                             "partial_success": True,
                         },
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error="Pass a file PATH (or --changed / --deps-of PATH) to show a skeleton.",
                         hint="Pass one or more file PATHS, or use --changed / --deps-of PATH.",
                     )
                 )
