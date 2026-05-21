@@ -20,6 +20,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
@@ -126,6 +128,11 @@ def test_marker_aware_co_ownership_writes_disjoint_byte_regions() -> None:
     mod = _load("sync_surface_counts_byteregion", SYNC_SCRIPT)
     mod.build_replacements(mod._live_counts(), mod._live_languages())
     for path in sorted(co_owned):
+        # CLAUDE.md is dev-local (untracked) — absent on CI checkouts.
+        # The marker-block invariant still holds for the tracked
+        # co-owned files (README / AGENTS); skip what isn't present.
+        if not path.exists():
+            continue
         text = path.read_text(encoding="utf-8")
         spans = mod._marker_spans(text)
         assert spans, (
@@ -282,8 +289,12 @@ def test_marker_aware_substitution_never_touches_marker_blocks() -> None:
     """
     import re as _re
 
+    claude = ROOT / "CLAUDE.md"
+    if not claude.exists():
+        pytest.skip("CLAUDE.md is dev-local (untracked); marker-block test runs only where it is present")
+
     mod = _sync_module()
-    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    text = claude.read_text(encoding="utf-8")
     block_match = _re.search(
         r"<!--\s*BEGIN auto-count:claude-headline.*?<!--\s*END auto-count:claude-headline.*?-->",
         text,
