@@ -10,9 +10,11 @@ W1224-audit memo.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import click
@@ -251,8 +253,25 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
     threshold_seconds = threshold_days * 86400
     stale = []
 
+    # git blame is subprocess-bound (one `git blame` per documented file) and
+    # was the dominant cost (~88s serial on roam-code). Pre-fetch all blames
+    # across a bounded thread pool: blame is a read-only git operation (no
+    # index lock, no shared mutable state), and ThreadPoolExecutor.map yields
+    # results in input order, so the result-building loop below stays
+    # byte-identical to the old serial version — only wall-clock changes.
+    file_paths = list(symbols_by_file.keys())
+    max_workers = min(8, (os.cpu_count() or 1))
+    blame_by_file: dict[str, str | None] = {}
+    if file_paths:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for fp, out in zip(
+                file_paths,
+                pool.map(lambda p: _run_git_blame(p, project_root), file_paths),
+            ):
+                blame_by_file[fp] = out
+
     for file_path, symbols in symbols_by_file.items():
-        blame_output = _run_git_blame(file_path, project_root)
+        blame_output = blame_by_file.get(file_path)
         if not blame_output:
             continue
 
