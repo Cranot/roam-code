@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Perf + Pattern-1 stabilisation campaign (2026-05-21)
+
+#### Performance
+
+- **`intent` 66s → 12s.** `_scan_doc_for_symbols` replaced the O(lines × symbols) per-name `re.search` hot loop with one combined `\bNAME\b` alternation regex per line + cheap set-membership lookups. Output-identical (`symbol_names` is a set, so ref order is unchanged) — verified by construction + 17 passing tests.
+- **`doc-staleness` 93s → 19s.** The per-file `git blame` walk was sequential; it now runs across a bounded `ThreadPoolExecutor` (`min(8, cpu_count())`). `executor.map` preserves input order, so the result list and its final stable sort are byte-identical to the serial version (verified A/B excluding the file-under-test's own self-blame).
+- **`sbom` 30s → 9s.** `sbom_reachability.py`'s filesystem scanners called `Path.rglob('*')` and discarded `.roam`/`.git`/`node_modules` post-hoc — descending into `.roam`'s ~56K paths on every scan. A shared `_walk_pruned` helper now prunes skip-dirs during `os.walk` descent; output-identical (same skip set → same yielded file set).
+- **`alerts` — latent O(n³) bounded.** `_check_trends` fed the full snapshot history into an O(n)-window × O(n²)-Mann-Kendall test. The fetch is now capped at the 200 most-recent snapshots (`ROAM_ALERTS_SNAPSHOT_LIMIT` env override) — a no-op on normal repos, bounded on long-history ones.
+- **`clones` — degenerate `clone_detect` bucketing fixed.** `node_count // max(node_count // 3, 5)` collapsed every function ≥ 15 AST nodes into a single size band (~3 bands total → near-O(n²) pairing). Replaced with geometric base-2 banding `int(log2(node_count))`; base-2 plus the existing ±1 adjacency scan provably enumerates every pair within the 0.5 node-count ratio gate, so clone pairs / clusters / similarities are output-identical (only the sequential `cluster_id` label renumbers).
+- **`smells` refused-bequest — N+1 bulk-hoisted.** `_detect_refused_bequest` issued 2 SQL SELECTs per `inherits` edge; both are now bulk pre-fetched once via `batched_in`. Output-identical (verified byte-for-byte over 4494 findings).
+- **`smells` / `health` parallel-hierarchy — O(S²) → recall-preserving inverted index.** The detector Jaccard-compared every ordered pair of eligible superclasses; it now builds a `token → superclasses` inverted index and only compares pairs sharing ≥ 1 marker token. Recall-preserving (any pair with Jaccard > 0 necessarily shares a token), so output is identical.
+- **`pr-risk` — per-file `git diff` collapsed to one call.** `_get_file_stat` spawned one `git diff --numstat -- <path>` subprocess per changed file; replaced with a single `git diff --numstat` over the same range parsed once into a `{path: (added, removed)}` dict. Output-identical.
+- **`verify-imports` — per-miss full-table-scan eliminated.** The miss path fired a leading-wildcard `path LIKE` (un-indexable full scan of `files`) per unresolved import; replaced with an O(1) pre-built basename-set lookup that exactly replicates the SQLite `LIKE` semantics (ASCII case-insensitivity, `_` single-char wildcard). Output-identical (31,886 import rows verified byte-identical); a latent-scalability win for large monorepos.
+
+#### Fixed
+
+- **Pattern-1 — 17 commands omitted `isError`/`status` on their error envelopes.** affected-tests, check-rules, context, coverage-gaps, file, fitness, grep, history-grep, ingest-trace, intent-check, invariants, plan, preflight, refs-text, relate, report, and reset emitted a JSON envelope on their usage-error / failure path without the machine-gate fields `isError: true` + a closed-enum `status`. All 17 now emit them (fitness + check-rules conditionally — only when a rule actually failed; a clean pass stays clean). New drift-guard `tests/test_pattern1_envelope_shape.py` parametrically asserts the shape across the 15 unconditional commands.
+
 ### Post-v13.3 execution wave (2026-05-20)
 
 #### Added
