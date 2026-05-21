@@ -1265,6 +1265,50 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
     # methods checked; we don't want to re-read the file for each one.
     source_cache: dict[int, str | None] = {}
 
+    # W370c perf: hoist the two per-edge SELECTs out of the loop. The
+    # original ran an N+1 pattern -- 2 serial round-trips per inherits
+    # edge (child_methods by file/line-range, parent_method_names by
+    # parent_id). On a deep OO hierarchy that is 2*N serial queries inside
+    # the hot ``roam smells`` path. Bulk pre-fetch both, then do the
+    # line-range containment / override-membership checks in Python against
+    # in-memory dicts. The per-edge logic and emitted findings (and order)
+    # are byte-identical to the in-loop version.
+    from roam.db.connection import batched_in
+
+    child_file_ids = sorted({row["child_file_id"] for row in inherits})
+    parent_ids = sorted({row["parent_id"] for row in inherits})
+
+    # All methods grouped by file_id, ordered by id (rowid) so the in-Python
+    # containment filter yields rows in the same order the original
+    # per-file SELECT (no ORDER BY -> rowid order) returned them.
+    methods_by_file: dict[int, list[sqlite3.Row]] = {}
+    try:
+        method_rows = batched_in(
+            conn,
+            "SELECT id, name, line_start, line_end, file_id FROM symbols "
+            "WHERE kind = 'method' AND file_id IN ({ph}) "
+            "ORDER BY id",
+            child_file_ids,
+        )
+        for m in method_rows:
+            methods_by_file.setdefault(m["file_id"], []).append(m)
+    except sqlite3.OperationalError:
+        methods_by_file = {}
+
+    # Parent method names grouped by parent_id (override-membership set).
+    parent_names_by_id: dict[int, set[str]] = {}
+    try:
+        pname_rows = batched_in(
+            conn,
+            "SELECT parent_id, name FROM symbols WHERE kind = 'method' AND parent_id IN ({ph})",
+            parent_ids,
+        )
+        for r in pname_rows:
+            if r["name"]:
+                parent_names_by_id.setdefault(r["parent_id"], set()).add(r["name"])
+    except sqlite3.OperationalError:
+        parent_names_by_id = {}
+
     for row in inherits:
         child_path = row["child_path"]
         child_lang = row["child_lang"]
@@ -1286,28 +1330,22 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
 
         # Methods in the child class. Use line-range containment because
         # parent_id may not be reliably set across all languages for
-        # methods; line-range is the universal containment signal.
+        # methods; line-range is the universal containment signal. Apply the
+        # same predicate the SQL used (line_start >= c_start AND
+        # COALESCE(line_end, line_start) <= c_end) in Python over the
+        # pre-fetched per-file method list.
         c_start = int(row["child_line_start"] or 0)
         c_end = int(row["child_line_end"] or c_start)
-        try:
-            child_methods = conn.execute(
-                "SELECT id, name, line_start, line_end FROM symbols "
-                "WHERE file_id = ? AND kind = 'method' "
-                "AND line_start >= ? AND COALESCE(line_end, line_start) <= ?",
-                (row["child_file_id"], c_start, c_end),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            continue
+        child_methods = [
+            m
+            for m in methods_by_file.get(row["child_file_id"], ())
+            if m["line_start"] is not None
+            and m["line_start"] >= c_start
+            and (m["line_end"] if m["line_end"] is not None else m["line_start"]) <= c_end
+        ]
 
         # Parent method names (so we only count overrides, not new methods).
-        try:
-            parent_method_names_rows = conn.execute(
-                "SELECT name FROM symbols WHERE kind = 'method' AND parent_id = ?",
-                (row["parent_id"],),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            parent_method_names_rows = []
-        parent_method_names: set[str] = {r["name"] for r in parent_method_names_rows if r["name"]}
+        parent_method_names: set[str] = parent_names_by_id.get(row["parent_id"], set())
         # If parent has no known methods (e.g. it's a stdlib base class
         # we didn't index), we can't tell what's an override vs a new
         # method. Fall back to "every trivial method on the child is a
