@@ -258,27 +258,49 @@ def syntax_check(ctx, paths, changed):
     total_errors = sum(len(r["errors"]) for r in results)
     clean = total_errors == 0
 
-    if clean:
+    # W-Pattern2: `skipped` files (unsupported/regex-only language, unreadable
+    # source, grammar-load failure, parse crash) were checked-but-not-checked.
+    # Disclose them instead of letting `total_files` silently undercount and
+    # the verdict claim "clean".
+    all_skipped = total_files == 0 and skipped > 0
+    partial_success = skipped > 0
+
+    if all_skipped:
+        # Nothing was actually parsed -- must NOT claim "clean".
+        verdict = (
+            f"nothing checked -- all {skipped} file{'s' if skipped != 1 else ''} skipped (unparseable/unsupported)"
+        )
+    elif clean:
         verdict = f"clean -- {total_files} files checked, 0 errors"
+        if skipped > 0:
+            verdict += f", {skipped} skipped -- unparseable/unsupported"
     else:
         n_err_files = len(files_with_errors)
         verdict = (
             f"{total_errors} syntax error{'s' if total_errors != 1 else ''} "
             f"in {n_err_files} file{'s' if n_err_files != 1 else ''}"
         )
+        if skipped > 0:
+            verdict += f", {skipped} skipped -- unparseable/unsupported"
 
     if json_mode:
+        summary = {
+            "verdict": verdict,
+            "total_files": total_files,
+            "files_with_errors": len(files_with_errors),
+            "total_errors": total_errors,
+            "clean": clean,
+        }
+        # W-Pattern2: surface skip disclosure ONLY on the degraded path so
+        # the healthy-path envelope (skipped == 0) stays byte-identical.
+        if partial_success:
+            summary["files_skipped"] = skipped
+            summary["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "syntax-check",
-                    summary={
-                        "verdict": verdict,
-                        "total_files": total_files,
-                        "files_with_errors": len(files_with_errors),
-                        "total_errors": total_errors,
-                        "clean": clean,
-                    },
+                    summary=summary,
                     files=[r for r in results if r["errors"]],
                 )
             )
@@ -292,7 +314,12 @@ def syntax_check(ctx, paths, changed):
                     node_label = err["node_type"]
                     click.echo(f"  {r['path']}:{err['line']}:{err['column']}  {node_label}  {err['text']}")
             click.echo("")
-            click.echo(f"{total_errors} errors, {len(files_with_errors)} files affected, {total_files} files checked")
+            click.echo(
+                f"{total_errors} errors, {len(files_with_errors)} files affected, "
+                f"{total_files} files checked, {skipped} skipped"
+            )
+        elif skipped > 0:
+            click.echo(f"  {total_files} files checked, {skipped} skipped (unparseable/unsupported)")
 
     if not clean:
         from roam.exit_codes import EXIT_GATE_FAILURE

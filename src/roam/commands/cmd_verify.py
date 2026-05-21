@@ -544,6 +544,13 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     """Check for syntax errors via tree-sitter ERROR nodes.
 
     Uses tree-sitter to parse changed files and reports any ERROR nodes found.
+
+    W-Pattern2: a file whose parse CRASHED was not actually verified -- it
+    must NOT be credited as a clean score-100 file. Such files are tracked
+    in ``parse_failures`` and surfaced as INFO-level violations; the syntax
+    category is marked ``available: false`` when the underlying check could
+    not run at all (tree-sitter import failure), so the composite scorer can
+    distinguish "skipped/crashed" from a genuine perfect score.
     """
     if not file_ids:
         return {"score": 100, "violations": []}
@@ -557,12 +564,21 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     violations = []
     files_checked = 0
     files_with_errors = 0
+    parse_failures = 0
 
     try:
         from roam.index.parser import parse_file
     except ImportError:
-        # If tree-sitter is not available, skip syntax check
-        return {"score": 100, "violations": []}
+        # If tree-sitter is not available the syntax check could not run.
+        # W-Pattern2: do NOT silently score 100 (a fabricated perfect
+        # verdict); mark the category unavailable so the composite scorer
+        # treats it as a non-credit dimension rather than a passed gate.
+        return {
+            "score": 100,
+            "violations": [],
+            "available": False,
+            "unavailable_reason": "tree-sitter parser unavailable -- syntax check did not run",
+        }
 
     for frow in changed_files:
         fpath = root / frow["path"]
@@ -573,16 +589,41 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
         if not lang:
             continue
 
-        files_checked += 1
-
         try:
             result = parse_file(fpath, lang)
         except Exception:
+            # W-Pattern2: a crashed parse is NOT a clean file. Count it as
+            # a parse failure and surface it -- never credit it as checked.
+            parse_failures += 1
+            violations.append(
+                {
+                    "category": "syntax",
+                    "severity": SEVERITY_INFO,
+                    "file": frow["path"],
+                    "line": None,
+                    "message": f"could not parse `{frow['path']}` -- syntax not verified",
+                    "fix": "Verify the file parses; this file was NOT syntax-checked",
+                }
+            )
             continue
 
         # parse_file returns (tree, source_bytes, language) or (None, None, None)
         if result is None or result[0] is None:
+            # Parser returned no tree -- the file was not verified.
+            parse_failures += 1
+            violations.append(
+                {
+                    "category": "syntax",
+                    "severity": SEVERITY_INFO,
+                    "file": frow["path"],
+                    "line": None,
+                    "message": f"could not parse `{frow['path']}` -- syntax not verified",
+                    "fix": "Verify the file parses; this file was NOT syntax-checked",
+                }
+            )
             continue
+
+        files_checked += 1
         tree = result[0]
 
         error_nodes = _find_error_nodes(tree.root_node)
@@ -609,7 +650,11 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
         score = round(100 * (files_checked - files_with_errors) / files_checked)
         score = max(0, min(100, score))
 
-    return {"score": score, "violations": violations}
+    result_dict: dict = {"score": score, "violations": violations}
+    if parse_failures > 0:
+        # W-Pattern2: disclose that some files were not actually verified.
+        result_dict["parse_failures"] = parse_failures
+    return result_dict
 
 
 def _find_error_nodes(node) -> list:
@@ -752,6 +797,24 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
         score = _compute_composite(categories)
         verdict = _compute_verdict(score)
 
+        # W-Pattern2: detect degraded sub-checks -- a crashed parse or an
+        # unavailable syntax category means part of the gate did NOT run.
+        # The composite verdict must disclose that rather than reporting a
+        # clean PASS indistinguishable from a fully-verified one.
+        syntax_parse_failures = categories.get("syntax", {}).get("parse_failures", 0)
+        syntax_unavailable = categories.get("syntax", {}).get("available", True) is False
+        degraded = syntax_parse_failures > 0 or syntax_unavailable
+        if degraded:
+            qualifiers = []
+            if syntax_parse_failures > 0:
+                qualifiers.append(
+                    f"{syntax_parse_failures} file{'s' if syntax_parse_failures != 1 else ''} "
+                    "not syntax-checked (parse failed)"
+                )
+            if syntax_unavailable:
+                qualifiers.append("syntax check unavailable (tree-sitter parser missing)")
+            verdict = f"{verdict} -- {'; '.join(qualifiers)}"
+
         # Flatten all violations
         all_violations = []
         for cat_result in categories.values():
@@ -763,21 +826,34 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
         # Build category summary (used by JSON output + auto-log).
         cat_summary = {}
         for cat_name, cat_result in categories.items():
-            cat_summary[cat_name] = {
+            entry = {
                 "score": cat_result["score"],
                 "violation_count": len(cat_result.get("violations", [])),
                 "violations": cat_result.get("violations", []),
             }
+            # W-Pattern2: surface degraded-path disclosure on the affected
+            # category only -- keeps the healthy-path envelope unchanged.
+            if cat_result.get("parse_failures", 0) > 0:
+                entry["parse_failures"] = cat_result["parse_failures"]
+            if cat_result.get("available", True) is False:
+                entry["available"] = False
+                if cat_result.get("unavailable_reason"):
+                    entry["unavailable_reason"] = cat_result["unavailable_reason"]
+            cat_summary[cat_name] = entry
+
+        verify_summary = {
+            "verdict": verdict,
+            "score": score,
+            "threshold": threshold,
+            "files_checked": files_checked,
+            "violation_count": violation_count,
+        }
+        if degraded:
+            verify_summary["partial_success"] = True
 
         verify_envelope = json_envelope(
             "verify",
-            summary={
-                "verdict": verdict,
-                "score": score,
-                "threshold": threshold,
-                "files_checked": files_checked,
-                "violation_count": violation_count,
-            },
+            summary=verify_summary,
             categories=cat_summary,
             violations=all_violations,
         )

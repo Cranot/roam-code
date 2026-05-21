@@ -90,37 +90,43 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     delta = _compute_delta(base_state, targ_state, threshold=threshold)
 
     verdict = _verdict(delta)
+    complexity_available = delta.get("complexity_data_available", True)
 
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "compare",
-                    summary={
-                        "verdict": verdict,
-                        "baseline": str(base),
-                        "target": str(targ),
-                        "symbols_added": len(delta["symbols_added"]),
-                        "symbols_removed": len(delta["symbols_removed"]),
-                        "symbols_moved": len(delta["symbols_moved"]),
-                        "complexity_regressions": len(delta["complexity_up"]),
-                        "complexity_improvements": len(delta["complexity_down"]),
-                        # W1298 Pattern-3a: complexity_up/_down deltas are
-                        # per-file sums of cognitive_complexity, not McCabe.
-                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-                    },
-                    symbols_added=delta["symbols_added"][:top],
-                    symbols_removed=delta["symbols_removed"][:top],
-                    symbols_moved=delta["symbols_moved"][:top],
-                    complexity_up=delta["complexity_up"][:top],
-                    complexity_down=delta["complexity_down"][:top],
-                    file_count_baseline=base_state["file_count"],
-                    file_count_target=targ_state["file_count"],
-                    symbol_count_baseline=base_state["symbol_count"],
-                    symbol_count_target=targ_state["symbol_count"],
-                )
+        summary: dict[str, Any] = {
+            "verdict": verdict,
+            "baseline": str(base),
+            "target": str(targ),
+            "symbols_added": len(delta["symbols_added"]),
+            "symbols_removed": len(delta["symbols_removed"]),
+            "symbols_moved": len(delta["symbols_moved"]),
+            "complexity_regressions": len(delta["complexity_up"]),
+            "complexity_improvements": len(delta["complexity_down"]),
+            # W1298 Pattern-3a: complexity_up/_down deltas are
+            # per-file sums of cognitive_complexity, not McCabe.
+            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+        }
+        envelope_data: dict[str, Any] = {
+            "symbols_added": delta["symbols_added"][:top],
+            "symbols_removed": delta["symbols_removed"][:top],
+            "symbols_moved": delta["symbols_moved"][:top],
+            "complexity_up": delta["complexity_up"][:top],
+            "complexity_down": delta["complexity_down"][:top],
+            "file_count_baseline": base_state["file_count"],
+            "file_count_target": targ_state["file_count"],
+            "symbol_count_baseline": base_state["symbol_count"],
+            "symbol_count_target": targ_state["symbol_count"],
+        }
+        if not complexity_available:
+            # W-Pattern2: disclose the degraded path -- one index predates
+            # the math_signals schema, so complexity deltas were suppressed.
+            summary["partial_success"] = True
+            summary["complexity_data_available"] = False
+            envelope_data["complexity_unavailable_reason"] = (
+                "an index predates the math_signals schema -- complexity deltas "
+                "were suppressed to avoid a fabricated verdict; re-run roam init"
             )
-        )
+        click.echo(to_json(json_envelope("compare", summary=summary, **envelope_data)))
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -131,8 +137,12 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     click.echo(f"  Symbols added:    {len(delta['symbols_added'])}")
     click.echo(f"  Symbols removed:  {len(delta['symbols_removed'])}")
     click.echo(f"  Symbols moved:    {len(delta['symbols_moved'])}")
-    click.echo(f"  Files got more complex (Δ ≥ {threshold}): {len(delta['complexity_up'])}")
-    click.echo(f"  Files got simpler (Δ ≥ {threshold}):       {len(delta['complexity_down'])}")
+    if complexity_available:
+        click.echo(f"  Files got more complex (Δ ≥ {threshold}): {len(delta['complexity_up'])}")
+        click.echo(f"  Files got simpler (Δ ≥ {threshold}):       {len(delta['complexity_down'])}")
+    else:
+        click.echo("  Complexity delta:  UNAVAILABLE -- an index predates the math_signals schema")
+        click.echo("                     (re-run `roam init` on that index to enable complexity deltas)")
     click.echo("")
 
     def _section(title: str, items: list[Any], render) -> None:
@@ -174,6 +184,7 @@ def _load_index_state(db_path: Path) -> dict:
             symbols[qname] = {"qname": qname, "kind": r["kind"] or "", "path": r["path"] or ""}
 
         complexities = {}
+        complexity_data_available = True
         try:
             for r in conn.execute(
                 "SELECT f.path AS path, COALESCE(SUM(ms.cognitive_complexity), 0) AS total "
@@ -183,14 +194,18 @@ def _load_index_state(db_path: Path) -> dict:
             ):
                 complexities[r["path"]] = int(r["total"] or 0)
         except sqlite3.OperationalError:
-            # math_signals or column may not exist on older indices
-            pass
+            # math_signals or column may not exist on older indices.
+            # W-Pattern2: do NOT silently treat complexity as 0 -- that
+            # would fabricate IMPROVED/REGRESSED deltas. Disclose instead.
+            complexity_data_available = False
+            complexities = {}
 
         file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         symbol_count = len(symbols)
         return {
             "symbols": symbols,
             "complexities": complexities,
+            "complexity_data_available": complexity_data_available,
             "file_count": file_count,
             "symbol_count": symbol_count,
         }
@@ -223,20 +238,28 @@ def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]
                 }
             )
 
-    base_cx = base["complexities"]
-    targ_cx = targ["complexities"]
-    all_files = set(base_cx) | set(targ_cx)
+    # W-Pattern2: if EITHER index lacks complexity data (an index that
+    # predates the math_signals schema), suppress the complexity-delta
+    # section entirely. Computing deltas against a fabricated 0 baseline
+    # would emit a phantom IMPROVED/REGRESSED verdict.
+    complexity_data_available = base.get("complexity_data_available", True) and targ.get(
+        "complexity_data_available", True
+    )
 
     up = []
     down = []
-    for f in all_files:
-        b = base_cx.get(f, 0)
-        t = targ_cx.get(f, 0)
-        d = t - b
-        if d >= threshold:
-            up.append({"path": f, "baseline": b, "target": t, "delta": d})
-        elif d <= -threshold:
-            down.append({"path": f, "baseline": b, "target": t, "delta": d})
+    if complexity_data_available:
+        base_cx = base["complexities"]
+        targ_cx = targ["complexities"]
+        all_files = set(base_cx) | set(targ_cx)
+        for f in all_files:
+            b = base_cx.get(f, 0)
+            t = targ_cx.get(f, 0)
+            d = t - b
+            if d >= threshold:
+                up.append({"path": f, "baseline": b, "target": t, "delta": d})
+            elif d <= -threshold:
+                down.append({"path": f, "baseline": b, "target": t, "delta": d})
 
     return {
         "symbols_added": sorted([targ_syms[n] for n in added_names], key=lambda x: x["qname"]),
@@ -244,6 +267,7 @@ def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]
         "symbols_moved": sorted(moved, key=lambda x: x["qname"]),
         "complexity_up": sorted(up, key=lambda x: -x["delta"]),
         "complexity_down": sorted(down, key=lambda x: x["delta"]),
+        "complexity_data_available": complexity_data_available,
     }
 
 
@@ -253,6 +277,25 @@ def _verdict(delta: dict) -> str:
     down = len(delta["complexity_down"])
     added = len(delta["symbols_added"])
     removed = len(delta["symbols_removed"])
+    complexity_available = delta.get("complexity_data_available", True)
+
+    if not complexity_available:
+        # W-Pattern2: complexity deltas were suppressed -- the verdict
+        # must NOT pretend to be a complexity-driven IMPROVED/REGRESSED.
+        # Decide on symbol churn only and disclose the missing dimension.
+        if added == 0 and removed == 0:
+            base_verdict = "NO CHANGE"
+        elif added > removed * 1.5:
+            base_verdict = "SYMBOLS ADDED"
+        elif removed > added * 1.5:
+            base_verdict = "SYMBOLS REMOVED"
+        else:
+            base_verdict = "SIDEWAYS"
+        return (
+            f"{base_verdict} -- complexity delta unavailable "
+            "(an index predates the math_signals schema; re-run roam init)"
+        )
+
     if up == 0 and down == 0 and added == 0 and removed == 0:
         return "NO CHANGE"
     if down > up * 1.5 and removed >= added * 0.8:
