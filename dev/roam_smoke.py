@@ -13,7 +13,7 @@ command that emits a clean usage/error envelope argless is healthy (correct
 Pattern-1 behavior). The bugs we hunt are: HANG (no return), CRASH (uncaught
 traceback), BAD_JSON / EMPTY_STDOUT (Pattern-1C envelope violations in --json).
 
-Usage:  python dev/roam_smoke.py [--timeout 15] [--workers 6]
+Usage:  python dev/roam_smoke.py [--timeout 180] [--workers 6]
 Output: dev/roam_smoke_results.jsonl  (incremental, one row per command)
         dev/ROAM-SMOKE-<date>.md       (human summary of the actionable failures)
 Safe to Ctrl-C: partial JSONL survives.
@@ -169,7 +169,18 @@ def _run_one(cmd: str, timeout: int) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--timeout", type=int, default=15, help="hard per-command timeout (s)")
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=180,
+        help=(
+            "hard per-command timeout (s). Heavy analysis commands "
+            "(clones/smells/partition/dead/math) run 30-100s+ solo and 2-3x "
+            "that under worker contention; a low value false-flags "
+            "slow-but-healthy commands as HANG. 180s clears every command's "
+            "real runtime so only a genuine non-returning hang trips it."
+        ),
+    )
     ap.add_argument("--workers", type=int, default=6, help="parallel subprocesses")
     ap.add_argument("--only", default="", help="comma-list: run ONLY these commands (disambiguation re-run)")
     args = ap.parse_args()
