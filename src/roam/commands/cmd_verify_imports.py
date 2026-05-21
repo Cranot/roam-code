@@ -171,21 +171,52 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
     return names
 
 
-def _get_file_language(conn: sqlite3.Connection, file_path: str) -> str | None:
-    """Look up language for a file path from the index."""
+def _get_file_language(
+    conn: sqlite3.Connection,
+    file_path: str,
+    *,
+    lang_by_path: dict[str, str | None] | None = None,
+) -> str | None:
+    """Look up language for a file path from the index.
+
+    When ``lang_by_path`` (a ``{path: language}`` map built once per run) is
+    supplied, the lookup is an O(1) dict hit instead of a per-call SELECT —
+    same result, including ``None`` for an unknown path. Callers without the
+    map fall back to the single-row query.
+    """
+    if lang_by_path is not None:
+        return lang_by_path.get(file_path)
     row = conn.execute("SELECT language FROM files WHERE path = ?", (file_path,)).fetchone()
     return row["language"] if row else None
 
 
-def _check_name_exists(conn: sqlite3.Connection, name: str) -> bool:
-    """Check if a name exists as a symbol name, qualified_name, or file path."""
-    # Check symbols table
-    row = conn.execute(
-        "SELECT 1 FROM symbols WHERE name = ? OR qualified_name = ? LIMIT 1",
-        (name, name),
-    ).fetchone()
-    if row:
-        return True
+def _check_name_exists(
+    conn: sqlite3.Connection,
+    name: str,
+    *,
+    symbol_names: set[str] | None = None,
+    symbol_qnames: set[str] | None = None,
+) -> bool:
+    """Check if a name exists as a symbol name, qualified_name, or file path.
+
+    When both pre-loaded ``symbol_names`` / ``symbol_qnames`` sets are supplied
+    (built once per run), the dominant ``name = ? OR qualified_name = ?`` probe
+    — which runs for every import name — becomes an O(1) set membership instead
+    of a per-name SELECT. This is exact: membership in either set is true iff
+    the query would return a row. The rarer file-path / dotted-module fallbacks
+    below only fire on a miss, so they stay as direct queries.
+    """
+    # Check symbols table (set fast-path when both preloaded; else query)
+    if symbol_names is not None and symbol_qnames is not None:
+        if name in symbol_names or name in symbol_qnames:
+            return True
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM symbols WHERE name = ? OR qualified_name = ? LIMIT 1",
+            (name, name),
+        ).fetchone()
+        if row:
+            return True
 
     # Vue / Svelte SFC import: name retains the extension
     # (e.g. ``import Bar from '@/components/Bar.vue'`` extracts ``Bar.vue``).
@@ -318,6 +349,10 @@ def _scan_file_imports(
     conn: sqlite3.Connection,
     file_path: str,
     project_root: str,
+    *,
+    symbol_names: set[str] | None = None,
+    symbol_qnames: set[str] | None = None,
+    lang_by_path: dict[str, str | None] | None = None,
 ) -> list[dict]:
     """Scan a source file for import statements and validate each one.
 
@@ -328,7 +363,7 @@ def _scan_file_imports(
     if not os.path.isfile(full_path):
         return []
 
-    language = _get_file_language(conn, file_path)
+    language = _get_file_language(conn, file_path, lang_by_path=lang_by_path)
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
 
@@ -355,7 +390,7 @@ def _scan_file_imports(
                         )
                         continue
 
-                    resolved = _check_name_exists(conn, name)
+                    resolved = _check_name_exists(conn, name, symbol_names=symbol_names, symbol_qnames=symbol_qnames)
                     entry: dict = {
                         "file": file_path,
                         "line": line_num,
@@ -408,17 +443,46 @@ def verify_imports(
         rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
         file_paths = [r["path"] for r in rows]
 
+    # Pre-load symbol names / qualified names + a file->language map ONCE so the
+    # per-import resolution probe and per-file language lookup are in-memory
+    # set/dict hits instead of N+1 SELECTs (the file-scan phase otherwise fired
+    # up to ~5 queries per import name -> tens of thousands of round-trips).
+    # Output-preserving: set membership is exact for the symbols name/qname
+    # probe, and dict.get matches the single-row language SELECT (None for an
+    # unknown path).
+    symbol_names: set[str] = set()
+    symbol_qnames: set[str] = set()
+    for r in conn.execute("SELECT name, qualified_name FROM symbols"):
+        if r["name"]:
+            symbol_names.add(r["name"])
+        if r["qualified_name"]:
+            symbol_qnames.add(r["qualified_name"])
+    lang_by_path: dict[str, str | None] = {
+        r["path"]: r["language"] for r in conn.execute("SELECT path, language FROM files")
+    }
+
     # 2. Scan each file
     all_imports: list[dict] = []
     files_checked: set[str] = set()
 
     for fp in file_paths:
-        file_imports = _scan_file_imports(conn, fp, project_root)
+        file_imports = _scan_file_imports(
+            conn,
+            fp,
+            project_root,
+            symbol_names=symbol_names,
+            symbol_qnames=symbol_qnames,
+            lang_by_path=lang_by_path,
+        )
         if file_imports:
             files_checked.add(fp)
             all_imports.extend(file_imports)
 
-    # 3. Also check edge-based imports from the DB
+    # 3. Also check edge-based imports from the DB.
+    # (file, name) index for O(1) edge-dedup against already-found imports —
+    # replaces an O(n) linear scan per edge, kept in sync as new edge imports
+    # are appended (matches the original growing-scan semantics exactly).
+    seen_file_name: set[tuple[str, str]] = {(i["file"], i["name"]) for i in all_imports}
     edge_imports = _get_edge_imports(conn, file_filter)
     for edge in edge_imports:
         target_name = edge.get("target_name") or ""
@@ -427,12 +491,11 @@ def verify_imports(
         # Check if we already found this import from file scanning
         fp = edge["file_path"]
         line = edge.get("line") or 0
-        already_found = any(i["file"] == fp and i["name"] == target_name for i in all_imports)
-        if already_found:
+        if (fp, target_name) in seen_file_name:
             continue
 
         # Skip Python stdlib modules in edge-based imports too
-        edge_lang = _get_file_language(conn, fp)
+        edge_lang = _get_file_language(conn, fp, lang_by_path=lang_by_path)
         if _is_python_file(edge_lang, fp) and _is_stdlib_module(target_name):
             all_imports.append(
                 {
@@ -444,9 +507,12 @@ def verify_imports(
                 }
             )
             files_checked.add(fp)
+            seen_file_name.add((fp, target_name))
             continue
 
-        resolved = edge["target_id"] is not None and _check_name_exists(conn, target_name)
+        resolved = edge["target_id"] is not None and _check_name_exists(
+            conn, target_name, symbol_names=symbol_names, symbol_qnames=symbol_qnames
+        )
         entry: dict = {
             "file": fp,
             "line": line,
@@ -458,6 +524,7 @@ def verify_imports(
             entry["suggestions"] = _fts_suggestions(conn, target_name)
         all_imports.append(entry)
         files_checked.add(fp)
+        seen_file_name.add((fp, target_name))
 
     total = len(all_imports)
     resolved = sum(1 for i in all_imports if i["status"] == "resolved")
