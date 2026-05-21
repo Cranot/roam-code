@@ -29,6 +29,9 @@ from click.testing import CliRunner as _CliRunner
 
 from roam.ask.workflow import workflow_metadata_for_recipe
 from roam.cli import _COMMANDS  # W907 verified: no cycle exists; see tests/test_w907_cycle_hedge_audit.py
+from roam.observability import (
+    log_swallowed,
+)  # "Make fallback chains loud" — surface swallowed exceptions under ROAM_VERBOSE
 
 _FASTMCP_IMPORT_ERROR: str | None = None
 try:
@@ -44,14 +47,25 @@ except Exception as exc:
 try:
     from mcp.types import ToolAnnotations as _ToolAnnotations
 except ImportError:
+    # Expected-missing on older `mcp` packages: ToolAnnotations is an optional
+    # type the decorator stack treats as best-effort metadata. Narrow
+    # `except ImportError` (not bare `Exception`) so a genuine error inside
+    # mcp.types still propagates; `None` is the named absent-state sentinel.
     _ToolAnnotations = None
 
+_TASKCONFIG_IMPORT_ERROR: str | None = None
 try:
     with warnings.catch_warnings(), contextlib.redirect_stderr(io.StringIO()):
         warnings.simplefilter("ignore")
         from fastmcp.server.tasks.config import TaskConfig as _TaskConfig
-except Exception:
+except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades gracefully
+    # Expected-missing on older FastMCP (<2.14): TaskConfig is optional and the
+    # decorator stack degrades to the no-task path. Record the import error
+    # AND surface it under ROAM_VERBOSE so "old FastMCP" is distinguishable
+    # from a real breakage inside fastmcp.server.tasks.
     _TaskConfig = None
+    _TASKCONFIG_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
+    log_swallowed("mcp_server:import_taskconfig", exc)
 
 
 def _fastmcp_unavailable_message() -> str:
@@ -72,6 +86,7 @@ def _fastmcp_unavailable_message() -> str:
 
 # MCP-native enhancements (sampling, watcher, session, progress, completions).
 # Each module is best-effort -- import failures degrade gracefully.
+_MCP_EXTRAS_IMPORT_ERROR: str | None = None
 try:
     from roam.mcp_extras import completions as _mcp_completions
     from roam.mcp_extras import preflight as _mcp_preflight
@@ -79,7 +94,15 @@ try:
     from roam.mcp_extras import sampling as _mcp_sampling
     from roam.mcp_extras import session as _mcp_session
     from roam.mcp_extras import watcher as _mcp_watcher
-except Exception:
+except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades gracefully
+    # Best-effort: the mcp_extras package (watchdog-backed watcher, sampling,
+    # completions) is optional and the server degrades to the core path
+    # without it. Record the import error AND surface it under ROAM_VERBOSE so
+    # a real breakage (e.g. a syntax error inside mcp_extras) is
+    # distinguishable from an absent optional dep rather than silently
+    # disabling six feature surfaces.
+    _MCP_EXTRAS_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
+    log_swallowed("mcp_server:import_mcp_extras", exc)
     _mcp_completions = None  # type: ignore[assignment]
     _mcp_preflight = None  # type: ignore[assignment]
     _mcp_progress = None  # type: ignore[assignment]
@@ -3251,9 +3274,11 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         if run_gc:
             _HANDLE_GC_WRITE_COUNTER["n"] = 0
             _gc_handle_dir(handle_dir)
-    except Exception:
-        # GC must never break the actual tool response.
-        pass
+    except Exception as exc:  # noqa: BLE001 — GC must never break the tool response
+        # GC must never break the actual tool response — but surface the
+        # failure under ROAM_VERBOSE so a recurring GC breakage (e.g. a
+        # directory-permission regression) is visible rather than silent.
+        log_swallowed("mcp_server:handle_gc", exc)
 
     # Build a tiny preview so the agent has orientation without
     # fetching the full payload. Keep this VERY small.
@@ -3379,12 +3404,9 @@ def _resolve_active_run_id() -> str | None:
     when no run is open or anything blows up - the caller will route the
     receipt to ``_no_run/`` instead.
     """
-    try:
-        env_id = os.environ.get("ROAM_RUN_ID", "").strip()
-        if env_id:
-            return env_id
-    except Exception:
-        pass
+    env_id = os.environ.get("ROAM_RUN_ID", "").strip()
+    if env_id:
+        return env_id
     try:
         from pathlib import Path as _Path
 
@@ -3392,7 +3414,11 @@ def _resolve_active_run_id() -> str | None:
         from roam.runs.helpers import get_active_run_id
 
         return get_active_run_id(_Path(find_project_root()))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — receipt routing must never break a tool call
+        # No run open OR the ledger scan blew up — route the receipt to
+        # `_no_run/`. Surface the failure under ROAM_VERBOSE so a real
+        # ledger-scan breakage is distinguishable from "no run is active".
+        log_swallowed("mcp_server:resolve_active_run_id", exc)
         return None
 
 
@@ -3408,7 +3434,11 @@ def _mcp_receipts_root() -> "Path":
         from roam.db.connection import find_project_root
 
         root = Path(find_project_root())
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — receipt-root resolution must never break a tool call
+        # No `.git` root found (running `roam mcp` outside a repo) OR the
+        # resolver raised — fall back to CWD. Surface under ROAM_VERBOSE so a
+        # real find_project_root regression doesn't hide as "outside a repo".
+        log_swallowed("mcp_server:mcp_receipts_root", exc)
         root = Path(".").resolve()
     return root / ".roam" / "mcp_receipts"
 
@@ -3486,9 +3516,18 @@ def _write_mcp_receipt(
     # the closed-enum invariant on the dataclass holds.
     redactions_tuple = tuple(state.get("redactions") or ())
     redaction_details = state.get("redaction_details") or {}
+    injection_markers = state.get("injection_markers") or {}
     extra: dict[str, object] = {}
     if redaction_details:
         extra["redaction_details"] = dict(redaction_details)
+    # MCP-P1.2 — per-marker prompt-injection hit counts ride in ``extra``
+    # so the ``redactions`` tuple stays inside the closed REDACTION_REASONS
+    # enum. The bytes were NOT altered (a marker is a signal, not a secret);
+    # ``injection_markers`` is the audit detail behind the closed-enum
+    # ``"prompt_injection_marker"`` reason. When no marker fired the key is
+    # absent, so pre-P1.2 receipts stay byte-identical (hash-stable).
+    if injection_markers:
+        extra["injection_markers"] = dict(injection_markers)
     # MCP-P1.1 — shadow-mode lineage. ``shadow_mode`` + ``would_deny_reason``
     # only ride in ``extra`` when the gate actually short-circuited a deny
     # under ``ROAM_MODE_DRY_RUN``. When dry-run is off, neither key is set
@@ -3560,11 +3599,13 @@ def _write_mcp_receipt(
                 tool_call=tool_call_id,
                 receipt_hash=receipt_hash,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — ledger-link failure must never break the tool call
             # Best-effort: a ledger-link failure must NEVER break the tool
             # call. The receipt is still on disk; ``verify_chain`` will
-            # report ``receipt_integrity="not_linked"`` for it.
-            pass
+            # report ``receipt_integrity="not_linked"`` for it. Surface the
+            # failure under ROAM_VERBOSE — a silent drop here means the
+            # receipt loses its tamper-evidence chain and no one knows.
+            log_swallowed("mcp_server:receipt_ledger_link", exc)
 
 
 import contextlib as _contextlib
@@ -3607,15 +3648,20 @@ def _mcp_receipt_for(
         "result": None,
         "redactions": (),
         "redaction_details": {},
+        # MCP-P1.2 — per-marker prompt-injection hit counts; populated by
+        # the egress scan in ``_wrap_with_receipt`` when a marker fires.
+        "injection_markers": {},
     }
     try:
         yield receipt_state
     finally:
         try:
             _write_mcp_receipt(tool_name, args, receipt_state)
-        except Exception:
-            # Best-effort: receipts must NEVER break the tool call.
-            pass
+        except Exception as exc:  # noqa: BLE001 — receipts must never break the tool call
+            # Best-effort: receipts must NEVER break the tool call. Surface
+            # under ROAM_VERBOSE — a silent receipt-write failure means the
+            # WRITE audit trail has a hole no one is told about.
+            log_swallowed("mcp_server:write_mcp_receipt", exc)
 
 
 def _wrap_with_cold_start_guard(name: str, fn):
@@ -3814,8 +3860,11 @@ def _log_mode_dry_run_would_deny(tool_name: str, reason: str) -> None:
             tool_name,
             reason,
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — the policy path must never break a tool call
+        # A logging failure must not break the tool call. Route through the
+        # swallow-logger so even a broken logging surface leaves a trace
+        # under ROAM_VERBOSE rather than vanishing entirely.
+        log_swallowed("mcp_server:log_mode_dry_run_would_deny", exc)
 
 
 # Mirrors tests/test_w954_core_tools_capability_drift.py. Kept local to
@@ -3874,12 +3923,20 @@ def _resolve_required_mode_for_tool(tool_name: str, repo_root) -> str:
     fallback = _required_mode_from_side_effects(meta)
     try:
         from roam.modes.policy import VALID_MODES, list_modes
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — mode resolution must never break a tool call
+        # roam.modes.policy unavailable — fall back to the side-effect-derived
+        # mode. Surface under ROAM_VERBOSE: a missing policy module is a real
+        # substrate breakage, not a routine absence.
+        log_swallowed("mcp_server:resolve_required_mode:import", exc)
         return fallback
     cli_name = _mcp_tool_to_cli_command(tool_name)
     try:
         policies = list_modes(repo_root)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — mode resolution must never break a tool call
+        # Policy files unreadable/malformed — fall back to the side-effect
+        # mode. Surface under ROAM_VERBOSE so a corrupt .roam/ policy set is
+        # distinguishable from the no-policy-configured default path.
+        log_swallowed("mcp_server:resolve_required_mode:list_modes", exc)
         return fallback
     for mode_name in VALID_MODES:
         policy = policies.get(mode_name)
@@ -3912,7 +3969,11 @@ def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
     try:
         from roam.db.connection import find_project_root
         from roam.modes.policy import check_command_allowed, resolve_mode
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
+        # Policy substrate unavailable — gate fails OPEN. Surface under
+        # ROAM_VERBOSE: a missing policy module silently disables the entire
+        # MCP-boundary mode gate, which is a security-relevant degradation.
+        log_swallowed("mcp_server:evaluate_mode_policy:import", exc)
         return {
             "decision": "allow",
             "enforcement": enforcement,
@@ -3922,7 +3983,10 @@ def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
         }
     try:
         repo_root = find_project_root()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
+        # No repo root — gate fails OPEN. Surface under ROAM_VERBOSE so a
+        # find_project_root regression doesn't masquerade as "outside a repo".
+        log_swallowed("mcp_server:evaluate_mode_policy:find_root", exc)
         return {
             "decision": "allow",
             "enforcement": enforcement,
@@ -3933,12 +3997,20 @@ def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
     try:
         active = resolve_mode(repo_root)
         active_name = active.name
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
+        # Active-mode resolution failed — proceed with an empty active mode.
+        # Surface under ROAM_VERBOSE: a corrupt mode file silently weakens
+        # the gate's view of what mode the agent is actually in.
+        log_swallowed("mcp_server:evaluate_mode_policy:resolve_mode", exc)
         active_name = ""
     cli_name = _mcp_tool_to_cli_command(tool_name)
     try:
         allowed, reason = check_command_allowed(repo_root, cli_name)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
+        # check_command_allowed raised — gate fails OPEN (allowed=True).
+        # Surface under ROAM_VERBOSE so a policy-evaluation crash doesn't
+        # silently turn the gate into a no-op for this tool.
+        log_swallowed("mcp_server:evaluate_mode_policy:check_allowed", exc)
         allowed, reason = True, ""
     required_mode = _resolve_required_mode_for_tool(tool_name, repo_root)
     return {
@@ -4017,8 +4089,79 @@ def _redact_result_for_egress(result):
         from roam.security.redact import redact_secrets_in_value
 
         return redact_secrets_in_value(result)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — egress redaction must never break the tool call
+        # Redaction failed — ship the result UNREDACTED rather than break the
+        # call. Surface under ROAM_VERBOSE: a silent failure here means a
+        # secret-shaped string could cross the MCP boundary unredacted with
+        # nobody told the scrubber didn't run.
+        log_swallowed("mcp_server:redact_result_for_egress", exc)
         return result, {}
+
+
+def _scan_result_for_injection_markers(result):
+    """MCP-P1.2 — scan a tool result for prompt-injection markers before egress.
+
+    Walks the tool's return value (dict/list/tuple/string) and matches a
+    conservative set of known prompt-injection markers (override phrases,
+    chat-template control tokens, spoofed turn headers, tool-result spoof
+    tags — see ``roam.security.redact.PROMPT_INJECTION_MARKERS``). Returns a
+    ``{marker_id: hit_count}`` dict; empty when nothing fired.
+
+    Unlike :func:`_redact_result_for_egress`, this scan NEVER alters the
+    output bytes — a prompt-injection marker is a *signal*, not a secret.
+    The caller stamps the closed-enum reason ``"prompt_injection_marker"``
+    onto the receipt's ``redactions[]`` audit trail when the dict is
+    non-empty, leaving the offending bytes intact for a downstream gateway
+    / host to inspect.
+
+    Defensive: any exception is swallowed and an empty dict is returned.
+    The egress marker scan must never break the tool call itself — like
+    the rest of ``_wrap_with_receipt`` it is best-effort.
+    """
+    try:
+        from roam.security.redact import scan_prompt_injection_in_value
+
+        return scan_prompt_injection_in_value(result)
+    except Exception as exc:  # noqa: BLE001 — egress marker scan must never break the tool call
+        # Scan failed — return no markers rather than break the call. Surface
+        # under ROAM_VERBOSE: a silent failure here means prompt-injection
+        # markers go undetected with no entry in the receipt's redactions[].
+        log_swallowed("mcp_server:scan_result_for_injection_markers", exc)
+        return {}
+
+
+def _stamp_egress_redactions(state, secret_hits, injection_hits):
+    """Stamp egress-scan lineage onto the MCP receipt state (P0.1 + P1.2).
+
+    Builds the receipt's ``redactions`` tuple from the two egress scans:
+
+    * ``secret_hits`` (P0.1) — secret-pattern hit counts; a non-empty dict
+      adds the closed-enum reason ``"secret"``.
+    * ``injection_hits`` (P1.2) — prompt-injection marker hit counts; a
+      non-empty dict adds the closed-enum reason
+      ``"prompt_injection_marker"``.
+
+    Both reasons are members of ``REDACTION_REASONS`` so the
+    ``McpDecisionReceipt`` construction-time validator accepts the tuple.
+    Per-pattern / per-marker counts ride in ``extra`` (``redaction_details``
+    for secrets, ``injection_markers`` for markers) so the closed-enum
+    invariant on ``redactions`` holds while the detail is still auditable.
+
+    The order is stable (``secret`` before ``prompt_injection_marker``) so
+    a receipt's canonical JSON is byte-deterministic for a given scan
+    outcome.
+    """
+    reasons: list[str] = []
+    if secret_hits:
+        reasons.append("secret")
+        state["redaction_details"] = secret_hits
+    if injection_hits:
+        reasons.append("prompt_injection_marker")
+        # Per-marker counts ride in ``extra`` — the ``redactions`` tuple
+        # itself stays inside the closed REDACTION_REASONS enum.
+        state["injection_markers"] = injection_hits
+    if reasons:
+        state["redactions"] = tuple(reasons)
 
 
 def _wrap_with_receipt(name: str, fn):
@@ -4080,10 +4223,12 @@ def _wrap_with_receipt(name: str, fn):
                     return envelope
                 result = await fn(*args, **kwargs)
                 redacted, hits = _redact_result_for_egress(result)
+                # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-
+                # injection markers. Non-mutating: the marker scan only
+                # annotates the receipt, the output bytes are unchanged.
+                injection_hits = _scan_result_for_injection_markers(redacted)
                 state["result"] = redacted
-                if hits:
-                    state["redactions"] = ("secret",)
-                    state["redaction_details"] = hits
+                _stamp_egress_redactions(state, hits, injection_hits)
                 return redacted
 
         return _async_receipt_wrapped
@@ -4109,10 +4254,12 @@ def _wrap_with_receipt(name: str, fn):
                 return envelope
             result = fn(*args, **kwargs)
             redacted, hits = _redact_result_for_egress(result)
+            # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-
+            # injection markers. Non-mutating: the marker scan only
+            # annotates the receipt, the output bytes are unchanged.
+            injection_hits = _scan_result_for_injection_markers(redacted)
             state["result"] = redacted
-            if hits:
-                state["redactions"] = ("secret",)
-                state["redaction_details"] = hits
+            _stamp_egress_redactions(state, hits, injection_hits)
             return redacted
 
     return _sync_receipt_wrapped
@@ -4293,8 +4440,11 @@ def _index_mtime() -> float:
         p = get_db_path()
         if p and p.exists():
             return p.stat().st_mtime
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — cache-key probe must never break a tool call
+        # DB path unresolvable / stat failed — fall back to 0.0 (treats the
+        # cache as cold). Surface under ROAM_VERBOSE so a recurring stat
+        # failure doesn't silently disable mtime-based cache invalidation.
+        log_swallowed("mcp_server:index_mtime", exc)
     return 0.0
 
 
@@ -4326,7 +4476,11 @@ def _check_stale_with_cache() -> tuple[bool, str | None]:
         from roam.commands.stale_index import check_stale
 
         is_stale, reason = check_stale(sensitivity="medium")
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — stale-index probe must never break a tool call
+        # check_stale raised — assume not-stale rather than break the call.
+        # Surface under ROAM_VERBOSE: a silent failure here suppresses the
+        # stale-index banner agents rely on to avoid acting on a stale graph.
+        log_swallowed("mcp_server:check_stale_with_cache", exc)
         is_stale, reason = False, None
     _STALE_CHECK_CACHE["default"] = (now, is_stale, reason)
     return is_stale, reason
@@ -4822,8 +4976,11 @@ async def _ctx_report_progress(
         return
     try:
         await ctx.report_progress(progress=progress, total=total, message=message)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — progress reporting must never break a tool call
+        # Client doesn't support progress OR the channel dropped — surface
+        # under ROAM_VERBOSE so a transport-level breakage is visible rather
+        # than presenting as a client that simply lacks progress support.
+        log_swallowed("mcp_server:ctx_report_progress", exc)
 
 
 async def _ctx_info(ctx: _Context | None, message: str) -> None:
@@ -4832,8 +4989,11 @@ async def _ctx_info(ctx: _Context | None, message: str) -> None:
         return
     try:
         await ctx.info(message)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — log messaging must never break a tool call
+        # Client doesn't support log messages OR the channel dropped —
+        # surface under ROAM_VERBOSE so a transport-level breakage is visible
+        # rather than presenting as a client that just lacks log support.
+        log_swallowed("mcp_server:ctx_info", exc)
 
 
 def _coerce_yes_no(value) -> bool | None:
@@ -4931,7 +5091,12 @@ async def _confirm_force_reindex(ctx: _Context | None) -> bool | None:
             "Force reindex may take longer and rewrites index metadata. Continue?",
             ["continue", "cancel"],
         )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — elicitation must never break a tool call
+        # Client doesn't support elicitation OR the prompt failed — return
+        # None (caller treats as "not confirmed"). Surface under ROAM_VERBOSE
+        # so an elicitation transport breakage is distinguishable from a
+        # client that simply lacks elicitation support.
+        log_swallowed("mcp_server:confirm_force_reindex", exc)
         return None
 
     if getattr(response, "action", "") != "accept":
@@ -5039,8 +5204,29 @@ def _compound_envelope(
             workflow_recipe = scored
 
     for name, data in sub_results:
-        if not data or "error" in data:
-            err_msg = data.get("error", "empty result") if data else "empty result"
+        # W805-TTTTT — the error-storm coalescer's trimmed envelope
+        # (mcp_server.py error-storm trim path) carries ``isError: True`` +
+        # ``first_error_message`` but OMITS the top-level ``error`` key. The
+        # narrow ``"error" in data`` check let a trimmed-isError child slip
+        # into the success bucket (``sections``) — a Pattern-2 silent SAFE.
+        # Widen the failure classification to also catch ``isError is True``,
+        # and fall back to ``first_error_message`` so the trimmed child still
+        # surfaces an actionable message.
+        if not data or "error" in data or (isinstance(data, dict) and data.get("isError") is True):
+            # err_msg fallback chain: a trimmed-isError child has no
+            # top-level ``error`` key — fall back to ``first_error_message``
+            # (the coalescer's captured first-fire text), then to a
+            # structured ``isError`` envelope's ``summary.verdict`` (e.g.
+            # "Symbol not found: X"), and only then to the opaque sentinel.
+            err_msg = "empty result"
+            if data:
+                child_summary = data.get("summary")
+                err_msg = (
+                    data.get("error")
+                    or data.get("first_error_message")
+                    or (child_summary.get("verdict") if isinstance(child_summary, dict) else None)
+                    or "empty result"
+                )
             errors.append({"command": name, "error": err_msg})
         else:
             sections[name] = data
@@ -5091,7 +5277,8 @@ def _compound_envelope(
         # Mention the failures explicitly in the verdict line so an LLM
         # reading just the summary doesn't miss them. (All-failed runs
         # already get the count-in-the-verdict treatment above.)
-        prefix = f"PARTIAL ({len(failed_subcommands)} failed: {', '.join(failed_subcommands)}) — "
+        # ASCII-only output convention (CLAUDE.md) — use '--' not an em-dash.
+        prefix = f"PARTIAL ({len(failed_subcommands)} failed: {', '.join(failed_subcommands)}) -- "
         result["summary"]["verdict"] = prefix + result["summary"]["verdict"]
     if all_failed:
         # Pattern-1 conformance — an all-subcommands-failed compound is a
@@ -6501,6 +6688,11 @@ def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None
         except Exception as exc:  # noqa: BLE001 — surface to caller
             return None, f"jq evaluation failed: {exc}"
     except ImportError:
+        # Expected-missing: the `jq` library is an optional dependency. Its
+        # absence is the designed-for path — fall through to the built-in
+        # minimal-jq-subset parser below. Narrow `except ImportError` (not
+        # bare `Exception`) so a real error inside the jq package still
+        # propagates. No swallow-log: this is routine, not a degradation.
         pass
 
     # --- minimal jq subset ------------------------------------------------
@@ -7607,12 +7799,20 @@ def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = "."
     if kind_norm in ("symbol", "all"):
         try:
             from roam.commands.cmd_complete import _prefix_symbols
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — completion degrades to empty list
+            # cmd_complete unimportable — symbol completion returns []. Surface
+            # under ROAM_VERBOSE: a broken cmd_complete module is a real bug,
+            # not an expected absence.
+            log_swallowed("mcp_server:complete:prefix_symbols_import", exc)
             _prefix_symbols = None  # type: ignore[assignment]
         if _prefix_symbols is not None:
             try:
                 payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — completion degrades to empty list
+                # Prefix query raised (e.g. DB locked) — return [] rather than
+                # break the call. Surface under ROAM_VERBOSE so a recurring
+                # query failure isn't masked as "no completions found".
+                log_swallowed("mcp_server:complete:prefix_symbols_query", exc)
                 payload["symbols"] = []
         else:
             payload["symbols"] = []
@@ -10006,9 +10206,20 @@ if mcp is not None:
         """Current codebase health snapshot (JSON).
 
         Provides the same data as the ``health`` tool but exposed as an
-        MCP resource so agents can subscribe to or poll it.
+        MCP resource so agents can subscribe to or poll it. When an optional
+        MCP-server dependency failed to import at startup, a
+        ``mcp_server_degradations`` block names the absent feature surface so
+        the degradation is observable rather than silent ("Make fallback
+        chains loud").
         """
         data = _run_roam(["health"])
+        degradations: dict[str, str] = {}
+        if _MCP_EXTRAS_IMPORT_ERROR is not None:
+            degradations["mcp_extras"] = _MCP_EXTRAS_IMPORT_ERROR
+        if _TASKCONFIG_IMPORT_ERROR is not None:
+            degradations["task_config"] = _TASKCONFIG_IMPORT_ERROR
+        if degradations and isinstance(data, dict):
+            data = {**data, "mcp_server_degradations": degradations}
         return json.dumps(data, indent=2)
 
     @mcp.resource("roam://summary")
@@ -17227,8 +17438,12 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         if watch_handle is not None:
             try:
                 watch_handle.stop()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — shutdown cleanup must never mask the real exit
+                # Watcher teardown on server shutdown — a failure here must
+                # not mask the real exit path. Surface under ROAM_VERBOSE so
+                # a watcher that fails to release its observer thread is
+                # visible rather than silently leaking on every shutdown.
+                log_swallowed("mcp_server:watch_handle_stop", exc)
 
 
 # ---------------------------------------------------------------------------

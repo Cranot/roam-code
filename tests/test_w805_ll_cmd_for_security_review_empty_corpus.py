@@ -22,10 +22,9 @@ The compound aggregator is ``_compound_envelope`` at
 ``src/roam/mcp_server.py:4432``, same shared substrate as
 ``for_bug_fix`` (W805-F) and ``for_refactor``.
 
-W978 first-hypothesis probe (run BEFORE writing tests):
-
-OBSERVED behavior under pytest harness on empty corpus,
-``symbol=""``::
+W978 first-hypothesis probe (run BEFORE writing tests). The dict
+below is the PRE-W805-OCTET-seal snapshot — see the post-seal note
+that follows it::
 
     compound.summary.partial_success    = False             # SILENT-SAFE BUG
     compound.summary.failed_subcommands = []                # SILENT-SAFE BUG
@@ -35,6 +34,17 @@ OBSERVED behavior under pytest harness on empty corpus,
     child taint.summary.partial_success = True              # DISCLOSED
     child taint.summary.state           = 'empty_corpus'    # DISCLOSED
     child taint.summary.verdict         = 'no symbols to analyze (corpus empty; 22 rules loaded but not run ...)'
+
+POST-W805-OCTET-SEAL: the ``_compound_envelope`` aggregator now also
+routes a child carrying ``isError: true`` into ``failed_subcommands``.
+``vulns`` + ``critique`` carry ``isError`` on an empty corpus, so they
+move out of the success bucket — ``sections`` is now
+``['taint', 'adversarial']``. ``taint`` carries NO ``isError`` flag,
+only the nested ``summary.partial_success`` / ``summary.state``
+disclosure, so the seal does NOT catch it and it stays wrongly in
+``sections``. That residual partial_success-axis gap is exactly what
+this module pins; see ``test_empty_corpus_four_child_sections_present``
+for the current verified bucket split.
 
 This is the canonical W805-F-class aggregator bug, on a different
 child: the ``taint`` child returns a structured envelope with NO
@@ -289,22 +299,33 @@ class TestForSecurityReviewEmptyCorpusSmoke:
         assert isinstance(s.get("failed_subcommands"), list), s.get("failed_subcommands")
 
     def test_empty_corpus_four_child_sections_present(self, empty_corpus):
-        """All four subcommand sections appear in the envelope.
+        """All four subcommand children appear in the compound envelope.
 
-        Under pytest harness, vulns + critique typically complete
-        cleanly (in-process Click invocations, no external state
-        required), so ALL four children land in 'sections' rather
-        than failing out. Per W978, the empty-corpus pin below
-        therefore relies on the TAINT child's internal disclosure
-        rather than vulns/critique top-level errors."""
+        Post the W805-OCTET seal, the `_compound_envelope` aggregator
+        also routes a child carrying ``isError: true`` into
+        ``failed_subcommands``. On an empty corpus the four children
+        therefore split across the two buckets: ``taint`` +
+        ``adversarial`` run and land in ``sections``; the ``isError``
+        children (``vulns`` + ``critique``) correctly land in
+        ``failed_subcommands``. The union still accounts for all four —
+        and ``taint`` staying in ``sections`` is exactly the W805-F /
+        W805-LL aggregator gap the xfail-strict pins below still target
+        (taint self-discloses ``partial_success`` with no ``isError``
+        flag, so the seal does not catch it)."""
         r = for_security_review(symbol="", root=".")
-        sections = (r.get("summary") or {}).get("sections") or []
-        # All four children sit in 'sections' — this confirms the
-        # pin below is exercising the W805-F-class aggregator gap
-        # (child summary.partial_success NOT lifted) and NOT a
-        # top-level-error path.
+        s = r.get("summary") or {}
+        sections = s.get("sections") or []
+        failed = s.get("failed_subcommands") or []
+        accounted = set(sections) | set(failed)
+        # The union of both buckets accounts for all four children.
         for expected in ("taint", "vulns", "critique", "adversarial"):
-            assert expected in sections, f"missing {expected!r} in {sections}"
+            assert expected in accounted, f"missing {expected!r} in sections={sections} failed_subcommands={failed}"
+        # taint + adversarial always run cleanly (no external state) —
+        # this confirms the pins below exercise the W805-F-class
+        # aggregator gap (child summary.partial_success NOT lifted)
+        # and NOT a top-level-error / isError path.
+        assert "taint" in sections, sections
+        assert "adversarial" in sections, sections
 
 
 # ---------------------------------------------------------------------------

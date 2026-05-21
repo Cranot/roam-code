@@ -336,16 +336,25 @@ class TestForSecurityReviewBugsReproduce:
 
     def test_adversarial_child_errors_on_positional_symbol(self, single_symbol_corpus):
         """Bug A: ``adversarial`` doesn't take a positional symbol.
-        The compound appends one anyway, click rejects it."""
+        The compound appends one anyway, click rejects it.
+
+        Post W805-OCTET seal: the widened ``_compound_envelope`` aggregator
+        routes the errored ``adversarial`` child into ``_errors`` +
+        ``failed_subcommands`` (no longer merged to the top-level
+        ``adversarial`` key). Mirror ``test_vulns_child_errors_on_
+        unexpected_list_arg`` and look there."""
         r = for_security_review(symbol="handleAuth", root=".")
-        adv = r.get("adversarial") or {}
-        bug_a_visible = bool(adv.get("error")) or bool(adv.get("isError"))
+        errors = r.get("_errors") or []
+        failed = (r.get("summary") or {}).get("failed_subcommands") or []
+        adv_err = next((e for e in errors if e.get("command") == "adversarial"), None)
+        bug_a_visible = bool(adv_err) or "adversarial" in failed
         assert bug_a_visible, (
             f"Bug A regression-window: adversarial child looks healthy "
             f"despite being passed a positional symbol. Either "
             f"adversarial gained a positional-arg surface (good, "
             f"please update this assertion) OR the compound was fixed "
-            f"(good, please remove this assertion). Got: {adv!r}"
+            f"(good, please remove this assertion). "
+            f"_errors={errors!r} failed_subcommands={failed!r}"
         )
 
     def test_adversarial_succeeds_when_symbol_is_empty(self, single_symbol_corpus):
@@ -364,35 +373,18 @@ class TestForSecurityReviewBugsReproduce:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-NNNNN Bug A REAL agent-safety bug (Pattern-1D / Variant-D "
-        "silent success on degraded resolution). The 'adversarial' "
-        "child raised USAGE_ERROR (positional 'handleAuth' rejected) "
-        "but the error-storm trimmed envelope at mcp_server.py:3607-"
-        "3626 omits the top-level 'error' key in favour of "
-        "'isError'+'first_error_message'. The aggregator at "
-        "mcp_server.py:4448-4470 only checks for 'error in data', so "
-        "the trimmed envelope lands in 'sections' (the success "
-        "bucket). Agent-safety CRITICAL: an agent reading the "
-        "for_security_review verdict on a suspect symbol sees "
-        "adversarial listed in sections, finds zero adversarial "
-        "challenges, and concludes the symbol has been "
-        "adversarially-reviewed -- when in fact zero adversarial "
-        "work was performed. Fix: at mcp_server.py:4448-4470 also "
-        "trigger the error path on 'isError in data' (not just "
-        "'error in data'). Bundled with W805-F / W805-LL aggregator "
-        "fix wave."
-    ),
-)
 def test_adversarial_usage_error_propagates_to_failed_subcommands(
     single_symbol_corpus,
 ):
-    """Pin: a USAGE_ERROR'd child must NOT land in the compound's
-    success-bucket 'sections' list, EVEN WHEN the error-storm
-    coalescer trimmed the envelope to the 'isError' shape (no
-    top-level 'error' key)."""
+    """Pin — SEALED (W805-OCTET seal wave): a USAGE_ERROR'd child must NOT
+    land in the compound's success-bucket 'sections' list, EVEN WHEN the
+    error-storm coalescer trimmed the envelope to the 'isError' shape (no
+    top-level 'error' key).
+
+    The W805-TTTTT fix-forward widened ``_compound_envelope`` to classify
+    any ``isError: True`` child (trimmed or not) as a failed subcommand,
+    so the ``adversarial`` USAGE_ERROR now correctly surfaces in
+    ``failed_subcommands``. Plain assert (was xfail-strict pre-fix)."""
     r = for_security_review(symbol="handleAuth", root=".")
     summary = r.get("summary") or {}
     sections = summary.get("sections") or []
@@ -405,26 +397,16 @@ def test_adversarial_usage_error_propagates_to_failed_subcommands(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-NNNNN partial_success-must-flip pin: with TWO of FOUR "
-        "children erroring (vulns 'list' typo + adversarial positional "
-        "rejection), the compound MUST flip partial_success=True. "
-        "Today partial_success is True (vulns + critique fail visibly), "
-        "but only because the vulns/critique surface emits top-level "
-        "'error' keys. The adversarial trimmed envelope leaks past "
-        "the partial_success accounting. The stricter contract: when "
-        "any child emits isError=True (trimmed or not), partial_success "
-        "must be True AND failed_subcommands must name it. Bundled "
-        "with the aggregator pin above."
-    ),
-)
 def test_summary_failed_subcommands_includes_adversarial(
     single_symbol_corpus,
 ):
-    """Pin: failed_subcommands names every child whose envelope
-    discloses error state, including trimmed isError envelopes."""
+    """Pin — SEALED (W805-OCTET seal wave): failed_subcommands names every
+    child whose envelope discloses error state, including trimmed isError
+    envelopes.
+
+    The W805-TTTTT widening means any child emitting ``isError: True``
+    (trimmed or not) flips ``partial_success`` True AND is named in
+    ``failed_subcommands``. Plain assert (was xfail-strict pre-fix)."""
     r = for_security_review(symbol="handleAuth", root=".")
     failed = set((r.get("summary") or {}).get("failed_subcommands") or [])
     # vulns + critique already land here today (top-level 'error' key
@@ -516,14 +498,20 @@ class TestForSecurityReviewAmbiguousCorpusBugIsIdentical:
     def test_ambiguous_corpus_adversarial_errors_same_way(self, ambiguous_symbol_corpus):
         """The 3-file ambiguous corpus surfaces the SAME USAGE_ERROR
         as the single-file corpus -- so the bug is not ambiguity-
-        triggered."""
+        triggered.
+
+        Post W805-OCTET seal: the errored ``adversarial`` child is routed
+        to ``_errors`` + ``failed_subcommands`` by the widened aggregator,
+        not merged to the top-level ``adversarial`` key."""
         r = for_security_review(symbol="handleAuth", root=".")
-        adv = r.get("adversarial") or {}
-        bug_a_visible = bool(adv.get("error")) or bool(adv.get("isError"))
+        errors = r.get("_errors") or []
+        failed = (r.get("summary") or {}).get("failed_subcommands") or []
+        adv_err = next((e for e in errors if e.get("command") == "adversarial"), None)
+        bug_a_visible = bool(adv_err) or "adversarial" in failed
         assert bug_a_visible, (
             f"Ambiguous-name corpus did NOT trigger the bug. This "
-            f"means the bug is ambiguity-sensitive (rare). Got: "
-            f"{adv!r}"
+            f"means the bug is ambiguity-sensitive (rare). "
+            f"_errors={errors!r} failed_subcommands={failed!r}"
         )
 
     def test_ambiguous_corpus_no_per_subcommand_id_drift_observable(self, ambiguous_symbol_corpus):

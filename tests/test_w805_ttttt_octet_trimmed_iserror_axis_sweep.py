@@ -40,31 +40,28 @@ scoped recipes consumed by agents to decide whether to commit code
 trimmed-isError envelope leak silently flips a child into the success
 bucket on any of them, the user-facing verdict lies.
 
-PIN STRATEGY (scoped 3-test version per task spec):
+PIN STRATEGY (scoped 3-test version per task spec) — all three pins are
+now plain asserts; the W805-OCTET seal wave landed the fix-forward:
 
-1. **Root pin (xfail-strict).** Directly probe ``_compound_envelope`` with
-   a synthetic trimmed-isError dict — no end-to-end shell, no error-storm
-   priming, no fixture corpus. This is the minimal possible repro of the
-   bug: feed the aggregator the exact shape the coalescer produces and
-   assert that the bad-child lands in ``failed_subcommands``. Today it
-   lands in ``sections``. This is the FAMILY ROOT — every per-recipe pin
-   below would fail-via-this-cell.
+1. **Root pin (SEALED, plain assert).** Directly probe ``_compound_envelope``
+   with a synthetic trimmed-isError dict — no end-to-end shell, no
+   error-storm priming, no fixture corpus. This is the minimal possible
+   repro: feed the aggregator the exact shape the coalescer produces and
+   assert that the bad-child lands in ``failed_subcommands``. The widened
+   aggregator now classifies it correctly. This is the FAMILY ROOT.
 
-2. **Representative end-to-end pin (xfail-strict).** ``for_bug_fix``
+2. **Representative end-to-end pin (SEALED, plain assert).** ``for_bug_fix``
    stand-in: prime the error-storm coalescer to threshold, then invoke
    the compound so its children inherit the trimmed envelope. Asserts
-   that the failed child surfaces in ``failed_subcommands``. Today the
-   trimmed-isError envelope falls into ``sections`` and the agent-facing
-   verdict says "compound operation completed" / per-child verdicts
-   without naming the trimmed failure.
+   that the failed child surfaces in ``failed_subcommands``. The widened
+   aggregator now routes trimmed-isError children there.
 
-3. **Drift-guard (always-on).** Asserts that the LITERAL check at
-   ``mcp_server.py:4448-4450`` is still the narrow ``"error" in data``
-   form (NOT the widened ``"error" in data or data.get("isError") is True``
-   form). This guard FLIPS when the fix lands — at which point the two
-   xfail-strict pins above flip simultaneously to plain passes (xfail-
-   strict fails-on-pass, which is exactly the signal we want). This is
-   the FAMILY CLOSER: one place to invert when the fix-forward lands.
+3. **Drift-guard (always-on).** Asserts that the LITERAL aggregator check
+   in ``_compound_envelope`` is the WIDENED ``"error" in data or
+   data.get("isError") is True`` form (NOT the pre-fix narrow ``"error"
+   in data`` form). The guard fired when the fix landed; it now pins the
+   widened form so a future narrowing refactor trips a failure. This is
+   the FAMILY CLOSER.
 
 **Follow-up wave candidates** (deliberately deferred per task spec):
 per-recipe end-to-end pins for ``for_refactor`` (W805-KK), ``for_new_feature``
@@ -76,23 +73,36 @@ confirmation that the trimmed envelope is reachable end-to-end on each
 specific compound's recipe shape. The representative pin on ``for_bug_fix``
 demonstrates the end-to-end path is reachable; the rest are mechanical.
 
-**Fix-forward (separate wave).** Widen ``mcp_server.py:4448-4450`` to::
+**Fix-forward — SEALED (W805-OCTET seal wave).** The aggregator check in
+``_compound_envelope`` was widened to::
 
     for name, data in sub_results:
         if not data or "error" in data or (isinstance(data, dict) and data.get("isError") is True):
-            err_msg = (
-                data.get("error")
-                or data.get("first_error_message")
-                or "empty result"
-            )
+            err_msg = "empty result"
+            if data:
+                child_summary = data.get("summary")
+                err_msg = (
+                    data.get("error")
+                    or data.get("first_error_message")
+                    or (child_summary.get("verdict") if isinstance(child_summary, dict) else None)
+                    or "empty result"
+                )
             errors.append({"command": name, "error": err_msg})
         else:
             sections[name] = data
 
-When the widening lands, the drift-guard (item 3) tests will fail (the
-narrow form is gone), AND the two xfail-strict pins will fail-on-pass
-(xfail-strict semantic). Flipping the guards to assert the WIDE form and
-the xfail-strict markers to plain assertions seals the family.
+The ``err_msg`` chain additionally falls back to a structured ``isError``
+envelope's ``summary.verdict`` so a real degraded child (e.g.
+``affected-tests`` returning ``isError: True`` + ``verdict: "Symbol not
+found: X"`` without a top-level ``error`` key) surfaces an actionable
+message instead of the opaque ``"empty result"`` sentinel.
+
+When the widening landed, the drift-guard (item 3) flipped polarity to
+assert the WIDE form, and the two formerly-xfail-strict pins flipped to
+plain asserts — the family is sealed. The remaining W805-F / W805-LL
+xfail-strict pins probe a DIFFERENT, still-open bug: children that
+disclose only ``summary.partial_success: True`` (no top-level ``isError``
+or ``error``) are NOT lifted by this widening.
 """
 
 from __future__ import annotations
@@ -164,29 +174,17 @@ _TRIMMED_ISERROR_ENVELOPE = {
 }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-TTTTT ROOT PIN — Pattern-2 silent SAFE / Variant-D silent "
-        "success on degraded resolution. The aggregator at "
-        "mcp_server.py:4448-4450 checks ONLY 'error in data' to classify "
-        "a subcommand as failed. The error-storm coalescer's trimmed "
-        "envelope (mcp_server.py:3607-3626) omits the top-level 'error' "
-        "key in favour of isError+first_error_message, so it falls into "
-        "the success bucket. AGENT-SAFETY CRITICAL: an agent reading "
-        "failed_subcommands sees the child absent and concludes it ran "
-        "cleanly. Fix-forward: widen the check to also catch "
-        "data.get('isError') is True. This is the FAMILY ROOT for the "
-        "OCTET (W805-F / KK / LL / GGG / KKK / OOO / QQQ / VVV); each of "
-        "those 8 compounds consumes _compound_envelope and inherits this "
-        "leak."
-    ),
-)
 def test_root_compound_envelope_classifies_trimmed_iserror_as_failed():
-    """Direct probe: feed _compound_envelope a single subcommand result
-    matching the trimmed-isError shape; assert it lands in
-    failed_subcommands (the failure bucket), NOT sections (the success
+    """ROOT PIN — SEALED. Direct probe: feed _compound_envelope a single
+    subcommand result matching the trimmed-isError shape; assert it lands
+    in failed_subcommands (the failure bucket), NOT sections (the success
     bucket).
+
+    The W805-TTTTT fix-forward widened the aggregator check at
+    ``_compound_envelope`` to also catch ``data.get("isError") is True``,
+    so the trimmed-isError envelope is now correctly classified as a
+    failed subcommand. This pin is a plain assert (was xfail-strict
+    pre-fix).
     """
     sub_results = [("bad_child", dict(_TRIMMED_ISERROR_ENVELOPE))]
     result = _compound_envelope("test-compound", sub_results)
@@ -237,24 +235,15 @@ def _prime_storm_to_threshold(code: str = "USAGE_ERROR") -> None:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-TTTTT end-to-end pin (for_bug_fix representative). With "
-        "the error-storm coalescer primed to threshold, the compound's "
-        "children that would have returned a structured USAGE_ERROR "
-        "envelope now return the trimmed shape. The trimmed envelope "
-        "lacks the top-level 'error' key so it falls into 'sections' "
-        "(the success bucket) per the W805-TTTTT root pin. "
-        "Agent-facing failed_subcommands lies by omission. Bundled "
-        "with the FAMILY CLOSER drift-guard below — when the fix lands, "
-        "this pin flips to a plain pass at the same time as the guard."
-    ),
-)
 def test_end_to_end_for_bug_fix_trimmed_envelope_surfaces_in_failed():
-    """End-to-end: prime the storm, invoke for_bug_fix on an unresolved
-    symbol, assert that any child whose envelope is the trimmed shape
-    surfaces in failed_subcommands.
+    """End-to-end pin — SEALED. Prime the storm, invoke for_bug_fix on an
+    unresolved symbol, assert that any child whose envelope is the trimmed
+    shape surfaces in failed_subcommands.
+
+    The W805-TTTTT fix-forward widened the aggregator check, so a trimmed
+    (or any) ``isError: True`` child now correctly lands in
+    failed_subcommands end-to-end. This pin is a plain assert (was
+    xfail-strict pre-fix).
 
     The compound is invoked without a corpus fixture — it runs against
     the current working directory's roam-code index, which is stable
@@ -288,22 +277,23 @@ def test_end_to_end_for_bug_fix_trimmed_envelope_surfaces_in_failed():
 
 # ---------------------------------------------------------------------------
 # (3) DRIFT-GUARD / FAMILY CLOSER — always-on test that asserts the literal
-# check at mcp_server.py:4448-4450 is still the NARROW form. When the fix
-# lands (widening to also catch isError), this guard flips and the two
-# xfail-strict pins above simultaneously flip to plain passes — one line
-# of code, one place to invert.
+# aggregator check in ``_compound_envelope`` is the WIDENED form (catches
+# ``isError`` in addition to the top-level ``error`` key). The W805-TTTTT
+# fix-forward landed this widening; the guard now pins it so a future
+# refactor that narrows the check back trips a failure.
 # ---------------------------------------------------------------------------
 
 
-def test_drift_guard_aggregator_check_is_still_narrow():
-    """FAMILY CLOSER: assert the aggregator's check is still the narrow
-    ``"error" in data`` form, NOT the widened ``"error" in data or
-    data.get("isError") is True`` form.
+def test_drift_guard_aggregator_check_is_widened():
+    """FAMILY CLOSER — SEALED: assert the aggregator's classification check
+    is the WIDENED form (catches ``data.get("isError") is True`` in
+    addition to the top-level ``"error" in data`` key).
 
-    When the fix-forward lands, this guard FAILS. At the same moment the
-    two xfail-strict pins above flip from xfail to pass (xfail-strict
-    raises on pass) — three simultaneous signals from one code change.
-    Flip this guard's expected form to seal the family.
+    The W805-TTTTT fix-forward widened the check at ``_compound_envelope``
+    so a trimmed-isError child (or any ``isError: True`` envelope) is
+    correctly classified as a failed subcommand. This guard pins the
+    widened form so a future narrowing refactor trips a failure here AND
+    the two formerly-xfail pins above start failing for real.
     """
     import inspect
     import re
@@ -316,35 +306,31 @@ def test_drift_guard_aggregator_check_is_still_narrow():
     # on the all-failed output envelope (Pattern-1 conformance), which is
     # unrelated to the per-child classification surface this guard tracks.
     # Isolating the aggregator ``if`` line keeps the guard firing ONLY when
-    # the real check is widened (the W805-TTTTT fix-forward).
+    # the real check is narrowed back (a regression of the W805-TTTTT fix).
     agg_line = next(
         (ln for ln in src.splitlines() if ln.strip().startswith("if ") and '"error" in data' in ln),
         "",
     )
-    # The narrow form lives on ONE line near the top of the loop body:
+    # The narrow (pre-fix) form lived on ONE line near the top of the loop:
     #   if not data or "error" in data:
-    narrow_pattern = re.compile(r'if not data or "error" in data:')
-    # The widened form would look like one of these (we tolerate minor
-    # style variations to keep the guard low-friction when the fix lands):
-    widened_patterns = [
-        re.compile(r"isError"),
-        re.compile(r"first_error_message"),
-    ]
+    narrow_pattern = re.compile(r'if not data or "error" in data:\s*$')
+    # The widened (post-fix) form must reference isError on the same line:
+    #   if not data or "error" in data or (... data.get("isError") is True):
+    widened_pattern = re.compile(r"isError")
     narrow_hit = bool(narrow_pattern.search(agg_line))
-    widened_hit = any(p.search(agg_line) for p in widened_patterns)
-    assert narrow_hit, (
-        'Drift-guard expected to see the narrow \'if not data or "error" '
-        "in data:' check in _compound_envelope. If the fix-forward has "
-        "landed (good!), flip this guard to assert the widened form "
-        "instead, and flip the two xfail-strict pins above to plain "
-        "asserts. Source extract follows:\n" + src[:2000]
+    widened_hit = bool(widened_pattern.search(agg_line))
+    assert widened_hit, (
+        "Drift-guard expected the WIDENED aggregator check (referencing "
+        "'isError' on the classification line) in _compound_envelope. The "
+        "W805-TTTTT fix-forward widened it; if this guard fails the check "
+        "has been narrowed back — a Pattern-2 silent-SAFE regression. "
+        "Source extract follows:\n" + src[:2000]
     )
-    assert not widened_hit, (
-        "Drift-guard saw 'isError' or 'first_error_message' inside "
-        "_compound_envelope — the widening may have landed. If so, flip "
-        "this guard's polarity (assert the widened form) and the two "
-        "xfail-strict pins above to plain passes. Source extract "
-        "follows:\n" + src[:2000]
+    assert not narrow_hit, (
+        "Drift-guard saw the NARROW 'if not data or \"error\" in data:' "
+        "check — the W805-TTTTT widening has been reverted. A "
+        "trimmed-isError child would again leak into the success bucket. "
+        "Source extract follows:\n" + src[:2000]
     )
 
 

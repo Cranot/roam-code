@@ -70,11 +70,14 @@ def test_vocabulary_counts_match_memo() -> None:
     assert len(ARTIFACT_KINDS) == 11
     # 5 severities (critical/high/medium/low/info)
     assert len(CLAIM_SEVERITIES) == 5
-    # 9 redaction reasons (6 baseline + W241 adds machine_local_path +
+    # 10 redaction reasons (6 baseline + W241 adds machine_local_path +
     # schema_strict for the collector-side last-line-of-defense redactions
     # + W261 adds producer_not_available for declaring a missing producer
-    # gap, first used for the Q8 acceptance-producer hole on pr-replay).
-    assert len(REDACTION_REASONS) == 9
+    # gap, first used for the Q8 acceptance-producer hole on pr-replay
+    # + MCP-P1.2 adds prompt_injection_marker for the egress marker scan
+    # at the MCP tool-call boundary — append-only, deliberate source edit).
+    assert len(REDACTION_REASONS) == 10
+    assert "prompt_injection_marker" in REDACTION_REASONS
 
 
 def test_all_link_kinds_documented() -> None:

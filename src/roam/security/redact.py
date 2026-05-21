@@ -44,6 +44,9 @@ __all__ = [
     "redact_secrets",
     "scrub_actor_block",
     "redact_secrets_in_value",
+    "PROMPT_INJECTION_MARKERS",
+    "scan_prompt_injection_markers",
+    "scan_prompt_injection_in_value",
 ]
 
 
@@ -225,3 +228,120 @@ def scrub_actor_block(actor: Mapping[str, Any] | None) -> tuple[dict, bool]:
             found_any = True
         scrubbed[key] = new_value
     return scrubbed, found_any
+
+
+# ---------------------------------------------------------------------------
+# Prompt-injection marker scan (MCP-P1.2)
+# ---------------------------------------------------------------------------
+#
+# A *conservative* marker set scanned over MCP tool-call output bytes at the
+# egress boundary. Unlike :data:`SECRET_PATTERNS`, a marker hit does NOT mask
+# anything — a prompt-injection string is a *signal*, not a credential. The
+# egress scan leaves the output bytes intact and only stamps the closed-enum
+# reason ``"prompt_injection_marker"`` onto the MCP receipt's ``redactions[]``
+# audit trail, so a downstream gateway / host can escalate or quarantine.
+#
+# Design constraint: false positives here are costly. roam tool output is
+# codebase intelligence — symbol names, code snippets, file paths, git
+# history — so every pattern below is chosen to be *very unlikely* to appear
+# in legitimate analysis output:
+#
+#  1. The canonical override phrases ("ignore previous instructions",
+#     "disregard all prior instructions"). Free-text imperative sentences
+#     that do not occur in code identifiers or AST-derived envelopes.
+#  2. Chat-template control tokens (``<|im_start|>``, ``<|im_end|>``,
+#     ``<|endoftext|>``, ``[INST]`` / ``[/INST]``, ``<<SYS>>``). These are
+#     model-serialisation delimiters; they should never be embedded in a
+#     source symbol or a roam JSON envelope.
+#  3. Fake conversation-turn headers — a line that *starts* with
+#     ``system:`` or ``assistant:`` followed by content. Anchored to
+#     line-start (``re.MULTILINE``) and deliberately limited to the two
+#     roles an injected payload spoofs to seize control; the much more
+#     common ``user:`` is intentionally EXCLUDED because it is a frequent
+#     YAML / config key and would false-positive.
+#  4. Tool-result spoofing tags (``</tool_result>``, ``<tool_result>``,
+#     ``</function_results>``) — an injected payload forging the end of a
+#     tool result to smuggle a new instruction past the boundary.
+#
+# All matching is case-insensitive. The set is deliberately small; widening
+# it is a source-level edit that must justify the marginal false-positive
+# cost. Coordinate any change with the MCP-P1.2 tests.
+PROMPT_INJECTION_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "ignore_previous_instructions",
+        re.compile(
+            r"\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:the\s+)?"
+            r"(?:previous|prior|above|earlier)\s+(?:instructions?|prompts?|messages?|context)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "chat_template_control_token",
+        re.compile(
+            r"<\|(?:im_start|im_end|endoftext|system|user|assistant)\|>"
+            r"|\[/?INST\]"
+            r"|<</?SYS>>",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "spoofed_turn_header",
+        re.compile(r"^[ \t]*(?:system|assistant)[ \t]*:[ \t]*\S", re.IGNORECASE | re.MULTILINE),
+    ),
+    (
+        "tool_result_spoof",
+        re.compile(r"</?(?:tool_result|function_results|function_calls)>", re.IGNORECASE),
+    ),
+)
+
+
+def scan_prompt_injection_markers(value: str) -> dict[str, int]:
+    """Scan a string for known prompt-injection markers (MCP-P1.2).
+
+    Returns a ``{marker_id: hit_count}`` dict naming every marker that
+    fired and how many times. The dict is empty when nothing matched
+    (callers treat "empty" as "no markers detected"). Empty / non-string
+    input rides through as an empty dict so callers can pipe anything.
+
+    This function NEVER alters ``value`` — a prompt-injection marker is a
+    signal, not a secret. The caller stamps the closed-enum reason
+    ``"prompt_injection_marker"`` onto the receipt ``redactions[]`` array
+    when the returned dict is non-empty; the offending bytes are left
+    intact for the downstream gateway / host to inspect.
+    """
+    if not value or not isinstance(value, str):
+        return {}
+    counts: dict[str, int] = {}
+    for marker_id, pattern in PROMPT_INJECTION_MARKERS:
+        hits = pattern.findall(value)
+        if hits:
+            counts[marker_id] = len(hits)
+    return counts
+
+
+def scan_prompt_injection_in_value(value: Any) -> dict[str, int]:
+    """Recursively scan any JSON-ish value for prompt-injection markers.
+
+    Walks dicts, lists, and tuples; scans string leaves; rides non-string
+    scalars (int / float / bool / None) through untouched. Returns an
+    aggregate ``{marker_id: hit_count}`` dict summing every marker hit
+    across the walk.
+
+    Like :func:`scan_prompt_injection_markers`, this is non-mutating: it
+    inspects the value and reports, it never rewrites it.
+    """
+    if isinstance(value, str):
+        return scan_prompt_injection_markers(value)
+    agg: dict[str, int] = {}
+    if isinstance(value, dict):
+        for v in value.values():
+            for mid, n in scan_prompt_injection_in_value(v).items():
+                agg[mid] = agg.get(mid, 0) + n
+        return agg
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            for mid, n in scan_prompt_injection_in_value(item).items():
+                agg[mid] = agg.get(mid, 0) + n
+        return agg
+    # Scalars (int, float, bool, None, etc.) — ride through.
+    return agg

@@ -245,6 +245,26 @@ CLAIM_SEVERITIES: frozenset[str] = frozenset(
 #:                                names the gap rather than silently emitting
 #:                                empty ``approvals`` / ``accepted_risks``
 #:                                tuples.
+#: * ``prompt_injection_marker`` - MCP-P1.2: the egress scanner at the MCP
+#:                                tool-call boundary matched a known prompt-
+#:                                injection marker (e.g. "ignore previous
+#:                                instructions", a chat-template control token
+#:                                like ``<|im_end|>``, a fake ``system:`` /
+#:                                ``assistant:`` turn header) inside a tool's
+#:                                output bytes. Distinct from ``secret`` (which
+#:                                MASKS the offending substring with
+#:                                ``[REDACTED]``): a prompt-injection marker is
+#:                                a *signal*, not a credential, so the egress
+#:                                scan leaves the output bytes intact and only
+#:                                stamps this reason onto the receipt's
+#:                                ``redactions[]`` audit trail. A downstream
+#:                                gateway / host can then escalate, quarantine,
+#:                                or surface the call for human review. See
+#:                                ``src/roam/security/redact.py`` for the
+#:                                conservative marker set and
+#:                                ``_wrap_with_receipt`` in
+#:                                ``src/roam/mcp_server.py`` for the egress
+#:                                wiring.
 REDACTION_REASONS: frozenset[str] = frozenset(
     {
         "secret",
@@ -256,6 +276,7 @@ REDACTION_REASONS: frozenset[str] = frozenset(
         "machine_local_path",
         "schema_strict",
         "producer_not_available",
+        "prompt_injection_marker",
     }
 )
 

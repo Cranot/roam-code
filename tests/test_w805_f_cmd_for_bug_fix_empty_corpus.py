@@ -221,11 +221,23 @@ class TestForBugFixEmptyCorpusSmoke:
         assert s.get("target") == "zzMissingSymbol", s
 
     def test_empty_corpus_four_child_sections_present(self, empty_corpus):
-        """All four subcommand sections appear in the envelope."""
+        """All four subcommands are accounted for in the envelope —
+        either as a successful ``sections`` entry or as a failed
+        subcommand.
+
+        Post W805-OCTET seal: on empty corpus the ``affected_tests``
+        child returns ``isError: True`` (no top-level ``error`` key), so
+        the widened ``_compound_envelope`` aggregator routes it to
+        ``failed_subcommands`` rather than ``sections``. The four
+        subcommands are still all present — split across the two
+        buckets — so this test asserts the UNION covers all four."""
         r = for_bug_fix(symbol="zzMissingSymbol", root=".")
-        sections = (r.get("summary") or {}).get("sections") or []
+        summary = r.get("summary") or {}
+        sections = summary.get("sections") or []
+        failed = summary.get("failed_subcommands") or []
+        accounted = set(sections) | set(failed)
         for expected in ("diagnose", "affected_tests", "diff", "context"):
-            assert expected in sections, f"missing {expected!r} in {sections}"
+            assert expected in accounted, f"missing {expected!r} in sections={sections} + failed={failed}"
 
     def test_empty_corpus_law6_verdict_standalone(self, empty_corpus):
         """LAW 6: verdict is single-line ASCII; readable without other fields."""
@@ -329,11 +341,32 @@ class TestForBugFixEmptyChildrenDiscloseDegradedResolution:
         assert psum.get("resolution") == "unresolved", psum
 
     def test_affected_tests_child_discloses_partial(self, empty_corpus):
+        """The ``affected_tests`` child discloses degraded resolution.
+
+        Post W805-OCTET seal: unlike ``diagnose`` / ``context`` (which
+        disclose ONLY ``summary.partial_success`` and stay in
+        ``sections``), the ``affected_tests`` child returns a top-level
+        ``isError: True`` envelope. The widened ``_compound_envelope``
+        aggregator therefore routes it into ``failed_subcommands`` +
+        ``_errors`` rather than merging the full child envelope to the
+        top-level ``affected_tests`` key. Assert the child is correctly
+        classified as failed AND the surfaced error message is the
+        child's actionable verdict (not the opaque ``empty result``
+        sentinel — the err_msg fallback chain lifts ``summary.verdict``)."""
         r = for_bug_fix(symbol="zzMissingSymbol", root=".")
-        child = r.get("affected_tests") or {}
-        psum = child.get("summary") or {}
-        assert psum.get("partial_success") is True, psum
-        assert psum.get("resolution") == "unresolved", psum
+        failed = (r.get("summary") or {}).get("failed_subcommands") or []
+        assert "affected_tests" in failed, f"affected_tests (isError child) not classified as failed: {failed}"
+        errors = r.get("_errors") or []
+        at_err = next((e for e in errors if e.get("command") == "affected_tests"), None)
+        assert at_err is not None, f"affected_tests absent from _errors: {errors!r}"
+        msg = at_err.get("error") or ""
+        assert msg and msg != "empty result", (
+            f"affected_tests error message is the opaque sentinel — the "
+            f"err_msg fallback should lift summary.verdict. Got: {msg!r}"
+        )
+        assert "zzMissingSymbol" in msg, (
+            f"affected_tests error message does not name the unresolved symbol. Got: {msg!r}"
+        )
 
     def test_context_child_discloses_partial(self, empty_corpus):
         r = for_bug_fix(symbol="zzMissingSymbol", root=".")
@@ -398,29 +431,21 @@ def test_empty_corpus_compound_partial_success_propagation(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-F companion pin: when 3/4 symbol-anchored children report "
-        "resolution=unresolved on empty corpus, the compound verdict "
-        "MUST NOT read like four clean successes. The current verdict — "
-        '\'diagnose: Symbol "X" not found | affected_tests: Symbol not '
-        'found | diff: no changes | context: Symbol "X" not found\' — '
-        "is technically truthful per child, but the absence of a "
-        "PARTIAL prefix (which _compound_envelope:4498-4502 only adds "
-        "when failed_subcommands is non-empty) reads to an agent as a "
-        "successful bug-fix bundle. Fix bundled with the partial_success "
-        "propagation fix above."
-    ),
-)
 def test_empty_corpus_no_silent_fix_ready(empty_corpus):
-    """Pin: compound verdict must not read like a clean success when
-    children disclose unresolved resolution.
+    """Pin — SEALED (W805-OCTET seal wave): compound verdict must not read
+    like a clean success when children disclose unresolved resolution.
 
-    Acceptance: the verdict starts with the ``PARTIAL (...)`` prefix
-    that ``_compound_envelope`` adds at line 4498-4502 when
-    ``failed_subcommands`` is non-empty (i.e., the cascade flows
-    through once partial_success propagation lands).
+    Acceptance: the verdict starts with the ``PARTIAL (...)`` prefix that
+    ``_compound_envelope`` adds when ``failed_subcommands`` is non-empty.
+
+    The W805-TTTTT widening means the ``affected_tests`` child (which
+    returns ``isError: True`` on empty corpus) is now classified as a
+    failed subcommand, so ``failed_subcommands`` is non-empty and the
+    PARTIAL prefix fires. Plain assert (was xfail-strict pre-fix). NOTE:
+    the broader bug — ``diagnose`` / ``context`` disclose ONLY
+    ``summary.partial_success`` with no ``isError`` and are still NOT
+    lifted — remains pinned xfail by
+    ``test_empty_corpus_compound_partial_success_propagation``.
     """
     r = for_bug_fix(symbol="zzMissingSymbol", root=".")
     verdict = r["summary"]["verdict"]
