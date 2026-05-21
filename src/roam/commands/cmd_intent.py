@@ -69,8 +69,20 @@ def _scan_doc_for_symbols(root, doc_path, symbol_names):
     """Scan a doc file for references to known symbol names.
 
     Returns list of {symbol, line, snippet}.
+
+    Matching is done with ONE combined ``\\bNAME\\b`` alternation per line
+    (``set(pattern.findall(line))``) instead of one ``re.search`` per symbol
+    name per line. ``symbol_names`` is a set, so the per-line ``for name in
+    symbol_names: if name in hits`` loop yields the exact same refs in the
+    exact same (set-iteration) order as the old per-name search — it just
+    replaces the O(lines x symbols) regex hot loop (~66s on roam-code, ~225M
+    re.search calls) with one findall + cheap set lookups.
     """
     refs = []
+    eligible = [n for n in symbol_names if len(n) >= _MIN_NAME_LEN]
+    if not eligible:
+        return refs
+    pattern = re.compile("|".join(r"\b" + re.escape(n) + r"\b" for n in eligible))
     full_path = os.path.join(str(root), doc_path)
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
@@ -79,11 +91,14 @@ def _scan_doc_for_symbols(root, doc_path, symbol_names):
         return refs
 
     for line_num, line_text in enumerate(lines, 1):
+        hits = set(pattern.findall(line_text))
+        if not hits:
+            continue
+        snippet = line_text.strip()[:100]
+        # ``hits`` only contains eligible (>= _MIN_NAME_LEN) names, so iterating
+        # symbol_names and testing membership reproduces the old loop exactly.
         for name in symbol_names:
-            if len(name) < _MIN_NAME_LEN:
-                continue
-            if re.search(r"\b" + re.escape(name) + r"\b", line_text):
-                snippet = line_text.strip()[:100]
+            if name in hits:
                 refs.append(
                     {
                         "symbol": name,
