@@ -228,14 +228,35 @@ _TOPOLOGY_DECAY_RATE_DEFINITION = (
 )
 
 
-def _spectral_forecast_block(conn, horizon):
-    """One-shot spectral-instability + decay block (B8, Option-B).
+def _spectral_gap_series(conn):
+    """Read the persisted per-snapshot spectral-gap series, oldest first.
 
-    Computes the spectral gap (algebraic connectivity) of the CURRENT
-    file-level graph and projects it. The historical gap-per-snapshot series
-    is NOT persisted (no schema column), so ``forecast_spectral_decay`` runs
-    over the single current gap and reports ``insufficient_history`` for the
-    decay projection — the one-shot instability signal is the live payload.
+    B8 (Option-A): ``snapshots.spectral_gap`` is populated by the snapshot
+    writer (one gap per health snapshot). NULL rows — legacy snapshots
+    written before the column landed — are skipped so a partial-history
+    series is honest rather than zero-padded.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT spectral_gap FROM snapshots WHERE spectral_gap IS NOT NULL ORDER BY timestamp ASC"
+        ).fetchall()
+    except Exception:
+        return []
+    return [float(r[0]) for r in rows]
+
+
+def _spectral_forecast_block(conn, horizon):
+    """Spectral-instability + decay block (B8, Option-A persisted series).
+
+    Computes the one-shot spectral instability of the CURRENT file-level
+    graph, then projects the *persisted* historical gap-per-snapshot series
+    (``snapshots.spectral_gap``) forward via Theil-Sen. With >= 4 historical
+    gaps this yields a real "<N> snapshots to structural failure" budget;
+    with fewer, ``forecast_spectral_decay`` honestly reports
+    ``insufficient_history`` rather than faking a flat trend.
+
+    The series falls back to the single current gap when no history exists
+    yet (fresh repo / pre-column index) so the block is never empty.
 
     scipy-optional lineage is preserved: ``spectral_gap`` returns a 0.0
     sentinel + RuntimeWarning on a missing eigensolver, and we flag
@@ -250,9 +271,17 @@ def _spectral_forecast_block(conn, horizon):
 
     file_graph = build_file_graph(conn)
     inst = spectral_instability(file_graph)
-    # On-the-fly: a single current gap. Theil-Sen needs >= 4 points, so this
-    # honestly reports insufficient_history rather than faking a flat trend.
-    fc = forecast_spectral_decay([inst.spectral_gap], horizon=horizon)
+
+    # Project the persisted historical gap series. Append the live current
+    # gap so the most-recent point reflects the freshly-built graph even
+    # before the current run's snapshot row is written.
+    series = _spectral_gap_series(conn)
+    if not series:
+        series = [inst.spectral_gap]
+    elif series[-1] != inst.spectral_gap:
+        series = [*series, inst.spectral_gap]
+    fc = forecast_spectral_decay(series, horizon=horizon)
+
     # Loud-fallback lineage: a non-trivial single connected graph whose gap is
     # exactly 0.0 means the eigensolver is unavailable, not a real flat blob.
     compute_degraded = inst.node_count >= 2 and inst.component_count == 1 and inst.spectral_gap == 0.0
@@ -407,9 +436,17 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
             "repo, then `roam health` over time to accrue history)"
         )
     # B8: append a self-sufficient spectral clause so the combined verdict still
-    # works standalone (LAW 6). Anchored on `nodes` (a concrete-noun terminal).
+    # works standalone (LAW 6). When a persisted gap series produced a real
+    # decay projection (warning/alert), surface the "<N> snapshots to
+    # structural failure" budget — terminal-anchored on `snapshots` (LAW 4).
     elif spectral_degraded:
         verdict += "; spectral gap unavailable (eigensolver missing)"
+    elif spec_fc.status in ("warning", "alert") and spec_fc.snapshots_to_failure is not None:
+        verdict += (
+            f"; structural failure projected within {spec_fc.snapshots_to_failure} "
+            f"snapshots (spectral gap {spec_fc.current_gap:.3f}, "
+            f"decaying {spec_fc.slope:+.4f}/snapshot)"
+        )
     elif spec_inst.is_failed:
         verdict += (
             f"; spectral gap {spec_inst.spectral_gap:.3f} in the failure band across {spec_inst.node_count} nodes"
@@ -495,7 +532,7 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
     # B8: spectral forecast section. --alert-only suppresses it when the
     # current topology is healthy (mirrors the stable-metric suppression above).
-    spectral_noteworthy = spectral_degraded or spec_inst.is_failed
+    spectral_noteworthy = spectral_degraded or spec_inst.is_failed or spec_fc.status in ("warning", "alert")
     if not alert_only or spectral_noteworthy:
         click.echo("SPECTRAL FORECAST (modular separation of the current graph):")
         if spectral_degraded:
@@ -506,6 +543,26 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                 f"  gap {spec_inst.spectral_gap:.3f} ({spec_inst.verdict}) "
                 f"across {spec_inst.node_count} nodes, {spec_inst.component_count} component(s){flag}"
             )
+            # B8 Option-A: the decay projection over the persisted gap series.
+            decay_flag = ""
+            if spec_fc.status == "warning":
+                decay_flag = "  << WARNING"
+            elif spec_fc.status == "alert":
+                decay_flag = "  << ALERT"
+            if spec_fc.status == "insufficient_history":
+                click.echo(
+                    f"  decay: {spec_fc.history_points} historical gap(s) -- need >= 4 snapshots for a decay projection"
+                )
+            else:
+                budget = (
+                    f"{spec_fc.snapshots_to_failure} snapshots to structural failure"
+                    if spec_fc.snapshots_to_failure is not None
+                    else "no structural failure within horizon"
+                )
+                click.echo(
+                    f"  decay: slope {spec_fc.slope:+.4f}/snapshot over "
+                    f"{spec_fc.history_points} snapshots, {budget}{decay_flag}"
+                )
             click.echo(f"  {spectral_block['alert_wording']}")
         click.echo()
 

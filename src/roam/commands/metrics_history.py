@@ -199,6 +199,21 @@ def collect_metrics(conn):
 
         log_swallowed("metrics_history", _exc)
 
+    # B8: spectral gap (algebraic connectivity / lambda2) of the file graph.
+    # Persisting one gap per snapshot lets `roam forecast` project a TRUE
+    # historical decay series toward structural failure. None on a degenerate
+    # graph (< 2 nodes) or eigensolver failure — stored as NULL, never a
+    # misleading 0.0.
+    spectral_gap_val = None
+    try:
+        from roam.graph.spectral_forecast import compute_current_spectral_gap
+
+        spectral_gap_val = compute_current_spectral_gap(conn)
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history", _exc)
+
     return {
         "files": files,
         "symbols": symbols,
@@ -212,6 +227,7 @@ def collect_metrics(conn):
         "tangle_ratio": tangle_ratio,
         "avg_complexity": avg_complexity,
         "brain_methods": brain_methods,
+        "spectral_gap": spectral_gap_val,
     }
 
 
@@ -268,8 +284,8 @@ def append_snapshot(conn, tag=None, source="snapshot"):
            (timestamp, tag, source, git_branch, git_commit,
             files, symbols, edges, cycles, god_components,
             bottlenecks, dead_exports, layer_violations, health_score,
-            tangle_ratio, avg_complexity, brain_methods)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tangle_ratio, avg_complexity, brain_methods, spectral_gap)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             int(time.time()),
             tag,
@@ -288,6 +304,7 @@ def append_snapshot(conn, tag=None, source="snapshot"):
             metrics.get("tangle_ratio", 0),
             metrics.get("avg_complexity", 0),
             metrics.get("brain_methods", 0),
+            metrics.get("spectral_gap"),
         ),
     )
     conn.commit()

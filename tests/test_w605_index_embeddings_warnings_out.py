@@ -786,9 +786,10 @@ def test_w89_substrate_untouched() -> None:
     """
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 17, (
+    assert USER_VERSION == 18, (
         f"W89 substrate invariant: USER_VERSION must stay at canonical "
-        f"value (17); got {USER_VERSION}. W605 must not bump this."
+        f"value (18 since the B8 snapshots.spectral_gap migration); got "
+        f"{USER_VERSION}. W605 must not bump this."
     )
 
     schema_src = (repo_root() / "src" / "roam" / "db" / "schema.py").read_text(encoding="utf-8")

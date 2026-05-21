@@ -354,6 +354,32 @@ def forecast_from_graphs(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# DB-backed spectral gap (single source of truth for snapshot persistence)
+# ---------------------------------------------------------------------------
+
+
+def compute_current_spectral_gap(conn) -> float | None:
+    """Compute the spectral gap of the current file-level graph from a DB conn.
+
+    The single computation path shared by the snapshot writer (which persists
+    one gap per ``snapshots`` row) and ``cmd_forecast`` (which reads the
+    persisted series). Returns the rounded gap, or ``None`` when the graph is
+    too small to carry a meaningful spectral signal (< 2 nodes) so the caller
+    can store NULL rather than a misleading 0.0.
+
+    A 0.0 gap on a real multi-node graph is a *valid* signal (a graph that has
+    lost its modular separation), so 0.0 IS returned in that case — only the
+    degenerate < 2-node case maps to ``None``.
+    """
+    from roam.graph.builder import build_file_graph
+
+    file_graph = build_file_graph(conn)
+    if file_graph.number_of_nodes() < 2:
+        return None
+    return round(spectral_gap(file_graph), 6)
+
+
 def decay_alert_wording(
     forecast: SpectralForecast,
     *,

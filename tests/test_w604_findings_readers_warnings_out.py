@@ -592,8 +592,9 @@ def test_w89_substrate_untouched() -> None:
     # (c) USER_VERSION constant preserved.
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 17, (
-        f"W89 substrate invariant: USER_VERSION must stay at the canonical contract value (17); got {USER_VERSION}."
+    assert USER_VERSION == 18, (
+        f"W89 substrate invariant: USER_VERSION must stay at the canonical contract value "
+        f"(18 since the B8 snapshots.spectral_gap migration); got {USER_VERSION}. W604 must not bump this."
     )
 
 

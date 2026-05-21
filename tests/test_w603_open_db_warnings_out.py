@@ -77,14 +77,18 @@ INTENTIONAL — NOT PLUMBED (W978 positive coverage):
 * ``_safe_mkdir`` OSError (line ~50) — raises ``StaleDbDirError``
   with remediation hint. Already loud-by-raise; not a silent-pass.
 
-W97 USER_VERSION SUBSTRATE UNTOUCHED:
+W97 USER_VERSION SUBSTRATE UNTOUCHED *by W603*:
 
-* ``src/roam/db/schema.py`` — read only, NOT modified
-* ``USER_VERSION = 17`` constant — unchanged
+* ``src/roam/db/schema.py`` — NOT modified by the W603 plumb (later
+  schema changes, e.g. B8 ``snapshots.spectral_gap``, are tracked
+  separately by ``tests/test_user_version_discipline.py``).
+* ``USER_VERSION`` constant — not moved by W603; the pin below tracks
+  the current canonical contract value (18 since B8).
 * The schema-version contract with downstream consumers (manifest
   writer, bundle import, drift detection in ``roam doctor``) is
-  unchanged. The W603 plumb only surfaces the READ-side failure on
-  a corrupted PRAGMA that would otherwise be coerced to 0 silently.
+  unchanged by W603. The W603 plumb only surfaces the READ-side
+  failure on a corrupted PRAGMA that would otherwise be coerced to 0
+  silently.
 
 W596 HMAC CHAIN UNTOUCHED:
 
@@ -653,12 +657,15 @@ def test_w97_user_version_substrate_untouched() -> None:
     modify the constant, the schema, or the migration ordering. This
     test pins both invariants.
     """
-    # (a) USER_VERSION constant still 17 (current contract version).
+    # (a) USER_VERSION constant at the canonical contract value (18 since
+    # the B8 snapshots.spectral_gap column landed). W603 itself does not
+    # touch this constant — the pin guards against a W603-scope edit
+    # silently moving it. Bump in lockstep with a real schema change.
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 17, (
+    assert USER_VERSION == 18, (
         f"W97 USER_VERSION substrate invariant: USER_VERSION must "
-        f"stay at the canonical contract value (17); got {USER_VERSION}. "
+        f"stay at the canonical contract value (18); got {USER_VERSION}. "
         f"If you bumped USER_VERSION in this wave, audit which schema "
         f"change required it and update tests/test_user_version_discipline.py."
     )

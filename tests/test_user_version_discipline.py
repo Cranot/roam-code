@@ -42,8 +42,8 @@ _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
 # Snapshot captured at commit time. Update both values together when
 # schema.py or _FTS5_SCHEMA_COLUMNS legitimately changes. See module
 # docstring for workflow.
-_SNAPSHOT_SCHEMA_HASH = "1911eb4e9a5e0b19"
-_SNAPSHOT_USER_VERSION = 17
+_SNAPSHOT_SCHEMA_HASH = "6bde165795461cb1"
+_SNAPSHOT_USER_VERSION = 18
 
 
 def _current_schema_hash() -> str:

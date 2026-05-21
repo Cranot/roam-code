@@ -255,7 +255,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     health_score INTEGER,
     tangle_ratio REAL,
     avg_complexity REAL,
-    brain_methods INTEGER
+    brain_methods INTEGER,
+    spectral_gap REAL
 );
 
 -- Runtime trace statistics: ingested from OpenTelemetry/Jaeger/Zipkin/generic traces

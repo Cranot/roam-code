@@ -491,6 +491,12 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
         _exec("CREATE INDEX IF NOT EXISTS idx_findings_detector ON findings(source_detector)"),
     ),
     (59, "idx_findings_created", _exec("CREATE INDEX IF NOT EXISTS idx_findings_created ON findings(created_at)")),
+    # B8 — per-snapshot spectral gap (algebraic connectivity / lambda2) so
+    # `roam forecast` can project a TRUE historical gap-per-snapshot series
+    # toward structural failure (vs the Option-B one-shot signal). Older
+    # snapshot rows leave this NULL; `forecast_spectral_decay` skips NULLs
+    # when assembling the series, so a partial-history series is honest.
+    (60, "snapshots.spectral_gap", _alter("snapshots", "spectral_gap", "REAL")),
 ]
 
 
@@ -549,7 +555,7 @@ def ensure_schema(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None)
 # The CI check tests/test_user_version_discipline.py enforces this by
 # snapshotting a hash of schema.py; if the hash drifts, the test
 # requires USER_VERSION to drift too (lockstep updates).
-USER_VERSION = 17
+USER_VERSION = 18
 
 # Derived from the ledger so adding/removing a migration auto-updates
 # the count without a manual touch. The pin test in

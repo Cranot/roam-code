@@ -342,13 +342,69 @@ class TestForecastSpectral:
         assert isinstance(inst["spectral_gap"], (int, float))
         assert isinstance(inst["is_failed"], bool)
 
-    def test_spectral_decay_insufficient_history_on_the_fly(self, forecast_project):
-        """Option-B computes a single current gap, so decay is insufficient_history."""
+    def test_spectral_gap_persisted_in_snapshots(self, forecast_project):
+        """The snapshot writer persists snapshots.spectral_gap (B8 Option-A).
+
+        Every ``append_snapshot`` call stores one spectral gap, so a repo with
+        >= 4 re-indexes carries a real gap-per-snapshot series.
+        """
+        from roam.db.connection import open_db
+
+        with open_db(project_root=forecast_project) as conn:
+            rows = conn.execute("SELECT spectral_gap FROM snapshots ORDER BY timestamp ASC").fetchall()
+        assert rows, "Expected snapshot rows in the forecast fixture"
+        populated = [r[0] for r in rows if r[0] is not None]
+        assert populated, "Expected at least one snapshot row with a populated spectral_gap"
+        for gap in populated:
+            assert isinstance(gap, (int, float))
+
+    def test_spectral_decay_projects_persisted_series(self, forecast_project):
+        """With >= 4 declining persisted gaps, decay projects a real budget.
+
+        Writes a synthetic declining gap series straight into the snapshots
+        table, then asserts ``forecast`` projects it toward structural failure
+        with a non-stable status and a self-sufficient decay wording.
+        """
+        from roam.db.connection import open_db
+
+        # Overwrite the persisted gaps with a clearly declining series that
+        # crosses the 0.1 failure band within the horizon.
+        declining = [0.45, 0.34, 0.22, 0.13, 0.07]
+        with open_db(project_root=forecast_project) as conn:
+            ids = [r[0] for r in conn.execute("SELECT id FROM snapshots ORDER BY timestamp ASC").fetchall()]
+            # Ensure at least 5 snapshot rows exist to carry the series.
+            import time as _time
+
+            base_ts = int(_time.time())
+            while len(ids) < len(declining):
+                cur = conn.execute(
+                    "INSERT INTO snapshots (timestamp, source) VALUES (?, ?)",
+                    (base_ts + len(ids), "test"),
+                )
+                ids.append(cur.lastrowid)
+            for snap_id, gap in zip(ids[-len(declining) :], declining):
+                conn.execute("UPDATE snapshots SET spectral_gap = ? WHERE id = ?", (gap, snap_id))
+            conn.commit()
+
         result = _invoke(["forecast"], cwd=forecast_project, json_mode=True)
         data = _parse_json(result)
         decay = data["spectral_forecast"]["decay"]
-        # No persisted gap-per-snapshot series exists (no schema column), so the
-        # projection honestly reports insufficient_history rather than faking a trend.
+        # A real >= 4-point declining series: NOT insufficient_history anymore.
+        assert decay["status"] != "insufficient_history", f"Expected a real decay projection, got {decay}"
+        assert decay["status"] in ("warning", "alert", "trending")
+        assert decay["history_points"] >= 4
+        # The decay verdict is LAW-6 self-sufficient and anchored on snapshots/gap.
+        assert "spectral gap" in decay["verdict"]
+        # Alert wording renders the buyer-visible "<N> until structural failure" frame.
+        assert data["spectral_forecast"]["alert_wording"]
+
+    def test_spectral_decay_short_history_insufficient(self, forecast_no_snapshots):
+        """With no persisted gap series, decay honestly reports insufficient_history."""
+        result = _invoke(["forecast"], cwd=forecast_no_snapshots, json_mode=True)
+        data = _parse_json(result)
+        decay = data["spectral_forecast"]["decay"]
+        # Zero snapshots -> the on-the-fly single current gap is the only point,
+        # so the projection reports insufficient_history rather than faking a trend.
         assert decay["status"] == "insufficient_history"
 
     def test_spectral_clause_in_verdict(self, forecast_project):
