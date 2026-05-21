@@ -8,6 +8,7 @@ allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -630,6 +631,30 @@ def _resolved_thresholds(
 
 
 _RATE_OF_CHANGE_PCT = 20  # alert if metric changes more than 20%
+
+# Cap snapshot history fed into the O(n^2) Mann-Kendall / Sen's-slope trend
+# tests. _check_trends runs an O(n) window loop x an O(window^2) test per
+# tracked metric, i.e. O(n^3); an unbounded get_snapshots() fetch made `roam
+# alerts` latent-cubic on long-history repos. get_snapshots() returns
+# newest-first and trend significance is dominated by recent history, so
+# capping the fetch keeps the most-recent N snapshots -- the meaningful
+# "is it trending now" signal. Override via ROAM_ALERTS_SNAPSHOT_LIMIT for the
+# rare repo that wants a wider analysis window.
+_TREND_SNAPSHOT_LIMIT = 200
+
+
+def _trend_snapshot_limit() -> int:
+    """Return the snapshot-history cap for trend analysis (env-overridable)."""
+    raw = os.environ.get("ROAM_ALERTS_SNAPSHOT_LIMIT")
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+    return _TREND_SNAPSHOT_LIMIT
+
 
 # Metrics where an increase means degradation
 _WORSE_WHEN_HIGHER = {"cycles", "god_components", "bottlenecks", "dead_exports", "layer_violations"}
@@ -1314,7 +1339,7 @@ def alerts(ctx):
 
     with open_db(readonly=True) as conn:
         # W607-CX: ``get_snapshots`` substrate -- DB-row ingest.
-        snaps_raw = _run_check_cx("get_snapshots", get_snapshots, conn, default=[])
+        snaps_raw = _run_check_cx("get_snapshots", get_snapshots, conn, _trend_snapshot_limit(), default=[])
         if snaps_raw is None:
             snaps_raw = []
         # W607-CX: ``build_snap_dicts`` substrate -- raw-row -> dict.
