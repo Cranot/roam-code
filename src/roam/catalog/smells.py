@@ -396,6 +396,17 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind IN ('function', 'method')"
     ).fetchall()
+    # Bulk-fetch every outbound edge ONCE and bucket by source_id, replacing
+    # the per-symbol ``WHERE e.source_id = ?`` N+1 query. The in-memory bucket
+    # is keyed by source symbol id; iteration order over ``rows`` below is
+    # unchanged so the emitted findings stay byte-identical.
+    from collections import defaultdict
+
+    edges_by_source: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    for e in conn.execute(
+        "SELECT e.source_id, e.target_id, t.file_id as target_file_id FROM edges e JOIN symbols t ON e.target_id = t.id"
+    ).fetchall():
+        edges_by_source[e["source_id"]].append((e["target_id"], e["target_file_id"]))
     results = []
     for r in rows:
         # (1) Skip test-role files + orchestrator/assembler-named functions.
@@ -403,23 +414,17 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
             continue
         if _FEATURE_ENVY_ORCHESTRATOR_RE.search(r["name"] or ""):
             continue
-        edges = conn.execute(
-            "SELECT e.target_id, t.file_id as target_file_id "
-            "FROM edges e "
-            "JOIN symbols t ON e.target_id = t.id "
-            "WHERE e.source_id = ?",
-            (r["id"],),
-        ).fetchall()
+        edges = edges_by_source.get(r["id"], [])
         total = len(edges)
         if total < 4:
             continue
-        external = sum(1 for e in edges if e["target_file_id"] != r["file_id"])
+        external = sum(1 for (_tid, tfid) in edges if tfid != r["file_id"])
         ratio = external / total
         if ratio <= 0.5:
             continue
         # (2) Concentration gate: the external refs must be dominated by one
         # foreign file. Spread-across-many-files is orchestration, not envy.
-        foreign_counts = Counter(e["target_file_id"] for e in edges if e["target_file_id"] != r["file_id"])
+        foreign_counts = Counter(tfid for (_tid, tfid) in edges if tfid != r["file_id"])
         max_foreign = max(foreign_counts.values())
         dominant_share = max_foreign / external
         if dominant_share < _FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE:
@@ -494,6 +499,22 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind IN ('function', 'method')"
     ).fetchall()
+    # Bulk-fetch every incoming edge ONCE and bucket by target_id, replacing
+    # the per-symbol ``WHERE e.target_id = ?`` N+1 query. Each bucket entry is
+    # a (caller_file_id, caller_file_path) pair; the per-symbol filtering +
+    # de-dup below reproduces the old ``SELECT DISTINCT`` semantics in Python.
+    from collections import defaultdict
+
+    callers_by_target: dict[int, list[tuple[int | None, str]]] = defaultdict(list)
+    for cr in conn.execute(
+        "SELECT e.target_id AS tid, "
+        "COALESCE(e.source_file_id, ss.file_id) AS cf, "
+        "cf2.path AS cpath "
+        "FROM edges e "
+        "JOIN symbols ss ON e.source_id = ss.id "
+        "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id)"
+    ).fetchall():
+        callers_by_target[cr["tid"]].append((cr["cf"], cr["cpath"]))
     results = []
     for r in rows:
         # (1) Skip test-role target files.
@@ -511,19 +532,10 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
         # (3) Count DISTINCT non-test caller files (incoming edges), excluding
         #     the symbol's own file. This is the file-SCATTER metric: how many
         #     separate files a change to this symbol would ripple across.
-        caller_rows = conn.execute(
-            "SELECT DISTINCT COALESCE(e.source_file_id, ss.file_id) AS cf, "
-            "cf2.path AS cpath "
-            "FROM edges e "
-            "JOIN symbols ss ON e.source_id = ss.id "
-            "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id) "
-            "WHERE e.target_id = ?",
-            (r["id"],),
-        ).fetchall()
         caller_files = {
-            cr["cpath"]
-            for cr in caller_rows
-            if cr["cf"] is not None and cr["cf"] != r["file_id"] and not _is_test_path(cr["cpath"])
+            cpath
+            for (cf, cpath) in callers_by_target.get(r["id"], [])
+            if cf is not None and cf != r["file_id"] and not _is_test_path(cpath)
         }
         scatter = len(caller_files)
         if scatter < _SHOTGUN_MIN_CALLER_FILES:
@@ -1066,25 +1078,46 @@ def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind = 'class'"
     ).fetchall()
+    # Bulk-fetch every method ONCE, bucketed by file_id, replacing the
+    # per-class ``WHERE file_id = ? AND line_start >= ? AND line_end <= ?``
+    # query. The per-class line-range filter runs in Python below.
+    from collections import defaultdict
+
+    methods_by_file: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+    for m in conn.execute("SELECT id, file_id, line_start, line_end FROM symbols WHERE kind = 'method'").fetchall():
+        methods_by_file[m["file_id"]].append((m["id"], m["line_start"], m["line_end"]))
+    # Bulk-fetch every method->method edge ONCE, bucketed by source method id,
+    # replacing the per-class ``source_id IN (...) AND target_id IN (...)``
+    # query. Each entry maps a method source id to its method target ids.
+    method_id_set = {m[0] for ms in methods_by_file.values() for m in ms}
+    method_edges_by_source: dict[int, list[int]] = defaultdict(list)
+    for e in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
+        sid, tid = e["source_id"], e["target_id"]
+        if sid in method_id_set and tid in method_id_set:
+            method_edges_by_source[sid].append(tid)
     results = []
     for r in rows:
-        # Count methods within the class line range
-        methods = conn.execute(
-            "SELECT id FROM symbols WHERE file_id = ? AND kind = 'method' AND line_start >= ? AND line_end <= ?",
-            (r["file_id"], r["line_start"] or 0, r["line_end"] or 0),
-        ).fetchall()
+        # Count methods within the class line range. The class bounds use
+        # ``COALESCE(... , 0)`` to mirror the old query's ``line_start or 0``
+        # binding; a method with a NULL ``line_start``/``line_end`` is
+        # excluded — a NULL comparison in the old SQL evaluates falsy.
+        ls, le = r["line_start"] or 0, r["line_end"] or 0
+        methods = [
+            mid
+            for (mid, m_ls, m_le) in methods_by_file.get(r["file_id"], [])
+            if m_ls is not None and m_le is not None and m_ls >= ls and m_le <= le
+        ]
         method_count = len(methods)
         if method_count < 5:
             continue
-        method_ids = [m["id"] for m in methods]
+        method_ids = methods
         if not method_ids:
             continue
         # Count internal edges between methods of this class
-        ph = ",".join("?" for _ in method_ids)
-        internal_edges = conn.execute(
-            f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) AND target_id IN ({ph})",
-            method_ids + method_ids,
-        ).fetchone()[0]
+        class_method_set = set(method_ids)
+        internal_edges = sum(
+            1 for sid in method_ids for tid in method_edges_by_source.get(sid, []) if tid in class_method_set
+        )
         threshold = method_count // 2
         if internal_edges < threshold:
             loc_str = _loc(r["file_path"], r["line_start"])
