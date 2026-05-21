@@ -29,6 +29,9 @@ facing description.
 
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 from typing import Any
 
 from roam.evidence._vocabulary import REDACTION_REASONS
@@ -212,4 +215,46 @@ def mcp_receipt_json_schema() -> dict[str, Any]:
     }
 
 
+def _main(argv: list[str] | None = None) -> int:
+    """Print the receipt JSON Schema (or write it with ``--out``).
+
+    This makes the schema export reachable from an installed wheel via
+    ``python -m roam.evidence.mcp_receipt_schema`` — ``scripts/`` lives
+    outside the ``roam`` package and is NOT shipped to PyPI, so a
+    ``pip install roam-code`` user could not otherwise run the export.
+    The companion ``scripts/export_mcp_receipt_schema.py`` is a thin
+    in-repo delegator to this function.
+
+    Output is JSON Schema Draft 2020-12 with sorted keys and 2-space
+    indent — deterministic, so gateway integrators can diff a vendored
+    copy across roam releases.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m roam.evidence.mcp_receipt_schema",
+        description="Export the McpDecisionReceipt JSON Schema (Draft 2020-12).",
+    )
+    parser.add_argument(
+        "--out",
+        metavar="PATH",
+        default=None,
+        help="Write the schema to PATH instead of stdout.",
+    )
+    args = parser.parse_args(argv)
+
+    schema = mcp_receipt_json_schema()
+    # Deterministic: sorted keys + 2-space indent. Easy to diff in PRs.
+    text = json.dumps(schema, indent=2, sort_keys=True) + "\n"
+
+    if args.out is not None:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 __all__ = ["mcp_receipt_json_schema", "SCHEMA_ID", "SCHEMA_VERSION"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

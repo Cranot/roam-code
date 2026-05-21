@@ -82,11 +82,21 @@ jobs:
           # the working tree, and `cosign.key` / `.roam/index.db` are not
           # part of the source commit. The dirty-hash is recorded in the
           # predicate explicitly per cmd_cga.py guidance.
+          # W472: --also-vsa additionally emits a SLSA v1 Verification
+          # Summary Attestation (predicateType
+          # https://slsa.dev/verification_summary/v1) — the format
+          # external auditors consume. It lands as a sibling of the CGA:
+          # the .intoto.json suffix is stripped and .vsa.json appended,
+          # so .roam/cga-offline.intoto.json yields
+          # .roam/cga-offline.vsa.json. --sign covers both statements,
+          # so the VSA is cosign-signed alongside the CGA and gets its
+          # own .roam/cga-offline.vsa.bundle.
           roam cga emit \
             --include-taint \
             --sign \
             --key cosign.key \
             --allow-dirty \
+            --also-vsa \
             --output .roam/cga-offline.intoto.json
 
       - name: Verify CGA statement (offline round-trip)
@@ -119,6 +129,8 @@ jobs:
           path: |
             .roam/cga-offline.intoto.json
             .roam/cga-offline.intoto.bundle
+            .roam/cga-offline.vsa.json
+            .roam/cga-offline.vsa.bundle
             cosign.pub
 
   # -- Mode 2: keyless OIDC signing -----------------------------------------
@@ -159,11 +171,18 @@ jobs:
         run: |
           # W1302: see offline-key job for --allow-dirty rationale
           # (.roam/index.db not committed, dirty tree by design).
+          # W472: --also-vsa emits a sibling SLSA v1 Verification Summary
+          # Attestation at .roam/cga-keyless.vsa.json (the .intoto.json
+          # suffix is stripped, .vsa.json appended). --sign --keyless
+          # covers both statements, so the VSA is keyless-signed via
+          # Fulcio + Rekor alongside the CGA and gets its own
+          # .roam/cga-keyless.vsa.bundle (+ .vsa.cert for keyless).
           roam cga emit \
             --include-taint \
             --sign \
             --keyless \
             --allow-dirty \
+            --also-vsa \
             --output .roam/cga-keyless.intoto.json
 
       - name: Verify keyless (Fulcio + Rekor round-trip)
@@ -190,3 +209,5 @@ jobs:
           path: |
             .roam/cga-keyless.intoto.json
             .roam/cga-keyless.intoto.bundle
+            .roam/cga-keyless.vsa.json
+            .roam/cga-keyless.vsa.bundle

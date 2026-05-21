@@ -4,11 +4,33 @@
 #   - push of any v* tag (the canonical path; wheel ships before release notes)
 #   - GitHub Release creation (legacy compatibility — kept so manual draft-then-
 #     publish still works; skip-existing makes the second invocation a no-op)
-#   - manual workflow_dispatch (for re-runs after a failure)
+#   - manual workflow_dispatch (for re-runs after a failure — REQUIRES a tag input)
 #
 # Setup: configure a "trusted publisher" on PyPI for this repo
 # (https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 # before the first publish. No API tokens needed.
+#
+# W1055 — tag-bound build (split tag-publish from trunk-build):
+#   The artifact that gets published MUST be built from the exact commit the
+#   release tag points at, never from whatever trunk happens to be at run time.
+#   A ``release: published`` event days after the tag, or a ``workflow_dispatch``
+#   re-run, would otherwise check out default-branch HEAD (``github.sha``) and
+#   build drifted code under the tag's version number. The ``resolve-ref`` job
+#   below resolves a single canonical tag + SHA for every trigger and fails
+#   closed if the run is not tag-bound; every build/verify job then checks out
+#   that pinned SHA. No job both builds-from-trunk and publishes.
+#
+# W1054 — PEP 740 attestations + concurrency + environment reviewer gate:
+#   ``pypa/gh-action-pypi-publish`` is invoked with ``attestations: true`` so
+#   PyPI records PEP 740 provenance for the wheel. The ``concurrency`` block
+#   serializes overlapping tag pushes. The ``publish`` job runs in the ``pypi``
+#   GitHub environment — configure required reviewers on that environment in
+#   repo settings to gate the upload behind human approval.
+#
+# W1056 — SBOM↔wheel SHA binding + version-drift guard:
+#   The SBOM carries the SHA256 of the *published wheel* (computed after build,
+#   threaded into the CycloneDX document), not a build-time placeholder. A guard
+#   step fails the build if the built wheel's version != the git tag version.
 
 name: Publish to PyPI
 
@@ -18,16 +40,25 @@ on:
       - "v*"
   release:
     types: [published]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re-)publish from (e.g. v13.3). The build is bound to this tag's commit."
+        required: true
+        type: string
 
-# Serialize publish runs against the same ref so a tag-push + release-create
-# pair (or two simultaneous tag pushes) cannot race the SBOM-sign + PyPI
-# Trusted Publishing path. ``skip-existing: true`` only covers the wheel
-# upload collision; the Rekor / cosign sign path is not idempotent.
+# W1054: serialize publish runs so overlapping tag pushes (or a tag-push +
+# release-create pair) cannot double-publish or race the SBOM-sign + PyPI
+# Trusted Publishing path. The group key is the resolved tag, NOT
+# ``github.ref`` — a ``release: published`` event and the matching tag push
+# carry different ``github.ref`` values for the SAME release, so keying on
+# ``github.ref`` would let them run concurrently. ``github.event.release.tag_name``
+# (release trigger), ``github.event.inputs.tag`` (manual) and ``github.ref_name``
+# (tag push) collapse to the same tag string.
 # ``cancel-in-progress: false`` is critical — killing an in-flight publish
 # would leave partial state (e.g. wheel on PyPI without signed SBOM).
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -35,13 +66,97 @@ permissions:
   contents: read
 
 jobs:
+  # W1055: resolve the single canonical tag this run publishes, for ALL
+  # triggers, and fail closed if the run is not tag-bound. Every downstream
+  # job checks out ``needs.resolve-ref.outputs.sha`` so the published artifact
+  # is pinned to the tagged commit and can never drift to trunk HEAD.
+  resolve-ref:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Resolve and pin the tag-bound commit
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            push)              tag="$PUSH_REF_NAME" ;;
+            release)           tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$DISPATCH_TAG" ;;
+            *)
+              echo "::error::Unsupported trigger '$EVENT_NAME' — publish runs must be tag-bound."
+              exit 1
+              ;;
+          esac
+          if [ -z "${tag:-}" ]; then
+            echo "::error::No tag resolved for event '$EVENT_NAME' — refusing to publish from an unbound ref."
+            exit 1
+          fi
+          case "$tag" in
+            v*) ;;
+            *)
+              echo "::error::Resolved tag '$tag' does not start with 'v' — not a release tag."
+              exit 1
+              ;;
+          esac
+          # Resolve the tag to the exact commit SHA it points at. This SHA —
+          # not github.sha (trunk HEAD) — is what every build/verify job
+          # checks out. Using the GitHub API (not a local clone) means this
+          # job needs no checkout of its own.
+          sha=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq '.object.sha')
+          if [ -z "${sha:-}" ]; then
+            echo "::error::Could not resolve tag '$tag' to a commit SHA in '$REPO'."
+            exit 1
+          fi
+          # A tag can be annotated (object.type == tag) — dereference to the
+          # underlying commit so ``actions/checkout`` gets a commit-ish.
+          obj_type=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq '.object.type')
+          if [ "$obj_type" = "tag" ]; then
+            sha=$(gh api "repos/${REPO}/git/tags/${sha}" --jq '.object.sha')
+          fi
+          echo "Resolved publish target: tag=${tag} sha=${sha} (event=${EVENT_NAME})"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
   build:
+    # W1055: builds ONLY from the tag-pinned SHA resolved above. This job
+    # never sees trunk HEAD, so the artifact it produces is bound to the tag.
+    needs: resolve-ref
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
+          # W1055: pin the checkout to the resolved tag commit, NOT the
+          # workflow's default ref. For a delayed ``release: published`` or a
+          # ``workflow_dispatch`` re-run, the default ref is trunk HEAD —
+          # checking that out would publish drifted code under the tag.
+          ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
+
+      - name: Confirm checkout is the tag-bound commit
+        # W1055 belt-and-suspenders: prove the working tree is the resolved
+        # SHA before anything is built. Catches a checkout-ref regression
+        # before a drifted wheel can reach PyPI.
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checked-out HEAD $actual != resolved tag SHA $EXPECTED_SHA"
+            exit 1
+          fi
+          echo "Build is bound to tag commit $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -98,6 +213,59 @@ jobs:
             exit 1
           fi
 
+      - name: Guard — wheel version must equal the git tag version
+        # W1056 version-drift guard: the tag this run publishes under is
+        # ``v<X>`` (resolve-ref). The wheel filename embeds the version
+        # setuptools baked in from pyproject.toml of the tagged commit. If
+        # those disagree, the tag was pushed without bumping pyproject (or
+        # vice-versa) — fail BEFORE PyPI sees a mislabelled artifact.
+        env:
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          fi
+          wheel="${wheels[0]}"
+          # Wheel filename is {distribution}-{version}-{python}-{abi}-{platform}.whl
+          wheel_base=$(basename "$wheel")
+          wheel_version=$(echo "$wheel_base" | awk -F- '{print $2}')
+          # The git tag is ``v<version>``; strip the leading ``v``.
+          tag_version="${TAG#v}"
+          # Cross-check against pyproject.toml as a third witness.
+          pyproject_version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag_version=${tag_version} wheel_version=${wheel_version} pyproject_version=${pyproject_version}"
+          if [ "$wheel_version" != "$tag_version" ]; then
+            echo "::error::Wheel version '$wheel_version' != git tag version '$tag_version' — bump pyproject.toml or retag."
+            exit 1
+          fi
+          if [ "$pyproject_version" != "$tag_version" ]; then
+            echo "::error::pyproject.toml version '$pyproject_version' != git tag version '$tag_version' at the tagged commit."
+            exit 1
+          fi
+
+      - name: Compute published-wheel SHA256
+        # W1056: hash the EXACT wheel file that ``pypa/gh-action-pypi-publish``
+        # uploads, so the SBOM can bind to the real published artifact instead
+        # of a build-time placeholder. Emitted as a step output AND a file in
+        # ``dist/`` so both the SBOM step (this job) and any downstream
+        # consumer can read it.
+        id: wheelsha
+        run: |
+          set -euo pipefail
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          fi
+          wheel="${wheels[0]}"
+          sha256=$(sha256sum "$wheel" | awk '{print $1}')
+          echo "Published-wheel SHA256: ${sha256}  $(basename "$wheel")"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+          echo "wheel_name=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
+
       - name: Generate CycloneDX SBOM
         # SBOM (Software Bill of Materials) for the published wheel.
         # CycloneDX is the format auditors and enterprise procurement
@@ -113,6 +281,14 @@ jobs:
         # The SBOM lives in ``sbom/`` (NOT ``dist/``) so it doesn't
         # land in twine's upload set — twine validates filenames and
         # would reject .cdx.json.
+        #
+        # W1056: after the SBOM is generated, the published-wheel SHA256
+        # (computed above) is threaded into the CycloneDX document as a
+        # component hash + a top-level metadata property, so the SBOM is
+        # cryptographically bound to the exact artifact that reaches PyPI.
+        env:
+          WHEEL_SHA256: ${{ steps.wheelsha.outputs.sha256 }}
+          WHEEL_NAME: ${{ steps.wheelsha.outputs.wheel_name }}
         run: |
           set -e
           mkdir -p sbom
@@ -129,14 +305,80 @@ jobs:
           /tmp/sbom-venv/bin/pip install --quiet --upgrade pip
           /tmp/sbom-venv/bin/pip install --quiet cyclonedx-bom
           /tmp/sbom-venv/bin/pip install --quiet "$wheel"
+          sbom_path="sbom/roam-code-${version}.cdx.json"
           /tmp/sbom-venv/bin/cyclonedx-py environment \
             /tmp/sbom-venv/bin/python \
             --of JSON \
-            -o "sbom/roam-code-${version}.cdx.json"
-          echo "SBOM written to sbom/roam-code-${version}.cdx.json"
+            -o "$sbom_path"
+          echo "SBOM written to ${sbom_path}"
           # Quick sanity: ensure roam-code itself appears in components.
-          grep -q '"name": "roam-code"' "sbom/roam-code-${version}.cdx.json" \
+          grep -q '"name": "roam-code"' "$sbom_path" \
             || (echo "::error::SBOM missing roam-code component" && exit 1)
+          # W1056: bind the SBOM to the published wheel's SHA256.
+          # ``cyclonedx-py environment`` describes the installed dist (an
+          # unpacked package), not the wheel file, so it carries no hash for
+          # the wheel artifact itself. Inject the real SHA-256 of the wheel
+          # that will be uploaded to PyPI:
+          #   (a) onto the roam-code component as a CycloneDX ``hashes`` entry,
+          #   (b) as a top-level ``metadata.properties`` entry naming the
+          #       wheel file, so auditors can verify ``sha256sum <wheel>``
+          #       against the SBOM without parsing the component tree.
+          python - "$sbom_path" <<'PYEOF'
+          import json
+          import os
+          import sys
+
+          sbom_path = sys.argv[1]
+          wheel_sha = os.environ["WHEEL_SHA256"]
+          wheel_name = os.environ["WHEEL_NAME"]
+          if not wheel_sha:
+              sys.exit("::error::WHEEL_SHA256 is empty — wheel-SHA step did not run")
+
+          with open(sbom_path, encoding="utf-8") as fh:
+              doc = json.load(fh)
+
+          # (a) attach the wheel hash to the roam-code component.
+          bound = False
+          for comp in doc.get("components", []):
+              if comp.get("name") == "roam-code":
+                  hashes = comp.setdefault("hashes", [])
+                  # Drop any pre-existing SHA-256 placeholder, then bind the
+                  # real published-wheel digest.
+                  hashes[:] = [h for h in hashes if h.get("alg") != "SHA-256"]
+                  hashes.append({"alg": "SHA-256", "content": wheel_sha})
+                  bound = True
+          # The roam-code dist may surface under the metadata.component slot
+          # rather than the components list depending on cyclonedx-bom version.
+          meta_comp = doc.setdefault("metadata", {}).get("component")
+          if meta_comp and meta_comp.get("name") == "roam-code":
+              hashes = meta_comp.setdefault("hashes", [])
+              hashes[:] = [h for h in hashes if h.get("alg") != "SHA-256"]
+              hashes.append({"alg": "SHA-256", "content": wheel_sha})
+              bound = True
+          if not bound:
+              sys.exit("::error::roam-code component not found in SBOM — cannot bind wheel SHA")
+
+          # (b) top-level metadata property naming the exact wheel file.
+          props = doc.setdefault("metadata", {}).setdefault("properties", [])
+          props[:] = [
+              p for p in props
+              if p.get("name") not in (
+                  "roam:published_wheel_sha256",
+                  "roam:published_wheel_filename",
+              )
+          ]
+          props.append({"name": "roam:published_wheel_sha256", "value": wheel_sha})
+          props.append({"name": "roam:published_wheel_filename", "value": wheel_name})
+
+          with open(sbom_path, "w", encoding="utf-8") as fh:
+              json.dump(doc, fh, indent=2)
+              fh.write("\n")
+          print(f"SBOM bound to published wheel {wheel_name} sha256={wheel_sha}")
+          PYEOF
+          # Verify the binding landed before the SBOM leaves the build job.
+          grep -q "$WHEEL_SHA256" "$sbom_path" \
+            || (echo "::error::SBOM does not carry the published-wheel SHA256" && exit 1)
+          echo "SBOM↔wheel SHA binding verified."
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -154,10 +396,16 @@ jobs:
           path: sbom/
 
   publish:
-    needs: build
+    needs: [resolve-ref, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: pypi          # optional: use a GitHub environment for approval
+    # W1054: the ``pypi`` GitHub environment gates this job. Configure
+    # required reviewers on the environment in repo Settings → Environments
+    # so a human must approve before the wheel is uploaded. The environment
+    # also scopes the OIDC subject for PyPI Trusted Publishing.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/roam-code/${{ needs.resolve-ref.outputs.tag }}
     permissions:
       id-token: write
       contents: write   # upload SBOM as a release asset
@@ -182,6 +430,12 @@ jobs:
           # Idempotency: when a manual twine upload already shipped the wheel,
           # the workflow should no-op cleanly instead of erroring on file collision.
           skip-existing: true
+          # W1054: emit PEP 740 attestations. The action signs each
+          # dist with a Sigstore-backed attestation via the job's OIDC
+          # token and PyPI records the provenance. ``true`` is the action
+          # default for Trusted Publishing, but pin it explicitly so a
+          # future action-default change cannot silently drop provenance.
+          attestations: true
 
       - name: Install cosign
         # Only needed for tag-driven runs; the install is cheap enough
@@ -214,8 +468,10 @@ jobs:
         # product narrative — workflow artifacts expire after 90 days,
         # release assets do not.
         #
-        # Only run on tag-triggered events: workflow_dispatch / release
-        # webhooks may not have a clean tag context.
+        # W1055: upload against the RESOLVED tag (``needs.resolve-ref``),
+        # not ``github.ref_name``. A ``workflow_dispatch`` re-run carries a
+        # branch ref in ``github.ref_name`` — the resolved tag is the only
+        # correct release target across all three triggers.
         #
         # v13.2 fix (W1047): the publish job has no actions/checkout, so
         # ``gh release`` falls back to ``git`` for repo context and dies
@@ -224,10 +480,9 @@ jobs:
         # only the ``release: published`` trigger does. So tag-pushed runs
         # need to create the release before uploading assets. Idempotent
         # via ``gh release view ... || gh release create ...``.
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
           set -e
@@ -254,10 +509,9 @@ jobs:
         # ``gh release upload`` exits 0 but the asset never lands (e.g.
         # token scoping, rate-limit edge case, or someone deleting the
         # release between upload and check).
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
           set -e
@@ -272,12 +526,15 @@ jobs:
     # clean environment and run --version. Catches the class of failure
     # where the wheel passes local checks but PyPI's CDN serves the
     # wrong file or a packaging error breaks ``pip install`` post-upload.
-    needs: publish
+    needs: [resolve-ref, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
+          # W1055: smoke-test the SAME tagged commit's verification scripts,
+          # not trunk's — keeps the post-publish check bound to the release.
+          ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
 
       - uses: actions/setup-python@v5
