@@ -32,6 +32,7 @@ is the canonical registration point, not this list.
 from __future__ import annotations
 
 import ast
+import functools
 import logging
 import re
 import sqlite3
@@ -158,6 +159,75 @@ def _parse_param_count(signature: str | None) -> int:
     # Filter out self/cls and empty parts
     filtered = [p for p in parts if p and p.split(":")[0].split("=")[0].strip().lower() not in ("self", "cls", "")]
     return len(filtered)
+
+
+# ---------------------------------------------------------------------------
+# W1301 — shared per-run AST cache.
+#
+# Three Python-only detectors (``detect_magic_numbers``,
+# ``detect_boolean_parameter``, ``detect_switch_statement``) each used to
+# independently ``read_text()`` + ``ast.parse()`` every Python file in the
+# index. On roam-code (~1667 Python files) one ``ast.parse`` pass costs
+# ~8.7s; three detectors redoing it independently is ~26s -- the dominant
+# cost of ``roam smells`` (profiled: ~51s total, ~28s of it triple-parse).
+#
+# ``_read_and_parse`` parses each file exactly once and memoises the
+# resulting ``ast.Module`` against an ``(abs_path, mtime_ns, size)`` key.
+# The mtime+size component makes the cache self-invalidating: an edited
+# file re-parses, so a long-lived process (the MCP server reusing one
+# Python interpreter across many ``roam smells`` calls) never serves a
+# stale tree. The cache is bounded (``maxsize``) so it cannot grow without
+# limit on a very large monorepo; the LRU eviction simply re-parses an
+# evicted file on next access (correctness-neutral, perf-graceful).
+#
+# Output-identical guarantee: every consumer still receives the SAME
+# ``ast.Module`` it would have parsed itself (``ast.parse`` is pure for a
+# fixed source string), so the finding set is byte-identical -- this is a
+# work-deduplication refactor, not a behavioural change.
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=4096)
+def _parse_source_cached(_abs_path: str, _mtime_ns: int, _size: int) -> ast.Module | None:
+    """Read + ``ast.parse`` one file, memoised on (path, mtime_ns, size).
+
+    Returns the parsed ``ast.Module`` or ``None`` when the file cannot be
+    read or fails to parse (``SyntaxError`` / ``OSError`` / ``ValueError``).
+    The ``_mtime_ns`` + ``_size`` cache-key components self-invalidate on
+    any file edit so a reused interpreter never serves a stale tree.
+    """
+    try:
+        with open(_abs_path, encoding="utf-8", errors="replace") as fh:
+            source = fh.read()
+    except (OSError, ValueError) as exc:
+        # Loud-fallback lineage: disclose WHICH file was skipped so an
+        # operator chasing missing AST-detector findings can see the read
+        # failure rather than a silent gap.
+        log.debug("_parse_source_cached: read failed for %r: %s", _abs_path, exc)
+        return None
+    try:
+        return ast.parse(source)
+    except SyntaxError as exc:
+        log.debug("_parse_source_cached: parse failed for %r: %s", _abs_path, exc)
+        return None
+
+
+def _read_and_parse(workspace, rel_path: str) -> ast.Module | None:
+    """Return the cached ``ast.Module`` for ``workspace / rel_path``.
+
+    Thin wrapper that stats the file (cheap) to build the cache key, then
+    delegates to :func:`_parse_source_cached`. Returns ``None`` on any
+    read/stat/parse failure so callers keep their existing skip-on-None
+    control flow. Shared by the three Python-only AST detectors so each
+    file is parsed at most once per run.
+    """
+    abs_path = workspace / rel_path
+    try:
+        st = abs_path.stat()
+    except OSError as exc:
+        log.debug("_read_and_parse: stat failed for %r: %s", abs_path, exc)
+        return None
+    return _parse_source_cached(str(abs_path), st.st_mtime_ns, st.st_size)
 
 
 # ---------------------------------------------------------------------------
@@ -2271,13 +2341,11 @@ def detect_magic_numbers(conn: sqlite3.Connection) -> list[dict]:
 
     for f in files:
         rel_path = f["path"]
-        try:
-            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        # W1301: shared per-run AST cache -- parse each file at most once
+        # across the three Python-only AST detectors (was 3x independent
+        # ast.parse passes; ~8.7s each on roam-code).
+        tree = _read_and_parse(workspace, rel_path)
+        if tree is None:
             continue
 
         # Walk every FunctionDef / AsyncFunctionDef in the file. Each
@@ -2375,13 +2443,9 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
     for f in files:
         file_id = f["id"]
         rel_path = f["path"]
-        try:
-            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        # W1301: shared per-run AST cache (see detect_magic_numbers).
+        tree = _read_and_parse(workspace, rel_path)
+        if tree is None:
             continue
 
         # Pre-fetch enclosing-scope rows so each call site is attributed to
@@ -2556,13 +2620,9 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
     for f in files:
         file_id = f["id"]
         rel_path = f["path"]
-        try:
-            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        # W1301: shared per-run AST cache (see detect_magic_numbers).
+        tree = _read_and_parse(workspace, rel_path)
+        if tree is None:
             continue
 
         # Pre-collect every ``If`` node that is the orelse-tail of another
