@@ -231,14 +231,21 @@ def test_small_repos_skip_parallelization_for_clones(small_clones_project, cli_r
 
 @pytest.fixture
 def large_clones_project(project_factory):
-    """Synthetic fixture sized large enough that the parallel pair-
-    comparison path (threshold: 100K candidate pairs) is exercised
-    AND ProcessPool spinup is amortized.
+    """Synthetic fixture with a CPU-bound pair-comparison phase.
 
     Builds many source files each containing several similarly-sized
-    functions. With ~600 candidate functions × bucketed pairs we exceed
-    the 100K-pair threshold and produce a CPU-bound compare phase that
-    parallelizes well.
+    functions (~600 candidate functions, ~180K bucketed candidate
+    pairs).
+
+    NOTE: ~180K candidate pairs is BELOW the post-optimization
+    ``parallel_threshold`` (1.5M). Once ``_jaccard_bags`` was rewritten
+    single-pass (~13× faster per comparison), the ProcessPool spinup
+    (~12s on Windows) only pays off above ~1.5M candidate pairs — so a
+    fixture this size correctly takes the serial path even with
+    ``ROAM_NO_PARALLEL`` unset. Sizing a fixture past 1.5M pairs in a
+    unit test would make the test itself prohibitively slow, so the
+    companion test now verifies the serial path stays fast rather than
+    racing serial-vs-parallel.
     """
     files: dict[str, str] = {}
     # Make each function long enough (>= 5 lines + >= 8 AST nodes) to
@@ -273,13 +280,23 @@ def large_clones_project(project_factory):
 @pytest.mark.slow
 @pytest.mark.xdist_group("parallel_analyzers")
 def test_parallel_runs_faster_on_large_clones_fixture(large_clones_project, cli_runner):
-    """Wall-clock comparison: parallel should not be net-negative on a
-    fixture large enough to amortize ProcessPool spinup.
+    """A mid-size clones fixture takes the fast serial path and stays fast.
 
-    The fixture is sized so the O(n²) pair compare (~360 funcs ≈ 64K
-    candidate pairs) trips the parallel threshold. On a multi-core box
-    we expect a meaningful speedup; on single-CPU CI runners the spinup
-    cost can dominate, so the assertion is conservative.
+    Post-optimization reality: the single-pass ``_jaccard_bags`` rewrite
+    made per-pair comparison ~13× cheaper, raising the
+    ``parallel_threshold`` to 1.5M candidate pairs. This fixture
+    (~180K candidate pairs) is below that threshold, so ``roam clones``
+    correctly takes the SERIAL pair-comparison path even with
+    ``ROAM_NO_PARALLEL`` unset — engaging the ProcessPool here would be
+    net-negative (~12s Windows spinup vs ~2s of serial compare work).
+
+    The original form of this test raced serial-vs-parallel and asserted
+    ``speedup >= 0.6``; that premise broke once the optimization moved
+    the break-even far past any fixture small enough for a unit test.
+    The test now verifies the load-bearing post-optimization invariant:
+    the serial path completes the whole command quickly and the
+    parallel-default run produces identical structured results (no
+    ProcessPool spinup penalty leaks in).
 
     This test is marked slow because it runs the command twice; skip
     under ``pytest -m "not slow"``.
@@ -294,7 +311,7 @@ def test_parallel_runs_faster_on_large_clones_fixture(large_clones_project, cli_
     )
 
     t0 = time.time()
-    _run_with_env(
+    serial = _run_with_env(
         cli_runner,
         ["clones"],
         cwd=large_clones_project,
@@ -304,25 +321,32 @@ def test_parallel_runs_faster_on_large_clones_fixture(large_clones_project, cli_
     serial_elapsed = time.time() - t0
 
     t0 = time.time()
-    _run_with_env(
+    default = _run_with_env(
         cli_runner,
         ["clones"],
         cwd=large_clones_project,
         parallel=True,
         command="clones",
     )
-    parallel_elapsed = time.time() - t0
+    default_elapsed = time.time() - t0
 
-    speedup = serial_elapsed / max(parallel_elapsed, 0.01)
-    print(f"\nclones speedup: serial={serial_elapsed:.2f}s parallel={parallel_elapsed:.2f}s -> {speedup:.2f}x")
-    # On a quiet multi-core box we typically see 2-4x. Under test load
-    # (e.g. running this test alongside hundreds of others in the same
-    # pytest process) ProcessPool spinup can blow the budget. We gate
-    # at 0.6x to ensure we're not catastrophically slower, and skip the
-    # gate entirely on small hosts.
-    if (os.cpu_count() or 1) >= 4:
-        assert speedup >= 0.6, (
-            f"Parallel path is catastrophically slower than serial: "
-            f"{speedup:.2f}x (serial={serial_elapsed:.2f}s "
-            f"parallel={parallel_elapsed:.2f}s)"
-        )
+    print(f"\nclones (serial-path fixture): ROAM_NO_PARALLEL=1 {serial_elapsed:.2f}s · default {default_elapsed:.2f}s")
+
+    # Structured results must match — the candidate-pair-count threshold
+    # picks the path, but the detection output is path-independent.
+    assert _cluster_signatures(serial) == _cluster_signatures(default), (
+        "Cluster membership differs between ROAM_NO_PARALLEL=1 and default"
+    )
+    assert serial["summary"]["clone_pairs"] == default["summary"]["clone_pairs"], (
+        "clone_pairs count differs between ROAM_NO_PARALLEL=1 and default"
+    )
+
+    # The fixture is below ``parallel_threshold`` (1.5M candidate pairs),
+    # so the default run must NOT pay the ~12s ProcessPool spinup. A
+    # generous ceiling keeps the test stable under heavy parallel
+    # pytest-xdist load while still catching a regression that
+    # accidentally re-engages the pool below the break-even.
+    assert default_elapsed < 10.0, (
+        f"Mid-size fixture took {default_elapsed:.2f}s on the default path — "
+        f"looks like the ProcessPool engaged below the 1.5M-pair threshold."
+    )
