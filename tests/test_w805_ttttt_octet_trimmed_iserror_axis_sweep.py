@@ -309,6 +309,22 @@ def test_drift_guard_aggregator_check_is_still_narrow():
     import re
 
     src = inspect.getsource(_compound_envelope)
+    # Scope the check to the AGGREGATOR ``if`` LINE only — the per-subcommand
+    # classification check inside ``for name, data in sub_results``. A
+    # whole-function grep false-positives: ``_compound_envelope`` legitimately
+    # references ``isError`` ELSEWHERE — it stamps ``result["isError"] = True``
+    # on the all-failed output envelope (Pattern-1 conformance), which is
+    # unrelated to the per-child classification surface this guard tracks.
+    # Isolating the aggregator ``if`` line keeps the guard firing ONLY when
+    # the real check is widened (the W805-TTTTT fix-forward).
+    agg_line = next(
+        (
+            ln
+            for ln in src.splitlines()
+            if ln.strip().startswith("if ") and '"error" in data' in ln
+        ),
+        "",
+    )
     # The narrow form lives on ONE line near the top of the loop body:
     #   if not data or "error" in data:
     narrow_pattern = re.compile(r'if not data or "error" in data:')
@@ -318,8 +334,8 @@ def test_drift_guard_aggregator_check_is_still_narrow():
         re.compile(r"isError"),
         re.compile(r"first_error_message"),
     ]
-    narrow_hit = bool(narrow_pattern.search(src))
-    widened_hit = any(p.search(src) for p in widened_patterns)
+    narrow_hit = bool(narrow_pattern.search(agg_line))
+    widened_hit = any(p.search(agg_line) for p in widened_patterns)
     assert narrow_hit, (
         'Drift-guard expected to see the narrow \'if not data or "error" '
         "in data:' check in _compound_envelope. If the fix-forward has "
