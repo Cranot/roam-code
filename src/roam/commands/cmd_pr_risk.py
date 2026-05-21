@@ -500,38 +500,68 @@ def _emit_pr_risk_findings(
     return written
 
 
-def _get_file_stat(root, path, *, staged=False, commit_range=None):
-    """Get +/- line counts for a file."""
-    cmd = ["git", "diff", "--numstat", "--", path]
+def _get_all_file_stats(root, *, staged=False, commit_range=None):
+    """Get +/- line counts for ALL changed files in one ``git diff --numstat``.
+
+    Replaces the prior per-file ``git diff --numstat -- <path>`` spawn (one
+    subprocess per changed file) with a single invocation over the same diff
+    range/source. git's numstat output for one file is byte-identical to that
+    file's row in the all-files numstat, so the returned counts are identical
+    to the per-file calls.
+
+    Returns ``{path: (added, removed)}``. Binary files (``-``/``-`` numstat
+    tokens) map to ``(0, 0)`` exactly as the per-file code did. Any error
+    (missing git / timeout / unexpected output) yields an empty dict, so the
+    caller's ``dict.get(path, (0, 0))`` fallback degrades to ``(0, 0)`` —
+    matching the prior per-file ``return 0, 0`` floor.
+    """
+    cmd = ["git", "diff", "--numstat"]
     if commit_range:
-        cmd = ["git", "diff", "--numstat", commit_range, "--", path]
+        cmd = ["git", "diff", "--numstat", commit_range]
     elif staged:
-        cmd = ["git", "diff", "--cached", "--numstat", "--", path]
+        cmd = ["git", "diff", "--cached", "--numstat"]
+    stats: dict[str, tuple[int, int]] = {}
     try:
         result = subprocess.run(
             cmd,
             cwd=str(root),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
             encoding="utf-8",
             errors="replace",
         )
         if result.returncode != 0 or not result.stdout.strip():
-            return 0, 0
-        parts = result.stdout.strip().split("\t")
-        if len(parts) >= 2:
-            added = int(parts[0]) if parts[0] != "-" else 0
-            removed = int(parts[1]) if parts[1] != "-" else 0
-            return added, removed
-    except (OSError, subprocess.SubprocessError, ValueError):
+            return stats
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            try:
+                added = int(parts[0]) if parts[0] != "-" else 0
+                removed = int(parts[1]) if parts[1] != "-" else 0
+            except ValueError:
+                # Non-numeric numstat token (unexpected git output) — skip
+                # this row; the caller's dict.get fallback yields (0, 0).
+                continue
+            path = parts[2]
+            # Renamed files: git emits "old => new" or "{old => new}/tail" in
+            # the path column. The prior per-file call passed the path the
+            # caller resolved from the index, so its numstat row matched that
+            # exact path string. Index the row under the joined path column
+            # verbatim; if the caller's path differs the dict.get fallback
+            # yields (0, 0) — identical to the per-file path-mismatch floor.
+            stats[path] = (added, removed)
+    except (OSError, subprocess.SubprocessError):
         # OSError: git binary missing / permission denied.
         # SubprocessError: timeout / non-zero handling at run() layer.
-        # ValueError: non-numeric numstat token (e.g. unexpected git output).
         # Programmer errors (NameError/TypeError/AttributeError) propagate
         # per W531 fail-loud discipline.
-        pass
-    return 0, 0
+        return {}
+    return stats
 
 
 def _detect_author():
@@ -842,8 +872,9 @@ def pr_risk(ctx, commit_range, staged, author, persist):
     # W978 first-hypothesis finding: helper-CALL boundary is the dominant
     # raise axis. Each substrate has its own internal try/except returning
     # safe defaults (``get_changed_files`` returns ``[]`` on
-    # FileNotFoundError/TimeoutExpired; ``_get_file_stat`` returns
-    # ``(0, 0)`` on OSError/SubprocessError/ValueError;
+    # FileNotFoundError/TimeoutExpired; ``_get_all_file_stats`` returns
+    # ``{}`` on OSError/SubprocessError, so the per-file dict.get floors
+    # to ``(0, 0)``;
     # ``_detect_author`` returns ``None`` on git missing). But a helper
     # itself can still raise BEFORE reaching that floor (e.g., a downstream
     # refactor changes the SQL shape, or networkx blows up during
@@ -1112,7 +1143,12 @@ def pr_risk(ctx, commit_range, staged, author, persist):
             return
 
         total_syms_repo = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        diff_stats = {path: _get_file_stat(root, path, staged=staged, commit_range=commit_range) for path in file_map}
+        # W-perf: one `git diff --numstat` over the whole range instead of one
+        # spawn per changed file. The all-files numstat row for a path is
+        # byte-identical to `git diff --numstat -- <path>`, so per-file lookup
+        # below is an output-identical dict.get with a (0, 0) absence floor.
+        _all_diff_stats = _get_all_file_stats(root, staged=staged, commit_range=commit_range)
+        diff_stats = {path: _all_diff_stats.get(path, (0, 0)) for path in file_map}
 
         # --- Resolve author for familiarity/minor-contributor factors ---
         # W607-Q: ``_detect_author`` has its own try/except returning None
