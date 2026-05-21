@@ -318,11 +318,7 @@ def test_drift_guard_aggregator_check_is_still_narrow():
     # Isolating the aggregator ``if`` line keeps the guard firing ONLY when
     # the real check is widened (the W805-TTTTT fix-forward).
     agg_line = next(
-        (
-            ln
-            for ln in src.splitlines()
-            if ln.strip().startswith("if ") and '"error" in data' in ln
-        ),
+        (ln for ln in src.splitlines() if ln.strip().startswith("if ") and '"error" in data' in ln),
         "",
     )
     # The narrow form lives on ONE line near the top of the loop body:
