@@ -574,6 +574,7 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
             "rules_failing_on_siblings": 0,
             "total_violations": 0,
             "failed_rules": [],
+            "failed_rules_on_siblings": [],
             "rule_details": [],
             "severity": "OK",
         }
@@ -653,6 +654,20 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
         severity = _fitness_severity(target_fail_count or failed)
         failed_names_emit = failed_names
 
+    # Sibling-only failures: rules that FAIL but touch ZERO target files.
+    # ``failed_rules`` is target-attributed by design (W-dogfood-K) and is
+    # legitimately empty when the target itself is clean — but the
+    # sibling-failure text branch and JSON consumers still need the rule
+    # NAMES that ``rules_failing_on_siblings`` is counting, so they agree
+    # with ``rule_details``. Without this the preflight Fitness line printed
+    # a hollow ``()`` and the envelope reported an empty list against a
+    # non-zero count.
+    failed_names_on_siblings = [
+        r["name"]
+        for r in rule_results
+        if r["status"] == "FAIL" and r["violations_on_target"] == 0 and r["violations_on_siblings"] > 0
+    ]
+
     return {
         "rules_checked": len(rule_results),
         "rules_failed": failed,
@@ -661,6 +676,7 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
         "rules_failing_on_siblings": sibling_fail_count,
         "total_violations": len(all_violations),
         "failed_rules": failed_names_emit,
+        "failed_rules_on_siblings": failed_names_on_siblings,
         "rule_details": rule_results,
         "severity": severity,
     }
@@ -1144,6 +1160,7 @@ def preflight(ctx, target, staged):
                 "rules_failing_on_siblings": 0,
                 "total_violations": 0,
                 "failed_rules": [],
+                "failed_rules_on_siblings": [],
                 "rule_details": [],
                 "severity": "OK",
             },
@@ -1367,8 +1384,11 @@ def preflight(ctx, target, staged):
                 "fitness": {
                     "rules_checked": fitns["rules_checked"],
                     "rules_failed": fitns["rules_failed"],
+                    "rules_failing_on_target": fitns.get("rules_failing_on_target", 0),
+                    "rules_failing_on_siblings": fitns.get("rules_failing_on_siblings", 0),
                     "total_violations": fitns["total_violations"],
                     "failed_rules": fitns["failed_rules"],
+                    "failed_rules_on_siblings": fitns.get("failed_rules_on_siblings", []),
                     "rule_details": fitns["rule_details"],
                     "severity": fitns["severity"],
                 },
@@ -1549,17 +1569,32 @@ def preflight(ctx, target, staged):
             # the same file ("Max function complexity 50" tripped by a
             # 700-cc neighbour); blaming the changing symbol for that is
             # misleading. We surface both buckets explicitly.
+            # Helper: append a ``(name, name, ...)`` parenthetical only when
+            # there are names to show — never print a hollow ``()``.
+            def _with_names(text: str, names: list[str]) -> str:
+                shown = [n for n in names[:3] if n]
+                return f"{text} ({', '.join(shown)})" if shown else text
+
             if fitns["rules_checked"] == 0:
                 fit_desc = "no rules configured"
             elif fitns.get("rules_failing_on_target", 0) > 0:
-                rule_names = ", ".join(fitns["failed_rules"][:3])
-                fit_desc = f"{fitns['rules_failing_on_target']} rules currently fail on target ({rule_names})"
+                fit_desc = _with_names(
+                    f"{fitns['rules_failing_on_target']} rules currently fail on target",
+                    fitns.get("failed_rules") or [],
+                )
             elif fitns.get("rules_failing_on_siblings", 0) > 0:
-                rule_names = ", ".join(fitns["failed_rules"][:3])
-                fit_desc = f"target passes; {fitns['rules_failing_on_siblings']} rule(s) fail on sibling symbols ({rule_names})"
+                # Sibling-only failures: the target is clean. Name them from
+                # ``failed_rules_on_siblings`` (which agrees with rule_details)
+                # — ``failed_rules`` is target-attributed and empty here.
+                fit_desc = _with_names(
+                    f"target passes; {fitns['rules_failing_on_siblings']} rule(s) fail on sibling symbols",
+                    fitns.get("failed_rules_on_siblings") or [],
+                )
             elif fitns["rules_failed"] > 0:
-                rule_names = ", ".join(fitns["failed_rules"][:3])
-                fit_desc = f"{fitns['rules_failed']} rules currently fail ({rule_names})"
+                fit_desc = _with_names(
+                    f"{fitns['rules_failed']} rules currently fail",
+                    fitns.get("failed_rules") or [],
+                )
             else:
                 fit_desc = f"all {fitns['rules_checked']} rules pass"
             click.echo(f"  Fitness:          {fit_desc:<40s} {_severity_tag(fitns['severity'])}")
