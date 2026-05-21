@@ -213,7 +213,16 @@ def personalized_pagerank(
         normalised = {n: w / total for n, w in normalised.items()}
 
     try:
-        return nx.pagerank(G, alpha=alpha, personalization=normalised)
+        # Route through the roam-owned bounded power iteration — NOT
+        # nx.pagerank, which hangs for minutes on large dangling-heavy graphs
+        # under numpy>=2.4 / scipy>=1.17 (the same regression compute_pagerank
+        # was fixed for). personalized_pagerank runs on the FULL symbol graph
+        # at two production sites (retrieve's reranker, cmd_impact's reverse
+        # graph), so a seed-resolving query would otherwise wedge those
+        # commands. _pagerank_core takes the same personalization dict, hard-
+        # caps iterations (never raises PowerIterationFailedConvergence), and
+        # matches nx.pagerank within tol (tests/test_pagerank_scipy_core.py).
+        return _pagerank_core(G, alpha, personalization=normalised)
     except ImportError:
         # numpy/scipy not installed — degree-with-seed-boost fallback,
         # normalised so the result still satisfies the "scores sum to 1"
@@ -223,9 +232,6 @@ def personalized_pagerank(
         raw = {n: G.degree(n) + (5.0 if n in normalised else 0.0) for n in G}
         total = sum(raw.values()) or 1.0
         return {n: v / total for n, v in raw.items()}
-    except nx.PowerIterationFailedConvergence:
-        # Rare on real graphs; fall back to a tolerant pagerank call
-        return nx.pagerank(G, alpha=alpha, personalization=normalised, max_iter=300, tol=1e-04)
 
 
 def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
