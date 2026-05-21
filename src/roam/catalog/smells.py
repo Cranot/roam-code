@@ -447,8 +447,9 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
 
 
 # Tier: structural — caller-FILE scatter over the call-graph edges
-# (distinct source files of incoming edges), not a name heuristic. The
-# signal is graph topology, so the tier stays structural.
+# (distinct source files of incoming edges) gated on git co-change
+# coherence, not a name heuristic. The signal is graph + git topology, so
+# the tier stays structural.
 #
 # W1287 RE-IMPLEMENTATION ((internal memo)): the pre-W1287
 # detector fired on ``graph_metrics.in_degree > 7`` — pure INBOUND
@@ -458,39 +459,60 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
 # EvidenceArtifact.path), 69% in tests/. High inbound reference count is
 # good factoring — the OPPOSITE of the smell. The module comment at the
 # ``message-chain`` registration confirms message-chain is the out_degree
-# axis, so the in_degree impl was the wrong axis entirely.
+# axis, so the in_degree impl was the wrong axis entirely. W1287 replaced
+# it with a distinct-non-test-caller-FILE scatter count.
 #
-# Fowler's shotgun surgery = ONE change forcing edits across MANY DISTINCT
-# FILES — file-SCATTER, not raw reference count. The metric is now the
-# count of DISTINCT NON-TEST CALLER FILES referencing the symbol. To keep
-# the detector from re-discovering the same well-factored-hub FP class
-# (re-measurement on roam-code at threshold 8 still surfaced to_json /
-# open_db / ensure_index / find_project_root — single-source-of-truth
-# utilities whose high scatter is *centralization*, not surgery; estimated
-# new FP still > 60%), the detector is deliberately CONSERVATIVE: it fires
-# rarely-but-precisely behind (1) a high threshold and (2) the same
-# test-role / property / trivial-accessor exclusions the W1280 feature-envy
-# fix used. A well-factored repo SHOULD report ~zero shotgun-surgery rows;
-# the conservative gate makes that the expected state rather than emitting
-# ~1472 popularity-artifact FPs. The kind stays registered (retiring it
-# triggers count-drift / registry ripple). Tune ``_SHOTGUN_MIN_CALLER_FILES``
-# up, never down, if a future corpus re-introduces FPs.
+# W1300 COHERENCE GATE (the memo's fix-1 SECOND clause, restored): W1287
+# shipped the scatter axis but DROPPED the memo's "require the callees to
+# be a coherent change-set" requirement. Re-measurement confirmed the
+# predicted residual FP: at scatter>=12 the 27 roam-code rows were ALL
+# well-factored hubs (to_json/open_db/json_envelope/ensure_index/
+# find_project_root) — scatter alone cannot tell "one symbol forces
+# scattered edits" (surgery) apart from "one symbol is reused everywhere"
+# (centralization); both score high scatter. The discriminator is git
+# co-change COHERENCE among the caller files themselves: a genuine
+# shotgun-surgery symbol's scattered caller files co-evolve in shared
+# commits (a real ripple); a reuse hub's caller files each touched the
+# utility once and never co-change with each other. Measured on roam-code:
+# hubs cluster at 5-9% pairwise coherence, genuine change-clusters at
+# 19-48% — a clean bimodal split, cut at ``_SHOTGUN_MIN_COHERENCE`` (0.15).
+# The gate is GRACEFUL: when ``git_cochange`` is empty (no git history, or
+# a unit-test fixture that does not populate it) it degrades to the W1287
+# scatter-only behaviour so fixtures + no-history repos keep firing.
+# A well-factored repo SHOULD still report ~zero rows. The kind stays
+# registered (retiring it triggers count-drift / registry ripple). Tune
+# ``_SHOTGUN_MIN_CALLER_FILES`` / ``_SHOTGUN_MIN_COHERENCE`` UP, never
+# down, if a future corpus re-introduces FPs.
 _SHOTGUN_MIN_CALLER_FILES = 12
+# Minimum pairwise co-change coherence among a candidate's distinct caller
+# files for the scatter to count as a genuine change-ripple rather than a
+# centralization artifact. 0.15 sits in the empty band between the
+# roam-code reuse-hub cluster (<=0.12) and the genuine-cluster band
+# (>=0.19). Only applied when git_cochange has rows (graceful degrade).
+_SHOTGUN_MIN_COHERENCE = 0.15
 
 
 @detector("shotgun-surgery", confidence=CONFIDENCE_STRUCTURAL)
 def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
-    """Symbols referenced from many DISTINCT non-test caller files.
+    """Symbols whose change ripples across many CO-EVOLVING caller files.
 
     Fires when a function/method is referenced (incoming call/use edges)
-    from at least ``_SHOTGUN_MIN_CALLER_FILES`` (12) DISTINCT files that
-    are NOT the symbol's own file and NOT test-role files — i.e. changing
-    this one symbol ripples across many separate files (Fowler's shotgun
-    surgery: file-SCATTER, not raw inbound-reference count). Excludes
-    test-role target files, ``@property`` / dataclass-field symbols, and
-    trivial 1-3 line accessors (mirrors the W1280 feature-envy exclusion
-    style). Deliberately conservative — see the W1287 comment above for
-    why high inbound popularity alone is NOT this smell.
+    from at least ``_SHOTGUN_MIN_CALLER_FILES`` (12) DISTINCT non-test
+    files that are NOT the symbol's own file (Fowler's file-SCATTER axis)
+    AND those caller files form a coherent change-cluster — their pairwise
+    git co-change coherence is at least ``_SHOTGUN_MIN_COHERENCE`` (0.15).
+    The coherence gate is the discriminator that separates a genuine
+    change-ripple from a well-factored reuse hub (``to_json`` / ``open_db``
+    are referenced everywhere but their callers do NOT co-evolve): scatter
+    alone is centralization, scatter + coherence is shotgun surgery.
+
+    Excludes test-role target files, ``@property`` / dataclass-field
+    symbols, and trivial 1-3 line accessors (mirrors the W1280 feature-envy
+    exclusion style). The coherence gate degrades gracefully — when
+    ``git_cochange`` has no rows (no git history, or a unit-test fixture),
+    the detector falls back to the W1287 scatter-only predicate. See the
+    W1287 / W1300 comment above for why inbound popularity alone is NOT
+    this smell.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, s.file_id, "
@@ -515,6 +537,22 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
         "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id)"
     ).fetchall():
         callers_by_target[cr["tid"]].append((cr["cf"], cr["cpath"]))
+    # W1300: bulk-load the file co-change adjacency ONCE. ``git_cochange`` is
+    # a symmetric (file_id_a, file_id_b, cochange_count) table; require
+    # ``cochange_count >= 2`` so a single incidental shared commit does not
+    # register as coupling. ``cochange_present`` is False when the table is
+    # absent or empty -> the coherence gate degrades to scatter-only.
+    cochange_adj: dict[int, set[int]] = defaultdict(set)
+    cochange_present = False
+    try:
+        for ca, cb, cc in conn.execute(
+            "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange WHERE cochange_count >= 2"
+        ).fetchall():
+            cochange_present = True
+            cochange_adj[ca].add(cb)
+            cochange_adj[cb].add(ca)
+    except sqlite3.OperationalError:
+        cochange_present = False
     results = []
     for r in rows:
         # (1) Skip test-role target files.
@@ -529,17 +567,39 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
         ls, le = r["line_start"], r["line_end"]
         if ls is not None and le is not None and (le - ls) <= 2:
             continue
-        # (3) Count DISTINCT non-test caller files (incoming edges), excluding
-        #     the symbol's own file. This is the file-SCATTER metric: how many
+        # (3) Distinct non-test caller files (incoming edges), excluding the
+        #     symbol's own file. This is the file-SCATTER metric: how many
         #     separate files a change to this symbol would ripple across.
-        caller_files = {
-            cpath
-            for (cf, cpath) in callers_by_target.get(r["id"], [])
-            if cf is not None and cf != r["file_id"] and not _is_test_path(cpath)
-        }
-        scatter = len(caller_files)
+        #     Keep file ids alongside paths for the coherence step below.
+        caller_file_ids: set[int] = set()
+        caller_file_paths: set[str] = set()
+        for cf, cpath in callers_by_target.get(r["id"], []):
+            if cf is not None and cf != r["file_id"] and not _is_test_path(cpath):
+                caller_file_ids.add(cf)
+                caller_file_paths.add(cpath)
+        scatter = len(caller_file_paths)
         if scatter < _SHOTGUN_MIN_CALLER_FILES:
             continue
+        # (4) Coherence gate (W1300): the scattered caller files must form a
+        #     coherent change-cluster. Compute the fraction of caller-file
+        #     PAIRS that co-change with each other. A reuse hub's callers do
+        #     not co-evolve (low coherence); a genuine shotgun-surgery
+        #     symbol's callers share commits (high coherence). Degrades to
+        #     scatter-only when no git_cochange data exists.
+        coherence = 1.0  # default when the gate cannot apply (no git data)
+        if cochange_present:
+            cf_ids = sorted(caller_file_ids)
+            total_pairs = 0
+            coupled_pairs = 0
+            for ci in range(len(cf_ids)):
+                adj_i = cochange_adj.get(cf_ids[ci], ())
+                for cj in range(ci + 1, len(cf_ids)):
+                    total_pairs += 1
+                    if cf_ids[cj] in adj_i:
+                        coupled_pairs += 1
+            coherence = (coupled_pairs / total_pairs) if total_pairs else 0.0
+            if coherence < _SHOTGUN_MIN_COHERENCE:
+                continue
         loc_str = _loc(r["file_path"], r["line_start"])
         results.append(
             _finding(
@@ -550,7 +610,8 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
                 loc_str,
                 scatter,
                 _SHOTGUN_MIN_CALLER_FILES,
-                f"Shotgun surgery: referenced from {scatter} distinct non-test files; "
+                f"Shotgun surgery: referenced from {scatter} distinct non-test files "
+                f"that co-evolve ({coherence:.0%} pairwise co-change coherence); "
                 f"a change ripples across all of them",
             )
         )

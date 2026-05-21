@@ -52,7 +52,13 @@ from roam.output.formatter import (
 # axis) onto a conservative distinct-non-test-caller-FILE scatter metric
 # (>=12 caller files; Fowler's file-scatter axis). Predicate + claim shape
 # changed; ~1472 -> ~27 rows on roam-code.
-SMELLS_DETECTOR_VERSION: str = "1.6.0"
+# 1.6.0 -> 1.7.0 (W1300): detect_shotgun_surgery gains the memo's fix-1
+# SECOND clause — a git co-change COHERENCE gate. Scatter alone could not
+# tell a genuine change-ripple apart from a well-factored reuse hub
+# (to_json/open_db scored high scatter); the caller files must now also
+# co-evolve (>=15% pairwise co-change coherence). Graceful-degrades to
+# scatter-only when git_cochange is empty. ~27 -> ~13 rows on roam-code.
+SMELLS_DETECTOR_VERSION: str = "1.7.0"
 
 # W370c: per-smell-kind version stamps for the 2 detectors landing in this
 # wave. The composite SMELLS_DETECTOR_VERSION bumps 1.0.0 -> 1.1.0 to mark
@@ -91,7 +97,10 @@ FEATURE_ENVY_DETECTOR_VERSION: str = "1.1.0"
 # ~100% FP, the wrong axis) onto a conservative distinct-non-test-caller-FILE
 # scatter metric (Fowler's file-scatter axis). Predicate + metric semantics
 # changed -> bump 1.0.0 -> 1.1.0. Same call-site discipline as W1280.
-SHOTGUN_SURGERY_DETECTOR_VERSION: str = "1.1.0"
+# W1300: scatter is gated on git co-change coherence among the caller files
+# (the memo's fix-1 second clause) so reuse hubs no longer score as surgery.
+# Predicate tightened + claim shape extended -> bump 1.1.0 -> 1.2.0.
+SHOTGUN_SURGERY_DETECTOR_VERSION: str = "1.2.0"
 
 
 # W1269 (sibling of W1256): lookup table consumed by

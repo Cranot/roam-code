@@ -644,6 +644,70 @@ class TestShotgunSurgery:
         assert results == [], "8 distinct caller files is below the 12 threshold"
         conn.close()
 
+    def test_empty_git_cochange_degrades_to_scatter_only(self, tmp_path):
+        """W1300: with no git_cochange rows the coherence gate is bypassed.
+
+        The graceful-degrade path keeps the W1287 scatter-only predicate
+        for no-history repos + unit-test fixtures that do not populate
+        ``git_cochange``. ``_populate_shotgun_surgery`` writes no co-change
+        rows, so this is the degrade path: a 14-caller-file symbol still
+        fires exactly as it did under W1287.
+        """
+        conn = _make_db(tmp_path)
+        assert conn.execute("SELECT COUNT(*) FROM git_cochange").fetchone()[0] == 0
+        _populate_shotgun_surgery(conn, symbol_name="hub_fn", n_caller_files=14)
+        results = detect_shotgun_surgery(conn)
+        assert len(results) == 1, "scatter-only degrade must still fire on wide scatter"
+        assert results[0]["symbol_name"] == "hub_fn"
+        conn.close()
+
+    def test_coherence_gate_suppresses_diffuse_reuse_hub(self, tmp_path):
+        """W1300: wide scatter whose caller files do NOT co-evolve is suppressed.
+
+        A well-factored reuse hub (``to_json`` / ``open_db`` class) is
+        referenced from many files, but those files each touched the hub
+        once and never co-change with each other. With git_cochange
+        populated and ZERO coupling among the caller files, pairwise
+        coherence is 0% < 15% -> the finding is dropped. This is the
+        residual FP class the W1287 scatter-only predicate could not cut.
+        """
+        conn = _make_db(tmp_path)
+        _populate_shotgun_surgery(conn, symbol_name="reuse_hub", n_caller_files=14)
+        # git_cochange has rows (gate active) but NONE couple the 14 caller
+        # files (ids 2..15) to each other. One unrelated row makes the table
+        # non-empty so cochange_present is True.
+        conn.execute("INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (100, 101, 5)")
+        conn.commit()
+        results = detect_shotgun_surgery(conn)
+        assert results == [], "diffuse (non-co-evolving) reuse hub must NOT fire under the W1300 gate"
+        conn.close()
+
+    def test_coherence_gate_fires_on_coherent_change_cluster(self, tmp_path):
+        """W1300: wide scatter whose caller files DO co-evolve fires.
+
+        A genuine shotgun-surgery symbol's scattered caller files share
+        commits — they co-change with each other. With every caller-file
+        pair coupled in ``git_cochange``, pairwise coherence is 100% >= 15%
+        -> the finding fires and the description reports the coherence.
+        """
+        conn = _make_db(tmp_path)
+        _populate_shotgun_surgery(conn, symbol_name="surgery_fn", n_caller_files=14)
+        # Couple every caller-file PAIR (ids 2..15) so coherence == 100%.
+        caller_ids = list(range(2, 16))
+        for i in range(len(caller_ids)):
+            for j in range(i + 1, len(caller_ids)):
+                conn.execute(
+                    "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, 4)",
+                    (caller_ids[i], caller_ids[j]),
+                )
+        conn.commit()
+        results = detect_shotgun_surgery(conn)
+        assert len(results) == 1, "coherent (co-evolving) change-cluster must fire"
+        assert results[0]["symbol_name"] == "surgery_fn"
+        assert "co-evolve" in results[0]["description"]
+        assert "100%" in results[0]["description"]
+        conn.close()
+
 
 class TestDataClumps:
     def test_detects_data_clumps(self, tmp_path):
