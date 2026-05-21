@@ -279,17 +279,71 @@ def detect_parallel_hierarchy(
     findings: list[dict] = []
     # Iterate ordered pairs (A.id < B.id) to avoid double-counting.
     eligible.sort(key=lambda t: t[0])
+
+    # Precompute the per-hierarchy marker sets + union once (the old loop
+    # recomputed B-side markers O(S) times inside the inner loop).
+    # ``hier[i]`` is None when superclass i has too few markers to ever
+    # contribute to the Jaccard signal — exactly the old per-side guard.
+    hier: list[Optional[tuple[list[tuple[str, set[str]]], set[str]]]] = []
+    for super_id, super_name, subs in eligible:
+        markers, union = _markers_and_union(subs, super_name)
+        if len(markers) < min_subclasses or not union:
+            hier.append(None)
+        else:
+            hier.append((markers, union))
+
+    # W-perf: recall-preserving candidate generation via an inverted
+    # index. A pair can only clear a strictly-positive ``jaccard_threshold``
+    # if its two marker unions intersect (``_jaccard`` returns 0.0 on a
+    # disjoint pair). So build ``token -> [eligible indices]`` ONCE, then
+    # for each index derive its candidate partners as the union of
+    # hierarchies sharing >= 1 marker token. Comparing only those pairs is
+    # output-identical to the old O(S^2) scan: every pair the old loop
+    # would have FLAGGED necessarily shares a token, so it stays in the
+    # candidate set. Pairs are visited in ascending j order to keep
+    # finding order byte-stable.
+    #
+    # Guard: a non-positive threshold would flag disjoint pairs too
+    # (0.0 < 0.0 is False -> everything passes), so fall back to the full
+    # scan in that degenerate case to stay exactly equivalent.
+    candidates: list[list[int]] = [[] for _ in range(len(eligible))]
+    if jaccard_threshold > 0.0:
+        token_index: dict[str, list[int]] = {}
+        for idx, h in enumerate(hier):
+            if h is None:
+                continue
+            _markers, union = h
+            for tok in union:
+                token_index.setdefault(tok, []).append(idx)
+        for idx, h in enumerate(hier):
+            if h is None:
+                continue
+            _markers, union = h
+            partners: set[int] = set()
+            for tok in union:
+                for other in token_index.get(tok, ()):
+                    if other > idx:
+                        partners.add(other)
+            candidates[idx] = sorted(partners)
+    else:
+        for idx, h in enumerate(hier):
+            if h is None:
+                continue
+            candidates[idx] = list(range(idx + 1, len(eligible)))
+
     for i in range(len(eligible)):
         super_a_id, super_a_name, subs_a = eligible[i]
-        markers_a, union_a = _markers_and_union(subs_a, super_a_name)
-        if len(markers_a) < min_subclasses or not union_a:
+        hier_a = hier[i]
+        if hier_a is None:
             continue
+        markers_a, union_a = hier_a
 
-        for j in range(i + 1, len(eligible)):
+        for j in candidates[i]:
             super_b_id, super_b_name, subs_b = eligible[j]
-            markers_b, union_b = _markers_and_union(subs_b, super_b_name)
-            if len(markers_b) < min_subclasses or not union_b:
+            hier_b = hier[j]
+            if hier_b is None:
                 continue
+            markers_b, union_b = hier_b
 
             similarity = _jaccard(union_a, union_b)
             if similarity < jaccard_threshold:
