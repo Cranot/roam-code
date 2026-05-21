@@ -46,9 +46,10 @@ class TestComputePagerankFallback:
     """``compute_pagerank`` fallback when scipy isn't installed."""
 
     def _force_fallback(self):
-        """Monkey-patch ``nx.pagerank`` to raise ImportError so the
-        fallback path runs unconditionally."""
-        return patch("roam.graph.pagerank.nx.pagerank", side_effect=ImportError("scipy missing"))
+        """Force the degree-based fallback by making ``_pagerank_core``
+        (the roam-owned power iteration both pagerank entry points route
+        through) raise ImportError — i.e. simulate numpy/scipy missing."""
+        return patch("roam.graph.pagerank._pagerank_core", side_effect=ImportError("scipy missing"))
 
     def test_fallback_returns_one_score_per_node(self):
         G = _star(0, [1, 2, 3, 4])
@@ -79,7 +80,7 @@ class TestComputePagerankFallback:
 
 class TestPersonalizedPagerankFallback:
     def _force_fallback(self):
-        return patch("roam.graph.pagerank.nx.pagerank", side_effect=ImportError("scipy missing"))
+        return patch("roam.graph.pagerank._pagerank_core", side_effect=ImportError("scipy missing"))
 
     def test_fallback_returns_one_score_per_node(self):
         G = _star(0, [1, 2, 3, 4])
@@ -129,7 +130,11 @@ class TestPersonalizedPagerankAlphaIgnoredInFallback:
 
     def test_different_alphas_can_collide_in_fallback(self):
         G = _star(0, [1, 2, 3, 4])
-        with patch("roam.graph.pagerank.nx.pagerank", side_effect=ImportError):
+        # personalized_pagerank routes through _pagerank_core (the roam-owned
+        # bounded power iteration), NOT nx.pagerank — so the degree fallback now
+        # triggers when _pagerank_core raises ImportError (numpy/scipy genuinely
+        # missing). Patch that to exercise the surviving fallback branch.
+        with patch("roam.graph.pagerank._pagerank_core", side_effect=ImportError):
             a = personalized_pagerank(G, {1: 1.0}, alpha=0.5)
             b = personalized_pagerank(G, {1: 1.0}, alpha=0.95)
         # In the fallback, alpha is ignored — so the two distributions
