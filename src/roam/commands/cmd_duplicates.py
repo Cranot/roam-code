@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json as _json
+import math
+import os
 import re
 import sqlite3
 from collections import Counter, defaultdict
@@ -76,7 +79,30 @@ def _role_bucket_for_files(files: list[str]) -> str:
 # Bump this stamp when the weight formula in :func:`_compute_similarity`
 # or the bucketing / pre-filter shape changes meaningfully — both affect
 # which clusters survive thresholding and therefore which findings emit.
-DUPLICATES_DETECTOR_VERSION: str = "1.0.0"
+DUPLICATES_DETECTOR_VERSION: str = "1.1.0"
+
+# Geometric line-count band base for duplicate-candidate bucketing. Each band
+# spans a ~1.3x line ratio, so two functions within the ±30% shape window land
+# in the same or an adjacent band — the full 3x3 (param ±1, band ±1)
+# neighbourhood scanned below covers every bucket that can hold a
+# shape-compatible pair. Replaces a degenerate int(lc / max(lc * 0.3, 3)) that
+# evaluated to a constant 3 for every function >=10 lines, collapsing all of
+# them into one band per param-count and driving O(n^2) pair generation on
+# large repos (duplicates ran >360s on roam-code's ~21K candidates).
+_LOG_BAND_BASE: float = math.log(1.3)
+
+# Hard ceiling on shape-compatible candidate pairs scored in one run. Even with
+# geometric banding the ±30%/±1-param window admits millions of pairs on a large
+# repo (functions skew to a single ``self`` param), and _compute_similarity is
+# regex-heavy, so scoring all of them wedges the command (>360s on roam-code).
+# When the budget is hit we stop enumerating, score what we have, and disclose
+# it via summary.partial_success + a "scored N pairs (capped)" verdict note
+# (re-run with --scope or --sample for fuller coverage). Tunable via
+# ROAM_DUPLICATES_MAX_PAIRS.
+try:
+    _MAX_PAIRS_TO_CHECK = max(1, int(os.environ.get("ROAM_DUPLICATES_MAX_PAIRS", "1000000")))
+except ValueError:
+    _MAX_PAIRS_TO_CHECK = 1000000
 
 # ---------------------------------------------------------------------------
 # Name tokenization
@@ -85,8 +111,15 @@ DUPLICATES_DETECTOR_VERSION: str = "1.0.0"
 _SPLIT_RE = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
 
 
+@functools.lru_cache(maxsize=None)
 def _name_tokens(name: str) -> set[str]:
-    """Split a symbol name into lowercase token set (camelCase/snake_case)."""
+    """Split a symbol name into lowercase token set (camelCase/snake_case).
+
+    lru_cached: each symbol name recurs across the many candidate pairs it
+    participates in, and the returned set is read-only at every call site
+    (jaccard / set-difference only — never mutated in place), so memoizing
+    eliminates redundant regex tokenization in the hot _compute_similarity loop.
+    """
     parts = _SPLIT_RE.findall(name)
     tokens = {p.lower() for p in parts if len(p) >= 2}
     # Also split on underscores for snake_case
@@ -805,79 +838,92 @@ def duplicates(
         by_id = {r["id"]: r for r in candidates}
 
         # ── 2. Pre-filter by shape ───────────────────────────────────
-        # Group by (param_count bucket, line_count bucket) to avoid O(n^2)
+        # Group by (param_count, geometric line-count band). Each band spans a
+        # ~1.3x line ratio (_LOG_BAND_BASE), so two functions within the ±30%
+        # shape window always land in the same or an adjacent band; the full
+        # set of buckets that can hold a shape-compatible pair is the 3x3
+        # (param ±1, band ±1) neighbourhood scanned below.
         def _bucket_key(r):
             pc = r["param_count"] or 0
             lc = r["line_count"] or 0
-            # Bucket: param_count, line_count in bands of ~30%
-            lc_bucket = int(lc / max(lc * 0.3, 3)) if lc > 0 else 0
+            lc_bucket = int(math.log(lc) / _LOG_BAND_BASE) if lc > 0 else 0
             return (pc, lc_bucket)
 
-        # For each candidate, check neighbors in nearby buckets
+        # Stable candidate order so the pair-scoring budget below yields a
+        # deterministic partial result across runs / CI when the cap is hit.
+        # (Order does not affect the uncapped result — cluster membership is
+        # union-find, which is order-independent.)
+        candidates.sort(key=lambda r: r["id"])
         by_bucket: dict[tuple, list] = defaultdict(list)
         for r in candidates:
-            key = _bucket_key(r)
-            by_bucket[key].append(r)
+            by_bucket[_bucket_key(r)].append(r)
 
-        # Generate candidate pairs: same bucket + adjacent buckets
+        # Generate candidate pairs across the 3x3 (param ±1, band ±1)
+        # neighbourhood. seen_pairs dedupes the symmetric cross-bucket visits;
+        # the shape filter (param ±1, line ±30%) is applied per pair. The old
+        # code scanned only 5 of the 9 neighbours (same bucket + param±1 +
+        # band±1, never the diagonals), so it silently missed shape-compatible
+        # pairs whose param AND band both differed by one once banding was
+        # non-degenerate — the full neighbourhood closes that gap.
         pairs_to_check: list[tuple] = []
         seen_pairs: set[tuple[int, int]] = set()
+        pairs_budget_hit = False
 
-        for key, members in by_bucket.items():
-            pc, lc_b = key
-            # Check same bucket
-            for i in range(len(members)):
-                for j in range(i + 1, len(members)):
-                    a, b = members[i], members[j]
-                    # Skip functions in the same file with the same name
-                    # (likely overloads, not duplicates)
-                    pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
-                    if pair_key not in seen_pairs:
-                        # Check shape compatibility: param count +/- 1,
-                        # line count +/- 30%
-                        pa, pb = a["param_count"] or 0, b["param_count"] or 0
-                        la, lb = a["line_count"] or 0, b["line_count"] or 0
-                        if abs(pa - pb) <= 1:
-                            max_l = max(la, lb, 1)
-                            if abs(la - lb) / max_l <= 0.30:
-                                seen_pairs.add(pair_key)
-                                pairs_to_check.append((a, b))
+        def _consider(a, b) -> None:
+            nonlocal pairs_budget_hit
+            if pairs_budget_hit:
+                return
+            pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+            if pair_key in seen_pairs:
+                return
+            pa, pb = a["param_count"] or 0, b["param_count"] or 0
+            if abs(pa - pb) > 1:
+                return
+            la, lb = a["line_count"] or 0, b["line_count"] or 0
+            max_l = max(la, lb, 1)
+            if abs(la - lb) / max_l > 0.30:
+                return
+            seen_pairs.add(pair_key)
+            pairs_to_check.append((a, b))
+            if len(pairs_to_check) >= _MAX_PAIRS_TO_CHECK:
+                pairs_budget_hit = True
 
-            # Check adjacent param count buckets
-            for dpc in (-1, 1):
-                adj_key = (pc + dpc, lc_b)
-                if adj_key in by_bucket:
+        _NEIGHBOUR_OFFSETS = (
+            (0, 0),
+            (0, 1),
+            (0, -1),
+            (1, 0),
+            (1, 1),
+            (1, -1),
+            (-1, 0),
+            (-1, 1),
+            (-1, -1),
+        )
+        for (pc, lc_b), members in by_bucket.items():
+            if pairs_budget_hit:
+                break
+            for dpc, dlc in _NEIGHBOUR_OFFSETS:
+                if pairs_budget_hit:
+                    break
+                others = by_bucket.get((pc + dpc, lc_b + dlc))
+                if not others:
+                    continue
+                if dpc == 0 and dlc == 0:
+                    for i in range(len(members)):
+                        a = members[i]
+                        for j in range(i + 1, len(members)):
+                            _consider(a, members[j])
+                        if pairs_budget_hit:
+                            break
+                else:
                     for a in members:
-                        for b in by_bucket[adj_key]:
-                            pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
-                            if pair_key not in seen_pairs:
-                                pa = a["param_count"] or 0
-                                pb = b["param_count"] or 0
-                                la = a["line_count"] or 0
-                                lb = b["line_count"] or 0
-                                if abs(pa - pb) <= 1:
-                                    max_l = max(la, lb, 1)
-                                    if abs(la - lb) / max_l <= 0.30:
-                                        seen_pairs.add(pair_key)
-                                        pairs_to_check.append((a, b))
+                        for b in others:
+                            _consider(a, b)
+                        if pairs_budget_hit:
+                            break
 
-            # Check adjacent line count buckets
-            for dlc in (-1, 1):
-                adj_key = (pc, lc_b + dlc)
-                if adj_key in by_bucket:
-                    for a in members:
-                        for b in by_bucket[adj_key]:
-                            pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
-                            if pair_key not in seen_pairs:
-                                pa = a["param_count"] or 0
-                                pb = b["param_count"] or 0
-                                la = a["line_count"] or 0
-                                lb = b["line_count"] or 0
-                                if abs(pa - pb) <= 1:
-                                    max_l = max(la, lb, 1)
-                                    if abs(la - lb) / max_l <= 0.30:
-                                        seen_pairs.add(pair_key)
-                                        pairs_to_check.append((a, b))
+        if pairs_budget_hit:
+            partial_success = True
 
         # ── 3. Score pairs ───────────────────────────────────────────
         uf = _UnionFind()
@@ -1098,6 +1144,11 @@ def duplicates(
                 _parts.append(f"sampled {sample_size}/{original_candidate_count} candidates")
             if truncated:
                 _parts.append(f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters")
+            if pairs_budget_hit:
+                _parts.append(
+                    f"scored {len(pairs_to_check)} candidate pairs (capped at "
+                    f"{_MAX_PAIRS_TO_CHECK}; re-run with --scope or --sample for fuller coverage)"
+                )
             return "; ".join(_parts)
 
         verdict = _run_check_dd(
@@ -1201,6 +1252,10 @@ def duplicates(
                 summary_payload["truncated"] = True
                 summary_payload["clusters_total"] = total_clusters_found
                 summary_payload["max_pairs"] = max_pairs
+            if pairs_budget_hit:
+                summary_payload["pairs_capped"] = True
+                summary_payload["pairs_scored"] = len(pairs_to_check)
+                summary_payload["pairs_budget"] = _MAX_PAIRS_TO_CHECK
 
             # W607-BM + W607-DD: surface substrate-call AND aggregation-
             # phase markers (preserved-list-field discipline). Both
