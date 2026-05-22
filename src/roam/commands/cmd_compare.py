@@ -148,7 +148,7 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     def _section(title: str, items: list[Any], render) -> None:
         if not items:
             return
-        click.echo(f"  ── {title} (top {min(top, len(items))} of {len(items)}) ──")
+        click.echo(f"  -- {title} (top {min(top, len(items))} of {len(items)}) --")
         for it in items[:top]:
             click.echo(f"    {render(it)}")
         click.echo("")
