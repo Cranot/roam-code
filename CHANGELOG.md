@@ -48,6 +48,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`src/roam/mcp_extras/adversarial_compress.py` docstring** — corrected; the prior "PROTOTYPE / NOT yet wired into `mcp_server.py`" claim was stale relative to HEAD (the B6 wire shipped in v13.4 via `compress_mode` on `roam_adversarial`).
 - **Generator bug fix** in `dev/build_readme_counts.py` — was emitting backwards alias arrows in the `readme-canonical-mention` block (alias → canonical was rendering as canonical → alias).
 
+### Post-push polish (2026-05-22)
+
+Follow-up commits that landed on top of the v13.5 push after the deep-eval wave (5 parallel agents: CI watch / D2 + D3 architecture spike memos / test-isolation fix / flaky-perf test fix) surfaced two real defects + two doc-truth gaps.
+
+#### Test hardening
+
+- **`tests/test_auto_count_script.py` parallel-safety via `tmp_path` + `--root` flag.** The 3 modifying tests previously invoked `dev/build_readme_counts.py --apply` against the REAL repo root and the v13.5 hardening caught the classic race symptom: `test_readme_recipe_count_matches_registry` failed because a sibling auto-count test had momentarily written intermediate (drift-injected) bytes that the recipe-count test then read in its window. `dev/build_readme_counts.py` now accepts `--root <path>` (default unchanged), and the modifying tests copy the count-bearing files (README/CLAUDE/llms-install/AGENTS + both MCP cards + `.well-known` mirrors + `pyproject.toml` + `src/roam/cli.py` + `src/roam/mcp_server.py` + `tests/test_mcp_server_card_hash.py`) into a `tmp_path` shadow and invoke the script with `--root <tmp_path>`. The real working tree is never touched by the tests. Verified parallel-safe alongside `tests/test_ask.py` + `tests/test_readme_surface_consistency.py`.
+- **`tests/test_performance.py::test_incremental_single_file_change` — self-calibrating threshold.** The CPU-contention timing test had been relaxed once already (3000 ms → 5000 ms in `45b48eb`) and still failed under `pytest -n auto` on contended hosts (observed at 6552 ms vs 5000 ms in the v13.5 slow-lane). Replaced the absolute threshold with `min(max(5000, baseline * 0.75), 15000)` where `baseline` is a module-scoped fixture that times one `roam index --force` under the same conditions. The real regression signal — incremental ≤ 75 % of full-rebuild — survives, the 5000 ms floor keeps the assertion meaningful on unrealistically fast baselines, and the 15000 ms ceiling prevents a pathological baseline from hiding a real regression. ~7 sibling perf tests (`test_incremental_index_fast`, `TestNewCommandPerformance.test_understand_speed`, …) carry the same absolute-threshold vulnerability and are candidates for the same pattern in a future sweep.
+
+#### Architecture spike memos (planning-only — no source code changes)
+
+- **`(internal memo)`** — sized memo for the ★★★★★ D2 direction. **GO verdict**, 5/7/10 day cost band (stretched from `ARCHITECTURE-FUTURES.md`'s flat-5d claim). `scip-python` upstream is ~8 months stale (latest tag v0.6.6, 2025-09-05) but the broader SCIP protocol is active (v0.7.1, 2026-04-14) and MIT-licensed. The hardest unknown is the SCIP-symbol-format ↔ roam `qualified_name` mapping (Day 1 scope gate, not the protobuf parsing). **No schema migration** required — the existing `edges` table already carries `kind` / `bridge` / `confidence` / `bridge_version` columns. Must-do wiring: widen `CALL_EDGE_KINDS` at `src/roam/db/edge_kinds.py:70` so the new `scip_call` edges feed reachability detectors (W512 silent-no-op pattern if missed).
+- **`(internal memo)`** — sized memo for the ★★★★★ D3 direction. **RESEARCH-MORE verdict before GO** — the route-to-handler half already ships under `roam ws` (`src/roam/commands/cmd_ws.py` + `src/roam/workspace/`) via an OVERLAY DB pattern (`ws_repos`, `ws_cross_edges`) rather than the `ATTACH DATABASE` topology the original memo proposed. The actual gap is transitive cross-repo call-graph traversal. Two paths sized: **Path A** (extend `ws`, ~3-4 days; recommended) vs **Path B** (full ATTACH rebuild, ~7-9 days; matches the original memo proposal).
+
+#### Doc-truth corrections in `dev/ARCHITECTURE-FUTURES.md`
+
+- **Schema claim retracted (Direction #3).** The memo originally asserted "every `symbols` / `edges` row has a `repo_id` column shape (per `ChangeEvidence` design)." Verified false against `src/roam/db/schema.py` lines 14-57 and all 60 migrations in `src/roam/db/connection.py` lines 342-500 — no `repo_id` column exists on `symbols`, `edges`, or `files`. The corrected text now points at `(internal memo)` for the day-by-day sizing of either Path A (overlay, no migration) or Path B (full migration + USER_VERSION bump).
+- **Bridge count corrected (Direction #2 + cross-link).** `src/roam/bridges/` has 6 bridges (config / django / protobuf / rest_api / salesforce / template), not the 22 the memo originally claimed. Corrected at lines 62 and 302.
+- **D2 + D3 sized-memo cross-links** added to the §"Decisions made" status table so future readers find the day-by-day plan, not just the strategic framing.
+
+#### Chore
+
+- **`.gitignore`** — extended dev-scratch patterns for `dev/HANDOVER-*.md`, `dev/ROAM-SMOKE-*.md`, `dev/roam_smoke_results.jsonl`, `.stoa/` so `git status` stays signal-only after roam_smoke / handover-handoff sessions.
+
 ## [13.4] — 2026-05-21
 
 ### Perf + polish follow-up (2026-05-21)
