@@ -145,36 +145,72 @@ def _jaccard(a: set, b: set) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _body_structure_vector(row) -> dict:
-    """Extract a structural fingerprint from symbol_metrics + math_signals."""
-    return {
-        "line_count": row["line_count"] or 0,
-        "param_count": row["param_count"] or 0,
-        "nesting_depth": row["nesting_depth"] or 0,
-        "cognitive_complexity": row["cognitive_complexity"] or 0,
-        "return_count": row["return_count"] or 0,
-        "bool_op_count": row["bool_op_count"] or 0,
-        "callback_depth": row["callback_depth"] or 0,
-        "loop_depth": row["loop_depth"] or 0,
-        "has_nested_loops": row["has_nested_loops"] or 0,
-        "has_self_call": row["has_self_call"] or 0,
-    }
+# The 10 structural-fingerprint features, in fixed order. _body_structure_vector
+# emits a flat tuple in this order so _body_similarity can iterate positionally
+# without a dict-key walk. Order is irrelevant to the averaged result — it only
+# has to be stable between the two operands of one comparison.
+_STRUCT_FEATURES: tuple[str, ...] = (
+    "line_count",
+    "param_count",
+    "nesting_depth",
+    "cognitive_complexity",
+    "return_count",
+    "bool_op_count",
+    "callback_depth",
+    "loop_depth",
+    "has_nested_loops",
+    "has_self_call",
+)
+_STRUCT_FEATURE_COUNT: int = len(_STRUCT_FEATURES)
 
 
-def _body_similarity(a: dict, b: dict) -> float:
-    """Compare two body structure vectors.
+def _body_structure_vector(row) -> tuple[int, ...]:
+    """Extract a structural fingerprint from symbol_metrics + math_signals.
 
-    Uses normalized absolute difference per feature, averaged.
+    Returns a flat 10-tuple in :data:`_STRUCT_FEATURES` order. Computed once
+    per candidate row at load time (hoisted out of the per-pair scoring loop):
+    a candidate participates in ~93 pairs on the roam-code corpus, so building
+    this per-pair recomputed the same tuple ~93x. Pre-computing it on the row
+    dict turns 2M builds into ~21K.
     """
-    features = list(a.keys())
-    if not features:
+    return (
+        row["line_count"] or 0,
+        row["param_count"] or 0,
+        row["nesting_depth"] or 0,
+        row["cognitive_complexity"] or 0,
+        row["return_count"] or 0,
+        row["bool_op_count"] or 0,
+        row["callback_depth"] or 0,
+        row["loop_depth"] or 0,
+        row["has_nested_loops"] or 0,
+        row["has_self_call"] or 0,
+    )
+
+
+def _body_similarity(a: tuple[int, ...], b: tuple[int, ...]) -> float:
+    """Compare two body structure vectors (flat tuples, _STRUCT_FEATURES order).
+
+    Uses normalized absolute difference per feature, averaged. Positional
+    iteration over the two pre-built tuples replaces the old dict-key walk —
+    the hot path of the 1M-pair scoring loop.
+    """
+    if not a:
         return 0.0
     total = 0.0
-    for f in features:
-        va, vb = a[f], b[f]
-        max_val = max(abs(va), abs(vb), 1)
-        total += 1.0 - abs(va - vb) / max_val
-    return total / len(features)
+    for va, vb in zip(a, b):
+        diff = va - vb
+        if diff < 0:
+            diff = -diff
+        if diff == 0:
+            total += 1.0
+            continue
+        av = va if va >= 0 else -va
+        bv = vb if vb >= 0 else -vb
+        max_val = av if av > bv else bv
+        if max_val < 1:
+            max_val = 1
+        total += 1.0 - diff / max_val
+    return total / _STRUCT_FEATURE_COUNT
 
 
 def _param_similarity(count_a: int, count_b: int) -> float:
@@ -205,28 +241,74 @@ def _safe_get(row, key, default=None):
         return default
 
 
+def _precompute_row_fields(row) -> dict:
+    """Convert a candidate row to a dict with hoisted per-row similarity data.
+
+    ``_compute_similarity`` recurs over every pair a row appears in (~93x on
+    the roam-code corpus). Pre-computing the structure vector, name-token set
+    and signature-token set ONCE per candidate — instead of once per pair —
+    is the central perf hoist: it turns the 1M-pair scoring loop into pure
+    arithmetic + set ops over cached values. The returned dict is a drop-in
+    replacement for the original ``sqlite3.Row`` (``d[key]`` is identical to
+    ``Row[key]``); the extra ``_struct`` / ``_name_tok`` / ``_sig_tok`` keys
+    are read by :func:`_compute_similarity` when present.
+    """
+    d = dict(row)
+    d["_struct"] = _body_structure_vector(d)
+    d["_name_tok"] = _name_tokens(d["name"])
+    sig = d.get("signature")
+    # _sig_tok mirrors _signature_similarity's branches: None when the
+    # signature is empty/absent, else the tokenized set.
+    d["_sig_tok"] = _name_tokens(sig) if sig else None
+    d["_has_sig"] = bool(sig)
+    return d
+
+
 def _compute_similarity(row_a, row_b) -> float:
     """Compute weighted structural similarity between two symbol rows.
 
     Weights: body_structure(0.4) + params(0.25) + name(0.2) + signature(0.15)
+
+    Fast path: when both rows are precomputed dicts carrying the ``_struct``
+    / ``_name_tok`` / ``_sig_tok`` keys stamped by
+    :func:`_precompute_row_fields`, the per-row derived data is read straight
+    from the cache (the duplicates command feeds pre-stamped rows). Slow
+    path: raw rows (e.g. direct unit-test callers) compute the derived data
+    on the fly — output-identical, just not hoisted.
     """
-    body_a = _body_structure_vector(row_a)
-    body_b = _body_structure_vector(row_b)
-    body_sim = _body_similarity(body_a, body_b)
+    # ``in`` checks keys on a dict but VALUES on a sqlite3.Row, so the
+    # fast-path gate keys on dict-ness rather than ``"_struct" in row``.
+    fast = isinstance(row_a, dict) and isinstance(row_b, dict) and "_struct" in row_a and "_struct" in row_b
+
+    if fast:
+        body_sim = _body_similarity(row_a["_struct"], row_b["_struct"])
+        name_sim = _jaccard(row_a["_name_tok"], row_b["_name_tok"])
+        # Fast path for signature: reproduce _signature_similarity's
+        # branch structure exactly against the pre-computed token sets.
+        has_a, has_b = row_a["_has_sig"], row_b["_has_sig"]
+        if not has_a and not has_b:
+            sig_sim = 1.0
+        elif not has_a or not has_b:
+            sig_sim = 0.3
+        else:
+            sig_sim = _jaccard(row_a["_sig_tok"], row_b["_sig_tok"])
+    else:
+        body_sim = _body_similarity(
+            _body_structure_vector(row_a),
+            _body_structure_vector(row_b),
+        )
+        name_sim = _jaccard(
+            _name_tokens(row_a["name"]),
+            _name_tokens(row_b["name"]),
+        )
+        sig_sim = _signature_similarity(
+            _safe_get(row_a, "signature"),
+            _safe_get(row_b, "signature"),
+        )
 
     param_sim = _param_similarity(
         row_a["param_count"] or 0,
         row_b["param_count"] or 0,
-    )
-
-    name_sim = _jaccard(
-        _name_tokens(row_a["name"]),
-        _name_tokens(row_b["name"]),
-    )
-
-    sig_sim = _signature_similarity(
-        _safe_get(row_a, "signature"),
-        _safe_get(row_b, "signature"),
     )
 
     return 0.40 * body_sim + 0.25 * param_sim + 0.20 * name_sim + 0.15 * sig_sim
@@ -296,6 +378,35 @@ _STOP_WORDS = {
 }
 
 
+def _ranked_common_tokens(names: list[str], limit: int | None = None) -> list[str]:
+    """Return tokens shared by >= 2 of *names*, ranked deterministically.
+
+    ``_name_tokens`` returns a ``set``, whose iteration order varies with
+    ``PYTHONHASHSEED``. ``Counter.most_common`` breaks frequency ties by
+    insertion order, so feeding it from that set produced a different
+    winner run-to-run whenever several tokens tied on frequency. We pin
+    the tie-break by sorting the full frequency table on ``(-count,
+    token)`` — descending count, then ascending token text — before
+    slicing. With a clear frequency winner the result is unchanged; only
+    ties are now resolved by alphabetical token order instead of by
+    randomized set-iteration order.
+
+    Mirrors :func:`roam.graph.clone_detect._ranked_common_tokens` so the
+    two parallel DRY detectors share one tie-break discipline. ``limit``
+    of ``None`` returns every shared token (the ``_infer_pattern`` case);
+    an int caps the slice (the ``_suggest_refactor`` case).
+    """
+    token_freq: Counter = Counter()
+    for name in names:
+        for t in _name_tokens(name) - _STOP_WORDS:
+            token_freq[t] += 1
+
+    ranked = sorted(token_freq.items(), key=lambda kv: (-kv[1], kv[0]))
+    if limit is not None:
+        ranked = ranked[:limit]
+    return [t for t, c in ranked if c >= 2]
+
+
 def _infer_pattern(names: list[str]) -> str:
     """Infer a shared behavioral pattern from function names."""
     all_tokens: list[set[str]] = []
@@ -306,13 +417,10 @@ def _infer_pattern(names: list[str]) -> str:
     if not all_tokens:
         return "similar structure"
 
-    # Find tokens common to at least 2 functions
-    token_freq: Counter = Counter()
-    for ts in all_tokens:
-        for t in ts:
-            token_freq[t] += 1
-
-    common = [t for t, c in token_freq.most_common() if c >= 2]
+    # Find tokens common to at least 2 functions, ranked deterministically
+    # (descending frequency, ascending token text) so the chosen ``verb``
+    # below is stable regardless of PYTHONHASHSEED — see _ranked_common_tokens.
+    common = _ranked_common_tokens(names)
     # Find tokens unique to each
     unique_per = []
     for ts in all_tokens:
@@ -330,18 +438,10 @@ def _infer_pattern(names: list[str]) -> str:
 
 def _suggest_refactor(names: list[str], pattern: str) -> str:
     """Generate a refactoring suggestion for a duplicate cluster."""
-    all_tokens: list[set[str]] = []
-    for name in names:
-        tokens = _name_tokens(name) - _STOP_WORDS
-        all_tokens.append(tokens)
-
-    # Find the common verb/action
-    token_freq: Counter = Counter()
-    for ts in all_tokens:
-        for t in ts:
-            token_freq[t] += 1
-
-    common = [t for t, c in token_freq.most_common(3) if c >= 2]
+    # Common verb/action tokens, ranked deterministically (descending
+    # frequency, ascending token text) so the generated helper name is
+    # stable regardless of PYTHONHASHSEED — see _ranked_common_tokens.
+    common = _ranked_common_tokens(names, 3)
 
     if common:
         base_name = "_".join(common[:2])
@@ -833,6 +933,19 @@ def duplicates(
             sampled = True
             sample_size = len(candidates)
             partial_success = True
+
+        # ── Hoist per-row similarity data out of the pair-scoring loop ──
+        # Convert each surviving candidate Row -> dict, stamping the
+        # structure vector / name-token set / signature-token set ONCE.
+        # _compute_similarity recurs over every pair a row appears in
+        # (~93x on the roam-code corpus), so without this hoist the same
+        # per-row derived data is rebuilt ~93x — _body_structure_vector
+        # alone was 2M builds for 1M pairs. The dict is a drop-in
+        # replacement for the Row (``d[key]`` is identical), so every
+        # downstream consumer (bucketing, clustering, JSON serialisation,
+        # findings emit) is unaffected. Done AFTER sampling so only the
+        # rows actually scored get stamped.
+        candidates = [_precompute_row_fields(r) for r in candidates]
 
         # Build lookup
         by_id = {r["id"]: r for r in candidates}

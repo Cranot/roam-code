@@ -60,6 +60,90 @@ def _classify_cluster_pattern(size_pct: float, conductance: float) -> str:
     return "module"
 
 
+def _fast_cluster_quality(G: nx.DiGraph, cluster_map: dict[int, int]) -> dict:
+    """Output-identical, single-pass replacement for ``clusters.cluster_quality``.
+
+    ``clusters.cluster_quality`` computes per-cluster conductance by
+    re-iterating ``undirected.edges()`` ONCE PER CLUSTER -- O(clusters x
+    edges). On roam-code that is ~10.6k clusters x ~49k edges, ~520M
+    pure-Python set-membership iterations, costing ~25s+ in a single
+    ``compute_fingerprint`` call (the ``_modularity_only`` docstring in
+    ``graph/simulate.py`` documents the same cost and worked around it by
+    skipping conductance entirely -- but ``fingerprint`` USES the
+    conductance values, so it must compute them, just faster).
+
+    This helper accumulates ``cut`` and ``vol`` per cluster in a single
+    O(edges) pass. The result is byte-identical to ``cluster_quality``:
+
+      * ``modularity`` -- same ``nx.community.modularity`` call, same
+        community list-of-sets, same ``round(q, 4)``, same except-fallback.
+      * ``per_cluster`` -- conductance phi(S) = cut(S, S_bar) /
+        min(vol(S), vol(S_bar)), same ``round(.., 4)``, same
+        ``len(members) < 2 -> 0.0`` short-circuit.
+
+    Conductance identities exploited:
+      * vol(S)     = sum over edges of [u in S] + [v in S]
+      * vol(S_bar) = 2 * |edges| - vol(S)   (each edge contributes exactly
+        two endpoints; the in/out split is exhaustive -- this holds even
+        when an endpoint maps to no cluster, matching the old loop's
+        ``u in members`` test being False for every cluster).
+      * cut(S)     = count of edges with exactly one endpoint in S; an
+        edge whose endpoints fall in clusters cu != cv is a cut for BOTH.
+    """
+    if not cluster_map or len(G) == 0:
+        return {"modularity": 0.0, "per_cluster": {}, "mean_conductance": 0.0}
+
+    undirected = G.to_undirected()
+
+    # Community list-of-sets for NetworkX modularity (same as cluster_quality).
+    groups: dict[int, set] = defaultdict(set)
+    for node_id, cid in cluster_map.items():
+        groups[cid].add(node_id)
+    communities = list(groups.values())
+
+    try:
+        q = nx.community.modularity(undirected, communities)
+    except Exception:
+        q = 0.0
+
+    # Single O(edges) pass: accumulate per-cluster volume + cut.
+    m_edges = undirected.number_of_edges()
+    vol_in: dict[int, int] = defaultdict(int)
+    cut_count: dict[int, int] = defaultdict(int)
+    for u, v in undirected.edges():
+        cu = cluster_map.get(u)
+        cv = cluster_map.get(v)
+        if cu is not None:
+            vol_in[cu] += 1
+        if cv is not None:
+            vol_in[cv] += 1
+        if cu != cv:
+            if cu is not None:
+                cut_count[cu] += 1
+            if cv is not None:
+                cut_count[cv] += 1
+
+    per_cluster: dict[int, float] = {}
+    for cid, members in groups.items():
+        if len(members) < 2:
+            per_cluster[cid] = 0.0
+            continue
+        vol_s = vol_in.get(cid, 0)
+        vol_sbar = 2 * m_edges - vol_s
+        min_vol = min(vol_s, vol_sbar)
+        cut = cut_count.get(cid, 0)
+        per_cluster[cid] = round(cut / min_vol, 4) if min_vol > 0 else 0.0
+
+    conductances = list(per_cluster.values())
+    mean_cond = round(sum(conductances) / len(conductances), 4) if conductances else 0.0
+
+    return {
+        "modularity": round(q, 4),
+        "per_cluster": per_cluster,
+        "mean_conductance": mean_cond,
+    }
+
+
 def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
     """Extract a topology fingerprint from the indexed graph.
 
@@ -80,7 +164,7 @@ def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
         Fingerprint with topology, clusters, hub_bridge_ratio,
         pagerank_gini, dependency_direction, and antipatterns sections.
     """
-    from roam.graph.clusters import cluster_quality, detect_clusters, label_clusters
+    from roam.graph.clusters import detect_clusters, label_clusters
     from roam.graph.cycles import algebraic_connectivity, find_cycles
     from roam.graph.layers import detect_layers
     from roam.graph.pagerank import compute_pagerank
@@ -103,8 +187,12 @@ def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
     fiedler = algebraic_connectivity(G)
 
     # -- Clusters & modularity --
+    # Use the single-pass _fast_cluster_quality (output-identical to
+    # clusters.cluster_quality) — the canonical helper re-scans every
+    # edge once per cluster, which on a 10k-cluster graph dominated the
+    # whole command runtime. See _fast_cluster_quality docstring.
     cluster_map = detect_clusters(G)
-    quality = cluster_quality(G, cluster_map)
+    quality = _fast_cluster_quality(G, cluster_map)
     modularity = quality["modularity"]
 
     # -- Tangle ratio: fraction of nodes in non-trivial SCCs --

@@ -233,6 +233,68 @@ _MUTATION_LINE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"\bhttpx\.(post|put|patch|delete)\s*\("),
 )
 
+# Per-LINE substring fast-reject tokens.
+#
+# Every begin / commit / rollback / mutation regex above can only match a
+# line that contains at least one of these literal substrings — the set is
+# a strict superset of the literal anchors baked into each pattern:
+#
+#   begin     → "transaction" "begin" "connect" "cursor" "sessionmaker"
+#               "execute" (raw-SQL BEGIN/SAVEPOINT)
+#   commit    → "commit" "execute" (raw-SQL COMMIT)
+#   rollback  → "rollback" "execute" (raw-SQL ROLLBACK)
+#   mutation  → "execute" "save" "delete" "insert" "update" "upsert"
+#               "write_text" "write_bytes" "writelines" "open" "os."
+#               "shutil." "Path(" "requests." "httpx."
+#
+# All method-name literals are lowercase in the patterns, so a
+# case-sensitive ``substr in line`` test is exact. If a line contains NONE
+# of these tokens, no marker/mutation pattern can possibly match it, so the
+# ~41-regex per-line scan is skipped entirely. This is output-identical:
+# the token set never causes a pattern to miss a line it would have hit; it
+# only eliminates wasted work on lines that match nothing (the common case
+# — assignments, returns, conditionals). A microbenchmark put
+# ``any(tok in line)`` ~20x cheaper than the original 41 small re.search
+# calls, and far cheaper than a combined-alternation NFA gate. The drift
+# guard in tests/test_tx_boundaries.py pins the superset relationship so a
+# future pattern addition that introduces a new literal anchor fails loudly.
+_LINE_MARKER_TOKENS: tuple[str, ...] = (
+    "transaction",
+    "begin",
+    "connect",
+    "cursor",
+    "sessionmaker",
+    "commit",
+    "rollback",
+    "execute",
+    "save",
+    "delete",
+    "insert",
+    "update",
+    "upsert",
+    "write_text",
+    "write_bytes",
+    "writelines",
+    "open",
+    "os.",
+    "shutil.",
+    "Path(",
+    "requests.",
+    "httpx.",
+)
+
+
+def _line_has_marker_token(line: str) -> bool:
+    """True if ``line`` contains any token a marker/mutation pattern needs.
+
+    Cheap fast-reject for :func:`_scan_body` — see :data:`_LINE_MARKER_TOKENS`.
+    """
+    for tok in _LINE_MARKER_TOKENS:
+        if tok in line:
+            return True
+    return False
+
+
 # Cheap pre-filter — skip the per-line scan when none of these appear
 # anywhere in the body. Plain substring alternation; ANY hit triggers a
 # full scan.
@@ -330,6 +392,15 @@ def _scan_body(body_lines: list[str], body_line_start: int) -> dict:
         # Pop tx_stack when the with-block has been left.
         while tx_stack and indent <= tx_stack[-1][0]:
             tx_stack.pop()
+
+        # Per-line fast-reject: if the line contains none of the literal
+        # tokens every marker/mutation pattern requires, no pattern below
+        # can match — skip all ~41 re.search calls. Output-identical:
+        # _LINE_MARKER_TOKENS is a strict superset of every pattern's
+        # literal anchors (see its definition). The tx_stack dedent-pop
+        # above already ran, so depth tracking stays correct.
+        if not _line_has_marker_token(line):
+            continue
 
         # Decorator on the symbol itself
         for pat, label in _BEGIN_PATTERNS:

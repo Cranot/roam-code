@@ -230,31 +230,42 @@ def cluster_quality(G: nx.DiGraph, clusters: dict[int, int]) -> dict:
         q = 0.0
 
     # Per-cluster conductance: phi(S) = cut(S, S_bar) / min(vol(S), vol(S_bar))
+    #
+    # Single-pass formulation (output-identical to the prior per-cluster
+    # nested edge scan, just O(E + C) instead of O(E * C)):
+    #   vol(S)   = sum over edges of (#endpoints in S)
+    #   vol(Sbar)= 2 * E - vol(S)   -- every endpoint is in S or not
+    #   cut(S)   = #edges with exactly one endpoint in S
+    # The old loop incremented vol_s/vol_sbar per endpoint and cut per
+    # boundary edge; accumulating those counters per cluster in ONE edge
+    # walk reproduces the exact same integers (self-loops add 2 to vol(S)
+    # and 0 to cut, identically in both forms).
+    edge_count = undirected.number_of_edges()
+    two_e = 2 * edge_count
+    vol: dict[int, int] = defaultdict(int)
+    cut: dict[int, int] = defaultdict(int)
+    for u, v in undirected.edges():
+        cu = clusters.get(u)
+        cv = clusters.get(v)
+        if cu is not None:
+            vol[cu] += 1
+        if cv is not None:
+            vol[cv] += 1
+        if cu != cv:
+            if cu is not None:
+                cut[cu] += 1
+            if cv is not None:
+                cut[cv] += 1
+
     per_cluster: dict[int, float] = {}
     for cid, members in groups.items():
         if len(members) < 2:
             per_cluster[cid] = 0.0
             continue
-        cut = 0
-        vol_s = 0
-        vol_sbar = 0
-        for u, v in undirected.edges():
-            u_in = u in members
-            v_in = v in members
-            if u_in and not v_in:
-                cut += 1
-            elif not u_in and v_in:
-                cut += 1
-            if u_in:
-                vol_s += 1
-            else:
-                vol_sbar += 1
-            if v_in:
-                vol_s += 1
-            else:
-                vol_sbar += 1
-        min_vol = min(vol_s, vol_sbar)
-        per_cluster[cid] = round(cut / min_vol, 4) if min_vol > 0 else 0.0
+        vol_s = vol.get(cid, 0)
+        vol_sbar = two_e - vol_s
+        min_vol = vol_sbar if vol_sbar < vol_s else vol_s
+        per_cluster[cid] = round(cut.get(cid, 0) / min_vol, 4) if min_vol > 0 else 0.0
 
     conductances = list(per_cluster.values())
     mean_cond = round(sum(conductances) / len(conductances), 4) if conductances else 0.0

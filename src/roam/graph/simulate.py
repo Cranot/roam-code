@@ -35,15 +35,37 @@ def _hf(value: float, scale: float) -> float:
     return math.exp(-value / scale) if scale > 0 else 1.0
 
 
-def _approx_health(tangle_ratio: float, god_count: int, bn_count: int, layer_violations: int) -> int:
+def _approx_health(
+    tangle_ratio: float,
+    god_count: int,
+    bn_count: int,
+    layer_violations: int,
+    node_count: int = 0,
+) -> int:
     """Compute an approximate health score from graph-derived signals.
 
     Uses exponential decay (same family as metrics_history._compute_health_score)
     so that the *delta* between before/after is directionally accurate.
+
+    The ``god_count`` and ``bn_count`` terms are normalised to *percentages
+    of the graph* before decay. The previous formulation decayed the raw
+    counts (``_hf(god_count * 3, 5)`` == ``exp(-god_count * 0.6)``), which
+    saturates to 0 on any non-trivial repo — roam-code itself has ~290 god
+    components, so ``exp(-174)`` floored the absolute baseline to 0 and made
+    the LAW-6 verdict ("health unchanged at 0") meaningless. Normalising by
+    ``node_count`` keeps the score a plausible 0..100 value on large graphs
+    while preserving delta direction. ``node_count == 0`` reproduces the
+    all-perfect case (every signal decays from 0 -> 1.0 -> score 100).
     """
+    # Percentage of the graph that is a god component / bottleneck. Decay is
+    # calibrated against percentages so a fixed repo size no longer drives
+    # the score to 0 just because the absolute count is large.
+    god_pct = (100.0 * god_count / node_count) if node_count > 0 else 0.0
+    bn_pct = (100.0 * bn_count / node_count) if node_count > 0 else 0.0
+
     t = _hf(tangle_ratio, 10)  # weight 0.30
-    g = _hf(god_count * 3, 5)  # weight 0.25
-    b = _hf(bn_count * 2, 4)  # weight 0.20
+    g = _hf(god_pct, 12)  # weight 0.25
+    b = _hf(bn_pct, 10)  # weight 0.20
     lv = _hf(layer_violations, 5)  # weight 0.25
 
     weights = [0.30, 0.25, 0.20, 0.25]
@@ -59,9 +81,37 @@ def _approx_health(tangle_ratio: float, god_count: int, bn_count: int, layer_vio
 # ---------------------------------------------------------------------------
 
 
+def _modularity_only(G: nx.DiGraph, clusters: dict[int, int]) -> float:
+    """Compute Newman's modularity Q-score without the conductance pass.
+
+    ``compute_graph_metrics`` consumes only the ``modularity`` field of
+    ``cluster_quality``'s result. The per-cluster conductance loop in
+    ``cluster_quality`` re-iterates ``undirected.edges()`` once per cluster
+    -- O(clusters * edges) -- and on roam-code itself that single loop costs
+    ~25s out of a ~50s ``compute_graph_metrics`` call. Computing modularity
+    directly here is byte-identical to ``round(cluster_quality(...)["modularity"], 4)``
+    (same ``nx.community.modularity`` call, same rounding, same fallback)
+    while skipping the unused conductance work entirely.
+    """
+    if not clusters or len(G) == 0:
+        return 0.0
+    from collections import defaultdict
+
+    undirected = G.to_undirected()
+    groups: dict[int, set] = defaultdict(set)
+    for node_id, cid in clusters.items():
+        groups[cid].add(node_id)
+    communities = list(groups.values())
+    try:
+        q = nx.community.modularity(undirected, communities)
+    except Exception:
+        q = 0.0
+    return round(q, 4)
+
+
 def compute_graph_metrics(G: nx.DiGraph) -> dict:
     """Compute all graph-derivable metrics on any DiGraph."""
-    from roam.graph.clusters import cluster_quality, detect_clusters
+    from roam.graph.clusters import detect_clusters
     from roam.graph.cycles import algebraic_connectivity, find_cycles, propagation_cost
     from roam.graph.layers import detect_layers, find_violations
 
@@ -79,10 +129,10 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
     violations = find_violations(G, layers)
     lv_count = len(violations)
 
-    # Modularity
+    # Modularity -- direct Q-score; skips cluster_quality's unused
+    # O(clusters * edges) conductance loop (output-identical).
     clusters = detect_clusters(G)
-    quality = cluster_quality(G, clusters)
-    modularity = quality.get("modularity", 0.0)
+    modularity = _modularity_only(G, clusters)
 
     # Fiedler
     fiedler = algebraic_connectivity(G)
@@ -103,7 +153,7 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
             p90 = vals[int(len(vals) * 0.9)] if vals else 0
             bn_count = sum(1 for v in bc.values() if v > p90) if p90 > 0 else 0
 
-    health = _approx_health(tangle, god_count, bn_count, lv_count)
+    health = _approx_health(tangle, god_count, bn_count, lv_count, node_count=n)
 
     return {
         "health_score": health,

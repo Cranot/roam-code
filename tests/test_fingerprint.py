@@ -117,6 +117,79 @@ class TestComputeFingerprint:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: _fast_cluster_quality (perf optimisation, output-identity guard)
+# ---------------------------------------------------------------------------
+
+
+class TestFastClusterQuality:
+    """`_fast_cluster_quality` is the single-pass conductance/modularity
+    helper that replaced the O(clusters * edges) `clusters.cluster_quality`
+    call inside `compute_fingerprint`. It MUST stay byte-identical to the
+    canonical helper — the fingerprint payload (per-cluster conductance +
+    pattern classification + modularity) feeds the topology signature and
+    the cross-repo comparison verdict, so any drift would silently corrupt
+    the fingerprint hash.
+    """
+
+    def test_fast_cluster_quality_matches_canonical(self, fp_project, monkeypatch):
+        """`_fast_cluster_quality` output is identical to `cluster_quality`."""
+        monkeypatch.chdir(fp_project)
+        from roam.db.connection import open_db
+        from roam.graph.builder import build_symbol_graph
+        from roam.graph.clusters import cluster_quality, detect_clusters
+        from roam.graph.fingerprint import _fast_cluster_quality
+
+        with open_db(readonly=True) as conn:
+            G = build_symbol_graph(conn)
+            cluster_map = detect_clusters(G)
+            fast = _fast_cluster_quality(G, cluster_map)
+            canonical = cluster_quality(G, cluster_map)
+
+        # Modularity, mean conductance, and every per-cluster conductance
+        # value must match exactly (same rounding, same formula).
+        assert fast["modularity"] == canonical["modularity"]
+        assert fast["mean_conductance"] == canonical["mean_conductance"]
+        assert set(fast["per_cluster"].keys()) == set(canonical["per_cluster"].keys())
+        for cid, conductance in canonical["per_cluster"].items():
+            assert fast["per_cluster"][cid] == conductance, (
+                f"per-cluster conductance drift for cluster {cid}: "
+                f"fast={fast['per_cluster'][cid]} canonical={conductance}"
+            )
+
+    def test_fast_cluster_quality_empty_graph(self):
+        """Empty graph / empty cluster map returns the zero-floor dict."""
+        import networkx as nx
+
+        from roam.graph.fingerprint import _fast_cluster_quality
+
+        empty = _fast_cluster_quality(nx.DiGraph(), {})
+        assert empty == {"modularity": 0.0, "per_cluster": {}, "mean_conductance": 0.0}
+
+    def test_fast_cluster_quality_handles_unmapped_nodes(self):
+        """A node absent from the cluster map never corrupts conductance.
+
+        The single-pass identity (vol(S_bar) = 2*|E| - vol(S)) must hold
+        even when an edge endpoint maps to no cluster — that endpoint is
+        counted toward vol(S_bar) for every cluster, matching the
+        canonical helper's `u in members` test being False everywhere.
+        """
+        import networkx as nx
+
+        from roam.graph.clusters import cluster_quality
+        from roam.graph.fingerprint import _fast_cluster_quality
+
+        G = nx.DiGraph()
+        G.add_edges_from([(1, 2), (2, 3), (3, 1), (3, 4), (4, 5), (5, 4)])
+        # Node 4, 5 form a cluster; nodes 1-3 a cluster; deliberately leave
+        # one node out of the map to exercise the .get() -> None path.
+        cluster_map = {1: 0, 2: 0, 3: 0, 4: 1}  # node 5 unmapped
+        fast = _fast_cluster_quality(G, cluster_map)
+        canonical = cluster_quality(G, cluster_map)
+        assert fast["modularity"] == canonical["modularity"]
+        assert fast["per_cluster"] == canonical["per_cluster"]
+
+
+# ---------------------------------------------------------------------------
 # Unit tests: compare_fingerprints
 # ---------------------------------------------------------------------------
 

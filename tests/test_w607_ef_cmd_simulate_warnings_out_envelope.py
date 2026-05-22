@@ -348,11 +348,18 @@ def test_simulate_recompute_metrics_failure_surfaces_marker(cli_runner, sim_proj
 
     monkeypatch.setattr(_builder, "build_symbol_graph", lambda conn: _make_graph_with_nodes())
     monkeypatch.setattr(_sim_mod, "resolve_target", lambda G, conn, t: ([1], "foo"))
-    monkeypatch.setattr(
-        _sim_mod,
-        "apply_move",
-        lambda G, nid, target: {"operation": "move", "symbol": "foo"},
-    )
+
+    # The simulate command short-circuits the recompute when the
+    # counterfactual graph is topologically identical to the baseline
+    # (perf optimisation — every metric is derived from topology, so
+    # an unchanged topology reproduces the baseline byte-for-byte).
+    # The stub must therefore *actually* mutate G so the recompute
+    # path runs and the synthetic raise below can fire.
+    def _stub_apply_move(G, nid, target):
+        G.add_node("__force_topology_change__")
+        return {"operation": "move", "symbol": "foo"}
+
+    monkeypatch.setattr(_sim_mod, "apply_move", _stub_apply_move)
 
     # Track call count so the baseline pass succeeds (call 1) but the
     # post-transform recompute (call 2) raises.

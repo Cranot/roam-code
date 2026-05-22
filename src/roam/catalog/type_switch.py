@@ -13,11 +13,16 @@ Algorithm
    the workspace root (``find_project_root()`` walks up for ``.git``).
    Files that can't be read are skipped silently — this matches the
    discipline used by ``detect_switch_statement`` and friends.
+   W1301: the read + ``ast.parse`` go through the shared per-run AST
+   cache (``smells._read_and_parse``) so when ``roam smells`` and this
+   detector run in the same process each Python file is parsed once and
+   reused. ``ast.parse`` is pure for a fixed source, so the finding set
+   is byte-identical to the old inline ``read_text`` + ``ast.parse``.
 2. Skip files whose path is rooted at ``tests/``, ``test/``, or whose
    basename is ``conftest.py``. Type-switches in test code are
    legitimate parametric setup (pytest fixtures, mocked classes,
    property-based shrinkers).
-3. Parse with ``ast.parse``. Walk every ``FunctionDef`` /
+3. Walk every ``FunctionDef`` /
    ``AsyncFunctionDef`` and count, per function body:
      * ``isinstance(x, T)`` calls discriminating on the SAME variable
        against ``>= min_class_arms`` distinct concrete classes.
@@ -419,6 +424,18 @@ def detect_type_switch(
     except sqlite3.OperationalError:
         return []
 
+    # W1301: lazy import of the shared per-run AST cache. ``smells.py``
+    # imports this module at its top (``from roam.catalog.type_switch
+    # import detect_type_switch``) BEFORE ``_read_and_parse`` is defined
+    # further down — a verified circular edge (smells -> type_switch ->
+    # smells). A module-level import here would hit a partially-
+    # initialized ``smells`` and raise ImportError. Deferring to call
+    # time is correct: by the time ``detect_type_switch`` runs,
+    # ``smells`` is fully initialized. ``_read_and_parse`` reads with
+    # ``encoding="utf-8", errors="replace"`` and a bare ``ast.parse`` —
+    # byte-identical to this detector's former inline parse.
+    from roam.catalog.smells import _read_and_parse
+
     workspace = _find_workspace_root()
     results: list[dict] = []
 
@@ -427,13 +444,12 @@ def detect_type_switch(
         rel_path = f["path"]
         if _file_is_test(rel_path):
             continue
-        try:
-            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            continue
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        # Shared cache: parses each file at most once per process and
+        # self-invalidates on (mtime_ns, size). Returns ``None`` on any
+        # read / stat / parse failure — same skip-on-failure control flow
+        # as the former ``(OSError, ValueError)`` + ``SyntaxError`` guards.
+        tree = _read_and_parse(workspace, rel_path)
+        if tree is None:
             continue
 
         module_singledispatch = _module_has_singledispatch(tree)

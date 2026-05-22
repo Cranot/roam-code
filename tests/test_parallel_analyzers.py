@@ -117,6 +117,25 @@ def _cluster_signatures(env: dict) -> set:
     return out
 
 
+def _cluster_pattern_map(env: dict) -> dict:
+    """Map each cluster's frozenset member signature to its
+    (pattern, suggestion) strings.
+
+    Keyed by member signature rather than cluster id/index so that
+    cluster-ordering drift across serial/parallel paths does not break
+    the comparison — only the pattern/suggestion content is compared.
+    """
+    clusters = env.get("clusters", []) or []
+    out: dict = {}
+    for c in clusters:
+        value = c.get("value") if "value" in c else c
+        members = value.get("members", []) or []
+        sig = frozenset(m.get("qualified_name", "") for m in members)
+        if sig:
+            out[sig] = (value.get("pattern", ""), value.get("suggestion", ""))
+    return out
+
+
 def _pair_signatures(env: dict) -> set:
     """Sorted (qname_a, qname_b) pair signatures, ignoring within-pair
     ordering."""
@@ -138,13 +157,16 @@ def _pair_signatures(env: dict) -> set:
 
 @pytest.mark.xdist_group("parallel_analyzers")
 def test_clones_parallel_matches_serial_output(clones_project, cli_runner):
-    """Cluster membership and pair counts must be identical between
-    serial and parallel paths.
+    """Cluster membership, pair counts AND per-cluster pattern/suggestion
+    strings must be identical between serial and parallel paths.
 
-    Pattern strings and member ordering legitimately drift across
-    processes (pre-existing non-determinism due to ``set`` iteration
-    order and ``Counter.most_common`` tie-breaking under randomized
-    string hashing). Cluster membership is the load-bearing invariant.
+    The pattern/suggestion strings used to be tolerated as legitimately
+    drifting across processes (``set`` iteration order + ``Counter.
+    most_common`` insertion-order tie-break under randomized string
+    hashing). That non-determinism is now sealed: ``_ranked_common_tokens``
+    pins the tie-break to ``(-count, token)`` sort order, so the strings
+    are deterministic regardless of ``PYTHONHASHSEED`` and this test
+    asserts them exactly.
     """
     serial = _run_with_env(cli_runner, ["clones"], cwd=clones_project, parallel=False, command="clones")
     parallel = _run_with_env(cli_runner, ["clones"], cwd=clones_project, parallel=True, command="clones")
@@ -152,6 +174,15 @@ def test_clones_parallel_matches_serial_output(clones_project, cli_runner):
     s_sig = _cluster_signatures(serial)
     p_sig = _cluster_signatures(parallel)
     assert s_sig == p_sig, f"Cluster membership differs.\nserial-only: {s_sig - p_sig}\nparallel-only: {p_sig - s_sig}"
+
+    # Pattern/suggestion strings are now deterministic — keyed by the
+    # cluster's frozenset member signature so cluster-ordering drift
+    # across paths doesn't break the comparison.
+    s_patterns = _cluster_pattern_map(serial)
+    p_patterns = _cluster_pattern_map(parallel)
+    assert s_patterns == p_patterns, (
+        f"pattern/suggestion strings differ between serial and parallel.\nserial: {s_patterns}\nparallel: {p_patterns}"
+    )
 
     # Pair count must match exactly (deterministic across paths).
     assert serial["summary"]["clone_pairs"] == parallel["summary"]["clone_pairs"], (

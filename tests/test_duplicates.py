@@ -628,10 +628,16 @@ class TestInternalFunctions:
         assert 0.0 < _param_similarity(2, 3) < 1.0
 
     def test_body_similarity_identical(self):
-        """Identical body vectors should give 1.0."""
+        """Identical body vectors should give 1.0.
+
+        ``_body_similarity`` consumes the flat structure tuple produced by
+        ``_body_structure_vector`` (the perf hoist that lifted the per-row
+        vector build out of the 1M-pair scoring loop). Identical operands
+        still score a perfect 1.0.
+        """
         from roam.commands.cmd_duplicates import _body_similarity
 
-        v = {"line_count": 10, "param_count": 2, "nesting_depth": 1}
+        v = (10, 2, 1, 4, 1, 0, 0, 0, 0, 0)
         assert _body_similarity(v, v) == 1.0
 
     def test_infer_pattern(self):
@@ -642,3 +648,81 @@ class TestInternalFunctions:
         pattern = _infer_pattern(names)
         assert isinstance(pattern, str)
         assert len(pattern) > 0
+
+
+class TestPatternInferenceDeterminism:
+    """Regression: ``_infer_pattern`` / ``_suggest_refactor`` must be
+    deterministic regardless of ``PYTHONHASHSEED``.
+
+    Root cause (sealed here): both functions fed a ``Counter`` from
+    ``_name_tokens(name) - _STOP_WORDS`` — a ``set`` whose iteration order
+    varies with ``PYTHONHASHSEED``. ``Counter.most_common`` breaks
+    frequency ties by insertion order, so on a tie the emitted pattern /
+    suggestion string flipped process-to-process (e.g. ``shared emit
+    logic`` vs ``shared seed logic``). The fix routes both through
+    ``_ranked_common_tokens``, which pins the tie-break to a ``(-count,
+    token)`` sort — mirroring the same fix already landed on
+    ``roam.graph.clone_detect._ranked_common_tokens``.
+    """
+
+    def test_ranked_common_tokens_tie_break_is_alphabetical(self):
+        """On a frequency tie the lower token text wins, not insertion order."""
+        from roam.commands.cmd_duplicates import _ranked_common_tokens
+
+        # ``zebra`` and ``apple`` both appear twice; ``apple`` must rank first.
+        names = ["zebra_apple_one", "zebra_apple_two"]
+        ranked = _ranked_common_tokens(names)
+        assert ranked[0] == "apple"
+        assert ranked[1] == "zebra"
+
+    def test_clear_winner_unchanged(self):
+        """A clear frequency winner is unaffected by the tie-break sort."""
+        from roam.commands.cmd_duplicates import _infer_pattern, _suggest_refactor
+
+        names = ["parse_json_config", "parse_yaml_config", "parse_toml_config"]
+        # ``parse`` (3x) and ``config`` (3x) tie at top frequency; ``config``
+        # sorts before ``parse`` alphabetically so it is the deterministic verb.
+        assert _infer_pattern(names) == "shared config logic with json, yaml, toml"
+        assert _suggest_refactor(names, "") == ("Extract common logic into a generic config_parse() helper")
+
+    def test_deterministic_across_input_orderings(self):
+        """Same token multiset, different name orderings (a stand-in for
+        ``set`` iteration-order drift under varying ``PYTHONHASHSEED``)
+        must produce identical output."""
+        from roam.commands.cmd_duplicates import _infer_pattern, _suggest_refactor
+
+        names = ["alpha_gamma", "alpha_delta", "beta_gamma", "beta_delta"]
+        forward_pattern = _infer_pattern(names)
+        reverse_pattern = _infer_pattern(list(reversed(names)))
+        forward_suggest = _suggest_refactor(names, "")
+        reverse_suggest = _suggest_refactor(list(reversed(names)), "")
+        assert forward_pattern == reverse_pattern
+        assert forward_suggest == reverse_suggest
+
+    def test_deterministic_across_hash_seeds(self):
+        """Run the pure functions in fresh subprocesses with distinct
+        ``PYTHONHASHSEED`` values; the pattern/suggestion strings must be
+        byte-identical across all seeds."""
+        import os
+        import subprocess
+        import sys
+
+        snippet = (
+            "from roam.commands.cmd_duplicates import _infer_pattern, _suggest_refactor;"
+            "names = ['alpha_gamma', 'alpha_delta', 'beta_gamma', 'beta_delta'];"
+            "print(_infer_pattern(names));"
+            "print(_suggest_refactor(names, ''))"
+        )
+        outputs = set()
+        for seed in ("0", "1", "42", "1337"):
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
+            proc = subprocess.run(
+                [sys.executable, "-c", snippet],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            assert proc.returncode == 0, f"seed={seed} failed: {proc.stderr}"
+            outputs.add(proc.stdout)
+        assert len(outputs) == 1, f"pattern inference varied across PYTHONHASHSEED: {outputs}"

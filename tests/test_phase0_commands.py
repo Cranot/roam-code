@@ -131,3 +131,25 @@ def test_article_12_check_writes_output_file(tmp_path):
     assert out_path.exists()
     text = out_path.read_text(encoding="utf-8")
     assert "# EU AI Act — Article 12 Readiness Assessment" in text
+
+
+def test_article_12_check_text_output_is_emoji_free():
+    """`roam article-12-check` text output must be plain ASCII status markers.
+
+    CLAUDE.md output convention: "No emojis, no colors, no box-drawing".
+    The checklist used to print U+2705 / U+26A0 emoji marks; status is
+    now rendered as ``[OK] PASS`` / ``[WARN] REVIEW``.
+    """
+    import re
+
+    from roam.cli import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["article-12-check"], catch_exceptions=False)
+    assert result.exit_code == 0
+    # No emoji-class codepoints anywhere in the text report.
+    emoji = re.findall(r"[\U0001F000-\U0001FAFF☀-➿️]", result.output)
+    assert not emoji, f"text output contains emoji codepoints: {emoji!r}"
+    # ASCII status markers are present.
+    assert "[OK] PASS" in result.output
+    assert "[WARN] REVIEW" in result.output
