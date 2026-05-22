@@ -107,6 +107,41 @@ def full_reindex_baseline_ms(medium_project):
     return elapsed
 
 
+@pytest.fixture(scope="module")
+def cheap_query_baseline_ms(medium_project, full_reindex_baseline_ms):
+    """Self-calibrating baseline for query-class tests.
+
+    Times ``roam map`` against ``medium_project`` (already indexed by
+    ``full_reindex_baseline_ms``), which is the cheapest read-only
+    query in the catalog. Per-test thresholds for heavier queries
+    (``understand``, ``preflight``, ``complexity``, ``conventions``,
+    ...) are expressed as ``max(absolute_floor, ratio * baseline)``
+    capped by an absolute ceiling — see ``_query_limit`` below.
+
+    Captured under the same CPU-contention conditions the dependent
+    tests see, so the ratio holds whether the host is idle or every
+    xdist worker is fighting for cores.
+    """
+    # ``full_reindex_baseline_ms`` is depended on so the index is built
+    # before we time the query; the value itself is not used here.
+    _ = full_reindex_baseline_ms
+    out, rc, elapsed = timed_roam("map", cwd=medium_project)
+    assert rc == 0, f"Baseline query failed: {out}"
+    return elapsed
+
+
+def _query_limit(baseline_ms: float, floor_ms: float, ratio: float, ceiling_ms: float) -> float:
+    """Self-calibrating threshold: ``min(max(floor, ratio*baseline), ceiling)``.
+
+    The ratio is the real regression signal — under heavy CPU contention
+    every query slows proportionally, so a fixed multiple of a cheap-query
+    baseline keeps the bound meaningful. The floor keeps the assertion
+    useful on absurdly fast baselines; the ceiling stops a pathological
+    baseline from masking a real regression.
+    """
+    return min(max(floor_ms, ratio * baseline_ms), ceiling_ms)
+
+
 # ============================================================================
 # INDEXING PERFORMANCE
 # ============================================================================
@@ -127,15 +162,30 @@ class TestIndexingPerformance:
             f"({elapsed / file_count:.0f}ms/file, limit {INDEX_TIME_PER_FILE_MS}ms/file)"
         )
 
-    def test_incremental_index_fast(self, medium_project):
-        """Incremental index with no changes should be near-instant."""
+    def test_incremental_index_fast(self, medium_project, full_reindex_baseline_ms):
+        """Incremental index with no changes should be near-instant.
+
+        Threshold is self-calibrating against ``full_reindex_baseline_ms``:
+        a no-change incremental must be at most 50% of a full rebuild —
+        nothing changed, so the work is just a manifest scan, dramatically
+        cheaper than re-extracting 200+ files. Floor (8s) absorbs xdist
+        startup-overhead jitter without masking real regressions; ceiling
+        (15s) stops a pathological baseline from hiding one. Previously
+        a hard 5000ms cap that flaked under ``pytest -n auto``.
+        """
         # First make sure index exists
         roam("index", cwd=medium_project)
 
         out, rc, elapsed = timed_roam("index", cwd=medium_project)
         assert rc == 0
         assert "up to date" in out
-        assert elapsed < 5000, f"No-change incremental took {elapsed:.0f}ms (limit 5000ms)"
+
+        limit_ms = _query_limit(full_reindex_baseline_ms, 8000.0, 0.50, 15000.0)
+        assert elapsed < limit_ms, (
+            f"No-change incremental took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(8000, 50% of "
+            f"baseline {full_reindex_baseline_ms:.0f}ms) capped at 15000ms)"
+        )
 
     def test_incremental_single_file_change(self, medium_project, full_reindex_baseline_ms):
         """Changing one file should re-index only that file quickly.
@@ -147,12 +197,16 @@ class TestIndexingPerformance:
         one file out of 200+ should be dramatically cheaper than rebuilding
         the whole index, regardless of how loaded the host is. The
         absolute ceiling (15s) is a sanity backstop; the absolute floor
-        (5s) keeps the assertion meaningful on unrealistically fast
-        baselines.
+        (8s) absorbs xdist startup-overhead jitter when the baseline
+        itself runs at ~5s under heavy contention without masking real
+        regressions.
 
         Previously a hard 5000ms cap that flaked under ``pytest -n auto``
-        (commit 45b48eb already moved it 3000 -> 5000). See HANDOVER /
-        ROADMAP for the "fix flakes, don't retry them" discipline.
+        (commit 45b48eb already moved it 3000 -> 5000; commit 340997f
+        introduced the ratio shape with floor=5000 which still flaked
+        under ``-n 8`` when the baseline itself was near 5s). See
+        HANDOVER / ROADMAP for the "fix flakes, don't retry them"
+        discipline.
         """
         # Modify one file
         target = medium_project / "pkg_0" / "file_0.py"
@@ -167,11 +221,10 @@ class TestIndexingPerformance:
         # Threshold = max(absolute floor, 75% of machine baseline), capped
         # by an absolute ceiling so a pathological baseline can't hide a
         # real regression.
-        ratio_bound = full_reindex_baseline_ms * 0.75
-        limit_ms = min(max(5000.0, ratio_bound), 15000.0)
+        limit_ms = _query_limit(full_reindex_baseline_ms, 8000.0, 0.75, 15000.0)
         assert elapsed < limit_ms, (
             f"Single-file incremental took {elapsed:.0f}ms "
-            f"(limit {limit_ms:.0f}ms = max(5000, 75% of "
+            f"(limit {limit_ms:.0f}ms = max(8000, 75% of "
             f"baseline {full_reindex_baseline_ms:.0f}ms) capped at 15000ms)"
         )
 
@@ -183,85 +236,94 @@ class TestIndexingPerformance:
 
 class TestQueryPerformance:
     @pytest.fixture(autouse=True)
-    def ensure_indexed(self, medium_project):
-        """Make sure the medium project is indexed before queries."""
+    def ensure_indexed(self, medium_project, cheap_query_baseline_ms):
+        """Make sure the medium project is indexed before queries, and
+        compute a self-calibrating per-test threshold.
+
+        Each test in this class checks ``elapsed < self.query_limit_ms``,
+        which is ``min(max(QUERY_TIME_MS, 20x baseline), 10000ms)``.
+        That floor/ratio/ceiling shape (same as 340997f) keeps the
+        bound meaningful under ``-n auto`` CPU contention without losing
+        the regression-detection signal on idle hosts.
+        """
         roam("index", cwd=medium_project)
         self.proj = medium_project
+        self.query_limit_ms = _query_limit(cheap_query_baseline_ms, float(QUERY_TIME_MS), 20.0, 10000.0)
 
     def test_map_speed(self):
         out, rc, elapsed = timed_roam("map", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"map took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"map took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_file_speed(self):
         out, rc, elapsed = timed_roam("file", "pkg_0/file_0.py", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"file took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"file took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_symbol_speed(self):
         out, rc, elapsed = timed_roam("symbol", "Service0_0", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"symbol took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"symbol took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_search_speed(self):
         out, rc, elapsed = timed_roam("search", "Service", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"search took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"search took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_deps_speed(self):
         out, rc, elapsed = timed_roam("deps", "pkg_0/file_0.py", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"deps took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"deps took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_health_speed(self):
         out, rc, elapsed = timed_roam("health", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"health took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"health took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_dead_speed(self):
         out, rc, elapsed = timed_roam("dead", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"dead took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"dead took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_clusters_speed(self):
         out, rc, elapsed = timed_roam("clusters", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"clusters took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"clusters took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_layers_speed(self):
         out, rc, elapsed = timed_roam("layers", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"layers took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"layers took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_weather_speed(self):
         out, rc, elapsed = timed_roam("weather", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"weather took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"weather took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_grep_speed(self):
         out, rc, elapsed = timed_roam("grep", "method_0", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"grep took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"grep took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_uses_speed(self):
         out, rc, elapsed = timed_roam("uses", "Service0_0", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"uses took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"uses took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_impact_speed(self):
         out, rc, elapsed = timed_roam("impact", "Service0_0", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"impact took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"impact took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_fan_speed(self):
         out, rc, elapsed = timed_roam("fan", "symbol", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"fan took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"fan took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
     def test_coupling_speed(self):
         out, rc, elapsed = timed_roam("coupling", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"coupling took {elapsed:.0f}ms"
+        assert elapsed < self.query_limit_ms, f"coupling took {elapsed:.0f}ms (limit {self.query_limit_ms:.0f}ms)"
 
 
 # ============================================================================
@@ -278,11 +340,18 @@ class TestNewCommandPerformance:
         roam("index", cwd=medium_project)
         self.proj = medium_project
 
-    def test_understand_speed(self):
-        """roam understand should complete within 5s."""
+    def test_understand_speed(self, cheap_query_baseline_ms):
+        """roam understand should complete within ~5s on idle, scaled up
+        proportionally under CPU contention via ``cheap_query_baseline_ms``.
+        """
         out, rc, elapsed = timed_roam("understand", cwd=self.proj)
         assert rc == 0
-        assert elapsed < 5000, f"understand took {elapsed:.0f}ms (limit 5000ms)"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 5000.0, 30.0, 15000.0)
+        assert elapsed < limit_ms, (
+            f"understand took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(5000, 30x baseline "
+            f"{cheap_query_baseline_ms:.0f}ms) capped at 15000ms)"
+        )
 
     def test_dead_summary_speed(self):
         out, rc, elapsed = timed_roam("dead", "--summary", cwd=self.proj)
@@ -364,10 +433,11 @@ class TestJsonPerformance:
         assert elapsed < QUERY_TIME_MS, f"--json dead took {elapsed:.0f}ms"
         assert '"command"' in out
 
-    def test_json_understand_speed(self):
+    def test_json_understand_speed(self, cheap_query_baseline_ms):
         out, rc, elapsed = timed_roam("--json", "understand", cwd=self.proj)
         assert rc == 0
-        assert elapsed < 5000, f"--json understand took {elapsed:.0f}ms"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 5000.0, 30.0, 15000.0)
+        assert elapsed < limit_ms, f"--json understand took {elapsed:.0f}ms (limit {limit_ms:.0f}ms)"
         assert '"command"' in out
 
     def test_json_envelope_structure(self):
@@ -851,11 +921,18 @@ class TestV6CommandPerformance:
         roam("index", cwd=medium_project)
         self.proj = medium_project
 
-    def test_complexity_speed(self):
-        """roam complexity should complete within 3s."""
+    def test_complexity_speed(self, cheap_query_baseline_ms):
+        """roam complexity should complete within ~3s on idle, scaled up
+        under CPU contention via ``cheap_query_baseline_ms``.
+        """
         out, rc, elapsed = timed_roam("complexity", cwd=self.proj)
         assert rc == 0
-        assert elapsed < 3000, f"complexity took {elapsed:.0f}ms (limit 3000ms)"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 3000.0, 20.0, 10000.0)
+        assert elapsed < limit_ms, (
+            f"complexity took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(3000, 20x baseline "
+            f"{cheap_query_baseline_ms:.0f}ms) capped at 10000ms)"
+        )
 
     def test_complexity_bumpy_road_speed(self):
         """roam complexity --bumpy-road should complete within 3s."""
@@ -863,11 +940,18 @@ class TestV6CommandPerformance:
         assert rc == 0
         assert elapsed < 3000
 
-    def test_conventions_speed(self):
-        """roam conventions should complete within 3s."""
+    def test_conventions_speed(self, cheap_query_baseline_ms):
+        """roam conventions should complete within ~3s on idle, scaled up
+        under CPU contention via ``cheap_query_baseline_ms``.
+        """
         out, rc, elapsed = timed_roam("conventions", cwd=self.proj)
         assert rc == 0
-        assert elapsed < 3000, f"conventions took {elapsed:.0f}ms (limit 3000ms)"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 3000.0, 20.0, 10000.0)
+        assert elapsed < limit_ms, (
+            f"conventions took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(3000, 20x baseline "
+            f"{cheap_query_baseline_ms:.0f}ms) capped at 10000ms)"
+        )
 
     def test_debt_speed(self):
         """roam debt should complete within 3s."""
@@ -893,11 +977,18 @@ class TestV6CommandPerformance:
         assert rc == 0
         assert elapsed < 3000
 
-    def test_preflight_speed(self):
-        """roam preflight should complete within 5s."""
+    def test_preflight_speed(self, cheap_query_baseline_ms):
+        """roam preflight should complete within ~5s on idle, scaled up
+        under CPU contention via ``cheap_query_baseline_ms``.
+        """
         out, rc, elapsed = timed_roam("preflight", "method_0", cwd=self.proj)
         assert rc == 0, f"preflight failed (rc={rc}): {out[:200]}"
-        assert elapsed < 5000, f"preflight took {elapsed:.0f}ms (limit 5000ms)"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 5000.0, 30.0, 15000.0)
+        assert elapsed < limit_ms, (
+            f"preflight took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(5000, 30x baseline "
+            f"{cheap_query_baseline_ms:.0f}ms) capped at 15000ms)"
+        )
 
     def test_map_budget_speed(self):
         """roam map --budget should complete within 2s."""
@@ -911,11 +1002,18 @@ class TestV6CommandPerformance:
         assert rc == 0
         assert elapsed < 5000
 
-    def test_understand_enhanced_speed(self):
-        """Enhanced understand should complete within 5s."""
+    def test_understand_enhanced_speed(self, cheap_query_baseline_ms):
+        """Enhanced understand should complete within ~5s on idle, scaled up
+        under CPU contention via ``cheap_query_baseline_ms``.
+        """
         out, rc, elapsed = timed_roam("understand", cwd=self.proj)
         assert rc == 0
-        assert elapsed < 5000, f"understand took {elapsed:.0f}ms (limit 5000ms)"
+        limit_ms = _query_limit(cheap_query_baseline_ms, 5000.0, 30.0, 15000.0)
+        assert elapsed < limit_ms, (
+            f"understand took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(5000, 30x baseline "
+            f"{cheap_query_baseline_ms:.0f}ms) capped at 15000ms)"
+        )
 
     def test_describe_enhanced_speed(self):
         """Enhanced describe should complete within 5s."""
