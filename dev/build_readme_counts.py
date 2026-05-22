@@ -589,6 +589,15 @@ class FileResult:
 def _apply_markdown(path: Path, builder: Callable[[Counts, Path], dict[str, str]], c: Counts,
                     write: bool, root: Path) -> FileResult:
     text = path.read_text(encoding="utf-8")
+    # Pointer-file pattern (2026-05-22 dogfood wiring): CLAUDE.md was reduced
+    # to a one-line ``@AGENTS.md`` import to restore Claude Code auto-load
+    # WITHOUT re-introducing the internal-content mirror. The blocks the
+    # script otherwise expects live in AGENTS.md, which IS swept (see
+    # ``_agents_md_blocks``). Treat the pointer as an intentional no-op so
+    # ``--check`` does not flag MISSING-MARKERS on a file that has no
+    # block-bearing content by design.
+    if text.lstrip().startswith("@AGENTS.md"):
+        return FileResult(path=path, changed=False, missing_blocks=[])
     new_text = text
     blocks = builder(c, root)
     missing: list[str] = []

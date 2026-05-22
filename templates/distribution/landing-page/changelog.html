@@ -102,9 +102,19 @@
 <ul>
 <li><strong>Loud-fallback campaign — batch 6 (extended sweep).</strong> ~57 modules (<code>src/roam/commands/cmd_*.py</code> + <code>agents_md/generator.py</code> + <code>output/formatter.py</code> + <code>mcp_extras/concurrency.py</code> + <code>mcp_server.py</code>) now emit <code>roam.observability.log_swallowed</code> lineage at silent <code>except: pass</code> / swallowed-exception sites. Behaviour identical — the exception is still swallowed, just no longer silent. The ratchet baseline in <code>tests/test_loud_fallback_no_new_silent_except.py</code> drops from ~196 to ~107 on the post-campaign tree.</li>
 </ul>
+<h4>Changed (dogfood wiring 2026-05-22 evening)</h4>
+<ul>
+<li><strong>MCP tool descriptions — top-10 rewrite (BiasBusters + Sentry pattern).</strong> The 10 most-critical roam-code MCP tool descriptions (<code>roam_ask</code>, <code>roam_search_symbol</code>, <code>roam_uses</code>, <code>roam_context</code>, <code>roam_understand</code>, <code>roam_diff</code>, <code>roam_prepare_change</code>, <code>roam_critique</code>, <code>roam_diagnose_issue</code>, <code>roam_affected_tests</code>) rewritten with imperative verb-lede, user-voice trigger phrases ('where is X?', 'who calls Y?', 'safe to delete Z?'), explicit anti-patterns ('Do NOT use Bash:grep for symbol lookup'), and alternative-named replacement ('Replaces multi-shape grep'). Pattern grounded in <strong>BiasBusters (arXiv 2510.00307)</strong> — description semantic alignment is the #1 driver of selection — and the <strong>Sentry MCP scaling case</strong> (60M req/month with 3 tools; each description carries concrete examples + workflow chaining hints). Lift target measured via <code>dev/audit_session_tool_usage.py</code>.</li>
+</ul>
 <h4>Added</h4>
 <ul>
 <li><strong><code>dev/ARCHITECTURE-FUTURES.md</code> — long-horizon architecture memo.</strong> Captures four research directions (D1 event-driven graph mutators / D2 LSP-LSIF-SCIP integration / D3 federated multi-repo graphs / D4 eBPF runtime trace stitching) + the B-batch capability-positioning sweep. <strong>D2 (SCIP/LSIF ingest)</strong> and <strong>D3 (federated multi-repo graphs)</strong> flagged ★★★★★ as the next architectural moves; B6 (adversarial + MCP sampling), B7 (taint + LLM classify), B8 (forecast + spectral) already shipped (v12.1 / v13.4) — section status marked SHIPPED.</li>
+</ul>
+<ul>
+<li><strong><code>dev/audit_session_tool_usage.py</code> — Claude Code session transcript auditor.</strong> Measures the "dogfood ratio" (<code>roam_*</code> MCP tool calls / total tool calls) across recent JSONL transcripts under <code>~/.claude/projects/&lt;slug&gt;/</code>. Surfaces shell-grep volume, retry-loop patterns, top Read targets, and Bash-class breakdown (git-diff / git-log / fs-discovery / test-lint / etc.). Baseline 2026-05-22 across 200 transcripts: <strong>0.18% (2/1113)</strong> — Bash 47% / Read 22% / Grep 20% / MCP 0.18%. Tracked tool; re-runnable after each session-cluster.</li>
+</ul>
+<ul>
+<li><strong><code>CLAUDE.md</code> (1-line <code>@AGENTS.md</code> pointer).</strong> Restores Claude Code's auto-load path (removed in e5993a6 because the original 263-line file carried internal-only content) WITHOUT re-introducing the internal-content pattern. Single <code>@AGENTS.md</code> directive imports the multi-vendor AGENTS.md so the navigation guidance (§ "Codebase navigation with roam") reaches Claude Code at session start. HTML comment documents the strategic decision and instructs maintainers to edit AGENTS.md (not this file) for any content additions.</li>
 <li><strong>5 new drift-guards in <code>tests/test_doc_consistency.py</code></strong> pinning landing-page version surfaces.</li>
 <li><strong><code>templates/rules/rust/.roam-rules.yml</code> + <code>templates/rules/swift/.roam-rules.yml</code> — invalid <code>severity: NOTE</code></strong> (a non-canonical severity not in the closed enum) → fixed. All 8 rule packs now validate.</li>
 </ul>

@@ -99,6 +99,20 @@ def test_claude_md_cites_correct_anchor_counts() -> None:
             "are defence-in-depth on local dev only."
         )
     claude_md = claude_md_path.read_text(encoding="utf-8")
+    # 2026-05-22 dogfood wiring: CLAUDE.md is now a pointer (``@AGENTS.md``)
+    # rather than a 263-line internal-content mirror. The anchor-count claims
+    # live in AGENTS.md (the multi-vendor source of truth); the pointer
+    # imports them at session start. Skip this drift-guard when the pointer
+    # pattern is detected — the same assertions apply to AGENTS.md via the
+    # parallel test below.
+    if claude_md.strip().startswith("@AGENTS.md"):
+        import pytest
+
+        pytest.skip(
+            "CLAUDE.md is a pointer to AGENTS.md (dogfood-wiring 2026-05-22). "
+            "Anchor counts validated in AGENTS.md; see "
+            "test_agents_md_cites_correct_anchor_counts."
+        )
 
     # The doc has TWO sentences citing these counts (line ~57 source-of-truth
     # block, line ~65 contributor instructions). Both must agree with source.
