@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Perf + drift-truth wave (2026-05-22)
+
+#### Performance
+
+- **`roam tx-boundaries` — per-line substring fast-reject.** A pre-check (a strict-superset token set of every transaction / mutation regex's literal anchor) gates the ~41-regex per-line scan with cheap `any(tok in line)`. A line that contains none of those tokens cannot match any pattern, so the regex pass is skipped entirely. Output-identical (the token set never excludes a line a pattern would have matched). Microbenchmark put the pre-check ~20x cheaper than the equivalent combined-alternation NFA. The drift guard in `tests/test_tx_boundaries.py` pins the superset relationship.
+- **`roam simulate` recompute shortcut.** When the counterfactual graph is topologically identical to the baseline (every metric in `compute_graph_metrics` is derived purely from topology — `move` / `extract` / `merge` rewrite `file_path` but never add or remove nodes / edges), the post-transform recompute reuses the baseline metrics instead of running a fresh ~50s metric pass. `delete` still triggers the full recompute (it genuinely removes nodes / edges). The guard compares graphs directly, so a future topology-changing transform stays correct automatically. Output-identical.
+- **`roam fingerprint` / `roam clusters` — graph perf.** Targeted hotspot fixes across the graph layer; new drift-guard in `tests/test_fingerprint.py`.
+- **`roam duplicates` — pair-scoring hoist + deterministic tie-break.** Per-row derived fields hoisted out of the O(n²) pair-scoring loop. Output byte-identical.
+- **`roam smells` type-switch — shared AST cache.** Type-switch detector reuses the v13.4 mtime+size-keyed `lru_cache` (same one the magic-numbers / boolean-parameter / switch-statement detectors share). Output byte-identical.
+
+#### Fixed
+
+- **`roam compare` — `math_signals` → `symbol_metrics` schema migration.** The complexity-delta query was reading from the long-retired `math_signals` table; migrated to `symbol_metrics.cognitive_complexity` (the metric's actual location since v12.x). The "predates the schema" disclosure wording also names `symbol_metrics`. A2-fix re-keys symbol identity on `(qualified_name, line_start)` so overloaded methods (roam-code has ~5600 same-qname symbols) stop silently dropping from the delta.
+- **`roam simulate` — non-saturating health score.** Health-score computation was prematurely clamping; now non-saturating.
+- **`roam agents-md` — canonical MCP preset counts.** Was reading a stale source for preset counts; now canonical.
+- **`roam audit-trail-verify` — Pattern-2 degraded-path disclosure.** A partially-failed verify no longer reads as a clean pass.
+- **`roam article-12-check` — plain-ASCII status markers in the markdown report.** Replaced the `✅` / `⚠️` emoji markers with `[OK]` / `[WARN]` plain-ASCII labels per the CLAUDE.md output convention (no emojis / colors / box-drawing in CLI output); mirrors how sibling commands render text-mode status. Check-item titles + summary text keep their typographic em-dashes / `≥` consistent with the rest of the codebase.
+- **`roam agent-score` — clamp to [0, 100].**
+- **`roam clones` / `roam duplicates` — deterministic clone-pattern tie-break.** Equal-score clusters previously had PYTHONHASHSEED-dependent ordering across both detector families; now deterministic.
+- **Kotlin extractor — by-delegate syntax classification.** The tree-sitter Kotlin grammar misparses `class C : I by delegate { ... }` (treats the trailing `{...}` as a lambda argument to the delegate call), so functions declared inside such blocks landed under an `annotated_lambda` parent and the existing `class_body` context rule missed them. Adding `explicit_delegation` to the function-declaration context map in `extractors/kotlin.yaml` resolves the classification (`LoggingPrinter.log` now correctly classifies as `method`).
+- **`roam_ask` description — recipe count 24 → 25.** Stale literal in the MCP tool description; the README MCP tool table is auto-regenerated from the description, so the README count tracks automatically.
+- **MCP tool count 224 → 227** across README headline + landing-page stale literals (the canonical count lives in `roam.surface_counts`).
+
+#### Changed
+
+- **Loud-fallback campaign — batch 6 (extended sweep).** ~57 modules (`src/roam/commands/cmd_*.py` + `agents_md/generator.py` + `output/formatter.py` + `mcp_extras/concurrency.py` + `mcp_server.py`) now emit `roam.observability.log_swallowed` lineage at silent `except: pass` / swallowed-exception sites. Behaviour identical — the exception is still swallowed, just no longer silent. The ratchet baseline in `tests/test_loud_fallback_no_new_silent_except.py` drops from ~196 to ~107 on the post-campaign tree.
+
+#### Added
+
+- **`dev/ARCHITECTURE-FUTURES.md` — long-horizon architecture memo.** Captures four research directions (D1 event-driven graph mutators / D2 LSP-LSIF-SCIP integration / D3 federated multi-repo graphs / D4 eBPF runtime trace stitching) + the B-batch capability-positioning sweep. **D2 (SCIP/LSIF ingest)** and **D3 (federated multi-repo graphs)** flagged ★★★★★ as the next architectural moves; B6 (adversarial + MCP sampling), B7 (taint + LLM classify), B8 (forecast + spectral) already shipped (v12.1 / v13.4) — section status marked SHIPPED.
+- **5 new drift-guards in `tests/test_doc_consistency.py`** pinning landing-page version surfaces.
+- **`templates/rules/rust/.roam-rules.yml` + `templates/rules/swift/.roam-rules.yml` — invalid `severity: NOTE`** (a non-canonical severity not in the closed enum) → fixed. All 8 rule packs now validate.
+
+#### Docs
+
+- **README pass 3 — scannable rewrite** (the v13.4 polish continued). "What's New" now reflects v13.4; ~20 stale command examples + literals fixed; the comprehensive command table moved behind a `<details>` link to the hosted Command Reference. `test_readme_covers_all_canonical_cli_commands` relaxed accordingly (the count gate via `test_readme_cli_command_count_matches_source` still pins the `(all N)` header to canonical).
+- **CONTRIBUTING / AGENTS / llms-install / docs/ polish.** `USER_VERSION 17 → 18`, SARIF list `14 → 37`, algo-catalog `23 → 34`. Stale `CLAUDE.md` cross-refs removed from AGENTS.md — CLAUDE.md was removed from the public repo in `e5993a6`; AGENTS.md is now the sole canonical agent guide.
+- **Landing-page sweep.** `templates/distribution/landing-page/index.html` + `status.html` + `docs/*.html` — stale version literals + broken command examples fixed.
+- **`src/roam/mcp_extras/adversarial_compress.py` docstring** — corrected; the prior "PROTOTYPE / NOT yet wired into `mcp_server.py`" claim was stale relative to HEAD (the B6 wire shipped in v13.4 via `compress_mode` on `roam_adversarial`).
+- **Generator bug fix** in `dev/build_readme_counts.py` — was emitting backwards alias arrows in the `readme-canonical-mention` block (alias → canonical was rendering as canonical → alias).
+
 ## [13.4] — 2026-05-21
 
 ### Perf + polish follow-up (2026-05-21)

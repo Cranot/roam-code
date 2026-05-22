@@ -29,7 +29,7 @@
     "name": "Changelog",
     "url": "https://roam-code.com/changelog",
     "inLanguage": "en",
-    "dateModified": "2026-05-16",
+    "dateModified": "2026-05-21",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -76,6 +76,46 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Perf + drift-truth wave (2026-05-22)</h3>
+<h4>Performance</h4>
+<ul>
+<li><strong><code>roam tx-boundaries</code> — per-line substring fast-reject.</strong> A pre-check (a strict-superset token set of every transaction / mutation regex's literal anchor) gates the ~41-regex per-line scan with cheap <code>any(tok in line)</code>. A line that contains none of those tokens cannot match any pattern, so the regex pass is skipped entirely. Output-identical (the token set never excludes a line a pattern would have matched). Microbenchmark put the pre-check ~20x cheaper than the equivalent combined-alternation NFA. The drift guard in <code>tests/test_tx_boundaries.py</code> pins the superset relationship.</li>
+<li><strong><code>roam simulate</code> recompute shortcut.</strong> When the counterfactual graph is topologically identical to the baseline (every metric in <code>compute_graph_metrics</code> is derived purely from topology — <code>move</code> / <code>extract</code> / <code>merge</code> rewrite <code>file_path</code> but never add or remove nodes / edges), the post-transform recompute reuses the baseline metrics instead of running a fresh ~50s metric pass. <code>delete</code> still triggers the full recompute (it genuinely removes nodes / edges). The guard compares graphs directly, so a future topology-changing transform stays correct automatically. Output-identical.</li>
+<li><strong><code>roam fingerprint</code> / <code>roam clusters</code> — graph perf.</strong> Targeted hotspot fixes across the graph layer; new drift-guard in <code>tests/test_fingerprint.py</code>.</li>
+<li><strong><code>roam duplicates</code> — pair-scoring hoist + deterministic tie-break.</strong> Per-row derived fields hoisted out of the O(n²) pair-scoring loop. Output byte-identical.</li>
+<li><strong><code>roam smells</code> type-switch — shared AST cache.</strong> Type-switch detector reuses the v13.4 mtime+size-keyed <code>lru_cache</code> (same one the magic-numbers / boolean-parameter / switch-statement detectors share). Output byte-identical.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li><strong><code>roam compare</code> — <code>math_signals</code> → <code>symbol_metrics</code> schema migration.</strong> The complexity-delta query was reading from the long-retired <code>math_signals</code> table; migrated to <code>symbol_metrics.cognitive_complexity</code> (the metric's actual location since v12.x). The "predates the schema" disclosure wording also names <code>symbol_metrics</code>. A2-fix re-keys symbol identity on <code>(qualified_name, line_start)</code> so overloaded methods (roam-code has ~5600 same-qname symbols) stop silently dropping from the delta.</li>
+<li><strong><code>roam simulate</code> — non-saturating health score.</strong> Health-score computation was prematurely clamping; now non-saturating.</li>
+<li><strong><code>roam agents-md</code> — canonical MCP preset counts.</strong> Was reading a stale source for preset counts; now canonical.</li>
+<li><strong><code>roam audit-trail-verify</code> — Pattern-2 degraded-path disclosure.</strong> A partially-failed verify no longer reads as a clean pass.</li>
+<li><strong><code>roam article-12-check</code> — plain-ASCII status markers in the markdown report.</strong> Replaced the <code>✅</code> / <code>⚠️</code> emoji markers with <code>[OK]</code> / <code>[WARN]</code> plain-ASCII labels per the CLAUDE.md output convention (no emojis / colors / box-drawing in CLI output); mirrors how sibling commands render text-mode status. Check-item titles + summary text keep their typographic em-dashes / <code>≥</code> consistent with the rest of the codebase.</li>
+<li><strong><code>roam agent-score</code> — clamp to [0, 100].</strong></li>
+<li><strong><code>roam clones</code> / <code>roam duplicates</code> — deterministic clone-pattern tie-break.</strong> Equal-score clusters previously had PYTHONHASHSEED-dependent ordering across both detector families; now deterministic.</li>
+<li><strong>Kotlin extractor — by-delegate syntax classification.</strong> The tree-sitter Kotlin grammar misparses <code>class C : I by delegate { ... }</code> (treats the trailing <code>{...}</code> as a lambda argument to the delegate call), so functions declared inside such blocks landed under an <code>annotated_lambda</code> parent and the existing <code>class_body</code> context rule missed them. Adding <code>explicit_delegation</code> to the function-declaration context map in <code>extractors/kotlin.yaml</code> resolves the classification (<code>LoggingPrinter.log</code> now correctly classifies as <code>method</code>).</li>
+<li><strong><code>roam_ask</code> description — recipe count 24 → 25.</strong> Stale literal in the MCP tool description; the README MCP tool table is auto-regenerated from the description, so the README count tracks automatically.</li>
+<li><strong>MCP tool count 224 → 227</strong> across README headline + landing-page stale literals (the canonical count lives in <code>roam.surface_counts</code>).</li>
+</ul>
+<h4>Changed</h4>
+<ul>
+<li><strong>Loud-fallback campaign — batch 6 (extended sweep).</strong> ~57 modules (<code>src/roam/commands/cmd_*.py</code> + <code>agents_md/generator.py</code> + <code>output/formatter.py</code> + <code>mcp_extras/concurrency.py</code> + <code>mcp_server.py</code>) now emit <code>roam.observability.log_swallowed</code> lineage at silent <code>except: pass</code> / swallowed-exception sites. Behaviour identical — the exception is still swallowed, just no longer silent. The ratchet baseline in <code>tests/test_loud_fallback_no_new_silent_except.py</code> drops from ~196 to ~107 on the post-campaign tree.</li>
+</ul>
+<h4>Added</h4>
+<ul>
+<li><strong><code>dev/ARCHITECTURE-FUTURES.md</code> — long-horizon architecture memo.</strong> Captures four research directions (D1 event-driven graph mutators / D2 LSP-LSIF-SCIP integration / D3 federated multi-repo graphs / D4 eBPF runtime trace stitching) + the B-batch capability-positioning sweep. <strong>D2 (SCIP/LSIF ingest)</strong> and <strong>D3 (federated multi-repo graphs)</strong> flagged ★★★★★ as the next architectural moves; B6 (adversarial + MCP sampling), B7 (taint + LLM classify), B8 (forecast + spectral) already shipped (v12.1 / v13.4) — section status marked SHIPPED.</li>
+<li><strong>5 new drift-guards in <code>tests/test_doc_consistency.py</code></strong> pinning landing-page version surfaces.</li>
+<li><strong><code>templates/rules/rust/.roam-rules.yml</code> + <code>templates/rules/swift/.roam-rules.yml</code> — invalid <code>severity: NOTE</code></strong> (a non-canonical severity not in the closed enum) → fixed. All 8 rule packs now validate.</li>
+</ul>
+<h4>Docs</h4>
+<ul>
+<li><strong>README pass 3 — scannable rewrite</strong> (the v13.4 polish continued). "What's New" now reflects v13.4; ~20 stale command examples + literals fixed; the comprehensive command table moved behind a <code>&lt;details&gt;</code> link to the hosted Command Reference. <code>test_readme_covers_all_canonical_cli_commands</code> relaxed accordingly (the count gate via <code>test_readme_cli_command_count_matches_source</code> still pins the <code>(all N)</code> header to canonical).</li>
+<li><strong>CONTRIBUTING / AGENTS / llms-install / docs/ polish.</strong> <code>USER_VERSION 17 → 18</code>, SARIF list <code>14 → 37</code>, algo-catalog <code>23 → 34</code>. Stale <code>CLAUDE.md</code> cross-refs removed from AGENTS.md — CLAUDE.md was removed from the public repo in <code>e5993a6</code>; AGENTS.md is now the sole canonical agent guide.</li>
+<li><strong>Landing-page sweep.</strong> <code>templates/distribution/landing-page/index.html</code> + <code>status.html</code> + <code>docs/*.html</code> — stale version literals + broken command examples fixed.</li>
+<li><strong><code>src/roam/mcp_extras/adversarial_compress.py</code> docstring</strong> — corrected; the prior "PROTOTYPE / NOT yet wired into <code>mcp_server.py</code>" claim was stale relative to HEAD (the B6 wire shipped in v13.4 via <code>compress_mode</code> on <code>roam_adversarial</code>).</li>
+<li><strong>Generator bug fix</strong> in <code>dev/build_readme_counts.py</code> — was emitting backwards alias arrows in the <code>readme-canonical-mention</code> block (alias → canonical was rendering as canonical → alias).</li>
+</ul>
 <h2>[13.4] — 2026-05-21</h2>
 <h3>Perf + polish follow-up (2026-05-21)</h3>
 <h4>Performance</h4>
