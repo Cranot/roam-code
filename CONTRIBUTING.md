@@ -154,7 +154,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v13.2            # pin to a release tag
+    rev: v13.4            # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
@@ -202,7 +202,8 @@ Before picking up work, skim:
 - `dev/BACKLOG.md` — the sprint queue + shipped history. Good for finding
   small, well-scoped tasks tagged "drive-by" or "polish".
 - `(internal memo)` — active strategy command center
-  (framing, launch readiness, build priorities).
+  (framing, launch readiness, build priorities). Private — gitignored; not
+  shipped to PyPI/GitHub.
 
 ### Reporting Bugs
 
@@ -496,7 +497,8 @@ wrangler pages deploy templates/distribution/landing-page \
 ```
 
 PyPI publishes from a tag (`.github/workflows/publish.yml`). After a
-version-bump commit lands on main: `git tag v13.2 && git push origin v13.2`.
+version-bump commit lands on main, tag it with the new `pyproject.toml`
+version and push the tag: `git tag vX.Y && git push origin vX.Y`.
 
 ## PR Guidelines
 

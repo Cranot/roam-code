@@ -137,7 +137,7 @@
         </p>
 <pre class="terminal" aria-label="First-day repo orientation"><span class="t-prompt">$</span> <span class="t-cmd">roam understand</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam tour</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam minimap --tokens 4000</span></pre>
+<span class="t-prompt">$</span> <span class="t-cmd">roam minimap</span></pre>
       </div>
     </section>
 
@@ -158,7 +158,7 @@
         </p>
 <pre class="terminal" aria-label="Task-driven retrieval"><span class="t-prompt">$</span> <span class="t-cmd">roam retrieve "where does login validate sessions"</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam context UserService</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam agent-context --tokens 8000</span></pre>
+<span class="t-prompt">$</span> <span class="t-cmd">roam agent-context --agent-id 1 --agents 3</span></pre>
       </div>
     </section>
 
@@ -246,16 +246,16 @@
         </p>
         <p>
           Commands: <code>roam layers</code> ·
-          <code>roam cycles</code> ·
           <code>roam clusters</code> ·
           <code>roam health</code> ·
           <code>roam dark-matter</code> ·
+          <code>roam spectral</code> ·
           <code>roam fitness</code>.
         </p>
 <pre class="terminal" aria-label="Architecture-drift sweep"><span class="t-prompt">$</span> <span class="t-cmd">roam health</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam cycles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam layers</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam dark-matter</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam fitness --ci</span></pre>
+<span class="t-prompt">$</span> <span class="t-cmd">roam fitness</span></pre>
       </div>
     </section>
 
@@ -298,9 +298,9 @@
           <code>roam orchestrate</code> ·
           <code>roam agent-plan</code>.
         </p>
-<pre class="terminal" aria-label="Multi-agent partitioning"><span class="t-prompt">$</span> <span class="t-cmd">roam partition --agents 3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam orchestrate --emit fleet.json</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam agent-plan --target claude</span></pre>
+<pre class="terminal" aria-label="Multi-agent partitioning"><span class="t-prompt">$</span> <span class="t-cmd">roam partition --n-agents 3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam orchestrate --agents 3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam agent-plan --n-agents 3 --format claude-teams</span></pre>
       </div>
     </section>
 
@@ -331,7 +331,7 @@
           <code>roam audit-trail-verify</code> ·
           <code>--sarif</code>.
         </p>
-<pre class="terminal" aria-label="Audit-grade evidence emission"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --sign cosign</span>
+<pre class="terminal" aria-label="Audit-grade evidence emission"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --sign</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam audit-trail-export --since 2026-01-01</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam health --sarif &gt; health.sarif</span></pre>
       </div>

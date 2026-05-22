@@ -28,19 +28,19 @@ This section codifies what makes a roam command good. Distilled from 212 dogfood
 
 ### Six systemic anti-patterns to NEVER ship
 
-From `internal/dogfood/SYNTHESIS-2026-05-12.md` — validated unchanged across 30 → 59 → 212 evals.
+From `internal/dogfood/SYNTHESIS-2026-05-12.md` — validated unchanged across 30 → 59 → 212 evals as failure classes. Several of the original incidents are now SEALED behind regression tests; they are kept here as regression-invariant examples, not as claims that the bug is currently live.
 
-1. **JSON-parse-on-empty-input.** When the CLI emits empty stdout (no records / no changes), the MCP wrapper feeds it to `json.loads()` and crashes. Always emit `{"command": X, ...empty fields with sensible defaults}` instead of empty stdout. Confirmed in 4 commands today (`diff`, `file_info`, `for_bug_fix.diff`, cascading to `pr_analyze`).
+1. **Pattern-1 family — "structured signal lost or never reached".** One root failure family. (A) Hang on missing prerequisite — SEALED (live guard `src/roam/mcp_extras/preflight.py`). (B) Structured signal collapsed to generic `COMMAND_FAILED` by an intermediate layer — SEALED (try-parse stdout as JSON at the wrapper-bridge). (C) Empty-stdout crash on `json.loads()` — SEALED (CLI always emits a structured envelope, even on no-results). (D) Silent success on degraded resolution — LIVE: disclose the resolution state via a `resolution` field + `partial_success: true` + a degraded verdict. Every wrapper that cannot complete normally emits the canonical failure envelope (closed `status` / `error_code` enums; `isError: true` inside a successful JSON-RPC result).
 
-2. **Silent fallback.** Never emit `verdict: "SAFE"` / `"completed"` / `"non-conformant"` when the underlying check failed or didn't run. Make absent state explicit: `state: "not_initialized"`, not `state: "broken"`. `for_refactor` reports `verdict: "compound operation completed"` despite 4/4 subcommand failures — this is exactly what NOT to do.
+2. **Silent fallback.** Never emit `verdict: "SAFE"` / `"completed"` / `"non-conformant"` when the underlying check failed or didn't run. Make absent state explicit: `state: "not_initialized"`, not `state: "broken"`. Historical example: `for_refactor` once reported `verdict: "compound operation completed"` despite 4/4 subcommand failures — the guard now lives in `_compound_envelope()` and its tests (subcommand failure must set `partial_success: true` and name the failed subcommands).
 
-3. **Vocabulary mismatch across commands.** Different commands report different "callers" / "complexity" / "AI rot" / "public symbols" / "compliance score" for the same input. Either standardize the metric **or label every field with its precise definition** (`caller_metric_definition: "raw_edge_rows"` pattern from `docs/dogfood/IMPLEMENTATION-2026-05-12.md` Task 1). 9+ MCP parameter names refer to similar concepts (`symbol` vs `name` vs `path` vs `paths` vs `file` vs `query` vs `queries` vs `patterns` vs `prefix`). Pick a vocabulary and enforce it at the MCP boundary.
+3. **Vocabulary mismatch family.** (a) Cross-command metric divergence — different commands report different "callers" / "complexity" / "AI rot" / "public symbols" for the same input; fix by stamping a `<metric>_definition` sidecar field (`caller_metric_definition: "raw_edge_rows"` pattern). (b) Cross-MCP parameter-name divergence — 9+ MCP parameter names refer to similar concepts (`symbol` vs `name`; `path` vs `paths` vs `file`; `query` vs `queries` vs `patterns` vs `prefix`); fix via the `_PARAM_ALIASES` table in `src/roam/mcp_server.py` with boundary normalization at wrapper-dispatch time. The lint `tests/test_mcp_param_names.py` blocks new wrappers re-introducing legacy names.
 
-4. **Conventions detector inconsistency.** 5 commands (`describe`, `understand`, `minimap`, `preflight`, `conventions` standalone) compute conventions differently and disagree on the same codebase. There must be ONE canonical detector — use `describe`'s. Cross-link the others to it.
+4. **Conventions detector inconsistency — RESOLVED (Fix G).** All 5 sites (`describe`, `understand`, `minimap`, `preflight`, `conventions` standalone) now delegate to the canonical `conventions_helper.compute_conventions()`. Any new convention-aware command MUST call the helper; `--persist` to the findings registry lives ONLY on the standalone `conventions` command.
 
-5. **Compound-recipe internal command-name drift.** `for_security_review` calls internal `roam vuln` (should be `vulns`). `for_refactor` calls `roam complexity-report` (should be `complexity`). String-concat invocation is fragile; use a **registry-key lookup** at compound-init time. Both bugs ship silently because no test runs the compound end-to-end on the actual CLI registry.
+5. **Compound-recipe internal command-name drift — SEALED.** Use **registry-key lookup** at compound-init time, never string-concat. Live in `_cr()` / `_COMPOUND_REGISTRY` (`src/roam/mcp_server.py`); guard test `tests/test_compound_recipe_registry.py` AST-scans recipes against `cli._COMMANDS | cli._DEPRECATED_COMMANDS`.
 
-6. **Response volume crisis.** 8 commands return 50K-1.6M tokens with no auto-handle: `capsule` (1.6M), `partition` (1.1M), `conventions` (398K), `verify-imports` (275K), `fingerprint` (262K), `api` (247K), `changelog` (154K), `simulate-departure` (128K). The fix pattern exists already: `roam_explore` and `roam_dogfood` use auto-handle correctly; `graph-export` writes JSONL to disk + returns a tiny envelope. Mandate one of these patterns for any response >20K tokens. **And fix `fetch_handle` itself — it crashes on the 92K-byte handles the handle pattern was designed to absorb.**
+6. **Response volume family.** (a) Auto-handle pattern — caller polls for chunks via `_wrap_with_handle_off`; FULLY ADOPTED, every `@_tool` command inherits it. (b) File-write pattern — writes to disk + returns a tiny envelope (`graph-export`, `fingerprint`, `index-bundle`, `cga`, `agent-export`). (c) `fetch_handle`'s own crash on large handles — SEALED at v2.0.0 (fully paginated byte-slice + section-pick + jq-projection modes). Mandate: any response >20K tokens MUST use 6a OR 6b.
 
 ### Twelve agi-in-md laws applied to roam-code
 
@@ -54,7 +54,7 @@ These are language-model behavioral laws (validated on Haiku/Sonnet/Opus 4.5/4.6
 
 4. **[LAW] "Code" nouns activate analytical mode on any input.** (D15) — In roam: `agent_contract.facts` strings should anchor on concrete nouns ("`useThemeClasses` has 528 callers") not abstract ones ("this symbol has many callers"). Concrete nouns activate analytical processing; abstract nouns activate summary mode.
 
-   **Concrete-noun anchor vocabulary**: the LAW 4 lint at `tests/test_law4_lint.py` accepts a fact string as concrete-noun-anchored if its terminal token (last word, punctuation stripped) is in a known anchor set. Authoritative sources: `src/roam/output/formatter.py:concrete_plural_terminals` (98 entries, drives the humanizer's "skip findings suffix" rule) and `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS` (115 entries = 98 shared with the formatter + 17 SBOM/registry additions; mirrors the formatter set per the `# Keep these two lists in sync.` comment, and the count drift is pinned by `tests/test_law4_anchor_counts.py`). Representative entries — consult the source files for the full list:
+   **Concrete-noun anchor vocabulary**: the LAW 4 lint at `tests/test_law4_lint.py` accepts a fact string as concrete-noun-anchored if its terminal token (last word, punctuation stripped) is in a known anchor set. Authoritative sources: `src/roam/output/formatter.py:concrete_plural_terminals` (99 entries, drives the humanizer's "skip findings suffix" rule) and `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS` (116 entries = 99 shared with the formatter + 17 SBOM/registry additions; mirrors the formatter set per the `# Keep these two lists in sync.` comment, and the count drift is pinned by `tests/test_law4_anchor_counts.py`). Representative entries — consult the source files for the full list:
 
    - **Code structure**: `files`, `symbols`, `edges`, `nodes`, `cycles`, `clusters`, `layers`, `modules`, `commands`, `tools`, `capabilities`, `imports`, `endpoints`, `dependencies`, `packages`, `routes`
    - **Findings**: `findings`, `hotspots`, `smells`, `violations`, `warnings`, `errors`, `alerts`, `issues`, `gaps`, `leaks`, `secrets`, `vulnerabilities`
@@ -62,7 +62,7 @@ These are language-model behavioral laws (validated on Haiku/Sonnet/Opus 4.5/4.6
    - **Past participles / state qualifiers**: `passed`, `failed`, `scanned`, `checked`, `affected`, `scored`, `confirmed`, `analyzed`, `skipped`, `reached`
    - **Time units**: `days`, `weeks`, `months`, `years`, `hours`, `minutes`, `seconds`, `milliseconds`
 
-   When writing a new fact, ensure the terminal token is in the anchor set. If not, either rephrase to anchor on a different terminal OR add the new noun to BOTH `src/roam/output/formatter.py:concrete_plural_terminals` AND `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS`. The test set is a deliberate superset of the formatter set (formatter has 98 entries; the test mirrors all of them and adds 17 SBOM/registry-domain terminals — `capabilities`, `commands`, `tools`, `packages`, `phantom`, `reachable`, etc.). The mirror is hand-maintained rather than imported so the lint stays decoupled from `roam.output.formatter` — see the `# Keep these two lists in sync.` comment in the test file.
+   When writing a new fact, ensure the terminal token is in the anchor set. If not, either rephrase to anchor on a different terminal OR add the new noun to BOTH `src/roam/output/formatter.py:concrete_plural_terminals` AND `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS`. The test set is a deliberate superset of the formatter set (formatter has 99 entries; the test mirrors all of them and adds 17 SBOM/registry-domain terminals — `capabilities`, `commands`, `tools`, `packages`, `phantom`, `reachable`, etc.). The mirror is hand-maintained rather than imported so the lint stays decoupled from `roam.output.formatter` — see the `# Keep these two lists in sync.` comment in the test file.
 
    Example:
    - WRONG: `"7 of 10 capabilities are AI-safe"` (ends on `AI-safe`, not anchored)
@@ -170,6 +170,7 @@ src/roam/
     bridge_protobuf.py # .proto → Go/Java/Python stubs bridge
     bridge_rest_api.py # Frontend HTTP calls → backend route definitions
     bridge_template.py # Jinja2/Django/ERB/Handlebars variable + include resolution
+    bridge_django.py   # Django admin/serializer/form/URL → Model + view resolution
     bridge_config.py   # Env var reads → .env/.yml definitions
   catalog/
     tasks.py           # Universal algorithm catalog — 23 tasks with ranked solution approaches
@@ -223,7 +224,7 @@ src/roam/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
     schema_registry.py # JSON envelope schema versioning + validation
-tests/                 # 744 test_*.py files
+tests/                 # 1100+ test_*.py files
   # Core & legacy
   test_basic.py, test_comprehensive.py, test_fixes.py, test_performance.py,
   test_resolve.py, test_salesforce.py, test_v6_features.py,
@@ -311,7 +312,7 @@ analysis core.
 src/roam/atomic_io.py     - atomic_write_text/bytes/json (os.replace; POSIX+Windows safe)
 src/roam/agents_md/       - AGENTS.md generator (compositional; consumes the rest)
 src/roam/constitution/    - capstone .roam/constitution.yml unifying laws+rules+memory+gates
-src/roam/db/findings.py   - cross-detector finding registry (roam findings list/show/count); USER_VERSION 17 schema
+src/roam/db/findings.py   - cross-detector finding registry (roam findings list/show/count); USER_VERSION 18 schema
 src/roam/laws/            - invariant mining (roam laws mine/check) - self-installing
 src/roam/leases/          - multi-agent coordination (roam lease claim/release/list)
 src/roam/memory/          - repo-local agent memory (.roam/memory.jsonl)
@@ -405,7 +406,7 @@ Agent-developer landing page:
 unknown literals raise `ValueError`):
 
 - `policy_decision` (6 values): `allow`, `deny`, `escalate`, `redact`,
-  `not_evaluated`, `dry_run`.
+  `not_evaluated`, `would_deny_dry_run`.
 - `redactions` reasons (9 values, canonical W226 `REDACTION_REASONS`):
   `secret`, `pii`, `sensitive_content`, `size_limit`, `policy`,
   `user_opt_in_required`, `machine_local_path`, `schema_strict`,
@@ -419,7 +420,6 @@ correction, `surface --json` top-level keys completion, and
 
 ### Where to look next (cross-links)
 
-- `CLAUDE.md` (this repo)            - Claude-specific operator guide (parallel to AGENTS.md)
 - `README.md` (this repo)            - public surface + headline counts
 - `https://roam-code.com/docs/`      - hosted command reference, architecture, getting-started
 - `templates/distribution/landing-page/docs/agent-contract.html` - agent-developer landing page (envelope shape + closed enums)
@@ -427,10 +427,10 @@ correction, `surface --json` top-level keys completion, and
 - `src/roam/evidence/mcp_receipt.py` - canonical `McpDecisionReceipt` dataclass
 - `scripts/export_mcp_receipt_schema.py` - JSON Schema Draft 2020-12 emitter (P2.2)
 - https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163 - public reply on the runtime-security posture
-- `(internal memo)`  - active strategy command center (framing, launch, build queue)
+- `(internal memo)`  - active strategy command center (framing, launch, build queue). Private — gitignored; not shipped to PyPI/GitHub.
 - `dev/BACKLOG.md`                   - what's queued / still TODO
 - `dev/ROADMAP.md` tier four-star    - strategic items not yet started (R21 leases done; R25 plugin still open)
-- `internal/dogfood/SYNTHESIS-2026-05-12.md` - dogfood corpus (gitignored)
+- `internal/dogfood/SYNTHESIS-2026-05-12.md` - dogfood corpus (private — gitignored)
 
 ## Conventions
 
@@ -579,7 +579,7 @@ Before modifying any code:
 Additional commands: `roam health` (0-100 score), `roam impact <name>` (what breaks),
 `roam pr-risk` (PR risk score), `roam file <path>` (file skeleton),
 `roam simulate move <sym> <file>` (what-if architecture), `roam orchestrate` (multi-agent partitioning),
-`roam adversarial` (attack surface review), `roam mutate move <sym> <file>` (code transforms),
+`roam adversarial` (architectural challenges on changed files — composes cycles + clusters + layers + catalog + dead + complexity), `roam mutate move <sym> <file>` (code transforms),
 `roam clones --persist` (populate `clone_pairs` so `critique` and `retrieve` can flag clone classes).
 
 Index-aware text search (added on top of grep / refs):

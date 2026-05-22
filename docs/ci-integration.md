@@ -103,7 +103,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 | `changed-depth` | `3` | Dependency depth used when computing changed+dependent file scope in `changed-only` mode. |
 | `base-ref` | _(auto)_ | Optional explicit base ref/SHA for incremental mode. Default is PR base SHA (or push `before` SHA). |
 | `sarif` | `false` | When `true`, exports SARIF for the selected SARIF command set and uploads a guarded combined SARIF file to GitHub Code Scanning. Requires `security-events: write` permission. |
-| `sarif-commands` | `auto` | Space-separated commands to export via `--sarif`. `auto` picks the SARIF-capable subset of `commands` (`health`, `dead`, `complexity`, `rules`, `secrets`, `algo`). |
+| `sarif-commands` | `auto` | Space-separated commands to export via `--sarif`. `auto` picks the SARIF-capable subset of `commands` (any command in `_SARIF_CONSUMERS` -- see "Commands that emit SARIF" below). |
 | `sarif-category` | `roam-code` | Base SARIF upload category. The action appends job/runtime suffixes to reduce collisions. |
 | `sarif-max-runs` | `20` | Pre-upload guardrail: maximum runs kept in combined SARIF. Extra runs are dropped from the tail with a warning. |
 | `sarif-max-results` | `25000` | Pre-upload guardrail: maximum results per run. Extra results are dropped from the tail with a warning. |
@@ -111,7 +111,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 | `comment` | `true` | When `true` and running on a pull request, upserts one marker-managed sticky PR comment (idempotent) and removes duplicate sticky comments if they exist. Requires `pull-requests: write` permission. |
 | `gate` | _(empty)_ | Quality gate expression. Supports scalar checks (`key>=value`) and trend-aware functions (`velocity(metric)<=0`, `direction(metric)!=worsening`). The action exits with code 5 when the gate fails. |
 | `cache` | `true` | Cache pip packages and the `.roam/` SQLite index between runs for faster incremental analysis. |
-| `python-version` | `3.11` | Python version to use. Supports 3.9 through 3.13. |
+| `python-version` | `3.11` | Python version to use. Supports 3.10 through 3.13 (roam-code requires Python 3.10+). |
 
 ## Outputs
 
@@ -189,19 +189,23 @@ The PR comment will show the gate result as `PASSED` or `FAILED`.
 
 ### Commands that emit SARIF
 
-Fourteen commands honour the global `--sarif` flag. The authoritative list
-lives at `src/roam/cli.py` -- `_SARIF_CONSUMERS` (drift-guarded by
+A growing set of commands honour the global `--sarif` flag. The authoritative
+list lives at `src/roam/cli.py` -- `_SARIF_CONSUMERS` (drift-guarded by
 `tests/test_sarif_consumer_list.py`). To print the current list at any time:
 
 ```bash
 roam --help 2>&1 | grep -A1 -- '--sarif'
 ```
 
-The W26.1-audited set (alphabetical):
+The current set (alphabetical):
 
 ```
-algo, audit-trail-conformance-check, check-rules, complexity, dead, health,
-py-modern, py-types, rules, secrets, stale-refs, supply-chain, taint, vulns
+affected-tests, algo, audit-trail-conformance-check, auth-gaps, bus-factor,
+check-rules, clones, complexity, critique, dark-matter, dead, delete-check,
+duplicates, fan, flag-dead, health, hotspots, impact, laws, llm-smells,
+missing-index, n1, orphan-imports, orphan-routes, over-fetch, partition,
+py-modern, py-types, rules, secrets, smells, stale-refs, supply-chain,
+taint, test-impact, verify-imports, vulns
 ```
 
 Any other command run with `--sarif` falls back to its native JSON envelope

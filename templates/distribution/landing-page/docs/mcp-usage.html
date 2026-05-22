@@ -244,22 +244,22 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
           <tr>
             <td><code>roam_capsule_export</code></td>
             <td>Exports the entire sanitised structural graph; can exceed 1M tokens on large repos.</td>
-            <td>Write to file via the CLI (<code>roam capsule --out capsule.json</code>) and reference the path, or scope with <code>--include</code>.</td>
+            <td>Write to file via the CLI (<code>roam capsule --output capsule.json</code>) and reference the path.</td>
           </tr>
           <tr>
             <td><code>roam_orchestrate</code> / <code>roam_partition</code></td>
             <td>Multi-agent partitioning emits one entry per cluster; thousands of entries on large repos.</td>
-            <td>Use <code>--n-agents</code> to bound output, or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
+            <td>Bound output with <code>--agents N</code> (orchestrate) or <code>--n-agents N</code> (partition), or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
           </tr>
           <tr>
             <td><code>roam_fingerprint</code></td>
             <td>Per-symbol topology fingerprints across the whole graph.</td>
-            <td>Pass <code>--top N</code> or restrict to a subgraph.</td>
+            <td>Pass <code>--compact</code> for a single-line summary instead of the full per-symbol export.</td>
           </tr>
           <tr>
             <td><code>roam_verify_imports</code></td>
             <td>Cross-language import resolution over every file.</td>
-            <td>Scope to changed files with <code>--changed</code>.</td>
+            <td>Scope to a single file with <code>--path</code>.</td>
           </tr>
           <tr>
             <td>Any tool returning more than 20K tokens</td>

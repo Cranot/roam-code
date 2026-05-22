@@ -108,9 +108,83 @@ def _server_json_version() -> str | None:
 # The bundled wheel copy lives under ``src/roam/`` for ``roam mcp --card``.
 _PUBLIC_MCP_CARD = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
 
+# Sibling spec-named copy of the same card: some MCP discovery clients
+# probe ``/.well-known/mcp/server-card.json`` rather than the flat
+# ``/.well-known/mcp-server-card.json``. Both ship in the landing-page
+# tree and must carry the same version stamp.
+_PUBLIC_MCP_CARD_NESTED = (
+    ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp" / "server-card.json"
+)
+
+_LANDING_PAGE = ROOT / "templates" / "distribution" / "landing-page"
+
 
 def _mcp_card_version() -> str | None:
     p = _PUBLIC_MCP_CARD
+    if not p.exists():
+        return None
+    return json.loads(p.read_text(encoding="utf-8")).get("version")
+
+
+# ---------------------------------------------------------------------------
+# Landing-page version-string scrapers
+# ---------------------------------------------------------------------------
+#
+# These surfaces statically embed the package version in hand-maintained
+# prose / JSON-LD / changelog headers. They have a documented habit of
+# drifting behind the real release (index.html JSON-LD stuck at 13.2;
+# status.html said v13.2; server.json drift broke CI during v13.4). Each
+# scraper below pulls the *specific* version-bearing field so the guard
+# names exactly what to fix when it bites.
+
+
+def _index_html_jsonld_version() -> str | None:
+    """JSON-LD ``softwareVersion`` in the landing-page ``index.html``."""
+    p = _LANDING_PAGE / "index.html"
+    if not p.exists():
+        return None
+    m = re.search(r'"softwareVersion"\s*:\s*"([^"]+)"', p.read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
+def _status_html_current_version() -> str | None:
+    """``status.html`` ``(current: vN.N)`` Changelog pointer."""
+    p = _LANDING_PAGE / "status.html"
+    if not p.exists():
+        return None
+    m = re.search(r"current:\s*v(\d+\.\d+(?:\.\d+)?)", p.read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
+def _changelog_html_latest_release_version() -> str | None:
+    """First *released* ``<h2>[N.N] - date</h2>`` header in the rendered
+    ``changelog.html`` — i.e. the newest shipped version. ``[Unreleased]``
+    is intentionally skipped (no version stamp)."""
+    p = _LANDING_PAGE / "changelog.html"
+    if not p.exists():
+        return None
+    # Match released entries only: a bracketed version + an em-dash date.
+    m = re.search(
+        r"<h2>\[(\d+\.\d+(?:\.\d+)?)\]\s*&mdash;|<h2>\[(\d+\.\d+(?:\.\d+)?)\]\s*—", p.read_text(encoding="utf-8")
+    )
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
+def _canonical_demo_driver_version() -> str | None:
+    """SARIF ``driver.version`` embedded in the ``docs/canonical-demo.html``
+    expected-output excerpt."""
+    p = _LANDING_PAGE / "docs" / "canonical-demo.html"
+    if not p.exists():
+        return None
+    m = re.search(r'"name"\s*:\s*"roam"\s*,\s*"version"\s*:\s*"([^"]+)"', p.read_text(encoding="utf-8"))
+    return m.group(1) if m else None
+
+
+def _nested_mcp_card_version() -> str | None:
+    """``version`` in the spec-named ``/.well-known/mcp/server-card.json``."""
+    p = _PUBLIC_MCP_CARD_NESTED
     if not p.exists():
         return None
     return json.loads(p.read_text(encoding="utf-8")).get("version")
@@ -187,6 +261,108 @@ class TestVersionConsistency:
         )
         assert card_full == live_total, (
             f"card capabilities.tools.presets.full = {card_full} but live total = {live_total}"
+        )
+
+    # -- Landing-page surfaces (newly guarded) -----------------------------
+    #
+    # Every landing-page file that *statically* embeds the package version
+    # is pinned to pyproject below. The audit habit being closed: a release
+    # bump touches pyproject + server.json + the card, but the hand-edited
+    # HTML surfaces silently fall behind (index.html JSON-LD was stuck at
+    # 13.2; status.html said v13.2). Each test below names the exact field
+    # and file so the failure message is a copy-pasteable fix instruction.
+    #
+    # Dev-local-absence skip discipline mirrors ``test_count_drift``'s
+    # CLAUDE.md guard: a landing-page file genuinely missing on a CI
+    # checkout ``pytest.skip``s rather than failing — but it is NEVER
+    # silently passed.
+
+    def test_index_html_jsonld_version_matches_pyproject(self):
+        """``index.html`` JSON-LD ``softwareVersion`` must equal pyproject.
+
+        This field was the canonical drift example this guard closes — it
+        sat at ``13.2`` for two releases because the JSON-LD block is
+        hand-maintained and no test pinned it.
+        """
+        truth = _truth_version()
+        actual = _index_html_jsonld_version()
+        if actual is None:
+            p = _LANDING_PAGE / "index.html"
+            if not p.exists():
+                pytest.skip("landing-page index.html not present (dev-local)")
+            raise AssertionError("index.html missing JSON-LD 'softwareVersion' field")
+        assert actual == truth, (
+            f"index.html JSON-LD softwareVersion={actual!r} != pyproject {truth!r} — "
+            f'bump "softwareVersion" in templates/distribution/landing-page/index.html to {truth!r}'
+        )
+
+    def test_status_html_current_version_matches_pyproject(self):
+        """``status.html`` Changelog pointer ``(current: vN.N)`` must equal
+        pyproject — it said ``v13.2`` after the v13.3/v13.4 releases."""
+        truth = _truth_version()
+        actual = _status_html_current_version()
+        if actual is None:
+            p = _LANDING_PAGE / "status.html"
+            if not p.exists():
+                pytest.skip("landing-page status.html not present (dev-local)")
+            raise AssertionError("status.html missing '(current: vN.N)' Changelog pointer")
+        assert actual == truth, (
+            f"status.html says 'current: v{actual}' but pyproject is {truth!r} — "
+            f"update the '(current: v...)' pointer in "
+            f"templates/distribution/landing-page/status.html to v{truth}"
+        )
+
+    def test_changelog_html_latest_release_matches_pyproject(self):
+        """The newest *released* entry header in the rendered
+        ``changelog.html`` must equal pyproject.
+
+        A release that bumps pyproject without re-rendering the changelog
+        HTML leaves the latest header behind — the exact 'regenerate
+        downstream artifacts in the same commit' drift this guards.
+        ``[Unreleased]`` carries no version stamp and is skipped.
+        """
+        truth = _truth_version()
+        actual = _changelog_html_latest_release_version()
+        if actual is None:
+            p = _LANDING_PAGE / "changelog.html"
+            if not p.exists():
+                pytest.skip("landing-page changelog.html not present (dev-local)")
+            raise AssertionError("changelog.html has no released '<h2>[N.N] — date</h2>' entry")
+        assert actual == truth, (
+            f"changelog.html newest released entry is [{actual}] but pyproject is {truth!r} — "
+            f"add the [{truth}] section (re-render changelog.html in the release commit)"
+        )
+
+    def test_canonical_demo_driver_version_matches_pyproject(self):
+        """The SARIF ``driver.version`` baked into the
+        ``docs/canonical-demo.html`` expected-output excerpt must equal
+        pyproject — a stale demo prints a wrong version to every reader."""
+        truth = _truth_version()
+        actual = _canonical_demo_driver_version()
+        if actual is None:
+            p = _LANDING_PAGE / "docs" / "canonical-demo.html"
+            if not p.exists():
+                pytest.skip("landing-page docs/canonical-demo.html not present (dev-local)")
+            raise AssertionError("canonical-demo.html missing SARIF driver 'version' in the output excerpt")
+        assert actual == truth, (
+            f"canonical-demo.html SARIF driver.version={actual!r} != pyproject {truth!r} — "
+            f'bump the SARIF driver "version" in '
+            f"templates/distribution/landing-page/docs/canonical-demo.html to {truth!r}"
+        )
+
+    def test_nested_mcp_card_matches_pyproject(self):
+        """The spec-named ``/.well-known/mcp/server-card.json`` copy must
+        equal pyproject — same card, second discovery path."""
+        truth = _truth_version()
+        actual = _nested_mcp_card_version()
+        if actual is None:
+            if not _PUBLIC_MCP_CARD_NESTED.exists():
+                pytest.skip(".well-known/mcp/server-card.json not present (dev-local)")
+            raise AssertionError(".well-known/mcp/server-card.json missing 'version' field")
+        assert actual == truth, (
+            f".well-known/mcp/server-card.json version={actual!r} != pyproject {truth!r} — "
+            f"bump 'version' in "
+            f"templates/distribution/landing-page/.well-known/mcp/server-card.json to {truth!r}"
         )
 
     # ``test_landscape_json_self_row_version_matches`` removed

@@ -210,7 +210,7 @@
     <section id="agent-os-substrate">
       <h2>Agent OS Substrate</h2>
       <p>
-        On top of the analysis core, Roam ships an 11-package control-plane substrate that
+        On top of the analysis core, Roam ships a 12-package control-plane substrate that
         lets agents earn the right to change code. Every package is repo-local (under
         <code>.roam/</code>), zero-network, and additive to the index.
       </p>
@@ -228,6 +228,7 @@
           <tr><td><code>memory/</code></td><td>Repo-local agent memory at <code>.roam/memory.jsonl</code>.</td></tr>
           <tr><td><code>modes/</code></td><td>Four cumulative action modes: <code>read_only</code> / <code>safe_edit</code> / <code>migration</code> / <code>autonomous_pr</code>.</td></tr>
           <tr><td><code>policy/</code></td><td>Graph-aware rule clauses (<code>reachable_from</code>, <code>imports_from</code>, ...).</td></tr>
+          <tr><td><code>quality/</code></td><td>Canonical metric definitions (<code>ai_rot</code>, <code>cycles</code>, <code>god_components</code>, <code>public_symbols</code>).</td></tr>
           <tr><td><code>runs/</code></td><td>Per-run event ledger + HMAC tamper detection (<code>roam runs verify</code>).</td></tr>
           <tr><td><code>world_model/</code></td><td>Four detectors: side-effects, idempotency, causal-graph, tx-boundaries.</td></tr>
         </tbody>

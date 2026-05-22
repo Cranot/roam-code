@@ -144,7 +144,7 @@ VERDICT: 2 N+1 hotspots
       <h2>5. The layer violation that quietly couples your domain to your HTTP stack</h2>
       <p><strong>Scenario.</strong> The agent is asked to "use the existing HTTP retry helper" and imports <code>http.retry</code> directly inside <code>domain/billing.py</code>. The change passes review — it's a small import. Six months later you can't change HTTP libraries without touching the entire domain layer.</p>
       <p><strong>What Roam does.</strong> <code>roam layers</code> infers architectural layers; <code>roam fitness</code> + <code>.roam-gates.yml</code> declare layer constraints; <code>roam critique</code> blocks PRs that violate them.</p>
-      <pre class="terminal" aria-label="Layers/fitness demo"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --gates fitness</span>
+      <pre class="terminal" aria-label="Layers/fitness demo"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
 VERDICT: BLOCK
 [1] layer-violation (HIGH)
     Edge added: domain/billing.py -> http/retry.py
@@ -161,7 +161,7 @@ nearest tests:
   test_pricing_engine.py::test_basic_discount (covers lines 60-79, not 88-104)
   test_pricing_engine.py::test_segment_lookup (covers segment_for_user, not the discount branch)
 
-<span class="t-prompt">$</span> <span class="t-cmd">roam test-gaps --diff</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam test-gaps --changed</span>
 VERDICT: 1 high-risk gap
 src/pricing/engine.py:88-104 discount_for_segment
   reach-from-tests: 0
@@ -178,14 +178,14 @@ indirect references requiring manual fix:
   scripts/seed_demo.py:88      importlib.import_module('app.queues.email')
   src/admin/registry.py:204    QUEUE_REGISTRY['email'] = 'app.queues.email:EmailQueue'
 
-run: roam plan-refactor EmailQueue --target infrastructure/messaging/email_queue.py
+run: roam plan-refactor EmailQueue --target-file infrastructure/messaging/email_queue.py
 to get a step-by-step plan with caller-update ordering.</pre>
 
       <h2>8. The PR that ships unsigned</h2>
       <p><strong>Scenario.</strong> Quarterly review arrives. Compliance asks "what was checked on this PR before it merged?" You point at green checkmarks. They want a signed, tamper-evident artifact — not a screenshot of CI. EU AI Act / SOC 2 CC8.1 / ISO 42001 evidence.</p>
-      <p><strong>What Roam does.</strong> <code>roam attest</code> emits an in-toto v1 attestation (<code>roam-code.dev/CodeGraph/v1</code>) covering the inputs, the gates that ran, and the verdicts. Optional <code>cosign</code> signing produces an offline-verifiable artifact you can store with the PR.</p>
-      <pre class="terminal" aria-label="Attest demo"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --cosign --sign --output cga.intoto.jsonl</span>
-attestation: roam-code.dev/CodeGraph/v1
+      <p><strong>What Roam does.</strong> <code>roam attest</code> emits an in-toto v1 attestation (<code>https://roam-code.com/spec/CodeGraph/v1</code>) covering the inputs, the gates that ran, and the verdicts. Optional <code>cosign</code> signing produces an offline-verifiable artifact you can store with the PR.</p>
+      <pre class="terminal" aria-label="Attest demo"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --sign --output cga.intoto.jsonl</span>
+attestation: https://roam-code.com/spec/CodeGraph/v1
 inputs:
   graph_merkle: sha256:e2b0...c4f
   diff_merkle:  sha256:9a17...8d2
@@ -197,7 +197,7 @@ gates:
 signed by: keyless OIDC (github-actions)
 written: cga.intoto.jsonl
 
-<span class="t-prompt">$</span> <span class="t-cmd">roam audit-trail-verify cga.intoto.jsonl</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam cga verify cga.intoto.jsonl</span>
 VERDICT: VERIFIED
 signature: valid
 graph_merkle: matches HEAD

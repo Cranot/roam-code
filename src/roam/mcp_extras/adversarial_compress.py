@@ -32,10 +32,11 @@ Design notes
   dependency-injected for tests), so importing this module never drags
   in the FastMCP-adjacent stack.
 
-This module is a PROTOTYPE: it is importable and unit-tested, but it is
-NOT yet wired into ``mcp_server.py`` / ``cmd_adversarial.py`` — that is a
-deliberate serial follow-up (see
-``(internal memo)``).
+Wired into ``mcp_server.py`` via the async ``roam_adversarial`` MCP tool
+(its ``compress_mode`` parameter dispatches to :func:`compress_adversarial`
+here). Deliberately NOT exposed on the CLI ``cmd_adversarial.py`` path
+because :class:`Context` (the sampling carrier) only exists inside the
+MCP runtime.
 """
 
 from __future__ import annotations

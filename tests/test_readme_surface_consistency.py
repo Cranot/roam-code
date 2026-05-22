@@ -58,24 +58,24 @@ def _readme_mcp_tools(text: str) -> set[str]:
 
 
 def test_readme_covers_all_canonical_cli_commands():
-    """Gate both directions on the README's CLI tables.
+    """Gate the README against typos / stale command names.
 
-    - missing: canonical command absent from README -> agents lose discoverability.
-    - extras: README references a name that is no longer canonical (deleted /
-      renamed / typo) -> agents copy-paste a command that no longer exists.
+    The README rewrite moved the comprehensive command table behind a
+    ``<details>`` link to the hosted Command Reference, so it no longer
+    enumerates every canonical command inline -- the count gate
+    ``test_readme_cli_command_count_matches_source`` covers the
+    "all N" header instead. What this test still owns: anything the
+    README *does* mention in a ``| `roam X` |`` row must be a real
+    canonical command or a deprecated alias.
 
     Deprecated aliases listed in ``cli._DEPRECATED_COMMANDS`` are tolerated as
-    extras because they remain user-typeable until removal (W697; mirrors the
-    missing+extra dual gate already enforced on the MCP tool list).
+    extras because they remain user-typeable until removal (W697).
     """
     text = _readme_text()
     readme_cmds = _readme_cli_commands(text)
     canonical = set(canonical_cli_commands())
     all_registered = set(cli_commands().keys())
     allowed_aliases = _deprecated_alias_names()
-
-    missing = sorted(canonical - readme_cmds)
-    assert not missing, f"README missing CLI commands: {missing}"
 
     extras = readme_cmds - canonical - allowed_aliases
     # Split for a sharper error: alias-but-not-allowlisted vs entirely unknown.
@@ -143,20 +143,23 @@ def test_readme_cli_command_count_matches_source():
     )
 
 
-def test_readme_has_v11_narrative_section():
+def test_readme_has_whats_new_section():
+    """Lock in the load-bearing README narrative blocks.
+
+    The README rewrite (d2ab065) replaced the v11-anchored narrative
+    with a per-release ``## What's New`` block keyed on the current
+    versions. The test was historically pinned to v11 strings; it now
+    asserts the structural contract instead: a What's New section
+    must exist, must surface at least one current-release ``### vX.Y``
+    sub-heading, and must keep the SARIF + FTS5 cross-cuts that the
+    perf narrative depends on so a future rewrite cannot accidentally
+    drop them.
+    """
     text = _readme_text()
-    assert "## What's New in v11" in text
-    assert "MCP v2" in text
-    assert "92% reduction" in text
-    # v12.2: the "1000x" speedup claim was softened to a measured-cohort
-    # statement during the adversarial-review pass (the original number
-    # was unsourced and a competitor would screenshot it). The contract
-    # this test now enforces: the FTS5/BM25 perf narrative is still in
-    # the README, just no longer with a fragile multiplier.
-    assert "FTS5/BM25" in text
-    assert "milliseconds" in text
-    assert "O(changed)" in text
-    assert "SARIF" in text
+    assert "## What's New" in text, "README must keep the What's New section header"
+    assert re.search(r"### v13\.\d", text), "README What's New must surface at least one current-release sub-heading"
+    assert "SARIF" in text, "README must keep the SARIF cross-cut"
+    assert "FTS5" in text, "README must keep the FTS5 perf narrative anchor"
 
 
 def test_cli_deprecated_commands_is_ast_literal():

@@ -297,4 +297,4 @@ first-impression defects.
 
 - README ["Install + first three commands"](../README.md#install--first-three-commands) — the claim this transcript verifies.
 - Landing page ["Install + first three commands"](https://roam-code.com/docs/getting-started) — public-facing version of the same flow.
-- `(internal memo)` — strategy command center; this transcript closes P0.2 from the launch-readiness queue.
+- `(internal memo)` — strategy command center; this transcript closes P0.2 from the launch-readiness queue. Private — gitignored; not shipped to PyPI/GitHub.
