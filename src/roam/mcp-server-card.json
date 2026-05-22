@@ -102,8 +102,8 @@
     "sfxml", "foxpro", "yaml", "hcl", "jsonc", "mdx"
   ],
   "compliance_artifacts": {
-    "in_toto_v1_predicate": "https://roam-code.dev/CodeGraph/v1",
-    "in_toto_v1_aibom_predicate": "https://roam-code.dev/CodeGraph-AIBOM/v1",
+    "in_toto_v1_predicate": "https://roam-code.com/spec/CodeGraph/v1",
+    "in_toto_v1_aibom_predicate": "https://roam-code.com/spec/CodeGraph-AIBOM/v1",
     "openvex_compatible": true,
     "openvex_disallowed_labels": ["code_not_reachable"],
     "sbom_formats": ["cyclonedx-1.7", "spdx-2.3"],

@@ -1,5 +1,5 @@
 <!--
-PR Replay deliverable template (Roam Code v13.2+).
+PR Replay deliverable template (Roam Code v13.4+).
 
 This file is the **prose-stable reference** for the Markdown report that
 `roam pr-replay --markdown` emits per engagement. The renderer at
@@ -159,8 +159,8 @@ Based on this replay's findings, the following Review configuration would have c
        entry (PR Replay reads merged history only; bundles are produced
        by Roam Review / runs).
      - Q8 (approvals / accepted risks) — until an approvals harvester
-       lands (tracked in `CLAUDE.md` under "What's still synthetic /
-       recently sealed"), human approvals recorded outside the run
+       lands (tracked in `CLAUDE.md` under "Pipeline coverage + sealed
+       producer gaps"), human approvals recorded outside the run
        ledger (Slack, email, GitHub UI) are NOT in this packet.
 
      The non-certification statement is always appended. To reproduce

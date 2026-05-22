@@ -17,8 +17,8 @@ compliance with any standard.
 | `go/.roam-rules.yml` | Go | 12 | 3 BLOCK, 9 WARN |
 | `java/.roam-rules.yml` | Java | 12 | 5 BLOCK, 7 WARN |
 | `kotlin/.roam-rules.yml` | Kotlin (Android + Spring) | 12 | 5 BLOCK, 7 WARN |
-| `rust/.roam-rules.yml` | Rust | 30 | 5 BLOCK, 16 WARN, 9 NOTE |
-| `swift/.roam-rules.yml` | Swift | 25 | 4 BLOCK, 8 WARN, 13 NOTE |
+| `rust/.roam-rules.yml` | Rust | 30 | 5 BLOCK, 16 WARN, 9 INFO |
+| `swift/.roam-rules.yml` | Swift | 25 | 4 BLOCK, 8 WARN, 13 INFO |
 
 For a hand-annotated example covering the four pattern types end-to-end, see
 [`../examples/.roam-rules.yml`](../examples/.roam-rules.yml).

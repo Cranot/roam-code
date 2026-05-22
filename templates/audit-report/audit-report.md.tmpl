@@ -100,9 +100,9 @@ The block below is auto-generated from `roam describe --agent-prompt` and is rea
 
 <!-- TODO[narrative]: Recommend specific gates that map to this audit's findings.
      Template menu (pick the ones that apply):
-     - `roam pr-risk --gate <N>` to block PRs that affect more than N files / cross more than M layers.
+     - `roam pr-analyze --gate --block-threshold <N>` to block PRs whose blast-radius score is at or above N.
      - `roam health --gate` with `.roam-gates.yml` thresholds derived from Section 2 above.
-     - `roam dead --strict` if Section 4 dead-code count is over the noise floor.
+     - `roam dead --persist` if Section 4 dead-code count is over the noise floor — mirrors dead exports into the findings registry for CI inspection.
      - `roam clones --persist` to surface clone-class issues during PR review.
      - Pin `roam-code` version in CI so health-score deltas are comparable across PRs.
      Tie each recommended gate to a specific finding above. -->

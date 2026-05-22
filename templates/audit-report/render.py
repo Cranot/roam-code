@@ -200,8 +200,9 @@ def _render_health(health: dict) -> str:
         parts.append("\n".join(rows))
 
     # actionable_cycles is a count, not a list; the per-cycle detail
-    # lives behind `roam cycles --json` and is not folded into the audit
-    # envelope. We point at it from Appendix B for reproduction.
+    # lives behind `roam health --json` (cycles section) and is not folded
+    # into a separate audit envelope. We point at it from Appendix B for
+    # reproduction.
 
     return "\n".join(parts) + "\n"
 
@@ -256,7 +257,7 @@ def _render_dead(dead: dict) -> str:
         f"**Estimated removal effort:** {effort_h:.0f} h · "
         f"**Auditor-actionable:** {actionable} (SAFE + REVIEW)",
         "",
-        "_Run `roam dead --detail --json` against the repo for the full per-symbol "
+        "_Run `roam --json dead` against the repo for the full per-symbol "
         "list (it is omitted here for size). The detail envelope is reproducible "
         "from the same git SHA._",
     ]

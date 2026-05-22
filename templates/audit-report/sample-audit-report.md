@@ -242,7 +242,7 @@ system.
 Roam compiles the pack from the local SQLite-backed run ledger
 (`.roam/runs/`), proof bundles (`.roam/pr-bundles/`), and the
 findings registry. The substrate is in `src/roam/runs/`,
-`src/roam/pr_bundle/`, `src/roam/evidence/`, and `src/roam/db/findings.py`.
+`src/roam/commands/cmd_pr_bundle.py`, `src/roam/evidence/`, and `src/roam/db/findings.py`.
 Every artifact ships as JSON (machine-readable), Markdown
 (human-readable), and an optional in-toto v1 attestation
 (cryptographically verifiable with cosign).

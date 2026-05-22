@@ -279,8 +279,8 @@ def _readme_blocks(c: Counts) -> dict[str, str]:
             f"intentional design; under the hood the canonical surface is "
             f"**{c.command_names} commands ({c.canonical_commands} canonical "
             f"+ {c.alias_names} aliases) organised into {c.category_count} "
-            f"categories** (aliases for muscle memory: `algo` → `math`, "
-            f"`weather` → `churn`, `digest` / `snapshot` / `trend` → "
+            f"categories** (aliases for muscle memory: `math` → `algo`, "
+            f"`churn` → `weather`, `digest` / `snapshot` / `trend` → "
             f"`trends`, `onboard` → `understand`, `refs` → `uses`), but you "
             f"don't need to know that to start."
         ),

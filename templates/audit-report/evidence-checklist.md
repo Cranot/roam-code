@@ -39,8 +39,8 @@ produce it and the `ChangeEvidence` field a downstream renderer reads.
 Where an axis cannot be produced by Roam alone (e.g., a human approval
 recorded only in Slack), the collector emits
 `redactions[].reason = "producer_not_available"` rather than synthesising
-one. Producer gaps are listed in `CLAUDE.md` under "What's still
-synthetic / recently sealed".
+one. Producer gaps are listed in `CLAUDE.md` under "Pipeline coverage +
+sealed producer gaps".
 
 ## Sections to extract for `sample-audit-report.md`
 
@@ -142,7 +142,7 @@ canonical mandate in `CLAUDE.md`).
 The `ChangeEvidence` dataclass + the closed enumerations
 (`SUBJECT_KINDS`, `LINK_KINDS`, `ARTIFACT_KINDS`,
 `PROVENANCE_SOURCES`, …) live under `src/roam/evidence/`. Run
-`roam --json pr-bundle emit --json` to produce a bundle the collector
+`roam --json pr-bundle emit` to produce a bundle the collector
 can then compile into an evidence packet.
 
 ## Production tips

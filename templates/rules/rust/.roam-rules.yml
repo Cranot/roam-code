@@ -124,14 +124,14 @@ rules:
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*.clone"
-    severity: NOTE
+    severity: INFO
 
   - id: rs-no-leak-after-mem-replace
     description: "std::mem::replace / take without binding the previous value usually drops it; review or use std::mem::swap."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "mem::replace"
-    severity: NOTE
+    severity: INFO
 
   - id: rs-no-box-leak-without-static
     description: "Box::leak() returns a 'static reference — only use in lifetime-of-program contexts."
@@ -145,7 +145,7 @@ rules:
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "Arc.*clone"
-    severity: NOTE
+    severity: INFO
 
   # ---- Concurrency + async ----
 
@@ -168,14 +168,14 @@ rules:
     pattern: import_from
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "std::sync::Mutex"
-    severity: NOTE
+    severity: INFO
 
   - id: rs-no-spawn-without-name
     description: "tokio::spawn with no instrumentation is hard to trace; consider spawn_named or tracing::instrument."
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "tokio::spawn"
-    severity: NOTE
+    severity: INFO
 
   # ---- Error-handling discipline ----
 
@@ -205,7 +205,7 @@ rules:
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "Err::from_string"
-    severity: NOTE
+    severity: INFO
 
   # ---- Hygiene ----
 
@@ -228,7 +228,7 @@ rules:
     pattern: function_call
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "FIXME"
-    severity: NOTE
+    severity: INFO
 
   - id: rs-no-test-only-imports-in-bin
     description: "Binary targets should not import #[cfg(test)] helpers from the lib crate."
@@ -242,11 +242,11 @@ rules:
     pattern: import_from
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*::internal::*"
-    severity: NOTE
+    severity: INFO
 
   - id: rs-no-feature-gated-cfg-misuse
     description: "#[cfg(feature = \"_unstable\")] on shipped code suggests unfinished feature flags."
     pattern: decorator_use
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*feature*=*_unstable*"
-    severity: NOTE
+    severity: INFO

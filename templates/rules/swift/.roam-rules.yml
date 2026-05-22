@@ -25,7 +25,7 @@ rules:
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "*!*"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-try-bang
     description: "Replace try! with try? or do/catch; try! crashes on throw."
@@ -48,14 +48,14 @@ rules:
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "*self*"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-unowned-without-justification
     description: "[unowned self] crashes if self deallocates first; prefer [weak self] unless self lifetime is proven."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
-    forbidden_target_glob: "[unowned*"
-    severity: NOTE
+    forbidden_target_glob: "*unowned*"
+    severity: INFO
 
   # ---- Concurrency ----
 
@@ -71,14 +71,14 @@ rules:
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "Task.detached"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-async-let-without-await
     description: "async let without subsequent await stalls the task tree; await it or remove the binding."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "async let"
-    severity: NOTE
+    severity: INFO
 
   # ---- SwiftUI state ----
 
@@ -87,21 +87,21 @@ rules:
     pattern: decorator_use
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "State"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-published-without-mainactor
     description: "@Published properties touched off-main can crash; mark the wrapping ObservableObject @MainActor."
     pattern: decorator_use
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "Published"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-environmentobject-without-injection
     description: "Reading @EnvironmentObject without an .environmentObject() injection traps at runtime."
     pattern: decorator_use
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "EnvironmentObject"
-    severity: NOTE
+    severity: INFO
 
   # ---- Error handling ----
 
@@ -133,21 +133,21 @@ rules:
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "TODO"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-fixme-in-shipped
     description: "// FIXME on shipped code; convert to issue or fix."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "FIXME"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-print-in-prod
     description: "print() in production code dirties stdout; use OSLog / Logger."
     pattern: function_call
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "print"
-    severity: NOTE
+    severity: INFO
 
   # ---- Dangerous APIs ----
 
@@ -156,14 +156,14 @@ rules:
     pattern: import_from
     source_glob: "Sources/**/*View.swift"
     forbidden_target_glob: "UIKit"
-    severity: NOTE
+    severity: INFO
 
   - id: sw-no-objc-runtime-misuse
     description: "objc_msgSend / @objc on Swift-only code paths often signals a bridging issue."
     pattern: decorator_use
     source_glob: "Sources/**/*.swift"
     forbidden_target_glob: "objc"
-    severity: NOTE
+    severity: INFO
 
   # WHY: Private Apple SPI (underscore-prefixed symbols) trips App Store static
   # analysis on submission, blocking release. The forbidden glob catches the
