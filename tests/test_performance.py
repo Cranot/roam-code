@@ -90,6 +90,23 @@ def medium_project(tmp_path_factory):
     return proj
 
 
+@pytest.fixture(scope="module")
+def full_reindex_baseline_ms(medium_project):
+    """Self-calibrating baseline: time a full ``--force`` re-index of
+    ``medium_project`` so per-test thresholds can be expressed as a
+    ratio of the local machine's full-index cost.
+
+    Captured under the same CPU-contention conditions (e.g. ``-n auto``)
+    the dependent tests see, so the ratio stays meaningful even when
+    every worker is fighting for cores. Replaces hard-coded absolute
+    thresholds that crept upward over time (3000 -> 5000 -> ...) on
+    busy CI.
+    """
+    out, rc, elapsed = timed_roam("index", "--force", cwd=medium_project)
+    assert rc == 0, f"Baseline index failed: {out}"
+    return elapsed
+
+
 # ============================================================================
 # INDEXING PERFORMANCE
 # ============================================================================
@@ -120,8 +137,23 @@ class TestIndexingPerformance:
         assert "up to date" in out
         assert elapsed < 5000, f"No-change incremental took {elapsed:.0f}ms (limit 5000ms)"
 
-    def test_incremental_single_file_change(self, medium_project):
-        """Changing one file should re-index only that file quickly."""
+    def test_incremental_single_file_change(self, medium_project, full_reindex_baseline_ms):
+        """Changing one file should re-index only that file quickly.
+
+        Threshold is self-calibrating: incremental must be at most 75% of
+        the machine's own full-reindex cost (captured by the
+        ``full_reindex_baseline_ms`` fixture under the same CPU-contention
+        conditions). That ratio is the real regression signal — touching
+        one file out of 200+ should be dramatically cheaper than rebuilding
+        the whole index, regardless of how loaded the host is. The
+        absolute ceiling (15s) is a sanity backstop; the absolute floor
+        (5s) keeps the assertion meaningful on unrealistically fast
+        baselines.
+
+        Previously a hard 5000ms cap that flaked under ``pytest -n auto``
+        (commit 45b48eb already moved it 3000 -> 5000). See HANDOVER /
+        ROADMAP for the "fix flakes, don't retry them" discipline.
+        """
         # Modify one file
         target = medium_project / "pkg_0" / "file_0.py"
         content = target.read_text()
@@ -131,7 +163,17 @@ class TestIndexingPerformance:
         out, rc, elapsed = timed_roam("index", cwd=medium_project)
         assert rc == 0
         assert "Re-extracting" in out
-        assert elapsed < 5000, f"Single-file incremental took {elapsed:.0f}ms (limit 5000ms)"
+
+        # Threshold = max(absolute floor, 75% of machine baseline), capped
+        # by an absolute ceiling so a pathological baseline can't hide a
+        # real regression.
+        ratio_bound = full_reindex_baseline_ms * 0.75
+        limit_ms = min(max(5000.0, ratio_bound), 15000.0)
+        assert elapsed < limit_ms, (
+            f"Single-file incremental took {elapsed:.0f}ms "
+            f"(limit {limit_ms:.0f}ms = max(5000, 75% of "
+            f"baseline {full_reindex_baseline_ms:.0f}ms) capped at 15000ms)"
+        )
 
 
 # ============================================================================
