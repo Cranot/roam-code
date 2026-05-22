@@ -1302,6 +1302,171 @@ _ALWAYS_PRESERVED_LIST_FIELDS = frozenset(
 _ALWAYS_PRESERVED_LIST_MAX = 10
 
 
+#: Envelope top-level keys that ``strip_list_payloads`` always copies through
+#: untouched regardless of their value shape. Kept private + module-scoped so
+#: the partition helper can share it with the public entry point without
+#: rebuilding the set on every call.
+_STRIP_PASSTHROUGH_KEYS = frozenset(
+    {
+        "command",
+        "schema",
+        "schema_version",
+        "version",
+        "project",
+        "_meta",
+    }
+)
+
+
+def _cap_preserved_list(values: list) -> tuple[list, int]:
+    """Cap a preserved-list field at :data:`_ALWAYS_PRESERVED_LIST_MAX`.
+
+    Returns a ``(kept, dropped)`` tuple where ``kept`` is a fresh list
+    (defensive copy, never the input) and ``dropped`` is the count of
+    elements omitted (zero when the input is at or below the cap).
+    """
+    if len(values) > _ALWAYS_PRESERVED_LIST_MAX:
+        kept = list(values[:_ALWAYS_PRESERVED_LIST_MAX])
+        return kept, len(values) - _ALWAYS_PRESERVED_LIST_MAX
+    return list(values), 0
+
+
+def _partition_envelope_fields(
+    data: dict,
+    keep_summary: bool,
+) -> tuple[dict, dict[str, int], dict[str, int]]:
+    """Classify each top-level envelope key into the strip-output shape.
+
+    Walks ``data`` once and routes each key/value to the right bucket:
+
+    * passthrough keys (``_STRIP_PASSTHROUGH_KEYS``) and ``summary`` go into
+      the result dict as-is (summary gets a shallow copy so callers can
+      annotate it freely);
+    * preserved-list keys (``_ALWAYS_PRESERVED_LIST_FIELDS``) are capped
+      via :func:`_cap_preserved_list` and any drop is recorded in the
+      ``preserved_list_truncations`` map plus a top-level
+      ``<field>_truncated`` sibling on the result;
+    * other list-valued keys are dropped from the result and their length
+      is recorded in ``list_counts`` for W1008 disclosure;
+    * scalar / dict values fall through to the result unchanged.
+
+    Returns a ``(result, list_counts, preserved_list_truncations)`` tuple
+    where ``result`` is the partially-built stripped envelope (summary
+    disclosure annotations + top-level ``list_counts`` are written later
+    by :func:`_annotate_summary_disclosure`).
+    """
+    result: dict = {}
+    list_counts: dict[str, int] = {}
+    preserved_list_truncations: dict[str, int] = {}
+
+    for k, v in data.items():
+        if k in _STRIP_PASSTHROUGH_KEYS:
+            result[k] = v
+        elif k == "summary":
+            if keep_summary:
+                result[k] = dict(v) if isinstance(v, dict) else v
+        elif isinstance(v, list):
+            if k in _ALWAYS_PRESERVED_LIST_FIELDS:
+                kept, dropped = _cap_preserved_list(v)
+                result[k] = kept
+                if dropped:
+                    result[f"{k}_truncated"] = dropped
+                    preserved_list_truncations[k] = dropped
+            else:
+                list_counts[k] = len(v)
+        else:
+            result[k] = v
+
+    return result, list_counts, preserved_list_truncations
+
+
+def _detect_schema_violations(data: dict) -> list[str]:
+    """Scan the ORIGINAL envelope for canonical-shape violations (W1100).
+
+    Returns the ordered list of violation kinds discovered. Today the only
+    recognised kind is ``agent_contract_shape`` (canonical shape is a
+    dict per ``_derive_agent_contract``; a list at envelope top-level is
+    the W1007 producer-bug signal). New violation kinds plug in here so
+    the public ``strip_list_payloads`` stays single-purpose.
+    """
+    violations: list[str] = []
+    if isinstance(data.get("agent_contract"), list):
+        violations.append("agent_contract_shape")
+    return violations
+
+
+def _annotate_summary_disclosure(
+    result: dict,
+    list_counts: dict[str, int],
+    preserved_list_truncations: dict[str, int],
+    schema_violation_kinds: list[str],
+) -> None:
+    """Stamp the progressive-disclosure flags onto the result envelope.
+
+    Writes the W1008 / W1100 / W1101 / W1102 disclosure surface in place:
+
+    * ``summary.detail_available`` always true;
+    * ``summary.truncated`` true iff any non-empty list was dropped OR
+      any preserved list was capped;
+    * ``summary.preserved_list_truncations`` always present (W1102
+      symmetry) — empty dict when nothing was capped;
+    * ``summary.partial_success`` overridden to true when schema
+      violations were detected, and ``summary.schema_violations``
+      extended (not replaced) with the new kinds (W1100);
+    * top-level ``list_counts`` always present (W1101 symmetry) — empty
+      dict when nothing was dropped.
+
+    The annotation is minimal so summary stays ``<=`` detail in size.
+    """
+    has_non_empty_lists = any(c > 0 for c in list_counts.values())
+    has_preserved_truncations = bool(preserved_list_truncations)
+
+    if "summary" not in result:
+        result["summary"] = {}
+    summary = result.get("summary")
+    if isinstance(summary, dict):
+        summary["detail_available"] = True
+        if has_non_empty_lists or has_preserved_truncations:
+            summary["truncated"] = True
+        # W1102: emit preserved_list_truncations always for symmetry with
+        # W1101 list_counts + W1006 redactions[]. Empty dict tells the
+        # consumer "strip_list_payloads ran and no preserved field was
+        # clipped" vs an absent key which would be indistinguishable from
+        # "envelope wasn't processed". Lives INSIDE summary (not top-level)
+        # to mirror the per-field <field>_truncated siblings, which are
+        # already top-level — the summary entry is the structured roll-up.
+        # Shape: {field_name: dropped_count} — same shape as the internal
+        # tracker, no semantic change.
+        summary["preserved_list_truncations"] = dict(preserved_list_truncations)
+        # W1100: schema violation overrides successful verdict — agent_contract
+        # must be dict, list is malformed. Override existing ``False`` because
+        # a malformed envelope is non-recoverable signal; ``setdefault`` would
+        # let a stale ``partial_success: false`` bury the violation. Extend
+        # (don't replace) any caller-supplied ``schema_violations`` list so
+        # orthogonal violations remain visible.
+        if schema_violation_kinds:
+            summary["partial_success"] = True
+            existing_violations = summary.get("schema_violations")
+            if isinstance(existing_violations, list):
+                for kind in schema_violation_kinds:
+                    if kind not in existing_violations:
+                        existing_violations.append(kind)
+            else:
+                summary["schema_violations"] = list(schema_violation_kinds)
+
+    # W1008: surface ``list_counts`` at envelope top-level so agents can
+    # tell which fields were dropped + how big they were (drives the
+    # "re-request with --detail" decision). Mirrors the W1006/W1007
+    # envelope-level disclosure pattern.
+    # W1101: emit list_counts: {} always for symmetry with W1006
+    # redactions[] (consumer-side absence-vs-empty disambiguation) — an
+    # empty dict tells the consumer "strip_list_payloads ran and dropped
+    # nothing", an absent key would be indistinguishable from "envelope
+    # wasn't processed". LAW 6: a tiny ``{field: N}`` dict (or ``{}``),
+    # not a list expansion -- compression preserved.
+    result["list_counts"] = dict(list_counts)
+
+
 def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     """Strip list-valued payload fields from a JSON envelope in default mode.
 
@@ -1338,107 +1503,14 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     always receives ``detail_available: true``.  When non-empty lists were
     stripped, the summary also receives ``truncated: true``.
     """
-    preserved = {
-        "command",
-        "schema",
-        "schema_version",
-        "version",
-        "project",
-        "_meta",
-    }
-    list_counts: dict[str, int] = {}
-    # Tracks fields preserved via _ALWAYS_PRESERVED_LIST_FIELDS that
-    # had to be capped — drives the summary.truncated flag below.
-    preserved_list_truncations: dict[str, int] = {}
-
-    # Build stripped result: drop all list-valued payload fields
-    result: dict = {}
-    for k, v in data.items():
-        if k in preserved:
-            result[k] = v
-        elif k == "summary":
-            if keep_summary:
-                result[k] = dict(v) if isinstance(v, dict) else v
-        elif isinstance(v, list):
-            if k in _ALWAYS_PRESERVED_LIST_FIELDS:
-                # W1000: preserve the disclosure list, bounded.
-                if len(v) > _ALWAYS_PRESERVED_LIST_MAX:
-                    result[k] = list(v[:_ALWAYS_PRESERVED_LIST_MAX])
-                    dropped = len(v) - _ALWAYS_PRESERVED_LIST_MAX
-                    result[f"{k}_truncated"] = dropped
-                    preserved_list_truncations[k] = dropped
-                else:
-                    result[k] = list(v)
-            else:
-                # Drop list — record its count
-                list_counts[k] = len(v)
-        else:
-            result[k] = v
-
-    has_non_empty_lists = any(c > 0 for c in list_counts.values())
-    has_preserved_truncations = bool(preserved_list_truncations)
-
-    # W1100: detect schema-violation shapes — ``agent_contract`` is
-    # canonically a DICT (per ``_derive_agent_contract``), but the W1007
-    # preserve-don't-drop fix keeps the malformed list visible at envelope
-    # top-level. Visibility alone is not enough: agents reading the
-    # envelope can still treat it as a clean success unless the schema
-    # mistake also lifts a structured signal into ``summary``. Per
-    # CLAUDE.md Pattern 2 discipline (never emit a success verdict when
-    # the underlying check failed/was malformed), surface the violation
-    # via ``summary.partial_success: true`` + a ``summary.schema_violations``
-    # disclosure list. The original list payload is left untouched —
-    # W1007's preserve-don't-drop semantic is invariant.
-    schema_violation_kinds: list[str] = []
-    if isinstance(data.get("agent_contract"), list):
-        schema_violation_kinds.append("agent_contract_shape")
-
-    # Annotate summary with progressive disclosure flags.
-    # Keep the annotation minimal so summary is always <= detail in size.
-    if "summary" not in result:
-        result["summary"] = {}
-    if isinstance(result.get("summary"), dict):
-        result["summary"]["detail_available"] = True
-        if has_non_empty_lists or has_preserved_truncations:
-            result["summary"]["truncated"] = True
-        # W1102: emit preserved_list_truncations always for symmetry with
-        # W1101 list_counts + W1006 redactions[]. Empty dict tells the
-        # consumer "strip_list_payloads ran and no preserved field was
-        # clipped" vs an absent key which would be indistinguishable from
-        # "envelope wasn't processed". Lives INSIDE summary (not top-level)
-        # to mirror the per-field <field>_truncated siblings, which are
-        # already top-level — the summary entry is the structured roll-up.
-        # Shape: {field_name: dropped_count} — same shape as the internal
-        # tracker, no semantic change.
-        result["summary"]["preserved_list_truncations"] = dict(preserved_list_truncations)
-        # W1100: schema violation overrides successful verdict — agent_contract
-        # must be dict, list is malformed. Override existing ``False`` because
-        # a malformed envelope is non-recoverable signal; ``setdefault`` would
-        # let a stale ``partial_success: false`` bury the violation. Extend
-        # (don't replace) any caller-supplied ``schema_violations`` list so
-        # orthogonal violations remain visible.
-        if schema_violation_kinds:
-            result["summary"]["partial_success"] = True
-            existing_violations = result["summary"].get("schema_violations")
-            if isinstance(existing_violations, list):
-                for kind in schema_violation_kinds:
-                    if kind not in existing_violations:
-                        existing_violations.append(kind)
-            else:
-                result["summary"]["schema_violations"] = list(schema_violation_kinds)
-
-    # W1008: surface ``list_counts`` at envelope top-level so agents can
-    # tell which fields were dropped + how big they were (drives the
-    # "re-request with --detail" decision). Mirrors the W1006/W1007
-    # envelope-level disclosure pattern.
-    # W1101: emit list_counts: {} always for symmetry with W1006
-    # redactions[] (consumer-side absence-vs-empty disambiguation) — an
-    # empty dict tells the consumer "strip_list_payloads ran and dropped
-    # nothing", an absent key would be indistinguishable from "envelope
-    # wasn't processed". LAW 6: a tiny ``{field: N}`` dict (or ``{}``),
-    # not a list expansion -- compression preserved.
-    result["list_counts"] = dict(list_counts)
-
+    result, list_counts, preserved_list_truncations = _partition_envelope_fields(data, keep_summary)
+    schema_violation_kinds = _detect_schema_violations(data)
+    _annotate_summary_disclosure(
+        result,
+        list_counts,
+        preserved_list_truncations,
+        schema_violation_kinds,
+    )
     return result
 
 
