@@ -1105,6 +1105,132 @@ def _build_resource_config_cache(conn) -> list[str]:
     return contents
 
 
+def _resolve_with_symbol(conn, model_name, bulk_with_sym):
+    """Return the ``$with`` property row for ``model_name``, preferring the
+    bulk-prefetch payload when available.
+
+    The bulk path (``bulk_with_sym is not _BULK_NOT_FETCHED``) is used by
+    :func:`analyze_n1`, which calls :func:`_bulk_fetch_with_symbols` once
+    and threads the resulting per-model row through every invocation —
+    avoiding the per-model ``SELECT`` against ``symbols`` × ``files``.
+    The legacy ad-hoc path (sentinel left untouched) issues the
+    ``LIKE '%{model_name}.php'`` query as a one-off lookup.
+
+    Returns the row dict (or sqlite Row) for the matching property, or
+    ``None`` if the model has no ``$with`` declaration.
+    """
+    if bulk_with_sym is _BULK_NOT_FETCHED:
+        return conn.execute(
+            "SELECT s.default_value, s.line_start, s.line_end, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.name IN ('with', '$with') AND s.kind = 'property' "
+            "AND f.path LIKE ?",
+            (f"%{model_name}.php",),
+        ).fetchone()
+    return bulk_with_sym
+
+
+def _read_with_property_snippet(abs_path, line_start, line_end):
+    """Read the ``$with`` property body from disk and return its source
+    snippet, or ``""`` if the file can't be read.
+
+    The DB column ``default_value`` is the fast path — populated by the
+    PHP extractor whenever the literal initialiser is short enough to
+    capture. When it isn't (multi-line array, embedded comments), the
+    indexer leaves ``default_value`` empty and we re-read the symbol's
+    source range from disk. ``line_end`` may itself be ``NULL`` for
+    truncated symbols, in which case we widen by 10 lines as a safety
+    net — the regex extractor in
+    :func:`_extract_with_property_relations` only matches quoted
+    relationship names, so over-reading is harmless.
+
+    OS-level read failures (vanished file, permission flip mid-scan)
+    are swallowed via :func:`roam.observability.log_swallowed` and the
+    empty snippet is returned.
+    """
+    if not abs_path.is_file():
+        return ""
+    try:
+        with open(abs_path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        start = max(0, line_start - 1)
+        end = line_end or start + 10
+        return "".join(lines[start:end])
+    except OSError as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_n1:eager_load_source_read", _exc)
+        return ""
+
+
+def _extract_with_property_relations(with_sym, root):
+    """Pull relationship names out of a ``$with`` property declaration.
+
+    Two extraction paths:
+
+    1. ``default_value`` was captured at index time — extract quoted
+       names directly from the captured literal.
+    2. ``default_value`` is empty — read the symbol's source range from
+       disk (via :func:`_read_with_property_snippet`) and extract from
+       the on-disk snippet. Requires a resolvable project root.
+
+    Returns the set of relationship names found (possibly empty).
+    """
+    if not with_sym:
+        return set()
+    if with_sym["default_value"]:
+        return set(re.findall(r"['\"](\w+)['\"]", with_sym["default_value"]))
+    if not root:
+        return set()
+    abs_path = root / with_sym["file_path"]
+    snippet = _read_with_property_snippet(abs_path, with_sym["line_start"], with_sym["line_end"])
+    return set(re.findall(r"['\"](\w+)['\"]", snippet))
+
+
+def _extract_eager_load_relations(config_contents, model_name):
+    """Pull relationship names out of Laravel ``->eagerLoad([...])`` calls
+    in resource-config sources, scoped to ``model_name``.
+
+    For each config file we find every ``->eagerLoad([...])`` call,
+    then verify the model is referenced within 500 chars upstream
+    (either as a bare class name, ``Model::class``, or as a
+    lower-cased resource key like ``'posts'``). Calls that don't pass
+    the proximity check belong to a different model in the same file
+    and are skipped.
+
+    Returns the set of relationship names found (possibly empty).
+    """
+    model_lower = model_name.lower()
+    eager: set[str] = set()
+    for content in config_contents:
+        for match in re.finditer(
+            r"->eagerLoad\(\s*\[(.*?)\]\s*\)",
+            content,
+            re.DOTALL,
+        ):
+            start = max(0, match.start() - 500)
+            context = content[start : match.end()]
+            if model_name in context or f"{model_name}::class" in context or model_lower in context.lower():
+                eager.update(re.findall(r"['\"](\w+)['\"]", match.group(1)))
+    return eager
+
+
+def _extract_controller_with_relations(controller_contents, model_name):
+    """Pull relationship names out of ``Model::with([...])`` calls across
+    every controller source in ``controller_contents``.
+
+    Thin reducer over :func:`_extract_with_calls` — kept named so the
+    orchestrator's intent ("collect controller-side ``with`` calls")
+    stays self-documenting.
+
+    Returns the set of relationship names found (possibly empty).
+    """
+    eager: set[str] = set()
+    for content in controller_contents:
+        eager.update(_extract_with_calls(content, model_name))
+    return eager
+
+
 def _find_eager_loads(
     conn,
     model_name,
@@ -1152,81 +1278,28 @@ def _find_eager_loads(
 
     Returns set of relationship names that are eager loaded.
     """
-    eager_loaded = set()
-
     from roam.db.connection import find_project_root
 
     root = find_project_root()
+    eager_loaded: set[str] = set()
 
     # --- 1. Check $with property on the model ---
-    if bulk_with_sym is _BULK_NOT_FETCHED:
-        with_sym = conn.execute(
-            "SELECT s.default_value, s.line_start, s.line_end, f.path as file_path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.name IN ('with', '$with') AND s.kind = 'property' "
-            "AND f.path LIKE ?",
-            (f"%{model_name}.php",),
-        ).fetchone()
-    else:
-        with_sym = bulk_with_sym
-
-    if with_sym:
-        if with_sym["default_value"]:
-            eager_loaded.update(re.findall(r"['\"](\w+)['\"]", with_sym["default_value"]))
-        elif root:
-            # Read from source
-            abs_path = root / with_sym["file_path"]
-            if abs_path.is_file():
-                try:
-                    with open(abs_path, encoding="utf-8", errors="replace") as fh:
-                        lines = fh.readlines()
-                    start = max(0, with_sym["line_start"] - 1)
-                    end = with_sym["line_end"] or start + 10
-                    snippet = "".join(lines[start:end])
-                    eager_loaded.update(re.findall(r"['\"](\w+)['\"]", snippet))
-                except OSError as _exc:
-                    from roam.observability import log_swallowed
-
-                    log_swallowed("cmd_n1:eager_load_source_read", _exc)
+    with_sym = _resolve_with_symbol(conn, model_name, bulk_with_sym)
+    eager_loaded.update(_extract_with_property_relations(with_sym, root))
 
     # --- 2. Check resource config files for eagerLoad ---
-    # Convert model class name to resource key pattern
-    # e.g., "Post" → look for Post::class or 'posts' near eagerLoad
-    model_lower = model_name.lower()
-
     if resource_config_contents is not None:
         config_contents_iter = resource_config_contents
     else:
         config_contents_iter = _iter_resource_config_contents(conn, root)
-
-    for content in config_contents_iter:
-        # Find eagerLoad([...]) calls and extract relationship names
-        # Pattern: ->eagerLoad(['rel1', 'rel2', ...])
-        for match in re.finditer(
-            r"->eagerLoad\(\s*\[(.*?)\]\s*\)",
-            content,
-            re.DOTALL,
-        ):
-            # Check if this eagerLoad is near the model reference
-            # Look backwards from match for the model class name
-            start = max(0, match.start() - 500)
-            context = content[start : match.end()]
-            if model_name in context or f"{model_name}::class" in context or model_lower in context.lower():
-                rels = re.findall(r"['\"](\w+)['\"]", match.group(1))
-                eager_loaded.update(rels)
+    eager_loaded.update(_extract_eager_load_relations(config_contents_iter, model_name))
 
     # --- 3. Check controller with() calls ---
-    # Look for Model::with(['rel']) or ->with(['rel']) near model references.
-    # Source contents come from either the pre-built cache (fast path,
-    # used by ``analyze_n1``) or a per-call directory scan + read_text
-    # (slow path, for ad-hoc callers without a cache).
     if controller_cache is not None:
-        contents_iter = controller_cache.values()
+        controller_contents_iter = controller_cache.values()
     else:
-        contents_iter = _iter_controller_contents(conn, root)
-
-    for content in contents_iter:
-        eager_loaded.update(_extract_with_calls(content, model_name))
+        controller_contents_iter = _iter_controller_contents(conn, root)
+    eager_loaded.update(_extract_controller_with_relations(controller_contents_iter, model_name))
 
     return eager_loaded
 
