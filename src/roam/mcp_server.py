@@ -3174,67 +3174,85 @@ _INLINE_RESPONSE_TOOLS: frozenset[str] = frozenset(
 )
 
 
-def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
-    """If ``payload`` JSON-serialises larger than the threshold, write
-    it to a content-addressed file and return a small handle envelope.
-    Otherwise return ``payload`` unchanged.
+def _should_bypass_handle_off(payload: dict, tool_name: str) -> bool:
+    """Return True when ``payload`` MUST be returned inline (handle-off skipped).
 
-    Inputs:
-      payload     — the dict the @_tool function returned
-      tool_name   — passed in by the wrapper; certain tools (notably
-                    ``roam_fetch_handle`` itself, and the meta-tool)
-                    bypass handle-off to avoid infinite recursion.
+    Bypass reasons, in evaluation order:
 
-    Threshold: ``ROAM_MCP_HANDLE_KB`` env var, default 50KB.
-    Set to 0 to disable for all tools.
+    * payload is not a dict (defensive — wrappers may return raw values);
+    * payload carries ``isError`` (agent needs the full structured-error
+      envelope to decide whether to retry);
+    * tool is ``roam_fetch_handle`` itself (would self-loop) or the
+      meta-tool ``_META_TOOL`` (already small);
+    * W671: tool is in ``_INLINE_RESPONSE_TOOLS`` — session-bootstrap /
+      pure-metadata responses where the payload IS the answer;
+    * payload already IS a handle envelope (``is_handle`` set) — avoid
+      double-handling on composed internal calls.
+    """
+    if not isinstance(payload, dict):
+        return True
+    if payload.get("isError"):
+        return True
+    if tool_name in {"roam_fetch_handle", _META_TOOL}:
+        return True
+    if tool_name in _INLINE_RESPONSE_TOOLS:
+        return True
+    if payload.get("is_handle"):
+        return True
+    return False
+
+
+def _serialise_for_handle(payload: dict) -> tuple[str, int, str] | None:
+    """Serialise ``payload`` to JSON and return ``(blob, size, sha)``.
+
+    Reads the ``ROAM_MCP_HANDLE_KB`` env var (default 50KB) to determine
+    the threshold; returns ``None`` when:
+
+    * threshold is disabled (``<= 0``);
+    * payload is not JSON-serialisable (let the regular code path raise);
+    * serialised size is below threshold (no handle-off needed).
+
+    ``size`` is the UTF-8-encoded byte length (matches the byte-size field
+    in the handle envelope). The 16-hex-char sha256 prefix is the
+    content-addressed handle id.
     """
     import hashlib as _hashlib
     import json as _json
-
-    if not isinstance(payload, dict):
-        return payload
-    # Don't handle-off errors — agent needs the full structured-error
-    # envelope to decide whether to retry.
-    if payload.get("isError"):
-        return payload
-    # Don't handle-off the fetch tool itself (would loop) or the meta-tool.
-    if tool_name in {"roam_fetch_handle", _META_TOOL}:
-        return payload
-    # W671: SETUP / pure-metadata tools whose response IS the answer must
-    # be returned inline. Forcing agents through ``roam_fetch_handle`` for
-    # the canonical session-start catalog defeats the one-round-trip
-    # contract. See ``_INLINE_RESPONSE_TOOLS`` above for the rationale.
-    if tool_name in _INLINE_RESPONSE_TOOLS:
-        return payload
-    # Don't double-handle: if the payload already IS a handle envelope
-    # (e.g. an internal call composed from one), pass through.
-    if payload.get("is_handle"):
-        return payload
 
     try:
         threshold_kb = int(os.environ.get("ROAM_MCP_HANDLE_KB", "50"))
     except ValueError:
         threshold_kb = 50
     if threshold_kb <= 0:
-        return payload
+        return None
     threshold = threshold_kb * 1024
 
     try:
         blob = _json.dumps(payload, default=str)
     except (TypeError, ValueError):
-        # Unserialisable — let the regular code path raise the error.
-        return payload
+        return None
     encoded = blob.encode("utf-8")
     size = len(encoded)
     if size < threshold:
-        return payload
+        return None
 
     sha = _hashlib.sha256(encoded).hexdigest()[:16]
-    handle_dir = _handle_storage_dir()
+    return blob, size, sha
+
+
+def _persist_handle_blob(handle_dir: Path, sha: str, blob: str) -> Path | None:
+    """Write ``blob`` to a content-addressed file under ``handle_dir``.
+
+    Tightens a freshly-created directory to ``0o700`` (owner-only) since
+    handle payloads can include source excerpts, taint findings, and
+    PageRank data. Returns the target ``Path`` on success, or ``None``
+    on ``OSError`` (read-only filesystem / permission issue — caller
+    should ship the fat envelope rather than fail the call).
+
+    Idempotent: identical payloads reuse the same file (content-addressed).
+    """
     try:
         # First-creation: tighten the directory to 0o700 (owner-only).
-        # Handle payloads can include source excerpts, taint findings, and
-        # PageRank data — keep them confidential to the project owner.
         # mkdir's mode arg is masked by umask, so chmod after creation.
         was_new = not handle_dir.exists()
         handle_dir.mkdir(parents=True, exist_ok=True)
@@ -3250,15 +3268,22 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         if not target.is_file():
             target.write_text(blob, encoding="utf-8")
     except OSError:
-        # Read-only filesystem or permission issue — better to ship
-        # the fat envelope than fail the call.
-        return payload
+        return None
+    return target
 
-    # Amortised GC — cheap to skip in the hot path. Run when EITHER:
-    #   (a) directory has grown beyond the trigger threshold, OR
-    #   (b) we've written N times since the last GC pass.
-    # Both gates use try/except to keep GC opportunistic; a failure here
-    # never poisons the response we're about to return.
+
+def _maybe_run_amortised_gc(handle_dir: Path) -> None:
+    """Best-effort handle-directory GC, amortised across many calls.
+
+    Runs ``_gc_handle_dir`` when EITHER:
+
+    * directory has grown past ``_HANDLE_GC_MIN_FILES`` entries, OR
+    * we've written ``_HANDLE_GC_RUN_EVERY`` times since the last pass.
+
+    Both gates are wrapped in try/except so a failure here never poisons
+    the response we're about to return; recurring GC breakage surfaces
+    under ``ROAM_VERBOSE`` via ``log_swallowed``.
+    """
     try:
         _HANDLE_GC_WRITE_COUNTER["n"] += 1
         run_gc = False
@@ -3275,13 +3300,22 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
             _HANDLE_GC_WRITE_COUNTER["n"] = 0
             _gc_handle_dir(handle_dir)
     except Exception as exc:  # noqa: BLE001 — GC must never break the tool response
-        # GC must never break the actual tool response — but surface the
-        # failure under ROAM_VERBOSE so a recurring GC breakage (e.g. a
-        # directory-permission regression) is visible rather than silent.
         log_swallowed("mcp_server:handle_gc", exc)
 
-    # Build a tiny preview so the agent has orientation without
-    # fetching the full payload. Keep this VERY small.
+
+def _build_handle_preview(payload: dict) -> dict:
+    """Build the tiny ``preview`` dict embedded in the handle envelope.
+
+    Includes (when present):
+
+    * ``summary`` — the full summary dict (already small by contract);
+    * ``command`` / ``schema`` / ``schema_version`` / ``version`` —
+      orientation metadata;
+    * ``sections`` — the names of any compound-envelope sections, so
+      the agent knows what's inside without fetching the full payload.
+
+    Kept VERY small so the agent has orientation without a round-trip.
+    """
     preview: dict = {}
     if isinstance(payload.get("summary"), dict):
         preview["summary"] = payload["summary"]
@@ -3294,7 +3328,17 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         sections = payload["summary"].get("sections")
         if isinstance(sections, list):
             preview["sections"] = sections
+    return preview
 
+
+def _build_handle_envelope(*, sha: str, size: int, target: Path, tool_name: str, preview: dict) -> dict:
+    """Assemble the canonical handle envelope returned in place of a fat payload.
+
+    Shape is the public ``roam-code.com/spec/handle/v1`` contract — agents
+    branch on ``is_handle`` to decide whether to call ``roam_fetch_handle``.
+    Byte-stable: any change here must update the lock-in tests in
+    ``tests/test_mcp_handle_off.py`` and ``tests/test_response_volume_handles.py``.
+    """
     return {
         "schema": "roam-code.com/spec/handle/v1",
         "schema_version": "1.0.0",
@@ -3313,6 +3357,39 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
             "handle": sha,
         },
     }
+
+
+def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
+    """If ``payload`` JSON-serialises larger than the threshold, write
+    it to a content-addressed file and return a small handle envelope.
+    Otherwise return ``payload`` unchanged.
+
+    Inputs:
+      payload     — the dict the @_tool function returned
+      tool_name   — passed in by the wrapper; certain tools (notably
+                    ``roam_fetch_handle`` itself, and the meta-tool)
+                    bypass handle-off to avoid infinite recursion.
+
+    Threshold: ``ROAM_MCP_HANDLE_KB`` env var, default 50KB.
+    Set to 0 to disable for all tools.
+    """
+    if _should_bypass_handle_off(payload, tool_name):
+        return payload
+
+    serialised = _serialise_for_handle(payload)
+    if serialised is None:
+        return payload
+    blob, size, sha = serialised
+
+    handle_dir = _handle_storage_dir()
+    target = _persist_handle_blob(handle_dir, sha, blob)
+    if target is None:
+        return payload
+
+    _maybe_run_amortised_gc(handle_dir)
+
+    preview = _build_handle_preview(payload)
+    return _build_handle_envelope(sha=sha, size=size, target=target, tool_name=tool_name, preview=preview)
 
 
 def _wrap_with_handle_off(name: str, fn):
@@ -5412,7 +5489,13 @@ async def explore(
 
 @_tool(
     name="roam_prepare_change",
-    description="Pre-change bundle: preflight + context + effects in one call. Call BEFORE modifying code.",
+    description=(
+        "Bundle everything needed before editing a symbol: blast radius, affected "
+        "tests, files to read, side effects, fitness gates. Call BEFORE Edit/Write "
+        "on non-trivial code. Use when user asks 'is it safe to change X?', 'what "
+        "do I need to know to refactor Y?', 'show me what depends on Z'. Replaces "
+        "manual preflight + context + effects sequence."
+    ),
     output_schema=_SCHEMA_PREPARE_CHANGE,
 )
 def prepare_change(
@@ -5536,7 +5619,13 @@ def review_change(staged: bool = False, commit_range: str = "", budget: int = 0,
 
 @_tool(
     name="roam_diagnose_issue",
-    description="Debug bundle: root cause suspects + side effects in one call.",
+    description=(
+        "Find root-cause suspects for a failing symbol. Use when user reports 'X "
+        "is broken', 'test Y fails', 'why does Z return null?', 'this exception "
+        "traces to ...'. Ranks upstream / downstream callers by composite risk "
+        "and lists side effects + transactional boundaries. Replaces manual "
+        "Grep+Read traversal of the call graph. Pass the suspect symbol."
+    ),
     output_schema=_SCHEMA_DIAGNOSE_ISSUE,
 )
 def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = ".") -> dict:
@@ -6110,7 +6199,12 @@ async def roam_reindex(
 
 @_tool(
     name="roam_understand",
-    description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
+    description=(
+        "Brief Claude on an unfamiliar codebase in one call. Use when user asks "
+        "'what is this repo?', 'where do I start?', 'give me the lay of the land'. "
+        "Returns stack, architecture layers, entry points, hotspots, conventions "
+        "(~2-4K tokens). Do NOT explore with Glob/Grep first — start here."
+    ),
     output_schema=_SCHEMA_UNDERSTAND,
     task_mode="required",
 )
@@ -6160,13 +6254,14 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
 @_tool(
     name="roam_ask",
     description=(
-        "Free-form intent dispatcher: maps a natural-language question "
-        '("is it safe to delete X", "where does login validate", '
-        '"what just broke") to one of 25 pre-built recipes that compose '
-        "preflight / retrieve / critique / fleet / diagnose / trace / "
-        "trends / hotspots / debt / taint commands. Call this BEFORE "
-        "falling back to Grep+Read — the 25-recipe registry covers most "
-        "common workflows in one tool call."
+        "Route a natural-language codebase question to the right roam recipe. "
+        "Use when user asks 'is it safe to delete X?', 'where does login validate?', "
+        "'what just broke?', 'who owns module Y?', 'trace the n+1 in checkout'. "
+        "Maps intent to one of 25 composed recipes (onboard / trace-task / find-bug / "
+        "verify-patch / explore-impact / security-audit / who-owns / what-changed / "
+        "explore-tests / dependency-update / ...). Try this BEFORE falling back to "
+        "Grep+Read — the dispatcher covers most workflows in one tool call. Even "
+        "low-confidence results contain signal."
     ),
 )
 def ask(
@@ -7739,7 +7834,15 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
 
 @_tool(
     name="roam_search_symbol",
-    description="Find symbols by name substring. Returns kind, file, line, PageRank importance.",
+    description=(
+        "Look up a function / class / method by partial name. Use when user "
+        "mentions a symbol ('the login handler', 'AuthService.refresh', "
+        "'handleSave') and you need the file path, line, kind, and qualified "
+        "name. Replaces `Bash: grep -n 'def name' src/` + Read. Returns "
+        "PageRank-ranked results — most-important match first. Do NOT use for "
+        "finding references — that's roam_uses. For 3+ patterns at once use "
+        "roam_batch_search."
+    ),
     output_schema=_SCHEMA_SEARCH,
 )
 def search_symbol(query: str, root: str = ".") -> dict:
@@ -7837,7 +7940,13 @@ def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = "."
 
 @_tool(
     name="roam_context",
-    description="Minimal files + line ranges needed to work with a symbol.",
+    description=(
+        "Get the minimum files + line ranges needed to understand or modify a "
+        "symbol. Use when user says 'show me X', 'I need to change Y', 'how does "
+        "Z work?'. Returns targeted reads ranked by PageRank — cheaper than "
+        "Read'ing whole files. For pre-change safety (blast radius + tests + "
+        "effects), use roam_prepare_change instead."
+    ),
     output_schema=_SCHEMA_CONTEXT,
 )
 def context(
@@ -8003,7 +8112,13 @@ def fleet_plan(
 
 @_tool(
     name="roam_critique",
-    description="Verify a patch against the indexed graph (clones-not-edited + blast radius). Pipe a diff in `diff_text`.",
+    description=(
+        "Verify a unified diff against the codebase graph BEFORE merge. Use when "
+        "user asks 'review my patch', 'is this PR safe?', or after generating any "
+        "non-trivial diff. Catches clones-not-edited (missed duplicates the agent "
+        "should have updated together) + blast-radius hop count. Pass `git diff` "
+        "output as diff_text. Grounded against the indexed graph, not vibes."
+    ),
     output_schema=_SCHEMA_CRITIQUE,
 )
 def critique_patch(
@@ -9225,7 +9340,13 @@ def changelog(since: str = "", suggest: bool = False, root: str = ".") -> dict:
 
 @_tool(
     name="roam_affected_tests",
-    description="Test files that exercise changed code, with hop distance.",
+    description=(
+        "List the tests you actually need to run after editing a symbol or file. "
+        "Use when user asks 'which tests do I run?', 'what tests cover X?', or "
+        "after Edit/Write. Walks reverse-dependencies with hop distance — closer "
+        "hops run first. For a full pre-commit check (blast radius + fitness + "
+        "tests), use roam_prepare_change."
+    ),
 )
 def affected_tests(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
     """Find test files that exercise changed code.
@@ -11368,7 +11489,13 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05, root: st
 
 @_tool(
     name="roam_diff",
-    description="Blast radius of uncommitted/committed changes: affected symbols, files, tests.",
+    description=(
+        "Show the blast radius of your edits BEFORE you commit. Run after "
+        "Edit/Write tools to see affected symbols, files, tests, plus coupling "
+        "and fitness warnings. Use when user asks 'what did my change break?', "
+        "'safe to commit?'. Replaces ad-hoc `git diff --stat` inspection with "
+        "graph-aware impact data. For PR-level risk verdict, use roam_pr_risk."
+    ),
     output_schema=_SCHEMA_DIFF,
 )
 def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> dict:
@@ -11431,11 +11558,12 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
 @_tool(
     name="roam_uses",
     description=(
-        "All consumers of a symbol: callers, importers, inheritors by edge type. "
-        'Use this *instead of* a multi-shape grep ("->X|\\.X\\b|\'X\'|\\"X\\"") '
-        "to find references — graph-precise, no string-literal / comment "
-        "false positives, and the result is already structured by edge type. "
-        "For 3+ symbols call `roam_batch_get` (one round-trip) instead."
+        "List every caller, importer, and subclass of a symbol — structured by "
+        "edge type. Use when user asks 'where is X used?', 'who calls Y?', "
+        "'what breaks if I rename Z?'. Graph-precise: no comment / string-literal "
+        "false positives that multi-shape Grep produces. Do NOT use Bash:grep for "
+        "references — this is the right tool. For 3+ symbols call roam_batch_get "
+        "(one round-trip) instead."
     ),
 )
 def roam_uses(symbol: str, full: bool = False, root: str = ".") -> dict:
