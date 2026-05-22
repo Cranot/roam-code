@@ -153,7 +153,7 @@ Fields:
 | `declared_side_effects`  | `tuple[str, ...]`     | E.g. `("read_only",)`, `("write_filesystem",)`. From `_TOOL_METADATA`.      |
 | `required_mode`          | `str \| None`         | `read_only` / `safe_edit` / `migration` / `autonomous_pr`.                  |
 | `input_hash`             | `str \| None`         | sha256 of canonical-JSON input args. Never the args themselves.             |
-| `policy_decision`        | `str`                 | Closed enum from 6-member `_POLICY_DECISIONS`: `allow` / `deny` / `escalate` / `redact` / `not_evaluated` / `would_deny_dry_run`. |
+| `policy_decision`        | `str`                 | Closed enum from 9-member `POLICY_DECISIONS` (`src/roam/evidence/_vocabulary.py:582`, verified 2026-05-22): `pass` / `fail` / `allow` / `deny` / `escalate` / `redact` / `not_evaluated` / `unknown` / `would_deny_dry_run`. |
 | `output_ref`             | `str \| None`         | Artifact id when output is large. Mutually exclusive with `output_hash`.    |
 | `output_hash`            | `str \| None`         | sha256 of inline output when small. Mutually exclusive with `output_ref`.   |
 | `run_event_id`           | `str \| None`         | Link to `.roam/runs/<id>/events.jsonl` row.                                 |
@@ -209,9 +209,9 @@ Receipt's sha256 is now linked into the HMAC chain — verify with
 receipt's sha256 hex content hash now appears as a `receipt_hash` field
 on a signed ledger event in `.roam/runs/<run_id>/events.jsonl`. The
 helper `verify_chain_with_receipts()` in `src/roam/runs/signing.py`
-(lines 414-518; closed-enum `RECEIPT_INTEGRITY_STATES` declared at
-lines 394-401) extends the offline 4-state envelope with a
-`receipt_integrity` closed enum:
+(lines 426-536, closed-enum `RECEIPT_INTEGRITY_STATES` declared at
+lines 406-413; verified 2026-05-22) extends the offline 4-state envelope
+with a `receipt_integrity` closed enum:
 
 | Value         | Meaning                                                                |
 | ------------- | ---------------------------------------------------------------------- |
