@@ -357,7 +357,9 @@
         the tool's <code>required_mode</code> before dispatch. The
         receipt's <code>policy_decision</code> is a closed enum —
         <code>allow</code> / <code>deny</code> /
-        <code>not_evaluated</code> — reflecting an actual enforcement
+        <code>escalate</code> / <code>redact</code> /
+        <code>not_evaluated</code> / <code>would_deny_dry_run</code> —
+        reflecting an actual enforcement
         decision at the MCP boundary, not a hard-coded allow. Resolution
         priority (highest wins): explicit <code>--mode</code> flag,
         <code>ROAM_AGENT_MODE</code> env var,
@@ -415,7 +417,7 @@
           <tr><td><code>declared_side_effects</code></td><td>Tuple of <code>read_only</code> / <code>write_filesystem</code> / etc. from the tool registry.</td></tr>
           <tr><td><code>required_mode</code></td><td><code>read_only</code> / <code>safe_edit</code> / <code>migration</code> / <code>autonomous_pr</code>.</td></tr>
           <tr><td><code>input_hash</code></td><td>sha256 of canonical-JSON input args. Never the args themselves.</td></tr>
-          <tr><td><code>policy_decision</code></td><td>Closed enum: <code>allow</code> / <code>deny</code> / <code>not_evaluated</code>.</td></tr>
+          <tr><td><code>policy_decision</code></td><td>Closed enum: <code>allow</code> / <code>deny</code> / <code>escalate</code> / <code>redact</code> / <code>not_evaluated</code> / <code>would_deny_dry_run</code>.</td></tr>
           <tr><td><code>output_ref</code> / <code>output_hash</code></td><td>Artifact id for large output, or sha256 for small. Mutually exclusive.</td></tr>
           <tr><td><code>run_event_id</code></td><td>Link to <code>.roam/runs/&lt;id&gt;/events.jsonl</code> row.</td></tr>
           <tr><td><code>redactions</code></td><td>Closed-enum tuple of redaction reasons; stable across versions.</td></tr>
