@@ -5969,7 +5969,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 @_tool(
     name="roam_expand_toolset",
     description="List available tool presets or show contents of a preset. "
-    "Presets: core (57), review (70), refactor (70), debug (69), architecture (71), compliance (13), full (224).",
+    "Presets: core (57), review (70), refactor (70), debug (69), architecture (71), compliance (13), full (227).",
 )
 def expand_toolset(preset: str = "") -> dict:
     """List available presets and their tools. Call to discover tools beyond the active preset.
@@ -6162,10 +6162,10 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
     description=(
         "Free-form intent dispatcher: maps a natural-language question "
         '("is it safe to delete X", "where does login validate", '
-        '"what just broke") to one of 24 pre-built recipes that compose '
+        '"what just broke") to one of 25 pre-built recipes that compose '
         "preflight / retrieve / critique / fleet / diagnose / trace / "
         "trends / hotspots / debt / taint commands. Call this BEFORE "
-        "falling back to Grep+Read — the recipe registry covers most "
+        "falling back to Grep+Read — the 25-recipe registry covers most "
         "common workflows in one tool call."
     ),
 )
@@ -8343,8 +8343,9 @@ def sbom(
     name="roam_cga_emit",
     description=(
         "Emit a Code Graph Attestation — in-toto v1 statement with "
-        "predicate type `roam-code.dev/CodeGraph/v1` (or `CodeGraph-"
-        "AIBOM/v1` with --aibom). Merkle root over symbol fingerprints + "
+        "predicate type `https://roam-code.com/spec/CodeGraph/v1` (or "
+        "`https://roam-code.com/spec/CodeGraph-AIBOM/v1` with --aibom). "
+        "Merkle root over symbol fingerprints + "
         "edge-bundle digest. Optional cosign keyless or offline signing."
     ),
 )
@@ -12797,7 +12798,7 @@ def roam_alerts(root: str = ".") -> dict:
         "Local-only telemetry: per-tool invocation counts grouped by "
         "outcome (success / rate_limited / error). Helps answer "
         '"which tools are agents actually using?" and "are 90 of '
-        'the 224 tools dead weight?". Never phones home — counters '
+        'the 227 tools dead weight?". Never phones home — counters '
         "live in the MCP server process and reset on restart."
     ),
 )
@@ -14078,7 +14079,7 @@ def roam_cut(
         "generated Go/Java/Python stubs, Salesforce Apex -> Aura/LWC/"
         "Visualforce, REST API frontend -> backend route, template "
         "variable -> source, and env-var read -> .env definition. "
-        "Use ``roam_bridges`` to list registered bridge types."
+        "Call this tool to list every registered bridge type."
     ),
 )
 def roam_x_lang(scope: str = "", root: str = ".") -> dict:

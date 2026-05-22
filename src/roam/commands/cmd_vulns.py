@@ -946,8 +946,10 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
                             reached = True
                             break
                     v["reachable"] = 1 if reached else -1
-            except Exception:
-                pass
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_vulns:reachability", _exc)
 
         # Filter to reachable only
         vulns = [v for v in vulns if v.get("reachable") == 1]

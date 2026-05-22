@@ -175,8 +175,13 @@ def _collect_closure(conn, sym, rename=None, delete=False):
                             }
                         )
                         seen_files.add(fp)
-            except (OSError, IOError):
-                pass
+            except (OSError, IOError) as _exc:
+                # An unreadable doc/config file is silently dropped from
+                # the rename closure — surface lineage so a missed
+                # string-reference has a discoverable cause.
+                from roam.observability import log_swallowed
+
+                log_swallowed(f"cmd_closure:string_ref_scan:{fp}", _exc)
 
     return changes
 

@@ -945,8 +945,10 @@ def _get_repo_stat(info: dict) -> dict:
         result["symbols"] = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         result["indexed"] = True
         result["index_age_s"] = int(time.time() - db_path.stat().st_mtime)
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_ws:index_stats", _exc)
     finally:
         conn.close()
 

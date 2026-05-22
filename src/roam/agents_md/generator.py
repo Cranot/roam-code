@@ -628,9 +628,11 @@ def _section_capability_summary() -> dict[str, Any]:
         log_swallowed("agents_md.generator:section_capability:import", exc)
         return {}
 
-    # Mirrors cmd_capabilities._populate_registry; the registry is a
-    # superset by design -- the goal is to surface "57 core / 149 full"
-    # style numbers, not to enumerate every decorated command.
+    # Mirrors cmd_capabilities._populate_registry; importing these modules
+    # populates `REGISTRY` so `registered_count` / `ai_safe_count` below are
+    # non-empty. The MCP `core` / `full` counts do NOT come from the
+    # registry (see the `mcp_preset_counts()` block below) -- the registry
+    # is a superset and has no reliable per-preset signal.
     decorated_modules = [
         "roam.commands.cmd_critique",
         "roam.commands.cmd_preflight",
@@ -660,9 +662,31 @@ def _section_capability_summary() -> dict[str, Any]:
         log_swallowed("agents_md.generator:section_capability:registry_all", exc)
         return {}
 
-    core = sum(1 for c in caps if "core" in c.mcp_preset and c.mcp_expose)
-    full = sum(1 for c in caps if "full" in c.mcp_preset and c.mcp_expose)
     ai_safe = sum(1 for c in caps if c.ai_safe)
+
+    # MCP preset counts come from the canonical AST-only surface counter --
+    # the same source `roam surface --json` and `dev/build_readme_counts.py`
+    # use. The capability registry is NOT a valid source here: no
+    # `@roam_capability` ever sets `mcp_preset` to include `"full"`, and only
+    # a curated handful of modules are import-populated above, so a
+    # registry-derived count was structurally always wrong (`full: 0`,
+    # `core: ~9`). `mcp_preset_counts()` parses `_PRESETS` in mcp_server.py
+    # directly, so it reports the real `core: 57 / full: 227`.
+    core: Optional[int] = None
+    full: Optional[int] = None
+    try:
+        from roam.surface_counts import mcp_preset_counts
+
+        preset_counts = mcp_preset_counts()
+        core = int(preset_counts.get("core") or 0) or None
+        full = int(preset_counts.get("full") or 0) or None
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a parse
+        # failure differs from a genuine zero. Drop the field (None renders
+        # cleanly via `_render_capability`) rather than ship a structural 0.
+        log_swallowed("agents_md.generator:section_capability:mcp_preset_counts", exc)
+        core = None
+        full = None
 
     # Also try to surface the authoritative CLI command total (the
     # surface counter parses the AST directly so it's robust to lazy

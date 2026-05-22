@@ -1721,8 +1721,12 @@ def _save_external_cache(project_root: Path, results: dict[str, int | None]) -> 
     try:
         with open(cache_dir / _EXTERNAL_CACHE_FILENAME, "w", encoding="utf-8") as fh:
             _json.dump(payload, fh, indent=2, sort_keys=True)
-    except OSError:
-        pass
+    except OSError as _exc:
+        # A cache-write failure forces the next run to re-check every
+        # external URL — surface lineage so the lost cache has a cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_stale_refs:write_external_cache", _exc)
 
 
 def _scan_external_urls(

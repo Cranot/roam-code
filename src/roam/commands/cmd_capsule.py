@@ -602,8 +602,10 @@ def capsule(ctx, redact_paths, no_signatures, output):
                     _reload.setdefault("summary", {})["warnings_out"] = list(_all_markers)
                     _reload["warnings_out"] = list(_all_markers)
                     _output_text = _json.dumps(_reload)
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as _exc:
+                    from roam.observability import log_swallowed
+
+                    log_swallowed("cmd_capsule:warnings_repack", _exc)
         click.echo(_output_text if _output_text is not None else "{}")
         return
 

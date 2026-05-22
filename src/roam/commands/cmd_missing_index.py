@@ -1618,9 +1618,13 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
             try:
                 _emit_missing_index_findings(conn, findings)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_missing_index:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-CI disclosure
                 _w607ci_warnings_out.append(
                     f"missing_index_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"

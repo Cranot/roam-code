@@ -230,8 +230,12 @@ def scan_file_for_flags(file_path: str) -> list[dict]:
                             }
                         )
                         break  # one match per line is enough
-    except (OSError, UnicodeDecodeError):
-        pass
+    except (OSError, UnicodeDecodeError) as _exc:
+        # An unreadable file is silently dropped from the scan — surface
+        # lineage so a missing flag detection has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed(f"cmd_flag_dead:scan_file:{file_path}", _exc)
 
     return findings
 

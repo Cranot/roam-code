@@ -246,7 +246,10 @@ def _score_coupling(conn) -> tuple[int, dict]:
             "total_symbols": total_symbols,
             "cycle_count": len(cycles),
         }
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_ai_readiness:tangle_score", _exc)
         return 50, {"tangle_ratio": 0.0, "error": "graph build failed"}
 
 
@@ -551,7 +554,10 @@ def _score_architecture(conn) -> tuple[int, dict]:
             "cycles": len(cycles),
             "layers_detected": len(set(layer_map.values())) if layer_map else 0,
         }
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_ai_readiness:layer_score", _exc)
         return 50, {"violations": 0, "cycles": 0, "error": "graph build failed"}
 
 

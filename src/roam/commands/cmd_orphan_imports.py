@@ -1171,9 +1171,13 @@ def orphan_imports(ctx, lang, persist) -> None:
             try:
                 _emit_orphan_imports_findings(conn, all_orphans, ORPHAN_IMPORTS_DETECTOR_VERSION)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_orphan_imports:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-CR disclosure
                 _w607cr_warnings_out.append(
                     f"orphan_imports_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"

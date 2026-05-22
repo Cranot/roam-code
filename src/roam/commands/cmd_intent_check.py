@@ -158,15 +158,13 @@ def intent_check_cmd(ctx, intended_command: Optional[str]):
     )
 
     # Auto-log: intent-check IS an agent decision boundary.
-    try:
-        auto_log(
-            envelope,
-            action="intent-check",
-            target=intended_command,
-            repo_root=repo_root,
-        )
-    except Exception:
-        pass
+    # auto_log is documented + verified to never raise.
+    auto_log(
+        envelope,
+        action="intent-check",
+        target=intended_command,
+        repo_root=repo_root,
+    )
 
     if json_mode:
         click.echo(to_json(envelope))

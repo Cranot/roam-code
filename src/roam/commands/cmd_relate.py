@@ -171,6 +171,8 @@ def _find_connecting_path(G, src, tgt, depth):
         if len(path) - 1 <= depth:
             return path
     except (nx.NetworkXNoPath, nx.NodeNotFound):
+        # Genuine expected-signal guard: NetworkXNoPath / NodeNotFound
+        # mean "no path exists" — the contractual None-return case.
         pass
     return None
 

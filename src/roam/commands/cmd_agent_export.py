@@ -134,8 +134,10 @@ def _gather_stats(conn):
         row = conn.execute("SELECT SUM(line_count) FROM symbol_metrics").fetchone()
         if row and row[0]:
             loc_estimate = row[0]
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:loc_estimate", _exc)
 
     return {
         "files": file_count,
@@ -223,7 +225,10 @@ def _gather_entry_points(conn, limit=10):
             (limit,),
         ).fetchall()
         return [{"path": r["path"], "symbols": r["sym_count"]} for r in rows]
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:entry_points", _exc)
         return []
 
 
@@ -253,7 +258,10 @@ def _gather_hotspots(conn, limit=10):
                 }
             )
         return results
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:hotspots", _exc)
         return []
 
 
@@ -264,7 +272,10 @@ def _gather_test_info(conn):
         total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         test_files = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'test'").fetchone()[0]
         source_files = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'source'").fetchone()[0]
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:test_info_counts", _exc)
         total_files = 0
         test_files = 0
         source_files = 0
@@ -278,8 +289,10 @@ def _gather_test_info(conn):
             parts = p.split("/")
             if len(parts) > 1:
                 test_dirs.add(parts[0])
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:test_dirs", _exc)
 
     # Detect test naming convention
     test_patterns = set()
@@ -303,8 +316,10 @@ def _gather_test_info(conn):
                 test_patterns.add("*Test.java")
             elif basename.endswith("_spec.rb"):
                 test_patterns.add("*_spec.rb")
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:test_patterns", _exc)
 
     return {
         "total_files": total_files,
@@ -330,7 +345,10 @@ def _gather_health(conn):
 
     try:
         m = collect_metrics(conn)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:health_metrics", _exc)
         m = {
             "health_score": None,
             "cycles": 0,
@@ -346,16 +364,20 @@ def _gather_health(conn):
         m["cycles_total"] = csum.total
         m["cycles_actionable"] = csum.actionable
         m["cycles_informational"] = csum.informational
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:cycles_summary", _exc)
     try:
         gsum = god_components(conn)
         m["god_components_raw"] = m.get("god_components", 0)
         m["god_components"] = gsum.total
         m["god_components_critical"] = gsum.critical
         m["god_components_actionable"] = gsum.actionable
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:god_components", _exc)
     return m
 
 
@@ -404,7 +426,10 @@ def _gather_layers(conn):
                 }
             )
         return results
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:layers", _exc)
         return []
 
 
@@ -424,7 +449,10 @@ def _gather_clusters(conn, limit=8):
             }
             for r in rows
         ]
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:clusters", _exc)
         return []
 
 
@@ -436,7 +464,10 @@ def _detect_build_command(conn):
         for r in rows:
             name = os.path.basename(r["path"]).lower()
             file_names.add(name)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:build_command", _exc)
         return None, None
 
     build_cmd = None
@@ -481,7 +512,10 @@ def _detect_frameworks(conn):
         frameworks = _detect_frameworks(conn)
         build_tool = _detect_build(conn)
         return frameworks, build_tool
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_agent_export:frameworks", _exc)
         return [], None
 
 
@@ -670,7 +704,10 @@ def _write_with_preserve(filepath, content):
         try:
             with open(filepath, "r", encoding="utf-8") as _fh:
                 existing = _fh.read()
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_agent_export:read_existing", _exc)
             existing = ""
 
         start_idx = existing.find(_MARKER_START)

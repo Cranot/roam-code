@@ -817,8 +817,10 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 from roam.graph.pagerank import personalized_pagerank
 
                 ppr = personalized_pagerank(RG, {sym_id: 1.0}, alpha=0.85)
-            except Exception:
-                pass
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_impact:personalized_pagerank", _exc)
 
         if not dependents:
             # W641-followup-A — canonical risk-LEVEL projection. A leaf
@@ -1048,8 +1050,10 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         try:
             pr_rows = conn.execute("SELECT symbol_id, pagerank FROM graph_metrics").fetchall()
             global_pr = {r["symbol_id"]: r["pagerank"] for r in pr_rows}
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_impact:global_pagerank", _exc)
 
         json_deps = {ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items] for ek, items in by_kind.items()}
         # Build affected file list with importance scores.

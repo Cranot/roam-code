@@ -394,8 +394,12 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
             "SELECT id FROM symbols WHERE name IN ('cli', 'main', '__main__', 'run', 'app', 'serve', 'entrypoint')"
         ).fetchall()
         entry_ids.update(int(r[0]) for r in named_entry_rows)
-    except sqlite3.OperationalError:
-        pass
+    except sqlite3.OperationalError as _exc:
+        # Missing/legacy schema — named entry points are skipped. Surface
+        # lineage so a degraded entry-point set has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_oracle:named_entry_points", _exc)
 
     if not entry_ids:
         return OracleResult(

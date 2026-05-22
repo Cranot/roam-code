@@ -635,16 +635,14 @@ def permit_issue(
     # ``provenance="run_ledger"``. The whitelist filter in auto_log
     # short-circuits silently when no active run is present.
     if persist:
-        try:
-            auto_log(
-                envelope,
-                action="permit-issue",
-                target=record.permit_id,
-                repo_root=root,
-                extra_event_fields={"permit_id": record.permit_id},
-            )
-        except Exception:
-            pass
+        # auto_log is documented + verified to never raise.
+        auto_log(
+            envelope,
+            action="permit-issue",
+            target=record.permit_id,
+            repo_root=root,
+            extra_event_fields={"permit_id": record.permit_id},
+        )
 
     if json_mode:
         click.echo(to_json(envelope))

@@ -676,8 +676,12 @@ def _active_run_id_for_replay() -> str | None:
             try:
                 meta = _json.loads((child / "meta.json").read_text(encoding="utf-8"))
                 in_progress = meta.get("status") == "in_progress"
-            except Exception:  # noqa: BLE001 — meta drift must not block
-                pass
+            except Exception as _exc:  # noqa: BLE001 — meta drift must not block
+                # A corrupt meta.json defaults in_progress to False —
+                # surface lineage so a misclassified run has a cause.
+                from roam.observability import log_swallowed
+
+                log_swallowed(f"cmd_pr_replay:run_meta:{child.name}", _exc)
             candidates.append((mtime, child.name, in_progress))
     except OSError:
         return None
@@ -1364,8 +1368,12 @@ def _approval_record_to_envelope_dict(record) -> dict:
                 "producer_envelope",
                 detail="github_review",
             )
-        except Exception:  # noqa: BLE001 - helper is supposed to never fail
-            pass
+        except Exception as _exc:  # noqa: BLE001 - helper is supposed to never fail
+            # A failure silently drops the provenance link from the
+            # evidence packet — surface lineage so the gap has a cause.
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_pr_replay:provenance_label", _exc)
     return out
 
 

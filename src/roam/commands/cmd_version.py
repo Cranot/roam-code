@@ -41,6 +41,8 @@ def _local_version() -> str:
         try:
             return _version("roam-code")
         except Exception:
+            # Genuine guard: the "unknown" return value below IS the
+            # explicit loud signal that version resolution failed.
             pass
     return "unknown"
 

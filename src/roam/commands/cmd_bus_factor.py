@@ -342,8 +342,13 @@ def _repo_identifier(project_root) -> str:
             url = (proc.stdout or "").strip()
             if url:
                 return url
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    except (OSError, subprocess.TimeoutExpired) as _exc:
+        # A remote-URL probe failure falls through to the project-root
+        # path fallback — surface lineage so a switched repo identifier
+        # has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_bus_factor:repo_identifier", _exc)
     return str(project_root)
 
 

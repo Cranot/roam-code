@@ -190,11 +190,15 @@ def _vibe_check_canonical(conn):
     try:
         from roam.quality.ai_rot import compute_ai_rot_score
     except ImportError:
+        # ai_rot is an optional quality module — absence is expected.
         return None
 
     try:
         result = compute_ai_rot_score(conn)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_dashboard:ai_rot_score", _exc)
         return None
 
     # Build the categories list dashboard displayed previously, now
@@ -298,7 +302,10 @@ def _top_danger_files(conn, limit: int = 5) -> list[dict]:
                AND COALESCE(fs.complexity, 0)   > 0
             """
         ).fetchall()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_dashboard:hotspot_query", _exc)
         return []
 
     out: list[dict] = []

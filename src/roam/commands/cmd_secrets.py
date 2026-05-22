@@ -478,8 +478,10 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
                     finding = _match_pattern_to_finding(line, pat, file_path, line_num, min_rank)
                     if finding is not None:
                         findings.append(finding)
-    except (OSError, UnicodeDecodeError):
-        pass
+    except (OSError, UnicodeDecodeError) as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_secrets:scan_file", _exc)
 
     return findings
 

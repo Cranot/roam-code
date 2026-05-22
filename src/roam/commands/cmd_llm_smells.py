@@ -1018,9 +1018,13 @@ def llm_smells(ctx, min_severity, persist):
                     source_version=LLM_SMELLS_DETECTOR_VERSION,
                 )
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_llm_smells:emit_findings", _exc)
 
         # Aggregates
         counts_by_kind: dict[str, int] = {k: 0 for k in _LLM_SMELLS_KINDS}

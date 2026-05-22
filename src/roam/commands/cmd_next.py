@@ -451,26 +451,37 @@ def _collect_state() -> RepoState:
             is_stale, reason = _check_index_staleness(root)
             state.index_stale = is_stale
             state.index_stale_reason = reason
-        except Exception:
-            pass
+        except Exception as _exc:
+            # Defensive per the module docstring — a probe failure must
+            # not crash the router. Surface lineage so a degraded
+            # recommendation has a discoverable cause.
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_next:index_staleness", _exc)
 
     try:
         state.uncommitted_count = _git_porcelain_count(root)
         state.has_uncommitted_changes = state.uncommitted_count > 0
-    except Exception:
-        pass
+    except Exception as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:git_porcelain_count", _exc)
 
     try:
         state.recent_memory_commands = _read_recent_memory_commands(root)
-    except Exception:
-        pass
+    except Exception as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:recent_memory_commands", _exc)
 
     try:
         cmd, src = _read_recent_envelope_next_command(root)
         state.recent_envelope_next_command = cmd
         state.recent_envelope_source = src
-    except Exception:
-        pass
+    except Exception as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:recent_envelope_next_command", _exc)
 
     # R24 constitution-pending probe -- only fires when the file exists
     # AND a run is active. Cheap, defensive, never raises.
@@ -485,8 +496,10 @@ def _collect_state() -> RepoState:
             state.pending_before_pr_check = bare
             state.pending_before_pr_invocation = invocation
             state.active_run_id = run_id
-        except Exception:
-            pass
+        except Exception as _exc:
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_next:pending_before_pr_check", _exc)
 
     # R16 / W14.2 — surface a recent intent-check BLOCKED event whose
     # upgrade target would unblock the agent. Independent of constitution
@@ -496,8 +509,10 @@ def _collect_state() -> RepoState:
         state.mode_upgrade_blocked_command = blocked_cmd
         state.mode_upgrade_target = upgrade_mode
         state.mode_upgrade_invocation = mode_invocation
-    except Exception:
-        pass
+    except Exception as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:recent_mode_block", _exc)
 
     return state
 

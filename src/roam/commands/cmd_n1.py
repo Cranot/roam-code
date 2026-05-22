@@ -622,8 +622,10 @@ def _find_appends_properties(conn, model_id, model_info, *, bulk_appends_sym=_BU
             # Extract the appends array from source (line_start is 1-indexed)
             snippet = "".join(lines[max(0, line_start - 1) : line_end])
             return re.findall(r"['\"](\w+)['\"]", snippet)
-        except OSError:
-            pass
+        except OSError as _exc:
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_n1:appends_source_read", _exc)
 
     return []
 
@@ -1182,8 +1184,10 @@ def _find_eager_loads(
                     end = with_sym["line_end"] or start + 10
                     snippet = "".join(lines[start:end])
                     eager_loaded.update(re.findall(r"['\"](\w+)['\"]", snippet))
-                except OSError:
-                    pass
+                except OSError as _exc:
+                    from roam.observability import log_swallowed
+
+                    log_swallowed("cmd_n1:eager_load_source_read", _exc)
 
     # --- 2. Check resource config files for eagerLoad ---
     # Convert model class name to resource key pattern

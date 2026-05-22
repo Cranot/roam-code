@@ -679,9 +679,13 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                     _w607dh_warnings_out.append(
                         f"fingerprint_emit_fingerprint_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
                     )
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) — degrade
+                # gracefully. Surface lineage so a non-expected variant
+                # (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_fingerprint:emit_findings", _exc)
 
         # W607-DH: ``compose_verdict`` substrate -- LAW 6 single-line
         # verdict string. A KeyError on the topology dict (e.g. when

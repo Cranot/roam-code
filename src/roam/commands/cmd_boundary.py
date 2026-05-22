@@ -513,9 +513,13 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
             try:
                 _emit_boundary_findings(conn, all_findings, source_version=_BOUNDARY_DETECTOR_VERSION)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # Pre-W89 schema (no findings table) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: pre-W89 schema (no findings table) — degrade
+                # gracefully. Surface lineage so a non-expected variant
+                # (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_boundary:emit_findings", _exc)
 
         # W805: empty-corpus / no-imports disclosure (Pattern 2 silent-fallback fix).
         # Count import-edges to decide whether 0-findings means "really

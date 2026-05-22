@@ -157,8 +157,10 @@ def _detect_frameworks(conn):
                 val = match.group(1) or match.group(2) or match.group(3) or match.group(4)
                 if val:
                     import_targets.add(val)
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_understand:import_scan", _exc)
 
     # collect file paths for pattern matching
     file_paths = set()
@@ -1308,8 +1310,10 @@ def _emit_tour_text(tour_data, conn, G, mermaid_mode):
             mermaid_text = _tour_mermaid(conn, G, top_symbols, reading_order)
             click.echo("Mermaid diagram:")
             click.echo(mermaid_text)
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_understand:mermaid", _exc)
 
 
 # ---------------------------------------------------------------------------

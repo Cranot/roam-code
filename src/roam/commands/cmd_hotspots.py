@@ -1089,9 +1089,13 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
             try:
                 _emit_hotspots_findings(conn, items, HOTSPOTS_DETECTOR_VERSION)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_hotspots:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-CP disclosure
                 _w607cp_warnings_out.append(f"hotspots_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 

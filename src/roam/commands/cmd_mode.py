@@ -384,8 +384,13 @@ def mode_cmd(
             repo_root=repo_root,
             extra_event_fields=extra_event_fields,
         )
-    except Exception:
-        pass
+    except Exception as _exc:
+        # auto_log itself never raises, but the extra_event_fields
+        # derivation above touches the envelope dict — surface lineage
+        # so a dropped mode-switch ledger event has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_mode:auto_log_extra_fields", _exc)
 
     if json_mode:
         click.echo(to_json(envelope))

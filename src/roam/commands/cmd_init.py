@@ -319,8 +319,10 @@ def init(ctx, root, yes, with_ci, since, full_history):
 
         with open_db(readonly=True, project_root=project_root) as conn:
             health_summary = collect_metrics(conn)
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_init:health_summary", _exc)
 
     # 6. Output
     _files = health_summary.get("files", 0)

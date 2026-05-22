@@ -1626,10 +1626,14 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
                     project_root=project_root,
                 )
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade
-                # gracefully so the standard auth-gaps output still ships.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully so the standard auth-gaps output
+                # still ships. Surface lineage so a non-expected variant
+                # (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_auth_gaps:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-CM disclosure
                 _w607cm_warnings_out.append(f"auth_gaps_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 

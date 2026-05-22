@@ -796,6 +796,8 @@ def brief_cmd(
             try:
                 conn.close()
             except Exception:
+                # Genuine guard: a close() failure during cleanup has no
+                # recoverable action and no user-visible consequence.
                 pass
 
     # ---------------------------------------------------------------------
@@ -837,11 +839,10 @@ def brief_cmd(
         },
     )
 
-    # Opportunistic auto-log (R20). Never raises -- handled inside auto_log.
-    try:
-        auto_log(envelope, action="brief", target=str(repo_root) if repo_root else "")
-    except Exception:
-        pass
+    # Opportunistic auto-log (R20). ``auto_log`` is documented + verified to
+    # never raise (every internal failure path is caught and converted to
+    # ``return None``); no defensive wrapper is needed here.
+    auto_log(envelope, action="brief", target=str(repo_root) if repo_root else "")
 
     if json_mode:
         click.echo(to_json(envelope))

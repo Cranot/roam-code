@@ -306,8 +306,12 @@ def _search_with_git_grep(pattern: str, project_root: Path, extra_args: list[str
         )
         if result.returncode <= 1:
             return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as _exc:
+        # A git-grep failure silently yields no matches — surface lineage
+        # so a missed route reference has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_orphan_routes:search_with_git_grep", _exc)
     return []
 
 

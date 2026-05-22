@@ -402,8 +402,11 @@ def _fts_suggestions(conn: sqlite3.Connection, name: str, limit: int = 3) -> lis
             display = r["qualified_name"] or r["name"]
             if display not in suggestions:
                 suggestions.append(display)
-    except Exception:
+    except Exception as _fts_exc:  # noqa: BLE001 — defensive
         # FTS5 not available, try LIKE fallback
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_verify_imports:fts_suggestions", _fts_exc)
         try:
             rows = conn.execute(
                 "SELECT s.name, s.qualified_name "
@@ -416,8 +419,8 @@ def _fts_suggestions(conn: sqlite3.Connection, name: str, limit: int = 3) -> lis
                 display = r["qualified_name"] or r["name"]
                 if display not in suggestions:
                     suggestions.append(display)
-        except Exception:
-            pass
+        except Exception as _like_exc:  # noqa: BLE001 — defensive
+            log_swallowed("cmd_verify_imports:like_suggestions_fallback", _like_exc)
 
     return suggestions
 
@@ -523,8 +526,10 @@ def _scan_file_imports(
                     if not resolved:
                         entry["suggestions"] = _fts_suggestions(conn, name)
                     results.append(entry)
-    except (OSError, UnicodeDecodeError):
-        pass
+    except (OSError, UnicodeDecodeError) as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_verify_imports:source_scan", _exc)
 
     return results
 

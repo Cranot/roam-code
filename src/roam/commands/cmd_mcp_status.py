@@ -116,7 +116,7 @@ def mcp_status(ctx) -> None:
     # which is the whole point of ``roam mcp-status``. But surfacing only
     # the active number hides the ceiling — an operator on the ``core``
     # preset sees "57 tools registered" with no signal that widening to
-    # ``full`` would unlock 224. Mirror the cmd_doctor:430 Option B pattern:
+    # ``full`` would unlock 227. Mirror the cmd_doctor:430 Option B pattern:
     # keep the live runtime numbers AND emit the AST-sourced ceiling
     # side-by-side so plugin-loading / preset-state drift is visible at a
     # glance. Additive only — existing ``tools_registered`` /

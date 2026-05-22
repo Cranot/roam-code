@@ -88,7 +88,7 @@ _metrics_lock = threading.Lock()
 # Per-tool invocation counters — local-only telemetry. Tracks how many
 # times each tool was called and how many returned each outcome
 # (success / rate_limited / error). Helps answer "is roam_ask actually
-# being used now that it's wired?" and "are 90 of the 224 tools dead
+# being used now that it's wired?" and "are 90 of the 227 tools dead
 # weight?" without phoning home.
 _tool_invocations: Counter[tuple[str, str]] = Counter()
 

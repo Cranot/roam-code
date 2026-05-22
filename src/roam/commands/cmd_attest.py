@@ -442,7 +442,10 @@ def _collect_fitness_evidence(conn, file_map, root):
 
         rule_results, violations = _collect_fitness_violations(conn, file_map, root)
         return {"rules": rule_results, "violations": violations[:50]}
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_attest:fitness_violations", _exc)
         return {"rules": [], "violations": []}
 
 
@@ -481,8 +484,10 @@ def _collect_effects_evidence(conn, file_map):
                     sym_effects[name]["transitive_effects"].append(r["effect_type"])
 
             effects_list.extend(sym_effects.values())
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_attest:effects_query", _exc)
 
     return effects_list
 

@@ -140,8 +140,11 @@ def index(ctx, force, verbose, quiet):
                     snap = append_snapshot(wconn, source="index")
                 if not json_mode and not quiet:
                     click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
-            except Exception:
-                pass  # Don't fail indexing if snapshot fails
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                # Don't fail indexing if snapshot fails
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_index:auto_snapshot", _exc)
     else:
         # Pattern 1C (CLAUDE.md): never emit empty stdout. If the indexer ran
         # but the DB isn't visible (race with cloud-sync, write to a different

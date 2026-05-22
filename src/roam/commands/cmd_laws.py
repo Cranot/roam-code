@@ -379,9 +379,13 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
             try:
                 _emit_laws_findings(conn, laws, LAWS_DETECTOR_VERSION)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_laws:emit_findings", _exc)
 
         # W805 (Pattern 2): pre-fetch symbol count INSIDE the open_db
         # block so the empty-state verdict below has a real input shape

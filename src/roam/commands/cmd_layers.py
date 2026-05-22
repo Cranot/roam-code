@@ -201,8 +201,10 @@ def _print_deepest_chain(conn, G):
             if info:
                 arrow = "    " if i == 0 else "  -> "
                 click.echo(f"  {arrow}{abbrev_kind(info['kind'])} {info['name']}  {loc(info['file_path'])}")
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_layers:deepest_chain", _exc)
 
 
 def _layers_mermaid(conn, G, layer_map, formatted, max_layer):

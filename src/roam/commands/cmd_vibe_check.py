@@ -1986,9 +1986,13 @@ def vibe_check(ctx, threshold, persist):
                     source_version=VIBE_CHECK_DETECTOR_VERSION,
                 )
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) —
+                # degrade gracefully. Surface lineage so a non-expected
+                # variant (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_vibe_check:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-BS disclosure
                 _w607bs_warnings_out.append(f"vibe_check_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 

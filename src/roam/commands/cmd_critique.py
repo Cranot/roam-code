@@ -1010,9 +1010,13 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
                     default=0,
                 )
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: findings table missing (pre-W89 schema) — degrade
+                # gracefully. Surface lineage so a non-expected variant
+                # (locked / corrupt DB) is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_critique:emit_findings", _exc)
 
     # Bench-relevance hint:
     # when the diff touches files in the retrieve / graph / catalog hot

@@ -293,8 +293,12 @@ def _fetch_diff_from_pr_url(url: str) -> str:
         )
         if proc.returncode == 0:
             return proc.stdout
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as _exc:
+        # A gh failure silently yields an empty diff — surface lineage so
+        # an empty PR analysis has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_pr_analyze:fetch_diff_from_pr_url", _exc)
     return ""
 
 
@@ -325,8 +329,12 @@ def _acquire_diff(
             data = sys.stdin.read()
             if data:
                 return data
-        except Exception:  # noqa: BLE001 — defensive
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            # A stdin read failure silently yields an empty diff — surface
+            # lineage so an empty PR analysis has a discoverable cause.
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_pr_analyze:acquire_diff:stdin", _exc)
 
     git_args = ["git", "diff"]
     if staged:
@@ -346,8 +354,12 @@ def _acquire_diff(
         )
         if proc.returncode == 0:
             return proc.stdout
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as _exc:
+        # A git-diff failure silently yields an empty diff — surface
+        # lineage so an empty PR analysis has a discoverable cause.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_pr_analyze:acquire_diff:git_diff", _exc)
     return ""
 
 

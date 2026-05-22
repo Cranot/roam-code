@@ -149,8 +149,12 @@ def recommend(ctx, symbol, limit) -> None:
                 other = r["id"]
                 entry = scores.setdefault(other, _candidate_init())
                 entry["clone"] += 1.0
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            # clone_pairs absent (clones --persist not run) or query failure;
+            # recommendations degrade gracefully without clone-sibling signal.
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_recommend:clone_siblings", _exc)
 
     # Normalise & combine.
     if not scores:

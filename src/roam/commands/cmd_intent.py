@@ -199,8 +199,11 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                     (_MIN_NAME_LEN, _MAX_SYMBOLS),
                 ).fetchall()
                 symbol_names = set(s["name"] for s in top_syms)
-            except Exception:
-                pass  # fall through with full set if query fails
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                # fall through with full set if query fails
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_intent:pagerank_sample", _exc)
 
         _TIMEOUT_SECONDS = 30
         _start_time = time.monotonic()

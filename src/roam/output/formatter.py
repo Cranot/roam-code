@@ -459,18 +459,82 @@ _RISK_KEYS = (
 def _stringify_risk_item(item) -> str:
     """Pull a short human-readable string out of an envelope risk-item.
 
-    Items are typically either bare strings or dicts with a ``message``
-    / ``title`` / ``description`` / ``rule_id`` field. Falls back to
-    ``str(item)`` when nothing useful is found.
+    ``agent_contract.risks[]`` must hold short, LAW-4-anchored fact
+    STRINGS — never a Python ``repr()`` dict dump. Three input shapes
+    are normalised here:
+
+    1. **Bare string** — returned as-is.
+    2. **R22 confidence triple** — ``{"value": <finding>, "confidence":
+       ..., "reason": ...}`` (from :func:`roam.output.confidence.wrap_findings`).
+       Recurse into ``value`` so the inner finding's message reaches the
+       risk string instead of the wrapper's ``str(triple)`` repr.
+    3. **Plain finding dict** — first a ``claim`` / ``message`` / ``title``
+       / ``description`` / ``verdict`` / ``observation`` / ``rule_id``
+       text field; failing that, a synthesised ``"<name>: <count> (<severity>)"``
+       fact from the conventional integrity-check shape (``cmd_db_check``).
+
+    The previous ``str(item)`` fallback leaked ``{'value': {...}, ...}``
+    repr dumps into a consumer-facing field (CLAUDE.md "structured signal
+    lost" anti-pattern); the synthesised-fact branch replaces it. A bare
+    ``"<key>=<value>"`` join is the last resort for an unrecognised dict
+    so the field still never carries a raw repr.
     """
     if isinstance(item, str):
         return item
-    if isinstance(item, dict):
-        for key in ("claim", "message", "title", "description", "verdict", "observation", "rule_id"):
-            v = item.get(key)
-            if isinstance(v, str) and v:
-                return v
-    return str(item)
+    if not isinstance(item, dict):
+        return str(item)
+
+    # R22 triple — unwrap and recurse into the inner finding so the
+    # message/rule of the actual finding surfaces, not str(triple).
+    if "value" in item and "confidence" in item:
+        return _stringify_risk_item(item["value"])
+
+    # Prefer an explicit human-readable text field.
+    for key in ("claim", "message", "title", "description", "verdict", "observation", "rule_id"):
+        v = item.get(key)
+        if isinstance(v, str) and v:
+            return v
+
+    # Integrity-check shape (cmd_db_check): {name, count, severity, note?}.
+    # Synthesise a short fact instead of dumping repr(dict).
+    name = item.get("name") or item.get("rule") or item.get("kind")
+    if isinstance(name, str) and name:
+        parts = [str(name)]
+        count = item.get("count")
+        if isinstance(count, (int, float)) and not isinstance(count, bool):
+            parts.append(f": {count}")
+        severity = item.get("severity") or item.get("level")
+        if isinstance(severity, str) and severity:
+            parts.append(f" ({severity})")
+        note = item.get("note")
+        if isinstance(note, str) and note:
+            parts.append(f" — {note}")
+        return "".join(parts)
+
+    # Last resort — a key=value join, never a raw repr(dict).
+    return ", ".join(f"{k}={v}" for k, v in item.items())
+
+
+# Severity / status values that mean "this finding is NOT a surviving
+# risk" — an all-clear integrity check row should not pollute risks[].
+_NON_RISK_SEVERITIES = frozenset({"ok", "info", "pass", "passed", "none", "clean"})
+
+
+def _is_non_risk_item(item) -> bool:
+    """Return True iff *item* is a finding that records an all-clear state.
+
+    Used to keep ``agent_contract.risks[]`` to genuine surviving risks
+    (CLAUDE.md CONSTRAINT 7). Unwraps the R22 confidence triple so the
+    inner finding's severity is the one inspected. Bare strings and
+    items with no severity field are treated as risks (no evidence they
+    are clean — fail towards surfacing).
+    """
+    if not isinstance(item, dict):
+        return False
+    if "value" in item and "confidence" in item and isinstance(item["value"], dict):
+        item = item["value"]
+    sev = item.get("severity") or item.get("level") or item.get("status")
+    return isinstance(sev, str) and sev.lower() in _NON_RISK_SEVERITIES
 
 
 # Keys that carry envelope state metadata, NOT user-facing analytical
@@ -796,12 +860,19 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
                 break
 
     # Risks — first non-empty list among the conventional risk keys.
+    # ``risks[]`` names SURVIVING risks (CLAUDE.md CONSTRAINT 7), so a
+    # finding whose severity says "nothing wrong" (``ok`` / ``info`` /
+    # ``pass`` / ``none``) is filtered out — an all-clear integrity
+    # sweep should yield an empty ``risks[]``, not three "(ok)" lines.
     for key in _RISK_KEYS:
         items = out.get(key)
         if isinstance(items, list) and items:
-            for item in items[:_AGENT_CONTRACT_MAX_RISKS]:
-                msg = _stringify_risk_item(item)
-                risks.append(_truncate_fact(msg))
+            for item in items:
+                if _is_non_risk_item(item):
+                    continue
+                risks.append(_truncate_fact(_stringify_risk_item(item)))
+                if len(risks) >= _AGENT_CONTRACT_MAX_RISKS:
+                    break
             break
 
     # Confidence — pull from summary; either 0..1 float or a 0..100 int.

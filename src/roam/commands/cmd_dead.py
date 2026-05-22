@@ -374,8 +374,12 @@ def _load_mcp_tool_names() -> frozenset[str]:
         from roam.mcp_server import _TOOL_METADATA as _meta
 
         collected.update(_meta.keys())
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        # fastmcp may be absent or mcp_server import may fail; Source 2
+        # (AST scan below) still recovers the tool roster.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_dead:tool_metadata_import", _exc)
 
     # Source 2: AST scan of mcp_server.py — recover the Python ``def``
     # names that the symbols table will store. We resolve the source
@@ -1180,7 +1184,10 @@ def _blame_one_file(project_root, file_path):
         from roam.index.git_stats import get_blame_for_file
 
         return file_path, get_blame_for_file(project_root, file_path)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_dead:blame_for_file", _exc)
         return file_path, []
 
 

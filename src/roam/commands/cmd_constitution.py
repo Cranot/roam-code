@@ -152,10 +152,9 @@ def constitution_init(ctx, with_laws, with_rules, force):
             click.echo(f"VERDICT: {verdict}")
             click.echo(f"  path: {path}")
             click.echo("Hint: pass --force to regenerate.")
-        try:
-            auto_log(env, action="constitution-init", target=str(path), repo_root=root)
-        except Exception:
-            pass
+        # auto_log is documented + verified to never raise (internal failure
+        # paths are caught and converted to ``return None``).
+        auto_log(env, action="constitution-init", target=str(path), repo_root=root)
         return
 
     try:
@@ -219,10 +218,8 @@ def constitution_init(ctx, with_laws, with_rules, force):
             for gate, items in constitution.required_checks.items():
                 click.echo(f"    {gate}: {len(items)} check(s)")
 
-    try:
-        auto_log(env, action="constitution-init", target=str(written), repo_root=root)
-    except Exception:
-        pass
+    # auto_log is documented + verified to never raise.
+    auto_log(env, action="constitution-init", target=str(written), repo_root=root)
 
 
 # ---------------------------------------------------------------------------
@@ -267,10 +264,8 @@ def constitution_check(ctx):
             click.echo(to_json(env))
         else:
             click.echo(f"VERDICT: {verdict}")
-        try:
-            auto_log(env, action="constitution-check", repo_root=root)
-        except Exception:
-            pass
+        # auto_log is documented + verified to never raise.
+        auto_log(env, action="constitution-check", repo_root=root)
         return
 
     report = check_constitution(root, constitution)
@@ -313,10 +308,8 @@ def constitution_check(ctx):
             rows = [[m["mode"], m["command"], m["state"]] for m in report.mode_issues]
             click.echo(format_table(["Mode", "Command", "State"], rows))
 
-    try:
-        auto_log(env, action="constitution-check", repo_root=root)
-    except Exception:
-        pass
+    # auto_log is documented + verified to never raise.
+    auto_log(env, action="constitution-check", repo_root=root)
 
 
 # ---------------------------------------------------------------------------
@@ -551,10 +544,8 @@ def constitution_apply(ctx, gate, strict, symbol, file_var, timeout):
             click.echo("")
             click.echo(format_table(["Command", "Exit", "Status", "Verdict"], rows))
 
-    try:
-        auto_log(env, action="constitution-apply", target=gate, repo_root=root)
-    except Exception:
-        pass
+    # auto_log is documented + verified to never raise.
+    auto_log(env, action="constitution-apply", target=gate, repo_root=root)
 
     if strict and report.any_failed:
         ctx.exit(5)

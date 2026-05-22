@@ -122,8 +122,12 @@ def _load_custom_domains():
             data = json.load(f)
         if isinstance(data, dict):
             return {str(k).lower(): float(v) for k, v in data.items() if isinstance(v, (int, float))}
-    except (json.JSONDecodeError, ValueError, OSError):
-        pass
+    except (json.JSONDecodeError, ValueError, OSError) as _exc:
+        # A malformed user config is silently ignored — surface lineage so
+        # the user knows their domain-weights.json did not take effect.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_risk:load_custom_domains", _exc)
     return {}
 
 
@@ -154,8 +158,12 @@ def _load_custom_path_zones():
                     if isinstance(patterns, list) and isinstance(weight, (int, float)):
                         result[str(zone_name)] = (tuple(str(p) for p in patterns), float(weight))
             return result
-    except (json.JSONDecodeError, ValueError, OSError):
-        pass
+    except (json.JSONDecodeError, ValueError, OSError) as _exc:
+        # A malformed user config is silently ignored — surface lineage so
+        # the user knows their path-zones.json did not take effect.
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_risk:load_custom_path_zones", _exc)
     return {}
 
 

@@ -150,8 +150,12 @@ def _git_default_branch(root: Path) -> str:
             )
             if result.returncode == 0:
                 return branch
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+            # A probe failure falls through to the HEAD~1 fallback base —
+            # surface lineage so an unexpected comparison base has a cause.
+            from roam.observability import log_swallowed
+
+            log_swallowed(f"cmd_api_changes:git_default_branch:{branch}", _exc)
     return "HEAD~1"
 
 

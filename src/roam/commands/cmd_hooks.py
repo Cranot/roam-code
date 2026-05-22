@@ -90,8 +90,12 @@ def _find_git_hooks_dir() -> Path | None:
                     if not real_git.is_absolute():
                         real_git = parent / real_git
                     return real_git / "hooks"
-            except OSError:
-                pass
+            except OSError as _exc:
+                # An unreadable worktree/submodule .git file is skipped —
+                # surface lineage so a missed hooks dir has a cause.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_hooks:worktree_gitdir", _exc)
 
     return None
 

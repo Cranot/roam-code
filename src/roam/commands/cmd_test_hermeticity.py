@@ -495,10 +495,14 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
             try:
                 _emit_findings(conn, findings)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # Pre-W89 schema — no findings table. Degrade silently
-                # rather than crash the standard scan path.
-                pass
+            except sqlite3.OperationalError as _exc:
+                # Expected: pre-W89 schema (no findings table) — degrade
+                # rather than crash the standard scan path. Surface
+                # lineage so a non-expected variant (locked / corrupt DB)
+                # is still discoverable.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_test_hermeticity:emit_findings", _exc)
 
     non_hermetic = len(non_hermetic_files)
     hermetic = max(0, total_test_files - non_hermetic)

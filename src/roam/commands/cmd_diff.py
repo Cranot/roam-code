@@ -1199,8 +1199,11 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                     for r in top_pr:
                         pr = float(r["pagerank"] or 0.0)
                         click.echo(f"  {r['name']:<40s} pr={pr:.4f}  {r['path']}")
-            except Exception:
-                pass  # Best-effort — never break `roam diff` over an enrichment fail.
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                # Best-effort — never break `roam diff` over an enrichment fail.
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_diff:pagerank_enrichment", _exc)
         click.echo()
 
         # Per-file breakdown
