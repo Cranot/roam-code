@@ -167,6 +167,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "asyncio: marks async tests requiring pytest-asyncio (skip when missing)",
     "git_history: tests that backdate fixture commits >365 days from now; auto-applies ROAM_GIT_SINCE=0 via tests/conftest.py to bypass W405 shallow-history default",
+    "xdist_group: pytest-xdist grouping marker — keeps marked tests on a single worker (used by tests/test_performance.py to serialize timing-sensitive perf suite). Registered here to silence PytestUnknownMarkWarning under default ``--dist=load``.",
 ]
 
 [tool.ruff]
