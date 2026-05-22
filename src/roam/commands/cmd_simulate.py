@@ -203,9 +203,40 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     # the counterfactual graph. A raise here degrades to the empty
     # metrics floor so the downstream metric_delta still composes a
     # zero-delta dict.
+    #
+    # PERF: every metric in ``compute_graph_metrics`` is derived purely
+    # from graph TOPOLOGY (node set + edge set) -- none reads the
+    # ``file_path`` node attribute. The move / extract / merge transforms
+    # only rewrite ``file_path``; they never add or remove a node or an
+    # edge. So when the counterfactual graph has an identical node set
+    # AND edge set, recomputing ``after`` would reproduce ``before``
+    # byte-for-byte. Reusing ``before`` in that case skips a full second
+    # ~50s metric pass (betweenness sampling + Louvain + modularity).
+    # ``delete`` genuinely removes nodes/edges, so its topology check
+    # fails and the recompute runs as before. The guard compares the
+    # graphs themselves rather than trusting the operation name, so a
+    # future topology-changing transform stays correct automatically.
+    def _topology_unchanged() -> bool:
+        if G is None or G_sim is None:
+            return False
+        if G.number_of_nodes() != G_sim.number_of_nodes():
+            return False
+        if G.number_of_edges() != G_sim.number_of_edges():
+            return False
+        if G.nodes.keys() != G_sim.nodes.keys():
+            return False
+        # Edge-set identity. Equal node-count + edge-count + node-set
+        # plus every G edge present in G_sim implies identical edge sets
+        # (no edge can have an endpoint outside the shared node set).
+        return all(G_sim.has_edge(u, v) for u, v in G.edges())
+
     def _recompute_metrics():
         if G_sim is None:
             return dict(empty_metrics_floor)
+        if _topology_unchanged():
+            # Counterfactual graph is topologically identical to the
+            # baseline -- every metric is unchanged. Reuse ``before``.
+            return dict(before)
         return compute_graph_metrics(G_sim)
 
     after = _run_check_ef(

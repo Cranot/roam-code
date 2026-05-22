@@ -42,6 +42,15 @@ symbols:
     name_capture: name
 
   # Functions (top-level and methods)
+  #
+  # ``class_body`` covers normal class methods. ``explicit_delegation``
+  # covers a Kotlin tree-sitter quirk: in ``class C : I by delegate { fun f() {} }``
+  # the grammar misparses the trailing ``{...}`` as a lambda argument to
+  # ``delegate`` rather than the class body, so the ``function_declaration``
+  # for ``f`` sits under ``explicit_delegation`` instead of ``class_body``.
+  # Methods inside such delegating classes still need ``method`` kind, and
+  # ``explicit_delegation`` is unique to that delegation-by syntax (it does
+  # not appear around legitimate top-level or in-lambda local functions).
   - query: |
       (function_declaration
         (simple_identifier) @name
@@ -50,6 +59,7 @@ symbols:
       default: function
       context:
         class_body: method
+        explicit_delegation: method
     def_capture: def
     name_capture: name
 

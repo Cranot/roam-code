@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from roam.commands.cmd_audit_trail_verify import EXIT_GATE_FAILURE, _verify_chain
+from roam.commands.cmd_audit_trail_verify import (
+    EXIT_GATE_FAILURE,
+    _build_rollup,
+    _verify_chain,
+)
 
 
 def _write_chain(path: Path, records: list[dict]) -> None:
@@ -304,3 +308,92 @@ def test_cli_audit_trail_verify_clean_chain_exits_0(tmp_path, cli_runner):
     _write_chain(path, [_base_record("SAFE", "2026-05-05T00:00:00Z")])
     result = cli_runner.invoke(cli, ["audit-trail-verify", "--input", str(path), "--gate"])
     assert result.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Missing-signature disclosure (Pattern-2 silent-fallback guard).
+#
+# Two halves to the fix:
+#   (1) `_build_rollup` must NOT count the genesis record as unsigned —
+#       an empty `previous_record_hash` on genesis is the chain root
+#       marker, by design. The pre-fix code reported a FALSE
+#       `missing_signatures: 1` on every well-formed chain, which made
+#       the envelope contradict itself (`chain_valid: true` +
+#       `missing_signatures: 1`).
+#   (2) WHEN `missing_signatures > 0` genuinely (a non-genesis record
+#       carrying no integrity hash), the verdict must NAME the gap and
+#       `partial_success` must flip — never a silent flat "chain valid".
+# ---------------------------------------------------------------------------
+
+
+def test_rollup_does_not_count_genesis_as_missing_signature():
+    """`_build_rollup` exempts the genesis record from the unsigned count.
+
+    Genesis legitimately has an empty `previous_record_hash` and the roam
+    audit-trail schema carries no per-record `record_hash`. Counting
+    genesis as unsigned produced a FALSE `missing_signatures: 1` on every
+    well-formed chain.
+    """
+    # Build via the real verifier so the records carry real shapes.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "trail.jsonl"
+        _write_chain(
+            path,
+            [
+                _base_record("SAFE", "2026-05-05T00:00:00Z"),
+                _base_record("REVIEW", "2026-05-05T00:01:00Z"),
+                _base_record("BLOCK", "2026-05-05T00:02:00Z"),
+            ],
+        )
+        records, issues = _verify_chain(path)
+    rollup = _build_rollup(records, issues, len(records), len(issues))
+    # Genesis exempt -> a clean chain has zero missing signatures.
+    assert rollup["missing_signatures"] == 0, rollup
+    assert rollup["broken_runs"] == 0
+    assert rollup["total_runs"] == 3
+
+
+def test_rollup_counts_genuine_unsigned_non_genesis_record():
+    """A non-genesis record with no integrity hash IS counted as unsigned.
+
+    Directly exercises the `missing_signatures` branch with a synthetic
+    record list so the disclosure path is provably reachable.
+    """
+    records = [
+        {"previous_record_hash": "", "timestamp": "t0"},  # genesis — exempt
+        {"previous_record_hash": "abc", "timestamp": "t1"},  # signed
+        {"previous_record_hash": "", "timestamp": "t2"},  # non-genesis, unsigned
+    ]
+    rollup = _build_rollup(records, [], len(records), 0)
+    assert rollup["missing_signatures"] == 1, rollup
+
+
+def test_verify_clean_chain_envelope_is_self_consistent(tmp_path, cli_runner):
+    """A valid chain must NOT contradict itself in the envelope.
+
+    Regression guard for the Defect-2 silent fallback: `chain_valid: true`
+    while `chain_rollup.missing_signatures: 1`. Post-fix the well-formed
+    chain reports `missing_signatures: 0`, a plain verdict, and
+    `partial_success: false` — all three agree.
+    """
+    from roam.cli import cli
+
+    path = tmp_path / "trail.jsonl"
+    _write_chain(
+        path,
+        [
+            _base_record("SAFE", "2026-05-05T00:00:00Z"),
+            _base_record("REVIEW", "2026-05-05T00:01:00Z"),
+        ],
+    )
+    result = cli_runner.invoke(cli, ["--json", "audit-trail-verify", "--input", str(path)])
+    env = _json.loads(result.output)
+    summary = env["summary"]
+    assert summary["chain_valid"] is True
+    assert summary["partial_success"] is False
+    assert summary["unsigned_events"] == 0
+    assert summary["chain_rollup"]["missing_signatures"] == 0
+    # Verdict stays plain — no false "unsigned" disclosure.
+    assert "unsigned" not in summary["verdict"].lower()

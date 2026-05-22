@@ -325,6 +325,94 @@ class TestCloneDetectCoreAlgorithm:
         assert "request" in tokens
 
 
+class TestPatternInferenceDeterminism:
+    """Regression: ``_suggest_extraction`` / ``_infer_clone_pattern`` must be
+    deterministic regardless of ``PYTHONHASHSEED``.
+
+    Root cause (sealed here): both functions fed a ``Counter`` from
+    ``_name_tokens(name) - _STOP_WORDS`` — a ``set`` whose iteration order
+    varies with ``PYTHONHASHSEED``. ``Counter.most_common`` breaks
+    frequency ties by insertion order, so on a tie the emitted suggestion
+    / pattern string varied process-to-process. The fix pins the tie-break
+    to ``(-count, token)`` sort order.
+    """
+
+    def test_suggest_extraction_tie_break_is_alphabetical(self):
+        """When several tokens tie on frequency, the winners are the
+        alphabetically-first tokens — stable, not insertion-order."""
+        from roam.graph.clone_detect import _suggest_extraction
+
+        # Every token appears exactly twice => a 4-way frequency tie on
+        # {alpha, beta, gamma, delta}. Deterministic tie-break must pick
+        # the two alphabetically-first: alpha, beta.
+        names = ["alpha_gamma", "alpha_delta", "beta_gamma", "beta_delta"]
+        assert _suggest_extraction(names) == "Extract common logic into a generic alpha_beta() helper"
+
+    def test_infer_clone_pattern_tie_break_is_alphabetical(self):
+        from roam.graph.clone_detect import _infer_clone_pattern
+
+        names = ["alpha_gamma", "alpha_delta", "beta_gamma", "beta_delta"]
+        # 4-way tie; alphabetically-first shared token is "alpha".
+        assert _infer_clone_pattern(names) == "shared alpha logic across 4 functions"
+
+    def test_suggest_extraction_clear_winner_unchanged(self):
+        """With a clear frequency winner (no tie), the result is the
+        winner — the fix only pins the tie-break, never overrides a
+        decisive count."""
+        from roam.graph.clone_detect import _suggest_extraction
+
+        # "payment" appears 3x, "order" 2x, others 1x. No tie among the
+        # top two => deterministic regardless of fix.
+        names = [
+            "process_payment_alpha",
+            "validate_payment_beta",
+            "refund_payment_order",
+            "cancel_order_zeta",
+        ]
+        assert _suggest_extraction(names) == "Extract common logic into a generic payment_order() helper"
+
+    def test_deterministic_across_input_orderings(self):
+        """Same token multiset, different name orderings (a stand-in for
+        ``set`` iteration-order drift under varying ``PYTHONHASHSEED``)
+        must produce identical output."""
+        from roam.graph.clone_detect import _infer_clone_pattern, _suggest_extraction
+
+        names = ["alpha_gamma", "alpha_delta", "beta_gamma", "beta_delta"]
+        forward_suggest = _suggest_extraction(names)
+        reverse_suggest = _suggest_extraction(list(reversed(names)))
+        forward_pattern = _infer_clone_pattern(names)
+        reverse_pattern = _infer_clone_pattern(list(reversed(names)))
+        assert forward_suggest == reverse_suggest
+        assert forward_pattern == reverse_pattern
+
+    def test_deterministic_across_hash_seeds(self):
+        """Run the pure functions in fresh subprocesses with distinct
+        ``PYTHONHASHSEED`` values; the suggestion/pattern strings must be
+        byte-identical across all seeds."""
+        import subprocess
+        import sys
+
+        snippet = (
+            "from roam.graph.clone_detect import _suggest_extraction, _infer_clone_pattern;"
+            "names = ['alpha_gamma', 'alpha_delta', 'beta_gamma', 'beta_delta'];"
+            "print(_suggest_extraction(names));"
+            "print(_infer_clone_pattern(names))"
+        )
+        outputs = set()
+        for seed in ("0", "1", "42", "1337"):
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
+            proc = subprocess.run(
+                [sys.executable, "-c", snippet],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            assert proc.returncode == 0, f"seed={seed} failed: {proc.stderr}"
+            outputs.add(proc.stdout)
+        assert len(outputs) == 1, f"pattern inference varied across PYTHONHASHSEED: {outputs}"
+
+
 class TestClonePersistence:
     """A.0 — persistence of clone detection results to clone_pairs / clone_clusters."""
 

@@ -235,7 +235,10 @@ def _render_markdown_report(results: list[dict], project_root: Path) -> str:
         "",
     ]
     for r in results:
-        mark = "✅ PASS" if r["passed"] else "⚠️  REVIEW"
+        # Plain-ASCII status markers — CLAUDE.md output convention forbids
+        # emojis / colors / box-drawing. Mirrors how sibling commands
+        # render text-mode status ([OK] / [WARN]).
+        mark = "[OK] PASS" if r["passed"] else "[WARN] REVIEW"
         lines.append(f"### {mark} — {r['item']}")
         lines.append(f"_Article {r['article']}_")
         lines.append("")
@@ -252,7 +255,7 @@ def _render_markdown_report(results: list[dict], project_root: Path) -> str:
             "",
             "## Next steps",
             "",
-            "1. Address any ⚠️ REVIEW items above.",
+            "1. Address any [WARN] REVIEW items above.",
             "2. If you suspect this codebase IS high-risk under Annex III,",
             "   consult counsel and your DPO immediately.",
             "3. Run `roam audit-trail-export --since 2025-01-01` to capture",

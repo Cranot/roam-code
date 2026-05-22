@@ -237,3 +237,53 @@ def test_agent_score_confidence_low_when_few_runs(score_project, cli_runner):
     assert agents["claude-code"]["confidence"] == "low"
     # Verdict should say "low confidence" out loud.
     assert "low confidence" in data["summary"]["verdict"].lower()
+
+
+# ---------------------------------------------------------------------------
+# 6. Duration clamp — ended_at < started_at must not yield a negative ms
+# ---------------------------------------------------------------------------
+
+
+def test_duration_ms_clamps_out_of_order_pair_to_zero():
+    """`_duration_ms` clamps a negative delta to 0.
+
+    A ledger run whose ``ended_at`` precedes its ``started_at`` (clock
+    skew, hand-edited meta.json) used to produce a negative duration.
+    A duration can never be negative — out-of-order pairs are malformed
+    and clamp to 0.
+    """
+    from roam.commands.cmd_agent_score import _duration_ms
+
+    # Well-ordered pair: a real positive duration.
+    assert _duration_ms("2026-05-13T08:14:33Z", "2026-05-13T08:15:03Z") == 30_000
+    # Out-of-order pair: ended_at BEFORE started_at -> clamped to 0.
+    assert _duration_ms("2026-05-13T08:15:03Z", "2026-05-13T08:14:33Z") == 0
+    # Identical timestamps -> 0 (not negative).
+    assert _duration_ms("2026-05-13T08:14:33Z", "2026-05-13T08:14:33Z") == 0
+    # Missing / malformed still 0 (unchanged behavior).
+    assert _duration_ms("", "2026-05-13T08:15:03Z") == 0
+    assert _duration_ms("not-a-date", "2026-05-13T08:15:03Z") == 0
+
+
+def test_agent_score_envelope_never_emits_negative_median_duration(score_project, cli_runner):
+    """`roam --json agent-score` must never surface a negative duration.
+
+    Seeds a run whose ``ended_at`` precedes its ``started_at`` and asserts
+    the envelope's ``median_run_duration_ms`` is clamped to 0, not a
+    negative integer.
+    """
+    _seed_run(
+        score_project,
+        "run_20260513_skew01",
+        agent="skew-agent",
+        events=[{"action": "preflight", "target": "foo", "summary_verdict": "ok"}],
+        started_at="2026-05-13T08:15:03Z",
+        ended_at="2026-05-13T08:14:33Z",  # BEFORE started_at — out of order
+    )
+    result = invoke_cli(cli_runner, ["agent-score"], cwd=score_project, json_mode=True)
+    data = parse_json_output(result, command="agent-score")
+    agents = _agents_map(data)
+    assert "skew-agent" in agents
+    median = agents["skew-agent"]["median_run_duration_ms"]
+    assert median >= 0, f"median_run_duration_ms must never be negative, got {median}"
+    assert median == 0

@@ -184,10 +184,8 @@ def agents_md_cmd(
                 sources_consulted=sorted(am.sources.keys()),
                 agents_md=am.to_dict(),
             )
-            try:
-                auto_log(envelope, action="agents-md", target=str(target))
-            except Exception:
-                pass
+            # auto_log is documented + verified to never raise.
+            auto_log(envelope, action="agents-md", target=str(target))
             if json_mode:
                 click.echo(to_json(envelope))
             else:
@@ -224,10 +222,8 @@ def agents_md_cmd(
         **envelope_kwargs,
     )
 
-    try:
-        auto_log(envelope, action="agents-md", target=wrote_to or "")
-    except Exception:
-        pass
+    # auto_log is documented + verified to never raise.
+    auto_log(envelope, action="agents-md", target=wrote_to or "")
 
     if json_mode:
         click.echo(to_json(envelope))

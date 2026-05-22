@@ -3,11 +3,11 @@
 Covers three commands where a degraded code path previously emitted a
 success / positive verdict indistinguishable from a fully-verified one:
 
-1. ``compare`` -- one index predates the ``math_signals`` schema. The old
-   code silently swallowed the ``OperationalError`` and treated every file
-   as complexity 0, fabricating an IMPROVED / REGRESSED verdict. The fix
-   suppresses the complexity-delta section, stamps ``partial_success`` and
-   qualifies the verdict.
+1. ``compare`` -- one index predates the ``symbol_metrics`` schema. The
+   old code silently swallowed the ``OperationalError`` and treated every
+   file as complexity 0, fabricating an IMPROVED / REGRESSED verdict. The
+   fix suppresses the complexity-delta section, stamps ``partial_success``
+   and qualifies the verdict.
 2. ``syntax-check`` -- files skipped (unsupported language, unreadable
    source, grammar-load failure, parse crash) were counted by an unused
    ``skipped`` variable. The fix surfaces ``files_skipped``, stamps
@@ -32,55 +32,55 @@ from pathlib import Path
 from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
-# FINDING 1 -- compare: index missing math_signals
+# FINDING 1 -- compare: index missing symbol_metrics
 # ---------------------------------------------------------------------------
 
 
-def _make_index(path: Path, *, with_math_signals: bool) -> None:
-    """Build a tiny index DB; optionally OMIT the math_signals table.
+def _make_index(path: Path, *, with_symbol_metrics: bool) -> None:
+    """Build a tiny index DB; optionally OMIT the symbol_metrics table.
 
-    An index that predates the math_signals schema simply has no such
+    An index that predates the symbol_metrics schema simply has no such
     table -- the complexity query then raises sqlite3.OperationalError.
     """
     conn = sqlite3.connect(str(path))
     conn.executescript("""
         CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
         CREATE TABLE symbols (id INTEGER PRIMARY KEY, qualified_name TEXT,
-                              kind TEXT, file_id INTEGER);
+                              kind TEXT, file_id INTEGER, line_start INTEGER);
     """)
-    if with_math_signals:
-        conn.execute("CREATE TABLE math_signals (symbol_id INTEGER, cognitive_complexity INTEGER)")
+    if with_symbol_metrics:
+        conn.execute("CREATE TABLE symbol_metrics (symbol_id INTEGER, cognitive_complexity INTEGER)")
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'a.py')")
     conn.commit()
     conn.close()
 
 
-def _add_symbol(path: Path, sym_id: int, qname: str, *, with_math_signals: bool, complexity: int = 5) -> None:
+def _add_symbol(path: Path, sym_id: int, qname: str, *, with_symbol_metrics: bool, complexity: int = 5) -> None:
     conn = sqlite3.connect(str(path))
     conn.execute(
-        "INSERT INTO symbols (id, qualified_name, kind, file_id) VALUES (?, ?, 'function', 1)",
-        (sym_id, qname),
+        "INSERT INTO symbols (id, qualified_name, kind, file_id, line_start) VALUES (?, ?, 'function', 1, ?)",
+        (sym_id, qname, sym_id),
     )
-    if with_math_signals:
+    if with_symbol_metrics:
         conn.execute(
-            "INSERT INTO math_signals (symbol_id, cognitive_complexity) VALUES (?, ?)",
+            "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity) VALUES (?, ?)",
             (sym_id, complexity),
         )
     conn.commit()
     conn.close()
 
 
-def test_compare_load_index_state_flags_missing_math_signals(tmp_path) -> None:
+def test_compare_load_index_state_flags_missing_symbol_metrics(tmp_path) -> None:
     """_load_index_state records complexity_data_available=False when the
-    math_signals table is absent, instead of silently returning {}."""
+    symbol_metrics table is absent, instead of silently returning {}."""
     from roam.commands.cmd_compare import _load_index_state
 
     old_db = tmp_path / "old.db"
     new_db = tmp_path / "new.db"
-    _make_index(old_db, with_math_signals=False)
-    _make_index(new_db, with_math_signals=True)
-    _add_symbol(old_db, 1, "foo", with_math_signals=False)
-    _add_symbol(new_db, 1, "foo", with_math_signals=True)
+    _make_index(old_db, with_symbol_metrics=False)
+    _make_index(new_db, with_symbol_metrics=True)
+    _add_symbol(old_db, 1, "foo", with_symbol_metrics=False)
+    _add_symbol(new_db, 1, "foo", with_symbol_metrics=True)
 
     old_state = _load_index_state(old_db)
     new_state = _load_index_state(new_db)
@@ -96,13 +96,13 @@ def test_compare_compute_delta_suppresses_fabricated_complexity(tmp_path) -> Non
 
     old_db = tmp_path / "old.db"
     new_db = tmp_path / "new.db"
-    _make_index(old_db, with_math_signals=False)
-    _make_index(new_db, with_math_signals=True)
+    _make_index(old_db, with_symbol_metrics=False)
+    _make_index(new_db, with_symbol_metrics=True)
     # New index has a high-complexity symbol; old index has none recorded.
     # Pre-fix, the missing table would make every file complexity 0 and the
     # delta would look like a real REGRESSED jump.
-    _add_symbol(old_db, 1, "foo", with_math_signals=False)
-    _add_symbol(new_db, 1, "foo", with_math_signals=True, complexity=50)
+    _add_symbol(old_db, 1, "foo", with_symbol_metrics=False)
+    _add_symbol(new_db, 1, "foo", with_symbol_metrics=True, complexity=50)
 
     delta = _compute_delta(
         _load_index_state(old_db),
@@ -130,22 +130,22 @@ def test_compare_verdict_qualified_when_complexity_unavailable() -> None:
     }
     verdict = _verdict(delta)
     assert "complexity delta unavailable" in verdict
-    assert "math_signals" in verdict
+    assert "symbol_metrics" in verdict
     # Must not pretend the complexity dimension drove the verdict.
     assert verdict not in ("IMPROVED", "REGRESSED", "SIDEWAYS", "NO CHANGE")
 
 
 def test_compare_cli_json_discloses_partial_success(tmp_path) -> None:
-    """End-to-end: compare with one math_signals-less index stamps
+    """End-to-end: compare with one symbol_metrics-less index stamps
     partial_success and a complexity_unavailable_reason."""
     from roam.commands.cmd_compare import compare_cmd
 
     old_db = tmp_path / "old.db"
     new_db = tmp_path / "new.db"
-    _make_index(old_db, with_math_signals=False)
-    _make_index(new_db, with_math_signals=True)
-    _add_symbol(old_db, 1, "foo", with_math_signals=False)
-    _add_symbol(new_db, 1, "bar", with_math_signals=True)
+    _make_index(old_db, with_symbol_metrics=False)
+    _make_index(new_db, with_symbol_metrics=True)
+    _add_symbol(old_db, 1, "foo", with_symbol_metrics=False)
+    _add_symbol(new_db, 1, "bar", with_symbol_metrics=True)
 
     runner = CliRunner()
     result = runner.invoke(compare_cmd, [str(old_db), str(new_db)], obj={"json": True})
@@ -165,29 +165,29 @@ def test_compare_cli_text_discloses_unavailable(tmp_path) -> None:
 
     old_db = tmp_path / "old.db"
     new_db = tmp_path / "new.db"
-    _make_index(old_db, with_math_signals=False)
-    _make_index(new_db, with_math_signals=True)
-    _add_symbol(old_db, 1, "foo", with_math_signals=False)
-    _add_symbol(new_db, 1, "bar", with_math_signals=True)
+    _make_index(old_db, with_symbol_metrics=False)
+    _make_index(new_db, with_symbol_metrics=True)
+    _add_symbol(old_db, 1, "foo", with_symbol_metrics=False)
+    _add_symbol(new_db, 1, "bar", with_symbol_metrics=True)
 
     runner = CliRunner()
     result = runner.invoke(compare_cmd, [str(old_db), str(new_db)], obj={})
     assert result.exit_code == 0
     assert "UNAVAILABLE" in result.output
-    assert "math_signals" in result.output
+    assert "symbol_metrics" in result.output
 
 
 def test_compare_healthy_path_keeps_complexity_section(tmp_path) -> None:
-    """When BOTH indices have math_signals, the healthy path is unchanged:
+    """When BOTH indices have symbol_metrics, the healthy path is unchanged:
     no partial_success, complexity counts present, no disclosure noise."""
     from roam.commands.cmd_compare import compare_cmd
 
     old_db = tmp_path / "old.db"
     new_db = tmp_path / "new.db"
-    _make_index(old_db, with_math_signals=True)
-    _make_index(new_db, with_math_signals=True)
-    _add_symbol(old_db, 1, "foo", with_math_signals=True)
-    _add_symbol(new_db, 1, "foo", with_math_signals=True)
+    _make_index(old_db, with_symbol_metrics=True)
+    _make_index(new_db, with_symbol_metrics=True)
+    _add_symbol(old_db, 1, "foo", with_symbol_metrics=True)
+    _add_symbol(new_db, 1, "foo", with_symbol_metrics=True)
 
     runner = CliRunner()
     result = runner.invoke(compare_cmd, [str(old_db), str(new_db)], obj={"json": True})

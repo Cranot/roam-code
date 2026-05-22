@@ -119,11 +119,11 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
         }
         if not complexity_available:
             # W-Pattern2: disclose the degraded path -- one index predates
-            # the math_signals schema, so complexity deltas were suppressed.
+            # the symbol_metrics schema, so complexity deltas were suppressed.
             summary["partial_success"] = True
             summary["complexity_data_available"] = False
             envelope_data["complexity_unavailable_reason"] = (
-                "an index predates the math_signals schema -- complexity deltas "
+                "an index predates the symbol_metrics schema -- complexity deltas "
                 "were suppressed to avoid a fabricated verdict; re-run roam init"
             )
         click.echo(to_json(json_envelope("compare", summary=summary, **envelope_data)))
@@ -141,7 +141,7 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
         click.echo(f"  Files got more complex (Δ ≥ {threshold}): {len(delta['complexity_up'])}")
         click.echo(f"  Files got simpler (Δ ≥ {threshold}):       {len(delta['complexity_down'])}")
     else:
-        click.echo("  Complexity delta:  UNAVAILABLE -- an index predates the math_signals schema")
+        click.echo("  Complexity delta:  UNAVAILABLE -- an index predates the symbol_metrics schema")
         click.echo("                     (re-run `roam init` on that index to enable complexity deltas)")
     click.echo("")
 
@@ -168,37 +168,71 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     )
 
 
+def _index_lacks_complexity_table(conn: sqlite3.Connection) -> bool:
+    """True only when the index genuinely predates the symbol_metrics schema.
+
+    Distinguishes a real old-index condition (table absent, or the
+    ``cognitive_complexity`` column missing) from a code-side query bug.
+    A code bug must surface as a real error, not as a fabricated
+    "predates the schema" verdict (loud-fallback discipline).
+    """
+    has_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_metrics'").fetchone()
+    if not has_table:
+        return True
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(symbol_metrics)")}
+    return "cognitive_complexity" not in cols
+
+
 def _load_index_state(db_path: Path) -> dict:
-    """Load symbol qnames + file complexities from one index."""
+    """Load symbol identities + file complexities from one index."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
+        # A2 fix: key on the symbol row id, not qualified_name. roam-code
+        # has ~5600 same-qname symbols (overloaded methods, collisions);
+        # keying on qname silently dropped them, undercounting symbol_count
+        # AND hiding their add/remove/move from _compute_delta.
         symbols = {}
         for r in conn.execute(
-            "SELECT s.qualified_name AS qname, s.kind AS kind, f.path AS path "
+            "SELECT s.id AS sid, s.qualified_name AS qname, s.kind AS kind, "
+            "s.line_start AS line_start, f.path AS path "
             "FROM symbols s JOIN files f ON s.file_id = f.id"
         ):
             qname = r["qname"] or ""
             if not qname:
                 continue
-            symbols[qname] = {"qname": qname, "kind": r["kind"] or "", "path": r["path"] or ""}
+            symbols[r["sid"]] = {
+                "qname": qname,
+                "kind": r["kind"] or "",
+                "path": r["path"] or "",
+                "line_start": r["line_start"] or 0,
+            }
 
         complexities = {}
-        complexity_data_available = True
-        try:
-            for r in conn.execute(
-                "SELECT f.path AS path, COALESCE(SUM(ms.cognitive_complexity), 0) AS total "
-                "FROM files f LEFT JOIN symbols s ON s.file_id = f.id "
-                "LEFT JOIN math_signals ms ON ms.symbol_id = s.id "
-                "GROUP BY f.path"
-            ):
-                complexities[r["path"]] = int(r["total"] or 0)
-        except sqlite3.OperationalError:
-            # math_signals or column may not exist on older indices.
-            # W-Pattern2: do NOT silently treat complexity as 0 -- that
-            # would fabricate IMPROVED/REGRESSED deltas. Disclose instead.
-            complexity_data_available = False
-            complexities = {}
+        # A1 fix: cognitive_complexity lives in symbol_metrics, NOT
+        # math_signals (which carries loop signals). Only treat the
+        # complexity dimension as unavailable when the table/column is
+        # genuinely absent -- a verified old-index condition, not a
+        # swallowed code bug.
+        complexity_data_available = not _index_lacks_complexity_table(conn)
+        if complexity_data_available:
+            try:
+                for r in conn.execute(
+                    "SELECT f.path AS path, COALESCE(SUM(sm.cognitive_complexity), 0) AS total "
+                    "FROM files f LEFT JOIN symbols s ON s.file_id = f.id "
+                    "LEFT JOIN symbol_metrics sm ON sm.symbol_id = s.id "
+                    "GROUP BY f.path"
+                ):
+                    complexities[r["path"]] = int(r["total"] or 0)
+            except sqlite3.OperationalError as exc:
+                # The pre-flight check confirmed the table+column exist, so
+                # any OperationalError here is a genuine query bug, not an
+                # old index. Surface it loudly instead of masking it as a
+                # phantom "predates the schema" verdict (loud-fallback rule).
+                from roam.observability import log_swallowed
+
+                log_swallowed("compare._load_index_state.complexity", exc)
+                raise
 
         file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         symbol_count = len(symbols)
@@ -213,14 +247,31 @@ def _load_index_state(db_path: Path) -> dict:
         conn.close()
 
 
+def _identity_index(symbols: dict) -> dict[tuple[str, int], dict]:
+    """Re-key an id-keyed symbol dict by cross-index identity.
+
+    The symbols dict is keyed on local row id (so no symbol is dropped,
+    A2). Row ids are NOT stable between two indices, so add/remove/move
+    detection keys instead on ``(qualified_name, line_start)`` -- a
+    file-independent identity that survives a move. Same-qname symbols
+    on different lines stay distinct; a true same-line collision keeps
+    last-wins (rare, and the count is still correct via symbol_count).
+    """
+    out: dict[tuple[str, int], dict] = {}
+    for sym in symbols.values():
+        out[(sym["qname"], sym["line_start"])] = sym
+    return out
+
+
 def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]:
     """Walk the two states and produce a delta dict.
 
-    Symbol moves are detected by name-collision: same qualified_name in
-    both indices but different file paths.
+    Symbol moves are detected by identity-collision: same
+    ``(qualified_name, line_start)`` in both indices but different file
+    paths.
     """
-    base_syms = base["symbols"]
-    targ_syms = targ["symbols"]
+    base_syms = _identity_index(base["symbols"])
+    targ_syms = _identity_index(targ["symbols"])
 
     added_names = set(targ_syms) - set(base_syms)
     removed_names = set(base_syms) - set(targ_syms)
@@ -231,7 +282,7 @@ def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]
         if base_syms[name]["path"] != targ_syms[name]["path"]:
             moved.append(
                 {
-                    "qname": name,
+                    "qname": targ_syms[name]["qname"],
                     "kind": targ_syms[name]["kind"],
                     "old_path": base_syms[name]["path"],
                     "new_path": targ_syms[name]["path"],
@@ -239,7 +290,7 @@ def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]
             )
 
     # W-Pattern2: if EITHER index lacks complexity data (an index that
-    # predates the math_signals schema), suppress the complexity-delta
+    # predates the symbol_metrics schema), suppress the complexity-delta
     # section entirely. Computing deltas against a fabricated 0 baseline
     # would emit a phantom IMPROVED/REGRESSED verdict.
     complexity_data_available = base.get("complexity_data_available", True) and targ.get(
@@ -293,7 +344,7 @@ def _verdict(delta: dict) -> str:
             base_verdict = "SIDEWAYS"
         return (
             f"{base_verdict} -- complexity delta unavailable "
-            "(an index predates the math_signals schema; re-run roam init)"
+            "(an index predates the symbol_metrics schema; re-run roam init)"
         )
 
     if up == 0 and down == 0 and added == 0 and removed == 0:

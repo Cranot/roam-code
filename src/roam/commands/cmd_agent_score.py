@@ -64,7 +64,14 @@ from roam.runs.ledger import list_runs, read_run_events, runs_root
 
 
 def _duration_ms(started_at: str, ended_at: Optional[str]) -> int:
-    """Run duration in ms, or 0 when either side is missing/malformed."""
+    """Run duration in ms, or 0 when either side is missing/malformed.
+
+    Also returns 0 when ``ended_at`` precedes ``started_at`` — a
+    negative duration is physically impossible, so an out-of-order
+    ledger pair (clock skew, hand-edited ``meta.json``) is treated as
+    malformed and clamped to 0 rather than surfaced as a negative
+    ``median_run_duration_ms`` in the envelope.
+    """
     if not started_at or not ended_at:
         return 0
     try:
@@ -73,7 +80,7 @@ def _duration_ms(started_at: str, ended_at: Optional[str]) -> int:
     except ValueError:
         return 0
     delta = e - s
-    return int(delta.total_seconds() * 1000)
+    return max(0, int(delta.total_seconds() * 1000))
 
 
 def _median(values: list[int]) -> int:

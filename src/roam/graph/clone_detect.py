@@ -1126,25 +1126,38 @@ def _name_tokens(name: str) -> set[str]:
     return tokens
 
 
-def _infer_clone_pattern(names: list[str]) -> str:
+def _ranked_common_tokens(names: list[str], limit: int) -> list[str]:
+    """Return up to *limit* tokens shared by >= 2 of *names*, ranked
+    deterministically.
+
+    ``_name_tokens`` returns a ``set``, whose iteration order varies with
+    ``PYTHONHASHSEED``. ``Counter.most_common`` breaks frequency ties by
+    insertion order, so feeding it from that set produced a different
+    winner run-to-run whenever several tokens tied on frequency. We pin
+    the tie-break by sorting the full frequency table on ``(-count,
+    token)`` — descending count, then ascending token text — before
+    slicing. With a clear frequency winner the result is unchanged; only
+    ties are now resolved by alphabetical token order instead of by
+    randomized set-iteration order.
+    """
     token_freq: Counter = Counter()
     for name in names:
         for t in _name_tokens(name) - _STOP_WORDS:
             token_freq[t] += 1
 
-    common = [t for t, c in token_freq.most_common(3) if c >= 2]
+    ranked = sorted(token_freq.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [t for t, c in ranked[:limit] if c >= 2]
+
+
+def _infer_clone_pattern(names: list[str]) -> str:
+    common = _ranked_common_tokens(names, 3)
     if common:
         return f"shared {common[0]} logic across {len(names)} functions"
     return f"identical control flow structure ({len(names)} functions)"
 
 
 def _suggest_extraction(names: list[str]) -> str:
-    token_freq: Counter = Counter()
-    for name in names:
-        for t in _name_tokens(name) - _STOP_WORDS:
-            token_freq[t] += 1
-
-    common = [t for t, c in token_freq.most_common(2) if c >= 2]
+    common = _ranked_common_tokens(names, 2)
     if common:
         base = "_".join(common[:2])
         return f"Extract common logic into a generic {base}() helper"

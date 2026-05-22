@@ -212,6 +212,50 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     return records, issues
 
 
+def _build_rollup(_records, _issues, _records_count: int, _issues_count: int) -> dict:
+    """Chain-verify rollup metrics: total / verified / broken / unsigned.
+
+    Module-level (was a nested closure) so the genesis-exemption rule is
+    unit-testable in isolation. Pure function of its arguments — captures
+    nothing from any enclosing scope.
+
+    W607-EA chain_rollup boundary semantics: W978 5th-discipline — len()
+    calls live INSIDE this function, never at the kwarg-bind site of the
+    ``_run_check_ea`` wrapper.
+
+    ``missing_signatures`` counts records carrying NO integrity hash. The
+    genesis record (index 0) is EXEMPT: an empty ``previous_record_hash``
+    on genesis is the chain root marker (see module docstring "genesis,
+    previous_record_hash = ''"), NOT a missing signature. Counting genesis
+    as unsigned falsely reported ``missing_signatures: 1`` on every
+    well-formed chain — a Pattern-2 self-contradicting envelope
+    (``chain_valid: true`` alongside ``missing_signatures: 1``). A
+    non-genesis record with an empty ``previous_record_hash`` AND no
+    ``record_hash`` is genuinely unsigned (and also breaks the chain link,
+    so it is additionally counted as a broken issue).
+    """
+    broken = 0
+    missing_sigs = 0
+    for _i in _issues:
+        _kind = _i.get("issue", "")
+        if "not found" in _kind:
+            continue
+        if "previous_record_hash mismatch" in _kind or "invalid JSON" in _kind:
+            broken += 1
+    for _idx, _r in enumerate(_records):
+        if _idx == 0:
+            continue  # genesis: empty previous_record_hash is by design
+        if not _r.get("previous_record_hash", "") and not _r.get("record_hash", ""):
+            missing_sigs += 1
+    verified = max(0, _records_count - broken)
+    return {
+        "total_runs": _records_count,
+        "verified_runs": verified,
+        "broken_runs": broken,
+        "missing_signatures": missing_sigs,
+    }
+
+
 @roam_capability(
     name="audit-trail-verify",
     category="workflow",
@@ -702,31 +746,11 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
 
     # W607-EA -- chain_rollup boundary. Rollup metrics dict counting
     # total_runs / verified_runs / broken_runs / missing_signatures for
-    # the verified chain. W978 5th-discipline: len() calls live INSIDE
-    # the wrapped closure (records / issues iteration), never at the
-    # kwarg-bind site. W978 2nd-discipline: floor is a literal-constant
+    # the verified chain. ``_build_rollup`` is the module-level helper
+    # (hoisted out of this closure so the genesis-exemption rule is
+    # unit-testable). W978 2nd-discipline: floor is a literal-constant
     # dict of int 0s (NOT a comprehension or expression that re-walks
     # the potentially poisoned inputs).
-    def _build_rollup(_records, _issues, _records_count: int, _issues_count: int) -> dict:
-        broken = 0
-        missing_sigs = 0
-        for _i in _issues:
-            _kind = _i.get("issue", "")
-            if "not found" in _kind:
-                continue
-            if "previous_record_hash mismatch" in _kind or "invalid JSON" in _kind:
-                broken += 1
-        for _r in _records:
-            if not _r.get("previous_record_hash", "") and not _r.get("record_hash", ""):
-                missing_sigs += 1
-        verified = max(0, _records_count - broken)
-        return {
-            "total_runs": _records_count,
-            "verified_runs": verified,
-            "broken_runs": broken,
-            "missing_signatures": missing_sigs,
-        }
-
     rollup = _run_check_ea(
         "chain_rollup",
         _build_rollup,
@@ -760,6 +784,28 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         rollup,
         default="audit_trail_verify completed",
     )
+
+    # --- Missing-signature disclosure (Pattern-2 silent-fallback guard) ---
+    # A record with no ``previous_record_hash`` AND no ``record_hash`` is
+    # an *unsigned* event: the SHA-256 chain still links unbroken (so
+    # ``chain_valid`` stays True by design — unsigned-but-unbroken is a
+    # genuine "valid" chain), but the event carries no integrity proof of
+    # its own. Reporting a flat "chain valid" while ``chain_rollup`` shows
+    # ``missing_signatures > 0`` is a silent fallback: the verdict hides a
+    # real evidence gap. We DO NOT redefine ``chain_valid`` — instead the
+    # verdict NAMES the unsigned events and ``partial_success`` flips so
+    # consumers reading only the verdict (LAW 6) still see the gap.
+    missing_sigs = 0
+    if isinstance(rollup, dict):
+        try:
+            missing_sigs = int(rollup.get("missing_signatures", 0) or 0)
+        except (TypeError, ValueError):
+            missing_sigs = 0
+    if missing_sigs > 0 and state == "valid":
+        partial_success = True
+        if "unsigned" not in verdict:
+            _plural = "event" if missing_sigs == 1 else "events"
+            verdict = f"{verdict}; {missing_sigs} {_plural} unsigned"
 
     # W607-AI / W607-CN / W607-EA -- thread substrate-CALL AND
     # aggregation-phase AND aggregation-LAYER markers onto BOTH
@@ -805,6 +851,11 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         "chain_tier": chain_tier,
         "chain_rollup": rollup,
         "ea_verdict": ea_verdict,
+        # Promote the unsigned-event count out of the nested rollup so a
+        # consumer reading only ``summary`` (not ``summary.chain_rollup``)
+        # still sees the evidence gap that ``verdict`` + ``partial_success``
+        # disclose. 0 on a fully-signed chain (hash-stable success path).
+        "unsigned_events": missing_sigs,
     }
     if _combined_warnings_out:
         summary["warnings_out"] = list(_combined_warnings_out)
@@ -914,6 +965,11 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         # text-mode rendering path.
         click.echo(f"  records: {records_count}")
         click.echo(f"  state:   {state}")
+        # Disclose unsigned events in text mode too — the verdict already
+        # names them, but a separate line keeps text/JSON parity for the
+        # ``unsigned_events`` summary field.
+        if missing_sigs > 0:
+            click.echo(f"  unsigned: {missing_sigs} event(s) carry no integrity hash")
         if has_records:
             click.echo(f"  first:   {records[0].get('timestamp')}")
             click.echo(f"  last:    {records[-1].get('timestamp')}")
