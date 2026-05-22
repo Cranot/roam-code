@@ -107,6 +107,12 @@ dev/sample-audit-report.pdf
 dev/roam-self-audit-test.md
 dev/test-*.diff
 dev/test-rules*.yml
+dev/HANDOVER-*.md
+dev/ROAM-SMOKE-*.md
+dev/roam_smoke_results.jsonl
+
+# Stoa session profile (per-machine local state)
+.stoa/
 
 # Recheck-agent scratch dirs
 .audit-tmp/
