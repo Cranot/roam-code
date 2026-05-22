@@ -10,13 +10,45 @@ auto-count markers. These tests verify:
 4. The existing compat-sweep test still passes after a script run.
 5. Marker rewrites preserve non-marker content byte-for-byte.
 6. JSON updates preserve the file's whitespace style (no reformatting).
+
+Parallel safety
+---------------
+The three modifying tests (``test_script_exits_nonzero_on_drift``,
+``test_script_idempotent``, plus the steady-state apply called by
+``test_apply_preserves_non_marker_content`` / ``test_card_updates_preserve_array_formatting``
+/ ``test_card_bundled_and_public_stay_byte_identical``) used to invoke
+the script against the REAL repo root. Under ``pytest -n auto`` they
+raced each other and any other test that read README.md / CLAUDE.md /
+llms-install.md / the MCP cards — including
+``test_readme_recipe_count_matches_registry``, which failed during the
+v13.5 hardening when a sibling auto-count test had momentarily written
+intermediate (drift-injected) bytes that the recipe-count test then read
+in its window.
+
+The fix: every modifying test now operates on a ``tmp_path`` COPY of the
+count-bearing files (README/CLAUDE/llms-install/AGENTS + both MCP cards
++ the two ``.well-known`` mirrors + ``pyproject.toml`` +
+``src/roam/cli.py`` for ``_CATEGORIES`` + ``src/roam/mcp_server.py`` for
+``_CORE_TOOLS`` + ``tests/test_mcp_server_card_hash.py`` for the SHA-256
+pin). The script is invoked with ``--root <tmp_path>`` so all reads and
+writes are confined to the copy. The REAL working tree is never touched
+by these tests, so they can run in parallel without contaminating each
+other or any other test that reads the canonical files.
+
+The non-modifying tests (``test_script_check_passes_at_head``,
+``test_existing_compat_sweep_still_passes``,
+``test_script_has_check_and_apply_flags``) still target the real repo
+because they assert about steady-state truth that the running source
+tree owns.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 
@@ -37,10 +69,74 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
+# Files the build script reads (truth inputs) + files it writes (count-bearing
+# output). The modifying tests copy each present file under ``ROOT`` into a
+# ``tmp_path`` shadow, preserving the relative path under the configured
+# ``--root``. Missing-on-disk files (e.g. CLAUDE.md on public clones) are
+# silently skipped — the script already handles the file-missing case.
+_SHADOW_RELATIVE_PATHS: tuple[str, ...] = (
+    # Truth inputs read by the script.
+    "pyproject.toml",
+    "src/roam/cli.py",
+    "src/roam/mcp_server.py",
+    # Markdown targets the script may rewrite.
+    "README.md",
+    "CLAUDE.md",
+    "llms-install.md",
+    "AGENTS.md",
+    # MCP card pair + the two extra .well-known mirrors.
+    "src/roam/mcp-server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp-server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp/server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp-server-card",
+    # SHA-256 pin file that ``--apply`` auto-rotates.
+    "tests/test_mcp_server_card_hash.py",
+)
+
+
+def _make_shadow_root(tmp_path: Path) -> Path:
+    """Copy the count-bearing files into ``tmp_path``; return the shadow root.
+
+    The script's ``--root`` flag (added alongside this refactor) points all
+    its reads and writes at this shadow tree, so modifying tests never touch
+    the real repo and can run in parallel without contaminating each other
+    or any test that reads the canonical README/CLAUDE/llms-install/cards.
+    """
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    for rel in _SHADOW_RELATIVE_PATHS:
+        src = ROOT / rel
+        if not src.exists():
+            continue
+        dst = shadow / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    return shadow
+
+
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run the script in-process via subprocess, capture rc + output."""
+    """Run the script in-process via subprocess, capture rc + output.
+
+    Without ``--root``, the script defaults to its own ancestor (the real
+    repo root). Used by the read-only / steady-state tests.
+    """
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _run_in(shadow: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the script against ``shadow`` via ``--root <shadow>``.
+
+    All file reads/writes are confined to the shadow tree. This is the
+    parallel-safe entry point used by every modifying test in this module.
+    """
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args, "--root", str(shadow)],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -68,8 +164,13 @@ def test_script_check_passes_at_head():
 # ---------------------------------------------------------------------------
 
 
-def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
-    """Inject a wrong count into README; --check must exit non-zero, --apply must fix."""
+def test_script_exits_nonzero_on_drift(tmp_path):
+    """Inject a wrong count into README; --check must exit non-zero, --apply must fix.
+
+    Operates on a ``tmp_path`` shadow of the count-bearing files (see module
+    docstring) so the real README is never touched and the test is safe
+    under ``pytest -n auto``.
+    """
     # W844-drive-by: the old ``readme-headline-prose`` block emitted
     # ``f"... {command_names} commands and {mcp_full} MCP tools ..."`` and was
     # dropped from the script in v13.2 (see the v13.2 comment on
@@ -97,43 +198,57 @@ def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
     drift_string = f"{correct_cmd_count - 1} commands ({correct_canonical} canonical"
     assert drift_string != truth_string, "wrong-by-one drift string collided with truth"
 
-    backup = README.read_text(encoding="utf-8")
+    shadow = _make_shadow_root(tmp_path)
+    shadow_readme = shadow / "README.md"
+    backup = shadow_readme.read_text(encoding="utf-8")
     assert truth_string in backup, (
         f"test precondition failed: truth-aligned substring {truth_string!r} "
         f"not present in README — run dev/build_readme_counts.py --apply first"
     )
-    try:
-        # Inject drift: replace the truth-count with a wrong-by-one count inside
-        # the auto-count block. Use a marker-protected line so the change is reversible.
-        bad = backup.replace(truth_string, drift_string, 1)
-        assert bad != backup, "test setup failed — drift injection didn't change file"
-        README.write_text(bad, encoding="utf-8")
+    # Inject drift: replace the truth-count with a wrong-by-one count inside
+    # the auto-count block. The shadow tree is disposable (tmp_path),
+    # so the try/finally restore the old test needed is no longer required.
+    bad = backup.replace(truth_string, drift_string, 1)
+    assert bad != backup, "test setup failed — drift injection didn't change file"
+    shadow_readme.write_text(bad, encoding="utf-8")
 
-        # --check must now exit 1.
-        proc = _run(["--check"])
-        assert proc.returncode == 1, (
-            f"--check should exit 1 on drift; got rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
-        )
-        assert "DRIFT" in proc.stderr, f"stderr should mention DRIFT: {proc.stderr!r}"
+    # --check must now exit 1.
+    proc = _run_in(shadow, ["--check"])
+    assert proc.returncode == 1, (
+        f"--check should exit 1 on drift; got rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "DRIFT" in proc.stderr, f"stderr should mention DRIFT: {proc.stderr!r}"
 
-        # --apply must fix it.
-        proc = _run(["--apply"])
-        assert proc.returncode == 0
-        assert README.read_text(encoding="utf-8") == backup, "--apply should restore README to the truth-aligned state"
-    finally:
-        # Always restore.
-        README.write_text(backup, encoding="utf-8")
+    # --apply must fix it.
+    proc = _run_in(shadow, ["--apply"])
+    assert proc.returncode == 0
+    assert shadow_readme.read_text(encoding="utf-8") == backup, (
+        "--apply should restore README to the truth-aligned state"
+    )
 
 
 def test_script_idempotent(tmp_path):
-    """Running --apply twice produces identical bytes — no oscillation."""
-    snapshots_before = {
-        p: p.read_text(encoding="utf-8") for p in (README, CLAUDE, LLMS, PUBLIC_CARD, BUNDLED_CARD) if p.exists()
-    }
-    proc1 = _run(["--apply"])
+    """Running --apply twice produces identical bytes — no oscillation.
+
+    Operates on a ``tmp_path`` shadow of the count-bearing files (see module
+    docstring) so the real working tree is never touched.
+    """
+    shadow = _make_shadow_root(tmp_path)
+    shadow_files = tuple(
+        shadow / rel
+        for rel in (
+            "README.md",
+            "CLAUDE.md",
+            "llms-install.md",
+            "templates/distribution/landing-page/.well-known/mcp-server-card.json",
+            "src/roam/mcp-server-card.json",
+        )
+    )
+    snapshots_before = {p: p.read_text(encoding="utf-8") for p in shadow_files if p.exists()}
+    proc1 = _run_in(shadow, ["--apply"])
     assert proc1.returncode == 0
     snapshots_after1 = {p: p.read_text(encoding="utf-8") for p in snapshots_before}
-    proc2 = _run(["--apply"])
+    proc2 = _run_in(shadow, ["--apply"])
     assert proc2.returncode == 0
     snapshots_after2 = {p: p.read_text(encoding="utf-8") for p in snapshots_before}
     assert snapshots_after1 == snapshots_after2, "script is not idempotent — second --apply changed bytes"
@@ -170,11 +285,11 @@ def test_existing_compat_sweep_still_passes():
 # ---------------------------------------------------------------------------
 
 
-def test_apply_preserves_non_marker_content():
+def test_apply_preserves_non_marker_content(tmp_path):
     """--apply at steady state must not touch a single byte of non-marker content.
 
-    Records the file bytes outside the auto-count blocks, runs --apply,
-    re-records, asserts equality.
+    Records the file bytes outside the auto-count blocks, runs --apply on a
+    ``tmp_path`` shadow of the real files, re-records, asserts equality.
     """
     import re
 
@@ -188,9 +303,10 @@ def test_apply_preserves_non_marker_content():
 
     # CLAUDE.md is intentionally untracked on public clones (89a338d9); skip
     # when absent. README + LLMS are always present.
-    targets = tuple(p for p in (README, CLAUDE, LLMS) if p.exists())
+    shadow = _make_shadow_root(tmp_path)
+    targets = tuple(shadow / rel for rel in ("README.md", "CLAUDE.md", "llms-install.md") if (shadow / rel).exists())
     before = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in targets}
-    proc = _run(["--apply"])
+    proc = _run_in(shadow, ["--apply"])
     assert proc.returncode == 0
     after = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in targets}
     for p in before:
@@ -204,32 +320,37 @@ def test_apply_preserves_non_marker_content():
 # ---------------------------------------------------------------------------
 
 
-def test_card_updates_preserve_array_formatting():
+def test_card_updates_preserve_array_formatting(tmp_path):
     """The cards have inline arrays like ``["stdio", "sse", "streamable-http"]``.
     The script must not reflow them. Validates by checking the inline form
-    is still inline after a no-op --apply.
+    is still inline after a no-op --apply against a ``tmp_path`` shadow.
     """
-    raw = PUBLIC_CARD.read_text(encoding="utf-8")
+    shadow = _make_shadow_root(tmp_path)
+    shadow_public_card = shadow / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
+    raw = shadow_public_card.read_text(encoding="utf-8")
     assert '"supported": ["stdio"' in raw or '"supported":["stdio"' in raw, (
         "test precondition failed: inline ``supported`` array missing"
     )
-    proc = _run(["--apply"])
+    proc = _run_in(shadow, ["--apply"])
     assert proc.returncode == 0
-    raw_after = PUBLIC_CARD.read_text(encoding="utf-8")
+    raw_after = shadow_public_card.read_text(encoding="utf-8")
     assert raw_after == raw, "card was reformatted by no-op --apply"
     # Also re-parses as valid JSON.
     json.loads(raw_after)
 
 
-def test_card_bundled_and_public_stay_byte_identical():
+def test_card_bundled_and_public_stay_byte_identical(tmp_path):
     """test_bundled_card_matches_public_card requires both copies to be
     byte-identical. The script writes to both — confirm they agree
-    after --apply.
+    after --apply against a ``tmp_path`` shadow.
     """
-    proc = _run(["--apply"])
+    shadow = _make_shadow_root(tmp_path)
+    shadow_public_card = shadow / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
+    shadow_bundled_card = shadow / "src" / "roam" / "mcp-server-card.json"
+    proc = _run_in(shadow, ["--apply"])
     assert proc.returncode == 0
-    a = PUBLIC_CARD.read_text(encoding="utf-8")
-    b = BUNDLED_CARD.read_text(encoding="utf-8")
+    a = shadow_public_card.read_text(encoding="utf-8")
+    b = shadow_bundled_card.read_text(encoding="utf-8")
     assert a == b, (
         "public and bundled mcp-server-card.json must be byte-identical; script wrote different bytes to each"
     )

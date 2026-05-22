@@ -77,6 +77,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+# The default repo root is the script's own ancestor. ``--root`` (or the
+# ``ROAM_REPO_ROOT`` env var) overrides this at runtime so tests can point
+# the writer at a tmp_path copy of the count-bearing files, eliminating the
+# parallel-race / cross-test-contamination class observed in v13.5 hardening
+# (when ``test_readme_recipe_count_matches_registry`` failed because a
+# parallel auto-count test had momentarily written BAD bytes that the
+# recipe-count test read in its window).
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -104,11 +111,21 @@ class Counts:
     pyproject_version: str   # ``version`` string from pyproject.toml (truth)
 
 
-def collect_counts() -> Counts:
+def collect_counts(root: Path | None = None) -> Counts:
+    """Collect counts. ``root`` defaults to module-global ROOT.
+
+    The ``cli_surface_counts`` / ``mcp_surface_counts`` / ``mcp_tool_descriptions``
+    helpers resolve their inputs via ``importlib.resources`` on the live
+    ``roam`` package, so they are independent of ``root`` — only the
+    file-system reads (pyproject.toml, cli.py for ``_CATEGORIES``) are
+    routed through ``root``.
+    """
+    if root is None:
+        root = ROOT
     cli = cli_surface_counts()
     mcp = mcp_surface_counts()
     # category_count: parse _CATEGORIES from cli.py via AST to avoid runtime import.
-    cats = _category_count()
+    cats = _category_count(root)
     return Counts(
         command_names=int(cli["command_names"]),
         canonical_commands=int(cli["canonical_commands"]),
@@ -117,28 +134,28 @@ def collect_counts() -> Counts:
         mcp_core=int(mcp["core_tools"]),
         mcp_full=int(mcp["registered_tools"]),
         mcp_default_preset=int(mcp["core_tools"]) + 1,
-        pyproject_version=_pyproject_version(),
+        pyproject_version=_pyproject_version(root),
     )
 
 
-def _pyproject_version() -> str:
+def _pyproject_version(root: Path) -> str:
     """Read ``version = "X"`` from pyproject.toml — the canonical version.
 
     Mirrors ``tests/test_doc_consistency.py::_truth_version`` so the
     regenerator and the test agree on the source of truth.
     """
-    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
     m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     if not m:
         raise RuntimeError("pyproject.toml is missing a version field")
     return m.group(1)
 
 
-def _category_count() -> int:
+def _category_count(root: Path) -> int:
     """Count keys in ``_CATEGORIES`` in src/roam/cli.py via AST."""
     import ast
 
-    cli_path = ROOT / "src" / "roam" / "cli.py"
+    cli_path = root / "src" / "roam" / "cli.py"
     module = ast.parse(cli_path.read_text(encoding="utf-8"), filename=str(cli_path))
     for node in module.body:
         targets = []
@@ -229,11 +246,11 @@ def _mcp_tool_table() -> str:
     return "\n".join(lines)
 
 
-def _mcp_core_preset_inline(c: Counts) -> str:
+def _mcp_core_preset_inline(c: Counts, root: Path) -> str:
     """Emit the inline ``Core preset tools: \\`x\\`, \\`y\\`, ...`` line."""
     import ast
 
-    mcp_path = ROOT / "src" / "roam" / "mcp_server.py"
+    mcp_path = root / "src" / "roam" / "mcp_server.py"
     module = ast.parse(mcp_path.read_text(encoding="utf-8"), filename=str(mcp_path))
     core: set[str] | None = None
     for node in module.body:
@@ -251,7 +268,7 @@ def _mcp_core_preset_inline(c: Counts) -> str:
     return f"Core preset tools: {quoted}."
 
 
-def _readme_blocks(c: Counts) -> dict[str, str]:
+def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
     return {
         # ``readme-headline-prose`` was dropped in v13.2 per the
         # 2026-05-16 ecosystem refresh — README hero now leads with the
@@ -291,7 +308,7 @@ def _readme_blocks(c: Counts) -> dict[str, str]:
         ),
         # Inline ``Core preset tools: `x`, `y`, ...`` enumeration. Source of
         # truth: ``_CORE_TOOLS`` literal in ``src/roam/mcp_server.py``. W449.
-        "readme-mcp-core-preset-tools": _mcp_core_preset_inline(c),
+        "readme-mcp-core-preset-tools": _mcp_core_preset_inline(c, root),
         # Collapsed ``<summary>`` header for the MCP tool table. W449.
         "readme-mcp-tool-list-summary": (
             f"<summary><strong>MCP tool list (all {c.mcp_full})</strong></summary>"
@@ -312,7 +329,7 @@ def _readme_blocks(c: Counts) -> dict[str, str]:
     }
 
 
-def _claude_blocks(c: Counts) -> dict[str, str]:
+def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 — root accepted for signature symmetry with _readme_blocks
     return {
         # W138 reorder: lead with the env-independent total (mcp_full) and
         # name the core preset as a sub-claim. Headlines that lead with
@@ -345,7 +362,7 @@ def _claude_blocks(c: Counts) -> dict[str, str]:
     }
 
 
-def _llms_install_blocks(c: Counts) -> dict[str, str]:
+def _llms_install_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 — root accepted for signature symmetry with _readme_blocks
     return {
         # Line 4: "N commands, M MCP tools, 28 languages, 100% local, zero API keys."
         "llms-install-headline": (
@@ -360,7 +377,7 @@ def _llms_install_blocks(c: Counts) -> dict[str, str]:
     }
 
 
-def _agents_md_blocks(c: Counts) -> dict[str, str]:
+def _agents_md_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 — root accepted for signature symmetry with _readme_blocks
     """AGENTS.md Codex-headline + Codex-authoritative blocks (W397).
 
     AGENTS.md ships a hand-curated prelude (the `roam agents-md` generator
@@ -404,12 +421,27 @@ def _agents_md_blocks(c: Counts) -> dict[str, str]:
     }
 
 
-MARKDOWN_TARGETS: tuple[tuple[Path, Callable[[Counts], dict[str, str]]], ...] = (
+# Markdown targets — built lazily inside ``run(root, ...)`` so each
+# invocation can be retargeted at a ``--root`` override (tmp_path copies
+# for parallel-safe testing). The module-level constants below are kept
+# for back-compat with any importer that referenced them directly; their
+# values reflect the default ROOT and are NOT updated by ``--root``.
+MARKDOWN_TARGETS: tuple[tuple[Path, Callable[[Counts, Path], dict[str, str]]], ...] = (
     (ROOT / "README.md", _readme_blocks),
     (ROOT / "CLAUDE.md", _claude_blocks),
     (ROOT / "llms-install.md", _llms_install_blocks),
     (ROOT / "AGENTS.md", _agents_md_blocks),
 )
+
+
+def _markdown_targets(root: Path) -> tuple[tuple[Path, Callable[[Counts, Path], dict[str, str]]], ...]:
+    """Return the per-root MARKDOWN_TARGETS tuple."""
+    return (
+        (root / "README.md", _readme_blocks),
+        (root / "CLAUDE.md", _claude_blocks),
+        (root / "llms-install.md", _llms_install_blocks),
+        (root / "AGENTS.md", _agents_md_blocks),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -437,10 +469,37 @@ WELL_KNOWN_MIRROR_PATHS: tuple[Path, ...] = (
     _WELL_KNOWN_DIR / "mcp-server-card",            # SEP-2127 no-suffix
 )
 
+
+def _mcp_card_path(root: Path) -> Path:
+    """Public ``.well-known/mcp-server-card.json`` for the given root."""
+    return root / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
+
+
+def _bundled_mcp_card_path(root: Path) -> Path:
+    """Bundled ``src/roam/mcp-server-card.json`` for the given root."""
+    return root / "src" / "roam" / "mcp-server-card.json"
+
+
+def _well_known_mirror_paths(root: Path) -> tuple[Path, ...]:
+    """The two extra ``.well-known`` mirrors (SEP-1649 nested + SEP-2127 no-suffix)."""
+    well_known = root / "templates" / "distribution" / "landing-page" / ".well-known"
+    return (
+        well_known / "mcp" / "server-card.json",
+        well_known / "mcp-server-card",
+    )
+
+
 # W844 — the SHA-256 pin in tests/test_mcp_server_card_hash.py. The hash
 # is computed on the LF-line-ending bytes (canonical git storage) per
 # W1308; ``_canonical_card_bytes`` enforces that on Windows checkouts.
 CARD_HASH_TEST_PATH = ROOT / "tests" / "test_mcp_server_card_hash.py"
+
+
+def _card_hash_test_path(root: Path) -> Path:
+    """Per-root ``tests/test_mcp_server_card_hash.py`` for SHA-256 pin rotation."""
+    return root / "tests" / "test_mcp_server_card_hash.py"
+
+
 CARD_HASH_PIN_PATTERN = re.compile(
     r'^(_EXPECTED_CARD_SHA256\s*=\s*")([0-9a-f]{64})(")',
     flags=re.MULTILINE,
@@ -527,11 +586,11 @@ class FileResult:
     missing_blocks: list[str]
 
 
-def _apply_markdown(path: Path, builder: Callable[[Counts], dict[str, str]], c: Counts,
-                    write: bool) -> FileResult:
+def _apply_markdown(path: Path, builder: Callable[[Counts, Path], dict[str, str]], c: Counts,
+                    write: bool, root: Path) -> FileResult:
     text = path.read_text(encoding="utf-8")
     new_text = text
-    blocks = builder(c)
+    blocks = builder(c, root)
     missing: list[str] = []
     for name, body in blocks.items():
         new_text, found = _replace_block(new_text, name, body)
@@ -573,7 +632,7 @@ def _sync_well_known_mirror(canonical: Path, mirror: Path, write: bool) -> FileR
     return FileResult(path=mirror, changed=changed, missing_blocks=[])
 
 
-def _rotate_card_hash_pin(canonical: Path, write: bool) -> FileResult:
+def _rotate_card_hash_pin(canonical: Path, write: bool, card_hash_test_path: Path) -> FileResult:
     """Recompute SHA-256 of the canonical card + rewrite the test-file pin (W844).
 
     Closes the W563 auto-rotate gap. Every prior card edit (W789, W794,
@@ -584,11 +643,11 @@ def _rotate_card_hash_pin(canonical: Path, write: bool) -> FileResult:
     via a tight regex (anchored on the assignment, not the digest); only
     the 64-hex digit run between the quotes is touched.
     """
-    if not canonical.exists() or not CARD_HASH_TEST_PATH.exists():
-        return FileResult(path=CARD_HASH_TEST_PATH, changed=False,
+    if not canonical.exists() or not card_hash_test_path.exists():
+        return FileResult(path=card_hash_test_path, changed=False,
                           missing_blocks=["<file-missing>"])
     digest = hashlib.sha256(_canonical_card_bytes(canonical)).hexdigest()
-    text = CARD_HASH_TEST_PATH.read_text(encoding="utf-8")
+    text = card_hash_test_path.read_text(encoding="utf-8")
     new_text, count = CARD_HASH_PIN_PATTERN.subn(
         lambda m: f"{m.group(1)}{digest}{m.group(3)}",
         text,
@@ -597,19 +656,27 @@ def _rotate_card_hash_pin(canonical: Path, write: bool) -> FileResult:
     if count == 0:
         # Pin moved or was renamed — surface as a missing block so callers
         # notice rather than silently failing to update.
-        return FileResult(path=CARD_HASH_TEST_PATH, changed=False,
+        return FileResult(path=card_hash_test_path, changed=False,
                           missing_blocks=["_EXPECTED_CARD_SHA256"])
     changed = new_text != text
     if changed and write:
-        CARD_HASH_TEST_PATH.write_text(new_text, encoding="utf-8")
-    return FileResult(path=CARD_HASH_TEST_PATH, changed=changed, missing_blocks=[])
+        card_hash_test_path.write_text(new_text, encoding="utf-8")
+    return FileResult(path=card_hash_test_path, changed=changed, missing_blocks=[])
 
 
-def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
-    c = collect_counts()
+def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True,
+        root: Path | None = None) -> int:
+    if root is None:
+        root = ROOT
+    c = collect_counts(root)
     results: list[FileResult] = []
 
-    for path, builder in MARKDOWN_TARGETS:
+    mcp_card_path = _mcp_card_path(root)
+    bundled_mcp_card_path = _bundled_mcp_card_path(root)
+    well_known_mirrors = _well_known_mirror_paths(root)
+    card_hash_test_path = _card_hash_test_path(root)
+
+    for path, builder in _markdown_targets(root):
         if not path.exists():
             # CLAUDE.md is intentionally untracked from the public repo
             # (removed in commit 89a338d9 — it's the local-only project
@@ -621,13 +688,13 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
                 continue
             results.append(FileResult(path=path, changed=False, missing_blocks=["<file-missing>"]))
             continue
-        results.append(_apply_markdown(path, builder, c, write))
+        results.append(_apply_markdown(path, builder, c, write, root))
 
     # MCP card (public + bundled copy — they MUST stay byte-identical per
     # tests/test_doc_consistency.py::test_bundled_card_matches_public_card).
-    results.append(_apply_mcp_card(MCP_CARD_PATH, c, write))
-    if BUNDLED_MCP_CARD_PATH.exists():
-        results.append(_apply_mcp_card(BUNDLED_MCP_CARD_PATH, c, write))
+    results.append(_apply_mcp_card(mcp_card_path, c, write))
+    if bundled_mcp_card_path.exists():
+        results.append(_apply_mcp_card(bundled_mcp_card_path, c, write))
 
     # W844 — sync the two extra .well-known mirrors to the canonical card
     # bytes (closes the W1308 manual-sync gap) and rotate the SHA-256 pin
@@ -636,10 +703,10 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
     # reflects the just-written counts/version. Skipping rotation via
     # ``--no-rotate-card-hash`` is intentional: useful when debugging a
     # card edit you do NOT want the pin to chase.
-    for mirror in WELL_KNOWN_MIRROR_PATHS:
-        results.append(_sync_well_known_mirror(MCP_CARD_PATH, mirror, write))
+    for mirror in well_known_mirrors:
+        results.append(_sync_well_known_mirror(mcp_card_path, mirror, write))
     if rotate_card_hash:
-        results.append(_rotate_card_hash_pin(BUNDLED_MCP_CARD_PATH, write))
+        results.append(_rotate_card_hash_pin(bundled_mcp_card_path, write, card_hash_test_path))
 
     # Report.
     any_change = any(r.changed for r in results)
@@ -652,7 +719,13 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
           f"default_preset={c.mcp_default_preset}")
     for r in results:
         status = "changed" if r.changed else "ok"
-        rel = r.path.relative_to(ROOT).as_posix() if r.path.is_absolute() else str(r.path)
+        # Use the configured root for the relative display path; fall back to
+        # ROOT for paths that happen to live outside the root (none today, but
+        # the older module-level constants made this assumption).
+        try:
+            rel = r.path.relative_to(root).as_posix() if r.path.is_absolute() else str(r.path)
+        except ValueError:
+            rel = r.path.relative_to(ROOT).as_posix() if r.path.is_absolute() else str(r.path)
         missing = f" missing_blocks={r.missing_blocks}" if r.missing_blocks else ""
         print(f"  {status:8s}  {rel}{missing}")
 
@@ -675,6 +748,8 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
 
 
 def main() -> int:
+    import os
+
     parser = argparse.ArgumentParser(description=__doc__)
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument("--check", action="store_true",
@@ -687,12 +762,29 @@ def main() -> int:
         help="W844: skip auto-rotation of _EXPECTED_CARD_SHA256 in "
              "tests/test_mcp_server_card_hash.py (default: rotate)",
     )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Override the repo root that the script reads/writes "
+             "(default: the script's own ancestor). The ROAM_REPO_ROOT "
+             "env var sets the same value. Used by parallel-safe tests "
+             "that operate on a tmp_path copy of the count-bearing files.",
+    )
     args = parser.parse_args()
     rotate = not args.no_rotate_card_hash
+    # CLI flag wins; env var is the secondary override; default is module ROOT.
+    root: Path | None = args.root
+    if root is None:
+        env_root = os.environ.get("ROAM_REPO_ROOT")
+        if env_root:
+            root = Path(env_root)
+    if root is not None:
+        root = root.resolve()
 
     if args.check:
-        return run(write=False, mode_label="check", rotate_card_hash=rotate)
-    return run(write=True, mode_label="apply", rotate_card_hash=rotate)
+        return run(write=False, mode_label="check", rotate_card_hash=rotate, root=root)
+    return run(write=True, mode_label="apply", rotate_card_hash=rotate, root=root)
 
 
 if __name__ == "__main__":
