@@ -235,9 +235,14 @@ def _render_markdown_report(results: list[dict], project_root: Path) -> str:
         "",
     ]
     for r in results:
-        # Plain-ASCII status markers — CLAUDE.md output convention forbids
-        # emojis / colors / box-drawing. Mirrors how sibling commands
-        # render text-mode status ([OK] / [WARN]).
+        # Plain-ASCII status markers — AGENTS.md output convention forbids
+        # emojis / colors / box-drawing. ``[OK] PASS`` / ``[WARN] REVIEW``
+        # is paired here (label + verb) because Article 12 deliberately
+        # uses REVIEW (not FAIL) — a flagged item needs human governance
+        # judgment, not a binary pass/fail verdict. Sibling commands
+        # (cmd_doctor / cmd_health / cmd_fitness / cmd_check_rules) use
+        # the bare bracketed form [PASS] / [WARN] / [FAIL] because their
+        # outcomes are binary.
         mark = "[OK] PASS" if r["passed"] else "[WARN] REVIEW"
         lines.append(f"### {mark} — {r['item']}")
         lines.append(f"_Article {r['article']}_")

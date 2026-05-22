@@ -1470,14 +1470,14 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         ]
         click.echo(format_table(["Field", "Value", "Expected"], rows, budget=0))
     else:
-        click.echo("Closed-enum validation: PASS")
+        click.echo("Closed-enum validation: [PASS]")
 
     if has_redactions:
         click.echo(f"Redactions declared: {len(redactions)} ({', '.join(redactions)})")
     else:
         click.echo("Redactions declared: 0")
 
-    honesty_state = "PASS" if (has_redactions or banner_tier == "strong") else "REVIEW"
+    honesty_state = "[PASS]" if (has_redactions or banner_tier == "strong") else "[REVIEW]"
     click.echo(f"Honesty signals: {honesty_state}")
 
     # W280: packet-size readout. Always emit (Pattern-2 always-emit)

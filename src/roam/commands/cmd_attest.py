@@ -599,8 +599,10 @@ def _format_markdown(attestation, evidence, verdict):
     lines.append("## Roam Attestation")
     lines.append("")
 
-    # Verdict banner
-    safe_icon = "PASS" if verdict["safe_to_merge"] else "FAIL"
+    # Verdict banner (canonical [PASS]/[FAIL] bracketed form per AGENTS.md
+    # output convention; matches cmd_doctor / cmd_health / cmd_fitness /
+    # cmd_check_rules).
+    safe_icon = "[PASS]" if verdict["safe_to_merge"] else "[FAIL]"
     lines.append(f"**Verdict: {safe_icon}**")
     if verdict["conditions"]:
         lines.append("")
