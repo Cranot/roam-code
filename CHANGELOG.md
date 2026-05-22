@@ -80,6 +80,50 @@ Follow-up commits that landed on top of the v13.5 push after the deep-eval wave 
 
 - **`.gitignore`** — extended dev-scratch patterns for `dev/HANDOVER-*.md`, `dev/ROAM-SMOKE-*.md`, `dev/roam_smoke_results.jsonl`, `.stoa/` so `git status` stays signal-only after roam_smoke / handover-handoff sessions.
 
+### Post-push polish — waves 2 + 3 + 4 (2026-05-22 afternoon/evening)
+
+Four additional polish waves continued the brain-method refactor + drift-truth sweep work. Highlights — see commits `5fbe04a..33cc7e5` for the per-file diffs.
+
+#### Brain-method refactor sweep — 4 critical-cog functions
+
+The split-into-named-helpers pattern, applied 4 times. Each target's existing test suite confirms byte-identical output; orchestrator drops to <30 and stays under it.
+
+- **`strip_list_payloads` in `src/roam/output/formatter.py` — cog 61 → 0** (4 named helpers: `_cap_preserved_list`, `_partition_envelope_fields`, `_detect_schema_violations`, `_annotate_summary_disclosure`). ~3,755 tests byte-identical across the W1000/1006/1007/1008/1028/1100/1101/1102 fixture families.
+- **`analyze_n1` in `src/roam/commands/cmd_n1.py` — cog 78 → 3** (6 named helpers: `_resolve_missing_model_file_ids`, `_prefetch_bulk_state`, `_resolve_model_methods`, `_build_candidate_tuples`, `_make_n1_finding`, `_emit_findings_for_candidate`). 166 + 108 cross-suite tests byte-identical.
+- **`_maybe_handle_off` in `src/roam/mcp_server.py` — cog 64 → 3** (6 named helpers: `_should_bypass_handle_off`, `_serialise_for_handle`, `_persist_handle_blob`, `_maybe_run_amortised_gc`, `_build_handle_preview`, `_build_handle_envelope`). 201 tests across `tests/test_mcp_handle_off.py` + `tests/test_response_volume_handles.py` + `tests/test_fetch_handle_chunked.py` byte-identical; the public `roam-code.com/spec/handle/v1` envelope shape is pinned.
+- **`_find_eager_loads` in `src/roam/commands/cmd_n1.py` — cog 54 → 4** (5 named helpers: `_resolve_with_symbol`, `_read_with_property_snippet`, `_extract_with_property_relations`, `_extract_eager_load_relations`, `_extract_controller_with_relations`). 75 `tests/test_n1*` byte-identical.
+
+#### Perf-test pattern extension
+
+- **8 sibling perf tests** in `tests/test_performance.py` adopted the self-calibrating threshold pattern from `340997f` (the v13.5 hardening of `test_incremental_single_file_change`). New module-scope fixture `cheap_query_baseline_ms` times `roam map` against `medium_project` to supply a baseline for the heavier query-class tests; helper `_query_limit(baseline, floor, ratio, ceiling)` collapses the `min(max(floor, ratio * baseline), ceiling)` shape into one call. Applied to `test_incremental_index_fast`, `TestQueryPerformance` (15 tests), `TestNewCommandPerformance.test_understand_speed`, `TestJsonPerformance.test_json_understand_speed`, `TestV6CommandPerformance.test_complexity_speed` / `test_conventions_speed` / `test_preflight_speed` / `test_understand_enhanced_speed`. Also widened `test_incremental_single_file_change` floor 5000 ms → 8000 ms after a `-n 8` contention flake.
+- **`xdist_group` marker registered** in `pyproject.toml` `[tool.pytest.ini_options].markers` to silence the `PytestUnknownMarkWarning` that fired on every test-collection run. The marker is consumed by pytest-xdist directly under `--dist=loadgroup`; registration is purely cosmetic.
+
+#### Text-mode CLI conventions
+
+- **Box-drawing in `cmd_compare`'s section separator** (`──`, U+2500) replaced with plain ASCII `--`. The only true CLI-output box-drawing violation surfaced by the emoji-audit sweep across all `cmd_*.py` + `output/*.py` text-mode rendering paths.
+- **Bare `PASS`/`FAIL`/`REVIEW` status markers canonicalized to `[PASS]`/`[FAIL]`/`[REVIEW]`.** A canonicalization audit found 3 truly-bare status spots: `cmd_evidence_doctor.py:1473` `Closed-enum validation: PASS`, `cmd_evidence_doctor.py:1480` `honesty_state = "PASS" if ... else "REVIEW"`, and `cmd_attest.py:603` `safe_icon = "PASS" if ... else "FAIL"`. All bracketed. The bracketed form is the dominant convention across `cmd_doctor` / `cmd_health` / `cmd_fitness` / `cmd_check_rules` / `cmd_evidence_doctor` (rest of file) / `cmd_audit_trail_conformance` / `cmd_budget` / `cmd_diff` (8 files). The misleading comment in `cmd_article_12_check.py:238-240` that claimed siblings use `[OK]`/`[WARN]` corrected — Article 12's `[OK] PASS` / `[WARN] REVIEW` paired form is intentional because `REVIEW` (not `FAIL`) reflects flagged-for-human-judgment, distinct from binary pass/fail.
+
+#### Doc-truth sweeps — second pass
+
+- **`dev/ROADMAP.md` + `dev/MCP-SECURITY-POSTURE.md` + `dev/BACKLOG.md` — 11 stale claims corrected.** Line-number drift on `connection.py:354→:558`, `detectors.py 4,286 lines→4,972`, `cmd_health.py:920→:1242`, `mcp_server.py:802→:2027`, `cmd_n1.py:558-664→:1108-1234`, `complexity.py:1050→:397+:1319`, `cmd_n1.py:449-478→:854-898`. `_POLICY_DECISIONS` 6-member list → 9 (added `pass`/`fail`/`unknown` per `src/roam/evidence/_vocabulary.py:582`). `verify_chain_with_receipts` 414-518 → 426-536. `RECIPE_INTEGRITY_STATES` 394-401 → 406-413. BACKLOG R15/R16/R18/R21/R22/R23/R24/R26/R27/R28 strike-throughs applied (all SHIPPED but never marked).
+- **`templates/distribution/landing-page/docs/*.html` — 5 stale claims corrected.** `architecture.html:225` `USER_VERSION 17 → 18`; `agent-contract.html:358-360 + :418` `policy_decision` enum 3 values → 6; `integration-tutorials.html:268-270` + `mcp-usage.html:359-361` added `would_deny_dry_run`. `scripts/linkcheck.py --strict` confirms 29 pages still resolve.
+
+#### Architecture spike + release readiness
+
+- **`dev/V13.5-RELEASE-READINESS-2026-05-22.md` (NEW)** — sized audit + step-by-step release sequence for the v13.5 PyPI tag-and-publish. The release-readiness verdict was HOLD pending the dogfood-wiring landing (now resolved in commit `33cc7e5`); re-run the audit before tagging. The memo enumerates the bump+tag steps, the still-pending Co-Author leak on `340997f`, and which D2/D3 memos are ready for sprint commitment.
+
+#### MCP description rewrites + Claude Code auto-load
+
+- **MCP tool descriptions — top-10 rewrite (BiasBusters + Sentry pattern).** The 10 most-critical roam-code MCP tool descriptions (`roam_ask`, `roam_search_symbol`, `roam_uses`, `roam_context`, `roam_understand`, `roam_diff`, `roam_prepare_change`, `roam_critique`, `roam_diagnose_issue`, `roam_affected_tests`) rewritten with imperative verb-lede, user-voice trigger phrases ('where is X?', 'who calls Y?', 'safe to delete Z?'), explicit anti-patterns ('Do NOT use Bash:grep for symbol lookup'), and alternative-named replacement ('Replaces multi-shape grep'). Pattern grounded in **BiasBusters (arXiv 2510.00307)** — description semantic alignment is the #1 driver of selection — and the **Sentry MCP scaling case** (60M req/month with 3 tools; each description carries concrete examples + workflow chaining hints). Lift target measured via `dev/audit_session_tool_usage.py`.
+- **`dev/audit_session_tool_usage.py` (NEW)** — Claude Code session transcript auditor. Measures the "dogfood ratio" (`roam_*` MCP tool calls / total tool calls) across recent JSONL transcripts under `~/.claude/projects/<slug>/`. Surfaces shell-grep volume, retry-loop patterns, top Read targets, and Bash-class breakdown (git-diff / git-log / fs-discovery / test-lint / etc.). Baseline 2026-05-22 across 200 transcripts: **0.18% (2/1113)** — Bash 47% / Read 22% / Grep 20% / MCP 0.18%. Tracked tool; re-runnable after each session-cluster.
+- **`CLAUDE.md` (1-line `@AGENTS.md` pointer)** — restores Claude Code's auto-load path (removed in `e5993a6` because the original 263-line file carried internal-only content) WITHOUT re-introducing the internal-content pattern. Single `@AGENTS.md` directive imports the multi-vendor AGENTS.md so the navigation guidance (§ "Codebase navigation with roam") reaches Claude Code at session start. HTML comment documents the strategic decision and instructs maintainers to edit AGENTS.md (not this file) for any content additions.
+- **`dev/build_readme_counts.py` — pointer-aware skip.** Script now detects the `@AGENTS.md` pointer pattern and treats CLAUDE.md as an intentional no-op so `--check` no longer flags MISSING-MARKERS on a file with no block-bearing content by design.
+- **`tests/test_law4_anchor_counts.py` + `tests/test_findings_detector_count_drift.py`** — pointer-aware skip. Both tests previously gated on CLAUDE.md content for anchor-count + detector-count claims; with CLAUDE.md now a pointer, the claims live exclusively in AGENTS.md. Tests now detect the `@AGENTS.md` pointer pattern and skip cleanly.
+
+#### Forward-looking artifacts
+
+- **`(internal memo)` (NEW)** — comprehensive "what's next" memo capturing every observation, defect, sized-but-unbuilt direction, brain-method-refactor candidate, strategic positioning lift, and pattern-to-apply-forward surfaced during this session. Single forward-looking memo for the next roam-code session to pick up cleanly.
+
 ## [13.4] — 2026-05-21
 
 ### Perf + polish follow-up (2026-05-21)
