@@ -1365,31 +1365,53 @@ def _find_collection_contexts(conn, model_id, model_name, *, bulk_refs=_BULK_NOT
 # ---------------------------------------------------------------------------
 
 
-def analyze_n1(conn, confidence_filter=None):
-    """Run full N+1 implicit I/O analysis.
+def _resolve_missing_model_file_ids(conn, models, model_file_ids):
+    """Backfill ``file_id`` for any model that arrived without one.
 
-    Returns list of finding dicts with:
-    - model_name, model_location
-    - accessor_name, accessor_location
-    - appended_attribute
-    - relationship_chain (what I/O it triggers)
-    - eager_loaded (bool — is this relationship pre-loaded?)
-    - collection_contexts (where the model is used in collections)
-    - confidence, severity
-    - suggestion
+    ``_find_model_classes`` selects ``file_id``, but consumers could in
+    principle pass a model dict missing it. Issues a single batched IN
+    query against the symbols table, mutates ``models[mid]['file_id']``
+    in place for any rows resolved, and appends the resolved ``file_id``
+    to ``model_file_ids`` so the downstream method-by-file bulk fetch
+    sees the gap-filled set.
+
+    Returns ``None`` — operates by side-effect on the inputs.
     """
-    framework = _detect_framework(conn)
-    findings = []
+    missing_fid_model_ids = [int(mid) for mid, mi in models.items() if mi.get("file_id") is None]
+    if not missing_fid_model_ids:
+        return
+    from roam.db.connection import batched_in
 
-    models = _find_model_classes(conn)
-    if not models:
-        return findings, framework
+    for r in batched_in(
+        conn,
+        "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
+        missing_fid_model_ids,
+    ):
+        mid = int(r["id"])
+        fid = r["file_id"]
+        if fid is not None and mid in models:
+            models[mid]["file_id"] = int(fid)
+            model_file_ids.append(int(fid))
 
-    # Pre-loop bulk fetches collapse what used to be ~5 N+1 sites (one
-    # per helper × N models) into a constant number of batched_in
-    # queries. Each helper accepts the pre-fetched data through a
-    # keyword arg (``bulk_*``) and falls back to its per-model query
-    # when called ad-hoc by other code paths.
+
+def _prefetch_bulk_state(conn, models):
+    """Run every pre-loop bulk fetch and return the shared lookup maps.
+
+    Collapses what used to be ~5 N+1 sites (one per helper × N models)
+    into a constant number of ``batched_in`` queries and file-cache
+    builds. Each downstream helper accepts the pre-fetched data through
+    a keyword arg (``bulk_*``) and falls back to its per-model query
+    when called ad-hoc by other code paths.
+
+    Returns a dict with keys:
+      * ``methods_by_model`` — parent_id-linked methods by model id
+      * ``methods_by_file`` — methods grouped by file_id (PHP fallback)
+      * ``appends_by_model`` — ``$appends`` symbol rows by model id
+      * ``incoming_refs_by_model`` — incoming references by model id
+      * ``controller_cache`` — file-content cache for Laravel controllers
+      * ``with_sym_by_model`` — ``$with`` property symbols by model id
+      * ``resource_config_contents`` — Laravel resource-config file bodies
+    """
     model_ids = list(models.keys())
 
     # methods (with full location columns — needed by _find_accessor_methods
@@ -1406,20 +1428,7 @@ def analyze_n1(conn, confidence_filter=None):
     # Resolve file_id for any model that arrived without one (defensive —
     # ``_find_model_classes`` selects file_id, but consumers could in
     # principle pass a model dict missing it). Single batched IN query.
-    missing_fid_model_ids = [int(mid) for mid, mi in models.items() if mi.get("file_id") is None]
-    if missing_fid_model_ids:
-        from roam.db.connection import batched_in
-
-        for r in batched_in(
-            conn,
-            "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
-            missing_fid_model_ids,
-        ):
-            mid = int(r["id"])
-            fid = r["file_id"]
-            if fid is not None and mid in models:
-                models[mid]["file_id"] = int(fid)
-                model_file_ids.append(int(fid))
+    _resolve_missing_model_file_ids(conn, models, model_file_ids)
     methods_by_file = _bulk_fetch_methods_by_file(conn, model_file_ids)
 
     # $appends symbols (replaces _find_appends_properties N+1)
@@ -1443,41 +1452,76 @@ def analyze_n1(conn, confidence_filter=None):
     # shared list serves all models.
     resource_config_contents = _build_resource_config_cache(conn)
 
-    # First pass: filter to (model_id, model_info, accessors, model_methods)
-    # tuples we'll actually trace. We need this to know all accessor IDs
-    # before bulk-fetching their outgoing edges.
+    return {
+        "methods_by_model": methods_by_model,
+        "methods_by_file": methods_by_file,
+        "appends_by_model": appends_by_model,
+        "incoming_refs_by_model": incoming_refs_by_model,
+        "controller_cache": controller_cache,
+        "with_sym_by_model": with_sym_by_model,
+        "resource_config_contents": resource_config_contents,
+    }
+
+
+def _resolve_model_methods(conn, model_id, model_info, methods_by_model, methods_by_file):
+    """Return the method symbols for one model, with file-range fallback.
+
+    Preferred source is the parent_id-linked ``methods_by_model`` bulk
+    map. When that's empty (PHP parser, primarily, which doesn't set
+    parent_id), falls back to the file-id-keyed ``methods_by_file`` map
+    and filters by ``line_start``/``line_end``. As a last resort runs a
+    legacy per-model SELECT so we don't silently drop methods for models
+    that arrived with no file_id resolution.
+    """
+    model_methods = methods_by_model.get(model_id, [])
+    if model_methods:
+        return model_methods
+    # File-range fallback for models without parent_id-linked
+    # methods (PHP, primarily). Uses the pre-fetched
+    # ``methods_by_file`` map so this stays a constant-cost
+    # in-memory filter instead of one SELECT per gap-model.
+    fid = model_info.get("file_id")
+    line_start = model_info.get("line_start") or 0
+    line_end = model_info.get("line_end") or 999999
+    if fid is not None:
+        return [m for m in methods_by_file.get(int(fid), []) if line_start <= m["line_start"] <= line_end]
+    # ``model_file_ids`` resolution above should have filled
+    # this in; preserve the legacy per-model query as a last
+    # resort so we don't silently drop methods.
+    row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (model_id,)).fetchone()
+    fallback_fid = row["file_id"] if row else None
+    if fallback_fid is not None:
+        return conn.execute(
+            "SELECT s.id, s.name, s.kind, s.line_start FROM symbols s "
+            "WHERE s.file_id = ? AND s.kind = 'method' "
+            "AND s.line_start >= ? AND s.line_start <= ?",
+            (fallback_fid, line_start, line_end),
+        ).fetchall()
+    return model_methods
+
+
+def _build_candidate_tuples(conn, models, bulk):
+    """Filter models to the ``(id, info, accessors, methods)`` tuples we'll trace.
+
+    Walks every model, skips test paths, resolves the model's methods
+    (with bulk-fetch fallbacks), then runs the ``$appends`` and
+    accessor-method passes. Models with no ``$appends`` or no matching
+    accessors are dropped here so the second pre-fetch can size its
+    accessor-edge IN-query against the final candidate set.
+
+    ``bulk`` is the dict returned by ``_prefetch_bulk_state``.
+    """
     candidates: list[tuple[int, dict, list, list]] = []
+    methods_by_model = bulk["methods_by_model"]
+    methods_by_file = bulk["methods_by_file"]
+    appends_by_model = bulk["appends_by_model"]
+
     for model_id, model_info in models.items():
         if _is_test_path(model_info["file_path"]):
             continue
 
         # Get all methods on this model (for relationship detection).
-        model_methods = methods_by_model.get(model_id, [])
-        if not model_methods:
-            # File-range fallback for models without parent_id-linked
-            # methods (PHP, primarily). Uses the pre-fetched
-            # ``methods_by_file`` map so this stays a constant-cost
-            # in-memory filter instead of one SELECT per gap-model.
-            fid = model_info.get("file_id")
-            line_start = model_info.get("line_start") or 0
-            line_end = model_info.get("line_end") or 999999
-            if fid is not None:
-                model_methods = [
-                    m for m in methods_by_file.get(int(fid), []) if line_start <= m["line_start"] <= line_end
-                ]
-            else:
-                # ``model_file_ids`` resolution above should have filled
-                # this in; preserve the legacy per-model query as a last
-                # resort so we don't silently drop methods.
-                row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (model_id,)).fetchone()
-                fallback_fid = row["file_id"] if row else None
-                if fallback_fid is not None:
-                    model_methods = conn.execute(
-                        "SELECT s.id, s.name, s.kind, s.line_start FROM symbols s "
-                        "WHERE s.file_id = ? AND s.kind = 'method' "
-                        "AND s.line_start >= ? AND s.line_start <= ?",
-                        (fallback_fid, line_start, line_end),
-                    ).fetchall()
+        model_methods = _resolve_model_methods(conn, model_id, model_info, methods_by_model, methods_by_file)
 
         # Step 1: Find $appends / virtual properties (uses bulk-fetched row)
         appended = _find_appends_properties(
@@ -1502,83 +1546,184 @@ def analyze_n1(conn, confidence_filter=None):
 
         candidates.append((model_id, model_info, accessors, model_methods))
 
+    return candidates
+
+
+def _make_n1_finding(
+    model_info,
+    model_name,
+    accessor_info,
+    attr_name,
+    rel_name,
+    io_type,
+    collection_ctxs,
+    framework,
+):
+    """Assemble one N+1 finding dict.
+
+    Derives ``confidence`` from collection-context evidence
+    (``high`` when present, ``low`` when absent, otherwise ``medium``),
+    pins ``severity`` to the canonical per-item label, and looks up the
+    framework-specific remediation suggestion. Output shape matches the
+    public ``analyze_n1`` contract documented on that function.
+    """
+    # Determine confidence
+    confidence = "medium"
+    if collection_ctxs:
+        confidence = "high"  # Used in collection context = definitely N+1
+    if not collection_ctxs:
+        confidence = "low"  # No collection context found = might be OK
+
+    # Determine severity based on likely query count
+    severity = "per-item query on serialization"
+
+    suggestion = _build_suggestion(framework, model_name, rel_name, attr_name, io_type)
+
+    return {
+        "model_name": model_info["qualified_name"] or model_name,
+        "model_location": loc(model_info["file_path"], model_info["line_start"]),
+        "accessor_name": accessor_info["name"],
+        "accessor_location": loc(accessor_info["file_path"], accessor_info["line_start"]),
+        "appended_attribute": attr_name,
+        "relationship": rel_name,
+        "io_type": io_type,
+        "eager_loaded": False,
+        "confidence": confidence,
+        "severity": severity,
+        "collection_contexts": collection_ctxs[:3],  # Top 3
+        "suggestion": suggestion,
+    }
+
+
+def _emit_findings_for_candidate(
+    conn,
+    model_id,
+    model_info,
+    accessors,
+    model_methods,
+    bulk,
+    edge_maps,
+    framework,
+):
+    """Emit every N+1 finding for one candidate ``(id, info, accessors, methods)`` tuple.
+
+    Resolves the model's eager-loaded relationships and collection
+    contexts once, then walks each accessor: traces its I/O chains via
+    the pre-fetched accessor-edge maps, skips any chain whose
+    relationship is already eager-loaded, and emits a finding via
+    ``_make_n1_finding`` for every remaining lazy chain.
+
+    ``bulk`` is the dict from ``_prefetch_bulk_state``; ``edge_maps`` is
+    the ``(callees_by_accessor, sub_callee_names)`` pair returned by
+    ``_bulk_fetch_accessor_edge_traces``.
+    """
+    callees_by_accessor, sub_callee_names = edge_maps
+    model_name = model_info["name"]
+
+    # Step 3: Find what's already eager loaded (uses bulk-fetched
+    # ``$with`` symbol + cached resource-config contents)
+    eager_loaded = _find_eager_loads(
+        conn,
+        model_name,
+        controller_cache=bulk["controller_cache"],
+        bulk_with_sym=bulk["with_sym_by_model"].get(model_id),
+        resource_config_contents=bulk["resource_config_contents"],
+        model_id=model_id,
+    )
+
+    # Step 4: Find collection contexts (uses bulk-fetched refs)
+    collection_ctxs = _find_collection_contexts(
+        conn,
+        model_id,
+        model_name,
+        bulk_refs=bulk["incoming_refs_by_model"].get(model_id),
+    )
+
+    results: list[dict] = []
+    # Step 5: For each accessor, trace I/O chains (uses bulk edge maps)
+    for accessor_info, attr_name in accessors:
+        aid = int(accessor_info["id"])
+        io_chains = _trace_accessor_io(
+            conn,
+            aid,
+            accessor_info,
+            model_methods,
+            bulk_callees=callees_by_accessor.get(aid, []),
+            bulk_sub_names=sub_callee_names,
+        )
+
+        if not io_chains:
+            continue
+
+        # Check if the relationships found are eager loaded
+        for rel_name, io_type in io_chains:
+            if rel_name in eager_loaded:
+                continue  # This one is handled, skip it
+            results.append(
+                _make_n1_finding(
+                    model_info,
+                    model_name,
+                    accessor_info,
+                    attr_name,
+                    rel_name,
+                    io_type,
+                    collection_ctxs,
+                    framework,
+                )
+            )
+    return results
+
+
+def analyze_n1(conn, confidence_filter=None):
+    """Run full N+1 implicit I/O analysis.
+
+    Returns list of finding dicts with:
+    - model_name, model_location
+    - accessor_name, accessor_location
+    - appended_attribute
+    - relationship_chain (what I/O it triggers)
+    - eager_loaded (bool — is this relationship pre-loaded?)
+    - collection_contexts (where the model is used in collections)
+    - confidence, severity
+    - suggestion
+    """
+    framework = _detect_framework(conn)
+    findings: list[dict] = []
+
+    models = _find_model_classes(conn)
+    if not models:
+        return findings, framework
+
+    # Pre-loop bulk fetches collapse what used to be ~5 N+1 sites (one
+    # per helper × N models) into a constant number of batched_in
+    # queries. Each helper accepts the pre-fetched data through a
+    # keyword arg (``bulk_*``) and falls back to its per-model query
+    # when called ad-hoc by other code paths.
+    bulk = _prefetch_bulk_state(conn, models)
+
+    # First pass: filter to (model_id, model_info, accessors, model_methods)
+    # tuples we'll actually trace. We need this to know all accessor IDs
+    # before bulk-fetching their outgoing edges.
+    candidates = _build_candidate_tuples(conn, models, bulk)
+
     # Second pre-fetch: now that we know every accessor we'll trace,
     # bulk-fetch their outgoing edges + sub-edges in two batched_in calls.
     accessor_ids = [a[0]["id"] for _, _, accs, _ in candidates for a in accs]
-    callees_by_accessor, sub_callee_names = _bulk_fetch_accessor_edge_traces(conn, accessor_ids)
+    edge_maps = _bulk_fetch_accessor_edge_traces(conn, accessor_ids)
 
     for model_id, model_info, accessors, model_methods in candidates:
-        model_name = model_info["name"]
-
-        # Step 3: Find what's already eager loaded (uses bulk-fetched
-        # ``$with`` symbol + cached resource-config contents)
-        eager_loaded = _find_eager_loads(
-            conn,
-            model_name,
-            controller_cache=controller_cache,
-            bulk_with_sym=with_sym_by_model.get(model_id),
-            resource_config_contents=resource_config_contents,
-            model_id=model_id,
-        )
-
-        # Step 4: Find collection contexts (uses bulk-fetched refs)
-        collection_ctxs = _find_collection_contexts(
-            conn,
-            model_id,
-            model_name,
-            bulk_refs=incoming_refs_by_model.get(model_id),
-        )
-
-        # Step 5: For each accessor, trace I/O chains (uses bulk edge maps)
-        for accessor_info, attr_name in accessors:
-            aid = int(accessor_info["id"])
-            io_chains = _trace_accessor_io(
+        findings.extend(
+            _emit_findings_for_candidate(
                 conn,
-                aid,
-                accessor_info,
+                model_id,
+                model_info,
+                accessors,
                 model_methods,
-                bulk_callees=callees_by_accessor.get(aid, []),
-                bulk_sub_names=sub_callee_names,
+                bulk,
+                edge_maps,
+                framework,
             )
-
-            if not io_chains:
-                continue
-
-            # Check if the relationships found are eager loaded
-            for rel_name, io_type in io_chains:
-                is_eager = rel_name in eager_loaded
-
-                if is_eager:
-                    continue  # This one is handled, skip it
-
-                # Determine confidence
-                confidence = "medium"
-                if collection_ctxs:
-                    confidence = "high"  # Used in collection context = definitely N+1
-                if not collection_ctxs:
-                    confidence = "low"  # No collection context found = might be OK
-
-                # Determine severity based on likely query count
-                severity = "per-item query on serialization"
-
-                suggestion = _build_suggestion(framework, model_name, rel_name, attr_name, io_type)
-
-                findings.append(
-                    {
-                        "model_name": model_info["qualified_name"] or model_name,
-                        "model_location": loc(model_info["file_path"], model_info["line_start"]),
-                        "accessor_name": accessor_info["name"],
-                        "accessor_location": loc(accessor_info["file_path"], accessor_info["line_start"]),
-                        "appended_attribute": attr_name,
-                        "relationship": rel_name,
-                        "io_type": io_type,
-                        "eager_loaded": False,
-                        "confidence": confidence,
-                        "severity": severity,
-                        "collection_contexts": collection_ctxs[:3],  # Top 3
-                        "suggestion": suggestion,
-                    }
-                )
+        )
 
     # Apply confidence filter — W1005-followup-D: equality → floor via
     # canonical severity_rank(). Detector emits {high, medium, low}; the
