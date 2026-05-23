@@ -938,6 +938,119 @@ def _split_invocation(s: str) -> list[str]:
         return s.split()
 
 
+def _apply_default_runner(argv: list[str], cwd: Path, t: int) -> tuple[int, str, str]:
+    """Default check-runner used when ``apply_constitution(runner=None)``.
+    Execs the command as a subprocess via ``subprocess.run``. The first
+    token is typically ``roam`` — on Windows resolves via PATHEXT; on
+    POSIX must be in PATH. Never raises: timeouts return (124, '',
+    'timeout after Ns'); missing binaries return (127, '', str(exc))."""
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=t,
+            check=False,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"timeout after {t}s"
+    except (FileNotFoundError, OSError) as exc:
+        return 127, "", str(exc)
+
+
+def _apply_extract_verdict_line(stdout: str, stderr: str) -> str:
+    """Best-effort one-liner verdict surface: prefer the first non-empty
+    stdout line, fall back to the first non-empty stderr line. Truncated
+    at 200 chars to keep envelope shape predictable."""
+    for src in (stdout, stderr):
+        if not src:
+            continue
+        for line in src.splitlines():
+            line = line.strip()
+            if line:
+                return line[:200]
+    return ""
+
+
+def _apply_run_one_template(
+    template: str,
+    vars_in: dict,
+    run: Any,
+    repo_root: Path,
+    timeout: int,
+) -> ApplyResult:
+    """Resolve placeholders in one check template and execute (or skip)
+    it. Uses ``_tokenize_and_substitute`` for the executed argv so a
+    variable value containing whitespace or shell metacharacters CANNOT
+    introduce additional argv tokens (argv-injection guard); the
+    human-readable ``invocation`` string still comes from the legacy
+    string-substitution helper. Skips when required ``${variable}``
+    substitutions are missing; produces an exit-code-2 envelope when the
+    substitution yields an empty argv. Otherwise dispatches via runner
+    and records the result with a best-effort verdict line."""
+    bare = _bare_command_name(template)
+    argv, missing = _tokenize_and_substitute(template, vars_in)
+    resolved, _ = _substitute_placeholders(template, vars_in)
+    if missing:
+        return ApplyResult(
+            command=bare,
+            invocation=template,
+            exit_code=0,
+            verdict="",
+            skipped=True,
+            skip_reason=f"missing variables: {', '.join(sorted(set(missing)))}",
+        )
+    if not argv:
+        return ApplyResult(
+            command=bare,
+            invocation=template,
+            exit_code=2,
+            verdict="empty invocation after substitution",
+            skipped=False,
+        )
+    exit_code, stdout, stderr = run(argv, repo_root, timeout)
+    return ApplyResult(
+        command=bare,
+        invocation=resolved,
+        exit_code=exit_code,
+        verdict=_apply_extract_verdict_line(stdout, stderr),
+        skipped=False,
+    )
+
+
+def _apply_aggregate_verdict(gate: str, results: list[ApplyResult]) -> tuple[str, str]:
+    """Aggregate per-check results into ``(state, summary_verdict)``.
+    Three states: ``ok`` (all non-skipped passed), ``failed`` (none passed),
+    ``partial`` (mixed). The verdict string surfaces the first failing
+    command when applicable so a glance at the line names the breakage."""
+    passed = sum(1 for r in results if r.passed)
+    failed = sum(1 for r in results if not r.passed and not r.skipped)
+    skipped = sum(1 for r in results if r.skipped)
+    total = len(results)
+
+    if failed == 0 and passed == total - skipped:
+        suffix = f" ({skipped} skipped)" if skipped else ""
+        return "ok", f"{gate} gate: {passed}/{total} passed{suffix}"
+
+    first_fail = next((r for r in results if not r.passed and not r.skipped), None)
+    if passed == 0 and failed == total - skipped:
+        if first_fail is not None:
+            return (
+                "failed",
+                f"{gate} gate: 0/{total} passed; first failure: {first_fail.command} (exit={first_fail.exit_code})",
+            )
+        return "failed", f"{gate} gate: all checks failed"
+
+    if first_fail is not None:
+        return (
+            "partial",
+            f"{gate} gate: {passed} passed / {failed} failed (first failure: {first_fail.command})",
+        )
+    return "partial", f"{gate} gate: {passed} passed / {failed} failed"
+
+
 def apply_constitution(
     repo_root: Path,
     constitution: Constitution,
@@ -958,6 +1071,8 @@ def apply_constitution(
     When None, we use ``subprocess.run`` against the system PATH.
 
     Never raises. Aggregates everything into an :class:`ApplyReport`.
+    Implementation: split across ``_apply_*`` helpers; this orchestrator
+    wires gate-validation -> per-template execution -> verdict aggregation.
     """
     if gate not in VALID_GATES:
         return ApplyReport(
@@ -966,7 +1081,6 @@ def apply_constitution(
             summary_verdict=f"unknown gate '{gate}' (valid: {', '.join(VALID_GATES)})",
             state="no_checks",
         )
-
     items = constitution.required_checks.get(gate) or []
     if not items:
         return ApplyReport(
@@ -975,119 +1089,8 @@ def apply_constitution(
             summary_verdict=f"no required checks declared for gate '{gate}'",
             state="no_checks",
         )
-
     vars_in = dict(variables or {})
-
-    def _default_runner(argv: list[str], cwd: Path, t: int):
-        # If the caller didn't override, exec the command as a subprocess.
-        # The first token is typically ``roam`` -- on Windows this resolves
-        # via PATHEXT; on POSIX it just needs to be in PATH.
-        try:
-            proc = subprocess.run(
-                argv,
-                cwd=str(cwd),
-                capture_output=True,
-                text=True,
-                timeout=t,
-                check=False,
-            )
-            return proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired:
-            return 124, "", f"timeout after {t}s"
-        except (FileNotFoundError, OSError) as exc:
-            return 127, "", str(exc)
-
-    run = runner or _default_runner
-
-    results: list[ApplyResult] = []
-    for template in items:
-        bare = _bare_command_name(template)
-        # Use token-safe substitution for the argv we actually execute so a
-        # variable value containing whitespace or shell metacharacters CANNOT
-        # introduce additional argv tokens (argv-injection guard). The
-        # human-readable ``invocation`` string is still produced from the
-        # legacy string-substitution helper for display purposes.
-        argv, missing = _tokenize_and_substitute(template, vars_in)
-        resolved, _ = _substitute_placeholders(template, vars_in)
-        if missing:
-            results.append(
-                ApplyResult(
-                    command=bare,
-                    invocation=template,
-                    exit_code=0,
-                    verdict="",
-                    skipped=True,
-                    skip_reason=f"missing variables: {', '.join(sorted(set(missing)))}",
-                )
-            )
-            continue
-
-        if not argv:
-            results.append(
-                ApplyResult(
-                    command=bare,
-                    invocation=template,
-                    exit_code=2,
-                    verdict="empty invocation after substitution",
-                    skipped=False,
-                )
-            )
-            continue
-
-        exit_code, stdout, stderr = run(argv, repo_root, timeout)
-        # Best-effort verdict surface: prefer first non-empty stdout line,
-        # fall back to stderr's first non-empty line.
-        verdict_line = ""
-        for src in (stdout, stderr):
-            if not src:
-                continue
-            for line in src.splitlines():
-                line = line.strip()
-                if line:
-                    verdict_line = line[:200]
-                    break
-            if verdict_line:
-                break
-
-        results.append(
-            ApplyResult(
-                command=bare,
-                invocation=resolved,
-                exit_code=exit_code,
-                verdict=verdict_line,
-                skipped=False,
-            )
-        )
-
-    passed = sum(1 for r in results if r.passed)
-    failed = sum(1 for r in results if not r.passed and not r.skipped)
-    skipped = sum(1 for r in results if r.skipped)
-    total = len(results)
-
-    if failed == 0 and passed == total - skipped:
-        state = "ok"
-        verdict = f"{gate} gate: {passed}/{total} passed" + (f" ({skipped} skipped)" if skipped else "")
-    elif passed == 0 and failed == total - skipped:
-        state = "failed"
-        # Surface the first failing command in the verdict.
-        first_fail = next((r for r in results if not r.passed and not r.skipped), None)
-        if first_fail is not None:
-            verdict = (
-                f"{gate} gate: 0/{total} passed; first failure: {first_fail.command} (exit={first_fail.exit_code})"
-            )
-        else:
-            verdict = f"{gate} gate: all checks failed"
-    else:
-        state = "partial"
-        first_fail = next((r for r in results if not r.passed and not r.skipped), None)
-        if first_fail is not None:
-            verdict = f"{gate} gate: {passed} passed / {failed} failed (first failure: {first_fail.command})"
-        else:
-            verdict = f"{gate} gate: {passed} passed / {failed} failed"
-
-    return ApplyReport(
-        gate=gate,
-        results=results,
-        summary_verdict=verdict,
-        state=state,
-    )
+    run = runner or _apply_default_runner
+    results = [_apply_run_one_template(template, vars_in, run, repo_root, timeout) for template in items]
+    state, verdict = _apply_aggregate_verdict(gate, results)
+    return ApplyReport(gate=gate, results=results, summary_verdict=verdict, state=state)
