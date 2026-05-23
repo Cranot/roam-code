@@ -297,49 +297,43 @@ def assert_json_envelope(data, command=None):
 
 
 @pytest.fixture
-def git_repo(tmp_path):
-    """Create an empty git repo with an initial commit.
+def indexed_project(tmp_path, monkeypatch):
+    """Indexed Python project: empty git repo + 3-file Python source tree
+    + ``roam index`` run. Returns the project directory path.
 
-    Returns the path to the repo directory.
+    Replaces the prior 3-fixture chain (``git_repo`` -> ``python_project``
+    -> ``indexed_project``) that had zero direct consumers on the
+    upstream two fixtures. Collapsed 2026-05-23 per the conftest-cleanup
+    audit; helpers ``git_init`` / ``git_commit`` / ``index_in_process``
+    stay module-level since they have other callers (project_factory,
+    project_with_snapshots, make_src_project).
 
-    W414d-BAIL (2026-05-17): function-scope is intentional. ``git_repo`` has
-    no direct test consumers — it is reached only transitively via
-    ``python_project`` -> ``indexed_project``. ``indexed_project`` itself is
-    function-scoped (W414c-BAIL: findings-registry coupling), but several
-    transitive consumers of the conftest ``indexed_project`` mutate the
-    project tree WITHOUT cleanup:
+    W414c-BAIL (2026-05-17, load-bearing): function-scope is intentional.
+    Promoting to module-scope via ``tmp_path_factory`` would break:
 
+      - test_findings_pr_risk.py asserts ``count == 0`` for the pr-risk
+        detector after a ``--persist`` run earlier in the module; it also
+        ``DROP TABLE findings`` in one branch which would leak schema state.
+      - test_findings_doctor.py: same ``count == 0`` + DROP TABLE
+        pattern for the doctor detector.
+      - test_findings_critique.py asserts ``count == 0`` for critique.
       - test_grep_extended.py adds ``patterns.txt`` at the repo root and
-        ``src/with_dot.py`` without restoring them.
+        ``src/with_dot.py`` without restoring them, so module-scope reuse
+        would leak leaked files into subsequent grep/list/index
+        assertions.
 
-    Promoting ``git_repo`` (and therefore ``python_project``) to
-    module-scope via ``tmp_path_factory`` would share the same directory
-    across every test in the module, so the leaked files from one test
-    would corrupt subsequent grep/list/index assertions. Per-file overrides
-    (17 files already do this via ``tmp_path_factory``) remain the
-    canonical optimisation; do NOT re-attempt centralised promotion
-    without first auditing every transitive mutator for cleanup.
+    Per-file overrides (17 files already do this via ``tmp_path_factory``)
+    remain the canonical optimisation. Do NOT re-attempt centralised
+    promotion without first decoupling the findings-registry tests
+    (e.g. autouse ``DELETE FROM findings`` fixture in each findings-*
+    module) AND auditing every transitive mutator for cleanup.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
     git_init(repo)
-    return repo
 
-
-@pytest.fixture
-def python_project(git_repo):
-    """Extend git_repo with a small Python project (3 files, imports, calls).
-
-    Returns the path to the project directory.
-
-    W414d-BAIL (2026-05-17): function-scope is intentional. See ``git_repo``
-    for the full BAIL rationale — transitive consumers via
-    ``indexed_project`` (notably test_grep_extended.py) mutate the project
-    tree without cleanup, so module-scope reuse would leak state across
-    tests in a module.
-    """
-    src = git_repo / "src"
+    src = repo / "src"
     src.mkdir()
 
     (src / "models.py").write_text(
@@ -405,41 +399,12 @@ def python_project(git_repo):
         'UNUSED_CONSTANT = "never_referenced"\n'
     )
 
-    git_commit(git_repo, "add python project")
-    return git_repo
+    git_commit(repo, "add python project")
 
-
-@pytest.fixture
-def indexed_project(python_project, monkeypatch):
-    """Extend python_project by running `roam index` on it.
-
-    Returns the path to the indexed project directory.
-
-    W414c-BAIL (2026-05-17): function-scope is intentional. Promoting to
-    module-scope would break 3+ consumer files that rely on a pristine
-    findings registry and source tree per test:
-
-      - test_findings_pr_risk.py asserts ``count == 0`` for the pr-risk
-        detector after a ``--persist`` run earlier in the module; it also
-        ``DROP TABLE findings`` in one branch which would leak schema state.
-      - test_findings_doctor.py has the same ``count == 0`` + DROP TABLE
-        pattern for the doctor detector.
-      - test_findings_critique.py asserts ``count == 0`` for critique.
-
-    Several other consumers (test_commands_workflow.py,
-    test_findings_pr_risk.py, test_pr_risk_author.py) already wrap mutation
-    in try/finally + restore, so module-scope file-content reuse would
-    *probably* be safe — but the findings-registry coupling is the
-    immediate blocker. Per-file overrides (17 files already do this via
-    tmp_path_factory) remain the canonical optimisation for hot-spot
-    consumer files; do NOT re-attempt centralised promotion without first
-    decoupling the findings-registry tests (e.g. autouse ``DELETE FROM
-    findings`` fixture in each findings-* module).
-    """
-    monkeypatch.chdir(python_project)
-    out, rc = index_in_process(python_project)
+    monkeypatch.chdir(repo)
+    out, rc = index_in_process(repo)
     assert rc == 0, f"roam index failed:\n{out}"
-    return python_project
+    return repo
 
 
 def make_src_project(tmp_path, files, *, src_dir="src"):
