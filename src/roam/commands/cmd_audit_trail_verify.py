@@ -340,7 +340,7 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
     # disclosure. ``partial_success`` flips on non-empty bucket.
     #
     # Triad-quartet milestone: with W607-AD (cmd_attest), W607-AE
-    # (cmd_pr_bundle), W607-AF (cmd_cga in flight) and now W607-AI
+    # (cmd_pr_bundle), W607-AF (cmd_cga) and now W607-AI
     # (cmd_audit_trail_verify), the producer + composer + signer +
     # verifier of the cryptographic-attestation path are all W607-
     # plumbed. A raise anywhere in {sign, hash, write, verify} now

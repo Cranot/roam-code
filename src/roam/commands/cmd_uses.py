@@ -179,7 +179,7 @@ def uses(ctx, name, full):
     # SYMBOL-RELATIONS TRIO pairing analogue -- this is the third leg
     # closure at the aggregation layer:
     #   cmd_uses    (W607-U substrate + W607-DE THIS -- agg added)
-    #   cmd_deps    (W607-V substrate + W607-DB in flight -- agg pending)
+    #   cmd_deps    (W607-V substrate + W607-DB landed -- agg added)
     #   cmd_relate  (W607-W substrate + W607-DA landed -- agg added)
     # After DE lands, all 3 members have aggregation-phase layer.
     #

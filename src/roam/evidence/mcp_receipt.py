@@ -19,10 +19,10 @@ Design mirrors ``EvidenceArtifact`` in spirit:
   ``redactions[]`` at construction time.
 * Deterministic JSON serialisation and a stable sha256 content hash.
 
-Race-condition note: W182 (ActorRef on ChangeEvidence) is in flight at
-the time of writing. This module references the actor as a plain
-``actor_ref_id: str | None`` so it can land independently. When W182
-arrives, a follow-up wave can tighten the type.
+Historical note: W182 (ActorRef on ChangeEvidence) landed in a sibling
+wave. This module references the actor as a plain
+``actor_ref_id: str | None`` for compatibility; a follow-up could
+tighten the type to the ActorRef dataclass directly.
 
 NON-GOALS:
 

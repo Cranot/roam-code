@@ -2718,13 +2718,13 @@ def _derive_limitations(evidence) -> tuple[str, ...]:
 # tables in the PR Replay report. Each helper is a pure function so the
 # renderer stays deterministic.
 #
-# Race-condition note: W190 (the collector materialisation) is in flight.
-# When the collector has populated the refs, these helpers render rich
-# tables. When the collector hasn't yet populated them, the actors helper
-# falls back to the legacy flat ``agent_id`` / ``human_actor`` fields so
-# reviewers still see SOME identity surface; authorities and environment
-# fall back to a "no X recorded" sentinel because they have no legacy
-# scalar equivalent on ``ChangeEvidence``.
+# Fallback chain: when the collector has populated the refs (W190),
+# these helpers render rich tables. When the collector hasn't populated
+# them (legacy bundles, partial-evidence paths), the actors helper falls
+# back to the flat ``agent_id`` / ``human_actor`` fields so reviewers
+# still see SOME identity surface; authorities and environment fall back
+# to a "no X recorded" sentinel because they have no legacy scalar
+# equivalent on ``ChangeEvidence``.
 # ---------------------------------------------------------------------------
 
 

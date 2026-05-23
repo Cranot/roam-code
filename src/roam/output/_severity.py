@@ -566,8 +566,6 @@ __all__ = [
     "to_sarif_level",
     "severity_rank",
     "validate_severity",
-    # W565
     "severity_to_confidence_level",
-    # W566
     "severity_breakdown",
 ]
