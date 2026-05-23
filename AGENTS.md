@@ -24,13 +24,14 @@ Authoritative counts (AST-derived, env-independent): `command_count: 241 · cano
 
 ## Where files go (private vs public)
 
-This repo is public. The default-deny gitignore policy makes the location choice mechanical:
+This repo is public. The placement rule is physical, not pattern-based:
 
-- **`internal/`** (folder-wide gitignored) — **default for all planning artifacts.** Session memos, sprint plans, release-readiness drafts, monetization research, dogfood batches, smoke results, scratch notes. Sub-conventions: `internal/dogfood/` (eval corpus), `internal/planning/` (session/sprint/release memos). Write here unless you have a positive reason to publish.
-- **`dev/`** (default-deny, whitelist-only) — public dev artifacts: tracked dev scripts, the example plugin, and a curated set of public docs (`ARCHITECTURE-FUTURES.md`, `BACKLOG.md`, `ROADMAP.md`, `MCP-SECURITY-POSTURE.md`, `D2-SCIP-SPIKE-*.md`, `D3-FEDERATED-GRAPHS-SPIKE-*.md`). Adding a NEW file here requires an explicit `!dev/<path>` line in `.gitignore` — that edit IS the code-review checkpoint for "is this content safe to publish?".
-- **Source tree** (`src/`, `tests/`, `templates/`, root files) — public by default.
+- **`internal/`** — the ONE private folder. Wholesale gitignored. Everything that shouldn't be on GitHub goes here: session memos, sprint plans, release-readiness drafts, monetization research, dogfood batches, smoke results, generated test fixtures, scratch notes, anything you'd be uncomfortable seeing in a public diff. Sub-conventions: `internal/dogfood/` (eval corpus), `internal/planning/` (session / sprint / release memos).
+- **Everything else** — public by default. `src/`, `tests/`, `templates/`, `dev/`, root files. No magic in the gitignore, no whitelists, no per-extension rules.
 
-Anti-pattern (Pattern 2: silent fallback) the repo used to have: enumerative dev/ gitignore that listed templated patterns to exclude (`OVERNIGHT-*`, `HANDOVER-*`, …), so any new memo family whose filename didn't match defaulted to *tracked*. Fixed by flipping to default-deny + explicit whitelist (2026-05-23).
+When in doubt about a file: if it's a planning artifact or session-cadence output, write it under `internal/`. If you intend it to be public, write it in the appropriate public folder.
+
+Anti-pattern history: the repo used to mix private memos into `dev/` and try to keep them out via an enumerative gitignore (`dev/OVERNIGHT-*`, `dev/HANDOVER-*`, …). Any new memo family whose filename didn't match a templated pattern slipped through as tracked. Fixed 2026-05-23 by flipping to the rule above: one private folder, no pattern magic.
 
 ## Quality discipline (from `internal/dogfood/` + agi-in-md)
 

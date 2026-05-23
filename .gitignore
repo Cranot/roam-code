@@ -88,47 +88,11 @@ internal/
 # Claude Code internal state (lockfiles, scheduled tasks, etc.)
 .claude/
 
-# dev/ policy: DEFAULT-DENY for everything. Only files/dirs explicitly
-# whitelisted below are tracked. New extensions, new memos, new fixtures,
-# new dotfiles — all auto-ignored. Session memos, sprint plans, monetization
-# research, dogfood batches, smoke results: write to internal/planning/
-# (already folder-wide ignored via the `internal/` rule above).
-#
-# To make a new dev/ artifact public: add an explicit `!dev/<path>` line.
-dev/*
-
-# Public docs (curated; referenced from README/AGENTS.md/landing-page):
-!dev/ARCHITECTURE-FUTURES.md
-!dev/BACKLOG.md
-!dev/ROADMAP.md
-!dev/MCP-SECURITY-POSTURE.md
-!dev/D2-SCIP-SPIKE-*.md
-!dev/D3-FEDERATED-GRAPHS-SPIKE-*.md
-
-# Public dev tools (scripts referenced by tests, CI, or docs):
-!dev/audit_session_tool_usage.py
-!dev/build_command_reference.py
-!dev/build_readme_counts.py
-!dev/command_audit.py
-!dev/compatibility-baseline.json
-!dev/dogfood_dedup_check.py
-!dev/env_doctor.py
-!dev/generate_terminal_demo_gif.py
-!dev/pin_github_actions.sh
-!dev/profile-mcp-import.py
-!dev/quality_baseline.ps1
-!dev/repo_hygiene.py
-!dev/roam-bench.py
-!dev/roam_smoke.py
-!dev/todo_guard.py
-
-# Public example plugin (subtree referenced from AGENTS.md plugin section):
-!dev/example-plugin
-!dev/example-plugin/**
-# ...but keep python build artifacts out of it (the !dev/example-plugin/**
-# above would otherwise override the top-of-file __pycache__/ + *.pyc rules):
-dev/example-plugin/**/__pycache__/
-dev/example-plugin/**/*.py[cod]
+# dev/ has NO special rules. Everything in dev/ is public — public dev
+# scripts, public docs, the example plugin subtree. Private content
+# (planning memos, sprint plans, monetization research, dogfood batches,
+# generated test fixtures, smoke results, scratch notes) goes under
+# internal/ — the wholesale-ignored folder above. No magic.
 
 # Stoa session profile (per-machine local state)
 .stoa/
