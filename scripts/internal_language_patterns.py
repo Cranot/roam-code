@@ -175,9 +175,12 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     ),
     # Fork-author attribution. Credit goes via LICENSE/CONTRIBUTING, not by
     # name-dropping individual GitHub handles in shipped code.
+    # NOTE: the regex pattern source is intentionally split with `+` so the
+    # individual names embedded in this catalog file don't trip a future
+    # blob-level scrub of the same strings.
     (
         "Fork-author attribution",
-        re.compile(r"upstream fork|upstream fork|credit upstream fork author|credit upstream fork author"),
+        re.compile(r"@Lukas" + r"Berka|@river" + r"-mounts|credit Lukas" + r" Berka|credit Sam" + r" Hannan"),
     ),
     # "cash path" / "revenue path" — internal revenue framing.
     (
