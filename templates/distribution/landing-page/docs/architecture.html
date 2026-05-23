@@ -78,6 +78,21 @@
       <strong>Inside vs gateway.</strong> Roam is the <em>server</em> in the MCP layering: it emits <code>McpDecisionReceipt</code> per sensitive tool call, the HMAC-chained run ledger, and the <code>ChangeEvidence</code> packet. Hosts (Claude Code, Cursor) own per-call approval; gateways own policy + correlation + audit aggregation; Roam ships the structured evidence stream those layers consume. See the <a href="https://github.com/Cranot/roam-code/discussions/37">MCP layering discussion</a> for the full split.
     </div>
 
+    <section id="rag-vs-substrate">
+      <h2>RAG vs Substrate</h2>
+      <p>
+        Two ways to feed code to an agent. RAG retrieves chunks based on embedding similarity; Roam retrieves <em>symbols</em> based on graph structure. The substrate model is what makes Roam queries graph-precise &mdash; no string/comment false positives, no embedding drift, deterministic relevance.
+      </p>
+<pre><code>RAG (embedding-based)        |  Roam (substrate-based)
+-----------------------------+------------------------------
+agent -&gt; embed -&gt; vector DB  |  agent -&gt; graph query
+    -&gt; top-k chunks          |     -&gt; ranked symbols
+    -&gt; hope it is relevant   |     -&gt; graph-precise refs
+                             |
+chunks have no edges         |  edges are first-class
+similarity != relevance      |  PageRank == importance</code></pre>
+    </section>
+
     <section id="pipeline">
       <h2>Pipeline at a Glance</h2>
 <pre><code>Repository ──&gt; Index Pipeline ──&gt; SQLite Storage

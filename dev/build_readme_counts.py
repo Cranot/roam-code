@@ -87,7 +87,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from roam.surface_counts import (  # noqa: E402
+from roam.surface_counts import (  # noqa: E402, I001
     cli_surface_counts,
     mcp_surface_counts,
     mcp_tool_descriptions,
