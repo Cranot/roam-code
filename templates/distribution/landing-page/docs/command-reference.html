@@ -139,12 +139,12 @@
       <table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td><code>roam search &lt;pattern&gt;</code></td><td>FTS5 symbol search (BM25-ranked, qname-aware)</td></tr>
+          <tr><td><code>roam search &lt;pattern&gt;</code></td><td>Symbol search by name substring; BM25/FTS5 reranking when <code>--explain</code> is set</td></tr>
           <tr><td><code>roam symbol &lt;name&gt;</code></td><td>Show symbol definition, callers, and callees</td></tr>
           <tr><td><code>roam file &lt;path&gt;</code></td><td>Detailed file info: complexity, ownership, recent changes</td></tr>
           <tr><td><code>roam impact &lt;name&gt;</code></td><td>Caller list — what breaks if you change this symbol</td></tr>
           <tr><td><code>roam trace &lt;a&gt; &lt;b&gt;</code></td><td>k-shortest paths between two symbols in the call graph</td></tr>
-          <tr><td><code>roam tour</code></td><td>Walk through the most architecturally-central symbols</td></tr>
+          <tr><td><code>roam tour</code></td><td>Onboarding tour: top symbols, reading order, entry points, language breakdown, stats</td></tr>
           <tr><td><code>roam diagnose &lt;name&gt;</code></td><td>Root-cause ranking for a failing symbol</td></tr>
           <tr><td><code>roam ask "&lt;question&gt;"</code></td><td>Natural-language intent dispatch over the recipe registry</td></tr>
         </tbody>
@@ -189,11 +189,11 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam taint</code></td><td>Graph-reach BFS for vulnerability reachability (OpenVEX-correct)</td></tr>
-          <tr><td><code>roam vuln-reach</code></td><td>Map a CVE to reachable code paths</td></tr>
-          <tr><td><code>roam adversarial</code></td><td>Attack-surface review per symbol</td></tr>
+          <tr><td><code>roam vuln-reach</code></td><td>Query reachability of ingested vulnerabilities; <code>--cve</code> scopes to one CVE, <code>--from</code> to one entry point</td></tr>
+          <tr><td><code>roam adversarial</code></td><td>Adversarial architecture review — challenges your changes by composing diff + cycles + clusters + layers + detectors</td></tr>
           <tr><td><code>roam cga emit</code></td><td>Sign an in-toto v1 Code Graph Attestation</td></tr>
           <tr><td><code>roam cga verify</code></td><td>Verify a CGA attestation (cosign-aware)</td></tr>
-          <tr><td><code>roam attest</code></td><td>SLSA-style provenance for the index itself</td></tr>
+          <tr><td><code>roam attest</code></td><td>Proof-carrying PR attestation — bundles diff, risk, breaking changes, and fitness for a commit range</td></tr>
         </tbody>
       </table>
     </section>
@@ -205,7 +205,7 @@
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
           <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; 227 in <code>full</code>)</td></tr>
-          <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
+          <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, Codex CLI</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
           <tr><td><code>roam skill-generate</code></td><td>Emit a SKILL.md file from the Capability Registry</td></tr>
