@@ -491,7 +491,9 @@ correction, `surface --json` top-level keys completion, and
 roam supports third-party `roam-plugin-*` packages — the substrate is in
 `src/roam/plugins/` and the reference example is at `dev/example-plugin/`.
 Framework-specific knowledge (nextjs, laravel, prisma, django, …) should ship
-as a plugin rather than landing in core.
+as a plugin rather than landing in core. Plugin-registered commands do NOT count
+toward the "241 commands" headline (W319) — the figure pins core-tree commands
+only; the plugin count surfaces separately in `roam plugins list`.
 
 **Entry-point pattern.** Plugins register via Python entry points; roam
 walks the `roam.plugins` group at startup:
@@ -513,7 +515,14 @@ exposes typed methods for each extension point:
 | `ctx.register_detector(task_id, way_id, detect_fn)`                             | Add an algorithm-catalog detector.                    |
 | `ctx.register_language_extractor(language, factory, *, extensions, grammar_alias)` | Add a per-language symbol/reference extractor.     |
 | `ctx.register_framework_detector(detect_fn)`                                    | Detect which framework a project uses.                |
+| `ctx.register_framework_profile(profile)`                                       | Bundle a detector + file patterns + recommended commands + conventions (W123/Wave28.3 — preferred over the bare detector; internally also calls `register_framework_detector`). |
 | `ctx.register_bridge(bridge)`                                                   | Add a cross-language reference bridge.                |
+
+**W56 contract.** `register_framework_detector`'s `detect_fn` MUST be typed
+`Callable[[pathlib.Path], Optional[str]]`. roam coerces `cwd` to `Path` before
+calling, but plugin authors who pass a bare `str` in unit tests crash at
+`project_root / "Gemfile"`. Annotate `project_root: Path` so `mypy` warns
+callers at the boundary.
 
 **Minimal example.** See `dev/example-plugin/`:
 
@@ -533,6 +542,12 @@ load a plugin without installing it via the env channel:
 ```bash
 PYTHONPATH=dev/example-plugin ROAM_PLUGIN_MODULES=roam_plugin_example roam plugins list
 ```
+
+**Observability triad.** Three commands surface what discovery saw:
+`roam plugins list` (every loaded plugin + contributed capabilities),
+`roam plugins info <name>` (per-plugin detail — commands / detectors /
+extractors / bridges / profiles), `roam plugins doctor` (CI-friendly
+exit code on failed loads — use in your plugin's release pipeline).
 
 Full typed surface lives in `src/roam/plugins/registry.py`. Tests live in
 `tests/test_plugin_substrate.py` and `tests/test_plugin_discovery.py`.
