@@ -43,6 +43,30 @@ from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
 
+def _bfs_neighbors(G, start, depth: int, neighbors_fn) -> set:
+    """Bounded BFS over a graph: collect every node reachable from
+    ``start`` within ``depth`` hops via the chosen direction
+    (``G.predecessors`` for upstream callers, ``G.successors`` for
+    downstream callees). The start node is excluded from the result.
+
+    Used by ``cmd_diagnose`` for the upstream/downstream suspect walks;
+    factored out so the two walks share one parameterised loop instead
+    of two near-identical 5-level-deep nestings (R-deepnest 2026-05-23)."""
+    out: set = set()
+    frontier = {start}
+    for _ in range(depth):
+        next_frontier: set = set()
+        for nid in frontier:
+            if nid not in G:
+                continue
+            for nb in neighbors_fn(nid):
+                if nb != start and nb not in out:
+                    out.add(nb)
+                    next_frontier.add(nb)
+        frontier = next_frontier
+    return out
+
+
 def _get_symbol_metrics(conn, sym_id):
     """Fetch complexity and churn for a symbol."""
     sm = conn.execute(
@@ -774,31 +798,12 @@ def diagnose(ctx, name, depth, batch_input):
             },
         )
 
-        # Upstream callers (predecessors in call graph) up to depth hops
-        upstream_ids = set()
-        frontier = {sym_id}
-        for _ in range(depth):
-            next_frontier = set()
-            for nid in frontier:
-                if nid in G:
-                    for pred in G.predecessors(nid):
-                        if pred != sym_id and pred not in upstream_ids:
-                            upstream_ids.add(pred)
-                            next_frontier.add(pred)
-            frontier = next_frontier
-
-        # Downstream callees (successors) up to depth hops
-        downstream_ids = set()
-        frontier = {sym_id}
-        for _ in range(depth):
-            next_frontier = set()
-            for nid in frontier:
-                if nid in G:
-                    for succ in G.successors(nid):
-                        if succ != sym_id and succ not in downstream_ids:
-                            downstream_ids.add(succ)
-                            next_frontier.add(succ)
-            frontier = next_frontier
+        # Upstream callers (predecessors) + downstream callees (successors)
+        # both reach via a bounded BFS over the call graph. The helper
+        # below replaces 2 near-identical 5-level-deep loops with one
+        # parameterised walk (R-deepnest cleanup, 2026-05-23).
+        upstream_ids = _bfs_neighbors(G, sym_id, depth, G.predecessors)
+        downstream_ids = _bfs_neighbors(G, sym_id, depth, G.successors)
 
         # Rank upstream by risk score
         def _build_ranked(sym_ids, direction):
