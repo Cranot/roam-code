@@ -798,6 +798,96 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     return matched
 
 
+def _bm_pick_class_constructor(candidates: list[dict], source_file: str, name: str, ref_kind: str) -> dict | None:
+    """For `call` references with an uppercase name (constructor-call pattern),
+    prefer a class candidate over other kinds. Selection order within the
+    class subset: same-file -> same-dir -> first[0]. Returns None to fall
+    through to the locality ladder when ref_kind/name don't match the
+    constructor heuristic OR no class candidates exist."""
+    if ref_kind != "call" or not name or not name[0].isupper():
+        return None
+    class_candidates = [c for c in candidates if c.get("kind") == "class"]
+    if not class_candidates:
+        return None
+    for sym in class_candidates:
+        if sym.get("file_path") == source_file:
+            return sym
+    source_dir = os.path.dirname(source_file) if source_file else ""
+    for sym in class_candidates:
+        if os.path.dirname(sym.get("file_path", "")) == source_dir:
+            return sym
+    return class_candidates[0]
+
+
+def _bm_pick_same_file(candidates: list[dict], source_file: str, source_parent: str) -> dict | None:
+    """Locality #1 — prefer candidates in the same file as the source ref.
+    With multiple matches AND a non-empty source_parent (Rust `MyStruct::`
+    / Go method-on-receiver), the W742-style tiebreak picks whichever
+    candidate's qualified_name starts with the same parent. Singleton
+    same-file match wins outright."""
+    same_file = [s for s in candidates if s.get("file_path") == source_file]
+    if not same_file:
+        return None
+    if len(same_file) == 1:
+        return same_file[0]
+    if source_parent:
+        for s in same_file:
+            qn = s.get("qualified_name", "")
+            if qn.startswith(source_parent + "::") or qn.startswith(source_parent + "."):
+                return s
+    return same_file[0]
+
+
+def _bm_pick_same_dir(candidates: list[dict], source_file: str) -> dict | None:
+    """Locality #2 — prefer candidates in the same directory as the source
+    ref. Within the same-dir subset, exported symbols (canonical
+    definitions) beat local bindings (destructured imports). Returns None
+    when no candidates share the source directory."""
+    source_dir = os.path.dirname(source_file) if source_file else ""
+    same_dir = [s for s in candidates if os.path.dirname(s.get("file_path", "")) == source_dir]
+    if not same_dir:
+        return None
+    exported = [s for s in same_dir if s.get("is_exported")]
+    if exported:
+        return exported[0]
+    return same_dir[0]
+
+
+def _bm_pick_import_matched(
+    candidates: list[dict],
+    import_map: dict[tuple[str, str], str],
+    source_file: str,
+    name: str,
+) -> dict | None:
+    """Locality #3 — when an import map records `(source_file, name) ->
+    import_path`, narrow the candidate pool to the import-path-matched
+    subset via `_match_import_path`. Exported preferred within that subset.
+    Returns None when no import path is recorded OR no candidates match."""
+    imp_path = import_map.get((source_file, name))
+    if not imp_path:
+        return None
+    import_matched = _match_import_path(imp_path, candidates)
+    if not import_matched:
+        return None
+    exported = [s for s in import_matched if s.get("is_exported")]
+    if exported:
+        return exported[0]
+    return import_matched[0]
+
+
+def _bm_pick_canonical_fallback(candidates: list[dict]) -> dict:
+    """Locality #4 — global fallback. Prefer exported symbols, then bias
+    by `_path_score` so `src/lib/` paths win over `dev/scripts/tests`
+    (prevents a dev/ helper defining its own ``open_db`` from shadowing
+    `src/roam/db/connection.py:open_db` when the dev file is indexed
+    first). Final tiebreak: deterministic by qualified_name. Always
+    returns SOMETHING — the caller has already screened for empty
+    candidates."""
+    exported = [s for s in candidates if s.get("is_exported")]
+    pool = exported or candidates
+    return min(pool, key=lambda s: (-_path_score(s.get("file_path") or ""), s.get("qualified_name") or ""))
+
+
 def _best_match(
     name: str,
     source_file: str,
@@ -806,73 +896,39 @@ def _best_match(
     source_parent: str = "",
     import_map: dict[tuple[str, str], str] | None = None,
 ) -> dict | None:
-    """Find the best matching symbol for a name, preferring locality."""
+    """Find the best matching symbol for a name, preferring locality.
+
+    Resolution ladder (first non-None wins):
+      1. Class-constructor preference (uppercase-name `call` ref)
+      2. Same-file (parent-aware tiebreak)
+      3. Same-directory (exported-preferred)
+      4. Import-path-narrowed (when import_map records the source's import)
+      5. Canonical global fallback (path-score + qualified_name tiebreak)
+
+    Empty-candidates and singleton-candidates fast-paths short-circuit
+    the ladder. The class-constructor branch sits ABOVE same-file so an
+    uppercase `MyClass()` call resolves to the class even when a
+    same-file helper coincidentally shares the name.
+    """
     candidates = symbols_by_name.get(name, [])
     if not candidates:
         return None
     if len(candidates) == 1:
         return candidates[0]
-
-    # For call references with an uppercase name, prefer class (constructor call pattern)
-    if ref_kind == "call" and name and name[0].isupper():
-        class_candidates = [c for c in candidates if c.get("kind") == "class"]
-        if class_candidates:
-            for sym in class_candidates:
-                if sym.get("file_path") == source_file:
-                    return sym
-            source_dir = os.path.dirname(source_file) if source_file else ""
-            for sym in class_candidates:
-                if os.path.dirname(sym.get("file_path", "")) == source_dir:
-                    return sym
-            return class_candidates[0]
-
-    # Prefer same file — with parent-aware tie-breaking for Rust/Go impl blocks
-    same_file = [s for s in candidates if s.get("file_path") == source_file]
-    if len(same_file) == 1:
-        return same_file[0]
-    if len(same_file) > 1:
-        # If source has a parent (e.g. MyStruct::some_method calling new()),
-        # prefer the candidate whose qualified_name starts with the same parent
-        if source_parent:
-            for s in same_file:
-                qn = s.get("qualified_name", "")
-                if qn.startswith(source_parent + "::") or qn.startswith(source_parent + "."):
-                    return s
-        return same_file[0]
-
-    # Prefer same directory — with exported definitions over local bindings
-    source_dir = os.path.dirname(source_file) if source_file else ""
-    same_dir = [s for s in candidates if os.path.dirname(s.get("file_path", "")) == source_dir]
-    if same_dir:
-        # Prefer exported symbols (canonical definitions, not destructured imports)
-        exported = [s for s in same_dir if s.get("is_exported")]
-        if exported:
-            return exported[0]
-        return same_dir[0]
-
-    # Import-aware resolution: use import path data to narrow candidates
+    constructor = _bm_pick_class_constructor(candidates, source_file, name, ref_kind)
+    if constructor is not None:
+        return constructor
+    same_file = _bm_pick_same_file(candidates, source_file, source_parent)
+    if same_file is not None:
+        return same_file
+    same_dir = _bm_pick_same_dir(candidates, source_file)
+    if same_dir is not None:
+        return same_dir
     if import_map:
-        imp_path = import_map.get((source_file, name))
-        if imp_path:
-            import_matched = _match_import_path(imp_path, candidates)
-            if import_matched:
-                # Prefer exported among import-matched candidates
-                exported = [s for s in import_matched if s.get("is_exported")]
-                if exported:
-                    return exported[0]
-                return import_matched[0]
-
-    # Fall back: prefer exported symbols globally, with a canonical-path
-    # bias as a tiebreak. Without the bias a dev/ helper script that
-    # defines its own ``open_db`` shadows the canonical
-    # ``src/roam/db/connection.py:open_db`` whenever the dev file is
-    # indexed first (e.g. alphabetically). The order is:
-    # 1) src/lib/ paths win over dev/scripts/tests
-    # 2) exported wins over local
-    # 3) deterministic by qualified_name as last tiebreak
-    exported = [s for s in candidates if s.get("is_exported")]
-    pool = exported or candidates
-    return min(pool, key=lambda s: (-_path_score(s.get("file_path") or ""), s.get("qualified_name") or ""))
+        import_matched = _bm_pick_import_matched(candidates, import_map, source_file, name)
+        if import_matched is not None:
+            return import_matched
+    return _bm_pick_canonical_fallback(candidates)
 
 
 def _closest_symbol(
