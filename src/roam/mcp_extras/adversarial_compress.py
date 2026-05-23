@@ -7,10 +7,9 @@ path. The adversarial command already emits structured *challenges*
 "defend this choice" ``question`` field). This module re-frames those
 challenges for the agent's own model in two modes:
 
-* **defend** — the "Dungeon Master" intent from
-  ``dev/ARCHITECTURE-FUTURES.md`` §B6: collapse N structured challenges
-  into one sharp adversarial brief that pressures the change author to
-  justify the structural choices.
+* **defend** — the "Dungeon Master" intent: collapse N structured
+  challenges into one sharp adversarial brief that pressures the change
+  author to justify the structural choices.
 * **digest** — the context-budget intent: prime the generic sampling
   summariser with adversarial-domain ``task`` framing so a 40+ challenge
   envelope compresses to a 1-3 KB triage briefing led by the

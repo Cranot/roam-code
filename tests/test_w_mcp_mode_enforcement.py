@@ -1,6 +1,6 @@
 """MCP-P0.2 — 4-mode policy enforcement at the MCP boundary.
 
-Per ``dev/BACKLOG.md`` MCP-P0.2: the 4-mode substrate
+MCP-P0.2 motivation: the 4-mode substrate
 (`read_only` / `safe_edit` / `migration` / `autonomous_pr`) is wired into
 ``mcp_server.py`` so the MCP boundary actually gates destructive tool
 calls instead of unconditionally hard-coding ``policy_decision="allow"``.

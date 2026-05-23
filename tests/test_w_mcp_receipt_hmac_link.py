@@ -1,6 +1,6 @@
 """MCP-P0.3 — HMAC-link MCP receipts to the signed event stream.
 
-Per ``dev/BACKLOG.md`` MCP-P0.3. Before P0.3, MCP receipts at
+MCP-P0.3 motivation. Before P0.3, MCP receipts at
 ``.roam/mcp_receipts/<run_id>/<tool_call>.json`` lived OUTSIDE the
 HMAC-chained run ledger — flipping a byte in a receipt JSON file was
 undetectable. P0.3 wires:

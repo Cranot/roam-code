@@ -4,9 +4,9 @@ Combines the spectral analysis in ``roam.graph.spectral`` (Fiedler vector /
 algebraic connectivity / spectral gap) with the trend-projection approach used
 by ``roam.commands.cmd_forecast`` (Theil-Sen regression over snapshot history).
 
-The thesis (per ``dev/ARCHITECTURE-FUTURES.md`` B8): count-based metrics
-(cycles, avg_complexity, dead_exports) tell you a codebase is degrading *after*
-the damage is structural. Algebraic connectivity (lambda2, the spectral gap)
+The thesis: count-based metrics (cycles, avg_complexity, dead_exports) tell
+you a codebase is degrading *after* the damage is structural. Algebraic
+connectivity (lambda2, the spectral gap)
 tells you a graph is *losing its modular separation* — clusters that used to be
 distinct are merging into one tangled blob. A declining spectral gap is an
 early warning that count-based metrics have not yet caught.

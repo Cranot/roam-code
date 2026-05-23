@@ -1,7 +1,6 @@
 """MCP-P1.2 — prompt-injection marker scan on the MCP receipt egress boundary.
 
-Per ``dev/BACKLOG.md`` MCP-P1.2 (the last queued item on the MCP
-runtime-security punch-list): the egress redaction layer historically only
+MCP-P1.2 motivation: the egress redaction layer historically only
 scanned for structural *secret* patterns. MCP-P1.2 adds a coarse, conservative
 prompt-injection marker scan over MCP tool-call output bytes.
 

@@ -69,8 +69,8 @@ refreshed by W1297 + W847):
 * L887 ``"severity": fitns.get("severity", "WARNING")`` (fitness
   fall-through default)
 
-Each is gated by the cmd_preflight migration in flight (see
-``dev/BACKLOG.md`` W759). The drift-guard pins them in
+Each is gated by the cmd_preflight migration in flight (tracked as
+W759). The drift-guard pins them in
 :data:`_PRE_W762_PENDING` so the lint is shipped fail-loud but
 non-blocking until W759 lands.
 

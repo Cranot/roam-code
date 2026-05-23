@@ -107,7 +107,7 @@ def test_writeable_file_sets_are_disjoint() -> None:
     assert not overlap, (
         "Both count-drift scripts claim to whole-file-write: "
         f"{sorted(p.relative_to(ROOT).as_posix() for p in overlap)}. "
-        "Pick one writer per file (see docstrings + dev/BACKLOG.md W23.1 note)."
+        "Pick one writer per file (see docstrings + W23.1 note)."
     )
 
 

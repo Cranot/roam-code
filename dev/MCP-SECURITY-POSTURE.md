@@ -418,10 +418,8 @@ follow-on.
 
 ## Roadmap
 
-Source of truth: `dev/BACKLOG.md` § "MCP runtime security — surfaced
-2026-05-18". The items below are quoted at the granularity a gateway
-integrator needs to plan around; consult BACKLOG for the implementation
-detail.
+The items below are quoted at the granularity a gateway integrator
+needs to plan around.
 
 ### P0 — claim-integrity (shipped today)
 
@@ -478,8 +476,6 @@ detail.
   - `templates/distribution/landing-page/docs/mcp-usage.html` § `#security-stance`.
   - Discussion #37 — public reply at
     `https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163`.
-- Internal roadmap
-  - `dev/BACKLOG.md` § "MCP runtime security — surfaced 2026-05-18".
 
 ---
 

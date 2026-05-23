@@ -1,6 +1,6 @@
 """MCP-P0.1 — egress secret redaction on the MCP receipt boundary.
 
-Per ``dev/BACKLOG.md`` MCP-P0.1: ``redact_secrets_in_string`` ships in
+MCP-P0.1 motivation: ``redact_secrets_in_string`` ships in
 ``src/roam/security/redact.py`` with 7 patterns (GitHub PAT, fine-grained
 PAT, sk-prefix, AWS AKIA, Bearer, PEM, JWT) but historically was never
 wired into the MCP egress path. This test pins the fix:

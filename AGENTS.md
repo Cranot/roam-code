@@ -438,10 +438,7 @@ correction, `surface --json` top-level keys completion, and
 - `src/roam/evidence/mcp_receipt.py` - canonical `McpDecisionReceipt` dataclass
 - `scripts/export_mcp_receipt_schema.py` - JSON Schema Draft 2020-12 emitter (P2.2)
 - https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163 - public reply on the runtime-security posture
-- `(internal memo)`  - active strategy command center (framing, launch, build queue). Private — gitignored; not shipped to PyPI/GitHub.
-- `dev/BACKLOG.md`                   - what's queued / still TODO
-- `dev/ROADMAP.md` tier four-star    - strategic items not yet started (R21 leases done; R25 plugin still open)
-- `internal/dogfood/SYNTHESIS-2026-05-12.md` - dogfood corpus (private — gitignored)
+- Strategic planning, engineering ledger, dogfood corpus, and other internal-cadence memos live under `internal/` (folder-wide gitignored). Read the newest files there at session start.
 
 ## Conventions
 

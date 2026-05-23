@@ -33,9 +33,8 @@ R22 finding-triple API (NEW):
     Wrap every list-of-findings entry in a ``{value, confidence,
     reason}`` triple so agents can weight signals at consumption time
     rather than having to re-derive a confidence label from raw
-    metrics. This is dev/BACKLOG R22 — pilot scope: five commands
-    (`smells`, `clones`, `vulns`, `orphan-imports`, `complexity`); full
-    sweep follows.
+    metrics. Pilot scope: five commands (`smells`, `clones`, `vulns`,
+    `orphan-imports`, `complexity`); full sweep follows.
 
 Shape::
 

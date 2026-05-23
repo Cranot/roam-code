@@ -38,8 +38,8 @@ This lint pins two invariants going forward:
 The dashboard-filtering trio (W1060 + W1061 + W1062 + followups) is the
 canonical OASIS-spec advisory-warning + tag + override plumb consumers
 expect. Drift here means new emitters silently regress the
-dashboard-filter axis. See ``dev/BACKLOG.md`` entries W1060 / W1061 /
-W1062 / W1062-followup / W1087.
+dashboard-filter axis. Tracked under W1060 / W1061 / W1062 /
+W1062-followup / W1087.
 
 Companion lint: ``tests/test_w365_tool_metadata_annotations_parity.py``
 (the W365 MCP ``ToolAnnotations`` parity lint that this test's

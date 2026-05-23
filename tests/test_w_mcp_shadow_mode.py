@@ -1,6 +1,6 @@
 """MCP-P1.1 — shadow-mode (``ROAM_MODE_DRY_RUN``) preview of policy enforcement.
 
-Per ``dev/BACKLOG.md`` MCP-P1.1: gateway operators previewing the 4-mode
+MCP-P1.1 motivation: gateway operators previewing the 4-mode
 enforcement policy in production need a way to see WHAT the gate would
 block without actually blocking it. The ``ROAM_MODE_DRY_RUN`` env flag
 flips the deny branch of ``_wrap_with_receipt`` from "build a

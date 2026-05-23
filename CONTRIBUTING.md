@@ -199,11 +199,7 @@ Before picking up work, skim:
 - `CLAUDE.md` — Claude-specific operator guide; mirrors AGENTS.md plus quality
   discipline and the LAW-4 concrete-noun anchor rules enforced by
   `tests/test_law4_lint.py`.
-- `dev/BACKLOG.md` — the sprint queue + shipped history. Good for finding
-  small, well-scoped tasks tagged "drive-by" or "polish".
-- `(internal memo)` — active strategy command center
-  (framing, launch readiness, build priorities). Private — gitignored; not
-  shipped to PyPI/GitHub.
+- GitHub Issues — the public queue for community contributions. Comment on an issue before starting non-trivial work so we can coordinate scope.
 
 ### Reporting Bugs
 
