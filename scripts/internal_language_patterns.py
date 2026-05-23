@@ -149,6 +149,50 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Phase-of-design module docstring",
         re.compile(r"Phase \d+ of (?:the )?[a-z][a-z\- ]+ (?:design|rollout|plan)", re.IGNORECASE),
     ),
+    # Date-stamped internal memo filenames in dev/ (catch-all).
+    # Public dev/ docs are NOT date-suffixed (only MCP-SECURITY-POSTURE.md,
+    # the example-plugin subtree, and dev scripts). Anything matching
+    # ``dev/<ALLCAPS>-YYYY-MM-DD.md`` is session-cadence planning content
+    # that belongs under ``internal/planning/``.
+    (
+        "Date-stamped dev/ memo filename",
+        re.compile(r"\bdev/[A-Z][A-Z0-9_-]*-\d{4}-\d{2}-\d{2}[A-Za-z0-9_-]*\.md\b"),
+    ),
+    # Internal-planning-doc dev/ filenames that exist without date suffix
+    # but are still session/strategy-cadence rather than user-facing.
+    (
+        "Internal-planning dev/ filename",
+        re.compile(
+            r"\bdev/(?:ROAM-STRATEGY|NEXT-BUILD-PRIORITIES|DOCS-CLEANUP-PLAN|"
+            r"SESSION-HANDOVER|MCP-EVOLUTION|MCP-SERVER-CARD|MCP-TASKS-EVAL|"
+            r"MCP-ELICITATION-CANDIDATES|DETECTOR-FP-METHODOLOGY|"
+            r"OWASP-TAINT-RULE-PACK-RESEARCH|CROSSWALK-ADDITIONS|"
+            r"PERF-PHASES|ROADMAP|BACKLOG|ARCHITECTURE-FUTURES|"
+            r"D[0-9]-[A-Z][A-Z0-9_-]+-SPIKE|MONETIZATION-OPPORTUNITIES|"
+            r"NEXT-PRIORITIES|V\d+\.\d+-RELEASE-READINESS|"
+            r"SPRINT-\d{4})\b"
+        ),
+    ),
+    # Fork-author attribution. Credit goes via LICENSE/CONTRIBUTING, not by
+    # name-dropping individual GitHub handles in shipped code.
+    (
+        "Fork-author attribution",
+        re.compile(r"upstream fork|upstream fork|credit upstream fork author|credit upstream fork author"),
+    ),
+    # "cash path" / "revenue path" — internal revenue framing.
+    (
+        "Cash-path framing",
+        re.compile(r"\brevenue path\b|\bthe (?:current )?cash path\b", re.IGNORECASE),
+    ),
+    # Internal/ folder revenue-ops cross-references from shipped code.
+    # ``internal/dogfood/`` and ``internal/smoke/`` references are
+    # legitimate (dogfood corpus is cited extensively in AGENTS.md; smoke
+    # is the output path of dev/roam_smoke.py). Block only the revenue-ops
+    # / planning cross-refs.
+    (
+        "Internal/ folder revenue-ops or planning cross-reference",
+        re.compile(r"\binternal/(?:pr-replay-engagement-playbook|planning/[A-Z])"),
+    ),
 ]
 
 

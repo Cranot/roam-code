@@ -5,8 +5,7 @@ Measures the dogfood ratio: what fraction of tool calls go to `roam_*`
 MCP tools vs always-loaded fallbacks (Bash / Read / Grep / Glob).
 
 Baseline 2026-05-22: 0/218 (0%) across the 6 most-recent transcripts on
-this repo. See `(internal memo)` for full
-analysis and the wiring proposal.
+this repo.
 
 Usage:
   python3 dev/audit_session_tool_usage.py [--project-dir PATH] [--top N]
@@ -185,7 +184,7 @@ def _render_human(report: dict) -> str:
         for name, n in report["roam_tools_by_count"]:
             lines.append(f"  {n:>5}  {name}")
     else:
-        lines.append("  (none — see (internal memo))")
+        lines.append("  (none)")
     lines.append("")
 
     lines.append("Bash usage by intent")

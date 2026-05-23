@@ -1,11 +1,8 @@
-"""Smoke tests for the Django bridge port from `upstream fork/roam-code`.
+"""Smoke tests for the Django bridge port from upstream fork work.
 
-The full upstream-fork test suite is ~3100 LOC across 7 files. This file
-locks in the *contract* — registration, edge-shape, and end-to-end
-indexing of a tiny Django project — without re-creating their entire
-fixture surface. Their test files are in their fork at
-``tests/test_bridge_django.py`` etc. and can be cherry-picked later if
-specific cases regress.
+This file locks in the *contract* — registration, edge-shape, and
+end-to-end indexing of a tiny Django project — without re-creating
+the upstream fixture surface.
 """
 
 from __future__ import annotations

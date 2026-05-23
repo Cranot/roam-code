@@ -14,8 +14,8 @@ Pattern-1 behavior). The bugs we hunt are: HANG (no return), CRASH (uncaught
 traceback), BAD_JSON / EMPTY_STDOUT (Pattern-1C envelope violations in --json).
 
 Usage:  python dev/roam_smoke.py [--timeout 180] [--workers 6]
-Output: dev/roam_smoke_results.jsonl  (incremental, one row per command)
-        dev/ROAM-SMOKE-<date>.md       (human summary of the actionable failures)
+Output: internal/smoke/roam_smoke_results.jsonl  (incremental, one row per command)
+        internal/smoke/roam-smoke-<date>.md      (human summary of the actionable failures)
 Safe to Ctrl-C: partial JSONL survives.
 """
 
@@ -220,7 +220,9 @@ def main() -> int:
     }
 
     date = _dt.date.today().isoformat()
-    md = root / "dev" / f"ROAM-SMOKE-{date}.md"
+    smoke_dir = root / "internal" / "smoke"
+    smoke_dir.mkdir(parents=True, exist_ok=True)
+    md = smoke_dir / f"roam-smoke-{date}.md"
     lines = [f"# roam command smoke - {date}", ""]
     lines.append(f"{len(rows)} commands run argless (`roam --json <cmd>`), {args.timeout}s timeout, stdin=DEVNULL.\n")
     lines.append("## Tally")

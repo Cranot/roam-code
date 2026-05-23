@@ -31,8 +31,7 @@ compliant with any named standard.
 - Use "maps to" or "supports evidence for".
 - Use "audit-ready record" when describing the artifact.
 - Do **not** use "certifies", "makes compliant", "guaranteed", or any phrase
-  that implies a formal attestation. The wider rule is now retained in
-  `(internal memo)`.
+  that implies a formal attestation.
 
 ## Current schema: v1 (`control_mapping/v1`)
 
@@ -215,8 +214,6 @@ on-disk path under an installed `roam-code` wheel).
   [`sample-audit-report.md`](https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-audit-report.md).
 - PR Replay sample report (companion surface, no run ledger):
   [`sample-pr-replay-team.md`](https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md).
-- Strategy + wording guardrails: `(internal memo)`.
-- Current build queue: `(internal memo)`.
 
 ---
 

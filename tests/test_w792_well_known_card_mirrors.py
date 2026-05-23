@@ -1,7 +1,7 @@
 """W792 — Byte-identity guard for the three .well-known MCP card variants.
 
-Three competing path conventions exist for MCP server card discovery (see
-``(internal memo)``, W765-RESEARCH):
+Three competing path conventions exist for MCP server card discovery
+(W765-RESEARCH):
 
 * SEP-1649 nested: ``/.well-known/mcp/server-card.json``
 * SEP-2127 no-suffix: ``/.well-known/mcp-server-card``

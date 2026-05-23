@@ -3,7 +3,7 @@
 The java-sqli rule flags untrusted servlet input flowing into a String-form
 SQL execution sink (Statement.executeQuery / executeUpdate /
 Connection.prepareStatement). Coverage matrix mirrors the W374 fixture
-scenarios from `(internal memo)` T-X03:
+scenarios for T-X03:
 
   1. source -> Statement.executeQuery (positive: should flag)
   2. source -> PreparedStatement.setString -> executeQuery (negative:

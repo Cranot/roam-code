@@ -397,7 +397,7 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     (39, "graph_metrics.eigenvector", _alter("graph_metrics", "eigenvector", "REAL DEFAULT 0")),
     (40, "graph_metrics.clustering_coefficient", _alter("graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")),
     (41, "graph_metrics.debt_score", _alter("graph_metrics", "debt_score", "REAL DEFAULT 0")),
-    # v12.1 — Django framework awareness (ported from upstream fork/roam-code)
+    # v12.1 — Django framework awareness (ported from upstream fork work)
     (42, "symbols.framework_type", _alter("symbols", "framework_type", "TEXT")),
     (43, "symbols.field_type", _alter("symbols", "field_type", "TEXT")),
     (44, "symbols.field_base_type", _alter("symbols", "field_base_type", "TEXT")),

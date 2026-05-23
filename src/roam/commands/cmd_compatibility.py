@@ -1,7 +1,7 @@
 """roam compatibility - detect outbound surface regressions vs a baseline.
 
-W1293 (P1.2 from (internal memo)). Catches the same bug
-class CLAUDE.md Constraint 8 protects against ("Use semantically meaningful
+Catches the same bug class AGENTS.md Constraint 8 protects against
+("Use semantically meaningful
 operation names - closed enumeration") but for OUTBOUND surface contracts
 that users / agents / CI depend on:
 

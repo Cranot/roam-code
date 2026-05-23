@@ -4,7 +4,7 @@ Runs after all files are parsed and edges are resolved. Queries the DB
 to build a cross-file inheritance graph, then batch-updates framework_type
 and field metadata for Django models and custom fields.
 
-Ported from `upstream fork/roam-code` — credit upstream fork author.
+Ported from upstream fork work.
 """
 
 from __future__ import annotations

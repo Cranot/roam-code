@@ -1,7 +1,6 @@
 """``roam boundary`` — public-by-accident exports + changed-range layer violations.
 
-W1295 (P1.3 from (internal memo)). Emits two closed-enum
-finding kinds:
+Emits two closed-enum finding kinds:
 
 * ``public_by_accident`` (severity ``warning``) — a Python symbol whose
   name starts with ``_`` is listed in its module's ``__all__`` (the

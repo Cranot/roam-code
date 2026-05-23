@@ -1,14 +1,12 @@
 # Customer-journey email templates
 
-> Drafts, refreshed 2026-05-18 for the current PR Replay revenue path.
-> Review before sending: fill placeholders, confirm the payment path, and
-> avoid implying the hosted Roam Review app is live until that launch path is
-> ready.
+> Drafts for PR Replay engagements. Review before sending: fill placeholders,
+> confirm the payment path, and avoid implying the hosted Roam Review app is
+> live until that launch path is ready.
 
 Templates covering qualification -> sale -> delivery -> retention -> crisis.
-Each template names the **playbook SOP** it triggers (see
-`internal operator notes`) and the **funnel stage** it
-sits in:
+Each template names the **playbook SOP** it triggers and the **funnel
+stage** it sits in:
 
 ```
 cold-introduce  ->  /audit visit  ->  SOW sign  ->  engagement-kickoff
@@ -21,8 +19,6 @@ cold-introduce  ->  /audit visit  ->  SOW sign  ->  engagement-kickoff
 - `templates/distribution/landing-page/audit.html` — the public buyer page
   emails point to (canonical prices, credit math, tier copy)
 - `templates/legal/sow-pr-replay.md` — the SOW the buyer countersigns
-- `internal operator notes` — the operator SOPs each
-  email triggers
 
 ## Personalisation rules
 

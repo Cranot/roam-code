@@ -7,7 +7,7 @@ errors. The fix is to point each subprocess at the worktree's own index
 file via ``GIT_INDEX_FILE`` rather than letting git fall back to the shared
 ``.git/index`` of the main worktree.
 
-Ported from `upstream fork/roam-code-sf` — credit upstream fork author.
+Ported from upstream fork work.
 """
 
 from __future__ import annotations

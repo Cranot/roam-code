@@ -229,7 +229,6 @@ something to flag.*
 
 ---
 
-*Per the retained agentic-assurance wording in `(internal memo)`,
-Roam **supports evidence for** governance review and **maps to**
+*Roam **supports evidence for** governance review and **maps to**
 change-management controls. The conformity assessment for any specific
 framework remains with the customer.*

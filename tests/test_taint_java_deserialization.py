@@ -5,8 +5,7 @@ Java deserialization sink (java.io.ObjectInputStream.readObject,
 java.beans.XMLDecoder.readObject, org.yaml.snakeyaml.Yaml.load,
 com.thoughtworks.xstream.XStream.fromXML) without going through an
 ObjectInputFilter / SafeConstructor / XStream allowlist guard. Coverage
-matrix mirrors the W374 fixture scenarios from
-`(internal memo)` T-X04:
+matrix mirrors the W374 fixture scenarios for T-X04:
 
   1. source -> ObjectInputStream.readObject (positive: should flag)
   2. source -> ObjectInputStream.setObjectInputFilter ->

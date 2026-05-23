@@ -10,8 +10,8 @@ framework but not visible in static imports:
 - URL configs -> View classes/functions (via path()/re_path())
 - Celery task tagging (via @app.task/@shared_task)
 
-Ported from `upstream fork/roam-code` — credit upstream fork author. See the
-companion ``src/roam/index/django_post.py`` for transitive inheritance + custom
+Ported from upstream fork work. See the companion
+``src/roam/index/django_post.py`` for transitive inheritance + custom
 field resolution that runs after the per-file extraction phase.
 """
 

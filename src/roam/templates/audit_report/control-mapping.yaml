@@ -457,7 +457,6 @@ controls:
   # NIST AI 600-1 - Generative AI Profile (July 2024, action-ID granularity
   # over the function-level nist_ai_rmf entries above). Added W428.
   # Source: https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf
-  # Companion planning doc: (internal memo)
   # ---------------------------------------------------------------------------
 
   - control_id: AI600_VALUE_CHAIN_PROVENANCE
@@ -519,7 +518,6 @@ controls:
   # NIST SP 800-218A - SSDF GenAI Community Profile (July 2024, task-level
   # specificity for AI-assisted development). Added W428.
   # Source: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218A.pdf
-  # Companion planning doc: (internal memo)
   # ---------------------------------------------------------------------------
 
   - control_id: SSDF218A_CODE_PROVENANCE

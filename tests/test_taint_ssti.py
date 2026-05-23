@@ -2,7 +2,7 @@
 
 The python-ssti rule flags untrusted input flowing into a server-side
 template render call. Coverage matrix below mirrors the W373 fixture
-scenarios from `(internal memo)`:
+scenarios:
 
   1. source -> sink (positive: should flag)
   2. source -> escape() -> sink (negative: sanitized; flagged but

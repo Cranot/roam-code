@@ -31,7 +31,7 @@ This repo is public. The placement rule is physical, not pattern-based:
 
 When in doubt about a file: if it's a planning artifact or session-cadence output, write it under `internal/`. If you intend it to be public, write it in the appropriate public folder.
 
-Anti-pattern history: the repo used to mix private memos into `dev/` and try to keep them out via an enumerative gitignore (`dev/OVERNIGHT-*`, `dev/HANDOVER-*`, …). Any new memo family whose filename didn't match a templated pattern slipped through as tracked. Fixed 2026-05-23 by flipping to the rule above: one private folder, no pattern magic.
+Anti-pattern history: the repo used to use an enumerative gitignore in `dev/` (whitelisting specific filename templates to exclude), which fail-opened on any new memo family. Fixed by the rule above: one private folder, no pattern magic.
 
 ## Quality discipline (from `internal/dogfood/` + agi-in-md)
 

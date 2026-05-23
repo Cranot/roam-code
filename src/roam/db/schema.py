@@ -435,7 +435,7 @@ CREATE INDEX IF NOT EXISTS idx_index_manifest_at ON index_manifest(indexed_at);
 -- to write to its detector-specific table AND emits one row here. That
 -- gives ``roam findings --filter ...`` a single index to query against
 -- + a central SARIF emit point + the substrate the queued WorkflowRun
--- work (CODE-BACKLOG D1) will hang off.
+-- work will hang off.
 --
 -- ``finding_id_str`` is the deterministic stable key (detector + subject
 -- + a content hash); UNIQUE on it lets re-emits upsert evidence without
