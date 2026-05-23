@@ -8,9 +8,10 @@ allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import operator as _operator
 import os
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Callable, Literal, TypedDict
 
 import click
 
@@ -96,6 +97,23 @@ class AlertThreshold(TypedDict):
 # updating the Literal AND extending this frozenset AND teaching
 # ``_check_thresholds`` the new comparison.
 _VALID_OPS: frozenset[str] = frozenset({">", "<", ">=", "<=", "=="})
+
+# Operator dispatch table for ``_check_thresholds``. Each comparator in
+# ``_VALID_OPS`` maps to ``(predicate, message_phrase)``. The message
+# phrase is asymmetric on purpose — only "<" says "below"; ">", ">=",
+# "<=", and "==" all say "above". ``tests/test_alerts_cmd.py:585`` pins
+# the literal `"cycles=15 (above 10 threshold)"` shape for an `op=">"`
+# rule, so the wording is part of the contract, not a code-cleanup
+# target. ``assert`` invariant below pins the keyset symmetry with
+# ``_VALID_OPS`` so a future comparator addition gets caught at import.
+_THRESHOLD_OPS: dict[str, tuple[Callable[[Any, Any], bool], str]] = {
+    "<": (_operator.lt, "below"),
+    ">": (_operator.gt, "above"),
+    ">=": (_operator.ge, "above"),
+    "<=": (_operator.le, "above"),
+    "==": (_operator.eq, "above"),
+}
+assert _THRESHOLD_OPS.keys() == _VALID_OPS, "_THRESHOLD_OPS keyset must match _VALID_OPS — add the new op to both."
 
 
 # W969 (Pattern 2 — silent fallback): the canonical lowercase severity
@@ -890,24 +908,15 @@ def _check_thresholds(
                 )
             continue
         threshold, level = rule["value"], rule["level"]
-        triggered = False
-        if op == "<" and val < threshold:
-            triggered = True
-        elif op == ">" and val > threshold:
-            triggered = True
-        elif op == ">=" and val >= threshold:
-            triggered = True
-        elif op == "<=" and val <= threshold:
-            triggered = True
-        elif op == "==" and val == threshold:
-            triggered = True
-        if triggered:
-            msg = f"below {threshold} threshold" if op == "<" else f"above {threshold} threshold"
+        # ``op`` already passed the _VALID_OPS gate above; the assert on
+        # the dict pins the same keyset, so direct lookup is safe here.
+        predicate, phrase = _THRESHOLD_OPS[op]
+        if predicate(val, threshold):
             alerts.append(
                 _make_alert(
                     level,
                     metric,
-                    f"{metric}={val} ({msg})",
+                    f"{metric}={val} ({phrase} {threshold} threshold)",
                     val,
                 )
             )

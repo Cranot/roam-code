@@ -33,6 +33,28 @@ _GENERATED_PATTERNS: dict[str, re.Pattern] = {
     "ruby": re.compile(r"_pb\.rb$"),
 }
 
+# Anchored stem-extraction patterns (full-match, applied to the lower-
+# cased basename) per generated language. Distinct from
+# ``_GENERATED_PATTERNS`` above, which uses ``re.search`` for suffix
+# DETECTION; these run via ``re.match`` for stem EXTRACTION (capturing
+# the original ``.proto`` filename root). Keys MUST be a superset of
+# ``_GENERATED_PATTERNS.keys()`` so every detected file has a stem
+# extractor — pinned by the assert below.
+_STEM_PATTERNS: dict[str, re.Pattern] = {
+    "python": re.compile(r"^(.+)_pb2\.pyi?$"),
+    "go": re.compile(r"^(.+)\.pb\.go$"),
+    "java": re.compile(r"^(.+?)(?:outerclass|grpc|proto)\.java$"),
+    "cpp_header": re.compile(r"^(.+)\.pb\.(?:h|cc)$"),
+    "cpp_source": re.compile(r"^(.+)\.pb\.(?:h|cc)$"),
+    "typescript": re.compile(r"^(.+)_pb\.(?:d\.)?ts$"),
+    "javascript": re.compile(r"^(.+)_pb\.js$"),
+    "csharp": re.compile(r"^(.+)\.g\.cs$"),
+    "ruby": re.compile(r"^(.+)_pb\.rb$"),
+}
+assert _STEM_PATTERNS.keys() >= _GENERATED_PATTERNS.keys(), (
+    "_STEM_PATTERNS must cover every language in _GENERATED_PATTERNS."
+)
+
 # All target extensions that could be generated from .proto
 _TARGET_EXTS = frozenset(
     {
@@ -206,42 +228,14 @@ class ProtobufBridge(LanguageBridge):
     def _extract_stem(self, basename: str, lang: str) -> str | None:
         """Extract the original proto stem from a generated filename.
 
-        E.g., "foo_pb2.py" -> "foo", "foo.pb.go" -> "foo"
-        """
-        lower = basename.lower()
-        if lang == "python":
-            # foo_pb2.py or foo_pb2.pyi
-            m = re.match(r"^(.+)_pb2\.pyi?$", lower)
-            return m.group(1) if m else None
-        elif lang == "go":
-            # foo.pb.go
-            m = re.match(r"^(.+)\.pb\.go$", lower)
-            return m.group(1) if m else None
-        elif lang == "java":
-            # FooOuterClass.java or FooGrpc.java or FooProto.java
-            m = re.match(r"^(.+?)(?:outerclass|grpc|proto)\.java$", lower)
-            return m.group(1) if m else None
-        elif lang in ("cpp_header", "cpp_source"):
-            # foo.pb.h or foo.pb.cc
-            m = re.match(r"^(.+)\.pb\.(?:h|cc)$", lower)
-            return m.group(1) if m else None
-        elif lang == "typescript":
-            # foo_pb.ts or foo_pb.d.ts
-            m = re.match(r"^(.+)_pb\.(?:d\.)?ts$", lower)
-            return m.group(1) if m else None
-        elif lang == "javascript":
-            # foo_pb.js
-            m = re.match(r"^(.+)_pb\.js$", lower)
-            return m.group(1) if m else None
-        elif lang == "csharp":
-            # Foo.g.cs
-            m = re.match(r"^(.+)\.g\.cs$", lower)
-            return m.group(1) if m else None
-        elif lang == "ruby":
-            # foo_pb.rb
-            m = re.match(r"^(.+)_pb\.rb$", lower)
-            return m.group(1) if m else None
-        return None
+        E.g., "foo_pb2.py" -> "foo", "foo.pb.go" -> "foo". Dispatches
+        through the module-level ``_STEM_PATTERNS`` table; unknown
+        languages return None silently."""
+        pattern = _STEM_PATTERNS.get(lang)
+        if pattern is None:
+            return None
+        m = pattern.match(basename.lower())
+        return m.group(1) if m else None
 
     def _match_message(self, msg_name: str, target_names: dict[str, str], lang: str) -> list[str]:
         """Match a proto message name to generated symbols.
