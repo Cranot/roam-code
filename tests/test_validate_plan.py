@@ -15,24 +15,6 @@ pytest.importorskip("fastmcp", reason="MCP tool tests require fastmcp; mcp_serve
 
 from roam.mcp_server import _vp_check_target_file, validate_plan
 
-# v13.3 fix-forwards 38-41: monkeypatch on mcp._vp_* helpers does not propagate
-# through the @_tool + _wrap_with_alias_normalization wrapper chain on CI. The
-# stubs land in the module namespace but the wrapper-captured call path bypasses
-# them. Affects ALL tests in this file that monkeypatch internal _vp_* helpers.
-# v13.4 follow-up will either re-target the stub points to dependencies the
-# wrapper preserves, OR test _vp_validate_one directly and split validate_plan's
-# outer dispatch into its own test. Unblocking the v13.3 release.
-_WRAPPER_ISOLATION_XFAIL = pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "v13.3 fix-forwards 38-41: monkeypatch on mcp._vp_* helpers does not "
-        "propagate through @_tool + alias-normalization wrapper chain on CI. "
-        "v13.4 follow-up tracked in (internal memo) "
-        "+ separate v13.4 ticket for the wrapper-isolation root cause."
-    ),
-)
-
-
 # ---------------------------------------------------------------------------
 # Helper-level
 # ---------------------------------------------------------------------------
@@ -114,7 +96,6 @@ def test_unknown_symbol_blocks():
     assert "SYMBOL_NOT_FOUND" in codes
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_remove_with_callers_blocks(monkeypatch):
     """``analyze_n1`` is called from cmd_n1 itself — has callers, must
     be blocked from removal.
@@ -157,7 +138,6 @@ def test_add_existing_file_blocks(tmp_path, monkeypatch):
     assert "INVALID_ADD_FILE" in codes
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_verdict_aggregates_correctly(monkeypatch):
     """Verdict order: blocked > needs-review > ok.
 
@@ -213,7 +193,6 @@ def test_plan_json_with_operations_wrapper():
 # pins the warning code AND the verdict so either drift fails the suite.
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_name_collision_warning_fires_when_new_name_exists(monkeypatch):
     """Renaming `analyze_n1` to `loc` — both real symbols in this repo.
 
@@ -257,7 +236,6 @@ def test_name_collision_silent_when_new_name_is_unique():
     assert op["facts"].get("new_name_collision") is False
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_medium_blast_radius_warning_fires_on_modest_caller_count(monkeypatch):
     """`_format_count` sits in the MEDIUM (10, 50] band by stub.
 
@@ -280,7 +258,6 @@ def test_medium_blast_radius_warning_fires_on_modest_caller_count(monkeypatch):
     assert r["summary"]["verdict"] == "needs-review"
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_high_blast_radius_warning_fires_on_widely_used_symbol(monkeypatch):
     """`to_json` trips HIGH (>50) by stub — not MEDIUM.
 
@@ -306,19 +283,6 @@ def test_high_blast_radius_warning_fires_on_widely_used_symbol(monkeypatch):
     assert r["summary"]["verdict"] == "needs-review"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "W1276: monkeypatch on mcp._vp_blast_radius doesn't take effect on CI "
-        "Python 3.10-3.13 — same root cause as test_name_collision_warning "
-        "(W1273). Live blast count for analyze_n1 (27) leaks through and "
-        "MEDIUM_BLAST_RADIUS fires alongside (or instead of) FITNESS_VIOLATIONS. "
-        "The producer-side contract is still pinned by "
-        "test_preflight_summary_carries_fitness_violations_list (no monkeypatch). "
-        "Cannot reproduce locally on Python 3.14 due to fastmcp incompat."
-    ),
-    strict=False,
-)
-@_WRAPPER_ISOLATION_XFAIL
 def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monkeypatch):
     """The FITNESS_VIOLATIONS branch reads ``summary['fitness_violations']`` /
     ``summary['violations']`` from ``roam preflight`` and only fires when the
@@ -470,7 +434,6 @@ def test_invalid_target_file_blocker_for_missing_parent_dir():
     assert r["summary"]["verdict"] == "blocked"
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_multiple_warnings_aggregate_in_summary(monkeypatch):
     """A 3-op plan, each producing at least one warning, must surface
     ``warnings_count >= 3`` and verdict ``needs-review`` (no blockers).
@@ -527,7 +490,6 @@ def test_multiple_warnings_aggregate_in_summary(monkeypatch):
     assert "HIGH_BLAST_RADIUS" in op2_codes
 
 
-@_WRAPPER_ISOLATION_XFAIL
 def test_verdict_precedence_blocker_dominates_warning(monkeypatch):
     """When the same plan carries both a blocker and a warning, the final
     verdict must collapse to ``blocked`` (not ``needs-review``).
