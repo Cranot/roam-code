@@ -349,6 +349,61 @@ def _apply_move(
         raise
 
 
+def _rename_resolve_target(conn, symbol_name: str, new_name: str) -> tuple[dict | None, dict | None]:
+    """Resolve the symbol to rename. Returns ``(sym, error_envelope)``;
+    exactly one of the two is non-None. The error envelope mirrors the
+    success-envelope shape (``operation`` + ``symbol`` + ``new_name`` +
+    ``files_modified`` + ``warnings``) so consumers can read the same
+    keys on both paths."""
+    sym = find_symbol(conn, symbol_name)
+    if sym:
+        return sym, None
+    return None, {
+        "operation": "rename",
+        "symbol": symbol_name,
+        "new_name": new_name,
+        "error": f"symbol not found: {symbol_name}",
+        "files_modified": [],
+        "warnings": [f"symbol not found: {symbol_name}"],
+    }
+
+
+def _rename_scan_lines(
+    lines: list[str], sym_actual_name: str, new_name: str, *, start: int = 0, end: int | None = None
+) -> list[dict]:
+    """Walk lines in ``[start, end)`` and emit a replace-change dict for
+    each line containing ``sym_actual_name``. 1-based line numbers in the
+    output match the file's external numbering."""
+    upper = len(lines) if end is None else min(len(lines), end)
+    changes: list[dict] = []
+    for i in range(max(0, start), upper):
+        line = lines[i]
+        if sym_actual_name in line:
+            changes.append(
+                {
+                    "type": "replace",
+                    "line_start": i + 1,
+                    "line_end": i + 1,
+                    "old_text": line,
+                    "new_text": line.replace(sym_actual_name, new_name),
+                }
+            )
+    return changes
+
+
+def _rename_merge_into_source(files_modified: list[dict], source_file: str, ref_changes: list[dict]) -> None:
+    """Merge ref-file changes into the source-file entry when ref_file ==
+    source_file. Dedupes by ``line_start`` so definition-line changes
+    already recorded by the definition pass don't get duplicated."""
+    existing = next((f for f in files_modified if f["path"] == source_file), None)
+    if not existing:
+        return
+    existing_lines = {c["line_start"] for c in existing["changes"]}
+    for c in ref_changes:
+        if c["line_start"] not in existing_lines:
+            existing["changes"].append(c)
+
+
 def rename_symbol(conn, symbol_name: str, new_name: str, dry_run: bool = True) -> dict:
     """Rename a symbol across the codebase.
 
@@ -368,88 +423,41 @@ def rename_symbol(conn, symbol_name: str, new_name: str, dry_run: bool = True) -
         New name for the symbol.
     dry_run:
         If True, return planned changes without writing files.
+
+    Implementation: split across ``_rename_*`` helpers; this orchestrator
+    wires them together. ``_apply_rename`` retains its own atomic-write
+    contract (asymmetric vs ``move_symbol``'s rollback; documented gap).
     """
-    sym = find_symbol(conn, symbol_name)
-    if not sym:
-        return {
-            "operation": "rename",
-            "symbol": symbol_name,
-            "new_name": new_name,
-            "error": f"symbol not found: {symbol_name}",
-            "files_modified": [],
-            "warnings": [f"symbol not found: {symbol_name}"],
-        }
+    sym, error_envelope = _rename_resolve_target(conn, symbol_name, new_name)
+    if error_envelope is not None:
+        return error_envelope
 
     sym_actual_name = sym["name"]
     source_file = sym["file_path"]
     line_start = sym["line_start"] or 1
     line_end = sym["line_end"] or line_start
 
-    files_modified = []
-    warnings = []
+    files_modified: list[dict] = []
+    warnings: list[str] = []
 
-    # 1. Definition file: rename in the definition line(s)
+    # Definition file pass: rename inside the [line_start..line_end] slice.
     source_lines = _read_file(source_file)
-    def_changes = []
-    for i in range(max(0, line_start - 1), min(len(source_lines), line_end)):
-        line = source_lines[i]
-        if sym_actual_name in line:
-            new_line = line.replace(sym_actual_name, new_name)
-            def_changes.append(
-                {
-                    "type": "replace",
-                    "line_start": i + 1,
-                    "line_end": i + 1,
-                    "old_text": line,
-                    "new_text": new_line,
-                }
-            )
-
+    def_changes = _rename_scan_lines(source_lines, sym_actual_name, new_name, start=line_start - 1, end=line_end)
     if def_changes:
-        files_modified.append(
-            {
-                "path": source_file,
-                "action": "MODIFY",
-                "changes": def_changes,
-            }
-        )
+        files_modified.append({"path": source_file, "action": "MODIFY", "changes": def_changes})
 
-    # 2. Reference files: rename in each referencing file
-    referencing_files = _find_files_referencing(conn, sym["id"])
-    for ref_file in referencing_files:
+    # Reference files pass: rename in each file that references the symbol.
+    # If ref_file == source_file, merge into the existing entry (dedupe by
+    # line_start so the definition-pass lines aren't double-recorded).
+    for ref_file in _find_files_referencing(conn, sym["id"]):
         ref_lines = _read_file(ref_file)
-        ref_changes = []
-        for i, line in enumerate(ref_lines):
-            if sym_actual_name in line:
-                new_line = line.replace(sym_actual_name, new_name)
-                ref_changes.append(
-                    {
-                        "type": "replace",
-                        "line_start": i + 1,
-                        "line_end": i + 1,
-                        "old_text": line,
-                        "new_text": new_line,
-                    }
-                )
-
-        if ref_changes:
-            # Avoid duplicating source file
-            if ref_file == source_file:
-                # Merge changes with existing definition changes
-                existing = next((f for f in files_modified if f["path"] == source_file), None)
-                if existing:
-                    existing_lines = {c["line_start"] for c in existing["changes"]}
-                    for c in ref_changes:
-                        if c["line_start"] not in existing_lines:
-                            existing["changes"].append(c)
-                continue
-            files_modified.append(
-                {
-                    "path": ref_file,
-                    "action": "MODIFY",
-                    "changes": ref_changes,
-                }
-            )
+        ref_changes = _rename_scan_lines(ref_lines, sym_actual_name, new_name)
+        if not ref_changes:
+            continue
+        if ref_file == source_file:
+            _rename_merge_into_source(files_modified, source_file, ref_changes)
+            continue
+        files_modified.append({"path": ref_file, "action": "MODIFY", "changes": ref_changes})
 
     result = {
         "operation": "rename",
