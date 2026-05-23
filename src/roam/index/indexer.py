@@ -220,6 +220,228 @@ def _semantic_activation_advice(conn, project_root: Path) -> str | None:
     )
 
 
+def _fhs_gather_max_cc(conn) -> dict[int, int]:
+    """Factor 1 — return ``{file_id: max_cognitive_complexity}`` joined
+    across all symbols in that file. Missing files default to 0 via the
+    consumer's ``.get(fid, 0)``."""
+    rows = conn.execute(
+        "SELECT s.file_id, MAX(sm.cognitive_complexity) as max_cc "
+        "FROM symbol_metrics sm JOIN symbols s ON s.id = sm.symbol_id "
+        "GROUP BY s.file_id"
+    ).fetchall()
+    return {r["file_id"]: r["max_cc"] or 0 for r in rows}
+
+
+def _fhs_gather_cycle_files_scc(conn, G) -> set:
+    """Factor 3 (graph path) — Tarjan SCC over the in-memory ``G`` digraph
+    catches ALL cycle lengths in O(V+E). Returns the set of file_ids that
+    contain any symbol participating in any SCC. On any failure emits the
+    Pattern-2 lineage warning + returns empty (degraded factor reads zero)."""
+    try:
+        from roam.graph.cycles import find_cycles
+
+        sccs = find_cycles(G, min_size=2)
+        cycle_symbol_ids: set = set()
+        for scc in sccs:
+            cycle_symbol_ids.update(scc)
+        if not cycle_symbol_ids:
+            return set()
+        from roam.db.connection import batched_in
+
+        rows_cyc = batched_in(
+            conn,
+            "SELECT DISTINCT file_id FROM symbols WHERE id IN ({ph})",
+            list(cycle_symbol_ids),
+        )
+        return {r[0] for r in rows_cyc}
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: SCC cycle detection failed (%s: %s); "
+            "Factor 3 (cycle membership) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
+        return set()
+
+
+def _fhs_gather_cycle_files_sql(conn) -> set:
+    """Factor 3 (no-graph fallback) — SQL 2-cycle self-join. Only catches
+    A→B→A patterns; longer cycles are silently missed. Backwards-compat
+    path for callers that don't build the NetworkX digraph first."""
+    try:
+        cycle_rows = conn.execute(
+            "SELECT DISTINCT s.file_id FROM symbols s "
+            "JOIN edges e1 ON e1.source_id = s.id "
+            "JOIN edges e2 ON e2.target_id = s.id "
+            "WHERE e1.target_id IN (SELECT source_id FROM edges WHERE target_id = s.id)"
+        ).fetchall()
+        return {r["file_id"] for r in cycle_rows}
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: 2-cycle SQL fallback failed (%s: %s); "
+            "Factor 3 (cycle membership) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
+        return set()
+
+
+def _fhs_gather_god_files(conn) -> set:
+    """Factor 4 — return file_ids containing any symbol with combined
+    in/out degree > 20 (the god-component threshold). Pattern-2 lineage
+    on degraded read."""
+    try:
+        god_rows = conn.execute(
+            "SELECT DISTINCT s.file_id FROM symbols s "
+            "JOIN graph_metrics gm ON gm.symbol_id = s.id "
+            "WHERE (gm.in_degree + gm.out_degree) > 20"
+        ).fetchall()
+        return {r["file_id"] for r in god_rows}
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: god-component query failed (%s: %s); "
+            "Factor 4 (god component) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
+        return set()
+
+
+def _fhs_gather_dead_export_ratios(conn) -> dict[int, float]:
+    """Factor 5 — return ``{file_id: dead_export_count / total_exports}``
+    where dead = exported symbol with zero in-degree. Pattern-2 lineage
+    on degraded read."""
+    try:
+        dead_rows = conn.execute(
+            "SELECT s.file_id, "
+            "COUNT(*) as total_exports, "
+            "SUM(CASE WHEN gm.in_degree = 0 THEN 1 ELSE 0 END) as dead "
+            "FROM symbols s "
+            "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
+            "WHERE s.is_exported = 1 "
+            "GROUP BY s.file_id"
+        ).fetchall()
+        result: dict[int, float] = {}
+        for r in dead_rows:
+            total = r["total_exports"] or 1
+            dead = r["dead"] or 0
+            result[r["file_id"]] = dead / total
+        return result
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: dead-export query failed (%s: %s); "
+            "Factor 5 (dead export ratio) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
+        return {}
+
+
+def _fhs_gather_file_stats(conn) -> dict[int, dict]:
+    """Factors 2/6/7 — return ``{file_id: {churn, complexity, entropy}}``
+    sourced from ``file_stats``. Missing files default per consumer."""
+    stats: dict[int, dict] = {}
+    stat_rows = conn.execute("SELECT file_id, total_churn, complexity, cochange_entropy FROM file_stats").fetchall()
+    for r in stat_rows:
+        stats[r["file_id"]] = {
+            "churn": r["total_churn"] or 0,
+            "complexity": r["complexity"] or 0,
+            "entropy": r["cochange_entropy"],
+        }
+    return stats
+
+
+def _fhs_compute_churn_percentiles(stats: dict[int, dict]) -> tuple[float, float]:
+    """Factor 7 helper — derive p50/p90 churn from the positive-churn
+    population. Returns ``(1, 1)`` on empty input so the consumer's
+    comparison-against-threshold stays well-defined."""
+    churns = sorted(s["churn"] for s in stats.values() if s["churn"] > 0)
+    if not churns:
+        return 1, 1
+    n = len(churns)
+    k50 = (n - 1) * 0.5
+    churn_p50 = churns[int(k50)] + (k50 - int(k50)) * (churns[min(int(k50) + 1, n - 1)] - churns[int(k50)])
+    k90 = (n - 1) * 0.9
+    churn_p90 = churns[int(k90)] + (k90 - int(k90)) * (churns[min(int(k90) + 1, n - 1)] - churns[int(k90)])
+    return churn_p50, churn_p90
+
+
+def _fhs_score_one_file(
+    fid: int,
+    max_cc_by_file: dict[int, int],
+    cycle_files: set,
+    god_files: set,
+    dead_by_file: dict[int, float],
+    stats: dict[int, dict],
+    churn_p50: float,
+    churn_p90: float,
+) -> float:
+    """Apply the 7-factor health-score recipe to one file. Returns a
+    rounded score in [1.0, 10.0]. Factors 1-6 each subtract from a
+    perfect-10 floor; Factor 7 (churn amplification) only fires when the
+    score already dropped below the band threshold so a high-churn-but-
+    healthy file isn't penalised by churn alone."""
+    score = 10.0
+    # Factor 1: Max cognitive complexity (0 to -4 points)
+    max_cc = max_cc_by_file.get(fid, 0)
+    if max_cc >= 40:
+        score -= 4.0
+    elif max_cc >= 25:
+        score -= 3.0
+    elif max_cc >= 15:
+        score -= 2.0
+    elif max_cc >= 8:
+        score -= 1.0
+    # Factor 2: File-level complexity (0 to -1.5 points)
+    file_cx = stats.get(fid, {}).get("complexity", 0) or 0
+    if file_cx > 20:
+        score -= 1.5
+    elif file_cx > 10:
+        score -= 1.0
+    elif file_cx > 5:
+        score -= 0.5
+    # Factor 3: Cycle membership (-1.5 points)
+    if fid in cycle_files:
+        score -= 1.5
+    # Factor 4: God component (-1.0 points)
+    if fid in god_files:
+        score -= 1.0
+    # Factor 5: Dead export ratio (0 to -1.0 points)
+    dead_ratio = dead_by_file.get(fid, 0)
+    if dead_ratio > 0.5:
+        score -= 1.0
+    elif dead_ratio > 0.2:
+        score -= 0.5
+    # Factor 6: Co-change entropy (0 to -1.0 points)
+    entropy = stats.get(fid, {}).get("entropy")
+    if entropy is not None and entropy > 0.85:
+        score -= 1.0
+    elif entropy is not None and entropy > 0.7:
+        score -= 0.5
+    # Clamp to [1, 10] BEFORE Factor 7 — the churn amplifier reads the
+    # pre-clamped band threshold (<6 / <5) to decide whether to fire.
+    score = max(1.0, min(10.0, score))
+    # Factor 7: Churn amplification — low health + high churn = worse.
+    churn = stats.get(fid, {}).get("churn", 0)
+    if churn > churn_p90 and score < 6:
+        score = max(1.0, score - 1.0)
+    elif churn > churn_p50 and score < 5:
+        score = max(1.0, score - 0.5)
+    return round(max(1.0, min(10.0, score)), 1)
+
+
+def _fhs_persist_scores(conn, updates: list[tuple[float, int]]) -> None:
+    """UPSERT computed scores into ``file_stats.health_score`` in one
+    transaction. Idempotent — second call with the same inputs is a no-op
+    at the row level (ON CONFLICT UPDATE writes the same value back)."""
+    with conn:
+        conn.executemany(
+            "INSERT INTO file_stats (health_score, file_id) VALUES (?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET health_score = excluded.health_score",
+            updates,
+        )
+
+
 def _compute_file_health_scores(conn, G=None):
     """Compute a 1-10 health score for every file, fusing all signals.
 
@@ -239,202 +461,38 @@ def _compute_file_health_scores(conn, G=None):
     which correctly identifies ALL cycle lengths in O(V+E).  When *G* is
     ``None`` the function falls back to a SQL 2-cycle self-join heuristic
     (only catches A→B→A patterns) for backwards compatibility.
+
+    Implementation: split across ``_fhs_*`` helpers; this orchestrator
+    wires them together. Each gather helper carries Pattern-2 lineage
+    (degraded factor reads zero with a warning) so a single SQL failure
+    can't poison the whole score.
     """
-    # Gather per-file data
     files = conn.execute("SELECT id, path FROM files").fetchall()
     if not files:
         return
-
-    # Max complexity per file
-    max_cc_by_file = {}
-    rows = conn.execute(
-        "SELECT s.file_id, MAX(sm.cognitive_complexity) as max_cc "
-        "FROM symbol_metrics sm JOIN symbols s ON s.id = sm.symbol_id "
-        "GROUP BY s.file_id"
-    ).fetchall()
-    for r in rows:
-        max_cc_by_file[r["file_id"]] = r["max_cc"] or 0
-
-    # Cycle membership: which files have symbols in cycles?
-    # Prefer SCC-based detection (all cycle lengths, O(V+E)) when the graph
-    # is available; fall back to the SQL 2-cycle self-join only as a last resort.
-    cycle_files: set = set()
-    if G is not None:
-        try:
-            from roam.graph.cycles import find_cycles
-
-            sccs = find_cycles(G, min_size=2)
-            # Collect every symbol ID that participates in any SCC (cycle of any length)
-            cycle_symbol_ids: set = set()
-            for scc in sccs:
-                cycle_symbol_ids.update(scc)
-            if cycle_symbol_ids:
-                from roam.db.connection import batched_in
-
-                rows_cyc = batched_in(
-                    conn,
-                    "SELECT DISTINCT file_id FROM symbols WHERE id IN ({ph})",
-                    list(cycle_symbol_ids),
-                )
-                cycle_files = {r[0] for r in rows_cyc}
-        except Exception as exc:
-            # Pattern-2 lineage: SCC-based cycle detection failed. The score
-            # below proceeds as if no files participate in a cycle; warn so
-            # the degraded health-score axis is observable rather than silent.
-            log.warning(
-                "_compute_file_health_scores: SCC cycle detection failed (%s: %s); "
-                "Factor 3 (cycle membership) will read as zero across all files",
-                type(exc).__name__,
-                exc,
-            )
-    else:
-        # Fallback: SQL 2-cycle self-join (only catches A→B→A patterns)
-        try:
-            cycle_rows = conn.execute(
-                "SELECT DISTINCT s.file_id FROM symbols s "
-                "JOIN edges e1 ON e1.source_id = s.id "
-                "JOIN edges e2 ON e2.target_id = s.id "
-                "WHERE e1.target_id IN (SELECT source_id FROM edges WHERE target_id = s.id)"
-            ).fetchall()
-            cycle_files = {r["file_id"] for r in cycle_rows}
-        except Exception as exc:
-            log.warning(
-                "_compute_file_health_scores: 2-cycle SQL fallback failed (%s: %s); "
-                "Factor 3 (cycle membership) will read as zero across all files",
-                type(exc).__name__,
-                exc,
-            )
-
-    # God components: files with symbols having degree > 20
-    god_files = set()
-    try:
-        god_rows = conn.execute(
-            "SELECT DISTINCT s.file_id FROM symbols s "
-            "JOIN graph_metrics gm ON gm.symbol_id = s.id "
-            "WHERE (gm.in_degree + gm.out_degree) > 20"
-        ).fetchall()
-        god_files = {r["file_id"] for r in god_rows}
-    except Exception as exc:
-        log.warning(
-            "_compute_file_health_scores: god-component query failed (%s: %s); "
-            "Factor 4 (god component) will read as zero across all files",
-            type(exc).__name__,
-            exc,
+    max_cc_by_file = _fhs_gather_max_cc(conn)
+    cycle_files = _fhs_gather_cycle_files_scc(conn, G) if G is not None else _fhs_gather_cycle_files_sql(conn)
+    god_files = _fhs_gather_god_files(conn)
+    dead_by_file = _fhs_gather_dead_export_ratios(conn)
+    stats = _fhs_gather_file_stats(conn)
+    churn_p50, churn_p90 = _fhs_compute_churn_percentiles(stats)
+    updates = [
+        (
+            _fhs_score_one_file(
+                f["id"],
+                max_cc_by_file,
+                cycle_files,
+                god_files,
+                dead_by_file,
+                stats,
+                churn_p50,
+                churn_p90,
+            ),
+            f["id"],
         )
-
-    # Dead exports per file
-    dead_by_file = {}
-    try:
-        dead_rows = conn.execute(
-            "SELECT s.file_id, "
-            "COUNT(*) as total_exports, "
-            "SUM(CASE WHEN gm.in_degree = 0 THEN 1 ELSE 0 END) as dead "
-            "FROM symbols s "
-            "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
-            "WHERE s.is_exported = 1 "
-            "GROUP BY s.file_id"
-        ).fetchall()
-        for r in dead_rows:
-            total = r["total_exports"] or 1
-            dead = r["dead"] or 0
-            dead_by_file[r["file_id"]] = dead / total
-    except Exception as exc:
-        log.warning(
-            "_compute_file_health_scores: dead-export query failed (%s: %s); "
-            "Factor 5 (dead export ratio) will read as zero across all files",
-            type(exc).__name__,
-            exc,
-        )
-
-    # File stats (churn, complexity, entropy)
-    stats = {}
-    stat_rows = conn.execute("SELECT file_id, total_churn, complexity, cochange_entropy FROM file_stats").fetchall()
-    for r in stat_rows:
-        stats[r["file_id"]] = {
-            "churn": r["total_churn"] or 0,
-            "complexity": r["complexity"] or 0,
-            "entropy": r["cochange_entropy"],
-        }
-
-    # Compute churn percentiles for amplification
-    churns = sorted(s["churn"] for s in stats.values() if s["churn"] > 0)
-    if churns:
-        n = len(churns)
-        k50 = (n - 1) * 0.5
-        churn_p50 = churns[int(k50)] + (k50 - int(k50)) * (churns[min(int(k50) + 1, n - 1)] - churns[int(k50)])
-        k90 = (n - 1) * 0.9
-        churn_p90 = churns[int(k90)] + (k90 - int(k90)) * (churns[min(int(k90) + 1, n - 1)] - churns[int(k90)])
-    else:
-        churn_p50, churn_p90 = 1, 1
-
-    # Compute health score per file
-    updates = []
-    for f in files:
-        fid = f["id"]
-        score = 10.0  # Start at perfect health
-
-        # Factor 1: Max cognitive complexity (0 to -4 points)
-        max_cc = max_cc_by_file.get(fid, 0)
-        if max_cc >= 40:
-            score -= 4.0
-        elif max_cc >= 25:
-            score -= 3.0
-        elif max_cc >= 15:
-            score -= 2.0
-        elif max_cc >= 8:
-            score -= 1.0
-
-        # Factor 2: File-level complexity (0 to -1.5 points)
-        file_cx = stats.get(fid, {}).get("complexity", 0) or 0
-        if file_cx > 20:
-            score -= 1.5
-        elif file_cx > 10:
-            score -= 1.0
-        elif file_cx > 5:
-            score -= 0.5
-
-        # Factor 3: Cycle membership (-1.5 points)
-        if fid in cycle_files:
-            score -= 1.5
-
-        # Factor 4: God component (-1.0 points)
-        if fid in god_files:
-            score -= 1.0
-
-        # Factor 5: Dead export ratio (0 to -1.0 points)
-        dead_ratio = dead_by_file.get(fid, 0)
-        if dead_ratio > 0.5:
-            score -= 1.0
-        elif dead_ratio > 0.2:
-            score -= 0.5
-
-        # Factor 6: Co-change entropy (0 to -1.0 points)
-        entropy = stats.get(fid, {}).get("entropy")
-        if entropy is not None and entropy > 0.85:
-            score -= 1.0
-        elif entropy is not None and entropy > 0.7:
-            score -= 0.5
-
-        # Clamp to [1, 10]
-        score = max(1.0, min(10.0, score))
-
-        # Factor 7: Churn amplification — low health + high churn = worse
-        churn = stats.get(fid, {}).get("churn", 0)
-        if churn > churn_p90 and score < 6:
-            score = max(1.0, score - 1.0)
-        elif churn > churn_p50 and score < 5:
-            score = max(1.0, score - 0.5)
-
-        score = round(max(1.0, min(10.0, score)), 1)
-        updates.append((score, fid))
-
-    with conn:
-        conn.executemany(
-            "INSERT INTO file_stats (health_score, file_id) VALUES (?, ?) "
-            "ON CONFLICT(file_id) DO UPDATE SET health_score = excluded.health_score",
-            updates,
-        )
-
+        for f in files
+    ]
+    _fhs_persist_scores(conn, updates)
     _log(f"  Health scores for {len(updates)} files")
 
 
