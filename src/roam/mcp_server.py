@@ -1432,9 +1432,30 @@ _SCHEMA_ORACLE = {
 }
 
 _SCHEMA_DIFF = _make_schema(
-    {"changed_files": {"type": "integer"}},
-    files={"type": "array"},
-    affected_symbols={"type": "array"},
+    # Summary mirrors what cmd_diff.py emits at lines 962-974: verdict +
+    # 4 integer counts + canonical risk-level pair. ``affected_symbols``
+    # is the COUNT (integer), not the array — the array payloads live
+    # at the top level under ``per_file`` and ``blast_radius``.
+    {
+        "changed_files": {"type": "integer"},
+        "affected_symbols": {"type": "integer"},
+        "affected_files": {"type": "integer"},
+        "risk_level_canonical": {"type": "string"},
+        "risk_rank": {"type": "integer"},
+    },
+    # Top-level mirrors cmd_diff.py:946-960 envelope_data: 4 integer
+    # mirrors of the summary counts + symbols_defined + the two array
+    # payloads + label + canonical risk-level pair. ``files`` was a
+    # stale name that no emit path ever produced.
+    label={"type": "string"},
+    changed_files={"type": "integer"},
+    symbols_defined={"type": "integer"},
+    affected_symbols={"type": "integer"},
+    affected_files={"type": "integer"},
+    per_file={"type": "array"},
+    blast_radius={"type": "array"},
+    risk_level_canonical={"type": "string"},
+    risk_rank={"type": "integer"},
 )
 
 # Wave B5 (W767): specialised per-command schema for ``roam_diagnose``.
