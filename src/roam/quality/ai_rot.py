@@ -162,7 +162,6 @@ def compute_ai_rot_score(conn, project_root: Path | None = None) -> AiRotScore:
     from roam.commands.cmd_vibe_check import (
         _PATTERN_NAMES,
         _WEIGHTS,
-        _aggregate_worst_files,  # noqa: F401 (re-exportable convenience)
         _compute_score,
         _detect_comment_anomalies,
         _detect_copy_paste,

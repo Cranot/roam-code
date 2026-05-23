@@ -376,7 +376,7 @@ _COMMENT_LINE_RE = re.compile(r"^(\s*)(#|//|\*\s|/\*|--\s)")
 # Re-imported above from roam.commands.pr_analyze.rules — single source of
 # truth for the import regex shapes shared between rule matching and the
 # AI-scoring orphan-imports signal.
-from roam.commands.pr_analyze.rules import _JS_IMPORT_RE, _PYTHON_IMPORT_RE  # noqa: E402,F811
+from roam.commands.pr_analyze.rules import _JS_IMPORT_RE, _PYTHON_IMPORT_RE  # noqa: E402
 
 _FN_DEF_RE = re.compile(
     r"^\s*(?:def\s+\w+|function\s+\w+|func\s+\w+|"

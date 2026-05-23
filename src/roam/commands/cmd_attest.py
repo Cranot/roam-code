@@ -176,7 +176,6 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
             _detect_author,
         )
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers  # noqa: F401
     except ImportError:
         return None
 
