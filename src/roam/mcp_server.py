@@ -3541,28 +3541,14 @@ def _mcp_receipts_root() -> "Path":
     return root / ".roam" / "mcp_receipts"
 
 
-def _write_mcp_receipt(
-    tool_name: str,
-    args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy, no runtime import needed
-    state: dict,
-) -> None:
-    """Construct an ``McpDecisionReceipt`` and atomically write it to disk.
+def _receipt_serialize_args(
+    args: "Mapping[str, object] | None",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy
+) -> dict[str, object]:
+    """JSON-safe view of the input args used for the receipt's input_hash.
 
-    Raises on any failure; the public ``_mcp_receipt_for`` context manager
-    swallows the exception so an audit-trail failure cannot break the tool
-    call.
-    """
-    import uuid as _uuid
-
-    from roam.atomic_io import atomic_write_text
-    from roam.evidence.mcp_receipt import McpDecisionReceipt, hash_input_args
-
-    meta = _TOOL_METADATA.get(tool_name, {})
-
-    # Build a JSON-serialisable view of the input args. Drop the FastMCP
-    # ``Context`` object (and anything else non-trivial) by going through a
-    # repr-based fallback - the goal is a stable hash, not a faithful replay
-    # of the call.
+    Drops the FastMCP ``Context`` object (``ctx`` key) and falls back to
+    ``repr(v)`` for any value that fails ``json.dumps``. The goal is a
+    stable hash, not a faithful replay of the call."""
     safe_args: dict[str, object] = {}
     for k, v in (args or {}).items():
         if k == "ctx":
@@ -3572,79 +3558,144 @@ def _write_mcp_receipt(
             safe_args[k] = v
         except (TypeError, ValueError):
             safe_args[k] = repr(v)
+    return safe_args
 
-    tool_call_id = f"{tool_name}_{_uuid.uuid4().hex[:12]}"
-    input_hash = hash_input_args(safe_args)
-    run_id = _resolve_active_run_id()
 
-    # output_ref OR output_hash, never both (the dataclass enforces this).
+def _receipt_resolve_output(state: dict) -> tuple[str | None, str | None]:
+    """Resolve ``(output_ref, output_hash)`` for the receipt.
+
+    Caller-provided values on ``state`` win. When both are absent and a
+    ``result`` was captured, compute from the canonical bytes: small
+    payloads hash inline (sha256), large payloads with an active handle
+    become an ``"handle:<id>"`` output_ref, otherwise the canonical-bytes
+    hash is still computed so the receipt always carries a fingerprint.
+    The dataclass enforces the output_ref OR output_hash invariant."""
     output_ref = state.get("output_ref")
     output_hash = state.get("output_hash")
-    if output_ref is None and output_hash is None:
-        # Compute output_hash from the captured result when small; else
-        # use the captured handle path.
-        result = state.get("result")
-        if result is not None:
-            try:
-                canonical = json.dumps(result, sort_keys=True, separators=(",", ":"))
-                payload = canonical.encode("utf-8")
-                if len(payload) <= _MCP_RECEIPT_MAX_INLINE_OUTPUT_BYTES:
-                    import hashlib as _hashlib
+    if output_ref is not None or output_hash is not None:
+        return output_ref, output_hash
+    result = state.get("result")
+    if result is None:
+        return None, None
+    try:
+        canonical = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        payload = canonical.encode("utf-8")
+        import hashlib as _hashlib
 
-                    output_hash = _hashlib.sha256(payload).hexdigest()
-                else:
-                    # Large result: rely on the handle-off layer's path if it
-                    # fired (result will carry ``handle``/``is_handle``); else
-                    # fall back to a hash of the canonical bytes so the
-                    # receipt always carries a fingerprint.
-                    if isinstance(result, dict) and result.get("is_handle"):
-                        handle = result.get("summary", {}).get("handle")
-                        if isinstance(handle, str) and handle:
-                            output_ref = f"handle:{handle}"
-                    if output_ref is None:
-                        import hashlib as _hashlib
+        if len(payload) <= _MCP_RECEIPT_MAX_INLINE_OUTPUT_BYTES:
+            return None, _hashlib.sha256(payload).hexdigest()
+        # Large result: prefer the handle-off layer's path; else hash the
+        # canonical bytes so the receipt still carries a fingerprint.
+        if isinstance(result, dict) and result.get("is_handle"):
+            handle = result.get("summary", {}).get("handle")
+            if isinstance(handle, str) and handle:
+                return f"handle:{handle}", None
+        return None, _hashlib.sha256(payload).hexdigest()
+    except (TypeError, ValueError):
+        return None, None
 
-                        output_hash = _hashlib.sha256(payload).hexdigest()
-            except (TypeError, ValueError):
-                output_hash = None
 
-    # MCP-P0.1 — surface egress-redaction lineage in the receipt. The
-    # ``redactions`` tuple stays inside the REDACTION_REASONS closed enum
-    # ("secret" / "pii" / …); per-pattern hit counts ride in ``extra`` so
-    # the closed-enum invariant on the dataclass holds.
-    redactions_tuple = tuple(state.get("redactions") or ())
-    redaction_details = state.get("redaction_details") or {}
-    injection_markers = state.get("injection_markers") or {}
+def _receipt_build_extra(state: dict) -> dict[str, object]:
+    """Assemble the receipt's ``extra`` dict from MCP-P0.1 / P1.1 / P1.2 lineage.
+
+    Each block is omitted when its source state is absent so pre-feature
+    receipts stay byte-identical (hash-stable across feature waves):
+    - ``redaction_details`` (MCP-P0.1) — per-pattern egress-redaction hits.
+    - ``injection_markers`` (MCP-P1.2) — per-marker prompt-injection hits;
+      bytes were NOT altered, so this rides as a signal not a redaction.
+    - ``shadow_mode`` + ``would_deny_reason`` (MCP-P1.1) — only when the
+      gate short-circuited a deny under ``ROAM_MODE_DRY_RUN``."""
     extra: dict[str, object] = {}
+    redaction_details = state.get("redaction_details") or {}
     if redaction_details:
         extra["redaction_details"] = dict(redaction_details)
-    # MCP-P1.2 — per-marker prompt-injection hit counts ride in ``extra``
-    # so the ``redactions`` tuple stays inside the closed REDACTION_REASONS
-    # enum. The bytes were NOT altered (a marker is a signal, not a secret);
-    # ``injection_markers`` is the audit detail behind the closed-enum
-    # ``"prompt_injection_marker"`` reason. When no marker fired the key is
-    # absent, so pre-P1.2 receipts stay byte-identical (hash-stable).
+    injection_markers = state.get("injection_markers") or {}
     if injection_markers:
         extra["injection_markers"] = dict(injection_markers)
-    # MCP-P1.1 — shadow-mode lineage. ``shadow_mode`` + ``would_deny_reason``
-    # only ride in ``extra`` when the gate actually short-circuited a deny
-    # under ``ROAM_MODE_DRY_RUN``. When dry-run is off, neither key is set
-    # on ``state``, so the produced ``extra`` dict is byte-identical to
-    # the pre-P1.1 shape — hash-stability preserved for existing receipts.
     if state.get("shadow_mode"):
         extra["shadow_mode"] = True
         extra["would_deny_reason"] = state.get("would_deny_reason") or ""
+    return extra
 
-    # MCP-P0.2: ``required_mode`` is sourced from the 4-mode policy gate
-    # (closed enum: read_only/safe_edit/migration/autonomous_pr) — not the
-    # ``task_mode`` axis (required/optional/None) which historically poisoned
-    # this field. ``state["required_mode"]`` is set by the gate in
-    # ``_wrap_with_receipt``; fall back to a side-effect-based default when
-    # the receipt was emitted from a code path that bypassed the gate (e.g.
-    # a direct ``_mcp_receipt_for`` use in a test).
+
+def _receipt_resolve_required_mode(state: dict, meta: dict) -> str:
+    """MCP-P0.2: source ``required_mode`` from the 4-mode policy gate (closed
+    enum: read_only/safe_edit/migration/autonomous_pr). Falls back to a
+    side-effect-based default when the receipt was emitted from a code path
+    that bypassed the gate (e.g. a direct ``_mcp_receipt_for`` use in a
+    test). Distinct from the ``task_mode`` axis (required/optional/None)
+    which historically poisoned this field."""
     required_mode = state.get("required_mode")
-    if not required_mode:
-        required_mode = _required_mode_from_side_effects(meta)
+    if required_mode:
+        return required_mode
+    return _required_mode_from_side_effects(meta)
+
+
+def _receipt_link_to_ledger(
+    run_id: str,
+    tool_name: str,
+    tool_call_id: str,
+    canonical: str,
+) -> None:
+    """MCP-P0.3 — HMAC-link the on-disk receipt to the signed event stream.
+
+    Appends ONE ledger event carrying the sha256 of the canonical receipt
+    bytes; the rolling-HMAC chain then locks that hash into the chain.
+    ``verify_chain`` walks these events, re-hashes the on-disk receipts,
+    and reports mismatch / missing / not_linked sub-states.
+
+    Best-effort: any failure here is swallowed so an audit-trail outage
+    cannot break the tool call. The receipt is still on disk;
+    ``verify_chain`` will report ``receipt_integrity="not_linked"`` for
+    it. ROAM_VERBOSE surfaces the failure so a regression doesn't silently
+    lose tamper-evidence."""
+    try:
+        import hashlib as _hashlib
+
+        from roam.db.connection import find_project_root
+        from roam.runs.ledger import log_event
+
+        receipt_hash = _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        log_event(
+            Path(find_project_root()),
+            run_id,
+            action="mcp_receipt",
+            tool_name=tool_name,
+            tool_call=tool_call_id,
+            receipt_hash=receipt_hash,
+        )
+    except Exception as exc:  # noqa: BLE001 — ledger-link failure must never break the tool call
+        log_swallowed("mcp_server:receipt_ledger_link", exc)
+
+
+def _write_mcp_receipt(
+    tool_name: str,
+    args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy, no runtime import needed
+    state: dict,
+) -> None:
+    """Construct an ``McpDecisionReceipt`` and atomically write it to disk.
+
+    Raises on any failure; the public ``_mcp_receipt_for`` context manager
+    swallows the exception so an audit-trail failure cannot break the tool
+    call. Implementation is split across ``_receipt_*`` helpers; this
+    orchestrator wires them together and emits the canonical receipt +
+    optional ledger link. Hash stability is preserved across the split:
+    helper outputs are assembled in the same order as the legacy inline
+    body, so existing receipts hash byte-identically (W210 discipline).
+    """
+    import uuid as _uuid
+
+    from roam.atomic_io import atomic_write_text
+    from roam.evidence.mcp_receipt import McpDecisionReceipt, hash_input_args
+
+    meta = _TOOL_METADATA.get(tool_name, {})
+    safe_args = _receipt_serialize_args(args)
+    tool_call_id = f"{tool_name}_{_uuid.uuid4().hex[:12]}"
+    input_hash = hash_input_args(safe_args)
+    run_id = _resolve_active_run_id()
+    output_ref, output_hash = _receipt_resolve_output(state)
+    extra = _receipt_build_extra(state)
+    required_mode = _receipt_resolve_required_mode(state, meta)
     # MCP-P0.2: ``policy_decision`` defaults to ``"not_evaluated"`` when no
     # gate ran — the dataclass refuses unknown verbs.
     decision = state.get("policy_decision") or "not_evaluated"
@@ -3660,7 +3711,7 @@ def _write_mcp_receipt(
         output_ref=output_ref,
         output_hash=output_hash,
         run_event_id=run_id,
-        redactions=redactions_tuple,
+        redactions=tuple(state.get("redactions") or ()),
         extra=extra,
     )
 
@@ -3668,42 +3719,8 @@ def _write_mcp_receipt(
     target = _mcp_receipts_root() / bucket / f"{tool_call_id}.json"
     canonical = receipt.to_canonical_json()
     atomic_write_text(target, canonical + "\n")
-
-    # MCP-P0.3 — HMAC-link the receipt to the signed event stream so the
-    # receipt JSON file becomes tamper-evident. We append ONE ledger event
-    # carrying the sha256 of the canonical receipt bytes; the rolling-HMAC
-    # chain then locks that hash into the chain. ``verify_chain`` (extended
-    # below) walks these events, re-hashes the on-disk receipts, and reports
-    # mismatch / missing / not_linked sub-states.
-    #
-    # Hash stability discipline (W210): the legacy ledger-event shape stays
-    # byte-identical because we only emit this event when a run is active
-    # AND the new ``receipt_hash`` field rides inside the event payload
-    # (not as an addition to existing event shapes). Pre-P0.3 chains have
-    # no ``mcp_receipt`` events, so their canonical bytes are unchanged.
     if run_id:
-        try:
-            import hashlib as _hashlib
-
-            from roam.db.connection import find_project_root
-            from roam.runs.ledger import log_event
-
-            receipt_hash = _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-            log_event(
-                Path(find_project_root()),
-                run_id,
-                action="mcp_receipt",
-                tool_name=tool_name,
-                tool_call=tool_call_id,
-                receipt_hash=receipt_hash,
-            )
-        except Exception as exc:  # noqa: BLE001 — ledger-link failure must never break the tool call
-            # Best-effort: a ledger-link failure must NEVER break the tool
-            # call. The receipt is still on disk; ``verify_chain`` will
-            # report ``receipt_integrity="not_linked"`` for it. Surface the
-            # failure under ROAM_VERBOSE — a silent drop here means the
-            # receipt loses its tamper-evidence chain and no one knows.
-            log_swallowed("mcp_server:receipt_ledger_link", exc)
+        _receipt_link_to_ledger(run_id, tool_name, tool_call_id, canonical)
 
 
 import contextlib as _contextlib
@@ -6504,135 +6521,204 @@ _VP_PLAN_KIND_FIELDS: dict[str, list[str]] = {
 }
 
 
-def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
-    """Validate a single change-plan operation. See
-    :func:`validate_plan` for the operation schema."""
-    kind = (op.get("kind") or "").lower()
-    blockers: list[dict] = []
-    warnings: list[dict] = []
-    advice: list[str] = []
-    facts: dict = {}
+class _VpAcc:
+    """Mutable accumulator for findings emitted while validating one plan
+    operation. Helpers push blockers / warnings / advice / facts; the
+    orchestrator copies them into the response envelope at the end."""
 
-    def _block(code: str, detail: str, **extras) -> None:
+    __slots__ = ("blockers", "warnings", "advice", "facts")
+
+    def __init__(self) -> None:
+        self.blockers: list[dict] = []
+        self.warnings: list[dict] = []
+        self.advice: list[str] = []
+        self.facts: dict = {}
+
+    def block(self, code: str, detail: str, **extras) -> None:
+        """Append a blocker dict with ``code`` + ``detail`` + arbitrary extras."""
         b = {"code": code, "detail": detail}
         b.update(extras)
-        blockers.append(b)
+        self.blockers.append(b)
 
-    def _warn(code: str, detail: str) -> None:
-        warnings.append({"code": code, "detail": detail})
+    def warn(self, code: str, detail: str) -> None:
+        """Append a warning dict with ``code`` + ``detail``."""
+        self.warnings.append({"code": code, "detail": detail})
 
-    if kind in {"rename", "move", "remove", "modify"}:
-        symbol = op.get("symbol") or ""
-        if not symbol:
-            _block("MISSING_SYMBOL", f"{kind} requires 'symbol'")
-        else:
-            found, candidates = _vp_check_symbol_exists(symbol, root)
-            facts["symbol_found"] = found
-            if not found:
-                _block(
-                    "SYMBOL_NOT_FOUND",
-                    f"symbol {symbol!r} not in index — did you mean: "
-                    + ", ".join(c.get("name") or c.get("qualified_name") or "?" for c in candidates[:3])
-                    if candidates
-                    else f"symbol {symbol!r} not in index",
-                )
-            else:
-                blast = _vp_blast_radius(symbol, root)
-                facts["blast_radius"] = blast
-                if isinstance(blast, int):
-                    if blast > 50:
-                        _warn(
-                            "HIGH_BLAST_RADIUS",
-                            f"{symbol} has {blast} incoming callers — review impact before applying.",
-                        )
-                    elif blast > 10:
-                        _warn(
-                            "MEDIUM_BLAST_RADIUS",
-                            f"{symbol} has {blast} incoming callers — proceed with care.",
-                        )
 
-    if kind == "rename":
-        new_name = op.get("new_name") or ""
-        if not new_name:
-            _block("MISSING_NEW_NAME", "rename requires 'new_name'")
-        else:
-            new_found, _ = _vp_check_symbol_exists(new_name, root)
-            facts["new_name_collision"] = new_found
-            if new_found:
-                _warn(
-                    "NAME_COLLISION",
-                    f"another symbol already uses {new_name!r} — rename may shadow it.",
-                )
-                advice.append("run `roam search <new_name>` to inspect the collision.")
+def _vp_symbol_not_found_detail(symbol: str, candidates: list[dict]) -> str:
+    """Format the ``SYMBOL_NOT_FOUND`` blocker detail with up to 3 candidate
+    suggestions when fuzzy matches exist; bare not-in-index detail otherwise."""
+    if not candidates:
+        return f"symbol {symbol!r} not in index"
+    names = ", ".join(c.get("name") or c.get("qualified_name") or "?" for c in candidates[:3])
+    return f"symbol {symbol!r} not in index — did you mean: {names}"
 
-    elif kind == "move":
-        target_file = op.get("target_file") or ""
-        if not target_file:
-            _block("MISSING_TARGET_FILE", "move requires 'target_file'")
-        else:
-            # For move, target file may or may not exist — both are
-            # valid (existing file means appending, new file means
-            # creating). Just verify the parent dir is sane.
-            ok, reason = _vp_check_target_file(target_file, must_exist=False, root=root)
-            facts["target_file_ok"] = ok
-            if not ok and "already exists" not in reason:
-                _block("INVALID_TARGET_FILE", reason)
 
-    elif kind == "remove":
-        blast = facts.get("blast_radius")
-        if isinstance(blast, int) and blast > 0:
-            _block(
-                "REMOVE_HAS_CALLERS",
-                f"cannot remove {op.get('symbol')!r} — {blast} callers would break. Migrate or update them first.",
-            )
-
-    elif kind == "modify":
-        # Modify is a soft op — the agent is just signalling intent.
-        # We surface fitness/complexity from preflight as an advisory.
-        symbol = op.get("symbol") or ""
-        if symbol:
-            pre = _run_roam(["preflight", symbol], root)
-            if isinstance(pre, dict):
-                summary = pre.get("summary") or {}
-                if isinstance(summary, dict):
-                    facts["preflight_verdict"] = summary.get("verdict")
-                    fitness = summary.get("fitness_violations") or summary.get("violations")
-                    if isinstance(fitness, list) and fitness:
-                        _warn(
-                            "FITNESS_VIOLATIONS",
-                            f"{symbol} has {len(fitness)} fitness violation(s) — fix before adding new logic.",
-                        )
-
-    elif kind == "add":
-        file_path = op.get("file") or ""
-        if not file_path:
-            _block("MISSING_FILE", "add requires 'file'")
-        else:
-            ok, reason = _vp_check_target_file(file_path, must_exist=False, root=root)
-            facts["file_ok"] = ok
-            if not ok:
-                _block("INVALID_ADD_FILE", reason)
-
-    else:
-        # Fix E (Sub-task 4) — enumerate the supported kinds and their
-        # expected fields so the agent can recover without dipping into
-        # docs. Per-kind field lists come from ``_VP_PLAN_KIND_FIELDS``.
-        supported = sorted(_VP_PLAN_KIND_FIELDS.keys())
-        _block(
-            "UNKNOWN_KIND",
-            (f"unsupported operation kind: {kind!r}. supported kinds: {', '.join(supported)}."),
-            supported_kinds=supported,
-            expected_fields=dict(_VP_PLAN_KIND_FIELDS),
+def _vp_emit_blast_warning(symbol: str, blast: int, acc: _VpAcc) -> None:
+    """Emit HIGH_BLAST_RADIUS (>50) or MEDIUM_BLAST_RADIUS (>10) warning
+    based on caller count; stay silent below 10."""
+    if blast > 50:
+        acc.warn(
+            "HIGH_BLAST_RADIUS",
+            f"{symbol} has {blast} incoming callers — review impact before applying.",
+        )
+    elif blast > 10:
+        acc.warn(
+            "MEDIUM_BLAST_RADIUS",
+            f"{symbol} has {blast} incoming callers — proceed with care.",
         )
 
+
+def _vp_resolve_subject_symbol(op: dict, acc: _VpAcc, root: str) -> None:
+    """For kinds that target an existing symbol (rename/move/remove/modify):
+    require ``op['symbol']``, look it up in the index, populate
+    ``facts['symbol_found']`` + ``facts['blast_radius']``, and emit
+    MISSING_SYMBOL / SYMBOL_NOT_FOUND blockers or blast-radius warnings."""
+    kind = (op.get("kind") or "").lower()
+    symbol = op.get("symbol") or ""
+    if not symbol:
+        acc.block("MISSING_SYMBOL", f"{kind} requires 'symbol'")
+        return
+    found, candidates = _vp_check_symbol_exists(symbol, root)
+    acc.facts["symbol_found"] = found
+    if not found:
+        acc.block("SYMBOL_NOT_FOUND", _vp_symbol_not_found_detail(symbol, candidates))
+        return
+    blast = _vp_blast_radius(symbol, root)
+    acc.facts["blast_radius"] = blast
+    if isinstance(blast, int):
+        _vp_emit_blast_warning(symbol, blast, acc)
+
+
+def _vp_validate_rename(op: dict, acc: _VpAcc, root: str) -> None:
+    """Validate a rename op: require ``new_name``, warn on collisions with
+    an existing symbol of the same name."""
+    new_name = op.get("new_name") or ""
+    if not new_name:
+        acc.block("MISSING_NEW_NAME", "rename requires 'new_name'")
+        return
+    new_found, _ = _vp_check_symbol_exists(new_name, root)
+    acc.facts["new_name_collision"] = new_found
+    if new_found:
+        acc.warn(
+            "NAME_COLLISION",
+            f"another symbol already uses {new_name!r} — rename may shadow it.",
+        )
+        acc.advice.append("run `roam search <new_name>` to inspect the collision.")
+
+
+def _vp_validate_move(op: dict, acc: _VpAcc, root: str) -> None:
+    """Validate a move op: require ``target_file``, accept both existing
+    files (append) and new files (create); only block on invalid paths.
+    A pre-existing target is signalled via ``facts['target_file_ok']`` but
+    not blocked — the diff shape pins the merge semantics."""
+    target_file = op.get("target_file") or ""
+    if not target_file:
+        acc.block("MISSING_TARGET_FILE", "move requires 'target_file'")
+        return
+    ok, reason = _vp_check_target_file(target_file, must_exist=False, root=root)
+    acc.facts["target_file_ok"] = ok
+    if not ok and "already exists" not in reason:
+        acc.block("INVALID_TARGET_FILE", reason)
+
+
+def _vp_validate_remove(op: dict, acc: _VpAcc, root: str) -> None:
+    """Validate a remove op: block when the resolved symbol still has
+    callers (positive blast radius) — they would break on removal.
+    Reads ``facts['blast_radius']`` populated by ``_vp_resolve_subject_symbol``."""
+    blast = acc.facts.get("blast_radius")
+    if isinstance(blast, int) and blast > 0:
+        acc.block(
+            "REMOVE_HAS_CALLERS",
+            f"cannot remove {op.get('symbol')!r} — {blast} callers would break. Migrate or update them first.",
+        )
+
+
+def _vp_validate_modify(op: dict, acc: _VpAcc, root: str) -> None:
+    """Validate a modify op: soft op signalling intent. Surfaces preflight
+    verdict + fitness-violation count as advisory warning; never blocks."""
+    symbol = op.get("symbol") or ""
+    if not symbol:
+        return
+    pre = _run_roam(["preflight", symbol], root)
+    if not isinstance(pre, dict):
+        return
+    summary = pre.get("summary") or {}
+    if not isinstance(summary, dict):
+        return
+    acc.facts["preflight_verdict"] = summary.get("verdict")
+    fitness = summary.get("fitness_violations") or summary.get("violations")
+    if isinstance(fitness, list) and fitness:
+        acc.warn(
+            "FITNESS_VIOLATIONS",
+            f"{symbol} has {len(fitness)} fitness violation(s) — fix before adding new logic.",
+        )
+
+
+def _vp_validate_add(op: dict, acc: _VpAcc, root: str) -> None:
+    """Validate an add op: require ``file``, verify the target path is sane
+    (parent exists, not escaping the project root, not already present)."""
+    file_path = op.get("file") or ""
+    if not file_path:
+        acc.block("MISSING_FILE", "add requires 'file'")
+        return
+    ok, reason = _vp_check_target_file(file_path, must_exist=False, root=root)
+    acc.facts["file_ok"] = ok
+    if not ok:
+        acc.block("INVALID_ADD_FILE", reason)
+
+
+def _vp_block_unknown_kind(kind: str, acc: _VpAcc) -> None:
+    """Fix E (Sub-task 4) — emit UNKNOWN_KIND blocker enumerating supported
+    kinds + per-kind expected fields so the agent can recover without
+    dipping into docs. Per-kind field lists come from ``_VP_PLAN_KIND_FIELDS``."""
+    supported = sorted(_VP_PLAN_KIND_FIELDS.keys())
+    acc.block(
+        "UNKNOWN_KIND",
+        f"unsupported operation kind: {kind!r}. supported kinds: {', '.join(supported)}.",
+        supported_kinds=supported,
+        expected_fields=dict(_VP_PLAN_KIND_FIELDS),
+    )
+
+
+# Per-kind validator dispatch table. The 4 SUBJECT kinds (rename/move/
+# remove/modify) get symbol resolution BEFORE their per-kind validator
+# fires; ``add`` skips symbol resolution. Unknown kinds route to
+# ``_vp_block_unknown_kind``.
+_VP_KIND_VALIDATORS = {
+    "rename": _vp_validate_rename,
+    "move": _vp_validate_move,
+    "remove": _vp_validate_remove,
+    "modify": _vp_validate_modify,
+    "add": _vp_validate_add,
+}
+
+_VP_SUBJECT_KINDS = frozenset({"rename", "move", "remove", "modify"})
+
+
+def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
+    """Validate a single change-plan operation. See :func:`validate_plan`
+    for the operation schema. Implementation is split across ``_vp_*``
+    helpers + a per-kind dispatch table; this orchestrator wires them
+    together. Subject-kind ops run symbol resolution first so the
+    per-kind validator can read ``facts['blast_radius']``."""
+    kind = (op.get("kind") or "").lower()
+    acc = _VpAcc()
+    if kind in _VP_SUBJECT_KINDS:
+        _vp_resolve_subject_symbol(op, acc, root)
+    validator = _VP_KIND_VALIDATORS.get(kind)
+    if validator is not None:
+        validator(op, acc, root)
+    else:
+        _vp_block_unknown_kind(kind, acc)
     return {
         "index": idx,
         "kind": kind,
-        "ok": not blockers,
-        "blockers": blockers,
-        "warnings": warnings,
-        "advice": advice,
-        "facts": facts,
+        "ok": not acc.blockers,
+        "blockers": acc.blockers,
+        "warnings": acc.warnings,
+        "advice": acc.advice,
+        "facts": acc.facts,
     }
 
 
