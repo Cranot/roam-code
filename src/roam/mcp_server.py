@@ -17,6 +17,7 @@ import contextlib
 import io
 import json
 import os
+import stat as _stat_mod
 import subprocess
 import sys
 import time as _time
@@ -3053,6 +3054,128 @@ _HANDLE_GC_DEFAULT_MAX_BYTES = 100 * 1024 * 1024  # 100MB
 _HANDLE_GC_MIN_FILES = 50  # only consider GC once dir has > this many entries
 
 
+def _gc_dir_is_usable(handle_dir: Path) -> bool:
+    """Return True iff ``handle_dir`` exists and is a directory. False on
+    missing path, regular-file shadow, or any OSError during the check —
+    silent-skip is the GC contract (never poison an in-flight tool response)."""
+    try:
+        return handle_dir.is_dir()
+    except OSError:
+        return False
+
+
+def _gc_resolve_tunables() -> tuple[int, int]:
+    """Read GC tunables from env. Bad values fall back to defaults silently
+    (one bad env var doesn't taint the other). Returns ``(ttl_hours, max_bytes)``.
+    Either ``<= 0`` disables the corresponding pass."""
+    try:
+        ttl_hours = int(os.environ.get("ROAM_MCP_HANDLE_TTL_HOURS", str(_HANDLE_GC_DEFAULT_TTL_HOURS)))
+    except ValueError:
+        ttl_hours = _HANDLE_GC_DEFAULT_TTL_HOURS
+    try:
+        max_bytes = int(os.environ.get("ROAM_MCP_HANDLE_MAX_BYTES", str(_HANDLE_GC_DEFAULT_MAX_BYTES)))
+    except ValueError:
+        max_bytes = _HANDLE_GC_DEFAULT_MAX_BYTES
+    return ttl_hours, max_bytes
+
+
+def _gc_snapshot_entries(handle_dir: Path) -> list[Path] | None:
+    """Snapshot directory contents. Returns ``None`` if the directory
+    vanished between the ``is_dir`` check and ``iterdir`` (rmtree race);
+    caller treats ``None`` as a silent skip."""
+    try:
+        return list(handle_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        return None
+
+
+def _gc_stat_json_files(entries: list[Path]) -> list[tuple[Path, float, int]]:
+    """Filter to ``*.json`` regular files + stat each, tolerating per-entry
+    vanish/permission races. Each file is wrapped in its own try so one
+    missing entry doesn't poison the whole sweep. Returns
+    ``[(path, mtime, size), ...]`` in iterdir order (not sorted)."""
+    stats: list[tuple[Path, float, int]] = []
+    for p in entries:
+        if p.suffix != ".json":
+            continue
+        try:
+            st = p.stat()
+        except (FileNotFoundError, OSError):
+            continue
+        # S_ISREG keeps the race-window tight: one stat call instead of
+        # stat + is_file (which would re-stat under the hood).
+        if not _stat_mod.S_ISREG(st.st_mode):
+            continue
+        stats.append((p, st.st_mtime, st.st_size))
+    return stats
+
+
+def _gc_safe_unlink(path: Path, handle_dir: Path) -> bool:
+    """Path-confined unlink. Confirms ``path.parent`` resolves to
+    ``handle_dir`` (belt-and-suspenders against a tainted ``handle_dir``
+    arg). Tolerates the file vanishing between check and unlink. Returns
+    True iff the unlink succeeded — caller uses this to adjust the
+    rolling-bytes total in the size pass."""
+    try:
+        if path.parent.resolve() != handle_dir.resolve():
+            return False
+        path.unlink()
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _gc_apply_ttl_pass(
+    stats: list[tuple[Path, float, int]],
+    handle_dir: Path,
+    ttl_hours: int,
+    now: float,
+) -> list[tuple[Path, float, int]]:
+    """Drop any *.json file whose mtime is older than ``now - ttl_hours*3600``;
+    return the survivor list (FRESH list, so the size pass can sort it in
+    place without coupling to the TTL pass's iteration order). When
+    ``ttl_hours <= 0`` the TTL pass is disabled — survivors == stats."""
+    if ttl_hours <= 0:
+        return list(stats)
+    cutoff = now - (ttl_hours * 3600)
+    survivors: list[tuple[Path, float, int]] = []
+    for entry in stats:
+        path, mtime, _size = entry
+        if mtime < cutoff:
+            # Eviction candidate. _gc_safe_unlink handles the path-confinement
+            # check + race-tolerant unlink; we accept either outcome silently
+            # (a survived-but-not-evictable file becomes a survivor; an
+            # actually-deleted file just drops out).
+            if not _gc_safe_unlink(path, handle_dir):
+                survivors.append(entry)
+        else:
+            survivors.append(entry)
+    return survivors
+
+
+def _gc_apply_size_pass(
+    stats: list[tuple[Path, float, int]],
+    handle_dir: Path,
+    max_bytes: int,
+) -> None:
+    """If total bytes exceed ``max_bytes``, evict oldest-mtime files first
+    until under cap. ``max_bytes <= 0`` disables the pass. Sorts a copy of
+    ``stats`` (not in-place) so callers' iteration order survives."""
+    if max_bytes <= 0:
+        return
+    total = sum(size for _p, _m, size in stats)
+    if total <= max_bytes:
+        return
+    # Oldest-first eviction. mtime is the access proxy; with content
+    # addressing, "oldest" means "least recently regenerated".
+    ordered = sorted(stats, key=lambda triple: triple[1])
+    for path, _mtime, size in ordered:
+        if total <= max_bytes:
+            break
+        if _gc_safe_unlink(path, handle_dir):
+            total -= size
+
+
 def _gc_handle_dir(handle_dir: Path) -> None:
     """Best-effort LRU/TTL cleanup of the on-disk handle store.
 
@@ -3072,89 +3195,20 @@ def _gc_handle_dir(handle_dir: Path) -> None:
       * If ``handle_dir`` is missing or not a directory, returns silently.
       * Never raises — GC is opportunistic; the caller has more important
         work (a tool response is mid-flight).
+
+    Implementation: split across ``_gc_*`` helpers; this orchestrator
+    wires them in eviction-order. Path-confinement is centralised in
+    ``_gc_safe_unlink`` so the TTL pass and size pass share one check.
     """
-    try:
-        if not handle_dir.is_dir():
-            return
-    except OSError:
+    if not _gc_dir_is_usable(handle_dir):
         return
-
-    # Resolve tunables. Bad values fall back to defaults rather than crashing.
-    try:
-        ttl_hours = int(os.environ.get("ROAM_MCP_HANDLE_TTL_HOURS", str(_HANDLE_GC_DEFAULT_TTL_HOURS)))
-    except ValueError:
-        ttl_hours = _HANDLE_GC_DEFAULT_TTL_HOURS
-    try:
-        max_bytes = int(os.environ.get("ROAM_MCP_HANDLE_MAX_BYTES", str(_HANDLE_GC_DEFAULT_MAX_BYTES)))
-    except ValueError:
-        max_bytes = _HANDLE_GC_DEFAULT_MAX_BYTES
-
-    # Snapshot directory contents. iterdir can raise if the dir was removed
-    # between the is_dir check and now (rmtree race) — swallow that.
-    try:
-        raw_entries = list(handle_dir.iterdir())
-    except (OSError, FileNotFoundError):
+    ttl_hours, max_bytes = _gc_resolve_tunables()
+    raw_entries = _gc_snapshot_entries(handle_dir)
+    if raw_entries is None:
         return
-
-    # Filter + stat in one pass, tolerating per-entry races (a file may
-    # vanish between iterdir and stat / is_file). Each file is wrapped in
-    # its own try so one missing entry doesn't poison the whole sweep.
-    stats: list[tuple[Path, float, int]] = []
-    for p in raw_entries:
-        if p.suffix != ".json":
-            continue
-        try:
-            st = p.stat()
-        except (FileNotFoundError, OSError):
-            continue
-        # st_mode bit 0o100000 == regular file; checking via S_ISREG keeps
-        # the race-window tight (one stat call instead of stat + is_file).
-        import stat as _stat_mod
-
-        if not _stat_mod.S_ISREG(st.st_mode):
-            continue
-        stats.append((p, st.st_mtime, st.st_size))
-
-    now = _time.time()
-
-    # --- TTL pass ---
-    if ttl_hours > 0:
-        cutoff = now - (ttl_hours * 3600)
-        survivors: list[tuple[Path, float, int]] = []
-        for p, mtime, size in stats:
-            if mtime < cutoff:
-                # Defensive: confirm the path is still inside handle_dir
-                # (parent matches) before unlinking. Belt-and-suspenders
-                # against any future caller passing a tainted path.
-                try:
-                    if p.parent.resolve() != handle_dir.resolve():
-                        survivors.append((p, mtime, size))
-                        continue
-                    p.unlink()
-                except (FileNotFoundError, OSError):
-                    # Already gone or unreadable — fine, skip.
-                    pass
-            else:
-                survivors.append((p, mtime, size))
-        stats = survivors
-
-    # --- Size pass ---
-    if max_bytes > 0:
-        total = sum(size for _p, _m, size in stats)
-        if total > max_bytes:
-            # Oldest-first eviction. mtime is the access proxy; with content
-            # addressing, "oldest" means "least recently regenerated".
-            stats.sort(key=lambda triple: triple[1])
-            for p, _mtime, size in stats:
-                if total <= max_bytes:
-                    break
-                try:
-                    if p.parent.resolve() != handle_dir.resolve():
-                        continue
-                    p.unlink()
-                    total -= size
-                except (FileNotFoundError, OSError):
-                    continue
+    stats = _gc_stat_json_files(raw_entries)
+    survivors = _gc_apply_ttl_pass(stats, handle_dir, ttl_hours, _time.time())
+    _gc_apply_size_pass(survivors, handle_dir, max_bytes)
 
 
 # Per-process counter used to amortise GC. Even when the dir is large,
