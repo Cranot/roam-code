@@ -108,10 +108,6 @@ The split-into-named-helpers pattern, applied 4 times. Each target's existing te
 - **`dev/ROADMAP.md` + `dev/MCP-SECURITY-POSTURE.md` + `dev/BACKLOG.md` — 11 stale claims corrected.** Line-number drift on `connection.py:354→:558`, `detectors.py 4,286 lines→4,972`, `cmd_health.py:920→:1242`, `mcp_server.py:802→:2027`, `cmd_n1.py:558-664→:1108-1234`, `complexity.py:1050→:397+:1319`, `cmd_n1.py:449-478→:854-898`. `_POLICY_DECISIONS` 6-member list → 9 (added `pass`/`fail`/`unknown` per `src/roam/evidence/_vocabulary.py:582`). `verify_chain_with_receipts` 414-518 → 426-536. `RECIPE_INTEGRITY_STATES` 394-401 → 406-413. BACKLOG R15/R16/R18/R21/R22/R23/R24/R26/R27/R28 strike-throughs applied (all SHIPPED but never marked).
 - **`templates/distribution/landing-page/docs/*.html` — 5 stale claims corrected.** `architecture.html:225` `USER_VERSION 17 → 18`; `agent-contract.html:358-360 + :418` `policy_decision` enum 3 values → 6; `integration-tutorials.html:268-270` + `mcp-usage.html:359-361` added `would_deny_dry_run`. `scripts/linkcheck.py --strict` confirms 29 pages still resolve.
 
-#### Architecture spike + release readiness
-
-- **`dev/V13.5-RELEASE-READINESS-2026-05-22.md` (NEW)** — sized audit + step-by-step release sequence for the v13.5 PyPI tag-and-publish. The release-readiness verdict was HOLD pending the dogfood-wiring landing (now resolved in commit `33cc7e5`); re-run the audit before tagging. The memo enumerates the bump+tag steps, the still-pending Co-Author leak on `340997f`, and which D2/D3 memos are ready for sprint commitment.
-
 #### MCP description rewrites + Claude Code auto-load
 
 - **MCP tool descriptions — top-10 rewrite (BiasBusters + Sentry pattern).** The 10 most-critical roam-code MCP tool descriptions (`roam_ask`, `roam_search_symbol`, `roam_uses`, `roam_context`, `roam_understand`, `roam_diff`, `roam_prepare_change`, `roam_critique`, `roam_diagnose_issue`, `roam_affected_tests`) rewritten with imperative verb-lede, user-voice trigger phrases ('where is X?', 'who calls Y?', 'safe to delete Z?'), explicit anti-patterns ('Do NOT use Bash:grep for symbol lookup'), and alternative-named replacement ('Replaces multi-shape grep'). Pattern grounded in **BiasBusters (arXiv 2510.00307)** — description semantic alignment is the #1 driver of selection — and the **Sentry MCP scaling case** (60M req/month with 3 tools; each description carries concrete examples + workflow chaining hints). Lift target measured via `dev/audit_session_tool_usage.py`.
@@ -119,10 +115,6 @@ The split-into-named-helpers pattern, applied 4 times. Each target's existing te
 - **`CLAUDE.md` (1-line `@AGENTS.md` pointer)** — restores Claude Code's auto-load path (removed in `e5993a6` because the original 263-line file carried internal-only content) WITHOUT re-introducing the internal-content pattern. Single `@AGENTS.md` directive imports the multi-vendor AGENTS.md so the navigation guidance (§ "Codebase navigation with roam") reaches Claude Code at session start. HTML comment documents the strategic decision and instructs maintainers to edit AGENTS.md (not this file) for any content additions.
 - **`dev/build_readme_counts.py` — pointer-aware skip.** Script now detects the `@AGENTS.md` pointer pattern and treats CLAUDE.md as an intentional no-op so `--check` no longer flags MISSING-MARKERS on a file with no block-bearing content by design.
 - **`tests/test_law4_anchor_counts.py` + `tests/test_findings_detector_count_drift.py`** — pointer-aware skip. Both tests previously gated on CLAUDE.md content for anchor-count + detector-count claims; with CLAUDE.md now a pointer, the claims live exclusively in AGENTS.md. Tests now detect the `@AGENTS.md` pointer pattern and skip cleanly.
-
-#### Forward-looking artifacts
-
-- **`(internal memo)` (NEW)** — comprehensive "what's next" memo capturing every observation, defect, sized-but-unbuilt direction, brain-method-refactor candidate, strategic positioning lift, and pattern-to-apply-forward surfaced during this session. Single forward-looking memo for the next roam-code session to pick up cleanly.
 
 ## [13.4] — 2026-05-21
 
