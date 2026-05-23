@@ -166,7 +166,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 | `roam preflight <symbol>` | Pre-change safety gate: blast radius + tests + complexity + coupling + fitness |
 | `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
 
-The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Multi-Repo Workspace. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
+The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
