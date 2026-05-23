@@ -423,6 +423,77 @@ def _receipt_file_for(repo_root: Path, run_id: str, tool_call: str) -> Path:
     return Path(repo_root) / ".roam" / "mcp_receipts" / run_id / f"{tool_call}.json"
 
 
+def _collect_receipt_events(events: list[dict]) -> list[dict]:
+    """Filter ``events`` to the subset that links an on-disk MCP receipt:
+    ``action == "mcp_receipt"`` AND ``receipt_hash`` is a non-empty
+    string. Events without those keys are skipped silently — pre-P0.3
+    chains have no receipt-linked events, which the orchestrator maps
+    to ``receipt_integrity="not_linked"``."""
+    out: list[dict] = []
+    for event in events:
+        if event.get("action") != "mcp_receipt":
+            continue
+        rh = event.get("receipt_hash")
+        if isinstance(rh, str) and rh:
+            out.append(event)
+    return out
+
+
+def _check_one_receipt(repo_root: Path, run_id: str, event: dict) -> tuple[str, Optional[int], Optional[str]]:
+    """Verify one mcp_receipt event's on-disk file against its stored
+    ``receipt_hash``. Returns ``(status, seq, tool_call)`` where status
+    is one of:
+
+      * ``"ok"`` - sha256 matches; ``tool_call`` is None
+      * ``"tampered"`` - sha256 mismatch; ``tool_call`` carries the
+        offending receipt id so the caller can surface it in ``details``
+      * ``"missing"`` - file is absent OR unreadable (OSError folds in;
+        loud-fallback log_swallowed surfaces the cause under
+        ROAM_VERBOSE per CLAUDE.md §"Make fallback chains loud")
+      * ``"malformed"`` - event lacks string ``tool_call`` / ``receipt_hash``;
+        treated as not-linked anomaly, not a crash.
+
+    The writer appends a trailing newline; strip it to recover the
+    canonical bytes that produced ``receipt_hash``."""
+    import hashlib
+
+    seq_raw = event.get("seq")
+    seq = seq_raw if isinstance(seq_raw, int) else None
+    tool_call = event.get("tool_call")
+    expected = event.get("receipt_hash")
+    if not isinstance(tool_call, str) or not isinstance(expected, str):
+        return ("malformed", seq, None)
+    path = _receipt_file_for(repo_root, run_id, tool_call)
+    if not path.exists():
+        return ("missing", seq, None)
+    try:
+        on_disk = path.read_bytes()
+    except OSError as exc:
+        log_swallowed(f"runs.signing:verify_receipts:read:{tool_call}", exc)
+        return ("missing", seq, None)
+    canonical = on_disk.rstrip(b"\n")
+    actual = hashlib.sha256(canonical).hexdigest()
+    if actual != expected:
+        return ("tampered", seq, tool_call)
+    return ("ok", seq, None)
+
+
+def _apply_tamper_verdict(base: dict, seq: Optional[int], tool_call: Optional[str]) -> dict:
+    """When a single receipt is tampered, the tamper overrides the
+    chain-level verdict — the receipt-bearing event's run-time
+    integrity claim is invalidated. Mutates ``base`` in place and
+    returns it for inline-return ergonomics."""
+    base["state"] = "tampered"
+    base["first_tamper_at_seq"] = seq if seq is not None else base.get("first_tamper_at_seq")
+    base["partial_success"] = False
+    base["receipt_integrity"] = "tampered"
+    base["details"] = (
+        f"mcp_receipt sha256 mismatch at seq={seq}: "
+        f"on-disk receipt for tool_call={tool_call} was modified after signing"
+    )
+    return base
+
+
 def verify_chain_with_receipts(
     events: list[dict],
     key: bytes,
@@ -459,70 +530,29 @@ def verify_chain_with_receipts(
     receipt-linkage have no ``receipt_hash`` field, so they are skipped
     silently — the chain bytes are unchanged from a pre-P0.3 chain when
     no receipts have been emitted.
+
+    Implementation: split across ``_collect_receipt_events`` (filter),
+    ``_check_one_receipt`` (per-receipt verify with closed-enum status),
+    and ``_apply_tamper_verdict`` (terminal tamper-state mutation).
+    This orchestrator wires them: HMAC pass → filter → loop → final
+    state assignment.
     """
     base = verify_chain(events, key)
-
-    # If the chain is already broken at the HMAC level, propagate the
-    # chain-level state without trying to walk receipts on top — the
-    # tampered chain is the dominant signal.
+    # Chain-level tamper dominates: propagate without walking receipts.
     if base["state"] == "tampered":
         base["receipt_integrity"] = "not_linked"
         return base
-
-    receipt_events: list[dict] = []
-    for idx, event in enumerate(events, start=1):
-        if event.get("action") != "mcp_receipt":
-            continue
-        rh = event.get("receipt_hash")
-        if isinstance(rh, str) and rh:
-            receipt_events.append(event)
-
+    receipt_events = _collect_receipt_events(events)
     if not receipt_events:
         base["receipt_integrity"] = "not_linked"
         return base
-
-    import hashlib
-
     first_missing_seq: Optional[int] = None
     for event in receipt_events:
-        seq = event.get("seq")
-        tool_call = event.get("tool_call")
-        expected = event.get("receipt_hash")
-        if not isinstance(tool_call, str) or not isinstance(expected, str):
-            # Malformed event — treat as not-linked anomaly (don't crash).
-            continue
-        path = _receipt_file_for(repo_root, run_id, tool_call)
-        if not path.exists():
-            if first_missing_seq is None:
-                first_missing_seq = seq if isinstance(seq, int) else None
-            continue
-        try:
-            on_disk = path.read_bytes()
-        except OSError as exc:
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
-            # unreadable receipt (permission error) is folded into the
-            # ``missing`` verdict, which a silent except would conflate
-            # with a genuinely-absent file. Surface the lineage so an
-            # OSError-as-missing has a discoverable cause.
-            log_swallowed(f"runs.signing:verify_receipts:read:{tool_call}", exc)
-            if first_missing_seq is None:
-                first_missing_seq = seq if isinstance(seq, int) else None
-            continue
-        # The writer appends a trailing newline; strip it to recover the
-        # canonical bytes that produced ``receipt_hash``.
-        canonical = on_disk.rstrip(b"\n")
-        actual = hashlib.sha256(canonical).hexdigest()
-        if actual != expected:
-            base["state"] = "tampered"
-            base["first_tamper_at_seq"] = seq if isinstance(seq, int) else base.get("first_tamper_at_seq")
-            base["partial_success"] = False
-            base["receipt_integrity"] = "tampered"
-            base["details"] = (
-                f"mcp_receipt sha256 mismatch at seq={seq}: "
-                f"on-disk receipt for tool_call={tool_call} was modified after signing"
-            )
-            return base
-
+        status, seq, tool_call = _check_one_receipt(repo_root, run_id, event)
+        if status == "tampered":
+            return _apply_tamper_verdict(base, seq, tool_call)
+        if status == "missing" and first_missing_seq is None:
+            first_missing_seq = seq
     if first_missing_seq is not None:
         base["receipt_integrity"] = "missing"
         base["first_missing_receipt_at_seq"] = first_missing_seq
@@ -531,6 +561,5 @@ def verify_chain_with_receipts(
         # collapsing the chain-level integrity verdict.
         base["partial_success"] = True
         return base
-
     base["receipt_integrity"] = "ok"
     return base
