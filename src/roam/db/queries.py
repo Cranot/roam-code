@@ -1,11 +1,16 @@
-"""Named SQL query constants used across commands."""
+"""Named SQL query constants used across commands.
+
+Scope: every constant in this module MUST be imported by at least one
+caller in ``src/roam/`` or ``tests/``. The dead-query audit (2026-05-23)
+removed 11 unused constants (FILE_BY_ID, FILES_BY_LANGUAGE, FILE_COUNT,
+SYMBOL_BY_ID, EXPORTED_SYMBOLS, ALL_EDGES, ALL_FILE_EDGES,
+CLUSTER_FOR_SYMBOL, FILE_STATS_BY_ID, COCHANGE_FOR_FILE, BLAME_FOR_FILE).
+Re-add via this module only when a real caller lands — never speculatively.
+"""
 
 # File queries
 FILE_BY_PATH = "SELECT * FROM files WHERE path = ?"
-FILE_BY_ID = "SELECT * FROM files WHERE id = ?"
 ALL_FILES = "SELECT * FROM files ORDER BY path"
-FILES_BY_LANGUAGE = "SELECT * FROM files WHERE language = ? ORDER BY path"
-FILE_COUNT = "SELECT COUNT(*) as cnt FROM files"
 
 # Symbol queries
 SYMBOLS_IN_FILE = """
@@ -23,22 +28,12 @@ SYMBOL_BY_QUALIFIED = """
     FROM symbols s JOIN files f ON s.file_id = f.id
     WHERE s.qualified_name = ?
 """
-SYMBOL_BY_ID = """
-    SELECT s.*, f.path as file_path
-    FROM symbols s JOIN files f ON s.file_id = f.id
-    WHERE s.id = ?
-"""
 SEARCH_SYMBOLS = """
     SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
     FROM symbols s JOIN files f ON s.file_id = f.id
     LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
     WHERE s.name LIKE ? COLLATE NOCASE
     ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
-"""
-EXPORTED_SYMBOLS = """
-    SELECT s.*, f.path as file_path
-    FROM symbols s JOIN files f ON s.file_id = f.id
-    WHERE s.is_exported = 1 ORDER BY f.path, s.line_start
 """
 TOP_SYMBOLS_BY_PAGERANK = """
     SELECT s.*, f.path as file_path, gm.pagerank
@@ -64,7 +59,6 @@ CALLEES_OF = """
     JOIN files f ON s.file_id = f.id
     WHERE e.source_id = ?
 """
-ALL_EDGES = "SELECT * FROM edges"
 
 # File edge queries
 FILE_IMPORTS = """
@@ -79,7 +73,6 @@ FILE_IMPORTED_BY = """
     WHERE fe.target_file_id = ?
     GROUP BY fe.source_file_id
 """
-ALL_FILE_EDGES = "SELECT * FROM file_edges"
 
 # Graph metrics
 METRICS_FOR_SYMBOL = "SELECT * FROM graph_metrics WHERE symbol_id = ?"
@@ -99,7 +92,6 @@ TOP_BY_DEGREE = """
 """
 
 # Cluster queries
-CLUSTER_FOR_SYMBOL = "SELECT * FROM clusters WHERE symbol_id = ?"
 ALL_CLUSTERS = """
     SELECT c.cluster_id, c.cluster_label, COUNT(*) as size,
            GROUP_CONCAT(s.name, ', ') as members
@@ -108,7 +100,6 @@ ALL_CLUSTERS = """
 """
 
 # Git queries
-FILE_STATS_BY_ID = "SELECT * FROM file_stats WHERE file_id = ?"
 # `WHERE COALESCE(file_role, 'source') = 'source'` keeps
 # legacy text dumps (FoxPro extracts under docs/legacy/, build/generated
 # artefacts, README/CHANGELOG churn) out of the hot list. Without this
@@ -120,21 +111,6 @@ TOP_CHURN_FILES = """
     FROM file_stats fs JOIN files f ON fs.file_id = f.id
     WHERE COALESCE(f.file_role, 'source') = 'source'
     ORDER BY fs.total_churn DESC LIMIT ?
-"""
-COCHANGE_FOR_FILE = """
-    SELECT f.path, gc.cochange_count
-    FROM git_cochange gc JOIN files f ON (
-        CASE WHEN gc.file_id_a = ? THEN gc.file_id_b ELSE gc.file_id_a END
-    ) = f.id
-    WHERE gc.file_id_a = ? OR gc.file_id_b = ?
-    ORDER BY gc.cochange_count DESC LIMIT ?
-"""
-BLAME_FOR_FILE = """
-    SELECT gc.author, gc.message, gc.timestamp, gfc.lines_added, gfc.lines_removed
-    FROM git_file_changes gfc
-    JOIN git_commits gc ON gfc.commit_id = gc.id
-    WHERE gfc.file_id = ?
-    ORDER BY gc.timestamp DESC
 """
 
 # Dead code.
