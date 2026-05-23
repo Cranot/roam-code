@@ -184,12 +184,12 @@ src/roam/
     bridge_django.py   # Django admin/serializer/form/URL → Model + view resolution
     bridge_config.py   # Env var reads → .env/.yml definitions
   catalog/
-    tasks.py           # Universal algorithm catalog — 23 tasks with ranked solution approaches
+    tasks.py           # Universal algorithm catalog — 34 tasks with ranked solution approaches
     detectors.py       # Algorithm anti-pattern detectors — query DB signals to find suboptimal patterns
   languages/
     base.py            # Abstract LanguageExtractor — all languages inherit this
     registry.py        # Language detection + grammar aliasing
-    *_lang.py          # One file per language (python, javascript, typescript, java, go, rust, c, csharp, php, ruby, kotlin, swift, scala, sql, foxpro, apex, aura, visualforce, sfxml, hcl, yaml, generic)
+    *_lang.py          # One file per language (python, javascript, typescript, java, go, rust, c, csharp, php, ruby, kotlin, swift, scala, sql, foxpro, apex, aura, visualforce, sfxml, hcl, yaml, dart, generic)
   graph/
     builder.py         # DB → NetworkX graph
     pagerank.py        # PageRank + centrality metrics
@@ -416,12 +416,12 @@ Agent-developer landing page:
 **Closed-enum vocabulary** (membership validated at receipt construction;
 unknown literals raise `ValueError`):
 
-- `policy_decision` (6 values): `allow`, `deny`, `escalate`, `redact`,
-  `not_evaluated`, `would_deny_dry_run`.
-- `redactions` reasons (9 values, canonical W226 `REDACTION_REASONS`):
+- `policy_decision` (9 values): `pass`, `fail`, `allow`, `deny`,
+  `escalate`, `redact`, `not_evaluated`, `unknown`, `would_deny_dry_run`.
+- `redactions` reasons (10 values, canonical W226 `REDACTION_REASONS`):
   `secret`, `pii`, `sensitive_content`, `size_limit`, `policy`,
   `user_opt_in_required`, `machine_local_path`, `schema_strict`,
-  `producer_not_available`.
+  `producer_not_available`, `prompt_injection_marker`.
 - `receipt_integrity` (4 values, emitted by `verify_chain_with_receipts`):
   `ok`, `missing`, `tampered`, `not_linked`.
 
