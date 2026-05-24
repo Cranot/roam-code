@@ -120,6 +120,7 @@ Before merging a new `cmd_X.py`:
 - [ ] Add at least one MCP-level test that runs the compound's actual internal subcommand chain (catches `vuln`/`vulns`-class typos)
 - [ ] Tool description uses imperative voice ("Run X") not declarative ("This command") (LAW 2)
 - [ ] If it returns a verdict that names a follow-up command, that command must be a literal `roam <subcommand>` string — copy-paste-executable (CONSTRAINT 12)
+- [ ] Document which Bash/Read/Grep pattern this command displaces in the command's docstring or a dedicated test — answers "does this displace a question the LLM actually has?" (DOGFOOD-RATIO-TRACKING.md)
 
 ## Quick reference
 
