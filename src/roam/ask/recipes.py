@@ -264,23 +264,22 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         name="security-audit",
-        intent="Check for taint paths, attack surface, and reachable vulns",
+        intent="Trace reachable taint paths to attack-surface sinks (sqli / xss / open redirect)",
         examples=(
-            "audit security",
-            "any attack surface I'm missing",
+            "trace attack surface",
             "find sql injection or xss reach",
-            "run a security review",
+            "review reachable taint paths",
+            "run an adversarial review",
         ),
         keywords=(
-            "security",
-            "audit",
             "taint",
-            "vuln",
             "attack",
             "sqli",
             "xss",
             "exploit",
             "cve",
+            "reach",
+            "adversarial",
         ),
         commands=(
             ("taint", ("--ci",)),
@@ -288,7 +287,9 @@ RECIPES: list[Recipe] = [
         ),
         summary=(
             "Taint reach (graph-BFS, OpenVEX-correct) plus the adversarial "
-            "attack-surface review. Failures gate-able in CI via exit 5."
+            "attack-surface review. Failures gate-able in CI via exit 5. "
+            "For a broader audit covering secrets and supply-chain, use "
+            "audit-security."
         ),
         phase="secure",
         perspectives=("taint-reachability", "attack-surface", "adversarial-review"),
@@ -448,14 +449,14 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         name="audit-security",
-        intent="Run a security audit: secrets, taint flows, dependency vulnerabilities",
+        intent="Run a comprehensive security audit covering secrets, taint flows, dependency vulnerabilities, and supply chain",
         examples=(
             "audit security",
-            "any vulnerabilities here",
-            "find secrets and SQLi",
-            "check for security issues",
+            "comprehensive security audit",
+            "any vulnerabilities or secrets here",
+            "release-readiness security check",
         ),
-        keywords=("security", "audit", "vulnerability", "vuln", "secret", "taint", "sqli", "xss"),
+        keywords=("security", "audit", "vulnerability", "vuln", "secret", "supply-chain", "release"),
         commands=(
             ("secrets", ()),
             ("taint", ()),

@@ -33,7 +33,7 @@ def partition_for_agents(
     if n_agents < 1:
         n_agents = 1
 
-    # ── 1. Scope the graph ────────────────────────────────────────
+    # -- 1. Scope the graph ----------------------------------------
     if target_files:
         target_set = set(target_files)
         keep = {n for n in G.nodes if G.nodes[n].get("file_path", "") in target_set}
@@ -46,7 +46,7 @@ def partition_for_agents(
     if len(G) == 0:
         return _empty_result(n_agents)
 
-    # ── 2. Detect clusters ────────────────────────────────────────
+    # -- 2. Detect clusters ----------------------------------------
     cluster_map = detect_clusters(G)
     if not cluster_map:
         # Assign every node to cluster 0
@@ -57,19 +57,19 @@ def partition_for_agents(
     for node_id, cid in cluster_map.items():
         groups[cid].add(node_id)
 
-    # ── 3. Adjust cluster count to match n_agents ─────────────────
+    # -- 3. Adjust cluster count to match n_agents -----------------
     partitions = _adjust_cluster_count(G, groups, n_agents)
 
-    # ── 4. Build agent descriptors ────────────────────────────────
+    # -- 4. Build agent descriptors --------------------------------
     agents = _build_agent_descriptors(G, conn, partitions)
 
-    # ── 5. Shared interfaces ──────────────────────────────────────
+    # -- 5. Shared interfaces --------------------------------------
     shared_interfaces = _find_shared_interfaces(G, conn, partitions)
 
-    # ── 6. Conflict probability ───────────────────────────────────
+    # -- 6. Conflict probability -----------------------------------
     conflict_prob = compute_conflict_probability(G, partitions)
 
-    # ── 7. Merge order ────────────────────────────────────────────
+    # -- 7. Merge order --------------------------------------------
     merge_order = compute_merge_order(G, partitions)
 
     # Count write conflicts (files appearing in multiple write lists)

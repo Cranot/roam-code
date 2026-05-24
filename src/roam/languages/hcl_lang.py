@@ -45,7 +45,7 @@ from .base import LanguageExtractor
 
 log = logging.getLogger(__name__)
 
-# ── Regex patterns ────────────────────────────────────────────────────────────
+# -- Regex patterns ------------------------------------------------------------
 
 # Block openers: keyword "label1" "label2" {
 _RE_BLOCK2 = re.compile(

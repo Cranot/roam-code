@@ -3833,6 +3833,30 @@ def _mcp_receipt_for(
             log_swallowed("mcp_server:write_mcp_receipt", exc)
 
 
+def _should_skip_cold_start_guard(name: str) -> bool:
+    """Return True when the cold-start guard should be a pass-through.
+
+    Two early-exits collapse here: (1) the preflight helper module
+    failed to import (best-effort -- never break the MCP surface), and
+    (2) the tool is in :data:`_NO_INDEX_NEEDED` so an index is not a
+    precondition (bootstrap / metadata / file-path tools).
+    """
+    if _mcp_preflight is None:
+        return True
+    return not _mcp_preflight.needs_index(name)
+
+
+def _check_cold_start(name: str, kwargs: dict):
+    """Probe ``root`` from kwargs and return a cold-start envelope or None.
+
+    Returns the structured "no index yet" envelope when the index is
+    missing so the wrapper can short-circuit; returns ``None`` when the
+    tool should proceed to its real body.
+    """
+    root = kwargs.get("root", ".")
+    return _mcp_preflight.maybe_cold_start_envelope(name, root)
+
+
 def _wrap_with_cold_start_guard(name: str, fn):
     """Wrap an MCP tool with the W296 "no index yet" short-circuit.
 
@@ -3857,20 +3881,14 @@ def _wrap_with_cold_start_guard(name: str, fn):
     import functools as _functools
     import inspect as _inspect
 
-    if _mcp_preflight is None:
-        # Best-effort: if the module failed to import we leave the tool
-        # uninstrumented rather than break the entire MCP surface.
-        return fn
-
-    if not _mcp_preflight.needs_index(name):
+    if _should_skip_cold_start_guard(name):
         return fn
 
     if _inspect.iscoroutinefunction(fn):
 
         @_functools.wraps(fn)
         async def _async_cold_start_wrapped(*args, **kwargs):
-            root = kwargs.get("root", ".")
-            envelope = _mcp_preflight.maybe_cold_start_envelope(name, root)
+            envelope = _check_cold_start(name, kwargs)
             if envelope is not None:
                 return envelope
             return await fn(*args, **kwargs)
@@ -3879,13 +3897,52 @@ def _wrap_with_cold_start_guard(name: str, fn):
 
     @_functools.wraps(fn)
     def _sync_cold_start_wrapped(*args, **kwargs):
-        root = kwargs.get("root", ".")
-        envelope = _mcp_preflight.maybe_cold_start_envelope(name, root)
+        envelope = _check_cold_start(name, kwargs)
         if envelope is not None:
             return envelope
         return fn(*args, **kwargs)
 
     return _sync_cold_start_wrapped
+
+
+def _exception_envelope(name: str, exc: Exception) -> dict:
+    """Build the canonical ``_structured_error`` envelope for a backstop exception."""
+    return _structured_error(
+        {
+            "command": name,
+            "error": str(exc) or exc.__class__.__name__,
+            "error_code": "UNKNOWN",
+            "hint": "an unexpected error occurred inside the tool — retry or report it.",
+        }
+    )
+
+
+def _build_async_exception_wrapper(name: str, fn):
+    """Wrap an async ``fn`` so any escaped ``Exception`` becomes the canonical envelope."""
+    import functools as _functools
+
+    @_functools.wraps(fn)
+    async def _async_exception_wrapped(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — deliberate backstop
+            return _exception_envelope(name, exc)
+
+    return _async_exception_wrapped
+
+
+def _build_sync_exception_wrapper(name: str, fn):
+    """Wrap a sync ``fn`` so any escaped ``Exception`` becomes the canonical envelope."""
+    import functools as _functools
+
+    @_functools.wraps(fn)
+    def _sync_exception_wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — deliberate backstop
+            return _exception_envelope(name, exc)
+
+    return _sync_exception_wrapped
 
 
 def _wrap_with_exception_envelope(name: str, fn):
@@ -3909,42 +3966,11 @@ def _wrap_with_exception_envelope(name: str, fn):
     :class:`KeyboardInterrupt` (which subclass ``BaseException``) pass
     through untouched so process-control signals are never swallowed.
     """
-    import functools as _functools
     import inspect as _inspect
 
     if _inspect.iscoroutinefunction(fn):
-
-        @_functools.wraps(fn)
-        async def _async_exception_wrapped(*args, **kwargs):
-            try:
-                return await fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 — deliberate backstop
-                return _structured_error(
-                    {
-                        "command": name,
-                        "error": str(exc) or exc.__class__.__name__,
-                        "error_code": "UNKNOWN",
-                        "hint": "an unexpected error occurred inside the tool — retry or report it.",
-                    }
-                )
-
-        return _async_exception_wrapped
-
-    @_functools.wraps(fn)
-    def _sync_exception_wrapped(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — deliberate backstop
-            return _structured_error(
-                {
-                    "command": name,
-                    "error": str(exc) or exc.__class__.__name__,
-                    "error_code": "UNKNOWN",
-                    "hint": "an unexpected error occurred inside the tool — retry or report it.",
-                }
-            )
-
-    return _sync_exception_wrapped
+        return _build_async_exception_wrapper(name, fn)
+    return _build_sync_exception_wrapper(name, fn)
 
 
 # ---------------------------------------------------------------------------

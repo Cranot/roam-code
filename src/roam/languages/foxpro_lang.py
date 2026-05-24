@@ -12,7 +12,7 @@ from .base import LanguageExtractor
 log = logging.getLogger(__name__)
 
 
-# ── Encoding detection ────────────────────────────────────────────────
+# -- Encoding detection ------------------------------------------------
 
 # Windows codepages commonly used with VFP, ordered by global prevalence.
 # VFP is a Windows-era tool; .prg files almost always use a Windows codepage
@@ -94,7 +94,7 @@ def _decode_source(source: bytes) -> str:
     return source.decode("latin-1")
 
 
-# ── Preprocessing helpers ─────────────────────────────────────────────
+# -- Preprocessing helpers ---------------------------------------------
 
 
 def _preprocess(source: bytes) -> tuple[list[str], dict[int, int]]:
@@ -173,7 +173,7 @@ def _strip_inline_comment(line: str) -> str:
     return line
 
 
-# ── Regex patterns ────────────────────────────────────────────────────
+# -- Regex patterns ----------------------------------------------------
 
 _RE_FUNC = re.compile(
     r"^\s*(FUNCTION|PROCEDURE)\s+(\w+)",
@@ -256,7 +256,7 @@ _RE_METHOD_CALL = re.compile(
 # Source: hackfox.github.io/section4/, vfphelp.com VFP9 docs
 _VFP_BUILTINS = frozenset(
     {
-        # ── Math ──
+        # -- Math --
         "ABS",
         "ACOS",
         "ASIN",
@@ -281,7 +281,7 @@ _VFP_BUILTINS = frozenset(
         "SQRT",
         "TAN",
         "VAL",
-        # ── String ──
+        # -- String --
         "ALLTRIM",
         "ASC",
         "AT",
@@ -334,7 +334,7 @@ _VFP_BUILTINS = frozenset(
         "TRANSFORM",
         "TRIM",
         "UPPER",
-        # ── Date / Time ──
+        # -- Date / Time --
         "CTOD",
         "CTOT",
         "DATE",
@@ -359,7 +359,7 @@ _VFP_BUILTINS = frozenset(
         "TTOD",
         "WEEK",
         "YEAR",
-        # ── Type / Conversion ──
+        # -- Type / Conversion --
         "BINTOC",
         "CAST",
         "CTOBIN",
@@ -380,7 +380,7 @@ _VFP_BUILTINS = frozenset(
         "NVL",
         "TYPE",
         "VARTYPE",
-        # ── File I/O ──
+        # -- File I/O --
         "ADDBS",
         "CURDIR",
         "DEFAULTEXT",
@@ -420,7 +420,7 @@ _VFP_BUILTINS = frozenset(
         "LOCFILE",
         "PUTFILE",
         "STRTOFILE",
-        # ── Cursor / Table ──
+        # -- Cursor / Table --
         "ALIAS",
         "BOF",
         "CANDIDATE",
@@ -478,7 +478,7 @@ _VFP_BUILTINS = frozenset(
         "USED",
         "XMLTOCURSOR",
         "XMLUPDATEGRAM",
-        # ── Array ──
+        # -- Array --
         "ACOPY",
         "ADATABASES",
         "ADBOBJECTS",
@@ -507,7 +507,7 @@ _VFP_BUILTINS = frozenset(
         "ASUBSCRIPT",
         "AUSED",
         "AVCXCLASSES",
-        # ── Object / Class ──
+        # -- Object / Class --
         "ACLASS",
         "COMPOBJ",
         "COMPROP",
@@ -518,7 +518,7 @@ _VFP_BUILTINS = frozenset(
         "GETPEM",
         "NEWOBJECT",
         "PEMSTATUS",
-        # ── UI / Display ──
+        # -- UI / Display --
         "BAR",
         "BARCOUNT",
         "BARPROMPT",
@@ -578,7 +578,7 @@ _VFP_BUILTINS = frozenset(
         "WROWS",
         "WTITLE",
         "WVISIBLE",
-        # ── System / Environment ──
+        # -- System / Environment --
         "DISKSPACE",
         "EXECSCRIPT",
         "GETENV",
@@ -596,7 +596,7 @@ _VFP_BUILTINS = frozenset(
         "SET",
         "SYS",
         "VERSION",
-        # ── Bitwise ──
+        # -- Bitwise --
         "BITAND",
         "BITCLEAR",
         "BITLSHIFT",
@@ -606,11 +606,11 @@ _VFP_BUILTINS = frozenset(
         "BITSET",
         "BITTEST",
         "BITXOR",
-        # ── Event binding ──
+        # -- Event binding --
         "BINDEVENT",
         "RAISEEVENT",
         "UNBINDEVENTS",
-        # ── Miscellaneous ──
+        # -- Miscellaneous --
         "ANSITOOEM",
         "BETWEEN",
         "CHRSAW",
@@ -626,7 +626,7 @@ _VFP_BUILTINS = frozenset(
 _DO_KEYWORDS = frozenset({"CASE", "WHILE"})
 
 
-# ── SCX/SCT binary parsing ───────────────────────────────────────────
+# -- SCX/SCT binary parsing -------------------------------------------
 # .SCX = DBF (dBASE) format with field descriptors for form elements
 # .SCT = FPT (memo) format storing actual text/binary content
 # Packed together by parse_file as: 4-byte-big-endian-scx-length + scx + sct
@@ -1324,7 +1324,7 @@ class FoxProExtractor(LanguageExtractor):
 
         return refs
 
-    # ── SCX form support ──────────────────────────────────────────────
+    # -- SCX form support ----------------------------------------------
 
     def _extract_scx_symbols(self, source: bytes, file_path: str) -> list[dict]:
         """Extract symbols from a packed .scx/.sct binary.

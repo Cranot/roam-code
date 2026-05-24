@@ -15,7 +15,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
-# ── Node-type mappings per language family ────────────────────────────
+# -- Node-type mappings per language family ----------------------------
 
 # Control flow nodes that increment complexity AND increase nesting
 _CONTROL_FLOW = {
@@ -217,7 +217,7 @@ def _merge(target: dict, source_r: dict):
     target["callback_depth"] = max(target["callback_depth"], source_r["callback_depth"])
 
 
-# ── Halstead metrics ────────────────────────────────────────────────
+# -- Halstead metrics ------------------------------------------------
 
 # Operator node types (control flow, assignments, calls, etc.)
 _OPERATOR_TYPES = {
@@ -480,7 +480,7 @@ def _complexity_from_source(source: bytes, line_start: int, line_end: int) -> di
     }
 
 
-# ── Math signal extraction (piggybacks on per-symbol AST walk) ──────
+# -- Math signal extraction (piggybacks on per-symbol AST walk) ------
 
 # Loop node types (cross-language)
 _LOOP_NODES = {
@@ -1040,7 +1040,7 @@ def _call_arg_texts(call_node, source: bytes) -> list[str]:
     return out
 
 
-# ── Equality + dependent-write detection (nested-lookup discriminator) ──
+# -- Equality + dependent-write detection (nested-lookup discriminator) --
 
 # AST node types that constitute "writes" inside an if-branch — used to
 # distinguish a real lookup pattern from streaming output.
@@ -1273,7 +1273,7 @@ def _is_bounded_loop(loop_node, source: bytes) -> bool:
     )
 
 
-# ── Batch computation + storage ──────────────────────────────────────
+# -- Batch computation + storage --------------------------------------
 
 
 def compute_and_store(

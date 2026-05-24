@@ -40,7 +40,7 @@ from .base import LanguageExtractor
 
 log = logging.getLogger(__name__)
 
-# ── Reserved GitLab CI top-level keys (not job names) ────────────────────────
+# -- Reserved GitLab CI top-level keys (not job names) ------------------------
 _GITLAB_RESERVED = frozenset(
     {
         "stages",
@@ -81,7 +81,7 @@ _GITLAB_RESERVED = frozenset(
     }
 )
 
-# ── Regex patterns ────────────────────────────────────────────────────────────
+# -- Regex patterns ------------------------------------------------------------
 
 # Top-level key: must start at column 0.
 # Allow colons inside the key (e.g. GitLab job names like "test:unit:").

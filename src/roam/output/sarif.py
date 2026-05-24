@@ -39,7 +39,7 @@ def _get_version() -> str:
     return __version__
 
 
-# ── Severity mapping ─────────────────────────────────────────────────
+# -- Severity mapping -------------------------------------------------
 #
 # W547: the canonical roam severity vocabulary + SARIF projection now
 # lives in :mod:`roam.output._severity`. The symbols below are kept as
@@ -65,7 +65,7 @@ def _to_level(severity: str) -> str:
     return to_sarif_level(severity)
 
 
-# ── Location helpers ─────────────────────────────────────────────────
+# -- Location helpers -------------------------------------------------
 
 
 def _physical_location(file_path: str, line: int | None = None) -> dict:
@@ -102,7 +102,7 @@ def _parse_loc_string(loc_str: str) -> tuple[str, int | None]:
     return loc_str, None
 
 
-# ── Emitter-level rule / result builders (W1178) ─────────────────────
+# -- Emitter-level rule / result builders (W1178) ---------------------
 #
 # Building-block substrate for the 20-emitter SARIF pipeline. Each
 # emitter previously inlined two near-identical dict shapes (a rule
@@ -206,7 +206,7 @@ def _result_entry(
     return result
 
 
-# ── Dashboard-filtering tag derivation (W1062) ───────────────────────
+# -- Dashboard-filtering tag derivation (W1062) -----------------------
 #
 # SARIF 2.1.0 stores free-form categorisation tags under
 # ``result.properties.tags[]`` (and ``rule.properties.tags[]``).
@@ -379,10 +379,10 @@ def _derive_finding_tags(
     return out
 
 
-# ── Core builder ─────────────────────────────────────────────────────
+# -- Core builder -----------------------------------------------------
 
 
-# ── Runtime-notification descriptor IDs (W1046) ──────────────────────
+# -- Runtime-notification descriptor IDs (W1046) ----------------------
 #
 # Closed enumeration of `descriptor.id` strings used on
 # `run.invocations[].toolExecutionNotifications[]` entries when
@@ -1156,7 +1156,7 @@ def _build_rule(rule: dict) -> dict:
     return out
 
 
-# ── Write / serialise ────────────────────────────────────────────────
+# -- Write / serialise ------------------------------------------------
 
 
 def write_sarif(data: dict, output_path: str | Path | None = None) -> str:
@@ -1170,7 +1170,7 @@ def write_sarif(data: dict, output_path: str | Path | None = None) -> str:
     return text
 
 
-# ── Fitness violations ───────────────────────────────────────────────
+# -- Fitness violations -----------------------------------------------
 
 
 def fitness_to_sarif(violations: list[dict]) -> dict:
@@ -1220,7 +1220,7 @@ def fitness_to_sarif(violations: list[dict]) -> dict:
     )
 
 
-# ── Dead code ────────────────────────────────────────────────────────
+# -- Dead code --------------------------------------------------------
 
 
 def dead_to_sarif(dead_exports: list[dict]) -> dict:
@@ -1303,7 +1303,7 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Stale references ─────────────────────────────────────────────────
+# -- Stale references -------------------------------------------------
 
 
 def stale_refs_to_sarif(targets: list[dict]) -> dict:
@@ -1372,7 +1372,7 @@ def stale_refs_to_sarif(targets: list[dict]) -> dict:
     )
 
 
-# ── Complexity ───────────────────────────────────────────────────────
+# -- Complexity -------------------------------------------------------
 
 
 def complexity_to_sarif(
@@ -1449,7 +1449,7 @@ def complexity_to_sarif(
     )
 
 
-# ── Health issues ────────────────────────────────────────────────────
+# -- Health issues ----------------------------------------------------
 
 
 def health_to_sarif(
@@ -1600,7 +1600,7 @@ def health_to_sarif(
     )
 
 
-# ── Rules violations ─────────────────────────────────────────────────
+# -- Rules violations -------------------------------------------------
 
 
 def rules_to_sarif(
@@ -1707,7 +1707,7 @@ def rules_to_sarif(
     )
 
 
-# ── Taint analysis ────────────────────────────────────────────────────
+# -- Taint analysis ----------------------------------------------------
 
 
 def taint_to_sarif(
@@ -1845,7 +1845,7 @@ def taint_to_sarif(
     )
 
 
-# ── Secret scanning ──────────────────────────────────────────────────
+# -- Secret scanning --------------------------------------------------
 
 
 def py_types_to_sarif(by_file: list[dict], coverage_pct: int) -> dict:
@@ -2016,7 +2016,7 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
     )
 
 
-# ── Algorithmic findings ─────────────────────────────────────────────
+# -- Algorithmic findings ---------------------------------------------
 
 
 def algo_to_sarif(
@@ -2143,7 +2143,7 @@ def algo_to_sarif(
     )
 
 
-# ── Critique (patch review) ─────────────────────────────────────────
+# -- Critique (patch review) -----------------------------------------
 
 
 def critique_to_sarif(findings: list[dict]) -> dict:
@@ -2254,7 +2254,7 @@ def critique_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Impact (blast radius) ───────────────────────────────────────────
+# -- Impact (blast radius) -------------------------------------------
 
 
 def _impact_importance_level(importance: float) -> str:
@@ -2429,7 +2429,7 @@ def impact_to_sarif(impact_data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Affected tests ───────────────────────────────────────────────────
+# -- Affected tests ---------------------------------------------------
 
 
 def affected_tests_to_sarif(data: dict) -> dict:
@@ -2536,7 +2536,7 @@ def affected_tests_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Test impact ──────────────────────────────────────────────────────
+# -- Test impact ------------------------------------------------------
 
 
 def _test_impact_reach_level(reach_count: int) -> str:
@@ -2634,7 +2634,7 @@ def test_impact_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Smells (code-smell detectors) ────────────────────────────────────
+# -- Smells (code-smell detectors) ------------------------------------
 
 
 def smells_to_sarif(
@@ -2807,7 +2807,7 @@ def smells_to_sarif(
     )
 
 
-# ── Partition (multi-agent work zones) ───────────────────────────────
+# -- Partition (multi-agent work zones) -------------------------------
 
 
 def _partition_conflict_risk_level(conflict_risk: str) -> str:
@@ -2965,7 +2965,7 @@ def partition_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Clones (AST structural clone detection) ──────────────────────────
+# -- Clones (AST structural clone detection) --------------------------
 
 
 def _clones_pair_level(similarity: float) -> str:
@@ -3210,7 +3210,7 @@ def clones_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Delete-check (deletion-safety gate on a working/staged/PR diff) ───
+# -- Delete-check (deletion-safety gate on a working/staged/PR diff) ---
 
 
 # Limit the number of SECONDARY survivor locations attached to a single
@@ -3363,7 +3363,7 @@ def delete_check_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Auth gaps (PHP / Laravel endpoint authentication & authorization) ─
+# -- Auth gaps (PHP / Laravel endpoint authentication & authorization) -
 
 
 def _auth_gaps_confidence_tier_level(tier: str) -> str:
@@ -3584,7 +3584,7 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── N+1 detector (implicit ORM lazy-load patterns) ───────────────────
+# -- N+1 detector (implicit ORM lazy-load patterns) -------------------
 
 
 def _n1_confidence_level(confidence: str) -> str:
@@ -3776,7 +3776,7 @@ def n1_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Missing-index detector (unindexed query columns) ─────────────────
+# -- Missing-index detector (unindexed query columns) -----------------
 
 
 def _missing_index_confidence_level(confidence: str) -> str:
@@ -3972,7 +3972,7 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Internal helpers ─────────────────────────────────────────────────
+# -- Internal helpers -------------------------------------------------
 
 
 def _algo_level(confidence: str) -> str:
@@ -4021,7 +4021,7 @@ def _slugify(text: str) -> str:
     return "".join(c for c in slug if c.isalnum() or c in ("-", "_"))
 
 
-# ── Orphan-imports detector (W1218) ──────────────────────────────────
+# -- Orphan-imports detector (W1218) ----------------------------------
 
 
 def _orphan_imports_kind_level(kind: str) -> str:
@@ -4226,7 +4226,7 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Over-fetch detector (W1219) ──────────────────────────────────────
+# -- Over-fetch detector (W1219) --------------------------------------
 
 
 def _over_fetch_severity_level(severity: str) -> str:
@@ -4444,7 +4444,7 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Bus factor (knowledge-loss / single-owner risk) ──────────────────
+# -- Bus factor (knowledge-loss / single-owner risk) ------------------
 
 
 def _bus_factor_risk_level(risk: str) -> str:
@@ -4718,7 +4718,7 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Laws detector (W1216) ────────────────────────────────────────────
+# -- Laws detector (W1216) --------------------------------------------
 
 
 def _laws_severity_level(severity: str) -> str:
@@ -4919,7 +4919,7 @@ def laws_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── LLM-API anti-pattern smells (W1207) ──────────────────────────────
+# -- LLM-API anti-pattern smells (W1207) ------------------------------
 
 
 # Closed enumeration of llm-smells pattern kinds (mirrors
@@ -5139,7 +5139,7 @@ def llm_smells_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Fan detector (W1209) ─────────────────────────────────────────────
+# -- Fan detector (W1209) ---------------------------------------------
 
 
 def _fan_flag_level(flag: str) -> str:
@@ -5344,7 +5344,7 @@ def fan_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Duplicates (semantic-duplicate function detection) ───────────────
+# -- Duplicates (semantic-duplicate function detection) ---------------
 
 
 def _duplicates_cluster_level(similarity: float) -> str:
@@ -5508,7 +5508,7 @@ def duplicates_to_sarif(data: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Dark-matter (hidden co-change couplings) ─────────────────────────
+# -- Dark-matter (hidden co-change couplings) -------------------------
 
 
 def _dark_matter_confidence_level(confidence: str) -> str:
@@ -5676,7 +5676,7 @@ def dark_matter_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Hotspots (runtime vs static rank-discrepancy detector — W1210) ───
+# -- Hotspots (runtime vs static rank-discrepancy detector — W1210) ---
 
 
 def _hotspots_classification_level(classification: str) -> str:
@@ -5849,7 +5849,7 @@ def hotspots_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Flag-dead (potentially-stale feature flag detector — W1226) ───────
+# -- Flag-dead (potentially-stale feature flag detector — W1226) -------
 
 
 def _flag_dead_staleness_level(staleness: str) -> str:
@@ -6101,7 +6101,7 @@ def flag_dead_to_sarif(
     )
 
 
-# ── Orphan-routes (dead Laravel API endpoint detector — W1227) ───────
+# -- Orphan-routes (dead Laravel API endpoint detector — W1227) -------
 
 
 def _orphan_routes_confidence_level(confidence: str) -> str:
@@ -6253,7 +6253,7 @@ def orphan_routes_to_sarif(findings: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
-# ── Verify-imports (import hallucination firewall — W1229) ───────────
+# -- Verify-imports (import hallucination firewall — W1229) -----------
 
 
 def _verify_imports_kind_level(kind: str) -> str:

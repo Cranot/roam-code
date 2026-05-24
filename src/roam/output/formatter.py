@@ -219,7 +219,7 @@ def to_json(data) -> str:
     return _json.dumps(data, indent=2, default=str, sort_keys=True)
 
 
-# ── Token budget truncation ──────────────────────────────────────────
+# -- Token budget truncation ------------------------------------------
 
 # Conservative heuristic: 1 token ~ 4 characters (works for English + code).
 _CHARS_PER_TOKEN = 4
@@ -1196,7 +1196,7 @@ def table_to_dicts(headers: list[str], rows: list[list[str]]) -> list[dict]:
     return [dict(zip(headers, row)) for row in rows]
 
 
-# ── Compact output mode ──────────────────────────────────────────────
+# -- Compact output mode ----------------------------------------------
 
 
 def compact_json_envelope(command: str, **payload) -> dict:
