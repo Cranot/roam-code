@@ -9675,7 +9675,14 @@ def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dead_code", description="Unreferenced exported symbols (dead code candidates).")
+@_tool(
+    name="roam_dead_code",
+    description=(
+        "Find unreferenced exported symbols ranked as dead-code candidates. "
+        "Triggers: 'what can I delete?', 'find dead code', 'unused exports'. "
+        "Pair with roam_safe_delete for the deletion verdict per symbol."
+    ),
+)
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 
@@ -11749,7 +11756,15 @@ def roam_symbol(symbol: str, full: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_deps", description="File-level imports and importers (what depends on this file).")
+@_tool(
+    name="roam_deps",
+    description=(
+        "List file-level imports and importers — what this file depends on "
+        "and what depends on it. Triggers: 'what depends on file.py?', "
+        "'show me the importers of module X'. Pair with roam_uses for "
+        "symbol-level reference lookups."
+    ),
+)
 def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
     """File-level import/imported-by relationships.
 
@@ -11839,7 +11854,15 @@ def roam_weather(count: int = 20, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_debt", description="Prioritized tech debt with SQALE remediation cost estimates.")
+@_tool(
+    name="roam_debt",
+    description=(
+        "Rank files by tech-debt score with SQALE remediation-cost estimates. "
+        "Triggers: 'where's the worst debt?', 'what should we refactor next?', "
+        "'estimate cleanup cost'. Pair with roam_complexity_report for "
+        "per-function brain-method targeting."
+    ),
+)
 def roam_debt(
     limit: int = 20,
     by_kind: bool = False,
@@ -12417,7 +12440,15 @@ def roam_n1(confidence: str = "medium", verbose: bool = False, root: str = ".") 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_auth_gaps", description="Endpoints missing authentication or authorization checks.")
+@_tool(
+    name="roam_auth_gaps",
+    description=(
+        "Find endpoints lacking auth / authorization checks ranked by "
+        "confidence. Triggers: 'which routes are unprotected?', 'show me "
+        "auth gaps', 'audit handler protection'. Pair with roam_taint "
+        "for taint-source reachability over the unprotected surfaces."
+    ),
+)
 def roam_auth_gaps(
     routes_only: bool = False,
     controllers_only: bool = False,
@@ -12483,7 +12514,15 @@ def roam_over_fetch(threshold: int = 10, confidence: str = "medium", root: str =
     return _run_roam(args, root)
 
 
-@_tool(name="roam_missing_index", description="Queries on non-indexed columns (slow query risk).")
+@_tool(
+    name="roam_missing_index",
+    description=(
+        "Detect queries hitting non-indexed columns flagged as slow-query "
+        "risks. Triggers: 'find slow queries', 'audit database indexes', "
+        "'where are the N+1 candidates?'. Pair with roam_n1 for "
+        "per-property iteration patterns."
+    ),
+)
 def roam_missing_index(table: str = "", confidence: str = "medium", root: str = ".") -> dict:
     """Find queries on non-indexed columns (potential slow queries).
 
@@ -12513,7 +12552,12 @@ def roam_missing_index(table: str = "", confidence: str = "medium", root: str = 
 
 @_tool(
     name="roam_orphan_routes",
-    description="Backend routes with no frontend consumer (dead endpoints).",
+    description=(
+        "Find backend routes lacking a frontend consumer — the dead-endpoint "
+        "surface. Triggers: 'which routes can we delete?', 'find unused "
+        "endpoints', 'audit API surface coverage'. Pair with roam_dead_code "
+        "for symbol-level dead-export detection."
+    ),
 )
 def roam_orphan_routes(limit: int = 50, confidence: str = "medium", root: str = ".") -> dict:
     """Detect backend routes with no frontend consumer (dead endpoints).
@@ -12541,7 +12585,12 @@ def roam_orphan_routes(limit: int = 50, confidence: str = "medium", root: str = 
 
 @_tool(
     name="roam_migration_safety",
-    description="Non-idempotent database migrations (unsafe for re-run).",
+    description=(
+        "Detect non-idempotent database migrations unsafe to re-run. "
+        "Triggers: 'audit migration safety', 'find non-idempotent migrations', "
+        "'which DDL would break on replay?'. Pair with roam_tx_boundaries "
+        "for transaction-correctness analysis."
+    ),
 )
 def roam_migration_safety(limit: int = 50, include_archive: bool = False, root: str = ".") -> dict:
     """Detect non-idempotent database migrations (unsafe for re-run).
@@ -12568,7 +12617,15 @@ def roam_migration_safety(limit: int = 50, include_archive: bool = False, root: 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_api_drift", description="Mismatches between backend models and frontend interfaces.")
+@_tool(
+    name="roam_api_drift",
+    description=(
+        "Detect mismatches between backend models and frontend interfaces. "
+        "Triggers: 'where do API contracts diverge?', 'find drift between "
+        "TS types and Django models', 'audit serializer coverage'. Pair "
+        "with roam_endpoints for full route inventory."
+    ),
+)
 def roam_api_drift(model: str = "", confidence: str = "medium", root: str = ".") -> dict:
     """Detect mismatches between backend models and frontend interfaces.
 

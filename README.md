@@ -308,7 +308,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_annotate_symbol` | Add persistent annotation to a symbol/file for future agent sessions. |
 | `roam_api` | List the public API surface — exported public symbols with signatures and docs. |
 | `roam_api_changes` | Detect breaking and non-breaking API changes vs a git ref. |
-| `roam_api_drift` | Mismatches between backend models and frontend interfaces. |
+| `roam_api_drift` | Detect mismatches between backend models and frontend interfaces. Triggers: 'where do API contracts diverge?', 'find drift between TS types and Django models', 'audit serializer coverage'. Pair with roam_endpoints for full route inventory. |
 | `roam_architecture_drift` | Compute per-week growth rates for symbols / edges / cycles across a sliding window of persisted ``.roam/snapshots/`` and classify overall direction as ``improving`` / ``degrading`` / ``stable``. Different from ``roam_graph_diff`` (point-in-time delta between two commits) and ``roam_trends`` (metric-level time series) -- this is the snapshot-based architectural-trajectory report. |
 | `roam_article_12_check` | Run a 6-item EU AI Act Article 12 readiness checklist over the indexed repo: audit-trail directory, audit-trail records, retention policy doc, technical docs, attestation surface, high-risk classification heuristic. Emits a structured envelope mapping each item to its Article (12, 18, 19) or Annex (III). Different from ``roam_audit_trail_conformance_check`` (per-record chain integrity) -- this is the repo-level governance-readiness assessment. Per the agentic-assurance guardrails: 'maps to' / 'supports evidence for', never 'certifies' / 'makes compliant'. |
 | `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes to one of 25 graph-aware recipes. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
@@ -317,7 +317,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_audit_trail_conformance_check` | Score the audit trail against an EU AI Act Article 12 checklist. |
 | `roam_audit_trail_export` | Export the audit trail as markdown / json / csv for procurement review. |
 | `roam_audit_trail_verify` | Verify SHA-256 chain integrity of a roam audit trail. |
-| `roam_auth_gaps` | Endpoints missing authentication or authorization checks. |
+| `roam_auth_gaps` | Find endpoints lacking auth / authorization checks ranked by confidence. Triggers: 'which routes are unprotected?', 'show me auth gaps', 'audit handler protection'. Pair with roam_taint for taint-source reachability over the unprotected surfaces. |
 | `roam_batch_get` | Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls. |
 | `roam_batch_search` | Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls. |
 | `roam_bisect_blame` | Find snapshots that caused architectural degradation, ranked by impact. |
@@ -352,10 +352,10 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_cut_analysis` | Minimum cut analysis: fragile domain boundaries, highest-impact leak edges. |
 | `roam_dark_matter` | File pairs that co-change without structural links (hidden coupling). |
 | `roam_dashboard` | Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot. |
-| `roam_dead_code` | Unreferenced exported symbols (dead code candidates). |
-| `roam_debt` | Prioritized tech debt with SQALE remediation cost estimates. |
+| `roam_dead_code` | Find unreferenced exported symbols ranked as dead-code candidates. Triggers: 'what can I delete?', 'find dead code', 'unused exports'. Pair with roam_safe_delete for the deletion verdict per symbol. |
+| `roam_debt` | Rank files by tech-debt score with SQALE remediation-cost estimates. Triggers: 'where's the worst debt?', 'what should we refactor next?', 'estimate cleanup cost'. Pair with roam_complexity_report for per-function brain-method targeting. |
 | `roam_delete_check` | Gate the diff (working / staged / PR / HEAD) on surviving references to deleted symbols and files. Per-deletion verdict: SAFE (no surviving references), LIKELY-SAFE (survivors only in tests / docs / unreachable code), or BREAK-RISK (survivors in reachable code). Different from ``roam_critique`` (PR-wide diff review) -- this targets the deletion surface specifically with CI-gate semantics (overall BREAK-RISK trips the gate). |
-| `roam_deps` | File-level imports and importers (what depends on this file). |
+| `roam_deps` | List file-level imports and importers — what this file depends on and what depends on it. Triggers: 'what depends on file.py?', 'show me the importers of module X'. Pair with roam_uses for symbol-level reference lookups. |
 | `roam_describe` | Auto-generate a project description for AI coding agents: multi-section Markdown report covering overview, directories, entry points, key abstractions, architecture, and testing. Different from ``roam_understand`` (compact codebase overview) -- this is the comprehensive prose description for CLAUDE.md / AGENTS.md / .cursor/rules. The wrapper emits to stdout; on-disk writes are deferred to the CLI (``roam describe --write``) so the MCP surface stays read-only. |
 | `roam_dev_profile` | Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection. |
 | `roam_diagnose` | Root cause analysis: upstream/downstream suspects ranked by composite risk. |
@@ -418,9 +418,9 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_metrics` | Show unified per-file or per-symbol metrics: cognitive complexity, fan-in / fan-out, SNA centrality vector (PageRank / betweenness / closeness / eigenvector / clustering coefficient), composite debt score, churn, test coverage, and comprehension difficulty in a single view. |
 | `roam_metrics_push` | Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.** |
 | `roam_migration_plan` | Generate an ordered migration plan with risk + blast-radius per step from a target-architecture YAML spec or inline ``--move SYMBOL=path/to/new/file`` directives. Each step is annotated with caller count and a derived risk score so agents can decide where to stop or insert tests. Stops at the first step exceeding ``max_risk``. Different from ``roam_simulate`` (counterfactual single-move analysis) -- this is the ordered multi-step plan with a risk gate. |
-| `roam_migration_safety` | Non-idempotent database migrations (unsafe for re-run). |
+| `roam_migration_safety` | Detect non-idempotent database migrations unsafe to re-run. Triggers: 'audit migration safety', 'find non-idempotent migrations', 'which DDL would break on replay?'. Pair with roam_tx_boundaries for transaction-correctness analysis. |
 | `roam_minimap` | Generate a compact ~20-line codebase minimap for CLAUDE.md injection: tech stack, annotated directory tree, key symbols by PageRank, high-fan-in symbols to avoid, hotspots, detected conventions. Different from ``roam_describe`` (long-form prose) and ``roam_map`` (structured skeleton) -- this is the sentinel-block one-pager. The wrapper emits to stdout; on-disk updates are deferred to the CLI (``roam minimap --update`` / ``--init-notes``) so the MCP surface stays read-only. |
-| `roam_missing_index` | Queries on non-indexed columns (slow query risk). |
+| `roam_missing_index` | Detect queries hitting non-indexed columns flagged as slow-query risks. Triggers: 'find slow queries', 'audit database indexes', 'where are the N+1 candidates?'. Pair with roam_n1 for per-property iteration patterns. |
 | `roam_module` | Show directory contents: exported symbols, signatures, external imports / importers, internal cohesion percentage, and API surface ratio. Different from ``roam_describe`` (project-wide) -- this analyses a single directory. |
 | `roam_mutate` | Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite. |
 | `roam_n1` | Detect N+1 I/O patterns in ORM code (Laravel/Django/Rails/SQLAlchemy/JPA). |
@@ -435,7 +435,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_oracle_test_only` | Alias of roam_oracle_is_test_only — preserves the shorter name agents sometimes guess. |
 | `roam_orchestrate` | Partition codebase for parallel multi-agent work with exclusive write zones. |
 | `roam_orphan_imports` | List imports that don't resolve to any indexed module or installed package -- catches typo'd local imports, missing packages, and dangling relative imports. Covers Python (default), JavaScript / TypeScript, and Go. Different from ``roam_dead_code`` (unused symbols) -- this targets import-statement orphans. |
-| `roam_orphan_routes` | Backend routes with no frontend consumer (dead endpoints). |
+| `roam_orphan_routes` | Find backend routes lacking a frontend consumer — the dead-endpoint surface. Triggers: 'which routes can we delete?', 'find unused endpoints', 'audit API surface coverage'. Pair with roam_dead_code for symbol-level dead-export detection. |
 | `roam_over_fetch` | Models serializing too many fields (data over-exposure risk). |
 | `roam_owner` | Show code ownership computed from git blame: per-author line counts, percentages, last-active dates, and a fragmentation index. Works on a file or a directory prefix. Different from ``roam_codeowners`` (which reads the CODEOWNERS file) -- this measures actual ownership. |
 | `roam_partition` | Multi-agent work partitioning: split codebase into independent work zones. |
