@@ -1,6 +1,6 @@
 {
   "control-mapping": {
-    "uuid": "a7ff0f6f-eda3-502c-af8d-b54eba1d09ca",
+    "uuid": "a03ab0ec-4bf1-58f8-ba67-425371d7d489",
     "metadata": {
       "title": "Roam control mapping \u2014 supports evidence for governance frameworks",
       "last-modified": "2026-05-14T12:00:00Z",
@@ -27,7 +27,7 @@
     },
     "mappings": [
       {
-        "uuid": "a87cd46f-7af6-58e9-b3ac-0553b07be69c",
+        "uuid": "eb3dfad5-4b35-5b7e-93a7-0d5a59a71bc8",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "df138066-9e2b-5a07-a531-1641bcbc392c",
         "props": [
@@ -39,7 +39,7 @@
         ],
         "maps": [
           {
-            "uuid": "698d7076-c4a1-5557-bf4f-79981e3a554b",
+            "uuid": "d9024b4e-07a0-5e35-9605-46ec08e5fcb1",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_RECORD_KEEPING",
             "target-control-id": "eu_ai_act_art_12:AI_AGENT_RECORD_KEEPING",
@@ -103,7 +103,7 @@
             ]
           },
           {
-            "uuid": "add22f10-0f75-5fb5-8429-86f475ffdb55",
+            "uuid": "11a3cd3b-5e84-51a9-b552-9b06054c7bef",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_CHANGE_PROVENANCE",
             "target-control-id": "eu_ai_act_art_12:AI_AGENT_CHANGE_PROVENANCE",
@@ -177,7 +177,7 @@
             ]
           },
           {
-            "uuid": "adbd6c7e-6262-5071-9925-a6afe7835907",
+            "uuid": "586afff3-25b9-5c5c-b767-fa85c2eb2756",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_AUDIT_TRAIL_INTACT",
             "target-control-id": "eu_ai_act_art_12:AI_AGENT_AUDIT_TRAIL_INTACT",
@@ -238,7 +238,7 @@
         ]
       },
       {
-        "uuid": "ca62fe04-83ec-5e86-8432-71fac2ff90f6",
+        "uuid": "e49c1e64-80c0-56fa-9a9d-52d052fb7d98",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "84786eb6-4d8a-53ce-bae6-5fb42a99e6c0",
         "props": [
@@ -250,7 +250,7 @@
         ],
         "maps": [
           {
-            "uuid": "1adcb97a-bfae-5cad-acba-2f88146ac2bd",
+            "uuid": "c5b51357-0785-584d-8118-dbf4fff8bc09",
             "relationship": "supports",
             "source-control-id": "roam:AI_CHANGE_CONTEXT_REVIEWED",
             "target-control-id": "internal_ai_change_policy:AI_CHANGE_CONTEXT_REVIEWED",
@@ -324,7 +324,7 @@
             ]
           },
           {
-            "uuid": "647eec37-f2dc-5fab-be9d-7410d627dcd9",
+            "uuid": "6019b813-385e-507c-8e38-aeea82aaf5b6",
             "relationship": "supports",
             "source-control-id": "roam:AI_CHANGE_TESTS_GATED",
             "target-control-id": "internal_ai_change_policy:AI_CHANGE_TESTS_GATED",
@@ -393,7 +393,7 @@
             ]
           },
           {
-            "uuid": "54bc9e25-3f68-56a2-a58f-6b12fd6b3485",
+            "uuid": "7cbac5a9-c476-531c-a761-eb5c4f3173d7",
             "relationship": "supports",
             "source-control-id": "roam:AI_CHANGE_BLAST_RADIUS_REVIEWED",
             "target-control-id": "internal_ai_change_policy:AI_CHANGE_BLAST_RADIUS_REVIEWED",
@@ -479,7 +479,7 @@
         ]
       },
       {
-        "uuid": "67c7043e-1f26-5c09-98ca-a0e8e5e9993c",
+        "uuid": "5f3f5108-d3f0-5f99-a7d6-f02c6d774573",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "8fd9045d-3bf1-5e2f-a3c8-48d718e2d407",
         "props": [
@@ -491,7 +491,7 @@
         ],
         "maps": [
           {
-            "uuid": "dfd77aa1-925e-5475-b3a8-5e8fdb18fd84",
+            "uuid": "245a8a1a-e676-5a0d-a900-c82103e77c31",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_OPERATIONAL_BOUNDARIES",
             "target-control-id": "iso_iec_42001:AI_AGENT_OPERATIONAL_BOUNDARIES",
@@ -550,7 +550,7 @@
             ]
           },
           {
-            "uuid": "c329e94a-fd62-529f-8045-06e600cdaadd",
+            "uuid": "e7efc027-c7cb-5ea6-a56a-3f599e5576bd",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_RISK_ASSESSMENT",
             "target-control-id": "iso_iec_42001:AI_AGENT_RISK_ASSESSMENT",
@@ -624,7 +624,7 @@
             ]
           },
           {
-            "uuid": "46058ca8-a361-5e18-8f93-91a29aaba3e2",
+            "uuid": "bf8c6fa9-f2bd-53c7-9d58-c08d6182d864",
             "relationship": "supports",
             "source-control-id": "roam:AI_AGENT_GOVERNANCE_REVIEW",
             "target-control-id": "iso_iec_42001:AI_AGENT_GOVERNANCE_REVIEW",
@@ -695,7 +695,7 @@
         ]
       },
       {
-        "uuid": "c1bb0b49-72e5-57de-96af-280b2a8db75c",
+        "uuid": "6de39850-70d3-52ac-8d43-1a19d2a677be",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "56f494d5-2cf6-54b5-a268-511cddcbbe46",
         "props": [
@@ -707,7 +707,7 @@
         ],
         "maps": [
           {
-            "uuid": "57cea993-34e3-5a8e-b81f-828fbbc4e570",
+            "uuid": "c7d75c27-244c-5953-9d08-c0e27158c08f",
             "relationship": "supports",
             "source-control-id": "roam:AI600_VALUE_CHAIN_PROVENANCE",
             "target-control-id": "nist_ai_600_1:AI600_VALUE_CHAIN_PROVENANCE",
@@ -781,7 +781,7 @@
             ]
           },
           {
-            "uuid": "4eebe998-2a2b-50be-8ff7-e01b96ebbfaf",
+            "uuid": "7daaeac6-fa5d-51be-bf2d-732a8d7a865b",
             "relationship": "supports",
             "source-control-id": "roam:AI600_STOP_BUILD_AUTHORITY",
             "target-control-id": "nist_ai_600_1:AI600_STOP_BUILD_AUTHORITY",
@@ -847,7 +847,7 @@
         ]
       },
       {
-        "uuid": "ba0efae2-5064-5252-b49a-2b4633a2c56a",
+        "uuid": "d66592f8-f17c-5d66-97d0-e3dff02071e5",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "e60e8160-be69-5f4d-bd73-e8c7ae555732",
         "props": [
@@ -859,7 +859,7 @@
         ],
         "maps": [
           {
-            "uuid": "9eff4195-1aab-5fda-8afc-796d711f451a",
+            "uuid": "2b6e7123-d601-54d1-b643-bee0f4051496",
             "relationship": "supports",
             "source-control-id": "roam:AI_GOVERN_MAP",
             "target-control-id": "nist_ai_rmf:AI_GOVERN_MAP",
@@ -913,7 +913,7 @@
             ]
           },
           {
-            "uuid": "8eb06a81-aa38-5110-a073-e124487500ff",
+            "uuid": "d0545f86-ab85-54f0-9fcd-47683eb67ed0",
             "relationship": "supports",
             "source-control-id": "roam:AI_MEASURE_RISK",
             "target-control-id": "nist_ai_rmf:AI_MEASURE_RISK",
@@ -992,7 +992,7 @@
             ]
           },
           {
-            "uuid": "7ab9b58e-f8aa-5e6f-bfe4-d152ab75e635",
+            "uuid": "4006d973-1f2f-57e2-8927-ee51dabb329e",
             "relationship": "supports",
             "source-control-id": "roam:AI_MANAGE_CONTROL",
             "target-control-id": "nist_ai_rmf:AI_MANAGE_CONTROL",
@@ -1068,7 +1068,7 @@
         ]
       },
       {
-        "uuid": "fe27cd08-a347-5946-ac1a-95677095e69c",
+        "uuid": "bdbb7f18-a287-5d47-99a7-0cbf7e21f30e",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "0ad4e083-9013-5ea1-8a42-1eb69c09b1d0",
         "props": [
@@ -1080,7 +1080,7 @@
         ],
         "maps": [
           {
-            "uuid": "4438339e-f5b7-57a3-960b-7ca88021920e",
+            "uuid": "90615f6b-032f-5677-b25a-15af71a662ea",
             "relationship": "supports",
             "source-control-id": "roam:SSDF218A_CODE_PROVENANCE",
             "target-control-id": "nist_sp_800_218a:SSDF218A_CODE_PROVENANCE",
@@ -1164,7 +1164,7 @@
             ]
           },
           {
-            "uuid": "1f88947d-8c79-5427-b485-93c191378d36",
+            "uuid": "001ce5b3-9dd3-5d44-9a8b-a442d3b6967c",
             "relationship": "supports",
             "source-control-id": "roam:SSDF218A_CODE_REVIEW_AI_OUTPUT",
             "target-control-id": "nist_sp_800_218a:SSDF218A_CODE_REVIEW_AI_OUTPUT",
@@ -1233,7 +1233,7 @@
             ]
           },
           {
-            "uuid": "1f80fd1e-f72a-5166-ad14-2289d9cd40b8",
+            "uuid": "e0a1cf47-ab3b-5569-9e57-b4177fc3b4af",
             "relationship": "supports",
             "source-control-id": "roam:SSDF218A_DEVELOPER_AUTHORIZATION",
             "target-control-id": "nist_sp_800_218a:SSDF218A_DEVELOPER_AUTHORIZATION",
@@ -1304,7 +1304,7 @@
         ]
       },
       {
-        "uuid": "cef73fdd-8b19-5497-8250-3594af5f622e",
+        "uuid": "e27c21d9-9009-59b7-bc5a-658b76f929b5",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "4d5883f8-5694-509d-bc63-f3a188b4e8d6",
         "props": [
@@ -1316,7 +1316,7 @@
         ],
         "maps": [
           {
-            "uuid": "5fc4a8d5-f17e-54db-bf9a-73e5150b4f3a",
+            "uuid": "2cd9d688-00f1-5ac7-b930-021e327d6cb5",
             "relationship": "supports",
             "source-control-id": "roam:SLSA_SRC_L2_AUTHORITY",
             "target-control-id": "slsa_src_l2:SLSA_SRC_L2_AUTHORITY",
@@ -1385,7 +1385,7 @@
             ]
           },
           {
-            "uuid": "df9bfb3f-ce57-5ffb-80b9-d12384e020ee",
+            "uuid": "0ed76832-25f3-5292-90bc-c9b6213b94ca",
             "relationship": "supports",
             "source-control-id": "roam:SLSA_SRC_L2_PROVENANCE",
             "target-control-id": "slsa_src_l2:SLSA_SRC_L2_PROVENANCE",
@@ -1471,7 +1471,7 @@
         ]
       },
       {
-        "uuid": "c4005dd7-2f9f-57e0-85c3-13a5d6224ebb",
+        "uuid": "68c48aaf-1ec9-518c-9096-b5c4d328248d",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "bb666de4-abae-5cf7-a9f3-610aaf0237c9",
         "props": [
@@ -1483,7 +1483,7 @@
         ],
         "maps": [
           {
-            "uuid": "2b2cf3d7-c38d-52cb-bf98-837f5fc720c9",
+            "uuid": "ffb1f6ea-cbec-5e1e-87f0-703a0bd5490c",
             "relationship": "supports",
             "source-control-id": "roam:SLSA_SRC_L3_VSA_PREDICATE",
             "target-control-id": "slsa_src_l3:SLSA_SRC_L3_VSA_PREDICATE",
@@ -1569,7 +1569,7 @@
         ]
       },
       {
-        "uuid": "c801ef71-6b00-57ce-af98-d230fec93677",
+        "uuid": "9e38b7eb-44b0-50e9-b5ba-8f8371d88309",
         "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
         "target-resource-id": "55d81eef-6a90-58db-bf39-3e7b40b88528",
         "props": [
@@ -1581,7 +1581,7 @@
         ],
         "maps": [
           {
-            "uuid": "ba61c5f3-0184-5c06-b7a0-2dfffb2ceb1d",
+            "uuid": "b182af87-3f83-5e0f-b7b7-d92894b6d8ee",
             "relationship": "supports",
             "source-control-id": "roam:CHANGE_AUTHORIZATION",
             "target-control-id": "soc_2_cc8_1:CHANGE_AUTHORIZATION",
@@ -1655,7 +1655,7 @@
             ]
           },
           {
-            "uuid": "ee26ae6c-a94f-5ac2-a1d1-5cf82e3eb485",
+            "uuid": "13515947-2524-5a4c-8aef-206ac4735a70",
             "relationship": "supports",
             "source-control-id": "roam:CHANGE_REVIEW",
             "target-control-id": "soc_2_cc8_1:CHANGE_REVIEW",
@@ -1729,7 +1729,7 @@
             ]
           },
           {
-            "uuid": "34dc8bc1-a4a4-5cbf-95f0-29e913eff92a",
+            "uuid": "23b3512b-33e1-5ea7-84fd-4553335d7d91",
             "relationship": "supports",
             "source-control-id": "roam:CHANGE_TRACEABILITY",
             "target-control-id": "soc_2_cc8_1:CHANGE_TRACEABILITY",

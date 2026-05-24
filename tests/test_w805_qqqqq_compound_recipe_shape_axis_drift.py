@@ -136,167 +136,177 @@ def _signature(cmd: click.Command) -> tuple[bool, int, bool]:
 # ---------------------------------------------------------------------------
 
 
-def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.expr]]]:
-    """Yield ``(lineno, recipe_key, post_cr_elements)`` for every
-    ``_safe_run([_cr("<key>"), *more], root)`` call.
+def _match_cr_head_call(expr: ast.expr) -> str | None:
+    """Return the recipe-key string if ``expr`` is ``_cr("X")``; else None.
 
-    ``post_cr_elements`` is the slice of the argv list AFTER the leading
-    ``_cr("<key>")`` call — those are what the recipe author intended
-    to feed to the target command. Returned as raw AST nodes so the
-    caller can decide which to treat as positionals vs option flags.
-
-    Two patterns are extracted:
-
-    1. INLINE LITERAL — ``_safe_run([_cr("X"), <elts...>], root)``. The
-       argv list is built in-place; ``post_cr_elements`` is
-       ``argv.elts[1:]``.
-    2. INCREMENTAL BUILD — ``args = [_cr("X")]; if cond:
-       args.append(<elt>); _safe_run(args, root)``. Used by
-       ``cmd_for_security_review`` for the adversarial section. We
-       walk each ``FunctionDef``, find ``<name> = [_cr("X")]``
-       assignments, collect every ``<name>.append(...)`` /
-       ``<name>.extend([...])`` call in the same function body, and
-       attribute the call to the FIRST ``_safe_run(<name>, root)`` we
-       see.
+    Shared predicate for the three SHAPE-axis stages: every stage
+    classifies its head element by this same rule.
     """
-    # Stage 1 — inline literals.
+    if not (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id == "_cr"
+        and len(expr.args) == 1
+        and isinstance(expr.args[0], ast.Constant)
+        and isinstance(expr.args[0].value, str)
+    ):
+        return None
+    return expr.args[0].value
+
+
+def _extract_cr_argv_head(argv: ast.expr) -> tuple[str, list[ast.expr]] | None:
+    """If ``argv`` is a non-empty ``ast.List`` led by ``_cr("X")``, return
+    ``(recipe_key, rest_elts)``; else None.
+    """
+    if not isinstance(argv, ast.List) or not argv.elts:
+        return None
+    recipe_key = _match_cr_head_call(argv.elts[0])
+    if recipe_key is None:
+        return None
+    return recipe_key, list(argv.elts[1:])
+
+
+def _iter_inline_safe_run_sites(
+    tree: ast.AST,
+) -> Iterator[tuple[int, str, list[ast.expr]]]:
+    """Stage 1 — inline literal ``_safe_run([_cr("X"), …], root)`` sites."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        # ``_safe_run([...], root)`` — name-based call.
         func = node.func
         if not (isinstance(func, ast.Name) and func.id == "_safe_run"):
             continue
         if not node.args:
             continue
-        argv = node.args[0]
-        if not isinstance(argv, ast.List) or not argv.elts:
+        head = _extract_cr_argv_head(node.args[0])
+        if head is None:
             continue
-        head = argv.elts[0]
-        # Head must be ``_cr("<key>")``.
-        if not (
-            isinstance(head, ast.Call)
-            and isinstance(head.func, ast.Name)
-            and head.func.id == "_cr"
-            and len(head.args) == 1
-            and isinstance(head.args[0], ast.Constant)
-            and isinstance(head.args[0].value, str)
-        ):
-            continue
-        recipe_key = head.args[0].value
-        yield node.lineno, recipe_key, list(argv.elts[1:])
+        recipe_key, post_cr = head
+        yield node.lineno, recipe_key, post_cr
 
-    # Stage 2 — incremental builds inside a FunctionDef.
+
+def _classify_incremental_node(
+    inner: ast.AST,
+    seeds: dict[str, tuple[str, int]],
+    appends: dict[str, list[ast.expr]],
+    consumed_at: dict[str, int],
+) -> None:
+    """Mutate ``seeds`` / ``appends`` / ``consumed_at`` for one node in a
+    FunctionDef body. Recognizes seed assigns, ``.append`` / ``.extend``,
+    plain ``_safe_run`` consumers, and W607-AJ ``_run_check*`` wrappers.
+    """
+    # Seed: ``args_name = [_cr("X")]``  (single-target list of len 1)
+    if isinstance(inner, ast.Assign) and len(inner.targets) == 1:
+        tgt = inner.targets[0]
+        if not (isinstance(tgt, ast.Name) and isinstance(inner.value, ast.List)):
+            return
+        elts = inner.value.elts
+        if len(elts) != 1:
+            return
+        recipe_key = _match_cr_head_call(elts[0])
+        if recipe_key is None:
+            return
+        seeds[tgt.id] = (recipe_key, inner.lineno)
+        appends.setdefault(tgt.id, [])
+        return
+    if not isinstance(inner, ast.Call):
+        return
+    # Append: ``args_name.append(<elt>)``
+    if (
+        isinstance(inner.func, ast.Attribute)
+        and inner.func.attr == "append"
+        and isinstance(inner.func.value, ast.Name)
+        and inner.func.value.id in seeds
+        and len(inner.args) == 1
+    ):
+        appends[inner.func.value.id].append(inner.args[0])
+        return
+    # Extend: ``args_name.extend([<elts>])``
+    if (
+        isinstance(inner.func, ast.Attribute)
+        and inner.func.attr == "extend"
+        and isinstance(inner.func.value, ast.Name)
+        and inner.func.value.id in seeds
+        and len(inner.args) == 1
+        and isinstance(inner.args[0], ast.List)
+    ):
+        appends[inner.func.value.id].extend(inner.args[0].elts)
+        return
+    if not isinstance(inner.func, ast.Name):
+        return
+    # Consumer: ``_safe_run(<name>, root)``
+    if (
+        inner.func.id == "_safe_run"
+        and inner.args
+        and isinstance(inner.args[0], ast.Name)
+        and inner.args[0].id in seeds
+        and inner.args[0].id not in consumed_at
+    ):
+        consumed_at[inner.args[0].id] = inner.lineno
+        return
+    # W607-AJ wrapper-bridge: ``_run_check_aj("<phase>", _safe_run, <name>,
+    # root, default=...)`` — the seed list is still consumed by _safe_run,
+    # just through the W607 substrate-marker closure. args[2] is the seed
+    # list variable.
+    if (
+        inner.func.id.startswith("_run_check")
+        and len(inner.args) >= 3
+        and isinstance(inner.args[1], ast.Name)
+        and inner.args[1].id == "_safe_run"
+        and isinstance(inner.args[2], ast.Name)
+        and inner.args[2].id in seeds
+        and inner.args[2].id not in consumed_at
+    ):
+        consumed_at[inner.args[2].id] = inner.lineno
+
+
+def _iter_incremental_safe_run_sites(
+    tree: ast.AST,
+) -> Iterator[tuple[int, str, list[ast.expr]]]:
+    """Stage 2 — ``args = [_cr("X")]; args.append(...); _safe_run(args, root)``
+    incremental-build sites inside each FunctionDef.
+    """
     for func_node in ast.walk(tree):
         if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        # Collect ``<name> = [_cr("X")]`` seed assignments inside this fn.
         seeds: dict[str, tuple[str, int]] = {}  # var -> (recipe_key, lineno)
         appends: dict[str, list[ast.expr]] = {}  # var -> appended elements
         consumed_at: dict[str, int] = {}  # var -> lineno of consuming _safe_run
 
         for inner in ast.walk(func_node):
-            # Seed: ``args_name = [_cr("X")]``  (single-target list of len 1)
-            if isinstance(inner, ast.Assign) and len(inner.targets) == 1:
-                tgt = inner.targets[0]
-                if not (isinstance(tgt, ast.Name) and isinstance(inner.value, ast.List)):
-                    continue
-                elts = inner.value.elts
-                if len(elts) != 1:
-                    continue
-                head = elts[0]
-                if not (
-                    isinstance(head, ast.Call)
-                    and isinstance(head.func, ast.Name)
-                    and head.func.id == "_cr"
-                    and len(head.args) == 1
-                    and isinstance(head.args[0], ast.Constant)
-                    and isinstance(head.args[0].value, str)
-                ):
-                    continue
-                seeds[tgt.id] = (head.args[0].value, inner.lineno)
-                appends.setdefault(tgt.id, [])
-            # Append: ``args_name.append(<elt>)``
-            elif (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Attribute)
-                and inner.func.attr == "append"
-                and isinstance(inner.func.value, ast.Name)
-                and inner.func.value.id in seeds
-                and len(inner.args) == 1
-            ):
-                appends[inner.func.value.id].append(inner.args[0])
-            # Extend: ``args_name.extend([<elts>])``
-            elif (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Attribute)
-                and inner.func.attr == "extend"
-                and isinstance(inner.func.value, ast.Name)
-                and inner.func.value.id in seeds
-                and len(inner.args) == 1
-                and isinstance(inner.args[0], ast.List)
-            ):
-                appends[inner.func.value.id].extend(inner.args[0].elts)
-            # Consumer: ``_safe_run(<name>, root)``
-            elif (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Name)
-                and inner.func.id == "_safe_run"
-                and inner.args
-                and isinstance(inner.args[0], ast.Name)
-                and inner.args[0].id in seeds
-                and inner.args[0].id not in consumed_at
-            ):
-                consumed_at[inner.args[0].id] = inner.lineno
-            # W607-AJ wrapper-bridge variant of the incremental-build
-            # consumer: ``_run_check_aj("<phase>", _safe_run, <name>,
-            # root, default=...)`` -- the seed list is still consumed
-            # by _safe_run, just through the W607 substrate-marker
-            # closure. args[2] is the seed list variable.
-            elif (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Name)
-                and inner.func.id.startswith("_run_check")
-                and len(inner.args) >= 3
-                and isinstance(inner.args[1], ast.Name)
-                and inner.args[1].id == "_safe_run"
-                and isinstance(inner.args[2], ast.Name)
-                and inner.args[2].id in seeds
-                and inner.args[2].id not in consumed_at
-            ):
-                consumed_at[inner.args[2].id] = inner.lineno
+            _classify_incremental_node(inner, seeds, appends, consumed_at)
 
         for var, (recipe_key, _seed_line) in seeds.items():
             if var not in consumed_at:
                 continue
             yield consumed_at[var], recipe_key, appends.get(var, [])
 
-    # Stage 3 — W607-AG/AJ wrapper-bridge variant. The compound-recipe W607
-    # waves (W607-AG cmd_for_refactor, W607-AJ cmd_for_security_review,
-    # and likely future for_bug_fix / for_new_feature) wrap each
-    # ``_safe_run`` invocation in a per-recipe ``_run_check`` /
-    # ``_run_check_aj`` closure for substrate-CALL marker plumbing:
-    #
-    #     _run_check_aj("vulns", _safe_run, [_cr("vulns"), "list"], root,
-    #                   default={"error": "vulns_w607aj_default"})
-    #
-    # The shape-axis drift in the inlined ``[_cr("X"), <positionals>]``
-    # list is still present at runtime — only the outermost call shape
-    # changed. Detect via: any Call whose third positional argument is
-    # an ``ast.List`` whose first element is ``_cr("<key>")``. Defends
-    # the W805-NNNNN pin against AST blindness through W607 wrappers
-    # (which would otherwise FAIL ``test_repo_wide_shape_axis_sweep``
-    # the moment the W607 family lands on a recipe carrying a known
-    # drift).
+
+def _iter_w607_wrapped_safe_run_sites(
+    tree: ast.AST,
+) -> Iterator[tuple[int, str, list[ast.expr]]]:
+    """Stage 3 — W607-AG/AJ wrapper-bridge variant:
+
+        _run_check_aj("vulns", _safe_run, [_cr("vulns"), "list"], root,
+                      default={"error": "vulns_w607aj_default"})
+
+    The shape-axis drift in the inlined ``[_cr("X"), <positionals>]`` list
+    is still present at runtime — only the outermost call shape changed.
+    Detect via: any ``_run_check*`` Call whose third positional argument
+    is an ``ast.List`` whose first element is ``_cr("<key>")``. Defends
+    the W805-NNNNN pin against AST blindness through W607 wrappers (which
+    would otherwise FAIL ``test_repo_wide_shape_axis_sweep`` the moment
+    the W607 family lands on a recipe carrying a known drift).
+    """
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
         if not isinstance(func, ast.Name):
             continue
-        # Match any ``_run_check*`` helper -- closed-set of W607 family
-        # naming variants: ``_run_check`` (W607-AG) and
-        # ``_run_check_aj`` (W607-AJ); future waves add more suffixes.
+        # Match any ``_run_check*`` helper — closed-set of W607 family
+        # naming variants: ``_run_check`` (W607-AG) and ``_run_check_aj``
+        # (W607-AJ); future waves add more suffixes.
         if not func.id.startswith("_run_check"):
             continue
         # Expect ``_run_check_*("<phase>", _safe_run, [<argv>], root, ...)``
@@ -308,21 +318,40 @@ def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.
         bridge = node.args[1]
         if not (isinstance(bridge, ast.Name) and bridge.id == "_safe_run"):
             continue
-        argv = node.args[2]
-        if not isinstance(argv, ast.List) or not argv.elts:
+        head = _extract_cr_argv_head(node.args[2])
+        if head is None:
             continue
-        head = argv.elts[0]
-        if not (
-            isinstance(head, ast.Call)
-            and isinstance(head.func, ast.Name)
-            and head.func.id == "_cr"
-            and len(head.args) == 1
-            and isinstance(head.args[0], ast.Constant)
-            and isinstance(head.args[0].value, str)
-        ):
-            continue
-        recipe_key = head.args[0].value
-        yield node.lineno, recipe_key, list(argv.elts[1:])
+        recipe_key, post_cr = head
+        yield node.lineno, recipe_key, post_cr
+
+
+def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.expr]]]:
+    """Yield ``(lineno, recipe_key, post_cr_elements)`` for every
+    ``_safe_run([_cr("<key>"), *more], root)`` call.
+
+    ``post_cr_elements`` is the slice of the argv list AFTER the leading
+    ``_cr("<key>")`` call — those are what the recipe author intended
+    to feed to the target command. Returned as raw AST nodes so the
+    caller can decide which to treat as positionals vs option flags.
+
+    Three patterns are extracted, each delegated to a dedicated
+    iterator so cognitive complexity stays bounded:
+
+    1. INLINE LITERAL — ``_safe_run([_cr("X"), <elts...>], root)``. The
+       argv list is built in-place; ``post_cr_elements`` is
+       ``argv.elts[1:]``. See ``_iter_inline_safe_run_sites``.
+    2. INCREMENTAL BUILD — ``args = [_cr("X")]; if cond:
+       args.append(<elt>); _safe_run(args, root)``. Used by
+       ``cmd_for_security_review`` for the adversarial section.
+       See ``_iter_incremental_safe_run_sites``.
+    3. W607 WRAPPER-BRIDGE — ``_run_check_aj("X", _safe_run,
+       [_cr("X"), …], root, default=…)``. The outer call shape changed
+       but the inline argv list still carries the SHAPE-axis drift.
+       See ``_iter_w607_wrapped_safe_run_sites``.
+    """
+    yield from _iter_inline_safe_run_sites(tree)
+    yield from _iter_incremental_safe_run_sites(tree)
+    yield from _iter_w607_wrapped_safe_run_sites(tree)
 
 
 def _count_literal_positionals(post_cr: list[ast.expr]) -> tuple[int, list[str]]:

@@ -91,6 +91,38 @@ def _references_name(node: ast.AST, name: str) -> bool:
     return False
 
 
+def _is_return_escape(sub: ast.AST, target_name: str) -> bool:
+    """True if ``sub`` is ``return <target_name>`` (with optional Path wrap)."""
+    if not (isinstance(sub, ast.Return) and sub.value is not None):
+        return False
+    return _value_is_escape_of(sub.value, target_name)
+
+
+def _is_assign_escape(sub: ast.AST, target_name: str) -> bool:
+    """True if ``sub`` is ``<outer> = <target_name>`` (non-self-assign)."""
+    if not isinstance(sub, ast.Assign):
+        return False
+    if not _value_is_escape_of(sub.value, target_name):
+        return False
+    # Skip self-assignments like ``X = X`` (rare).
+    return not _all_targets_are(sub.targets, target_name)
+
+
+def _stmt_escapes_target(stmt: ast.AST, target_name: str) -> bool:
+    """True if any sub-node in ``stmt`` is an escape of ``target_name``."""
+    for sub in ast.walk(stmt):
+        if _is_return_escape(sub, target_name):
+            return True
+        if _is_assign_escape(sub, target_name):
+            return True
+    return False
+
+
+def _body_escapes_target(body: list[ast.stmt], target_name: str) -> bool:
+    """True if any statement in ``body`` escapes ``target_name``."""
+    return any(_stmt_escapes_target(stmt, target_name) for stmt in body)
+
+
 def _find_unsafe_with_blocks(tree: ast.AST) -> list[tuple[str, int]]:
     """Walk ``tree`` and flag W668-unsafe ``with as_file(...) as X:`` blocks.
 
@@ -120,32 +152,12 @@ def _find_unsafe_with_blocks(tree: ast.AST) -> list[tuple[str, int]]:
     for node in ast.walk(tree):
         if not isinstance(node, (ast.With, ast.AsyncWith)):
             continue
-
         for item in node.items:
             target_name = _with_item_target_name(item)
             if target_name is None:
                 continue
-
-            # Walk the with-body and look for escape-route patterns.
-            for stmt in node.body:
-                for sub in ast.walk(stmt):
-                    # Pattern A: return <target> (with optional Path() wrap).
-                    if isinstance(sub, ast.Return) and sub.value is not None:
-                        if _value_is_escape_of(sub.value, target_name):
-                            offenders.append((target_name, node.lineno))
-                            break
-                    # Pattern B: <outer> = <target> / <outer> = Path(<target>)
-                    # only flag when the LHS is NOT just `target_name` itself
-                    # (reassigning the loop variable is a no-op for the bug).
-                    if isinstance(sub, ast.Assign):
-                        if _value_is_escape_of(sub.value, target_name):
-                            # Skip self-assignments like ``X = X`` (rare).
-                            if not _all_targets_are(sub.targets, target_name):
-                                offenders.append((target_name, node.lineno))
-                                break
-                else:
-                    continue
-                break  # break outer for-stmt loop once we've flagged this with-block
+            if _body_escapes_target(node.body, target_name):
+                offenders.append((target_name, node.lineno))
 
     return offenders
 

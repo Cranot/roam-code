@@ -60,28 +60,31 @@ def _collect_ids(page: Path) -> set[str]:
     return set(re.findall(r'\bid="([^"]+)"', text))
 
 
-def main() -> int:
+def _parse_args() -> argparse.Namespace:
+    """Build the CLI parser and return parsed args."""
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--external", action="store_true", help="Also check external URLs (slow)")
     ap.add_argument("--strict", action="store_true", help="Exit 1 on any issue (CI mode)")
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    if not SITE.exists():
-        print(f"Site dir not found: {SITE}", file=sys.stderr)
-        return 2
 
-    # changelog.html is auto-rendered from CHANGELOG.md and necessarily
-    # contains example markdown link references (``[path](path)`` etc.)
-    # that aren't real navigation. Skip it from the link audit; the
-    # changelog-render gate covers content correctness via its own
-    # source-of-truth diff against CHANGELOG.md.
+def _discover_pages() -> list[Path]:
+    """Return every landing-page HTML file we want to audit.
+
+    Skips ``changelog.html`` -- it is auto-rendered from CHANGELOG.md and
+    necessarily contains example markdown link references (``[path](path)``
+    etc.) that aren't real navigation. The changelog-render gate covers
+    content correctness via its own source-of-truth diff against CHANGELOG.md.
+    """
     skip = {"changelog.html"}
-    pages = [p for p in (list(SITE.glob("*.html")) + list(SITE.glob("docs/*.html"))) if p.name not in skip]
-    page_ids: dict[Path, set[str]] = {p: _collect_ids(p) for p in pages}
+    candidates = list(SITE.glob("*.html")) + list(SITE.glob("docs/*.html"))
+    return [p for p in candidates if p.name not in skip]
 
+
+def _scan_internal_links(pages: list[Path], page_ids: dict[Path, set[str]]) -> tuple[list[str], list[str]]:
+    """Walk every ``<a href>`` in each page, returning (issues, external_urls)."""
     issues: list[str] = []
     external_to_check: list[str] = []
-
     for page in pages:
         rel = page.relative_to(SITE).as_posix()
         text = page.read_text(encoding="utf-8")
@@ -104,26 +107,34 @@ def main() -> int:
                     issues.append(
                         f"{rel}: missing #{anchor} on {target.relative_to(SITE).as_posix()} (full href: {href})"
                     )
+    return issues, external_to_check
 
-    if args.external:
+
+def _check_external_urls(urls: list[str]) -> list[str]:
+    """HEAD-probe each unique URL; return issue strings for failures."""
+    try:
+        import urllib.request
+    except ImportError:
+        print("urllib not available; skipping external check", file=sys.stderr)
+        return []
+    issues: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
         try:
-            import urllib.request
-        except ImportError:
-            print("urllib not available; skipping external check", file=sys.stderr)
-        else:
-            seen = set()
-            for url in external_to_check:
-                if url in seen:
-                    continue
-                seen.add(url)
-                try:
-                    req = urllib.request.Request(url, method="HEAD")
-                    with urllib.request.urlopen(req, timeout=10) as r:
-                        if r.status >= 400:
-                            issues.append(f"external: {url} returned {r.status}")
-                except Exception as e:
-                    issues.append(f"external: {url} ({e.__class__.__name__})")
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if r.status >= 400:
+                    issues.append(f"external: {url} returned {r.status}")
+        except Exception as e:
+            issues.append(f"external: {url} ({e.__class__.__name__})")
+    return issues
 
+
+def _render_report(pages: list[Path], issues: list[str], strict: bool) -> int:
+    """Print summary + first 50 issues; return the appropriate exit code."""
     print(f"Checked {len(pages)} pages.")
     if not issues:
         print("All internal links resolve.")
@@ -133,7 +144,25 @@ def main() -> int:
         print(f"  {i}")
     if len(issues) > 50:
         print(f"  ... and {len(issues) - 50} more")
-    return 1 if args.strict else 0
+    return 1 if strict else 0
+
+
+def main() -> int:
+    args = _parse_args()
+
+    if not SITE.exists():
+        print(f"Site dir not found: {SITE}", file=sys.stderr)
+        return 2
+
+    pages = _discover_pages()
+    page_ids: dict[Path, set[str]] = {p: _collect_ids(p) for p in pages}
+
+    issues, external_to_check = _scan_internal_links(pages, page_ids)
+
+    if args.external:
+        issues.extend(_check_external_urls(external_to_check))
+
+    return _render_report(pages, issues, args.strict)
 
 
 if __name__ == "__main__":

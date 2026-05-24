@@ -677,6 +677,88 @@ def test_architecture_export_2way_pairing_dh_and_dk():
 # ---------------------------------------------------------------------------
 
 
+def _w978_is_literal_tree(n: ast.AST) -> bool:
+    """Pure-AST literal check; recursive on container nodes."""
+    if isinstance(n, ast.Constant):
+        return True
+    if isinstance(n, (ast.List, ast.Tuple, ast.Set)):
+        return all(_w978_is_literal_tree(x) for x in n.elts)
+    if isinstance(n, ast.Dict):
+        return all(_w978_is_literal_tree(x) for x in (list(n.keys) + list(n.values)))
+    if isinstance(n, ast.Name):
+        return n.id in ("None", "True", "False")
+    if isinstance(n, ast.UnaryOp) and isinstance(n.operand, ast.Constant):
+        return True
+    return False
+
+
+def _w978_assert_container_is_literal(value: ast.AST, fn_name: str) -> None:
+    """Assert every child of a List/Dict/Tuple/Set is a literal subtree."""
+    if isinstance(value, ast.Dict):
+        children = list(value.keys) + list(value.values)
+    else:
+        children = list(value.elts)
+    for child in children:
+        assert _w978_is_literal_tree(child), (
+            f"{fn_name} default= contains non-literal child at line {value.lineno}: {ast.dump(child)!r}"
+        )
+
+
+def _w978_assert_default_is_literal(value: ast.AST, fn_name: str) -> None:
+    """Dispatch default= value to the right literal check; raise on miss."""
+    if isinstance(value, ast.Constant):
+        return
+    if isinstance(value, (ast.List, ast.Dict, ast.Tuple, ast.Set)):
+        _w978_assert_container_is_literal(value, fn_name)
+        return
+    if isinstance(value, ast.Name):
+        assert value.id in ("None", "True", "False"), (
+            f"{fn_name} default= references symbol {value.id!r} "
+            f"at line {value.lineno}; only literals + immutable "
+            f"containers allowed (W978 2nd discipline)."
+        )
+        return
+    raise AssertionError(f"{fn_name} default= is not a literal at line {value.lineno}: {ast.dump(value)!r}")
+
+
+def _w978_extract_phase(node: ast.Call, fn_name: str) -> str | None:
+    """Return the phase string of a `fn_name(phase, ...)` call, or None to skip."""
+    func = node.func
+    if not isinstance(func, ast.Name) or func.id != fn_name:
+        return None
+    if not node.args:
+        return None
+    phase_arg = node.args[0]
+    assert isinstance(phase_arg, ast.Constant), (
+        f"{fn_name} phase arg must be a string literal at line {phase_arg.lineno}; got {ast.dump(phase_arg)!r}"
+    )
+    return phase_arg.value
+
+
+def _w978_audit_call(node: ast.Call, fn_name: str) -> str | None:
+    """Audit a single Call node; return its phase name (or None to skip)."""
+    phase = _w978_extract_phase(node, fn_name)
+    if phase is None:
+        return None
+    for kw in node.keywords:
+        if kw.arg != "default":
+            continue
+        _w978_assert_default_is_literal(kw.value, fn_name)
+    return phase
+
+
+def _w978_collect_phases(tree: ast.AST, fn_name: str) -> list[str]:
+    """Walk the tree, audit every matching call, return collected phase names."""
+    phases_seen: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        phase = _w978_audit_call(node, fn_name)
+        if phase is not None:
+            phases_seen.append(phase)
+    return phases_seen
+
+
 def test_w978_7_discipline_ast_audit_dk():
     """AST audit pins the W978 7-discipline compliance for W607-DK.
 
@@ -689,61 +771,7 @@ def test_w978_7_discipline_ast_audit_dk():
     src = src_path.read_text(encoding="utf-8")
     tree = ast.parse(src)
 
-    phases_seen: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Name) or func.id != "_run_check_dk":
-            continue
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        assert isinstance(phase_arg, ast.Constant), (
-            f"_run_check_dk phase arg must be a string literal at line {phase_arg.lineno}; got {ast.dump(phase_arg)!r}"
-        )
-        phases_seen.append(phase_arg.value)
-
-        # default= kwarg must be a literal / immutable / Name constant.
-        for kw in node.keywords:
-            if kw.arg != "default":
-                continue
-            value = kw.value
-            if isinstance(value, ast.Constant):
-                continue
-            if isinstance(value, (ast.List, ast.Dict, ast.Tuple, ast.Set)):
-                # One-level recursive literal check.
-                if isinstance(value, ast.Dict):
-                    children = list(value.keys) + list(value.values)
-                else:
-                    children = list(value.elts)
-
-                def _is_literal_tree(n) -> bool:
-                    if isinstance(n, ast.Constant):
-                        return True
-                    if isinstance(n, (ast.List, ast.Tuple, ast.Set)):
-                        return all(_is_literal_tree(x) for x in n.elts)
-                    if isinstance(n, ast.Dict):
-                        return all(_is_literal_tree(x) for x in (list(n.keys) + list(n.values)))
-                    if isinstance(n, ast.Name):
-                        return n.id in ("None", "True", "False")
-                    if isinstance(n, ast.UnaryOp) and isinstance(n.operand, ast.Constant):
-                        return True
-                    return False
-
-                for child in children:
-                    assert _is_literal_tree(child), (
-                        f"_run_check_dk default= contains non-literal child at line {value.lineno}: {ast.dump(child)!r}"
-                    )
-                continue
-            if isinstance(value, ast.Name):
-                assert value.id in ("None", "True", "False"), (
-                    f"_run_check_dk default= references symbol {value.id!r} "
-                    f"at line {value.lineno}; only literals + immutable "
-                    f"containers allowed (W978 2nd discipline)."
-                )
-                continue
-            raise AssertionError(f"_run_check_dk default= is not a literal at line {value.lineno}: {ast.dump(value)!r}")
+    phases_seen = _w978_collect_phases(tree, "_run_check_dk")
 
     # Phase names unique within the file (4th discipline collision check).
     duplicates = [p for p in phases_seen if phases_seen.count(p) > 1]

@@ -2,7 +2,13 @@
   "mcpServers": {
     "roam-code": {
       "command": "roam",
-      "args": ["mcp"]
+      "args": [
+        "mcp"
+      ],
+      "alwaysLoad": true,
+      "env": {
+        "ROAM_MCP_PRESET": "full"
+      }
     }
   }
 }

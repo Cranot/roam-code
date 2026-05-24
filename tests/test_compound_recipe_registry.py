@@ -420,45 +420,74 @@ def _scan_recipe_commands() -> list[tuple[pathlib.Path, str, int]]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_report_presets() -> list[tuple[pathlib.Path, str, int]]:
-    """Return ``(path, command_name, lineno)`` triples for every section
-    command in ``cmd_report.PRESETS``."""
-    out: list[tuple[pathlib.Path, str, int]] = []
+def _parse_report_ast() -> ast.Module | None:
+    """Load and parse ``_REPORT_FILE``; return None on read/syntax failure."""
     try:
         source = _REPORT_FILE.read_text(encoding="utf-8")
     except OSError:
-        return out
+        return None
     try:
-        tree = ast.parse(source)
+        return ast.parse(source)
     except SyntaxError:
-        return out
+        return None
+
+
+def _iter_presets_dict(tree: ast.Module) -> Iterator[ast.Dict]:
+    """Yield each preset-value ``ast.Dict`` inside ``PRESETS = {...}``."""
     for node in ast.walk(tree):
-        # PRESETS = {<name>: {"sections": [{"command": [...]}, ...]}}
         if not isinstance(node, ast.Assign):
             continue
-        if not (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "PRESETS"):
+        if len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not (isinstance(target, ast.Name) and target.id == "PRESETS"):
             continue
         if not isinstance(node.value, ast.Dict):
             continue
         for preset_value in node.value.values:
-            if not isinstance(preset_value, ast.Dict):
-                continue
-            for k, v in zip(preset_value.keys, preset_value.values):
-                if not (isinstance(k, ast.Constant) and k.value == "sections"):
+            if isinstance(preset_value, ast.Dict):
+                yield preset_value
+
+
+def _iter_sections_list(preset: ast.Dict) -> Iterator[ast.List]:
+    """Yield each ``"sections"`` value (an ``ast.List``) inside one preset."""
+    for k, v in zip(preset.keys, preset.values):
+        if not (isinstance(k, ast.Constant) and k.value == "sections"):
+            continue
+        if isinstance(v, ast.List):
+            yield v
+
+
+def _extract_command_head(section: ast.Dict) -> tuple[str, int] | None:
+    """Return ``(name, lineno)`` for the ``"command"`` list head when it's a
+    string ``ast.Constant``; otherwise ``None``."""
+    for sk, sv in zip(section.keys, section.values):
+        if not (isinstance(sk, ast.Constant) and sk.value == "command"):
+            continue
+        if not isinstance(sv, ast.List) or not sv.elts:
+            continue
+        head = sv.elts[0]
+        if isinstance(head, ast.Constant) and isinstance(head.value, str):
+            return head.value, head.lineno
+    return None
+
+
+def _scan_report_presets() -> list[tuple[pathlib.Path, str, int]]:
+    """Return ``(path, command_name, lineno)`` triples for every section
+    command in ``cmd_report.PRESETS``."""
+    tree = _parse_report_ast()
+    if tree is None:
+        return []
+    out: list[tuple[pathlib.Path, str, int]] = []
+    for preset in _iter_presets_dict(tree):
+        for sections in _iter_sections_list(preset):
+            for section in sections.elts:
+                if not isinstance(section, ast.Dict):
                     continue
-                if not isinstance(v, ast.List):
-                    continue
-                for section in v.elts:
-                    if not isinstance(section, ast.Dict):
-                        continue
-                    for sk, sv in zip(section.keys, section.values):
-                        if not (isinstance(sk, ast.Constant) and sk.value == "command"):
-                            continue
-                        if not isinstance(sv, ast.List) or not sv.elts:
-                            continue
-                        head = sv.elts[0]
-                        if isinstance(head, ast.Constant) and isinstance(head.value, str):
-                            out.append((_REPORT_FILE, head.value, head.lineno))
+                head = _extract_command_head(section)
+                if head is not None:
+                    name, lineno = head
+                    out.append((_REPORT_FILE, name, lineno))
     return out
 
 

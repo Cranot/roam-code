@@ -43,7 +43,7 @@ def dangling_project(tmp_path):
         "\n"
         "See [the strategy doc](docs/strategy/cold-outreach.md).\n"
         "\n"
-        "Also `internal backlog` for the backlog.\n"
+        "Also see `internal/backlog.md` for the backlog.\n"
     )
     # Reference-style + HTML href, both pointing at missing files.
     (proj / "docs").mkdir()
@@ -108,14 +108,14 @@ class TestStaleRefsDetection:
         monkeypatch.chdir(dangling_project)
         # Default: bare backtick refs are NOT extracted.
         result = invoke_cli(cli_runner, ["stale-refs"], cwd=dangling_project)
-        assert "internal backlog" not in result.output
+        assert "internal/backlog.md" not in result.output
         # Opt-in: re-enables the historical detection.
         result = invoke_cli(
             cli_runner,
             ["stale-refs", "--scan-bare-backticks"],
             cwd=dangling_project,
         )
-        assert "internal backlog" in result.output
+        assert "internal/backlog.md" in result.output
 
     def test_finds_html_href(self, cli_runner, dangling_project, monkeypatch):
         monkeypatch.chdir(dangling_project)
