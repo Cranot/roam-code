@@ -2594,23 +2594,9 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         if not calls:
             continue
 
-        high_calls: list[str] = []
-        medium_calls: list[str] = []
-        ambiguous_calls: list[str] = []
-        frameworks: set[str] = set()
-        fixes: set[str] = set()
-        for c in calls:
-            level, pack = _io_classify_call(c, language, conn, r, snippet=snippet)
-            if pack:
-                frameworks.add(pack["framework"])
-                if pack.get("fix"):
-                    fixes.add(pack["fix"])
-            if level == "high":
-                high_calls.append(c)
-            elif level == "medium":
-                medium_calls.append(c)
-            elif level == "ambiguous":
-                ambiguous_calls.append(c)
+        high_calls, medium_calls, ambiguous_calls, frameworks, fixes = _classify_loop_call_buckets(
+            calls, language, conn, r, snippet
+        )
 
         if not high_calls and not medium_calls and not ambiguous_calls:
             continue
@@ -2625,26 +2611,13 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         if _has_batch_iteration(snippet):
             continue
 
-        # M4: skip DEV-gated bodies — production stripped, so loop overhead
-        # is irrelevant. (Conservative: only skip when the gate is *literally*
-        # in this function's body.)
+        # M4: DEV-gated bodies get demoted (not dropped) — a real
+        # production-bound issue could still exist outside the gate, but it
+        # sinks to the bottom of the verdict list.
         dev_gated = _is_dev_only_block(snippet)
         guard_applies = bool(frameworks and guard_hints)
         evidence_io_calls = _dedupe(high_calls + medium_calls + ambiguous_calls)[:6]
-        if high_calls:
-            level = "high"
-        elif medium_calls:
-            level = "medium"
-        else:
-            level = "ambiguous"
-        if dev_gated:
-            # Don't drop entirely — a real production-bound issue could still
-            # exist outside the gate. But demote two tiers so it sinks to the
-            # bottom of the verdict list.
-            if level == "high":
-                level = "medium"
-            elif level == "medium":
-                level = "ambiguous"
+        level = _demote_dev_gated_level(_pick_io_level(high_calls, medium_calls), dev_gated)
         results.append(
             _io_emit_finding(
                 level,
@@ -2662,6 +2635,54 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
             )
         )
     return results
+
+
+def _classify_loop_call_buckets(
+    calls: list[str],
+    language: str,
+    conn: sqlite3.Connection,
+    r,
+    snippet: str,
+) -> tuple[list[str], list[str], list[str], set[str], set[str]]:
+    """Bin each loop call into tier buckets and collect framework/fix sets."""
+    high_calls: list[str] = []
+    medium_calls: list[str] = []
+    ambiguous_calls: list[str] = []
+    frameworks: set[str] = set()
+    fixes: set[str] = set()
+    for c in calls:
+        level, pack = _io_classify_call(c, language, conn, r, snippet=snippet)
+        if pack:
+            frameworks.add(pack["framework"])
+            if pack.get("fix"):
+                fixes.add(pack["fix"])
+        if level == "high":
+            high_calls.append(c)
+        elif level == "medium":
+            medium_calls.append(c)
+        elif level == "ambiguous":
+            ambiguous_calls.append(c)
+    return high_calls, medium_calls, ambiguous_calls, frameworks, fixes
+
+
+def _pick_io_level(high_calls: list[str], medium_calls: list[str]) -> str:
+    """Pick the dominant tier level from the per-tier bucket lists."""
+    if high_calls:
+        return "high"
+    if medium_calls:
+        return "medium"
+    return "ambiguous"
+
+
+def _demote_dev_gated_level(level: str, dev_gated: bool) -> str:
+    """Demote one tier when the loop body is DEV-gated (production stripped)."""
+    if not dev_gated:
+        return level
+    if level == "high":
+        return "medium"
+    if level == "medium":
+        return "ambiguous"
+    return level
 
 
 @detector(

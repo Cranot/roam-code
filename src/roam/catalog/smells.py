@@ -377,6 +377,42 @@ def detect_large_class(conn: sqlite3.Connection) -> list[dict]:
 # symbols/files graph; predicate is a threshold over graph-extracted shape,
 # not a name match. Higher signal than ``large-class`` but still a threshold,
 # so it lands on the structural tier rather than static_analysis.
+def _count_methods_in_class(conn: sqlite3.Connection, file_id: int, line_start: int, line_end: int) -> int:
+    """Count methods nested inside a class's line span."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind = 'method' AND line_start >= ? AND line_end <= ?",
+        (file_id, line_start, line_end),
+    ).fetchone()[0]
+
+
+def _format_god_class_parts(method_count: int, line_count: int) -> list[str]:
+    """Build the human-readable fragments for whichever thresholds tripped."""
+    parts = []
+    if method_count > 30:
+        parts.append(f"{method_count} methods")
+    if line_count > 1000:
+        parts.append(f"{line_count} LOC")
+    return parts
+
+
+def _build_god_class_finding(r, method_count: int, line_count: int) -> dict:
+    """Assemble a god-class finding dict from the row + computed counts."""
+    loc_str = _loc(r["file_path"], r["line_start"])
+    metric = max(method_count, line_count)
+    threshold = 30 if method_count > 30 else 1000
+    parts = _format_god_class_parts(method_count, line_count)
+    return _finding(
+        "god-class",
+        "critical",
+        r["name"],
+        r["kind"],
+        loc_str,
+        metric,
+        threshold,
+        f"God class: {', '.join(parts)}",
+    )
+
+
 @detector("god-class", confidence=CONFIDENCE_STRUCTURAL)
 def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 30 methods OR > 1000 LOC."""
@@ -390,31 +426,9 @@ def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
     results = []
     for r in rows:
         line_count = (r["line_end"] or 0) - (r["line_start"] or 0)
-        method_count = conn.execute(
-            "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind = 'method' AND line_start >= ? AND line_end <= ?",
-            (r["file_id"], r["line_start"] or 0, r["line_end"] or 0),
-        ).fetchone()[0]
+        method_count = _count_methods_in_class(conn, r["file_id"], r["line_start"] or 0, r["line_end"] or 0)
         if method_count > 30 or line_count > 1000:
-            loc_str = _loc(r["file_path"], r["line_start"])
-            metric = max(method_count, line_count)
-            threshold = 30 if method_count > 30 else 1000
-            parts = []
-            if method_count > 30:
-                parts.append(f"{method_count} methods")
-            if line_count > 1000:
-                parts.append(f"{line_count} LOC")
-            results.append(
-                _finding(
-                    "god-class",
-                    "critical",
-                    r["name"],
-                    r["kind"],
-                    loc_str,
-                    metric,
-                    threshold,
-                    f"God class: {', '.join(parts)}",
-                )
-            )
+            results.append(_build_god_class_finding(r, method_count, line_count))
     return results
 
 

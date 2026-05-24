@@ -404,6 +404,161 @@ def _make_truncation_finding(
 # ---------------------------------------------------------------------------
 
 
+def _bucket_symbols_by_layer(
+    symbols: list[tuple[int, str, str, int | None, str]],
+) -> dict[str, list[tuple[int, str, str, int | None, str]]]:
+    """Bucket callable symbols by classified layer; drop unmatched paths.
+
+    Anything that doesn't map is dropped — this detector is intentionally
+    focused on the layered-app pattern; arbitrary cross-module duplication
+    is W95/W855 territory.
+    """
+    by_layer: dict[str, list[tuple[int, str, str, int | None, str]]] = defaultdict(list)
+    for row in symbols:
+        sym_id, sym_name, sym_kind, sym_line, sym_path = row
+        layer = _classify_layer(sym_path)
+        if layer is None:
+            continue
+        by_layer[layer].append(row)
+    return by_layer
+
+
+def _attach_callees_to_layers(
+    by_layer: dict[str, list[tuple[int, str, str, int | None, str]]],
+    callees_by_id: dict[int, set[str]],
+) -> dict[str, list[tuple[int, str, str, int | None, str, set[str]]]]:
+    """Re-bucket each layer keeping only symbols with non-empty callee sets.
+
+    The comparison loop skips empties anyway but pre-filtering keeps the
+    O(n*m) tighter.
+    """
+    layered_with_callees: dict[str, list[tuple[int, str, str, int | None, str, set[str]]]] = defaultdict(list)
+    for layer, rows in by_layer.items():
+        for sym_id, sym_name, sym_kind, sym_line, sym_path in rows:
+            callees = callees_by_id.get(sym_id)
+            if not callees:
+                continue
+            layered_with_callees[layer].append((sym_id, sym_name, sym_kind, sym_line, sym_path, callees))
+    return layered_with_callees
+
+
+def _compare_caller_pair(
+    *,
+    sid_a: int,
+    name_a: str,
+    line_a: int | None,
+    path_a: str,
+    callees_a: set[str],
+    sid_b: int,
+    name_b: str,
+    path_b: str,
+    callees_b: set[str],
+    layer_a: str,
+    layer_b: str,
+    jaccard_threshold: float,
+    min_shared_callees: int,
+    seen_pairs: set[tuple[int, int]],
+) -> dict | None:
+    """Score one caller pair; return a finding dict or None when filtered out.
+
+    Skips self-pairs, already-seen pairs, pairs below ``min_shared_callees``
+    or below ``jaccard_threshold``. Mutates ``seen_pairs`` on accept.
+    """
+    # Skip same-symbol self-pairs (cannot happen across different layers
+    # but guards against degenerate rows with mis-classified paths).
+    if sid_a == sid_b:
+        return None
+    pair_key = (sid_a, sid_b) if sid_a < sid_b else (sid_b, sid_a)
+    if pair_key in seen_pairs:
+        return None
+    shared = callees_a & callees_b
+    if len(shared) < min_shared_callees:
+        return None
+    union = callees_a | callees_b
+    if not union:
+        return None
+    jaccard = len(shared) / len(union)
+    if jaccard < jaccard_threshold:
+        return None
+    seen_pairs.add(pair_key)
+    return _make_finding(
+        layer_a=layer_a,
+        layer_b=layer_b,
+        sym_a_name=name_a,
+        sym_b_name=name_b,
+        file_a=path_a,
+        file_b=path_b,
+        line_a=line_a,
+        jaccard=jaccard,
+        shared_callees=sorted(shared),
+        total_unique_callees=len(union),
+        threshold=jaccard_threshold,
+    )
+
+
+def _scan_layer_pair(
+    *,
+    layer_a: str,
+    layer_b: str,
+    rows_a: list[tuple[int, str, str, int | None, str, set[str]]],
+    rows_b: list[tuple[int, str, str, int | None, str, set[str]]],
+    pair_budget: int,
+    jaccard_threshold: float,
+    min_shared_callees: int,
+    seen_pairs: set[tuple[int, int]],
+) -> tuple[list[dict], bool]:
+    """Scan all caller pairs across two layers; return (findings, truncated).
+
+    Truncate when ``len(rows_a) * len(rows_b) > pair_budget`` — we still
+    scan as much of layer A as the budget allows, then the caller emits a
+    sentinel finding so the truncation is disclosed rather than silent.
+    """
+    full_comparisons = len(rows_a) * len(rows_b)
+    truncated = full_comparisons > pair_budget
+    findings: list[dict] = []
+    comparisons_done = 0
+    for sid_a, name_a, _ka, line_a, path_a, callees_a in rows_a:
+        if truncated and comparisons_done >= pair_budget:
+            break
+        for sid_b, name_b, _kb, _lb, path_b, callees_b in rows_b:
+            comparisons_done += 1
+            finding = _compare_caller_pair(
+                sid_a=sid_a,
+                name_a=name_a,
+                line_a=line_a,
+                path_a=path_a,
+                callees_a=callees_a,
+                sid_b=sid_b,
+                name_b=name_b,
+                path_b=path_b,
+                callees_b=callees_b,
+                layer_a=layer_a,
+                layer_b=layer_b,
+                jaccard_threshold=jaccard_threshold,
+                min_shared_callees=min_shared_callees,
+                seen_pairs=seen_pairs,
+            )
+            if finding is not None:
+                findings.append(finding)
+    return findings, truncated
+
+
+def _finalize_findings(
+    findings: list[dict],
+    truncation_findings: list[dict],
+) -> list[dict]:
+    """Deterministic merge: real findings by ``-metric_value``/name, then sentinels.
+
+    Sentinel truncation findings (if any) ride at the END of the list,
+    ordered by layer pair, so they never perturb the ordering of real
+    clone findings — a below-budget scan produces zero of these and the
+    output is byte-identical to the pre-budget detector.
+    """
+    findings.sort(key=lambda f: (-f["metric_value"], f["symbol_name"]))
+    truncation_findings.sort(key=lambda f: f["symbol_name"])
+    return findings + truncation_findings
+
+
 def detect_cross_layer_clones(
     conn: sqlite3.Connection,
     *,
@@ -439,17 +594,7 @@ def detect_cross_layer_clones(
     if not symbols:
         return []
 
-    # Bucket symbols by detected layer. Anything that doesn't map is
-    # dropped — this detector is intentionally focused on the layered-app
-    # pattern; arbitrary cross-module duplication is W95/W855 territory.
-    by_layer: dict[str, list[tuple[int, str, str, int | None, str]]] = defaultdict(list)
-    for row in symbols:
-        sym_id, sym_name, sym_kind, sym_line, sym_path = row
-        layer = _classify_layer(sym_path)
-        if layer is None:
-            continue
-        by_layer[layer].append(row)
-
+    by_layer = _bucket_symbols_by_layer(symbols)
     if len(by_layer) < 2:
         # Need at least two layers populated to have any cross-layer pair.
         return []
@@ -463,17 +608,7 @@ def detect_cross_layer_clones(
             all_layered_ids.add(r[0])
     callees_by_id = _load_callee_name_sets(conn, all_layered_ids)
 
-    # Re-bucket each layer to only keep symbols that actually have a
-    # non-empty callee set; the comparison loop below skips empties
-    # anyway but pre-filtering keeps the O(n*m) tighter.
-    layered_with_callees: dict[str, list[tuple[int, str, str, int | None, str, set[str]]]] = defaultdict(list)
-    for layer, rows in by_layer.items():
-        for sym_id, sym_name, sym_kind, sym_line, sym_path in rows:
-            callees = callees_by_id.get(sym_id)
-            if not callees:
-                continue
-            layered_with_callees[layer].append((sym_id, sym_name, sym_kind, sym_line, sym_path, callees))
-
+    layered_with_callees = _attach_callees_to_layers(by_layer, callees_by_id)
     if len(layered_with_callees) < 2:
         return []
 
@@ -493,13 +628,16 @@ def detect_cross_layer_clones(
             layer_a, layer_b = layers[i], layers[j]
             rows_a = layered_with_callees[layer_a]
             rows_b = layered_with_callees[layer_b]
-            # Truncate this layer pair when the full cross-product would
-            # exceed the budget. We still scan as much of layer A as the
-            # budget allows (each layer-A caller costs len(rows_b)
-            # comparisons), then emit a sentinel so the truncation is
-            # disclosed rather than silent.
-            full_comparisons = len(rows_a) * len(rows_b)
-            truncated = full_comparisons > pair_budget
+            pair_findings, truncated = _scan_layer_pair(
+                layer_a=layer_a,
+                layer_b=layer_b,
+                rows_a=rows_a,
+                rows_b=rows_b,
+                pair_budget=pair_budget,
+                jaccard_threshold=jaccard_threshold,
+                min_shared_callees=min_shared_callees,
+                seen_pairs=seen_pairs,
+            )
             if truncated:
                 truncation_findings.append(
                     _make_truncation_finding(
@@ -510,56 +648,9 @@ def detect_cross_layer_clones(
                         budget=pair_budget,
                     )
                 )
-            comparisons_done = 0
-            for sid_a, name_a, _ka, line_a, path_a, callees_a in rows_a:
-                if truncated and comparisons_done >= pair_budget:
-                    break
-                for sid_b, name_b, _kb, _lb, path_b, callees_b in rows_b:
-                    comparisons_done += 1
-                    # Skip same-symbol self-pairs (cannot happen across
-                    # different layers but guards against degenerate
-                    # rows with mis-classified paths).
-                    if sid_a == sid_b:
-                        continue
-                    pair_key = (sid_a, sid_b) if sid_a < sid_b else (sid_b, sid_a)
-                    if pair_key in seen_pairs:
-                        continue
-                    shared = callees_a & callees_b
-                    if len(shared) < min_shared_callees:
-                        continue
-                    union = callees_a | callees_b
-                    if not union:
-                        continue
-                    jaccard = len(shared) / len(union)
-                    if jaccard < jaccard_threshold:
-                        continue
-                    seen_pairs.add(pair_key)
-                    findings.append(
-                        _make_finding(
-                            layer_a=layer_a,
-                            layer_b=layer_b,
-                            sym_a_name=name_a,
-                            sym_b_name=name_b,
-                            file_a=path_a,
-                            file_b=path_b,
-                            line_a=line_a,
-                            jaccard=jaccard,
-                            shared_callees=sorted(shared),
-                            total_unique_callees=len(union),
-                            threshold=jaccard_threshold,
-                        )
-                    )
+            findings.extend(pair_findings)
 
-    # Deterministic ordering: highest similarity first, then alphabetical
-    # on ``symbol_name`` so two pairs with identical Jaccard scores still
-    # ship in a stable order across runs.
-    findings.sort(key=lambda f: (-f["metric_value"], f["symbol_name"]))
-    # Sentinel truncation findings (if any) ride at the END of the list,
-    # ordered by layer pair, so they never perturb the ordering of real
-    # clone findings — a below-budget scan produces zero of these and the
-    # output is byte-identical to the pre-budget detector.
-    truncation_findings.sort(key=lambda f: f["symbol_name"])
-    return findings + truncation_findings
+    return _finalize_findings(findings, truncation_findings)
 
 
 __all__ = [
