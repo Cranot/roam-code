@@ -105,7 +105,7 @@ class SideEffectClassification:
 # ---------------------------------------------------------------------------
 
 KNOWN_SIDE_EFFECTING_PREFIXES: tuple[tuple[str, str], ...] = (
-    # ── io_read ────────────────────────────────────────────────────────
+    # -- io_read --------------------------------------------------------
     ("requests.get", "io_read"),
     ("requests.head", "io_read"),
     ("httpx.get", "io_read"),
@@ -128,7 +128,7 @@ KNOWN_SIDE_EFFECTING_PREFIXES: tuple[tuple[str, str], ...] = (
     ("os.path.isfile", "io_read"),
     ("os.path.isdir", "io_read"),
     ("boto3.client", "io_read"),
-    # ── io_write ───────────────────────────────────────────────────────
+    # -- io_write -------------------------------------------------------
     ("requests.post", "io_write"),
     ("requests.put", "io_write"),
     ("requests.patch", "io_write"),
@@ -177,7 +177,7 @@ KNOWN_SIDE_EFFECTING_PREFIXES: tuple[tuple[str, str], ...] = (
     (".executemany", "io_write"),
     (".insert", "io_write"),
     (".save", "io_write"),
-    # ── process ────────────────────────────────────────────────────────
+    # -- process --------------------------------------------------------
     ("subprocess.run", "process"),
     ("subprocess.Popen", "process"),
     ("subprocess.check_call", "process"),
@@ -195,7 +195,7 @@ KNOWN_SIDE_EFFECTING_PREFIXES: tuple[tuple[str, str], ...] = (
     ("asyncio.gather", "process"),
     ("concurrent.futures.ThreadPoolExecutor", "process"),
     ("concurrent.futures.ProcessPoolExecutor", "process"),
-    # ── mutation ───────────────────────────────────────────────────────
+    # -- mutation -------------------------------------------------------
     ("os.environ.__setitem__", "mutation"),
     ("os.environ.pop", "mutation"),
 )

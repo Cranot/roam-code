@@ -314,6 +314,321 @@ def _global_names(all_text: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def _label_for_sink_match(pattern_label: str, kind: str) -> str:
+    """Format a sink anchor label — strip leading dot, prepend kind."""
+    clean = pattern_label.lstrip(".")
+    return f"{kind}:{clean}"
+
+
+def _empty_causal_graph(
+    sym_name: str,
+    file_path: str,
+    symbol_id: int,
+    line_start: int,
+    line_end: int,
+) -> CausalGraph:
+    """Build the canonical empty/low-confidence graph for early-return paths."""
+    return CausalGraph(
+        symbol=sym_name,
+        file=file_path,
+        edges=[],
+        inputs=[],
+        sinks=[],
+        truncated=False,
+        confidence="low",
+        symbol_id=symbol_id,
+        line_start=line_start,
+        line_end=line_end,
+    )
+
+
+def _collect_env_reads(
+    lines: list[str],
+    line_start: int,
+    inputs: set[str],
+) -> list[tuple[int, str]]:
+    """Pre-pass: scan for ``os.environ`` / ``os.getenv`` reads; mutate inputs."""
+    env_keys: list[tuple[int, str]] = []
+    for li, line in enumerate(lines, start=line_start):
+        for m in _ENV_READ_RE.finditer(line):
+            key = m.group(1) or m.group(2) or m.group(3)
+            if key:
+                env_keys.append((li, key))
+                inputs.add(f"env:{key}")
+    return env_keys
+
+
+def _compile_token_pats(tokens) -> dict[str, re.Pattern]:
+    """Pre-compile ``\\bTOKEN\\b`` regexes for cheap per-line token tests."""
+    return {t: re.compile(r"\b" + re.escape(t) + r"\b") for t in tokens}
+
+
+def _detect_param_to_raise(
+    line: str,
+    li: int,
+    param_set: set[str],
+    param_pats: dict[str, re.Pattern],
+    inputs: set[str],
+    sinks: set[str],
+    emit,
+) -> bool:
+    """Section E: emit param_to_raise edges for ``raise ...`` lines.
+
+    Returns False if emit caps out (caller must break the line loop).
+    """
+    raise_m = _RAISE_RE.match(line)
+    if not raise_m:
+        return True
+    exc_name = (raise_m.group(1) or "").strip()
+    tail = raise_m.group(2) or ""
+    sink_label = f"raise:{exc_name}" if exc_name else "raise"
+    sinks.add(sink_label)
+    for p in param_set:
+        if param_pats[p].search(tail):
+            inputs.add(f"param:{p}")
+            if not emit(
+                CausalEdge(
+                    source=f"param:{p}",
+                    sink=sink_label,
+                    kind="param_to_raise",
+                    confidence="high",
+                    evidence={"line_number": li, "matched_token": p},
+                )
+            ):
+                return False
+    return True
+
+
+def _detect_param_to_return(
+    line: str,
+    li: int,
+    param_set: set[str],
+    param_pats: dict[str, re.Pattern],
+    inputs: set[str],
+    sinks: set[str],
+    emit,
+) -> bool:
+    """Section B: emit param_to_return edges for ``return ...`` lines.
+
+    Returns False if emit caps out (caller must break the line loop).
+    """
+    ret_m = _RETURN_RE.match(line)
+    if not ret_m:
+        return True
+    tail = ret_m.group(1) or ""
+    sinks.add("return")
+    for p in param_set:
+        if param_pats[p].search(tail):
+            inputs.add(f"param:{p}")
+            if not emit(
+                CausalEdge(
+                    source=f"param:{p}",
+                    sink="return",
+                    kind="param_to_return",
+                    confidence="high",
+                    evidence={"line_number": li, "matched_token": p},
+                )
+            ):
+                return False
+    return True
+
+
+def _detect_global_to_mutation(
+    line: str,
+    stripped: str,
+    li: int,
+    file_globals: set[str],
+    inputs: set[str],
+    sinks: set[str],
+    emit,
+) -> bool:
+    """Section F: emit global_to_mutation edges for top-level-name writes.
+
+    Returns False if emit caps out (caller must break the line loop).
+    """
+    mut_m = _MUTATION_LINE_RE.match(line)
+    if not mut_m:
+        return True
+    gname = mut_m.group(1)
+    if gname not in file_globals:
+        return True
+    if not ("=" in stripped or "." in stripped or "[" in stripped):
+        return True
+    # Only count when this line clearly assigns to / mutates the global,
+    # not when it merely shadows a local.
+    inputs.add(f"global:{gname}")
+    sink_label = f"mutation:{gname}"
+    sinks.add(sink_label)
+    if not emit(
+        CausalEdge(
+            source=f"global:{gname}",
+            sink=sink_label,
+            kind="global_to_mutation",
+            confidence="medium",
+            evidence={"line_number": li, "matched_token": gname},
+        )
+    ):
+        return False
+    return True
+
+
+def _find_sink_anchor(line: str):
+    """Per-line scan: returns ``(sink_kind, sink_label, anchor_match)`` or (None, None, None).
+
+    Skips the 30-anchor loop entirely when the per-line pre-filter misses.
+    """
+    if not _LINE_PRE_FILTER_RE.search(line):
+        return None, None, None
+    for pat, kind, label in _SIDE_EFFECT_ANCHORS:
+        m = pat.search(line)
+        if m:
+            return kind, _label_for_sink_match(label, kind), m
+    return None, None, None
+
+
+def _extract_arg_blob(line: str, anchor_match) -> str:
+    """Carve the parenthesised arg list out of the line (depth-balanced walk).
+
+    Best-effort: doesn't balance nested parens beyond the immediate call,
+    which is sufficient for the heuristic.
+    """
+    if anchor_match is None:
+        return ""
+    paren_open = line.find("(", anchor_match.end() - 1)
+    if paren_open < 0:
+        return ""
+    depth = 0
+    end_idx = len(line)
+    for idx in range(paren_open, len(line)):
+        ch = line[idx]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+    return line[paren_open + 1 : end_idx]
+
+
+def _detect_param_to_effect(
+    line: str,
+    li: int,
+    arg_blob: str,
+    sink_label: str,
+    param_set: set[str],
+    param_pats: dict[str, re.Pattern],
+    inputs: set[str],
+    emit,
+) -> bool:
+    """Section A: emit param_to_effect edges; high if param in args, medium if elsewhere."""
+    for p in param_set:
+        in_args = bool(arg_blob and param_pats[p].search(arg_blob))
+        on_line = bool(param_pats[p].search(line))
+        if in_args or on_line:
+            inputs.add(f"param:{p}")
+            conf = "high" if in_args else "medium"
+            if not emit(
+                CausalEdge(
+                    source=f"param:{p}",
+                    sink=sink_label,
+                    kind="param_to_effect",
+                    confidence=conf,
+                    evidence={
+                        "line_number": li,
+                        "matched_token": p,
+                        "matched_pattern": sink_label,
+                    },
+                )
+            ):
+                return False
+    return True
+
+
+def _detect_global_to_effect(
+    line: str,
+    li: int,
+    arg_blob: str,
+    sink_label: str,
+    param_set: set[str],
+    file_globals: set[str],
+    global_pats: dict[str, re.Pattern],
+    inputs: set[str],
+    emit,
+) -> bool:
+    """Section C: emit global_to_effect edges; param shadows global."""
+    for g in file_globals:
+        if g in param_set:
+            continue  # param shadows global
+        in_args = bool(arg_blob and global_pats[g].search(arg_blob))
+        on_line = bool(global_pats[g].search(line))
+        if in_args or on_line:
+            inputs.add(f"global:{g}")
+            conf = "high" if in_args else "medium"
+            if not emit(
+                CausalEdge(
+                    source=f"global:{g}",
+                    sink=sink_label,
+                    kind="global_to_effect",
+                    confidence=conf,
+                    evidence={
+                        "line_number": li,
+                        "matched_token": g,
+                        "matched_pattern": sink_label,
+                    },
+                )
+            ):
+                return False
+    return True
+
+
+def _detect_env_to_effect(
+    li: int,
+    sink_label: str,
+    env_keys_in_body: list[tuple[int, str]],
+    emit,
+) -> bool:
+    """Section D: link any earlier env read in this body to the current sink call."""
+    for env_li, env_key in env_keys_in_body:
+        if env_li > li:
+            continue
+        if not emit(
+            CausalEdge(
+                source=f"env:{env_key}",
+                sink=sink_label,
+                kind="env_to_effect",
+                confidence="medium",
+                evidence={
+                    "line_number": li,
+                    "env_read_line": env_li,
+                    "matched_pattern": sink_label,
+                },
+            )
+        ):
+            return False
+    return True
+
+
+def _rollup_confidence(edges: list[CausalEdge]) -> str:
+    """Bucketise mean edge-confidence rank into low/medium/high.
+
+    W596: canonical confidence-LEVEL rank — preserves the pre-W596
+    ``{high:3, medium:2, low:1}`` polarity. Edges only emit canonical
+    labels, so the rank for ``unknown`` (0) and bogus (-1) never fires
+    in practice; the pre-W596 fallback was ``1`` (treat unknowns as
+    low), and ``max(..., 1)`` here keeps that behaviour for any future
+    label drift.
+    """
+    if not edges:
+        return "low"
+    avg = sum(max(confidence_level_rank(e.confidence, fallback=-1), 1) for e in edges) / len(edges)
+    if avg >= 2.5:
+        return "high"
+    if avg >= 1.5:
+        return "medium"
+    return "low"
+
+
 def _scan_one(
     sym_name: str,
     file_path: str,
@@ -326,24 +641,8 @@ def _scan_one(
     line_end: int,
 ) -> CausalGraph:
     """Build a causal graph for one symbol body."""
-    edges: list[CausalEdge] = []
-    inputs: set[str] = set()
-    sinks: set[str] = set()
-    truncated = False
-
     if not body_text:
-        return CausalGraph(
-            symbol=sym_name,
-            file=file_path,
-            edges=edges,
-            inputs=[],
-            sinks=[],
-            truncated=False,
-            confidence="low",
-            symbol_id=symbol_id,
-            line_start=line_start,
-            line_end=line_end,
-        )
+        return _empty_causal_graph(sym_name, file_path, symbol_id, line_start, line_end)
 
     # Cheap body-level pre-filter: skip the full per-line walk when no
     # anchor / return / raise token appears anywhere.  Cuts classifier
@@ -353,41 +652,26 @@ def _scan_one(
     # of global_to_mutation edges in functions that only assign to a
     # global without any other anchor are lost (≤ 2% of total edges on
     # the dogfood corpus).  Acceptable per the v1 heuristic spec.
-    has_any_anchor = bool(_BODY_PRE_FILTER_RE.search(body_text))
-    if not has_any_anchor:
-        return CausalGraph(
-            symbol=sym_name,
-            file=file_path,
-            edges=edges,
-            inputs=[],
-            sinks=[],
-            truncated=False,
-            confidence="low",
-            symbol_id=symbol_id,
-            line_start=line_start,
-            line_end=line_end,
-        )
+    if not _BODY_PRE_FILTER_RE.search(body_text):
+        return _empty_causal_graph(sym_name, file_path, symbol_id, line_start, line_end)
+
+    edges: list[CausalEdge] = []
+    inputs: set[str] = set()
+    sinks: set[str] = set()
+    truncated = False
 
     # Use line-by-line scan so we can attribute every edge to a source line.
     lines = body_text.splitlines()
 
     # Pre-pass: find env reads in this body and remember their keys (we
     # use the *file*-relative line number so evidence can be inspected).
-    env_keys_in_body: list[tuple[int, str]] = []
-    for li, line in enumerate(lines, start=line_start):
-        for m in _ENV_READ_RE.finditer(line):
-            key = m.group(1) or m.group(2) or m.group(3)
-            if key:
-                env_keys_in_body.append((li, key))
-                inputs.add(f"env:{key}")
+    env_keys_in_body = _collect_env_reads(lines, line_start, inputs)
 
-    # Build a quick set of param names for membership tests.
+    # Build a quick set of param names + pre-compiled \bTOKEN\b regexes
+    # for cheap "token appears on this line" tests.
     param_set = {p for p in params if p}
-
-    # Pre-compile per-param regexes for cheap "token appears on this line"
-    # tests.  We anchor with \b to avoid false positives on substrings.
-    param_pats: dict[str, re.Pattern] = {p: re.compile(r"\b" + re.escape(p) + r"\b") for p in param_set}
-    global_pats: dict[str, re.Pattern] = {g: re.compile(r"\b" + re.escape(g) + r"\b") for g in file_globals}
+    param_pats = _compile_token_pats(param_set)
+    global_pats = _compile_token_pats(file_globals)
 
     def _emit(edge: CausalEdge) -> bool:
         """Append edge if under cap; return False once truncated."""
@@ -398,208 +682,43 @@ def _scan_one(
         edges.append(edge)
         return True
 
-    def _label_for_sink_match(pattern_label: str, kind: str) -> str:
-        # Strip leading dot for cleaner output.
-        clean = pattern_label.lstrip(".")
-        return f"{kind}:{clean}"
-
     for li, line in enumerate(lines, start=line_start):
         stripped = line.strip()
 
-        # ── E. param_to_raise ────────────────────────────────────────────
-        raise_m = _RAISE_RE.match(line)
-        if raise_m:
-            exc_name = (raise_m.group(1) or "").strip()
-            tail = raise_m.group(2) or ""
-            sink_label = f"raise:{exc_name}" if exc_name else "raise"
-            sinks.add(sink_label)
-            for p in param_set:
-                if param_pats[p].search(tail):
-                    inputs.add(f"param:{p}")
-                    if not _emit(
-                        CausalEdge(
-                            source=f"param:{p}",
-                            sink=sink_label,
-                            kind="param_to_raise",
-                            confidence="high",
-                            evidence={"line_number": li, "matched_token": p},
-                        )
-                    ):
-                        break
-            if truncated:
-                break
-            # Once we've matched a raise we still scan further sink kinds
-            # (e.g. another line in the function); fall through.
+        # -- E. param_to_raise --
+        if not _detect_param_to_raise(line, li, param_set, param_pats, inputs, sinks, _emit):
+            break
 
-        # ── B. param_to_return ───────────────────────────────────────────
-        ret_m = _RETURN_RE.match(line)
-        if ret_m:
-            tail = ret_m.group(1) or ""
-            sinks.add("return")
-            for p in param_set:
-                if param_pats[p].search(tail):
-                    inputs.add(f"param:{p}")
-                    if not _emit(
-                        CausalEdge(
-                            source=f"param:{p}",
-                            sink="return",
-                            kind="param_to_return",
-                            confidence="high",
-                            evidence={"line_number": li, "matched_token": p},
-                        )
-                    ):
-                        break
-            if truncated:
-                break
+        # -- B. param_to_return --
+        if not _detect_param_to_return(line, li, param_set, param_pats, inputs, sinks, _emit):
+            break
 
-        # ── F. global_to_mutation ────────────────────────────────────────
-        mut_m = _MUTATION_LINE_RE.match(line)
-        if mut_m:
-            gname = mut_m.group(1)
-            if gname in file_globals and ("=" in stripped or "." in stripped or "[" in stripped):
-                # Only count when this line clearly assigns to / mutates
-                # the global, not when it merely shadows a local.
-                inputs.add(f"global:{gname}")
-                sink_label = f"mutation:{gname}"
-                sinks.add(sink_label)
-                if not _emit(
-                    CausalEdge(
-                        source=f"global:{gname}",
-                        sink=sink_label,
-                        kind="global_to_mutation",
-                        confidence="medium",
-                        evidence={"line_number": li, "matched_token": gname},
-                    )
-                ):
-                    break
+        # -- F. global_to_mutation --
+        if not _detect_global_to_mutation(line, stripped, li, file_globals, inputs, sinks, _emit):
+            break
 
-        # ── A/C/D. side-effect calls on this line ────────────────────────
-        sink_kind: Optional[str] = None
-        sink_label: Optional[str] = None
-        anchor_match: Optional[re.Match] = None
-        # Per-line pre-filter: skip the 30-anchor loop when no anchor
-        # substring is present.  Each anchor regex compile is cheap, but
-        # 30 * lines * 12K symbols is not.
-        if _LINE_PRE_FILTER_RE.search(line):
-            for pat, kind, label in _SIDE_EFFECT_ANCHORS:
-                m = pat.search(line)
-                if m:
-                    sink_kind = kind
-                    sink_label = _label_for_sink_match(label, kind)
-                    anchor_match = m
-                    break
-        if sink_kind and sink_label:
-            sinks.add(sink_label)
-            # Carve the parenthesised arg list out of the line (best
-            # effort — we don't balance nested parens beyond the immediate
-            # call, which is sufficient for the heuristic).
-            paren_open = line.find("(", anchor_match.end() - 1) if anchor_match else -1
-            arg_blob = ""
-            if paren_open >= 0:
-                # Walk until matching paren or end-of-line.
-                depth = 0
-                end_idx = len(line)
-                for idx in range(paren_open, len(line)):
-                    ch = line[idx]
-                    if ch == "(":
-                        depth += 1
-                    elif ch == ")":
-                        depth -= 1
-                        if depth == 0:
-                            end_idx = idx
-                            break
-                arg_blob = line[paren_open + 1 : end_idx]
+        # -- A/C/D. side-effect calls on this line --
+        sink_kind, sink_label, anchor_match = _find_sink_anchor(line)
+        if not (sink_kind and sink_label):
+            continue
+        sinks.add(sink_label)
+        arg_blob = _extract_arg_blob(line, anchor_match)
 
-            # A. param_to_effect
-            for p in param_set:
-                in_args = bool(arg_blob and param_pats[p].search(arg_blob))
-                on_line = bool(param_pats[p].search(line))
-                if in_args or on_line:
-                    inputs.add(f"param:{p}")
-                    conf = "high" if in_args else "medium"
-                    if not _emit(
-                        CausalEdge(
-                            source=f"param:{p}",
-                            sink=sink_label,
-                            kind="param_to_effect",
-                            confidence=conf,
-                            evidence={
-                                "line_number": li,
-                                "matched_token": p,
-                                "matched_pattern": sink_label,
-                            },
-                        )
-                    ):
-                        break
-            if truncated:
-                break
+        # A. param_to_effect
+        if not _detect_param_to_effect(line, li, arg_blob, sink_label, param_set, param_pats, inputs, _emit):
+            break
 
-            # C. global_to_effect
-            for g in file_globals:
-                if g in param_set:
-                    continue  # param shadows global
-                in_args = bool(arg_blob and global_pats[g].search(arg_blob))
-                on_line = bool(global_pats[g].search(line))
-                if in_args or on_line:
-                    inputs.add(f"global:{g}")
-                    conf = "high" if in_args else "medium"
-                    if not _emit(
-                        CausalEdge(
-                            source=f"global:{g}",
-                            sink=sink_label,
-                            kind="global_to_effect",
-                            confidence=conf,
-                            evidence={
-                                "line_number": li,
-                                "matched_token": g,
-                                "matched_pattern": sink_label,
-                            },
-                        )
-                    ):
-                        break
-            if truncated:
-                break
+        # C. global_to_effect
+        if not _detect_global_to_effect(
+            line, li, arg_blob, sink_label, param_set, file_globals, global_pats, inputs, _emit
+        ):
+            break
 
-            # D. env_to_effect — link any env read seen earlier in the
-            # body to this sink call.  Confidence ``medium`` because the
-            # flow is line-distant.
-            for env_li, env_key in env_keys_in_body:
-                if env_li > li:
-                    continue
-                if not _emit(
-                    CausalEdge(
-                        source=f"env:{env_key}",
-                        sink=sink_label,
-                        kind="env_to_effect",
-                        confidence="medium",
-                        evidence={
-                            "line_number": li,
-                            "env_read_line": env_li,
-                            "matched_pattern": sink_label,
-                        },
-                    )
-                ):
-                    break
-            if truncated:
-                break
-
-    # Compute graph-level confidence — average / consensus of edges.
-    # W596: canonical confidence-LEVEL rank — preserves the pre-W596
-    # ``{high:3, medium:2, low:1}`` polarity. Edges only emit canonical
-    # labels (see ``confidence="..."`` call sites above), so the rank
-    # for ``unknown`` (0) and bogus (-1) never fires in practice; the
-    # pre-W596 fallback was ``1`` (treat unknowns as low), and ``max(...,
-    # 1)`` here keeps that behaviour for any future label drift.
-    if not edges:
-        gconf = "low"
-    else:
-        avg = sum(max(confidence_level_rank(e.confidence, fallback=-1), 1) for e in edges) / len(edges)
-        if avg >= 2.5:
-            gconf = "high"
-        elif avg >= 1.5:
-            gconf = "medium"
-        else:
-            gconf = "low"
+        # D. env_to_effect — link any env read seen earlier in the body
+        # to this sink call.  Confidence ``medium`` because the flow is
+        # line-distant.
+        if not _detect_env_to_effect(li, sink_label, env_keys_in_body, _emit):
+            break
 
     return CausalGraph(
         symbol=sym_name,
@@ -608,7 +727,7 @@ def _scan_one(
         inputs=sorted(inputs),
         sinks=sorted(sinks),
         truncated=truncated,
-        confidence=gconf,
+        confidence=_rollup_confidence(edges),
         symbol_id=symbol_id,
         line_start=line_start,
         line_end=line_end,
