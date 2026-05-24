@@ -5632,11 +5632,11 @@ async def explore(
 @_tool(
     name="roam_prepare_change",
     description=(
-        "Bundle everything needed before editing a symbol: blast radius, affected "
-        "tests, files to read, side effects, fitness gates. Call BEFORE Edit/Write "
-        "on non-trivial code. Use when user asks 'is it safe to change X?', 'what "
-        "do I need to know to refactor Y?', 'show me what depends on Z'. Replaces "
-        "manual preflight + context + effects sequence."
+        "Pre-edit safety gate for a symbol. Returns blast radius + "
+        "affected tests + files to read + side effects + fitness gates "
+        "in one envelope. Call BEFORE Edit/Write on non-trivial code. "
+        "Replaces three separate calls. Triggers: 'safe to change X?', "
+        "'what does Y depend on?', 'show me what breaks if I rename Z'."
     ),
     output_schema=_SCHEMA_PREPARE_CHANGE,
 )
@@ -5762,11 +5762,10 @@ def review_change(staged: bool = False, commit_range: str = "", budget: int = 0,
 @_tool(
     name="roam_diagnose_issue",
     description=(
-        "Find root-cause suspects for a failing symbol. Use when user reports 'X "
-        "is broken', 'test Y fails', 'why does Z return null?', 'this exception "
-        "traces to ...'. Ranks upstream / downstream callers by composite risk "
-        "and lists side effects + transactional boundaries. Replaces manual "
-        "Grep+Read traversal of the call graph. Pass the suspect symbol."
+        "Root-cause triage for a failing symbol. Pass the suspect symbol. "
+        "Ranks upstream / downstream callers by risk + lists side effects "
+        "+ transactional boundaries. Replaces manual call-graph Grep+Read. "
+        "Triggers: 'X is broken', 'test Y fails', 'why does Z return null?'."
     ),
     output_schema=_SCHEMA_DIAGNOSE_ISSUE,
 )
@@ -6342,10 +6341,11 @@ async def roam_reindex(
 @_tool(
     name="roam_understand",
     description=(
-        "Brief Claude on an unfamiliar codebase in one call. Use when user asks "
-        "'what is this repo?', 'where do I start?', 'give me the lay of the land'. "
-        "Returns stack, architecture layers, entry points, hotspots, conventions "
-        "(~2-4K tokens). Do NOT explore with Glob/Grep first — start here."
+        "Codebase briefing in one call. Returns stack + architecture "
+        "layers + entry points + hotspots + conventions in ~2-4K tokens. "
+        "Triggers: 'what is this repo?', 'where do I start?', 'give me "
+        "the lay of the land'. Run this FIRST in an unfamiliar repo — "
+        "Glob/Grep around comes later."
     ),
     output_schema=_SCHEMA_UNDERSTAND,
     task_mode="required",
@@ -6396,14 +6396,12 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
 @_tool(
     name="roam_ask",
     description=(
-        "Route a natural-language codebase question to the right roam recipe. "
-        "Use when user asks 'is it safe to delete X?', 'where does login validate?', "
-        "'what just broke?', 'who owns module Y?', 'trace the n+1 in checkout'. "
-        "Maps intent to one of 25 composed recipes (onboard / trace-task / find-bug / "
-        "verify-patch / explore-impact / security-audit / who-owns / what-changed / "
-        "explore-tests / dependency-update / ...). Try this BEFORE falling back to "
-        "Grep+Read — the dispatcher covers most workflows in one tool call. Even "
-        "low-confidence results contain signal."
+        "Natural-language codebase question dispatcher. Examples: "
+        "'is it safe to delete X?', 'where does login validate?', "
+        "'what just broke?', 'who owns module Y?'. Routes to one of "
+        "25 graph-aware recipes. One call replaces Grep+Read for most "
+        "questions. Run this FIRST when the user asks a code-comprehension "
+        "question."
     ),
 )
 def ask(
@@ -8046,13 +8044,11 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
 @_tool(
     name="roam_search_symbol",
     description=(
-        "Look up a function / class / method by partial name. Use when user "
-        "mentions a symbol ('the login handler', 'AuthService.refresh', "
-        "'handleSave') and you need the file path, line, kind, and qualified "
-        "name. Replaces `Bash: grep -n 'def name' src/` + Read. Returns "
-        "PageRank-ranked results — most-important match first. Do NOT use for "
-        "finding references — that's roam_uses. For 3+ patterns at once use "
-        "roam_batch_search."
+        "Look up symbols by partial name. Returns PageRank-ranked file "
+        "paths, lines, kinds, qualified names. Triggers: 'where is "
+        "handleSave?', 'find AuthService.refresh', 'show me the login "
+        "handler'. Replaces Bash:grep + Read for symbol-shaped queries. "
+        "For references use roam_uses; for 3+ patterns use roam_batch_search."
     ),
     output_schema=_SCHEMA_SEARCH,
 )
@@ -8324,11 +8320,11 @@ def fleet_plan(
 @_tool(
     name="roam_critique",
     description=(
-        "Verify a unified diff against the codebase graph BEFORE merge. Use when "
-        "user asks 'review my patch', 'is this PR safe?', or after generating any "
-        "non-trivial diff. Catches clones-not-edited (missed duplicates the agent "
-        "should have updated together) + blast-radius hop count. Pass `git diff` "
-        "output as diff_text. Grounded against the indexed graph, not vibes."
+        "Post-edit patch verifier. Pass `git diff` output as diff_text. "
+        "Catches clones-not-edited (sibling duplicates the agent missed) "
+        "and high-blast-radius edits. Grounded in the indexed graph, not "
+        "heuristics. Triggers: 'review my patch', 'is this PR safe?', "
+        "after generating any non-trivial diff."
     ),
     output_schema=_SCHEMA_CRITIQUE,
 )
@@ -11769,12 +11765,11 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
 @_tool(
     name="roam_uses",
     description=(
-        "List every caller, importer, and subclass of a symbol — structured by "
-        "edge type. Use when user asks 'where is X used?', 'who calls Y?', "
-        "'what breaks if I rename Z?'. Graph-precise: no comment / string-literal "
-        "false positives that multi-shape Grep produces. Do NOT use Bash:grep for "
-        "references — this is the right tool. For 3+ symbols call roam_batch_get "
-        "(one round-trip) instead."
+        "List every caller, importer, and subclass of a symbol — grouped "
+        "by edge type. Triggers: 'where is X used?', 'who calls Y?', "
+        "'what breaks if I rename Z?'. Graph-precise edges replace shell "
+        "grep (zero comment / string-literal false positives). For 3+ "
+        "symbols use roam_batch_get."
     ),
 )
 def roam_uses(symbol: str, full: bool = False, root: str = ".") -> dict:

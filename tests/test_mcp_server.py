@@ -442,7 +442,10 @@ class TestExpandToolset:
         # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools),
         # v12.51=51 (+roam_ask, +roam_session_metrics),
         # R8=57 (+roam_validate_plan, +4 roam_for_*, +roam_fetch_handle).
-        assert result["tool_count"] == 57
+        # 2026-05-24 dogfood wave: 57 -> 15 (Intervention A of the
+        # dogfood-next-interventions design memo; 7 flagships + 8
+        # verified-firing tools).
+        assert result["tool_count"] == 15
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset
