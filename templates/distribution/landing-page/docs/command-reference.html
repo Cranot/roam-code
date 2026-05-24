@@ -227,6 +227,89 @@
       </table>
     </section>
 
+    <section id="mutate">
+      <h2>Mutate &mdash; probabilistic intent, deterministic compiler</h2>
+      <p>
+        <code>roam mutate</code> turns a natural-language refactor request into a deterministic AST transform with a graph-validated diff. The agent emits intent; Roam compiles it to a typed spec, applies it via tree-sitter, then re-resolves the graph and asserts zero dangling references before any disk write.
+      </p>
+<pre><code>            PROBABILISTIC INTENT                       DETERMINISTIC COMPILER
+            (what the agent wants)                     (what roam guarantees)
+
+            "move handleSave into                      Stage 1 -- Typed transform spec
+             src/forms/save.ts and                     +----------------------------+
+             rewrite its callers"                      | op       : move            |
+                    |                                  | symbol   : handleSave      |
+                    v                                  | dst_file : src/forms/...   |
+            LLM emits a structured                     | dry_run  : true            |
+            transform request                          +----------------------------+
+                    |                                              |
+                    +---------&gt;  validate  --------&gt; reject  -----&gt;+
+                                  fail               (no edit)
+                                    |
+                                    v
+                                Stage 2 -- AST rewriter (tree-sitter)
+                                +------------------------------------+
+                                |  parse src   -&gt;  remove def        |
+                                |  parse dst   -&gt;  insert def        |
+                                |  refs/edges  -&gt;  rewrite imports   |
+                                +------------------------------------+
+                                            |
+                                            v
+                                Stage 3 -- Graph-validated diff
+                                +------------------------------------+
+                                |  re-resolve symbols + edges        |
+                                |  diff against indexed graph        |
+                                |  assert: zero dangling refs        |
+                                +------------------------------------+
+                                            |
+                                            v
+                                  apply patch  |  reject + reason</code></pre>
+    </section>
+
+    <section id="simulate">
+      <h2>Simulate &mdash; gradient descent on an architecture canvas</h2>
+      <p>
+        <code>roam simulate</code> evaluates counterfactual refactors against the indexed graph without writing to disk. For each candidate move / extract / merge / delete, it clones the graph, re-derives the metric vector, and ranks by metric delta &mdash; so the agent picks the structurally best move before any edit lands.
+      </p>
+<pre><code>                    GRADIENT DESCENT ON AN ARCHITECTURE CANVAS
+
+            indexed graph G0  (cycles=12, complexity=84, coupling=0.31)
+                    |
+                    v
+            +-------+---------------------------------------------+
+            |       |       |       |              |              |
+            v       v       v       v              v              v
+        candidate candidate candidate candidate    ...        candidate
+        move      move      extract   merge                   delete
+        A-&gt;m1     B-&gt;m2     C-&gt;m3     D+E                     F
+            |       |       |       |              |              |
+            v       v       v       v              v              v
+        clone     clone     clone     clone        clone        clone
+        graph     graph     graph     graph        graph        graph
+            |       |       |       |              |              |
+            v       v       v       v              v              v
+        re-derive re-derive re-derive re-derive ...    re-derive
+        metrics   metrics   metrics   metrics              metrics
+            |       |       |       |              |              |
+            v       v       v       v              v              v
+        delta:    delta:    delta:    delta:                  delta:
+        -2 cyc    +1 cyc    -4 cyc    -1 cyc                  +3 cyc
+        -8 cmp    -3 cmp    -5 cmp    +2 cmp                  -1 cmp
+        -.04 cpl  +.01 cpl  -.07 cpl  -.02 cpl                +.05 cpl
+
+                                |
+                                v
+                        rank by metric delta
+                                |
+                                v
+                        best move:  extract C -&gt; m3
+                        (-4 cycles, -5 complexity, -0.07 coupling)
+                                |
+                                v
+                        no disk write -- counterfactual only
+                        agent may keep, refine, or discard</code></pre>
+    </section>
+
     <section>
       <h2>Where to find more</h2>
       <ul>
@@ -418,7 +501,7 @@
       <tr><td><code>roam clusters</code></td><td>Show code clusters and directory mismatches.</td></tr>
       <tr><td><code>roam spectral</code></td><td>Spectral bisection: Fiedler vector partition tree.</td></tr>
       <tr><td><code>roam coupling</code></td><td>Show temporal coupling: file pairs that change together.</td></tr>
-      <tr><td><code>roam dark-matter</code></td><td>Detect dark matter: file pairs that co-change but have no...</td></tr>
+      <tr><td><code>roam dark-matter</code></td><td>Detect Codebase Dark Matter: file pairs that co-change but have no...</td></tr>
       <tr><td><code>roam effects</code></td><td>Show what functions DO — side-effect classification.</td></tr>
       <tr><td><code>roam side-effects</code></td><td>Classify symbols by their side effects (none / io_read / ...</td></tr>
       <tr><td><code>roam idempotency</code></td><td>Classify symbols by idempotency (idempotent / non_idempot...</td></tr>

@@ -127,7 +127,7 @@ VERDICT: Fair codebase (70/100) &mdash; 47 critical, 9 warnings, focus: god_comp
 Health Score: 70/100  |  Tangle: 0.1% (13/25954 symbols in cycles)</code></pre>
       <p>
         <strong>What this proves about the moat.</strong> <em>CI-ready + zero-egress.</em>
-        The same composite score (complexity, cycles, dark-matter coupling, dead code, layer drift)
+        The same composite score (complexity, cycles, Codebase Dark Matter, dead code, layer drift)
         that drives a buyer's PR-replay artifact also ships as SARIF 2.1.0 &mdash; the format GitHub
         Code Scanning, GitLab, and Defender for DevOps consume natively. No SaaS dashboard fee,
         no scanner-noise surcharge, no <em>"your source is in our cloud now"</em> step. The file
@@ -179,7 +179,7 @@ git diff | roam critique</code></pre>
         <strong>What this proves about the moat.</strong> <em>Structural critique no semantic
         reviewer ships.</em> <code>roam critique</code> reads the diff as a graph mutation against
         the local index &mdash; clone siblings the agent didn't update, blast radius of the changed
-        lines, intent vs. dark-matter coupling, fitness-rule violations. Exit code 5 on high severity,
+        lines, intent vs. Codebase Dark Matter, fitness-rule violations. Exit code 5 on high severity,
         so CI gates without parsing markdown. Same SARIF projection as Step 2 if you want Code
         Scanning to surface it.
       </p>
