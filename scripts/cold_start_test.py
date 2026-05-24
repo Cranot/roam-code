@@ -9,8 +9,7 @@ running ``pip install roam-code; roam init; roam understand`` and hitting
 a traceback — this harness catches that class of regression before any
 release tag.
 
-Per ``internal/planning/COLD-START-TEST-PROTOCOL.md`` (workstream #5 in
-``internal/planning/NEXT-PRIORITIES.md``). Stdlib-only by design; runs in
+Required gate before any release tag. Stdlib-only by design; runs in
 any Python 3.10+ environment with ``git`` and ``roam`` on PATH.
 
 Usage
