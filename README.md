@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>241 commands · 227 MCP tools (57 in the default `core` preset) · 28 languages</sub>
+<sub>241 commands · 227 MCP tools (15 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -166,7 +166,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 | `roam preflight <symbol>` | Pre-change safety gate: blast radius + tests + complexity + coupling + fitness |
 | `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
 
-The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
+The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 36 commands).
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
@@ -273,7 +273,7 @@ roam mcp
 ```
 
 <!-- BEGIN auto-count:readme-default-preset -->
-**Default preset:** `core` (58 tools: 57 core + `roam_expand_toolset` meta-tool).
+**Default preset:** `core` (16 tools: 15 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
 227 tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
@@ -377,7 +377,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_evidence_diff` | Diff two ``ChangeEvidence`` packets: shows hash drift, schema drift, added/removed refs, missing evidence, and changed verdicts. Useful for reviewing PR re-runs, comparing replay windows, or auditing whether a fresh evidence packet has improved or regressed against a stored baseline. Different from ``roam_compare`` (two-index structural delta) -- this is the two-packet evidence delta. |
 | `roam_evidence_doctor` | Diagnose a ChangeEvidence packet's health: schema validity, closed-enum conformance, content_hash integrity, completeness banner tier (STRONG / PARTIAL / INSUFFICIENT), declared redactions, and actionable next steps for partial / missing evidence questions. Read-only. |
 | `roam_evidence_oscal` | Emit an OSCAL v1.2 document. Default kind='control-mapping' compiles the roam control map (maps roam evidence to EU AI Act, ISO/IEC 42001, NIST AI RMF, NIST AI 600-1, NIST SP 800-218A, SOC 2, internal AI-change policy). kind='assessment-results' compiles a per-run AR document from a ChangeEvidence packet (requires evidence_path); AR mandates an Assessment Plan reference — pass import_ap_ref for an external AP or omit it to inline a synthesized stub AP. Supports evidence for the listed frameworks — does not certify compliance. Two roam-specific concepts (authority_refs, redactions) surface as OSCAL ``prop`` extensions under the ``urn:roam:oscal:v1`` namespace. |
-| `roam_expand_toolset` | List available tool presets or show contents of a preset. Presets: core (57), review (70), refactor (70), debug (69), architecture (71), compliance (13), full (227). |
+| `roam_expand_toolset` | List available tool presets or show contents of a preset. Presets: core (15), review (73), refactor (73), debug (72), architecture (74), compliance (13), full (227). |
 | `roam_explore` | Codebase exploration bundle: understand overview + optional symbol deep-dive in one call. |
 | `roam_fan` | Show fan-in / fan-out: the most-connected symbols or files. Flags hub / spreader / HIGH-RISK structural hotspots based on cross-file import / call edges. Different from coupling (co-change frequency) -- this measures structural connectivity. |
 | `roam_fetch_handle` | Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection. |
@@ -472,7 +472,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_sbom` | Emit a Software Bill of Materials (CycloneDX 1.7 by default, or SPDX 2.3) enriched with call-graph reachability — distinguishes phantom dependencies from those actually exercised. Pair with --aibom for the AIBOM extension required by EU AI Act Art. 50. |
 | `roam_search_semantic` | Find symbols by natural language query (hybrid BM25 + vector + framework packs). |
 | `roam_search_symbol` | Look up a function / class / method by partial name. Use when user mentions a symbol ('the login handler', 'AuthService.refresh', 'handleSave') and you need the file path, line, kind, and qualified name. Replaces `Bash: grep -n 'def name' src/` + Read. Returns PageRank-ranked results — most-important match first. Do NOT use for finding references — that's roam_uses. For 3+ patterns at once use roam_batch_search. |
-| `roam_secrets` | Scan for hardcoded secrets, API keys, tokens, passwords (24 patterns). |
+| `roam_secrets` | Scan for hardcoded secrets, API keys, tokens, passwords (25 patterns). |
 | `roam_semantic_diff` | Structural change summary: what symbols were added/removed/modified. |
 | `roam_session_metrics` | Local-only telemetry: per-tool invocation counts grouped by outcome (success / rate_limited / error). Helps answer "which tools are agents actually using?" and "are 90 of the 227 tools dead weight?". Never phones home — counters live in the MCP server process and reset on restart. |
 | `roam_side_effects` | Classify symbols by side-effect bucket: ``none`` (pure), ``io_read`` (disk / network / DB read), ``io_write`` (disk / network / DB write), ``mutation`` (global / module state mutation), ``process`` (subprocess / thread / async), or ``unknown``. Coarse five-bucket taxonomy designed for agent decisions. Different from ``roam_effects`` (finer 11-kind taxonomy + transitive propagation) -- this is the agent's go/no-go classifier for ``can I retry this safely?``. |
@@ -524,7 +524,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 </details>
 
 <!-- BEGIN auto-count:readme-mcp-core-preset-tools -->
-Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit_trail_conformance_check`, `roam_audit_trail_export`, `roam_audit_trail_verify`, `roam_batch_get`, `roam_batch_search`, `roam_catalog`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_critique`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_disambiguate`, `roam_dogfood`, `roam_explore`, `roam_fetch_handle`, `roam_file_info`, `roam_fleet_plan`, `roam_for_bug_fix`, `roam_for_new_feature`, `roam_for_refactor`, `roam_for_security_review`, `roam_health`, `roam_impact`, `roam_metrics_push`, `roam_oracle_is_clone_of`, `roam_oracle_is_reachable_from_entry`, `roam_oracle_is_test_only`, `roam_oracle_route_exists`, `roam_oracle_symbol_exists`, `roam_pr_analyze`, `roam_pr_comment_render`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_py_modern`, `roam_py_types`, `roam_retrieve`, `roam_review_change`, `roam_rules_validate`, `roam_search_symbol`, `roam_session_metrics`, `roam_syntax_check`, `roam_taint_classify`, `roam_test_impact`, `roam_timeline`, `roam_trace`, `roam_understand`, `roam_uses`, `roam_validate_plan`, `roam_why_fail`.
+Core preset tools: `roam_alerts`, `roam_ask`, `roam_complexity_report`, `roam_critique`, `roam_dead_code`, `roam_diagnose_issue`, `roam_fetch_handle`, `roam_file_info`, `roam_grep`, `roam_metrics`, `roam_prepare_change`, `roam_search_symbol`, `roam_taint`, `roam_understand`, `roam_uses`.
 <!-- END auto-count:readme-mcp-core-preset-tools -->
 
 <details>
@@ -580,7 +580,7 @@ jobs:
 
 `roam init` auto-generates this workflow. The Action accepts `commands`, `gate` (quality-gate expression, exit 5 on failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR comment), `cache`, and `changed-only` (incremental mode).
 
-**SARIF output.** 37 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
+**SARIF output.** 36 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
 
 ```yaml
 - run: roam --sarif health > roam-health.sarif
@@ -688,7 +688,7 @@ roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC,
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 227 (57 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| MCP tools for agents | 227 (15 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 28 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |

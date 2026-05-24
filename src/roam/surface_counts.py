@@ -388,6 +388,17 @@ def mcp_preset_counts() -> dict[str, int]:
     core_tools = _literal_assignment(module, "_CORE_TOOLS")
     if not isinstance(core_tools, set):
         raise TypeError("_CORE_TOOLS is not a set literal")
+    # _WORKFLOW_TOOLS is the optional sibling set holding tools that USED
+    # to live in core (pre-2026-05-24 shrink) and now live in the
+    # specialised presets via the `_CORE_TOOLS | _WORKFLOW_TOOLS | {extras}`
+    # union. Absent on older mcp_server.py revisions; treat as empty set
+    # in that case so the AST evaluator stays backward-compatible.
+    try:
+        workflow_tools = _literal_assignment(module, "_WORKFLOW_TOOLS")
+    except (KeyError, ValueError):
+        workflow_tools = set()
+    if not isinstance(workflow_tools, set):
+        raise TypeError("_WORKFLOW_TOOLS is not a set literal")
 
     # Locate the `_PRESETS = {...}` (or annotated `_PRESETS: ... = {...}`) Dict node.
     presets_dict: ast.Dict | None = None
@@ -423,7 +434,10 @@ def mcp_preset_counts() -> dict[str, int]:
                 if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                     decorated.add(kw.value.value)
     total = len(decorated)
-    env: dict[str, set[str]] = {"_CORE_TOOLS": set(core_tools)}
+    env: dict[str, set[str]] = {
+        "_CORE_TOOLS": set(core_tools),
+        "_WORKFLOW_TOOLS": set(workflow_tools),
+    }
 
     counts: dict[str, int] = {}
     for key_node, value_node in zip(presets_dict.keys, presets_dict.values):

@@ -5,11 +5,11 @@
 <!-- BEGIN auto-count:Codex-headline -->
 roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **241 commands · 227 MCP tools (57 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
+a local SQLite DB. **241 commands · 227 MCP tools (15 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts (AST-derived, env-independent): `command_count: 241 · canonical_count: 234 · category_count: 7 · mcp tools registered: 227 · mcp tools in core preset: 57`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
+Authoritative counts (AST-derived, env-independent): `command_count: 241 · canonical_count: 234 · category_count: 7 · mcp tools registered: 227 · mcp tools in core preset: 15`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -152,7 +152,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 241 command names (234 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (57 tools in core preset; 227 in `full`) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (15 tools in core preset; 227 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)

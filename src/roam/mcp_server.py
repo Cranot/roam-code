@@ -113,66 +113,91 @@ except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades g
 
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
-# Default: "core" (57 tools + `roam_expand_toolset` meta-tool = 58 total).
+# Default: "core" (15 tools + `roam_expand_toolset` meta-tool = 16 total).
+# The dogfood-firing surface: 7 flagship tools targeted for selection
+# lift + 8 tools observed firing in the 2026-05-24 audit. Shrunk from
+# 57 in the 2026-05-24 dogfood wave (per Intervention A of the
+# dogfood-next-interventions design memo). Tools that left core are
+# in `_WORKFLOW_TOOLS` below
+# and remain part of the specialised presets (review / refactor /
+# debug / architecture) so power users keep their full surface area.
 # Authoritative count via `python -m roam.surface_counts` (mcp.core_tools).
 # Override: ROAM_MCP_PRESET=review|refactor|debug|architecture|full
 # Legacy: ROAM_MCP_LITE=0 maps to "full" preset.
 # ---------------------------------------------------------------------------
 
 _CORE_TOOLS = {
-    # compound operations (4) — each replaces 2-4 individual calls
+    # Flagship offensive tools (7) — targeted for selection lift via
+    # the BiasBusters / Sentry description-rewrite pattern. Currently
+    # fire 0-3 times per session; goal is 5+ collectively.
+    "roam_ask",  # natural-language dispatcher; replaces Grep+Read
+    "roam_understand",  # codebase briefing; replaces Glob exploration
+    "roam_search_symbol",  # symbol lookup; replaces Bash:grep
+    "roam_uses",  # reference lookup; replaces Bash:grep
+    "roam_prepare_change",  # pre-edit safety gate; bundles preflight+context+effects
+    "roam_critique",  # post-edit patch verifier; clones-not-edited + blast radius
+    "roam_diagnose_issue",  # root-cause triage for failing symbols
+    # Verified-firing tools (8) — observed in the 2026-05-24 dogfood audit
+    "roam_complexity_report",  # brain-method workflow
+    "roam_grep",  # index-aware grep with reachability annotation
+    "roam_fetch_handle",  # handle-pattern companion (Pattern 6a)
+    "roam_alerts",  # lightweight health alerts
+    "roam_dead_code",  # deletion-candidate surface
+    "roam_taint",  # OpenVEX-shaped taint findings
+    "roam_file_info",  # file skeleton; the Read-displacement target
+    "roam_metrics",  # per-symbol metric vector
+}
+
+# Workflow tools — the surface that USED to live in core (pre-2026-05-24
+# preset shrink) but moved to opt-in to tighten the default prompt.
+# Still bundled into the specialised presets below (review / refactor /
+# debug / architecture) so power users on those presets keep their full
+# analytical surface. Access from core via `roam_expand_toolset` or by
+# setting `ROAM_MCP_PRESET=full`.
+_WORKFLOW_TOOLS = {
+    # Compound bundles
     "roam_explore",
-    "roam_prepare_change",
     "roam_review_change",
-    "roam_diagnose_issue",
-    # batch operations (2) — replace 10-50 sequential calls with one
+    # Batch ops
     "roam_batch_search",
     "roam_batch_get",
-    # comprehension (6)
-    "roam_understand",
-    "roam_search_symbol",
+    # Comprehension extras
     "roam_complete",
     "roam_context",
-    "roam_file_info",
     "roam_deps",
-    # daily workflow (7)
+    # Daily workflow
     "roam_preflight",
     "roam_diff",
     "roam_pr_risk",
     "roam_affected_tests",
     "roam_impact",
-    "roam_uses",
     "roam_syntax_check",
-    # code quality (5)
+    # Code quality
     "roam_health",
-    "roam_dead_code",
-    "roam_complexity_report",
     "roam_diagnose",
     "roam_trace",
-    # v12.6 — Python-pivot tools (2)
+    # Python-pivot
     "roam_py_types",
     "roam_py_modern",
-    # v12 — retrieval / patch verification / agent fleet planning (3)
+    # Retrieval + auxiliary
     "roam_retrieve",
-    "roam_critique",
     "roam_fleet_plan",
-    # v12.1 — boolean oracles (5) — 1-token answers for agent prompts
+    # Boolean precondition oracles
     "roam_oracle_symbol_exists",
     "roam_oracle_route_exists",
     "roam_oracle_is_test_only",
     "roam_oracle_is_reachable_from_entry",
     "roam_oracle_is_clone_of",
-    # v12.1 — LLM-augmented taint classification (1)
+    # LLM-augmented taint classification
     "roam_taint_classify",
-    # v12.16 / machine-readable tool catalog (1)
+    # Machine-readable tool catalog
     "roam_catalog",
-    # v12.19 / agent-actionable wrappers for previously CLI-only signals (5)
-    "roam_alerts",
+    # Agent-actionable wrappers for previously CLI-only signals
     "roam_timeline",
     "roam_test_impact",
     "roam_disambiguate",
     "roam_why_fail",
-    # v12.26 — Roam Agent Review + Cloud Lite engines (8)
+    # Roam Agent Review + Cloud Lite engines
     "roam_pr_analyze",
     "roam_pr_comment_render",
     "roam_metrics_push",
@@ -181,24 +206,20 @@ _CORE_TOOLS = {
     "roam_audit_trail_conformance_check",
     "roam_rules_validate",
     "roam_dogfood",
-    # v12.51 — free-form intent dispatcher (replaces Grep+Read fallback)
-    "roam_ask",
-    # v12.51 — local-only tool-usage telemetry (introspection)
+    # Telemetry + plan validator
     "roam_session_metrics",
-    # R8.E3 — pre-apply change-plan validator
     "roam_validate_plan",
-    # R8.E4 — situation-keyed compound entry points
+    # Situation-keyed compound entry points
     "roam_for_new_feature",
     "roam_for_bug_fix",
     "roam_for_refactor",
     "roam_for_security_review",
-    # R8.E8 — large-response handle retrieval
-    "roam_fetch_handle",
 }
 
 _PRESETS: dict[str, set[str]] = {
     "core": _CORE_TOOLS.copy(),
     "review": _CORE_TOOLS
+    | _WORKFLOW_TOOLS
     | {
         "roam_breaking_changes",
         "roam_pr_diff",
@@ -215,6 +236,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_docs_coverage",
     },
     "refactor": _CORE_TOOLS
+    | _WORKFLOW_TOOLS
     | {
         "roam_simulate",
         "roam_closure",
@@ -231,6 +253,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_pytest_fixtures",
     },
     "debug": _CORE_TOOLS
+    | _WORKFLOW_TOOLS
     | {
         "roam_effects",
         "roam_path_coverage",
@@ -246,6 +269,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_pytest_fixtures",
     },
     "architecture": _CORE_TOOLS
+    | _WORKFLOW_TOOLS
     | {
         "roam_visualize",
         "roam_tour",
@@ -6176,7 +6200,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 @_tool(
     name="roam_expand_toolset",
     description="List available tool presets or show contents of a preset. "
-    "Presets: core (57), review (70), refactor (70), debug (69), architecture (71), compliance (13), full (227).",
+    "Presets: core (15), review (73), refactor (73), debug (72), architecture (74), compliance (13), full (227).",
 )
 def expand_toolset(preset: str = "") -> dict:
     """List available presets and their tools. Call to discover tools beyond the active preset.
@@ -11541,7 +11565,7 @@ def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
 
 @_tool(
     name="roam_secrets",
-    description="Scan for hardcoded secrets, API keys, tokens, passwords (24 patterns).",
+    description="Scan for hardcoded secrets, API keys, tokens, passwords (25 patterns).",
 )
 def secrets_scan(severity: str = "all", root: str = ".") -> dict:
     """Scan indexed files for hardcoded secrets and credentials.

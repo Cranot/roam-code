@@ -6,7 +6,7 @@ roam-code (`pip install roam-code`, Python 3.10+) is a local code-graph
 engine. It parses your repo once, stores structural facts in a local SQLite
 graph (symbols, dependencies, call graphs, architecture layers, git history,
 runtime traces), and exposes the graph through 241 CLI commands and 227 MCP
-tools (57 in the default `core` preset) across 28 languages. AI agents
+tools (15 in the default `core` preset) across 28 languages. AI agents
 (Claude Code, Cursor, Codex, Aider, your own) call it before, during, and
 after every change.
 

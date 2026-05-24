@@ -265,93 +265,54 @@ class TestToolDecorator:
         assert callable(mod.visualize)
 
     def test_core_tools_set_has_expected_members(self):
-        """Core tools set should contain the documented tools."""
+        """Core tools set should contain the documented 15 dogfood-firing tools.
+
+        Shrunk from 57 to 15 in the 2026-05-24 dogfood wave per
+        the dogfood-next-interventions design Intervention A. The 42
+        tools that left core remain accessible via ``_WORKFLOW_TOOLS``
+        (covered by the specialised presets and via
+        ``roam_expand_toolset``).
+        """
         from roam.mcp_server import _CORE_TOOLS
 
         expected = {
-            # compound operations (4)
-            "roam_explore",
-            "roam_prepare_change",
-            "roam_review_change",
-            "roam_diagnose_issue",
-            # batch operations (2)
-            "roam_batch_search",
-            "roam_batch_get",
-            # comprehension (6)
+            # Flagship offensive tools (7) — targeted for selection lift
+            "roam_ask",
             "roam_understand",
             "roam_search_symbol",
-            "roam_complete",
-            "roam_context",
-            "roam_file_info",
-            "roam_deps",
-            # daily workflow (7)
-            "roam_preflight",
-            "roam_diff",
-            "roam_pr_risk",
-            "roam_affected_tests",
-            "roam_impact",
             "roam_uses",
-            "roam_syntax_check",
-            # code quality (5)
-            "roam_health",
-            "roam_dead_code",
-            "roam_complexity_report",
-            "roam_diagnose",
-            "roam_trace",
-            # v12 — retrieval / patch verification / agent fleet planning (3)
-            "roam_retrieve",
+            "roam_prepare_change",
             "roam_critique",
-            "roam_fleet_plan",
-            # v12.1 — boolean oracles (5) + LLM-augmented taint classify (1)
-            "roam_oracle_symbol_exists",
-            "roam_oracle_route_exists",
-            "roam_oracle_is_test_only",
-            "roam_oracle_is_reachable_from_entry",
-            "roam_oracle_is_clone_of",
-            "roam_taint_classify",
-            # v12.6 — Python pivot tools (2)
-            "roam_py_types",
-            "roam_py_modern",
-            # v12.16 / machine-readable tool catalog (1)
-            "roam_catalog",
-            # v12.19 / agent-actionable wrappers (5)
-            "roam_alerts",
-            "roam_timeline",
-            "roam_test_impact",
-            "roam_disambiguate",
-            "roam_why_fail",
-            # v12.27 / v12.28 — Roam Agent Review v2 layer (8)
-            "roam_pr_analyze",
-            "roam_pr_comment_render",
-            "roam_rules_validate",
-            "roam_audit_trail_export",
-            "roam_audit_trail_verify",
-            "roam_audit_trail_conformance_check",
-            "roam_dogfood",
-            "roam_metrics_push",
-            # v12.51 — free-form intent dispatcher + telemetry (2)
-            "roam_ask",
-            "roam_session_metrics",
-            # R8.E3 — pre-apply change-plan validator (1)
-            "roam_validate_plan",
-            # R8.E4 — situation-keyed compound entry points (4)
-            "roam_for_new_feature",
-            "roam_for_bug_fix",
-            "roam_for_refactor",
-            "roam_for_security_review",
-            # R8.E8 — large-response handle retrieval (1)
+            "roam_diagnose_issue",
+            # Verified-firing tools (8) — observed in the 2026-05-24 audit
+            "roam_complexity_report",
+            "roam_grep",
             "roam_fetch_handle",
+            "roam_alerts",
+            "roam_dead_code",
+            "roam_taint",
+            "roam_file_info",
+            "roam_metrics",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36;
-        # v12.19: +5 agent wrappers = 41; v12.28: +8 Agent Review v2 = 49;
-        # v12.51: +2 (roam_ask + roam_session_metrics) = 51.
-        # R8: +1 validate_plan + 4 for_* + 1 fetch_handle = 57.
-        assert len(_CORE_TOOLS) == 57
+        # 2026-05-24 dogfood wave: 57 -> 15. The 7 flagships + 8
+        # verified-firing tools = 15 (the dogfood-firing surface). The
+        # specialised presets (review/refactor/debug/architecture) keep
+        # their full surface via the _WORKFLOW_TOOLS union.
+        assert len(_CORE_TOOLS) == 15
+
+    def test_workflow_tools_disjoint_from_core(self):
+        """_WORKFLOW_TOOLS holds the 45 tools that left core in the
+        2026-05-24 shrink. Must be set-disjoint from _CORE_TOOLS so the
+        union semantics in _PRESETS don't double-count."""
+        from roam.mcp_server import _CORE_TOOLS, _WORKFLOW_TOOLS
+
+        assert len(_WORKFLOW_TOOLS) == 45
+        assert _CORE_TOOLS & _WORKFLOW_TOOLS == set()
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
