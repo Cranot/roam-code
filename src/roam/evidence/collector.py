@@ -1583,6 +1583,275 @@ def _parse_iso_for_permits(value: str) -> datetime | None:
     return parsed
 
 
+def _authority_entry_id(entry: Any, *id_keys: str) -> str | None:
+    """Coerce a list entry to its id string regardless of shape.
+
+    Accepts a bare string (returned as-is) or a Mapping (first matching
+    ``id_keys`` entry that is a non-empty string wins). Anything else is
+    rejected with ``None`` so the caller can skip the row silently.
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, Mapping):
+        for key in id_keys:
+            v = entry.get(key)
+            if isinstance(v, str) and v:
+                return v
+    return None
+
+
+class _AuthorityRefBuilder:
+    """Accumulator for AuthorityRef rows with dedup + provenance wiring.
+
+    Owns the ``refs``/``seen`` state that the closure-based
+    implementation of ``_build_authority_refs`` held in lexical scope.
+    Centralising it here keeps the phase helpers
+    (``_authority_emit_*``) pure and lets each helper take a builder
+    instance instead of a closure.
+
+    W294 separation of axes (mirrors the original ``_add`` closure):
+
+    * ``source`` (W211 AUTHORITY_SOURCES) answers the AUTHORITY KIND
+      CATEGORY question.
+    * ``extra["provenance"]`` (W282 PROVENANCE_SOURCES) answers the
+      DATA CHANNEL question. Owned by ``add`` - ``extra_fields``
+      callers cannot overwrite it.
+    """
+
+    def __init__(
+        self,
+        corroborated_authorities: frozenset[tuple[str, str]],
+    ) -> None:
+        self._refs: list[AuthorityRef] = []
+        self._seen: set[tuple[str, str]] = set()
+        self._corroborated = corroborated_authorities
+
+    def add(
+        self,
+        kind: str,
+        authority_id: Any,
+        *,
+        granted_by: str | None = None,
+        envelope_source: str | None,
+        source: str = "inferred_fallback",
+        extra_fields: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not isinstance(authority_id, str) or not authority_id:
+            return
+        key = (kind, authority_id)
+        if key in self._seen:
+            return
+        self._seen.add(key)
+        corroborated = (kind, authority_id) in self._corroborated
+        provenance = _resolve_authority_provenance(
+            authority_kind=kind,
+            authority_id=authority_id,
+            envelope_source=envelope_source,
+            corroborated_in_run_ledger=corroborated,
+        )
+        merged_extra: dict[str, Any] = {"provenance": provenance}
+        if extra_fields:
+            for k, v in extra_fields.items():
+                # ``provenance`` is owned by this builder - callers
+                # cannot overwrite the channel answer via extra_fields.
+                if k == "provenance":
+                    continue
+                merged_extra[k] = v
+        self._refs.append(
+            AuthorityRef(
+                authority_kind=kind,
+                authority_id=authority_id,
+                granted_by=granted_by,
+                source=source,
+                extra=merged_extra,
+            )
+        )
+
+    def finalize(self) -> tuple[AuthorityRef, ...]:
+        return tuple(self._refs)
+
+
+def _authority_resolve_mode(
+    pr_bundle_envelope: Mapping[str, Any] | None,
+    caller_mode: str | None,
+) -> str | None:
+    """Resolve the effective mode for the mode AuthorityRef.
+
+    Precedence: caller kwarg > envelope ``mode`` > ``summary.active_mode``
+    > ``mode_block.active_mode``. Returns ``None`` when no source
+    surfaced a mode string.
+    """
+    if caller_mode is not None:
+        return caller_mode
+    if not isinstance(pr_bundle_envelope, Mapping):
+        return None
+    return _coalesce(
+        pr_bundle_envelope.get("mode"),
+        _nested(pr_bundle_envelope, ("summary", "active_mode")),
+        _nested(pr_bundle_envelope, ("mode_block", "active_mode")),
+    )
+
+
+def _authority_permit_extra_fields(
+    entry: Any,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Build the ``extra_fields`` payload for one permit entry.
+
+    W377/W378/W381: when the row carries the full W198 permit shape
+    (``permit_id`` + ``scope`` + ``issued_to`` + ``issued_at`` +
+    ``expires_at``), project the sibling fields onto
+    ``AuthorityRef.extra`` so an auditor can see WHAT was authorised,
+    to WHOM, and WHEN without cross-referencing the raw envelope.
+
+    * W294: ``permit_id`` is stamped ONLY when the entry carried a real
+      ``permit_id`` key. Synthetic rows that carry only ``id`` are
+      facade-shaped and intentionally land on the W198 facade detection
+      in ``AuthorityRef.__post_init__``.
+    * W377: ``expired`` is set when ``expires_at`` parses and is in the
+      past. Unparseable timestamps are treated as "no signal" (matches
+      ``PermitRecord.is_expired_at``).
+    * W378: ``issued_days_ago`` is stamped when ``issued_at`` is older
+      than ``_PERMIT_STALENESS_THRESHOLD_DAYS``.
+    * W381: ``scope`` / ``expires_at`` / ``issued_to`` accept strings
+      only (matches the W198 on-disk schema); non-string types are
+      dropped so a junk envelope row cannot poison the extra.
+
+    Returns ``None`` when the entry produced no extras so the caller
+    can pass it straight to ``_AuthorityRefBuilder.add``.
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    local_extra: dict[str, Any] = {}
+    raw_permit_id = entry.get("permit_id")
+    if isinstance(raw_permit_id, str) and raw_permit_id:
+        local_extra["permit_id"] = raw_permit_id
+    raw_scope = entry.get("scope")
+    if isinstance(raw_scope, str) and raw_scope:
+        local_extra["scope"] = raw_scope
+    raw_expires_at = entry.get("expires_at")
+    if isinstance(raw_expires_at, str) and raw_expires_at:
+        local_extra["expires_at"] = raw_expires_at
+    raw_issued_to = entry.get("issued_to")
+    if isinstance(raw_issued_to, str) and raw_issued_to:
+        local_extra["issued_to"] = raw_issued_to
+    if isinstance(raw_expires_at, str) and raw_expires_at:
+        exp_dt = _parse_iso_for_permits(raw_expires_at)
+        if exp_dt is not None and now >= exp_dt:
+            local_extra["expired"] = True
+    raw_issued_at = entry.get("issued_at")
+    if isinstance(raw_issued_at, str) and raw_issued_at:
+        iss_dt = _parse_iso_for_permits(raw_issued_at)
+        if iss_dt is not None:
+            delta = now - iss_dt
+            days = int(delta.total_seconds() // 86400)
+            if days >= _PERMIT_STALENESS_THRESHOLD_DAYS:
+                local_extra["issued_days_ago"] = days
+    return local_extra or None
+
+
+def _authority_emit_permits(
+    builder: _AuthorityRefBuilder,
+    permits: Any,
+) -> None:
+    """Emit permit AuthorityRefs from an envelope ``permits[]`` list.
+
+    W268: ``cmd_pr_bundle._build_envelope`` reads ``.roam/permits/*.json``
+    at emit time and stamps each row on the envelope. ``roam permit``
+    itself remains a verdict facade until ``--persist`` ships (W198),
+    so the on-disk directory is usually empty today - the branch
+    survives the empty case gracefully (Pattern 2 always-emit).
+    """
+    if not isinstance(permits, list):
+        return
+    now_for_permits = datetime.now(timezone.utc)
+    for entry in permits:
+        permit_id = _authority_entry_id(entry, "permit_id", "id")
+        extra_fields = _authority_permit_extra_fields(entry, now_for_permits)
+        builder.add(
+            "permit",
+            permit_id,
+            envelope_source="permit",
+            source="permit",
+            extra_fields=extra_fields,
+        )
+
+
+def _authority_emit_leases(
+    builder: _AuthorityRefBuilder,
+    leases: Any,
+) -> None:
+    """Emit lease AuthorityRefs from an envelope ``leases[]`` list.
+
+    W294: lease AuthorityRef intentionally keeps the default
+    ``source="inferred_fallback"``. AUTHORITY_SOURCES (W211) has no
+    ``lease`` entry; adding one would be a deliberate vocabulary
+    decision for a future wave. The asymmetry is intentional: a lease
+    ref has ``source="inferred_fallback"`` (the closed enum can't name
+    the category) AND
+    ``extra["provenance"]="producer_envelope(lease)"`` (the channel
+    answer remains precise). Both fields stay independently
+    load-bearing.
+    """
+    if not isinstance(leases, list):
+        return
+    for entry in leases:
+        builder.add(
+            "lease",
+            _authority_entry_id(entry, "lease_id", "id"),
+            envelope_source="lease",
+        )
+
+
+def _authority_emit_rules(
+    builder: _AuthorityRefBuilder,
+    rules_passed: Any,
+) -> None:
+    """Emit policy_rule AuthorityRefs from an envelope ``rules_passed[]``.
+
+    W294: ``source="rule_config"`` - policy rules surface through the
+    rules.yml configuration tier per AUTHORITY_SOURCES.
+    """
+    if not isinstance(rules_passed, list):
+        return
+    for entry in rules_passed:
+        builder.add(
+            "policy_rule",
+            _authority_entry_id(entry, "rule_id", "id"),
+            envelope_source="rule",
+            source="rule_config",
+        )
+
+
+def _authority_emit_approvals(
+    builder: _AuthorityRefBuilder,
+    approvals: Any,
+) -> None:
+    """Emit approval AuthorityRefs from an envelope ``approvals[]``.
+
+    W294: ``source="human_approval"`` - approvals always come from a
+    recorded human-approval event. ``granted_by`` is harvested from
+    the entry's ``approver`` or ``granted_by`` field when either is a
+    non-empty string.
+    """
+    if not isinstance(approvals, list):
+        return
+    for entry in approvals:
+        approval_id = _authority_entry_id(entry, "approval_id", "id")
+        granted_by = None
+        if isinstance(entry, Mapping):
+            approver = entry.get("approver") or entry.get("granted_by")
+            if isinstance(approver, str) and approver:
+                granted_by = approver
+        builder.add(
+            "approval",
+            approval_id,
+            granted_by=granted_by,
+            envelope_source="approval",
+            source="human_approval",
+        )
+
+
 def _build_authority_refs(
     pr_bundle_envelope: Mapping[str, Any] | None,
     caller_mode: str | None,
@@ -1643,229 +1912,32 @@ def _build_authority_refs(
             matching AuthorityRef's provenance to ``run_ledger``
             regardless of which envelope channel surfaced it.
     """
-    refs: list[AuthorityRef] = []
-    seen: set[tuple[str, str]] = set()
+    builder = _AuthorityRefBuilder(corroborated_authorities)
 
-    def _add(
-        kind: str,
-        authority_id: Any,
-        *,
-        granted_by: str | None = None,
-        envelope_source: str | None,
-        source: str = "inferred_fallback",
-        extra_fields: Mapping[str, Any] | None = None,
-    ) -> None:
-        """Materialize one AuthorityRef.
-
-        W294 separation of axes:
-
-        * ``source`` (W211 AUTHORITY_SOURCES) answers the AUTHORITY KIND
-          CATEGORY question - which closed-enum tier the producer learned
-          about this authority through. The caller passes the literal that
-          corresponds to ``kind``; default stays ``"inferred_fallback"``
-          for paths we couldn't classify.
-        * ``extra["provenance"]`` (W282 PROVENANCE_SOURCES) answers the
-          DATA CHANNEL question - which surface produced the value.
-          Computed here from ``envelope_source`` + run-ledger
-          corroboration via :func:`_resolve_authority_provenance`.
-
-        ``extra_fields`` lets the caller stamp additional structured
-        metadata onto ``extra`` (e.g. ``{"permit_id": "perm_..."}``)
-        without taking over the provenance slot.
-        """
-        if not isinstance(authority_id, str) or not authority_id:
-            return
-        key = (kind, authority_id)
-        if key in seen:
-            return
-        seen.add(key)
-        corroborated = (kind, authority_id) in corroborated_authorities
-        provenance = _resolve_authority_provenance(
-            authority_kind=kind,
-            authority_id=authority_id,
-            envelope_source=envelope_source,
-            corroborated_in_run_ledger=corroborated,
-        )
-        merged_extra: dict[str, Any] = {"provenance": provenance}
-        if extra_fields:
-            for k, v in extra_fields.items():
-                # ``provenance`` is owned by this helper - callers cannot
-                # overwrite the channel answer via extra_fields.
-                if k == "provenance":
-                    continue
-                merged_extra[k] = v
-        refs.append(
-            AuthorityRef(
-                authority_kind=kind,
-                authority_id=authority_id,
-                granted_by=granted_by,
-                source=source,
-                extra=merged_extra,
-            )
-        )
-
-    # Resolve the effective mode (caller kwarg already absorbed elsewhere
-    # but we re-derive here so the helper is self-contained).
-    #
-    # W292 envelope_source attribution: when the value came from the
-    # envelope (any of the three locations below), it earns
-    # ``producer_envelope(mode)`` unless a verified run-ledger event
-    # also recorded the mode (then ``run_ledger`` wins). When the
-    # caller passed ``caller_mode`` directly with no envelope match,
-    # we still tag it ``producer_envelope(mode)`` because the caller
-    # is the surface that knew about the mode - the alternative
-    # (``inferred``) would underclaim the signal.
-    mode_value: str | None = caller_mode
-    if mode_value is None and isinstance(pr_bundle_envelope, Mapping):
-        mode_value = _coalesce(
-            pr_bundle_envelope.get("mode"),
-            _nested(pr_bundle_envelope, ("summary", "active_mode")),
-            _nested(pr_bundle_envelope, ("mode_block", "active_mode")),
-        )
+    # W292 envelope_source attribution for mode: when the value came
+    # from the envelope, it earns ``producer_envelope(mode)`` unless a
+    # verified run-ledger event also recorded the mode (then
+    # ``run_ledger`` wins). When the caller passed ``caller_mode``
+    # directly with no envelope match, we still tag it
+    # ``producer_envelope(mode)`` because the caller is the surface
+    # that knew about the mode - the alternative (``inferred``) would
+    # underclaim the signal.
+    mode_value = _authority_resolve_mode(pr_bundle_envelope, caller_mode)
     if mode_value is not None:
-        # W294: source="mode" - mode AuthorityRef carries the W211 category
-        # answer naming the active-mode declaration tier. Distinct from
-        # extra["provenance"] which names the data channel.
-        _add("mode", mode_value, envelope_source="mode", source="mode")
+        # W294: source="mode" - mode AuthorityRef carries the W211
+        # category answer naming the active-mode declaration tier.
+        # Distinct from extra["provenance"] which names the data channel.
+        builder.add("mode", mode_value, envelope_source="mode", source="mode")
 
     if not isinstance(pr_bundle_envelope, Mapping):
-        return tuple(refs)
+        return builder.finalize()
 
-    # Helper to coerce a list entry to its id string regardless of shape.
-    def _entry_id(entry: Any, *id_keys: str) -> str | None:
-        if isinstance(entry, str):
-            return entry
-        if isinstance(entry, Mapping):
-            for key in id_keys:
-                v = entry.get(key)
-                if isinstance(v, str) and v:
-                    return v
-        return None
+    _authority_emit_permits(builder, pr_bundle_envelope.get("permits"))
+    _authority_emit_leases(builder, pr_bundle_envelope.get("leases"))
+    _authority_emit_rules(builder, pr_bundle_envelope.get("rules_passed"))
+    _authority_emit_approvals(builder, pr_bundle_envelope.get("approvals"))
 
-    permits = pr_bundle_envelope.get("permits")
-    if isinstance(permits, list):
-        now_for_permits = datetime.now(timezone.utc)
-        for entry in permits:
-            permit_id = _entry_id(entry, "permit_id", "id")
-            # W294: stamp ``extra["permit_id"]`` ONLY when the entry
-            # carried a real ``permit_id`` key (the W268 disk-read path
-            # populates this). Synthetic envelope rows that only carry
-            # ``id`` are facade-shaped and intentionally land on the
-            # W198 facade detection in ``AuthorityRef.__post_init__``
-            # (which auto-stamps ``extra["facade"] = True``).
-            #
-            # W377/W378/W381: when the row carries the full W198 permit
-            # shape (permit_id + scope + issued_to + issued_at +
-            # expires_at), project the sibling fields onto AuthorityRef.
-            # ``extra`` so an auditor can see WHAT was authorised, to
-            # WHOM, and WHEN -- without having to cross-reference the
-            # raw envelope. We also stamp ``extra["expired"] = True``
-            # when ``expires_at`` is already in the past (W377), and
-            # ``extra["issued_days_ago"] = N`` when ``issued_at`` is
-            # older than 90 days (W378). Both markers are advisory: the
-            # AuthorityRef is still materialised so historical evidence
-            # survives, but the markers let downstream consumers render
-            # the row differently.
-            extra_fields: dict[str, Any] | None = None
-            if isinstance(entry, Mapping):
-                local_extra: dict[str, Any] = {}
-                raw_permit_id = entry.get("permit_id")
-                if isinstance(raw_permit_id, str) and raw_permit_id:
-                    local_extra["permit_id"] = raw_permit_id
-                # W381: project sibling fields when they look usable.
-                # We accept strings only (matches the W198 on-disk
-                # schema); non-string types are intentionally dropped
-                # so a junk envelope row cannot poison the AuthorityRef
-                # extra.
-                raw_scope = entry.get("scope")
-                if isinstance(raw_scope, str) and raw_scope:
-                    local_extra["scope"] = raw_scope
-                raw_expires_at = entry.get("expires_at")
-                if isinstance(raw_expires_at, str) and raw_expires_at:
-                    local_extra["expires_at"] = raw_expires_at
-                raw_issued_to = entry.get("issued_to")
-                if isinstance(raw_issued_to, str) and raw_issued_to:
-                    local_extra["issued_to"] = raw_issued_to
-                # W377: expired marker. Best-effort parse: an unparseable
-                # ``expires_at`` is treated as "no signal" (matches the
-                # discipline in ``PermitRecord.is_expired_at``).
-                if isinstance(raw_expires_at, str) and raw_expires_at:
-                    exp_dt = _parse_iso_for_permits(raw_expires_at)
-                    if exp_dt is not None and now_for_permits >= exp_dt:
-                        local_extra["expired"] = True
-                # W378: staleness marker. Stamp ``issued_days_ago`` when
-                # the permit was issued more than 90 days before the
-                # collector ran. The threshold is intentionally generous
-                # so a typical sprint-bounded permit never trips it.
-                raw_issued_at = entry.get("issued_at")
-                if isinstance(raw_issued_at, str) and raw_issued_at:
-                    iss_dt = _parse_iso_for_permits(raw_issued_at)
-                    if iss_dt is not None:
-                        delta = now_for_permits - iss_dt
-                        days = int(delta.total_seconds() // 86400)
-                        if days >= _PERMIT_STALENESS_THRESHOLD_DAYS:
-                            local_extra["issued_days_ago"] = days
-                if local_extra:
-                    extra_fields = local_extra
-            _add(
-                "permit",
-                permit_id,
-                envelope_source="permit",
-                source="permit",
-                extra_fields=extra_fields,
-            )
-
-    leases = pr_bundle_envelope.get("leases")
-    if isinstance(leases, list):
-        for entry in leases:
-            # W294: lease AuthorityRef intentionally keeps the default
-            # ``source="inferred_fallback"``. AUTHORITY_SOURCES (W211)
-            # has no ``lease`` entry; adding one would be a deliberate
-            # vocabulary decision for a future wave. The asymmetry is
-            # intentional: a lease ref has
-            # ``source="inferred_fallback"`` (the closed enum can't
-            # name the category) AND
-            # ``extra["provenance"]="producer_envelope(lease)"`` (the
-            # channel answer remains precise). Both fields stay
-            # independently load-bearing.
-            _add(
-                "lease",
-                _entry_id(entry, "lease_id", "id"),
-                envelope_source="lease",
-            )
-
-    rules_passed = pr_bundle_envelope.get("rules_passed")
-    if isinstance(rules_passed, list):
-        for entry in rules_passed:
-            # W294: source="rule_config" - policy rules surface through
-            # the rules.yml configuration tier per AUTHORITY_SOURCES.
-            _add(
-                "policy_rule",
-                _entry_id(entry, "rule_id", "id"),
-                envelope_source="rule",
-                source="rule_config",
-            )
-
-    approvals = pr_bundle_envelope.get("approvals")
-    if isinstance(approvals, list):
-        for entry in approvals:
-            approval_id = _entry_id(entry, "approval_id", "id")
-            granted_by = None
-            if isinstance(entry, Mapping):
-                approver = entry.get("approver") or entry.get("granted_by")
-                if isinstance(approver, str) and approver:
-                    granted_by = approver
-            # W294: source="human_approval" - approvals always come
-            # from a recorded human-approval event.
-            _add(
-                "approval",
-                approval_id,
-                granted_by=granted_by,
-                envelope_source="approval",
-                source="human_approval",
-            )
-
-    return tuple(refs)
+    return builder.finalize()
 
 
 # Closed-list precedence of CI-detection environment variables. Order
