@@ -802,7 +802,7 @@ def duplicates(
             return default
 
     with open_db(readonly=not persist) as conn:
-        # ── 1. Candidate selection ───────────────────────────────────
+        # -- 1. Candidate selection -----------------------------------
         scope_clause = ""
         params: list = []
         if scope:
@@ -902,7 +902,7 @@ def duplicates(
                 click.echo(f"VERDICT: {verdict}")
             return
 
-        # ── Performance guard: bucket-based pair generation already prunes
+        # -- Performance guard: bucket-based pair generation already prunes
         # the candidate space heavily (param_count, line_count bands).  At
         # 50K candidates the bucketed pair scan stays well under the
         # O(n^2) worst case in practice; beyond that the algorithm needs
@@ -934,7 +934,7 @@ def duplicates(
             sample_size = len(candidates)
             partial_success = True
 
-        # ── Hoist per-row similarity data out of the pair-scoring loop ──
+        # -- Hoist per-row similarity data out of the pair-scoring loop --
         # Convert each surviving candidate Row -> dict, stamping the
         # structure vector / name-token set / signature-token set ONCE.
         # _compute_similarity recurs over every pair a row appears in
@@ -950,7 +950,7 @@ def duplicates(
         # Build lookup
         by_id = {r["id"]: r for r in candidates}
 
-        # ── 2. Pre-filter by shape ───────────────────────────────────
+        # -- 2. Pre-filter by shape -----------------------------------
         # Group by (param_count, geometric line-count band). Each band spans a
         # ~1.3x line ratio (_LOG_BAND_BASE), so two functions within the ±30%
         # shape window always land in the same or an adjacent band; the full
@@ -1038,7 +1038,7 @@ def duplicates(
         if pairs_budget_hit:
             partial_success = True
 
-        # ── 3. Score pairs ───────────────────────────────────────────
+        # -- 3. Score pairs -------------------------------------------
         uf = _UnionFind()
         pair_scores: dict[tuple[int, int], float] = {}
 
@@ -1061,7 +1061,7 @@ def duplicates(
             default=None,
         )
 
-        # ── 4. Build clusters ────────────────────────────────────────
+        # -- 4. Build clusters ----------------------------------------
         raw_clusters = uf.clusters()
 
         # Filter to clusters with >= 2 members
@@ -1110,7 +1110,7 @@ def duplicates(
                 }
             )
 
-        # ── 5. Rank clusters ────────────────────────────────────────
+        # -- 5. Rank clusters ----------------------------------------
         # Sort by: size desc, similarity desc, pagerank desc
         # W607-DD: wrap the ranking step so a __lt__-raising sentinel in
         # the key tuple (e.g. a custom score type) surfaces a structured
@@ -1126,7 +1126,7 @@ def duplicates(
             default=None,
         )
 
-        # ── 5.W165 Bucket + filter ──────────────────────────────────
+        # -- 5.W165 Bucket + filter ----------------------------------
         # Attach role_bucket to every cluster on the live structure so
         # downstream paths (verdict, JSON output, persist) share one
         # classification call. ``--exclude-tests`` drops only the
@@ -1188,7 +1188,7 @@ def duplicates(
         if bucket_counts is None:
             bucket_counts = {"production": 0, "test_intentional": 0, "mixed": 0}
 
-        # ── 5a. W136: mirror full cluster set into findings registry ─
+        # -- 5a. W136: mirror full cluster set into findings registry -
         # Runs ONLY with --persist. We emit BEFORE --max-pairs truncation
         # so the registry stays comprehensive regardless of how the
         # current invocation slices the display.
@@ -1213,7 +1213,7 @@ def duplicates(
                 default=None,
             )
 
-        # ── 5b. Apply --max-pairs truncation ─────────────────────────
+        # -- 5b. Apply --max-pairs truncation -------------------------
         total_clusters_found = len(cluster_list)
         truncated = False
         if max_pairs and max_pairs > 0 and len(cluster_list) > max_pairs:
@@ -1221,7 +1221,7 @@ def duplicates(
             truncated = True
             partial_success = True
 
-        # ── 6. Compute summary stats ────────────────────────────────
+        # -- 6. Compute summary stats --------------------------------
         total_functions = sum(c["size"] for c in cluster_list)
         estimated_lines = 0
         for c in cluster_list:
@@ -1272,7 +1272,7 @@ def duplicates(
         if verdict is None:
             verdict = "duplicates completed"
 
-        # ── 7. Output ───────────────────────────────────────────────
+        # -- 7. Output -----------------------------------------------
         # Build the per-cluster JSON dicts once — the SARIF path and the
         # JSON path both consume them; keeping the construction shared
         # guarantees the SARIF projection sees the same shape that
@@ -1429,7 +1429,7 @@ def duplicates(
             click.echo(to_json(_envelope))
             return
 
-        # ── Text output ──────────────────────────────────────────────
+        # -- Text output ----------------------------------------------
         click.echo(f"VERDICT: {verdict}")
         if not cluster_list:
             return

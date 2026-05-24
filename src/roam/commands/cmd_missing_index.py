@@ -571,24 +571,59 @@ def _classify_predicates(body: str) -> list[_ClassifiedPredicate]:
     """
     when_ranges = _find_when_ranges(body)
     preds: list[_ClassifiedPredicate] = []
+    consumed: set[int] = set()
 
     # Range helpers FIRST so a ``->whereBetween`` isn't double-classified
     # as a plain equality where. Operator-where (``->where('col', '>', x)``)
     # next, so it can claim its position before the looser _RE_WHERE.
-    consumed: set[int] = set()
+    _collect_range_helper(body, when_ranges, consumed, preds)
+    _collect_range_operator(body, when_ranges, consumed, preds)
+    _collect_plain_where(body, when_ranges, consumed, preds)
+    _collect_where_in(body, when_ranges, preds)
+    _collect_order_by(body, when_ranges, preds)
+
+    return preds
+
+
+def _collect_range_helper(
+    body: str,
+    when_ranges: list[tuple[int, int]],
+    consumed: set[int],
+    preds: list[_ClassifiedPredicate],
+) -> None:
+    """Append RANGE (or CONDITIONAL) predicates for ``->whereBetween`` etc."""
     for m in _RE_WHERE_RANGE_HELPER.finditer(body):
         pos = m.start()
         consumed.add(pos)
         cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_RANGE
         preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+
+
+def _collect_range_operator(
+    body: str,
+    when_ranges: list[tuple[int, int]],
+    consumed: set[int],
+    preds: list[_ClassifiedPredicate],
+) -> None:
+    """Append RANGE (or CONDITIONAL) predicates for 3-arg operator-where."""
     for m in _RE_WHERE_RANGE.finditer(body):
         pos = m.start()
         consumed.add(pos)
         cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_RANGE
         preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
 
-    # Plain equality where (skip positions already consumed by the range
-    # patterns above — _RE_WHERE matches their prefix as well).
+
+def _collect_plain_where(
+    body: str,
+    when_ranges: list[tuple[int, int]],
+    consumed: set[int],
+    preds: list[_ClassifiedPredicate],
+) -> None:
+    """Append UNCONDITIONAL (or CONDITIONAL) plain ``->where`` predicates.
+
+    Skips positions already consumed by range helpers / operator-where,
+    since _RE_WHERE matches their prefix too.
+    """
     for m in _RE_WHERE.finditer(body):
         pos = m.start()
         if pos in consumed:
@@ -596,20 +631,33 @@ def _classify_predicates(body: str) -> list[_ClassifiedPredicate]:
         cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_UNCONDITIONAL
         preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
 
-    # whereIn — eager-resolved equality (the array is materialised at call
-    # time, so it's ALWAYS applied unless wrapped in ->when()).
+
+def _collect_where_in(
+    body: str,
+    when_ranges: list[tuple[int, int]],
+    preds: list[_ClassifiedPredicate],
+) -> None:
+    """Append UNCONDITIONAL (or CONDITIONAL) ``->whereIn`` predicates.
+
+    whereIn is eager-resolved equality (the array is materialised at call
+    time, so it's ALWAYS applied unless wrapped in ->when()).
+    """
     for m in _RE_WHERE_IN.finditer(body):
         pos = m.start()
         cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_UNCONDITIONAL
         preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
 
-    # orderBy → sort, unless it's conditional (rare but possible).
+
+def _collect_order_by(
+    body: str,
+    when_ranges: list[tuple[int, int]],
+    preds: list[_ClassifiedPredicate],
+) -> None:
+    """Append SORT (or CONDITIONAL) predicates for ``->orderBy``."""
     for m in _RE_ORDER_BY.finditer(body):
         pos = m.start()
         cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_SORT
         preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
-
-    return preds
 
 
 def _rank_columns_for_index(

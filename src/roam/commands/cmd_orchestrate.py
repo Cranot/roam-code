@@ -389,7 +389,7 @@ def orchestrate(ctx, n_agents, file_args, staged):
             _run_check_ds("serialize_envelope", _serialize_envelope, default=None)
             return
 
-        # ── Text output (verdict first) ───────────────────────────
+        # -- Text output (verdict first) ---------------------------
         # W607-DS: ``format_text_output`` substrate -- the human-readable
         # text emission path. A raise here (e.g. KeyError on a malformed
         # agent dict missing ``write_files`` / ``read_only_files`` /

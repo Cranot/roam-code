@@ -185,7 +185,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
     else:
         surfaced = sorted_filtered
 
-    # ── agent_contract.facts (LAW 4: concrete-noun anchored) ────────────
+    # -- agent_contract.facts (LAW 4: concrete-noun anchored) ------------
     facts: list[str] = []
     worst = sorted_filtered[0] if sorted_filtered else None
     if worst is not None and worst.edges:
@@ -231,7 +231,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
     if not facts:
         facts.append("causal scan found no inputs flowing into side-effects")
 
-    # ── next_commands (LAW 2: imperative) ────────────────────────────────
+    # -- next_commands (LAW 2: imperative) --------------------------------
     next_commands: list[str] = []
     if worst is not None and worst.edges:
         sym_arg = worst.symbol.rsplit(".", 1)[-1]

@@ -297,14 +297,76 @@ def ws_status(ctx) -> None:
 # ---------------------------------------------------------------------------
 
 
-@ws.command("resolve")
-@click.pass_context
-def ws_resolve(ctx) -> None:
-    """Detect cross-repo API connections between frontend and backend repos."""
-    json_mode = ctx.obj.get("json") if ctx.obj else False
+def _ws_resolve_register_repos(ws_conn, repo_infos: list[dict]) -> dict[str, int]:
+    """Ensure every repo is registered in the workspace DB; return {name: repo_id}."""
+    from roam.workspace.db import upsert_repo
 
-    ws_root, config = _require_workspace(ctx, "ws-resolve")
+    repo_id_map: dict[str, int] = {}
+    for info in repo_infos:
+        last_indexed = None
+        if info["db_path"].exists():
+            last_indexed = info["db_path"].stat().st_mtime
+        rid = upsert_repo(
+            ws_conn,
+            name=info["name"],
+            path=str(info["path"]),
+            role=info.get("role", ""),
+            db_path=str(info["db_path"]),
+            last_indexed=last_indexed,
+        )
+        repo_id_map[info["name"]] = rid
+    return repo_id_map
 
+
+def _ws_resolve_derive_connections(config: dict, repo_infos: list[dict], json_mode: bool) -> list[dict]:
+    """Return explicit connections, else auto-derive frontend/backend pairs from role tags."""
+    connections = list(config.get("connections", []))
+    if connections:
+        return connections
+
+    fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]
+    be_repos = [r for r in repo_infos if r.get("role") == "backend"]
+    if fe_repos and be_repos:
+        connections = [
+            {"type": "rest-api", "frontend": fe["name"], "backend": be["name"]} for fe in fe_repos for be in be_repos
+        ]
+        if not json_mode:
+            pairs = ", ".join(f"{c['frontend']} -> {c['backend']}" for c in connections)
+            click.echo(
+                f"  Note: connections array empty; auto-derived {len(connections)} pair(s) from role tags: {pairs}",
+                err=True,
+            )
+            click.echo(
+                "  (edit `.roam-workspace.json` to override; re-run `roam ws init` to persist)",
+                err=True,
+            )
+        return connections
+
+    if not json_mode:
+        missing = []
+        if not fe_repos:
+            missing.append("a frontend role")
+        if not be_repos:
+            missing.append("a backend role")
+        click.echo(
+            f"  Warning: connections array is empty and no auto-derivation "
+            f"possible (missing: {', '.join(missing)}). "
+            f"Set `role: frontend` / `role: backend` on repos in "
+            f".roam-workspace.json, then re-run `roam ws init` "
+            f"or add `connections` entries manually.",
+            err=True,
+        )
+    return connections
+
+
+def _ws_resolve_scan_pair(
+    ws_conn,
+    conn_cfg: dict,
+    repo_infos: list[dict],
+    repo_id_map: dict[str, int],
+    json_mode: bool,
+) -> tuple[int, int, list, list]:
+    """Scan one frontend/backend pair; return (fe_call_count, be_route_count, matches, unmatched)."""
     from roam.workspace.api_scanner import (
         build_cross_repo_edges,
         find_unmatched_calls,
@@ -312,233 +374,196 @@ def ws_resolve(ctx) -> None:
         scan_backend_routes,
         scan_frontend_api_calls,
     )
-    from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import (
-        clear_cross_edges,
-        open_workspace_db,
-        upsert_repo,
-    )
 
-    repo_infos = get_repo_paths(config, ws_root)
+    if conn_cfg.get("type") != "rest-api":
+        return 0, 0, [], []
 
-    with open_workspace_db(ws_root) as ws_conn:
-        # Clear existing edges before re-resolve
-        clear_cross_edges(ws_conn)
+    fe_name = conn_cfg.get("frontend", "")
+    be_name = conn_cfg.get("backend", "")
+    fe_info = next((i for i in repo_infos if i["name"] == fe_name), None)
+    be_info = next((i for i in repo_infos if i["name"] == be_name), None)
+    if not fe_info or not be_info:
+        return 0, 0, [], []
 
-        # Ensure repos are registered
-        repo_id_map = {}
-        for info in repo_infos:
-            last_indexed = None
-            if info["db_path"].exists():
-                last_indexed = info["db_path"].stat().st_mtime
-            rid = upsert_repo(
-                ws_conn,
-                name=info["name"],
-                path=str(info["path"]),
-                role=info.get("role", ""),
-                db_path=str(info["db_path"]),
-                last_indexed=last_indexed,
-            )
-            repo_id_map[info["name"]] = rid
+    if not json_mode:
+        click.echo(f"Scanning {fe_name} for API calls...", nl=False)
+    fe_calls = scan_frontend_api_calls(fe_info["db_path"], fe_info["path"])
+    if not json_mode:
+        click.echo(f" {len(fe_calls)} found")
 
-        total_fe_calls = 0
-        total_be_routes = 0
-        total_matched = 0
-        all_matches = []
-        all_unmatched: list[dict] = []
+    if not json_mode:
+        click.echo(f"Scanning {be_name} for routes...", nl=False)
+    be_routes = scan_backend_routes(be_info["db_path"], be_info["path"])
+    if not json_mode:
+        click.echo(f" {len(be_routes)} found")
 
-        # Issue #18 guard: when `connections: []` is empty (the default
-        # after `ws init`, or after the user edits roles by hand without
-        # re-running init), auto-derive pairs from `role: frontend` β†”
-        # `role: backend` tags so `ws resolve` does *something* useful.
-        # The on-disk config is left alone — populate in-memory only.
-        connections = list(config.get("connections", []))
-        if not connections:
-            fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]
-            be_repos = [r for r in repo_infos if r.get("role") == "backend"]
-            if fe_repos and be_repos:
-                connections = [
-                    {"type": "rest-api", "frontend": fe["name"], "backend": be["name"]}
-                    for fe in fe_repos
-                    for be in be_repos
-                ]
-                if not json_mode:
-                    pairs = ", ".join(f"{c['frontend']} -> {c['backend']}" for c in connections)
-                    click.echo(
-                        f"  Note: connections array empty; auto-derived "
-                        f"{len(connections)} pair(s) from role tags: {pairs}",
-                        err=True,
-                    )
-                    click.echo(
-                        "  (edit `.roam-workspace.json` to override; re-run `roam ws init` to persist)",
-                        err=True,
-                    )
-            elif not json_mode:
-                missing = []
-                if not fe_repos:
-                    missing.append("a frontend role")
-                if not be_repos:
-                    missing.append("a backend role")
-                click.echo(
-                    f"  Warning: connections array is empty and no auto-derivation "
-                    f"possible (missing: {', '.join(missing)}). "
-                    f"Set `role: frontend` / `role: backend` on repos in "
-                    f".roam-workspace.json, then re-run `roam ws init` "
-                    f"or add `connections` entries manually.",
-                    err=True,
-                )
+    if not json_mode:
+        click.echo("Matching endpoints...", nl=False)
+    matched = match_api_endpoints(fe_calls, be_routes)
+    if not json_mode:
+        click.echo(f" {len(matched)}/{len(fe_calls)} matched")
 
-        # Process each connection pair
-        for conn_cfg in connections:
-            if conn_cfg.get("type") != "rest-api":
-                continue
+    if matched:
+        fe_repo_id = repo_id_map.get(fe_name, 0)
+        be_repo_id = repo_id_map.get(be_name, 0)
+        build_cross_repo_edges(ws_conn, fe_repo_id, be_repo_id, matched)
 
-            fe_name = conn_cfg.get("frontend", "")
-            be_name = conn_cfg.get("backend", "")
+    unmatched = find_unmatched_calls(fe_calls, be_routes, matched)
+    return len(fe_calls), len(be_routes), matched, unmatched
 
-            fe_info = next((i for i in repo_infos if i["name"] == fe_name), None)
-            be_info = next((i for i in repo_infos if i["name"] == be_name), None)
 
-            if not fe_info or not be_info:
-                continue
+def _ws_resolve_run_scans(
+    ws_conn,
+    connections: list[dict],
+    repo_infos: list[dict],
+    repo_id_map: dict[str, int],
+    json_mode: bool,
+) -> tuple[int, int, int, list, list]:
+    """Run scans for every connection; return (fe_calls, be_routes, matched, all_matches, all_unmatched)."""
+    total_fe_calls = 0
+    total_be_routes = 0
+    total_matched = 0
+    all_matches: list = []
+    all_unmatched: list[dict] = []
+    for conn_cfg in connections:
+        fe_n, be_n, matches, unmatched = _ws_resolve_scan_pair(ws_conn, conn_cfg, repo_infos, repo_id_map, json_mode)
+        total_fe_calls += fe_n
+        total_be_routes += be_n
+        total_matched += len(matches)
+        all_matches.extend(matches)
+        all_unmatched.extend(unmatched)
+    return total_fe_calls, total_be_routes, total_matched, all_matches, all_unmatched
 
-            if not json_mode:
-                click.echo(f"Scanning {fe_name} for API calls...", nl=False)
 
-            fe_calls = scan_frontend_api_calls(fe_info["db_path"], fe_info["path"])
-            total_fe_calls += len(fe_calls)
-            if not json_mode:
-                click.echo(f" {len(fe_calls)} found")
-
-            if not json_mode:
-                click.echo(f"Scanning {be_name} for routes...", nl=False)
-
-            be_routes = scan_backend_routes(be_info["db_path"], be_info["path"])
-            total_be_routes += len(be_routes)
-            if not json_mode:
-                click.echo(f" {len(be_routes)} found")
-
-            if not json_mode:
-                click.echo("Matching endpoints...", nl=False)
-
-            matched = match_api_endpoints(fe_calls, be_routes)
-            total_matched += len(matched)
-            if not json_mode:
-                click.echo(f" {len(matched)}/{len(fe_calls)} matched")
-
-            if matched:
-                fe_repo_id = repo_id_map.get(fe_name, 0)
-                be_repo_id = repo_id_map.get(be_name, 0)
-                build_cross_repo_edges(ws_conn, fe_repo_id, be_repo_id, matched)
-
-            all_matches.extend(matched)
-
-            # Compute unmatched calls for this pair (potential 404s).
-            unmatched = find_unmatched_calls(fe_calls, be_routes, matched)
-            all_unmatched.extend(unmatched)
-
-    total_unmatched = len(all_unmatched)
+def _ws_resolve_compute_verdict(
+    total_fe_calls: int, total_matched: int, total_unmatched: int
+) -> tuple[str, str, bool, int, float]:
+    """Return (state, verdict, partial_success, match_pct, match_rate). Pattern 2 + LAW 6."""
     match_pct = round(100 * total_matched / total_fe_calls) if total_fe_calls else 0
     match_rate = (total_matched / total_fe_calls) if total_fe_calls else 0.0
 
-    # Pattern 2: explicit state when any unmatched URLs survive — never
-    # silently SAFE. Verdict standalone-readable per LAW 6.
     if total_fe_calls == 0:
-        state = "no_frontend_calls"
-        verdict = "0 frontend calls discovered; nothing to resolve"
-        partial_success = False
-    elif total_unmatched == 0:
-        state = "ok"
-        verdict = f"{total_matched}/{total_fe_calls} frontend URLs match (100%); 0 unmatched"
-        partial_success = False
-    else:
-        state = "partial_match"
-        verdict = (
+        return "no_frontend_calls", "0 frontend calls discovered; nothing to resolve", False, match_pct, match_rate
+    if total_unmatched == 0:
+        return (
+            "ok",
+            f"{total_matched}/{total_fe_calls} frontend URLs match (100%); 0 unmatched",
+            False,
+            match_pct,
+            match_rate,
+        )
+    return (
+        "partial_match",
+        (
             f"{total_matched} of {total_fe_calls} frontend URLs match "
             f"({match_pct}%); {total_unmatched} unmatched POTENTIAL 404s"
-        )
-        partial_success = True
+        ),
+        True,
+        match_pct,
+        match_rate,
+    )
 
-    # Agent contract facts — flat, imperative, concrete.
-    facts: list[str] = []
-    if total_unmatched > 0:
-        facts.append(f"{total_unmatched} frontend URLs do not match any backend route")
-        # Top reason breakdown (concrete noun anchor).
-        reason_counts: dict[str, int] = {}
-        for u in all_unmatched:
-            reason_counts[u["reason"]] = reason_counts.get(u["reason"], 0) + 1
-        top_reasons = sorted(reason_counts.items(), key=lambda x: -x[1])
-        for reason_name, count in top_reasons[:3]:
-            facts.append(f"{count} unmatched have reason `{reason_name}`")
-        # Top shared prefix among unmatched (LAW 4 — concrete noun).
-        prefix_counts: dict[str, int] = {}
-        for u in all_unmatched:
-            url = u["url"]
-            segs = [s for s in url.split("/") if s]
-            if len(segs) >= 2:
-                prefix = "/" + "/".join(segs[:2])
-                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
-            elif segs:
-                prefix = "/" + segs[0]
-                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
-        top_prefixes = sorted(prefix_counts.items(), key=lambda x: -x[1])
-        if top_prefixes and top_prefixes[0][1] >= 2:
-            p, n = top_prefixes[0]
-            facts.append(f"{n} unmatched URLs share the prefix `{p}/`")
-        first = all_unmatched[0]
-        facts.append(f"Top unmatched: `{first['url']}` ({first['method'] or '?'})")
-    else:
-        facts.append(f"All {total_fe_calls} frontend URLs match a backend route")
 
-    next_commands: list[str] = []
-    if total_unmatched > 0:
-        next_commands.append("roam --json ws resolve   # see the full unmatched list")
-        next_commands.append("roam endpoints --json    # inspect backend route inventory")
+def _ws_resolve_build_facts(total_fe_calls: int, total_unmatched: int, all_unmatched: list[dict]) -> list[str]:
+    """Build flat, concrete-noun-anchored agent_contract.facts (LAW 4, LAW 10)."""
+    if total_unmatched == 0:
+        return [f"All {total_fe_calls} frontend URLs match a backend route"]
 
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "ws-resolve",
-                    summary={
-                        "frontend_calls": total_fe_calls,
-                        "backend_routes": total_be_routes,
-                        "matched": total_matched,
-                        "matched_count": total_matched,
-                        "unmatched_count": total_unmatched,
-                        "match_pct": match_pct,
-                        "match_rate": round(match_rate, 4),
-                        "state": state,
-                        "partial_success": partial_success,
-                        "verdict": verdict,
-                    },
-                    matches=[
-                        {
-                            "url": m["url_pattern"],
-                            "method": m.get("http_method", ""),
-                            "frontend_file": m["frontend"]["file_path"],
-                            "frontend_symbol": m["frontend"].get("symbol_name", ""),
-                            "backend_file": m["backend"]["file_path"],
-                            "backend_symbol": m["backend"].get("symbol_name", ""),
-                            "score": round(m["score"], 2),
-                        }
-                        for m in all_matches[:50]
-                    ],
-                    unmatched=all_unmatched,
-                    agent_contract={
-                        "facts": facts,
-                        "next_commands": next_commands,
-                    },
-                )
+    facts: list[str] = [f"{total_unmatched} frontend URLs do not match any backend route"]
+
+    reason_counts: dict[str, int] = {}
+    for u in all_unmatched:
+        reason_counts[u["reason"]] = reason_counts.get(u["reason"], 0) + 1
+    for reason_name, count in sorted(reason_counts.items(), key=lambda x: -x[1])[:3]:
+        facts.append(f"{count} unmatched have reason `{reason_name}`")
+
+    prefix_counts: dict[str, int] = {}
+    for u in all_unmatched:
+        url = u["url"]
+        segs = [s for s in url.split("/") if s]
+        if len(segs) >= 2:
+            prefix = "/" + "/".join(segs[:2])
+        elif segs:
+            prefix = "/" + segs[0]
+        else:
+            continue
+        prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+    top_prefixes = sorted(prefix_counts.items(), key=lambda x: -x[1])
+    if top_prefixes and top_prefixes[0][1] >= 2:
+        p, n = top_prefixes[0]
+        facts.append(f"{n} unmatched URLs share the prefix `{p}/`")
+
+    first = all_unmatched[0]
+    facts.append(f"Top unmatched: `{first['url']}` ({first['method'] or '?'})")
+    return facts
+
+
+def _ws_resolve_emit_json(
+    total_fe_calls: int,
+    total_be_routes: int,
+    total_matched: int,
+    total_unmatched: int,
+    match_pct: int,
+    match_rate: float,
+    state: str,
+    partial_success: bool,
+    verdict: str,
+    all_matches: list,
+    all_unmatched: list[dict],
+    facts: list[str],
+    next_commands: list[str],
+) -> None:
+    """Emit the ws-resolve JSON envelope."""
+    click.echo(
+        to_json(
+            json_envelope(
+                "ws-resolve",
+                summary={
+                    "frontend_calls": total_fe_calls,
+                    "backend_routes": total_be_routes,
+                    "matched": total_matched,
+                    "matched_count": total_matched,
+                    "unmatched_count": total_unmatched,
+                    "match_pct": match_pct,
+                    "match_rate": round(match_rate, 4),
+                    "state": state,
+                    "partial_success": partial_success,
+                    "verdict": verdict,
+                },
+                matches=[
+                    {
+                        "url": m["url_pattern"],
+                        "method": m.get("http_method", ""),
+                        "frontend_file": m["frontend"]["file_path"],
+                        "frontend_symbol": m["frontend"].get("symbol_name", ""),
+                        "backend_file": m["backend"]["file_path"],
+                        "backend_symbol": m["backend"].get("symbol_name", ""),
+                        "score": round(m["score"], 2),
+                    }
+                    for m in all_matches[:50]
+                ],
+                unmatched=all_unmatched,
+                agent_contract={
+                    "facts": facts,
+                    "next_commands": next_commands,
+                },
             )
         )
-        return
+    )
 
+
+def _ws_resolve_emit_text(
+    verdict: str,
+    all_matches: list,
+    all_unmatched: list[dict],
+    total_matched: int,
+    total_unmatched: int,
+) -> None:
+    """Render the ws-resolve text output (verdict, edges, top matches, top unmatched)."""
     click.echo()
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"Cross-repo edges: {total_matched} api_call edges stored")
     if all_matches:
-        # Show top matches
         for m in all_matches[:10]:
             method = m.get("http_method", "?")
             url = m["url_pattern"]
@@ -561,6 +586,58 @@ def ws_resolve(ctx) -> None:
             click.echo(f"  (+{total_unmatched - 10} more)")
         click.echo()
         click.echo("Run `roam --json ws resolve` for full list.")
+
+
+@ws.command("resolve")
+@click.pass_context
+def ws_resolve(ctx) -> None:
+    """Detect cross-repo API connections between frontend and backend repos."""
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+
+    ws_root, config = _require_workspace(ctx, "ws-resolve")
+
+    from roam.workspace.config import get_repo_paths
+    from roam.workspace.db import clear_cross_edges, open_workspace_db
+
+    repo_infos = get_repo_paths(config, ws_root)
+
+    with open_workspace_db(ws_root) as ws_conn:
+        clear_cross_edges(ws_conn)
+        repo_id_map = _ws_resolve_register_repos(ws_conn, repo_infos)
+        connections = _ws_resolve_derive_connections(config, repo_infos, json_mode)
+        total_fe_calls, total_be_routes, total_matched, all_matches, all_unmatched = _ws_resolve_run_scans(
+            ws_conn, connections, repo_infos, repo_id_map, json_mode
+        )
+
+    total_unmatched = len(all_unmatched)
+    state, verdict, partial_success, match_pct, match_rate = _ws_resolve_compute_verdict(
+        total_fe_calls, total_matched, total_unmatched
+    )
+    facts = _ws_resolve_build_facts(total_fe_calls, total_unmatched, all_unmatched)
+    next_commands: list[str] = []
+    if total_unmatched > 0:
+        next_commands.append("roam --json ws resolve   # see the full unmatched list")
+        next_commands.append("roam endpoints --json    # inspect backend route inventory")
+
+    if json_mode:
+        _ws_resolve_emit_json(
+            total_fe_calls,
+            total_be_routes,
+            total_matched,
+            total_unmatched,
+            match_pct,
+            match_rate,
+            state,
+            partial_success,
+            verdict,
+            all_matches,
+            all_unmatched,
+            facts,
+            next_commands,
+        )
+        return
+
+    _ws_resolve_emit_text(verdict, all_matches, all_unmatched, total_matched, total_unmatched)
 
 
 # ---------------------------------------------------------------------------

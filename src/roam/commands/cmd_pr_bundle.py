@@ -3363,7 +3363,7 @@ def pr_bundle_emit(
     if isinstance(env.get("summary"), dict):
         env["summary"].setdefault("verdict_floor", _bw_verdict_floor)
 
-    # ── Thread W607-AE + W607-BW markers onto BOTH summary.warnings_out
+    # -- Thread W607-AE + W607-BW markers onto BOTH summary.warnings_out
     # and the top-level envelope.warnings_out. Both share the canonical
     # ``pr_bundle_*`` family per the marker-prefix discipline; the additive
     # bucket stays distinguishable in tests + audits via the phase names

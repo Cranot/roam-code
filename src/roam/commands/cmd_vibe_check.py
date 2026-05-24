@@ -1100,6 +1100,118 @@ _SHALLOW_WRAPPER_PY = re.compile(
 )
 
 
+def _is_scaffolding_path(path: str) -> bool:
+    """True for test / conftest / cmd_* paths skipped by the inflation detector.
+
+    Matches the same exclusion the rest of the AI-rot detector applies
+    (mirrors ``_detect_dead_exports``'s scaffolding skip-list).
+    """
+    if not path:
+        return False
+    basename = path.rsplit("/", 1)[-1]
+    return (
+        "/tests/" in path
+        or "/test/" in path
+        or "conftest" in path
+        or "cmd_" in basename
+        or path.endswith("_test.py")
+        or "test_" in basename
+    )
+
+
+def _compute_line_starts(source: str) -> list[int]:
+    """Return 0-based byte offsets of every line start in *source*."""
+    line_starts: list[int] = [0]
+    for idx, ch in enumerate(source):
+        if ch == "\n":
+            line_starts.append(idx + 1)
+    return line_starts
+
+
+def _offset_to_line(start: int, line_starts: list[int]) -> int:
+    """Map a byte *start* offset into its 1-based line number.
+
+    Falls back to ``len(line_starts)`` when *start* lies past the last
+    recorded newline (matches the for/else fallthrough in the original).
+    """
+    for i, ls in enumerate(line_starts):
+        if ls > start:
+            return i
+    return len(line_starts)
+
+
+def _scan_comment_restates(
+    source: str,
+    pat: "re.Pattern[str]",
+    line_starts: list[int],
+) -> list[dict]:
+    """Yield ``comment_restates_code`` occurrences for one file."""
+    occurrences: list[dict] = []
+    for m in pat.finditer(source):
+        comment_text = m.group(1).strip()
+        code_line = m.group(2).strip()
+        # Ignore special markers and section dividers.
+        if not comment_text or comment_text.startswith(("---", "===", "***", "TODO", "FIXME", "NOTE", "XXX")):
+            continue
+        if not code_line or code_line.startswith(("#", "//")):
+            continue
+        if not _comment_restates_code(comment_text, code_line):
+            continue
+        line_no = _offset_to_line(m.start(), line_starts)
+        occurrences.append(
+            {
+                "line": line_no,
+                "subkind": "comment_restates_code",
+                "snippet": f"# {comment_text[:60]} / {code_line[:60]}",
+            }
+        )
+    return occurrences
+
+
+def _scan_shallow_wrappers(source: str, line_starts: list[int]) -> list[dict]:
+    """Yield ``shallow_wrapper`` occurrences for one Python file."""
+    occurrences: list[dict] = []
+    for m in _SHALLOW_WRAPPER_PY.finditer(source):
+        name = m.group(2)
+        # Private wrappers are below-the-fold by convention.
+        if name.startswith("_"):
+            continue
+        doc = (m.group("doc") or "").strip()
+        # Empty docstrings are caught by abandoned_stubs; we need a real
+        # docstring to call this "inflation".
+        if len(doc) < 10:
+            continue
+        line_no = _offset_to_line(m.start(), line_starts)
+        occurrences.append(
+            {
+                "line": line_no,
+                "subkind": "shallow_wrapper",
+                "name": name,
+                "snippet": f'def {name}(...): """{doc[:60]}...""" + 1 stmt',
+            }
+        )
+    return occurrences
+
+
+def _scan_file_for_inflation(path: str, lang: str, source: str) -> list[dict]:
+    """Run both inflation sub-heuristics over one file's source.
+
+    Returns the merged per-occurrence list (sub-heuristic A first, then B
+    for Python), matching the original ordering.
+    """
+    line_starts = _compute_line_starts(source)
+    occurrences: list[dict] = []
+
+    pat = _COMMENT_CODE_PATTERNS.get(lang)
+    if pat is not None:
+        occurrences.extend(_scan_comment_restates(source, pat, line_starts))
+
+    if lang == "python":
+        occurrences.extend(_scan_shallow_wrappers(source, line_starts))
+
+    return occurrences
+
+
 def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, list[dict]]:
     """Scan source files for boilerplate-inflation occurrences.
 
@@ -1125,18 +1237,8 @@ def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, l
         if lang not in _COMMENT_CODE_PATTERNS and lang != "python":
             continue
 
-        # Skip the same scaffolding paths the rest of the detector
-        # already ignores. Same predicate as ``_detect_dead_exports``'s
-        # exclusion list, expressed at Python level here.
         path = f["path"] or ""
-        if (
-            "/tests/" in path
-            or "/test/" in path
-            or "conftest" in path
-            or "cmd_" in path.rsplit("/", 1)[-1]
-            or path.endswith("_test.py")
-            or "test_" in path.rsplit("/", 1)[-1]
-        ):
+        if _is_scaffolding_path(path):
             continue
 
         file_path = project_root / path
@@ -1146,76 +1248,7 @@ def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, l
             continue
 
         total_files_scanned += 1
-        occurrences: list[dict] = []
-
-        # --- Sub-heuristic A: comment_restates_code -----------------
-        pat = _COMMENT_CODE_PATTERNS.get(lang)
-        if pat is not None:
-            # Build a list of (line_number, line_text) so we can map
-            # match offsets back to line numbers.
-            line_starts: list[int] = [0]
-            for idx, ch in enumerate(source):
-                if ch == "\n":
-                    line_starts.append(idx + 1)
-            for m in pat.finditer(source):
-                comment_text = m.group(1).strip()
-                code_line = m.group(2).strip()
-                # Ignore special markers and section dividers.
-                if not comment_text or comment_text.startswith(("---", "===", "***", "TODO", "FIXME", "NOTE", "XXX")):
-                    continue
-                if not code_line or code_line.startswith(("#", "//")):
-                    continue
-                if not _comment_restates_code(comment_text, code_line):
-                    continue
-                # Find the line number where the COMMENT lives.
-                start = m.start()
-                line_no = 1
-                for i, ls in enumerate(line_starts):
-                    if ls > start:
-                        line_no = i
-                        break
-                else:
-                    line_no = len(line_starts)
-                occurrences.append(
-                    {
-                        "line": line_no,
-                        "subkind": "comment_restates_code",
-                        "snippet": f"# {comment_text[:60]} / {code_line[:60]}",
-                    }
-                )
-
-        # --- Sub-heuristic B: shallow_wrapper (Python only) ----------
-        if lang == "python":
-            line_starts = [0]
-            for idx, ch in enumerate(source):
-                if ch == "\n":
-                    line_starts.append(idx + 1)
-            for m in _SHALLOW_WRAPPER_PY.finditer(source):
-                name = m.group(2)
-                # Private wrappers are below-the-fold by convention.
-                if name.startswith("_"):
-                    continue
-                doc = (m.group("doc") or "").strip()
-                # Empty docstrings are caught by abandoned_stubs; we
-                # need a real docstring to call this "inflation".
-                if len(doc) < 10:
-                    continue
-                start = m.start()
-                line_no = 1
-                for i, ls in enumerate(line_starts):
-                    if ls > start:
-                        line_no = i
-                        break
-                else:
-                    line_no = len(line_starts)
-                occurrences.append(
-                    {
-                        "line": line_no,
-                        "subkind": "shallow_wrapper",
-                        "name": name,
-                        "snippet": f'def {name}(...): """{doc[:60]}...""" + 1 stmt',
-                    }
-                )
+        occurrences = _scan_file_for_inflation(path, lang, source)
 
         if occurrences:
             # Count this FILE once toward ``found`` (per-file unit, matching

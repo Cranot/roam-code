@@ -20,7 +20,7 @@ import click
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
-# ── Platform definitions ─────────────────────────────────────────────
+# -- Platform definitions ---------------------------------------------
 
 _PLATFORMS = {
     "github": {
@@ -55,7 +55,7 @@ _PLATFORMS = {
     },
 }
 
-# ── GitHub Actions template (inline — uses the composite action) ─────
+# -- GitHub Actions template (inline — uses the composite action) -----
 
 _GITHUB_TEMPLATE = """\
 # roam-code Analysis for GitHub Actions
@@ -97,7 +97,7 @@ jobs:
 """
 
 
-# ── Template loading ─────────────────────────────────────────────────
+# -- Template loading -------------------------------------------------
 
 
 def _templates_dir() -> Path:
@@ -402,7 +402,7 @@ def _substitute_vars(template: str, variables: dict[str, str]) -> str:
     return result
 
 
-# ── Platform detection ───────────────────────────────────────────────
+# -- Platform detection -----------------------------------------------
 
 
 def _detect_platform(project_root: Path) -> list[str]:
@@ -444,7 +444,7 @@ def _get_default_branch(project_root: Path) -> str:
     return "main"
 
 
-# ── CLI command ──────────────────────────────────────────────────────
+# -- CLI command ------------------------------------------------------
 
 
 @roam_capability(

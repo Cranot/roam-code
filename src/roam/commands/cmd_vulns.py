@@ -957,344 +957,327 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
     return vulns
 
 
-def _output_results(
-    vulns: list[dict],
-    json_mode: bool,
-    sarif_mode: bool,
-    token_budget: int,
-    extra_summary: dict | None = None,
-    *,
-    reachable_only: bool = False,
-    _run_check_aq=None,
-    _w607aq_warnings_out=None,
-    _run_check_ch=None,
-    _w607ch_warnings_out=None,
-):
-    """Produce output in text, JSON, or SARIF format."""
-    # Fallback no-op accumulator when invoked outside the click closure.
-    if _run_check_aq is None or _w607aq_warnings_out is None:
-        _w607aq_warnings_out = []
+def _make_fallback_run_check(bucket: list[str], prefix: str):
+    """Build a no-op W607 accumulator for use outside the click closure."""
 
-        def _run_check_aq(phase, fn, *args, default=None, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                _w607aq_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
-                return default
+    def _run_check(phase, fn, *args, default=None, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            bucket.append(f"{prefix}_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
 
-    # W607-CH fallback no-op accumulator when invoked outside the click closure.
-    if _run_check_ch is None or _w607ch_warnings_out is None:
-        _w607ch_warnings_out = []
+    return _run_check
 
-        def _run_check_ch(phase, fn, *args, default=None, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
-                _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
-                return default
 
-    total = len(vulns)
-    by_severity = _run_check_aq(
-        "severity_breakdown",
-        _severity_breakdown,
+def _compute_predicate_fields(
+    total_local: int,
+    by_severity_local: dict,
+    reachable_count_local: int,
+    just_imported_local: bool,
+) -> dict:
+    """Assemble the verdict-input predicate fields (state + sev_parts)."""
+    sev_parts: list[str] = []
+    for sev in ("critical", "high", "medium", "low", "unknown"):
+        count = by_severity_local.get(sev, 0)
+        if count > 0:
+            sev_parts.append(f"{count} {sev}")
+    if total_local == 0 and not just_imported_local:
+        state_local = "no_scan"
+        partial_success_local = True
+    else:
+        state_local = "scanned"
+        partial_success_local = False
+    return {
+        "total": total_local,
+        "sev_parts": sev_parts,
+        "reachable_count": reachable_count_local,
+        "just_imported": just_imported_local,
+        "state": state_local,
+        "partial_success": partial_success_local,
+    }
+
+
+def _build_verdict_str(fields: dict) -> str:
+    """Render the one-line verdict from predicate fields (LAW 6 compliant)."""
+    total_local = fields["total"]
+    sev_parts = fields["sev_parts"]
+    reachable_count_local = fields["reachable_count"]
+    just_imported_local = fields["just_imported"]
+    if total_local == 0 and not just_imported_local:
+        return (
+            "no vulnerability scan available (vulnerabilities table is empty; "
+            "run `roam vulns --import-file <report.json>` to ingest npm-audit, "
+            "pip-audit, trivy, or osv output)"
+        )
+    if total_local == 0:
+        return "No vulnerabilities found"
+    sev_str = ", ".join(sev_parts)
+    out = f"{total_local} vulnerabilities ({sev_str})"
+    if reachable_count_local > 0:
+        out += f", {reachable_count_local} reachable"
+    return out
+
+
+def _render_sarif_output(vulns: list[dict], reachable_only: bool, _run_check_aq) -> None:
+    """Emit SARIF 2.1.0 output with finding-level filter disclosure."""
+    from roam.output.sarif import runtime_filter_disclosure, write_sarif
+
+    # W1061-followup-2: finding-level filter disclosure delegated to
+    # the shared :func:`runtime_filter_disclosure` helper. cmd_vulns
+    # has only one such filter today — ``--reachable-only`` — and it
+    # operates at finding-evaluation time (filters each row by its
+    # ``reachable`` field), NOT at rule-id granularity. Surfaces
+    # under a synthetic ``reachable-only-filter`` notification
+    # descriptor per SARIF 2.1.0 §3.20.4.
+    finding_filters: list[tuple[str, dict]] = []
+    if reachable_only:
+        finding_filters.append(
+            (
+                "reachable-only-filter",
+                {"filter": "--reachable-only", "filter_value": True},
+            )
+        )
+    _, sarif_notif_overrides = runtime_filter_disclosure(
+        finding_level_filters=finding_filters,
+    )
+    sarif = _run_check_aq(
+        "vulns_to_sarif",
+        _vulns_to_sarif,
         vulns,
+        runtime_notification_overrides=sarif_notif_overrides or None,
         default={},
     )
-    if by_severity is None:
-        by_severity = {}
-    reachable_count = sum(1 for v in vulns if v.get("reachable") == 1)
+    if sarif is None:
+        sarif = {}
+    sarif_text = _run_check_aq(
+        "write_sarif",
+        write_sarif,
+        sarif,
+        default="{}",
+    )
+    if sarif_text is None:
+        sarif_text = "{}"
+    click.echo(sarif_text)
 
-    # Fix E (Pattern 2: silent fallbacks) — distinguish "scan ran and found
-    # 0 vulnerabilities" from "no scan has ever been imported / no
-    # vulnerability data exists in the DB". The previous code reported
-    # "No vulnerabilities found" in BOTH cases, which silently hid the
-    # no-scan scenario from consumers and could be read as "this codebase
-    # is safe" when in fact no scanner has touched it.
-    #
-    # Heuristic: if no records in `vulnerabilities` AND the caller did not
-    # just import a report (extra_summary["imported"] is unset), we are in
-    # the no-scan state. An import that found zero rows is still a scan.
-    just_imported = bool(extra_summary and extra_summary.get("imported") is not None)
 
-    # W607-CH -- compute_predicate boundary. Wraps the per-field extraction
-    # of metrics so a future ``_severity_breakdown`` schema refactor that
-    # returns a non-dict (or a dict missing the canonical CVSS keys)
-    # surfaces a marker rather than crashing the verdict assembly. Floor
-    # to a documented empty-shape dict so downstream verdict/summary
-    # fields stay non-null.
-    def _compute_predicate_fields(
-        total_local: int,
-        by_severity_local: dict,
-        reachable_count_local: int,
-        just_imported_local: bool,
-    ) -> dict:
-        sev_parts: list[str] = []
-        for sev in ("critical", "high", "medium", "low", "unknown"):
-            count = by_severity_local.get(sev, 0)
-            if count > 0:
-                sev_parts.append(f"{count} {sev}")
-        if total_local == 0 and not just_imported_local:
-            state_local = "no_scan"
-            partial_success_local = True
-        else:
-            state_local = "scanned"
-            partial_success_local = False
-        return {
-            "total": total_local,
-            "sev_parts": sev_parts,
-            "reachable_count": reachable_count_local,
-            "just_imported": just_imported_local,
-            "state": state_local,
-            "partial_success": partial_success_local,
+def _build_vuln_records(vulns: list[dict]) -> list[dict]:
+    """Project raw vuln rows into R22 wrap_findings input records."""
+    vuln_records: list[dict] = []
+    for v in vulns:
+        rec: dict = {
+            "cve_id": v.get("cve_id"),
+            "package": v.get("package_name"),
+            "severity": v.get("severity"),
+            "title": v.get("title"),
+            "source": v.get("source"),
+            "matched_file": v.get("matched_file"),
+            "reachable": v.get("reachable", 0),
         }
+        if v.get("shortest_path"):
+            rec["shortest_path"] = v["shortest_path"]
+        if v.get("hop_count"):
+            rec["hop_count"] = v["hop_count"]
+        vuln_records.append(rec)
+    return vuln_records
 
-    _pred_fields = _run_check_ch(
-        "compute_predicate",
-        _compute_predicate_fields,
+
+def _compute_json_distribution(
+    vuln_records: list[dict],
+    verdict: str,
+    _run_check_aq,
+) -> tuple[list, dict, str]:
+    """Wrap findings + compute confidence distribution + verdict_with_high_count."""
+    vuln_triples = _run_check_aq(
+        "classify_findings",
+        wrap_findings,
+        vuln_records,
+        classifier=_vuln_classify,
+        default=[],
+    )
+    if vuln_triples is None:
+        vuln_triples = []
+    distribution = _run_check_aq(
+        "confidence_distribution",
+        confidence_distribution,
+        vuln_triples,
+        default={},
+    )
+    if distribution is None:
+        distribution = {}
+    verdict_with_conf = _run_check_aq(
+        "verdict_with_high_count",
+        verdict_with_high_count,
+        verdict,
+        distribution,
+        default=verdict,
+    )
+    if verdict_with_conf is None:
+        verdict_with_conf = verdict
+    return vuln_triples, distribution, verdict_with_conf
+
+
+def _build_json_summary(
+    verdict_with_conf: str,
+    state: str,
+    partial_success: bool,
+    total: int,
+    by_severity: dict,
+    reachable_count: int,
+    distribution: dict,
+    extra_summary: dict | None,
+    combined_warnings: list[str],
+) -> dict:
+    """Build the canonical JSON summary dict; flip partial_success on any warning."""
+    summary: dict = {
+        "verdict": verdict_with_conf,
+        "state": state,
+        "partial_success": partial_success,
+        "total": total,
+        "by_severity": by_severity,
+        "reachable_count": reachable_count,
+        "findings_confidence_distribution": distribution,
+    }
+    if extra_summary:
+        summary.update(extra_summary)
+    # W607-AQ / W607-CH: merge substrate-CALL markers AND aggregation-
+    # phase markers into the canonical ``warnings_out`` channel. Both
+    # buckets share the canonical ``vulns_*`` family (the W607-CH bucket
+    # is ADDITIVE, not a separate prefix). ``partial_success`` flips when
+    # ANY bucket is non-empty. W805 invariant: vulns invocation never
+    # collapses to a silent SAFE verdict when any of the ingest / reach
+    # / VEX-emit substrates or aggregation-phase boundaries raised. W826
+    # security-axis: the cmd_taint silent-SAFE Pattern-2 bug must NOT
+    # regress here.
+    if combined_warnings:
+        summary["warnings_out"] = list(combined_warnings)
+        summary["partial_success"] = True
+    return summary
+
+
+def _build_envelope_floor(verdict: str, combined_warnings: list[str]) -> dict:
+    """Synthesize the W607-CH build_envelope floor stub (minimal parseable shape)."""
+    return {
+        "command": "vulns",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": verdict,
+            "partial_success": True,
+            "warnings_out": list(combined_warnings),
+        },
+        "warnings_out": list(combined_warnings),
+    }
+
+
+def _render_json_output(
+    vulns: list[dict],
+    verdict: str,
+    state: str,
+    partial_success: bool,
+    total: int,
+    by_severity: dict,
+    reachable_count: int,
+    extra_summary: dict | None,
+    token_budget: int,
+    _run_check_aq,
+    _run_check_ch,
+    _w607aq_warnings_out: list[str],
+    _w607ch_warnings_out: list[str],
+) -> None:
+    """Emit the JSON envelope with W607 boundary protection + floor-rebuild safety net."""
+    # R22: wrap each vuln in {value, confidence, reason}. Consumers
+    # that previously read `vulnerabilities[i]["cve_id"]` must now
+    # read `vulnerabilities[i]["value"]["cve_id"]` plus
+    # `vulnerabilities[i]["confidence"]` / `vulnerabilities[i]["reason"]`.
+    vuln_records = _build_vuln_records(vulns)
+    vuln_triples, distribution, verdict_with_conf = _compute_json_distribution(
+        vuln_records,
+        verdict,
+        _run_check_aq,
+    )
+
+    _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
+    summary = _build_json_summary(
+        verdict_with_conf,
+        state,
+        partial_success,
         total,
         by_severity,
         reachable_count,
-        just_imported,
-        default={
-            "total": total,
-            "sev_parts": [],
-            "reachable_count": reachable_count,
-            "just_imported": just_imported,
-            "state": "scanned",
-            "partial_success": False,
-        },
-    )
-    state = _pred_fields["state"]
-    partial_success = _pred_fields["partial_success"]
-
-    # W607-CH -- compute_verdict boundary. Wraps the verdict-string assembly
-    # so a downstream f-string refactor (e.g. a non-int total or a
-    # severity tuple that raises on join) surfaces a marker rather than
-    # crashing the envelope. Floor must NOT re-interpolate the same values
-    # that tripped the closure (W978 first-hypothesis discipline: a
-    # __format__-raising sentinel under test would re-raise inside the
-    # default f-string). Use a literal ``"Vulnerability scan completed"``
-    # floor instead (LAW 6 still holds: the line works standalone).
-    # Mirror of cmd_supply_chain W607-CD / cmd_cga W607-BZ compute_verdict
-    # pattern.
-    def _build_verdict_str(fields: dict) -> str:
-        total_local = fields["total"]
-        sev_parts = fields["sev_parts"]
-        reachable_count_local = fields["reachable_count"]
-        just_imported_local = fields["just_imported"]
-        if total_local == 0 and not just_imported_local:
-            return (
-                "no vulnerability scan available (vulnerabilities table is empty; "
-                "run `roam vulns --import-file <report.json>` to ingest npm-audit, "
-                "pip-audit, trivy, or osv output)"
-            )
-        if total_local == 0:
-            return "No vulnerabilities found"
-        sev_str = ", ".join(sev_parts)
-        out = f"{total_local} vulnerabilities ({sev_str})"
-        if reachable_count_local > 0:
-            out += f", {reachable_count_local} reachable"
-        return out
-
-    verdict = _run_check_ch(
-        "compute_verdict",
-        _build_verdict_str,
-        _pred_fields,
-        default="Vulnerability scan completed",
+        distribution,
+        extra_summary,
+        _combined_warnings_out,
     )
 
-    # --- SARIF output ---
-    if sarif_mode:
-        from roam.output.sarif import runtime_filter_disclosure, write_sarif
+    envelope_kwargs: dict = {
+        "summary": summary,
+        "budget": token_budget,
+        "vulnerabilities": vuln_triples,
+    }
+    if _combined_warnings_out:
+        envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
 
-        # W1061-followup-2: finding-level filter disclosure delegated to
-        # the shared :func:`runtime_filter_disclosure` helper. cmd_vulns
-        # has only one such filter today — ``--reachable-only`` — and it
-        # operates at finding-evaluation time (filters each row by its
-        # ``reachable`` field), NOT at rule-id granularity. Surfaces
-        # under a synthetic ``reachable-only-filter`` notification
-        # descriptor per SARIF 2.1.0 §3.20.4.
-        finding_filters: list[tuple[str, dict]] = []
-        if reachable_only:
-            finding_filters.append(
-                (
-                    "reachable-only-filter",
-                    {"filter": "--reachable-only", "filter_value": True},
-                )
-            )
-        _, sarif_notif_overrides = runtime_filter_disclosure(
-            finding_level_filters=finding_filters,
-        )
-        sarif = _run_check_aq(
-            "vulns_to_sarif",
-            _vulns_to_sarif,
-            vulns,
-            runtime_notification_overrides=sarif_notif_overrides or None,
-            default={},
-        )
-        if sarif is None:
-            sarif = {}
-        sarif_text = _run_check_aq(
-            "write_sarif",
-            write_sarif,
-            sarif,
-            default="{}",
-        )
-        if sarif_text is None:
-            sarif_text = "{}"
-        click.echo(sarif_text)
-        return
-
-    # --- JSON output ---
-    if json_mode:
-        # R22: wrap each vuln in {value, confidence, reason}. Consumers
-        # that previously read `vulnerabilities[i]["cve_id"]` must now
-        # read `vulnerabilities[i]["value"]["cve_id"]` plus
-        # `vulnerabilities[i]["confidence"]` / `vulnerabilities[i]["reason"]`.
-        # We build the raw records first (so the classifier sees source+
-        # reachable), then wrap.
-        vuln_records = []
-        for v in vulns:
-            rec: dict = {
-                "cve_id": v.get("cve_id"),
-                "package": v.get("package_name"),
-                "severity": v.get("severity"),
-                "title": v.get("title"),
-                "source": v.get("source"),
-                "matched_file": v.get("matched_file"),
-                "reachable": v.get("reachable", 0),
-            }
-            if v.get("shortest_path"):
-                rec["shortest_path"] = v["shortest_path"]
-            if v.get("hop_count"):
-                rec["hop_count"] = v["hop_count"]
-            vuln_records.append(rec)
-
-        vuln_triples = _run_check_aq(
-            "classify_findings",
-            wrap_findings,
-            vuln_records,
-            classifier=_vuln_classify,
-            default=[],
-        )
-        if vuln_triples is None:
-            vuln_triples = []
-        distribution = _run_check_aq(
-            "confidence_distribution",
-            confidence_distribution,
-            vuln_triples,
-            default={},
-        )
-        if distribution is None:
-            distribution = {}
-        verdict_with_conf = _run_check_aq(
-            "verdict_with_high_count",
-            verdict_with_high_count,
-            verdict,
-            distribution,
-            default=verdict,
-        )
-        if verdict_with_conf is None:
-            verdict_with_conf = verdict
-
-        summary: dict = {
-            "verdict": verdict_with_conf,
-            "state": state,
-            "partial_success": partial_success,
-            "total": total,
-            "by_severity": by_severity,
-            "reachable_count": reachable_count,
-            "findings_confidence_distribution": distribution,
-        }
-        if extra_summary:
-            summary.update(extra_summary)
-
-        # W607-AQ / W607-CH: merge substrate-CALL markers AND aggregation-
-        # phase markers into the canonical ``warnings_out`` channel. Both
-        # buckets share the canonical ``vulns_*`` family (the W607-CH bucket
-        # is ADDITIVE, not a separate prefix). The aggregation-phase bucket
-        # stays distinguishable in tests + audits via its phase names
-        # (``compute_predicate`` / ``compute_verdict`` / ``build_envelope``).
-        # ``partial_success`` flips when ANY bucket is non-empty.
-        # W805 invariant: vulns invocation never collapses to a silent SAFE
-        # verdict when any of the ingest / reach / VEX-emit substrates or
-        # aggregation-phase boundaries raised. W826 security-axis: the
-        # cmd_taint silent-SAFE Pattern-2 bug must NOT regress here.
+    # W607-CH -- build_envelope boundary. Wraps the
+    # ``json_envelope("vulns", ...)`` projection. A downstream schema-
+    # shape refactor that breaks the envelope helper would otherwise
+    # crash AFTER all substrate + aggregation signals were already
+    # gathered. Floor to a minimal envelope stub so consumers still
+    # receive a parseable JSON object with the marker attached + the
+    # canonical command name. Phase name distinct from W607-AQ's
+    # existing ``serialize_envelope`` (which wraps ``to_json`` instead).
+    _envelope_floor = _build_envelope_floor(verdict, _combined_warnings_out)
+    envelope = _run_check_ch(
+        "build_envelope",
+        json_envelope,
+        "vulns",
+        default=_envelope_floor,
+        **envelope_kwargs,
+    )
+    # W607-CH -- if ``build_envelope`` raised AFTER the combined bucket
+    # was already snapshotted, the new ``vulns_build_envelope_failed:``
+    # marker was appended to ``_w607ch_warnings_out`` and the floor
+    # stub carries only the pre-raise combined list. Rebuild the floor
+    # stub's warnings_out so the new marker reaches the JSON output.
+    # Clean path -> envelope is the real json_envelope return value,
+    # no rebuild needed.
+    if envelope is _envelope_floor and _w607ch_warnings_out:
         _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
-        if _combined_warnings_out:
-            summary["warnings_out"] = list(_combined_warnings_out)
-            summary["partial_success"] = True
+        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+        envelope = _envelope_floor
 
-        envelope_kwargs: dict = {
-            "summary": summary,
-            "budget": token_budget,
-            "vulnerabilities": vuln_triples,
-        }
-        if _combined_warnings_out:
-            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
-
-        # W607-CH -- build_envelope boundary. Wraps the
-        # ``json_envelope("vulns", ...)`` projection. A downstream schema-
-        # shape refactor that breaks the envelope helper would otherwise
-        # crash AFTER all substrate + aggregation signals were already
-        # gathered. Floor to a minimal envelope stub so consumers still
-        # receive a parseable JSON object with the marker attached + the
-        # canonical command name. Phase name distinct from W607-AQ's
-        # existing ``serialize_envelope`` (which wraps ``to_json`` instead).
-        _envelope_floor: dict = {
-            "command": "vulns",
-            "schema_version": "1.0.0",
-            "summary": {
-                "verdict": verdict,
-                "partial_success": True,
-                "warnings_out": list(_combined_warnings_out),
-            },
-            "warnings_out": list(_combined_warnings_out),
-        }
-        envelope = _run_check_ch(
-            "build_envelope",
-            json_envelope,
-            "vulns",
-            default=_envelope_floor,
-            **envelope_kwargs,
-        )
-        # W607-CH -- if ``build_envelope`` raised AFTER the combined bucket
-        # was already snapshotted, the new ``vulns_build_envelope_failed:``
-        # marker was appended to ``_w607ch_warnings_out`` and the floor
-        # stub carries only the pre-raise combined list. Rebuild the floor
-        # stub's warnings_out so the new marker reaches the JSON output.
-        # Clean path -> envelope is the real json_envelope return value,
-        # no rebuild needed.
-        if envelope is _envelope_floor and _w607ch_warnings_out:
-            _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
-            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
-            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
-            envelope = _envelope_floor
-
-        output_text = _run_check_aq(
-            "serialize_envelope",
-            to_json,
-            envelope,
-            default="{}",
-        )
-        if output_text is None:
+    output_text = _run_check_aq(
+        "serialize_envelope",
+        to_json,
+        envelope,
+        default="{}",
+    )
+    if output_text is None:
+        output_text = "{}"
+    # W805 / Pattern-1 variant-D safety net: if serialize_envelope
+    # raised AFTER envelope build, re-build with the now-disclosed
+    # marker on warnings_out so the consumer still sees it.
+    if output_text == "{}" and (_w607aq_warnings_out or _w607ch_warnings_out):
+        _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
+        envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+        envelope_kwargs["summary"]["warnings_out"] = list(_combined_warnings_out)
+        try:
+            envelope = json_envelope("vulns", **envelope_kwargs)
+            output_text = to_json(envelope)
+        except Exception:
             output_text = "{}"
-        # W805 / Pattern-1 variant-D safety net: if serialize_envelope
-        # raised AFTER envelope build, re-build with the now-disclosed
-        # marker on warnings_out so the consumer still sees it.
-        if output_text == "{}" and (_w607aq_warnings_out or _w607ch_warnings_out):
-            _combined_warnings_out = list(_w607aq_warnings_out) + list(_w607ch_warnings_out)
-            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
-            envelope_kwargs["summary"]["warnings_out"] = list(_combined_warnings_out)
-            try:
-                envelope = json_envelope("vulns", **envelope_kwargs)
-                output_text = to_json(envelope)
-            except Exception:
-                output_text = "{}"
-        click.echo(output_text)
-        return
+    click.echo(output_text)
 
-    # --- Text output ---
+
+def _render_text_output(
+    vulns: list[dict],
+    verdict: str,
+    total: int,
+    reachable_count: int,
+    state: str,
+    extra_summary: dict | None,
+) -> None:
+    """Emit the plain-text verdict + severity-sorted table + summary line."""
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 
@@ -1336,3 +1319,117 @@ def _output_results(
         else:
             click.echo("  No vulnerabilities in the database.")
         click.echo("  Import a report: roam vulns --import-file <report.json>")
+
+
+def _output_results(
+    vulns: list[dict],
+    json_mode: bool,
+    sarif_mode: bool,
+    token_budget: int,
+    extra_summary: dict | None = None,
+    *,
+    reachable_only: bool = False,
+    _run_check_aq=None,
+    _w607aq_warnings_out=None,
+    _run_check_ch=None,
+    _w607ch_warnings_out=None,
+):
+    """Produce output in text, JSON, or SARIF format."""
+    # Fallback no-op accumulators when invoked outside the click closure.
+    if _run_check_aq is None or _w607aq_warnings_out is None:
+        _w607aq_warnings_out = []
+        _run_check_aq = _make_fallback_run_check(_w607aq_warnings_out, "vulns")
+
+    # W607-CH fallback no-op accumulator when invoked outside the click closure.
+    if _run_check_ch is None or _w607ch_warnings_out is None:
+        _w607ch_warnings_out = []
+        _run_check_ch = _make_fallback_run_check(_w607ch_warnings_out, "vulns")
+
+    total = len(vulns)
+    by_severity = _run_check_aq(
+        "severity_breakdown",
+        _severity_breakdown,
+        vulns,
+        default={},
+    )
+    if by_severity is None:
+        by_severity = {}
+    reachable_count = sum(1 for v in vulns if v.get("reachable") == 1)
+
+    # Fix E (Pattern 2: silent fallbacks) — distinguish "scan ran and found
+    # 0 vulnerabilities" from "no scan has ever been imported / no
+    # vulnerability data exists in the DB". The previous code reported
+    # "No vulnerabilities found" in BOTH cases, which silently hid the
+    # no-scan scenario from consumers and could be read as "this codebase
+    # is safe" when in fact no scanner has touched it.
+    #
+    # Heuristic: if no records in `vulnerabilities` AND the caller did not
+    # just import a report (extra_summary["imported"] is unset), we are in
+    # the no-scan state. An import that found zero rows is still a scan.
+    just_imported = bool(extra_summary and extra_summary.get("imported") is not None)
+
+    # W607-CH -- compute_predicate boundary. Wraps the per-field extraction
+    # of metrics so a future ``_severity_breakdown`` schema refactor that
+    # returns a non-dict (or a dict missing the canonical CVSS keys)
+    # surfaces a marker rather than crashing the verdict assembly. Floor
+    # to a documented empty-shape dict so downstream verdict/summary
+    # fields stay non-null.
+    _pred_fields = _run_check_ch(
+        "compute_predicate",
+        _compute_predicate_fields,
+        total,
+        by_severity,
+        reachable_count,
+        just_imported,
+        default={
+            "total": total,
+            "sev_parts": [],
+            "reachable_count": reachable_count,
+            "just_imported": just_imported,
+            "state": "scanned",
+            "partial_success": False,
+        },
+    )
+    state = _pred_fields["state"]
+    partial_success = _pred_fields["partial_success"]
+
+    # W607-CH -- compute_verdict boundary. Wraps the verdict-string assembly
+    # so a downstream f-string refactor (e.g. a non-int total or a
+    # severity tuple that raises on join) surfaces a marker rather than
+    # crashing the envelope. Floor must NOT re-interpolate the same values
+    # that tripped the closure (W978 first-hypothesis discipline: a
+    # __format__-raising sentinel under test would re-raise inside the
+    # default f-string). Use a literal ``"Vulnerability scan completed"``
+    # floor instead (LAW 6 still holds: the line works standalone).
+    # Mirror of cmd_supply_chain W607-CD / cmd_cga W607-BZ compute_verdict
+    # pattern.
+    verdict = _run_check_ch(
+        "compute_verdict",
+        _build_verdict_str,
+        _pred_fields,
+        default="Vulnerability scan completed",
+    )
+
+    if sarif_mode:
+        _render_sarif_output(vulns, reachable_only, _run_check_aq)
+        return
+
+    if json_mode:
+        _render_json_output(
+            vulns,
+            verdict,
+            state,
+            partial_success,
+            total,
+            by_severity,
+            reachable_count,
+            extra_summary,
+            token_budget,
+            _run_check_aq,
+            _run_check_ch,
+            _w607aq_warnings_out,
+            _w607ch_warnings_out,
+        )
+        return
+
+    _render_text_output(vulns, verdict, total, reachable_count, state, extra_summary)

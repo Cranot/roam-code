@@ -768,7 +768,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     ensure_index()
     root = find_project_root()
 
-    # ── W607-AD substrate-boundary plumbing ──────────────────────────
+    # -- W607-AD substrate-boundary plumbing --------------------------
     #
     # cmd_attest is the proof-carrying PR attestation aggregator: it
     # composes blast-radius / risk / breaking / fitness / budget / tests
@@ -971,7 +971,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
                 click.echo(f"{len(changed)} changed files not found in index ({label}). Run `roam index` first.")
             return
 
-        # ── Collect all evidence ──────────────────────────────────────
+        # -- Collect all evidence --------------------------------------
         # W607-AD wraps every collector. Each collector's documented
         # empty-floor (matching its happy-path return shape) is passed
         # as ``default=`` so a raise degrades cleanly and the envelope
@@ -1052,7 +1052,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             default=[],
         )
 
-        # ── Build attestation ─────────────────────────────────────────
+        # -- Build attestation -----------------------------------------
 
         # Tool version
         try:
@@ -1244,7 +1244,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             summary_block["warnings_out"] = list(_combined_warnings_out)
             summary_block["partial_success"] = True
 
-        # ── Envelope (built unconditionally so we can auto-log it) ───
+        # -- Envelope (built unconditionally so we can auto-log it) ---
         _envelope_kwargs: dict = dict(
             summary=summary_block,
             attestation=attestation,
@@ -1345,7 +1345,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
                 **_envelope_kwargs,
             )
 
-        # ── Output ────────────────────────────────────────────────────
+        # -- Output ----------------------------------------------------
 
         if output_format == "markdown":
             output = _format_markdown(attestation, evidence, verdict)
@@ -1374,7 +1374,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
                 click.echo(output)
             return
 
-        # ── Text output ───────────────────────────────────────────────
+        # -- Text output -----------------------------------------------
         _emit_text(
             attestation,
             evidence,

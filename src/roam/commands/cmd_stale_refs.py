@@ -604,6 +604,243 @@ def _matches_any_glob(rel_path: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
+def _build_lookup_indices(
+    all_files: list[str],
+) -> tuple[set[str], set[str], dict[str, list[str]]]:
+    """Build the (tracked_set, dir_set, basename_idx) trio from discovered files.
+
+    ``tracked_set`` is the membership set used to check whether a resolved
+    target path is one of the discovered files; ``dir_set`` lets us treat
+    a parent directory as a live target; ``basename_idx`` is the
+    basename → paths map used by the backtick resolver and the caller's
+    rename hints.
+    """
+    tracked_set = set(all_files)
+    dir_set: set[str] = set()
+    for p in all_files:
+        parent = os.path.dirname(p)
+        while parent:
+            dir_set.add(parent)
+            parent = os.path.dirname(parent)
+    basename_idx: dict[str, list[str]] = defaultdict(list)
+    for p in all_files:
+        basename_idx[os.path.basename(p)].append(p)
+    return tracked_set, dir_set, basename_idx
+
+
+def _record_in_page_anchor_stale(
+    rel: str,
+    lineno: int,
+    raw_url: str,
+    fragment: str,
+    *,
+    anchor_cache: AnchorCache,
+    check_anchors: bool,
+    ignore_target: tuple[str, ...],
+    stale_by_target: dict[str, list[dict]],
+) -> None:
+    """Record a stale-anchor finding when the source file's own ``#fragment`` is missing."""
+    if not check_anchors or not AnchorCache.is_anchor_validatable(rel):
+        return
+    anchors = anchor_cache.anchors_for(rel)
+    if anchors is None or fragment.lower() in anchors:
+        return
+    synthetic = f"{rel}#{fragment}"
+    if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel, ignore_target):
+        return
+    stale_by_target[synthetic].append(
+        {
+            "file": rel,
+            "line": lineno,
+            "kind": "anchor",
+            "raw": raw_url,
+            "anchor": fragment,
+            "anchor_target_file": rel,
+        }
+    )
+
+
+def _resolve_ref_target(
+    kind: str,
+    raw_url: str,
+    rel: str,
+    project_root: Path,
+    *,
+    basename_idx: dict[str, list[str]],
+    prose_mode: bool,
+    check_absolute_routes: bool,
+) -> tuple[Path | None, str | None]:
+    """Resolve a reference to ``(target, rel_target)``; filter runtime paths.
+
+    Returns ``(None, None)`` when the resolver yields no path, the path
+    can't be made relative to ``project_root``, or the resolved target
+    sits inside a runtime / dependency directory.
+    """
+    if kind == "backtick":
+        target = _resolve_backtick_target(
+            raw_url,
+            rel,
+            project_root,
+            basename_idx=basename_idx,
+            prose_mode=prose_mode,
+        )
+    else:
+        target = _resolve_target(
+            raw_url,
+            rel,
+            project_root,
+            check_absolute_routes=check_absolute_routes,
+        )
+    if target is None:
+        return None, None
+    try:
+        rel_target = target.relative_to(project_root).as_posix()
+    except ValueError:
+        return None, None
+    if _is_runtime_path(rel_target):
+        return None, None
+    return target, rel_target
+
+
+def _record_existing_target_anchor(
+    rel: str,
+    lineno: int,
+    raw_url: str,
+    fragment: str,
+    rel_target: str,
+    *,
+    anchor_cache: AnchorCache,
+    check_anchors: bool,
+    ignore_target: tuple[str, ...],
+    stale_by_target: dict[str, list[dict]],
+) -> None:
+    """Record a stale-anchor finding when the target file exists but ``#fragment`` is missing."""
+    if not (check_anchors and fragment and AnchorCache.is_anchor_validatable(rel_target)):
+        return
+    anchors = anchor_cache.anchors_for(rel_target)
+    # Case-insensitive lookup — GitHub matches ``#Setup`` against header
+    # ``# Setup``. Stored slugs are lowercased; lowercase the URL
+    # fragment too.
+    if anchors is None or fragment.lower() in anchors:
+        return
+    synthetic = f"{rel_target}#{fragment}"
+    if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel_target, ignore_target):
+        return
+    stale_by_target[synthetic].append(
+        {
+            "file": rel,
+            "line": lineno,
+            "kind": "anchor",
+            "raw": raw_url,
+            "anchor": fragment,
+            "anchor_target_file": rel_target,
+        }
+    )
+
+
+def _record_missing_target(
+    rel: str,
+    lineno: int,
+    raw_url: str,
+    kind: str,
+    rel_target: str,
+    fragment: str,
+    *,
+    ignore_target: tuple[str, ...],
+    stale_by_target: dict[str, list[dict]],
+) -> None:
+    """Record a stale-target finding for a missing target path."""
+    if _matches_any_glob(rel_target, ignore_target):
+        return
+    entry: dict = {
+        "file": rel,
+        "line": lineno,
+        "kind": kind,
+        "raw": raw_url,
+    }
+    if fragment:
+        entry["anchor"] = fragment
+    stale_by_target[rel_target].append(entry)
+
+
+def _process_one_ref(
+    rel: str,
+    lineno: int,
+    kind: str,
+    raw_url: str,
+    project_root: Path,
+    *,
+    prose_mode: bool,
+    tracked_set: set[str],
+    dir_set: set[str],
+    basename_idx: dict[str, list[str]],
+    anchor_cache: AnchorCache,
+    check_anchors: bool,
+    check_absolute_routes: bool,
+    ignore_target: tuple[str, ...],
+    stale_by_target: dict[str, list[dict]],
+) -> None:
+    """Per-ref decision tree: in-page anchor → resolve → exist-check → record."""
+    fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
+
+    # In-page anchor refs (``[x](#section)`` with no path) validate
+    # against the SOURCE file's own header set. Without this branch
+    # the path resolver returns None and the reference is silently
+    # accepted — so ``[broken](#nonexistent)`` in a README would never
+    # be flagged. Run the check before the path resolver because a
+    # pure-anchor URL has no path to resolve.
+    if kind != "backtick" and fragment and not _strip_url_decorations(raw_url).split("#", 1)[0]:
+        _record_in_page_anchor_stale(
+            rel,
+            lineno,
+            raw_url,
+            fragment,
+            anchor_cache=anchor_cache,
+            check_anchors=check_anchors,
+            ignore_target=ignore_target,
+            stale_by_target=stale_by_target,
+        )
+        return
+
+    target, rel_target = _resolve_ref_target(
+        kind,
+        raw_url,
+        rel,
+        project_root,
+        basename_idx=basename_idx,
+        prose_mode=prose_mode,
+        check_absolute_routes=check_absolute_routes,
+    )
+    if target is None or rel_target is None:
+        return
+
+    target_exists = rel_target in tracked_set or rel_target in dir_set or target.exists()
+    if target_exists:
+        _record_existing_target_anchor(
+            rel,
+            lineno,
+            raw_url,
+            fragment,
+            rel_target,
+            anchor_cache=anchor_cache,
+            check_anchors=check_anchors,
+            ignore_target=ignore_target,
+            stale_by_target=stale_by_target,
+        )
+        return
+
+    _record_missing_target(
+        rel,
+        lineno,
+        raw_url,
+        kind,
+        rel_target,
+        fragment,
+        ignore_target=ignore_target,
+        stale_by_target=stale_by_target,
+    )
+
+
 def _scan_project(
     project_root: Path,
     *,
@@ -632,19 +869,7 @@ def _scan_project(
       without re-parsing target files.
     """
     all_files = discover_files(project_root, include_excluded=include_excluded)
-
-    tracked_set = set(all_files)
-    dir_set: set[str] = set()
-    for p in all_files:
-        parent = os.path.dirname(p)
-        while parent:
-            dir_set.add(parent)
-            parent = os.path.dirname(parent)
-
-    basename_idx: dict[str, list[str]] = defaultdict(list)
-    for p in all_files:
-        basename_idx[os.path.basename(p)].append(p)
-
+    tracked_set, dir_set, basename_idx = _build_lookup_indices(all_files)
     anchor_cache = AnchorCache(project_root)
 
     stale_by_target: dict[str, list[dict]] = defaultdict(list)
@@ -672,94 +897,22 @@ def _scan_project(
             scan_bare_backticks=scan_bare_backticks,
         ):
             refs_seen += 1
-            fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
-
-            # In-page anchor refs (``[x](#section)`` with no path) validate
-            # against the SOURCE file's own header set. Without this branch
-            # the path resolver returns None and the reference is silently
-            # accepted — so ``[broken](#nonexistent)`` in a README would
-            # never be flagged. We run the check before the path resolver
-            # because a pure-anchor URL has no path to resolve.
-            if kind != "backtick" and fragment and not _strip_url_decorations(raw_url).split("#", 1)[0]:
-                if check_anchors and AnchorCache.is_anchor_validatable(rel):
-                    anchors = anchor_cache.anchors_for(rel)
-                    if anchors is not None and fragment.lower() not in anchors:
-                        synthetic = f"{rel}#{fragment}"
-                        if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel, ignore_target):
-                            continue
-                        stale_by_target[synthetic].append(
-                            {
-                                "file": rel,
-                                "line": lineno,
-                                "kind": "anchor",
-                                "raw": raw_url,
-                                "anchor": fragment,
-                                "anchor_target_file": rel,
-                            }
-                        )
-                continue
-
-            if kind == "backtick":
-                target = _resolve_backtick_target(
-                    raw_url,
-                    rel,
-                    project_root,
-                    basename_idx=basename_idx,
-                    prose_mode=prose_mode,
-                )
-            else:
-                target = _resolve_target(
-                    raw_url,
-                    rel,
-                    project_root,
-                    check_absolute_routes=check_absolute_routes,
-                )
-            if target is None:
-                continue
-            try:
-                rel_target = target.relative_to(project_root).as_posix()
-            except ValueError:
-                continue
-            # Skip refs into runtime / dependency dirs — intentionally absent.
-            if _is_runtime_path(rel_target):
-                continue
-
-            target_exists = rel_target in tracked_set or rel_target in dir_set or target.exists()
-
-            if target_exists:
-                # File is live; check the anchor when one was specified.
-                if check_anchors and fragment and AnchorCache.is_anchor_validatable(rel_target):
-                    anchors = anchor_cache.anchors_for(rel_target)
-                    # Case-insensitive lookup — GitHub matches ``#Setup``
-                    # against header ``# Setup``. Stored slugs are
-                    # lowercased; lowercase the URL fragment too.
-                    if anchors is not None and fragment.lower() not in anchors:
-                        synthetic = f"{rel_target}#{fragment}"
-                        if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel_target, ignore_target):
-                            continue
-                        stale_by_target[synthetic].append(
-                            {
-                                "file": rel,
-                                "line": lineno,
-                                "kind": "anchor",
-                                "raw": raw_url,
-                                "anchor": fragment,
-                                "anchor_target_file": rel_target,
-                            }
-                        )
-                continue
-
-            if _matches_any_glob(rel_target, ignore_target):
-                continue
-            entry: dict = {
-                "file": rel,
-                "line": lineno,
-                "kind": kind,
-                "raw": raw_url,
-            }
-            if fragment:
-                entry["anchor"] = fragment
-            stale_by_target[rel_target].append(entry)
+            _process_one_ref(
+                rel,
+                lineno,
+                kind,
+                raw_url,
+                project_root,
+                prose_mode=prose_mode,
+                tracked_set=tracked_set,
+                dir_set=dir_set,
+                basename_idx=basename_idx,
+                anchor_cache=anchor_cache,
+                check_anchors=check_anchors,
+                check_absolute_routes=check_absolute_routes,
+                ignore_target=ignore_target,
+                stale_by_target=stale_by_target,
+            )
 
     return stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache
 

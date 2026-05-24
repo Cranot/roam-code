@@ -661,7 +661,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
     """
     data = {}
 
-    # ── Project overview ─────────────────────────────────────────────
+    # -- Project overview ---------------------------------------------
     total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
 
@@ -686,7 +686,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
     data["symbols"] = total_symbols
     data["languages"] = languages
 
-    # ── Stack / key dependencies ──────────────────────────────────────
+    # -- Stack / key dependencies --------------------------------------
     # Previous implementation extracted top-level directories from the
     # most-imported files and emitted them as "Stack: src" on any
     # monorepo where local imports dominated. The language list above
@@ -698,14 +698,14 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
     # envelope shape without leaking directory names.
     data["stack"] = ""
 
-    # ── Conventions ──────────────────────────────────────────────────
+    # -- Conventions --------------------------------------------------
     # Delegate to the canonical detector — every command (describe,
     # understand, minimap, preflight, conventions) shares this code path
     # so they all agree on the same codebase.
     _conv = compute_conventions(conn)
     data["conventions"] = short_conventions_string(_conv["by_kind"], min_pct=70) or "mixed"
 
-    # ── Directory structure ──────────────────────────────────────────
+    # -- Directory structure ------------------------------------------
     dir_rows = conn.execute("""
         SELECT CASE WHEN INSTR(REPLACE(path, '\\', '/'), '/') > 0
                THEN SUBSTR(REPLACE(path, '\\', '/'), 1, INSTR(REPLACE(path, '\\', '/'), '/') - 1)
@@ -716,7 +716,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
     dir_parts = [f"{r['dir']}/ ({r['cnt']})" for r in dir_rows[:8]]
     data["structure"] = ", ".join(dir_parts)
 
-    # ── Key abstractions (top 5 by PageRank) ─────────────────────────
+    # -- Key abstractions (top 5 by PageRank) -------------------------
     abstractions = []
     try:
         top = conn.execute("""
@@ -737,7 +737,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
             warnings_out.append(f"describe_key_abstractions_failed:{type(_exc).__name__}:{_exc}")
     data["key_abstractions"] = abstractions
 
-    # ── Hotspots (top 3 by churn * complexity) ───────────────────────
+    # -- Hotspots (top 3 by churn * complexity) -----------------------
     hotspots = []
     try:
         rows = conn.execute("""
@@ -763,7 +763,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
             warnings_out.append(f"describe_hotspots_failed:{type(_exc).__name__}:{_exc}")
     data["hotspots"] = hotspots
 
-    # ── Cycle-only health estimate + canonical cycle counts ────────
+    # -- Cycle-only health estimate + canonical cycle counts --------
     # This is intentionally a *cheap* estimate and NOT the same number
     # `roam health` reports (which weights god components, bottlenecks,
     # and layer violations on top of cycles). Round 4 #17 noted the
@@ -811,7 +811,7 @@ def _agent_prompt_data(conn, *, warnings_out: list[str] | None = None):
         if warnings_out is not None:
             warnings_out.append(f"describe_cycle_health_failed:{type(_exc).__name__}:{_exc}")
 
-    # ── Test command guess ──
+    # -- Test command guess --
     from roam.output.project_shape import detect_project_shape
 
     try:

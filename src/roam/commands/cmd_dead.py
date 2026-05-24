@@ -1023,15 +1023,8 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
 from roam.output.file_role_hints import is_excluded_path as _is_tooling_path
 
 
-def _analyze_dead(conn):
-    """Run the full dead code analysis.
-
-    Returns (high, low, imported_files, consumer_meta, file_import_meta, sibling_meta).
-
-    ``dead`` means "no production consumers" rather than "no consumers
-    anywhere". Test-only consumers are preserved as metadata so output can
-    distinguish deletion candidates from tested-but-unused public surface.
-    """
+def _fetch_exported_candidates(conn):
+    """Fetch exported function/class/method rows, excluding test + tooling paths."""
     rows = conn.execute(
         "SELECT s.*, f.path as file_path "
         "FROM symbols s "
@@ -1041,22 +1034,13 @@ def _analyze_dead(conn):
         "ORDER BY f.path, s.line_start"
     ).fetchall()
     # Exclude test files — their symbols are discovered by pytest, not imported
-    rows = [r for r in rows if not _is_test_path(r["file_path"])]
     # Exclude tooling/CI/benchmarks/dev — same default-exclusion that
     # ``cmd_smells`` and ``cmd_fan`` apply.
-    rows = [r for r in rows if not _is_tooling_path(r["file_path"])]
-    if not rows:
-        return [], [], set(), {}, {}, {}
+    return [r for r in rows if not _is_test_path(r["file_path"]) and not _is_tooling_path(r["file_path"])]
 
-    consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
-    rows = [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0]
-    if not rows:
-        return [], [], set(), consumer_meta, {}, {}
-    _augment_test_text_consumers(conn, rows, consumer_meta)
 
-    imported_files, imported_production_files, file_import_meta = _dead_file_import_meta(conn)
-
-    # Filter transitively alive (barrel re-exports)
+def _build_file_importers(conn):
+    """Map target_file_id -> set of importing (non-test) source_file_ids."""
     importers_of = {}
     for fe in conn.execute(
         "SELECT fe.source_file_id, fe.target_file_id, f.path AS source_file "
@@ -1065,7 +1049,11 @@ def _analyze_dead(conn):
         if _is_test_path(fe["source_file"]):
             continue
         importers_of.setdefault(fe["target_file_id"], set()).add(fe["source_file_id"])
+    return importers_of
 
+
+def _find_transitively_alive(conn, rows, imported_production_files, importers_of):
+    """Return symbol ids alive via 3-hop barrel re-export reachability."""
     transitively_alive = set()
     for r in rows:
         fid = r["file_id"]
@@ -1094,6 +1082,31 @@ def _analyze_dead(conn):
         )
         if alive:
             transitively_alive.add(r["id"])
+    return transitively_alive
+
+
+def _analyze_dead(conn):
+    """Run the full dead code analysis.
+
+    Returns (high, low, imported_files, consumer_meta, file_import_meta, sibling_meta).
+
+    ``dead`` means "no production consumers" rather than "no consumers
+    anywhere". Test-only consumers are preserved as metadata so output can
+    distinguish deletion candidates from tested-but-unused public surface.
+    """
+    rows = _fetch_exported_candidates(conn)
+    if not rows:
+        return [], [], set(), {}, {}, {}
+
+    consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
+    rows = [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0]
+    if not rows:
+        return [], [], set(), consumer_meta, {}, {}
+    _augment_test_text_consumers(conn, rows, consumer_meta)
+
+    imported_files, imported_production_files, file_import_meta = _dead_file_import_meta(conn)
+    importers_of = _build_file_importers(conn)
+    transitively_alive = _find_transitively_alive(conn, rows, imported_production_files, importers_of)
 
     rows = [r for r in rows if r["id"] not in transitively_alive]
     sibling_meta = _referenced_sibling_counts(conn, {r["file_id"] for r in rows})

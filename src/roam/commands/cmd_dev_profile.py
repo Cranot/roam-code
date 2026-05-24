@@ -181,6 +181,53 @@ def _run_git_log(days: int, root: str) -> str | None:
         return None
 
 
+def _try_parse_header(line: str) -> dict | None:
+    """Return a new commit dict when ``line`` is a ``HASH|EMAIL|ISO8601|subject`` header.
+
+    Returns None for any non-header line (numstat rows, blank lines, etc).
+    """
+    if not line or "\t" in line or "|" not in line:
+        return None
+    if line[0].isdigit() or line[0] == "-":
+        return None
+    parts = line.split("|", 3)
+    if len(parts) < 3:
+        return None
+    hash_candidate = parts[0].strip()
+    # Accept git SHA: exactly 40 hex chars (full) or 7+ (abbreviated)
+    if not (7 <= len(hash_candidate) <= 41):
+        return None
+    if not all(c in "0123456789abcdefABCDEF" for c in hash_candidate):
+        return None
+    return {
+        "hash": hash_candidate,
+        "author_email": parts[1].strip().lower(),
+        "timestamp": _parse_iso8601(parts[2].strip()),
+        "subject": parts[3].strip() if len(parts) > 3 else "",
+        "files": [],
+        "lines_added": 0,
+        "lines_removed": 0,
+    }
+
+
+def _apply_numstat(current: dict, line: str) -> None:
+    """Parse one ``added\\tremoved\\tfilepath`` numstat row into ``current``."""
+    if "\t" not in line:
+        return
+    parts = line.split("\t", 2)
+    if len(parts) != 3:
+        return
+    added_str, removed_str, filepath = parts
+    try:
+        added = int(added_str) if added_str != "-" else 0
+        removed = int(removed_str) if removed_str != "-" else 0
+    except ValueError:
+        added, removed = 0, 0
+    current["files"].append(filepath.strip())
+    current["lines_added"] += added
+    current["lines_removed"] += removed
+
+
 def parse_git_log(raw: str) -> list[dict]:
     """Parse git log --format=... --numstat output into a list of commit dicts.
 
@@ -196,47 +243,16 @@ def parse_git_log(raw: str) -> list[dict]:
     commits: list[dict] = []
     current: dict | None = None
 
-    for line in raw.splitlines():
-        line = line.rstrip()
-
-        # Header line: "HASH|EMAIL|ISO8601|subject"
-        if "|" in line and not line[0].isdigit() and line[0] != "-" and "\t" not in line:
-            parts = line.split("|", 3)
-            # Accept git SHA: exactly 40 hex chars (full) or 7+ (abbreviated)
-            hash_candidate = parts[0].strip()
-            _is_sha = (
-                len(parts) >= 3
-                and 7 <= len(hash_candidate) <= 41
-                and all(c in "0123456789abcdefABCDEF" for c in hash_candidate)
-            )
-            if _is_sha:
-                if current is not None:
-                    commits.append(current)
-                ts = _parse_iso8601(parts[2].strip())
-                current = {
-                    "hash": parts[0].strip(),
-                    "author_email": parts[1].strip().lower(),
-                    "timestamp": ts,
-                    "subject": parts[3].strip() if len(parts) > 3 else "",
-                    "files": [],
-                    "lines_added": 0,
-                    "lines_removed": 0,
-                }
-                continue
-
-        # numstat line: "added\tremoved\tfilepath"
-        if current is not None and "\t" in line:
-            parts = line.split("\t", 2)
-            if len(parts) == 3:
-                added_str, removed_str, filepath = parts
-                try:
-                    added = int(added_str) if added_str != "-" else 0
-                    removed = int(removed_str) if removed_str != "-" else 0
-                except ValueError:
-                    added, removed = 0, 0
-                current["files"].append(filepath.strip())
-                current["lines_added"] += added
-                current["lines_removed"] += removed
+    for raw_line in raw.splitlines():
+        line = raw_line.rstrip()
+        header = _try_parse_header(line)
+        if header is not None:
+            if current is not None:
+                commits.append(current)
+            current = header
+            continue
+        if current is not None:
+            _apply_numstat(current, line)
 
     if current is not None:
         commits.append(current)

@@ -158,6 +158,199 @@ def _line_col_from_offset(content: str, offset: int) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 
 
+# Same regex set the batch scanner uses; hoisted to module scope so the
+# nested loop body doesn't rebuild the tuple on every line.
+_SCAN_KIND_REGEXES: tuple[tuple[str, re.Pattern], ...] = (
+    ("md_inline", _MD_INLINE_RE),
+    ("md_reference", _MD_REFERENCE_RE),
+    ("html_attr", _HTML_ATTR_RE),
+    ("backtick", _BACKTICK_PATH_RE),
+)
+
+# Kinds that only fire in prose files (.md / .html / .rst / ...).
+_PROSE_ONLY_KINDS: frozenset[str] = frozenset({"md_inline", "md_reference", "html_attr"})
+
+
+def _extract_raw_url(kind: str, m: re.Match) -> str:
+    """Pick the matched URL string out of *m* for the given *kind*."""
+    if kind == "html_attr":
+        return m.group("v1") or m.group("v2") or ""
+    if kind == "backtick":
+        return m.group("path")
+    return m.group("url")
+
+
+def _diagnose_in_page_anchor(
+    line: str,
+    zero_based_line: int,
+    m: re.Match,
+    raw_url: str,
+    fragment: str,
+    rel_path: str,
+    anchor_cache: AnchorCache,
+) -> dict | None:
+    """Build the severity-3 diagnostic when an in-page-only URL (``#fragment``) misses."""
+    if not AnchorCache.is_anchor_validatable(rel_path):
+        return None
+    anchors = anchor_cache.anchors_for(rel_path)
+    if anchors is None or fragment.lower() in anchors:
+        return None
+    return _make_diagnostic(
+        line,
+        zero_based_line,
+        m,
+        raw_url,
+        f"Anchor '#{fragment}' not found in this file",
+        severity=3,  # information
+    )
+
+
+def _resolve_match_target(
+    kind: str,
+    raw_url: str,
+    rel_path: str,
+    project_root: Path,
+    basename_idx: dict[str, list[str]],
+    prose_mode: bool,
+) -> tuple[Path | None, str | None]:
+    """Resolve *raw_url* to a project-relative target; filter runtime-only paths.
+
+    Returns ``(target, rel_target)`` or ``(None, None)`` when the target
+    can't be made relative to *project_root* or sits inside a runtime path.
+    """
+    if kind == "backtick":
+        target = _resolve_backtick_target(
+            raw_url,
+            rel_path,
+            project_root,
+            basename_idx=basename_idx,
+            prose_mode=prose_mode,
+        )
+    else:
+        target = _resolve_target(raw_url, rel_path, project_root)
+    if target is None:
+        return None, None
+    try:
+        rel_target = target.relative_to(project_root).as_posix()
+    except ValueError:
+        return None, None
+    if _is_runtime_path(rel_target):
+        return None, None
+    return target, rel_target
+
+
+def _diagnose_existing_target_anchor(
+    line: str,
+    zero_based_line: int,
+    m: re.Match,
+    raw_url: str,
+    rel_target: str,
+    fragment: str,
+    anchor_cache: AnchorCache,
+) -> dict | None:
+    """Build the severity-3 diagnostic when the target exists but its anchor is missing."""
+    if not fragment or not AnchorCache.is_anchor_validatable(rel_target):
+        return None
+    anchors = anchor_cache.anchors_for(rel_target)
+    if anchors is None or fragment.lower() in anchors:
+        return None
+    return _make_diagnostic(
+        line,
+        zero_based_line,
+        m,
+        raw_url,
+        f"Anchor '#{fragment}' not found in '{rel_target}'",
+        severity=3,
+    )
+
+
+def _diagnose_missing_target(
+    line: str,
+    zero_based_line: int,
+    m: re.Match,
+    raw_url: str,
+    rel_path: str,
+    lineno: int,
+    kind: str,
+    rel_target: str,
+    hint_ctx: HintContext,
+    anchor_cache: AnchorCache,
+) -> dict:
+    """Build the severity-2 diagnostic for a missing target, with optional hint + Quick Fix rewrite."""
+    hint_text = ""
+    rewrite_to = None
+    hint = _hint_for_target(
+        rel_target,
+        [{"file": rel_path, "line": lineno, "kind": kind, "raw": raw_url}],
+        hint_ctx,
+        anchor_cache=anchor_cache,
+    )
+    if hint:
+        hint_text = f". Did you mean '{hint['target']}'? [{hint['confidence']} · {hint['source']}]"
+        # Only HIGH-confidence hints earn an editable Quick Fix.
+        # MEDIUM/LOW surface in the message but require a human
+        # decision — same safety bar as ``--fix apply`` on the CLI.
+        if hint["confidence"] == "HIGH":
+            rewrite_to = _rewrite_for_lsp(raw_url, hint["target"])
+    return _make_diagnostic(
+        line,
+        zero_based_line,
+        m,
+        raw_url,
+        f"Reference target missing: '{rel_target}'{hint_text}",
+        severity=2,  # warning
+        rewrite_to=rewrite_to,
+    )
+
+
+def _diagnose_match(
+    line: str,
+    zero_based_line: int,
+    m: re.Match,
+    kind: str,
+    prose_mode: bool,
+    rel_path: str,
+    project_root: Path,
+    lineno: int,
+    *,
+    tracked_set: set[str],
+    dir_set: set[str],
+    basename_idx: dict[str, list[str]],
+    anchor_cache: AnchorCache,
+    hint_ctx: HintContext,
+) -> dict | None:
+    """Decide which (if any) Diagnostic to emit for one regex match.
+
+    The decision tree:
+    1. In-page-only anchor (``#fragment``) → :func:`_diagnose_in_page_anchor`.
+    2. Resolve target; if unresolved / runtime → no diagnostic.
+    3. Target exists → :func:`_diagnose_existing_target_anchor`.
+    4. Target missing → :func:`_diagnose_missing_target`.
+    """
+    raw_url = _extract_raw_url(kind, m)
+    if not raw_url:
+        return None
+    fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
+
+    # In-page anchor (URL is just ``#fragment``) short-circuits all
+    # target resolution.
+    from roam.commands.cmd_stale_refs import _strip_url_decorations
+
+    if kind != "backtick" and fragment and not _strip_url_decorations(raw_url).split("#", 1)[0]:
+        return _diagnose_in_page_anchor(line, zero_based_line, m, raw_url, fragment, rel_path, anchor_cache)
+
+    target, rel_target = _resolve_match_target(kind, raw_url, rel_path, project_root, basename_idx, prose_mode)
+    if target is None or rel_target is None:
+        return None
+
+    target_exists = rel_target in tracked_set or rel_target in dir_set or target.exists()
+    if target_exists:
+        return _diagnose_existing_target_anchor(line, zero_based_line, m, raw_url, rel_target, fragment, anchor_cache)
+    return _diagnose_missing_target(
+        line, zero_based_line, m, raw_url, rel_path, lineno, kind, rel_target, hint_ctx, anchor_cache
+    )
+
+
 def _scan_buffer_for_diagnostics(
     rel_path: str,
     content: str,
@@ -183,110 +376,27 @@ def _scan_buffer_for_diagnostics(
     diagnostics: list[dict] = []
     for lineno, line in enumerate(content.splitlines(), start=1):
         zero_based_line = lineno - 1
-        # Markdown / HTML / backtick — same regex set as the scanner.
-        for kind, regex in (
-            ("md_inline", _MD_INLINE_RE),
-            ("md_reference", _MD_REFERENCE_RE),
-            ("html_attr", _HTML_ATTR_RE),
-            ("backtick", _BACKTICK_PATH_RE),
-        ):
-            if kind in {"md_inline", "md_reference", "html_attr"} and not prose_mode:
+        for kind, regex in _SCAN_KIND_REGEXES:
+            if kind in _PROSE_ONLY_KINDS and not prose_mode:
                 continue
             for m in regex.finditer(line):
-                if kind == "html_attr":
-                    raw_url = m.group("v1") or m.group("v2") or ""
-                elif kind == "backtick":
-                    raw_url = m.group("path")
-                else:
-                    raw_url = m.group("url")
-                if not raw_url:
-                    continue
-                fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
-
-                # In-page anchor case (URL is just ``#fragment``).
-                from roam.commands.cmd_stale_refs import _strip_url_decorations
-
-                if kind != "backtick" and fragment and not _strip_url_decorations(raw_url).split("#", 1)[0]:
-                    if AnchorCache.is_anchor_validatable(rel_path):
-                        anchors = anchor_cache.anchors_for(rel_path)
-                        if anchors is not None and fragment.lower() not in anchors:
-                            diagnostics.append(
-                                _make_diagnostic(
-                                    line,
-                                    zero_based_line,
-                                    m,
-                                    raw_url,
-                                    f"Anchor '#{fragment}' not found in this file",
-                                    severity=3,  # information
-                                )
-                            )
-                    continue
-
-                if kind == "backtick":
-                    target = _resolve_backtick_target(
-                        raw_url,
-                        rel_path,
-                        project_root,
-                        basename_idx=basename_idx,
-                        prose_mode=prose_mode,
-                    )
-                else:
-                    target = _resolve_target(raw_url, rel_path, project_root)
-                if target is None:
-                    continue
-                try:
-                    rel_target = target.relative_to(project_root).as_posix()
-                except ValueError:
-                    continue
-                if _is_runtime_path(rel_target):
-                    continue
-
-                target_exists = rel_target in tracked_set or rel_target in dir_set or target.exists()
-
-                if target_exists:
-                    if fragment and AnchorCache.is_anchor_validatable(rel_target):
-                        anchors = anchor_cache.anchors_for(rel_target)
-                        if anchors is not None and fragment.lower() not in anchors:
-                            diagnostics.append(
-                                _make_diagnostic(
-                                    line,
-                                    zero_based_line,
-                                    m,
-                                    raw_url,
-                                    f"Anchor '#{fragment}' not found in '{rel_target}'",
-                                    severity=3,
-                                )
-                            )
-                    continue
-
-                # Path finding: missing target.
-                hint_text = ""
-                hint = _hint_for_target(
-                    rel_target,
-                    [{"file": rel_path, "line": lineno, "kind": kind, "raw": raw_url}],
-                    hint_ctx,
+                diag = _diagnose_match(
+                    line,
+                    zero_based_line,
+                    m,
+                    kind,
+                    prose_mode,
+                    rel_path,
+                    project_root,
+                    lineno,
+                    tracked_set=tracked_set,
+                    dir_set=dir_set,
+                    basename_idx=basename_idx,
                     anchor_cache=anchor_cache,
+                    hint_ctx=hint_ctx,
                 )
-                rewrite_to = None
-                if hint:
-                    hint_text = f". Did you mean '{hint['target']}'? [{hint['confidence']} · {hint['source']}]"
-                    # Only HIGH-confidence hints earn an editable Quick
-                    # Fix. MEDIUM/LOW hints surface in the message text
-                    # but require a human decision — keeps the same
-                    # safety bar as ``--fix apply`` on the CLI.
-                    if hint["confidence"] == "HIGH":
-                        rewrite_to = _rewrite_for_lsp(raw_url, hint["target"])
-                diagnostics.append(
-                    _make_diagnostic(
-                        line,
-                        zero_based_line,
-                        m,
-                        raw_url,
-                        f"Reference target missing: '{rel_target}'{hint_text}",
-                        severity=2,  # warning
-                        rewrite_to=rewrite_to,
-                    )
-                )
+                if diag is not None:
+                    diagnostics.append(diag)
     return diagnostics
 
 
@@ -723,6 +833,110 @@ def _handle_will_rename_files(state: _ServerState, msg: dict, writer) -> None:
     )
 
 
+def _resolve_rename_target(
+    kind: str,
+    raw_url: str,
+    src_rel: str,
+    project_root: Path,
+    basename_idx: dict[str, list[str]] | None,
+    prose_mode: bool,
+) -> str | None:
+    """Resolve *raw_url* to a project-relative path string, or None.
+
+    Mirrors the resolver branch in :func:`_resolve_match_target` but
+    returns just the POSIX rel string (or None for unresolvable /
+    out-of-project targets). No runtime-path filtering here — the
+    rename caller only cares about exact-string match against
+    ``old_rel_normalised``.
+    """
+    if kind == "backtick":
+        target = _resolve_backtick_target(
+            raw_url,
+            src_rel,
+            project_root,
+            basename_idx=basename_idx or {},
+            prose_mode=prose_mode,
+        )
+    else:
+        target = _resolve_target(raw_url, src_rel, project_root)
+    if target is None:
+        return None
+    try:
+        return target.relative_to(project_root).as_posix()
+    except ValueError:
+        return None
+
+
+def _build_renamed_url(raw_url: str, new_rel: str, fragment: str) -> str:
+    """Build the replacement URL for a rename TextEdit.
+
+    Preserves ``./`` leading-style and appends *fragment* when the new
+    URL doesn't already carry one — same behaviour as the original
+    inline branch.
+    """
+    new_url = new_rel
+    if raw_url.startswith("./"):
+        new_url = "./" + new_url
+    if fragment and "#" not in new_url:
+        new_url = f"{new_url}#{fragment}"
+    return new_url
+
+
+def _locate_url_span(line: str, raw_url: str, match: re.Match) -> tuple[int, int]:
+    """Locate the (start, end) char span of *raw_url* within *line*.
+
+    Falls back to the regex match span when *raw_url* isn't found
+    verbatim in the line (defensive — preserves the original logic's
+    fallback behaviour).
+    """
+    start = match.start()
+    if raw_url and raw_url in line:
+        start = line.find(raw_url)
+    end = start + len(raw_url) if raw_url else match.end()
+    return start, end
+
+
+def _make_text_edit(zero_based_line: int, start: int, end: int, new_text: str) -> dict:
+    """Build a single LSP TextEdit dict for a one-line range."""
+    return {
+        "range": {
+            "start": {"line": zero_based_line, "character": start},
+            "end": {"line": zero_based_line, "character": end},
+        },
+        "newText": new_text,
+    }
+
+
+def _collect_one_rename_edit(
+    line: str,
+    zero_based_line: int,
+    m: re.Match,
+    kind: str,
+    prose_mode: bool,
+    src_rel: str,
+    project_root: Path,
+    *,
+    old_rel_normalised: str,
+    new_rel: str,
+    basename_idx: dict[str, list[str]] | None,
+) -> dict | None:
+    """Build the TextEdit for one regex match, or None when it doesn't apply.
+
+    Returns None when the URL is empty, unresolvable, or doesn't land
+    on *old_rel_normalised*.
+    """
+    raw_url = _extract_raw_url(kind, m)
+    if not raw_url:
+        return None
+    fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
+    rel_target = _resolve_rename_target(kind, raw_url, src_rel, project_root, basename_idx, prose_mode)
+    if rel_target is None or rel_target != old_rel_normalised:
+        return None
+    new_url = _build_renamed_url(raw_url, new_rel, fragment)
+    start, end = _locate_url_span(line, raw_url, m)
+    return _make_text_edit(zero_based_line, start, end, new_url)
+
+
 def _collect_rename_edits(
     src_rel: str,
     content: str,
@@ -748,62 +962,24 @@ def _collect_rename_edits(
 
     for lineno, line in enumerate(content.splitlines(), start=1):
         zero_based_line = lineno - 1
-        for kind, regex in (
-            ("md_inline", _MD_INLINE_RE),
-            ("md_reference", _MD_REFERENCE_RE),
-            ("html_attr", _HTML_ATTR_RE),
-            ("backtick", _BACKTICK_PATH_RE),
-        ):
-            if kind in {"md_inline", "md_reference", "html_attr"} and not prose_mode:
+        for kind, regex in _SCAN_KIND_REGEXES:
+            if kind in _PROSE_ONLY_KINDS and not prose_mode:
                 continue
             for m in regex.finditer(line):
-                if kind == "html_attr":
-                    raw_url = m.group("v1") or m.group("v2") or ""
-                elif kind == "backtick":
-                    raw_url = m.group("path")
-                else:
-                    raw_url = m.group("url")
-                if not raw_url:
-                    continue
-                fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
-                if kind == "backtick":
-                    target = _resolve_backtick_target(
-                        raw_url,
-                        src_rel,
-                        project_root,
-                        basename_idx=basename_idx or {},
-                        prose_mode=prose_mode,
-                    )
-                else:
-                    target = _resolve_target(raw_url, src_rel, project_root)
-                if target is None:
-                    continue
-                try:
-                    rel_target = target.relative_to(project_root).as_posix()
-                except ValueError:
-                    continue
-                if rel_target != old_rel_normalised:
-                    continue
-                # The old reference lands on *old_rel*; replace with new_rel.
-                # Preserve fragment + leading "./" style if present.
-                new_url = new_rel
-                if raw_url.startswith("./"):
-                    new_url = "./" + new_url
-                if fragment and "#" not in new_url:
-                    new_url = f"{new_url}#{fragment}"
-                start = m.start()
-                if raw_url and raw_url in line:
-                    start = line.find(raw_url)
-                end = start + len(raw_url) if raw_url else m.end()
-                edits.append(
-                    {
-                        "range": {
-                            "start": {"line": zero_based_line, "character": start},
-                            "end": {"line": zero_based_line, "character": end},
-                        },
-                        "newText": new_url,
-                    }
+                edit = _collect_one_rename_edit(
+                    line,
+                    zero_based_line,
+                    m,
+                    kind,
+                    prose_mode,
+                    src_rel,
+                    project_root,
+                    old_rel_normalised=old_rel_normalised,
+                    new_rel=new_rel,
+                    basename_idx=basename_idx,
                 )
+                if edit is not None:
+                    edits.append(edit)
     return edits
 
 

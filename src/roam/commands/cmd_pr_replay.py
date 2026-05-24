@@ -342,7 +342,7 @@ def _build_review_suggestions(
     if not by_detector:
         return None
 
-    # ── 1. Recurring risk classes ────────────────────────────────────────
+    # -- 1. Recurring risk classes ----------------------------------------
     # "Recurring" = ≥2 findings OR appears in ≥2 PRs. A one-off finding
     # isn't worth a CI gate; the gate matters when the pattern repeats.
     recurring: list[dict] = []
@@ -358,7 +358,7 @@ def _build_review_suggestions(
     # Cap at 10 to honour CLAUDE.md "5-10 items max" constraint.
     recurring = recurring[:10]
 
-    # ── 2. Suggested .roam/rules.yml ─────────────────────────────────────
+    # -- 2. Suggested .roam/rules.yml -------------------------------------
     # One rule per recurring detector class we have a template for. The
     # preview is a YAML *string* (not a structured object) so the buyer
     # can copy-paste it into ``.roam/rules.yml`` without rendering.
@@ -384,7 +384,7 @@ def _build_review_suggestions(
     else:
         suggested_yaml = None
 
-    # ── 3. Suggested CI gates ────────────────────────────────────────────
+    # -- 3. Suggested CI gates --------------------------------------------
     # Tied to specific detector classes — each gate has a rationale that
     # cites the detector by name. Order matches recurring[] so the most
     # impactful gate is listed first.
@@ -422,7 +422,7 @@ def _build_review_suggestions(
         )
     ci_gates = ci_gates[:10]
 
-    # ── 4. What Review would have blocked ────────────────────────────────
+    # -- 4. What Review would have blocked --------------------------------
     # Per-PR list of commits with high-severity findings. These are the
     # PRs that would have hit Review's BLOCK verdict and stopped at the
     # gate. Medium-only PRs hit REVIEW (not BLOCK) so we leave them out.
@@ -1542,7 +1542,7 @@ def _collect_change_evidence(
         collect_change_evidence,
     )
 
-    # ── Commit subjects: kept local so kind="commit" survives the swap.
+    # -- Commit subjects: kept local so kind="commit" survives the swap.
     # W176's ``_build_changed_subjects_from_affected`` hardcodes
     # ``kind="symbol"`` for everything it builds; we therefore do NOT
     # route commit data through ``affected_symbols``.
@@ -1564,7 +1564,7 @@ def _collect_change_evidence(
             )
         )
 
-    # ── Findings envelope: combine registry rows + per-commit kinds.
+    # -- Findings envelope: combine registry rows + per-commit kinds.
     # Shape mirrors a ``roam findings list`` envelope: a top-level
     # ``findings: [...]`` array. The W176 collector flattens it directly.
     findings_rows: list[dict] = []
@@ -1591,7 +1591,7 @@ def _collect_change_evidence(
         )
     findings_envelope = {"findings": findings_rows}
 
-    # ── Run-event stream: synthesised from the filesystem listing so
+    # -- Run-event stream: synthesised from the filesystem listing so
     # the W176 collector can populate ``run_ids`` via its standard path.
     run_id_list = _collect_run_ids(commit_range)
     run_events = [{"run_id": rid} for rid in run_id_list]
@@ -1599,7 +1599,7 @@ def _collect_change_evidence(
     head_sha = _git_head_sha()
     diff_hash = _diff_hash_for_range(commit_range)
 
-    # ── Risk level: derived from the postmortem summary, aligned to the
+    # -- Risk level: derived from the postmortem summary, aligned to the
     # CLAIM_SEVERITIES vocabulary the collector and renderer expect.
     total_high = int(summary.get("total_high", 0) or 0)
     total_medium = int(summary.get("total_medium", 0) or 0)
@@ -1618,7 +1618,7 @@ def _collect_change_evidence(
     # mirror keeps producer→packet projection canonical end-to-end.
     risk_level_canonical = normalize_risk_level(risk_level) or "low"
 
-    # ── PR-bundle-shaped envelope: carries identity + verdict + risk
+    # -- PR-bundle-shaped envelope: carries identity + verdict + risk
     # level. The W176 collector reads top-level ``verdict`` / ``risk_level``
     # / ``run_ids`` / ``mode`` / ``commit_sha`` / ``git_range`` /
     # ``diff_hash``; we set the ones we have and let it ignore the rest.
@@ -1629,7 +1629,7 @@ def _collect_change_evidence(
         "timestamps": {"completed_at": generated_at},
     }
 
-    # ── W260: stamp the W189-shape actor block onto the synth envelope.
+    # -- W260: stamp the W189-shape actor block onto the synth envelope.
     # Without this, ``pr-replay`` synthesised an actor-free envelope and
     # the only identity that reached ``ChangeEvidence.actor_refs`` came
     # from ``_gather_audit_trail_envelope`` (W223). Consumers reading
@@ -1675,7 +1675,7 @@ def _collect_change_evidence(
             file=__import__("sys").stderr,
         )
 
-    # ── W272 — stamp the W266 / W268 producer-pattern fields on the
+    # -- W272 — stamp the W266 / W268 producer-pattern fields on the
     # synth envelope so pr-replay has the same authority + environment
     # parity that ``pr-bundle emit`` does. Three fields are written:
     #
@@ -1758,7 +1758,7 @@ def _collect_change_evidence(
         )
         w272_env_refs_tuple = ()
 
-    # ── W223 — best-effort gathering of the W199 kwargs. Each gatherer
+    # -- W223 — best-effort gathering of the W199 kwargs. Each gatherer
     # appends to its own warnings bucket so producer-level issues never
     # abort the replay; the collector merges them into its own list.
     pre_warnings: list[str] = []
@@ -1830,7 +1830,7 @@ def _collect_change_evidence(
     if context_files:
         pr_bundle_envelope["context_files"] = context_files
 
-    # ── W247b — GitHub review harvester. Runs BEFORE the W261 emitter so
+    # -- W247b — GitHub review harvester. Runs BEFORE the W261 emitter so
     # an APPROVED-on-head review populates ``pr_bundle_envelope["approvals"]``
     # (lifting Q8 to ``complete``) and a CHANGES_REQUESTED review appends a
     # ``deny`` PolicyDecision via ``extra_policy_decisions``. When a review
@@ -1889,7 +1889,7 @@ def _collect_change_evidence(
             _q8_redactions.append("producer_not_available")
             pr_bundle_envelope["redactions"] = _q8_redactions
 
-    # ── W1279 — config-hash drift detection wire-up. Lift the three
+    # -- W1279 — config-hash drift detection wire-up. Lift the three
     # W1255-IMPL hashes from the active run's meta.json (packet-side)
     # and recompute on-disk (current-side) so the collector's W1253
     # drift detector can fire. Missing run / missing meta gracefully
@@ -1956,7 +1956,7 @@ def _collect_change_evidence(
             changed_subjects=tuple(commit_subjects) + tuple(packet.changed_subjects),
         )
 
-    # ── W272 — merge our W266-derived env_refs into the packet. The
+    # -- W272 — merge our W266-derived env_refs into the packet. The
     # collector's ``_build_environment_refs`` does NOT read the synth
     # envelope's ``environment_refs`` key; it rebuilds from caller kwargs
     # (``caller_repo_id`` / ``caller_git_range`` / ``caller_commit_sha``).
@@ -2876,7 +2876,7 @@ def _render_report(
     """Render the markdown report. Pure function, no I/O."""
     out: list[str] = []
 
-    # ── Header ────────────────────────────────────────────────────────────
+    # -- Header ------------------------------------------------------------
     if client:
         out.append(f"# PR Replay Report — {client}")
     else:
@@ -2900,7 +2900,7 @@ def _render_report(
     out.append(tier_meta["purpose_line"])
     out.append("")
 
-    # ── Executive summary ─────────────────────────────────────────────────
+    # -- Executive summary -------------------------------------------------
     out.append("## Executive summary")
     out.append("")
     commits_scanned = summary.get("commits_scanned", len(commits))
@@ -2929,7 +2929,7 @@ def _render_report(
     out.append(f"- Medium-severity findings (would gate review): **{total_medium}**")
     out.append("")
 
-    # ── Detector breakdown ────────────────────────────────────────────────
+    # -- Detector breakdown ------------------------------------------------
     out.append("## What Roam would have flagged")
     out.append("")
     if not by_detector:
@@ -2952,7 +2952,7 @@ def _render_report(
         )
         out.append("")
 
-    # ── Per-PR breakdown ──────────────────────────────────────────────────
+    # -- Per-PR breakdown --------------------------------------------------
     out.append("## Per-PR breakdown")
     out.append("")
     flagged = [c for c in commits if (c.get("high", 0) + c.get("medium", 0)) > 0]
@@ -2983,7 +2983,7 @@ def _render_report(
             )
         out.append("")
 
-    # ── Per-detector deep-dive (Deep tier only, only when there are hits) ─
+    # -- Per-detector deep-dive (Deep tier only, only when there are hits) -
     if tier == "deep" and by_detector:
         out.append("## Per-detector deep-dive")
         out.append("")
@@ -3007,7 +3007,7 @@ def _render_report(
                 out.append(f"- _… and {len(matching) - 5} more_")
             out.append("")
 
-    # ── What to do with this ──────────────────────────────────────────────
+    # -- What to do with this ----------------------------------------------
     out.append("## Recommended next steps")
     out.append("")
     if not by_detector:
@@ -3055,7 +3055,7 @@ def _render_report(
 
     out.append("")
 
-    # ── Subscription credit (paid tiers only) ─────────────────────────────
+    # -- Subscription credit (paid tiers only) -----------------------------
     # Pricing v4 promise: 50% of the engagement fee credits toward Roam
     # Review if the buyer subscribes within 60 days. Surfacing it inside
     # the deliverable is more credible than only on the marketing page.
@@ -3074,7 +3074,7 @@ def _render_report(
         )
         out.append("")
 
-    # ── What's not in scope ────────────────────────────────────────────────
+    # -- What's not in scope ------------------------------------------------
     if tier in ("team", "deep"):
         out.append("## What this report does *not* cover")
         out.append("")
@@ -3099,7 +3099,7 @@ def _render_report(
         )
         out.append("")
 
-    # ── Methodology ──────────────────────────────────────────────────────
+    # -- Methodology ------------------------------------------------------
     out.append("## Methodology")
     out.append("")
     out.append(
@@ -3183,7 +3183,7 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
     is missing. If both are unavailable, returns ``(False, message)``
     so the caller can surface a useful error to the operator.
     """
-    # ── Path 1: pandoc ────────────────────────────────────────────────────
+    # -- Path 1: pandoc ----------------------------------------------------
     import shutil
 
     if shutil.which("pandoc"):
@@ -3221,7 +3221,7 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
     else:
         pandoc_err = "pandoc not on PATH"
 
-    # ── Path 2: reportlab fallback ────────────────────────────────────────
+    # -- Path 2: reportlab fallback ----------------------------------------
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
@@ -3796,7 +3796,7 @@ def pr_replay_cmd(
         if engagement_record and not json_mode:
             click.echo(f"Logged engagement to {engagement_record}")
 
-    # ── W177: evidence JSON + Markdown companion ─────────────────────────
+    # -- W177: evidence JSON + Markdown companion -------------------------
     # The Review-suggestions block doubles as input to the Markdown report,
     # so we compute it eagerly (not just in json_mode) when an evidence
     # artefact is being written. Returns None when there are no detector

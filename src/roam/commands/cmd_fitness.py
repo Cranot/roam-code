@@ -292,7 +292,7 @@ def _build_config_state_facts(config_state: str) -> list[str]:
     return []
 
 
-# ── Rule checkers ────────────────────────────────────────────────────
+# -- Rule checkers ----------------------------------------------------
 
 
 def _check_dependency_rule(rule, conn) -> list[dict]:
@@ -1048,7 +1048,7 @@ def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: in
         raise SystemExit(1)
 
 
-# ── CLI command ──────────────────────────────────────────────────────
+# -- CLI command ------------------------------------------------------
 
 
 @roam_capability(

@@ -785,7 +785,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         # Sort by blast radius
         file_impacts.sort(key=lambda x: x["affected_syms"], reverse=True)
 
-        # ── Extra analyses ───────────────────────────────────────────
+        # -- Extra analyses -------------------------------------------
 
         # Affected tests
         test_results = []
@@ -837,7 +837,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             )
             fitness_rule_results, fitness_violations = _fv if _fv is not None else ([], [])
 
-        # ── Envelope construction (used by JSON output + auto-log) ───
+        # -- Envelope construction (used by JSON output + auto-log) ---
 
         _diff_base_verdict = (
             f"{len(file_map)} files changed, "
@@ -1148,13 +1148,13 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 **envelope_data,
             )
 
-        # ── JSON output ──────────────────────────────────────────────
+        # -- JSON output ----------------------------------------------
 
         if json_mode:
             click.echo(to_json(diff_envelope))
             return
 
-        # ── Text output ──────────────────────────────────────────────
+        # -- Text output ----------------------------------------------
 
         if commit_range:
             label = commit_range
@@ -1237,7 +1237,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             if not full and len(sorted_files) > 20:
                 click.echo(f"  (+{len(sorted_files) - 20} more)")
 
-        # ── Affected tests section ───────────────────────────────────
+        # -- Affected tests section -----------------------------------
 
         if tests:
             click.echo()
@@ -1278,7 +1278,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 if pytest_cmd:
                     click.echo(f"\nRun: {pytest_cmd}")
 
-        # ── Coupling warnings section ────────────────────────────────
+        # -- Coupling warnings section --------------------------------
 
         if coupling:
             click.echo()
@@ -1313,7 +1313,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 if not full and len(coupling_warnings) > 10:
                     click.echo(f"\n(+{len(coupling_warnings) - 10} more warnings)")
 
-        # ── Fitness violations section ───────────────────────────────
+        # -- Fitness violations section -------------------------------
 
         if fitness:
             click.echo()
