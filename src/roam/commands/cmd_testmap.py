@@ -408,7 +408,7 @@ def _test_map_file_json(conn, path):
             to_json(
                 json_envelope(
                     "test-map",
-                    summary={"error": True},
+                    summary={"verdict": f"File not found: {path}", "error": True},
                     error=f"File not found: {path}",
                 )
             )

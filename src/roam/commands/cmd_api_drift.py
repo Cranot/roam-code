@@ -707,7 +707,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     to_json(
                         json_envelope(
                             "api-drift",
-                            summary={"error": msg, "findings": 0},
+                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
                             matches=[],
                             findings=[],
                         )
@@ -727,7 +727,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     to_json(
                         json_envelope(
                             "api-drift",
-                            summary={"error": msg, "findings": 0},
+                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
                             matches=[],
                             findings=[],
                         )
@@ -747,7 +747,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     to_json(
                         json_envelope(
                             "api-drift",
-                            summary={"error": msg, "findings": 0},
+                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
                             matches=[],
                             findings=[],
                         )
@@ -829,6 +829,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     json_envelope(
                         "api-drift",
                         summary={
+                            "verdict": f"{n_total} API drift findings ({n_high} high, {n_medium} medium, {n_low} low) across {len(matches)} matched models",
                             "findings": n_total,
                             "high": n_high,
                             "medium": n_medium,

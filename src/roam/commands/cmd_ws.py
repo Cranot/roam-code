@@ -182,6 +182,7 @@ def ws_init(ctx, repos: tuple, name: str) -> None:
                 json_envelope(
                     "ws-init",
                     summary={
+                        "verdict": f"Workspace '{ws_name}' initialized with {len(resolved)} repos",
                         "workspace": ws_name,
                         "repos": len(resolved),
                         "config_path": str(config_path),

@@ -346,7 +346,7 @@ def coverage_gaps(
                     to_json(
                         json_envelope(
                             "coverage-gaps",
-                            summary={"error": msg},
+                            summary={"verdict": f"ERROR: {msg}", "error": msg},
                         )
                     )
                 )
@@ -367,7 +367,7 @@ def coverage_gaps(
                     to_json(
                         json_envelope(
                             "coverage-gaps",
-                            summary={"error": msg},
+                            summary={"verdict": f"ERROR: {msg}", "error": msg},
                         )
                     )
                 )
@@ -385,7 +385,7 @@ def coverage_gaps(
                     to_json(
                         json_envelope(
                             "coverage-gaps",
-                            summary={"error": msg},
+                            summary={"verdict": f"ERROR: {msg}", "error": msg},
                         )
                     )
                 )
