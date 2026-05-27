@@ -127,18 +127,17 @@ except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades g
 # ---------------------------------------------------------------------------
 
 _CORE_TOOLS = {
-    # Flagship offensive tools (7) — targeted for selection lift via
-    # the BiasBusters / Sentry description-rewrite pattern. Currently
-    # fire 0-3 times per session; goal is 5+ collectively.
+    # Empirical winners (2026-05-23 A/B, 25+ runs, 3-run variance) — these
+    # fire reliably and earn their always-loaded slot:
     "roam_ask",  # natural-language dispatcher; replaces Grep+Read
     "roam_understand",  # codebase briefing; replaces Glob exploration
     "roam_search_symbol",  # symbol lookup; replaces Bash:grep
     "roam_uses",  # reference lookup; replaces Bash:grep
     "roam_prepare_change",  # pre-edit safety gate; bundles preflight+context+effects
-    "roam_critique",  # post-edit patch verifier; clones-not-edited + blast radius
     "roam_diagnose_issue",  # root-cause triage for failing symbols
-    # Verified-firing tools (8) — observed in the 2026-05-24 dogfood audit
-    "roam_complexity_report",  # brain-method workflow
+    "roam_batch_search",  # multi-symbol search (up to 10 in 1 call) [-69 to -79% tokens]
+    "roam_coupling",  # file/module coupling [-84% tokens, -70% time — biggest single win]
+    "roam_deps",  # file imports + importers; paired with coupling
     "roam_grep",  # index-aware grep with reachability annotation
     "roam_fetch_handle",  # handle-pattern companion (Pattern 6a)
     "roam_alerts",  # lightweight health alerts
@@ -146,6 +145,9 @@ _CORE_TOOLS = {
     "roam_taint",  # OpenVEX-shaped taint findings
     "roam_file_info",  # file skeleton; the Read-displacement target
     "roam_metrics",  # per-symbol metric vector
+    # Removed 2026-05-24 (empirical losers, 25+ A/B runs):
+    #   - roam_critique: model bypasses without git diff piped in; CLI still works
+    #   - roam_complexity_report: 3/3 variance runs LOST vs vanilla; deny-busted hook also blocks it
 }
 
 # Workflow tools — the surface that USED to live in core (pre-2026-05-24
@@ -159,12 +161,10 @@ _WORKFLOW_TOOLS = {
     "roam_explore",
     "roam_review_change",
     # Batch ops
-    "roam_batch_search",
     "roam_batch_get",
     # Comprehension extras
     "roam_complete",
     "roam_context",
-    "roam_deps",
     # Daily workflow
     "roam_preflight",
     "roam_diff",
@@ -2760,7 +2760,12 @@ _W332_DEPRECATED_INPUT_PATH_PARAMS: frozenset[str] = frozenset(
 _W347_DEPRECATED_PARAMS: frozenset[str] = frozenset({"file_path", "filename", "filepath", "subject"})
 
 
-def _normalize_aliases(tool_name: str, kwargs: dict, accepted: set[str]) -> tuple[dict, list[str]]:
+def _normalize_aliases(
+    tool_name: str,
+    kwargs: dict,
+    accepted: set[str],
+    defaults: dict | None = None,
+) -> tuple[dict, list[str]]:
     """Rewrite alias keys in ``kwargs`` to canonical names.
 
     Parameters
@@ -2775,6 +2780,13 @@ def _normalize_aliases(tool_name: str, kwargs: dict, accepted: set[str]) -> tupl
         way a tool whose ``target`` parameter means "git ref" (not
         "symbol") is unaffected because ``symbol`` is not in its
         ``accepted`` set, so the ``target → symbol`` alias is skipped.
+    defaults:
+        Optional mapping ``{canonical_name: default_value}`` from the
+        wrapped function's signature. Used to detect the
+        "FastMCP filled the canonical with its declared default while
+        the caller only set the alias" case — without this, the BOTH-
+        supplied branch fires and the alias value is dropped, leaving
+        only the canonical's default. See 2026-05-24 bug investigation.
 
     Returns
     -------
@@ -2787,15 +2799,21 @@ def _normalize_aliases(tool_name: str, kwargs: dict, accepted: set[str]) -> tupl
     1. If ONLY the alias is supplied (e.g. ``name=X``) and the canonical
        (``symbol``) is not, the alias is renamed to canonical and a
        deprecation warning is recorded.
-    2. If BOTH are supplied, the canonical wins and the alias is dropped
-       with a "duplicate / ignoring alias" warning. We never silently
-       merge or prefer the alias.
+    2. If BOTH are supplied:
+       a. If the canonical equals its declared default in ``defaults``
+          (i.e. FastMCP filled it from the wrapped fn's signature, the
+          user did not explicitly set it), the alias value is promoted
+          to canonical with a deprecation warning — same as rule 1.
+       b. Otherwise (both user-set), the canonical wins and the alias
+          is dropped with a "duplicate / ignoring alias" warning. We
+          never silently merge or prefer the alias.
     3. Aliases for canonicals NOT in ``accepted`` are left untouched —
        same-named parameters with different semantics across tools stay
        independent.
     """
     warnings: list[str] = []
     out = dict(kwargs)
+    defaults = defaults or {}
     for canon, alias_map in _PARAM_ALIASES.items():
         if canon not in accepted:
             continue
@@ -2808,10 +2826,21 @@ def _normalize_aliases(tool_name: str, kwargs: dict, accepted: set[str]) -> tupl
                 out[canon] = out.pop(alias)
                 warnings.append(f"{tool_name}: param '{alias}' is deprecated; use '{canon}'")
             elif alias in out and canon in out:
-                # Both supplied — canonical wins, alias is dropped loudly so
-                # the agent knows its alias was ignored (not silently merged).
-                out.pop(alias)
-                warnings.append(f"{tool_name}: ignoring '{alias}' (use '{canon}' only)")
+                # Rule 2a: canonical at its signature default while alias is
+                # user-set — FastMCP/Pydantic filled the canonical from the
+                # wrapped function's declared default. Promote the alias to
+                # canonical (deprecation, not duplicate) so the user-set
+                # alias value actually reaches the wrapped function.
+                # Detected via the ``defaults`` map passed by the wrapper.
+                if canon in defaults and out.get(canon) == defaults[canon]:
+                    out[canon] = out.pop(alias)
+                    warnings.append(f"{tool_name}: param '{alias}' is deprecated; use '{canon}'")
+                else:
+                    # Rule 2b: both user-set — canonical wins, alias is
+                    # dropped loudly so the agent knows its alias was
+                    # ignored (not silently merged).
+                    out.pop(alias)
+                    warnings.append(f"{tool_name}: ignoring '{alias}' (use '{canon}' only)")
     return out, warnings
 
 
@@ -3018,6 +3047,17 @@ def _wrap_with_alias_normalization(name: str, fn):
     merged_signature = _build_merged_signature(sig, accepted, aliases_for_tool)
     merged_annotations = _build_merged_annotations(fn, aliases_for_tool)
 
+    # Snapshot the wrapped function's declared defaults for the canonical
+    # params. _normalize_aliases uses this to distinguish "user-set canon"
+    # from "FastMCP-filled-with-default canon" — fixes the 2026-05-24 bug
+    # where calling pattern=X (with query at "") would drop the user's
+    # value because both kwargs were present.
+    canon_defaults: dict = {
+        p.name: p.default
+        for p in sig.parameters.values()
+        if p.name in accepted and p.default is not _inspect.Parameter.empty
+    }
+
     def _prepare_kwargs(kwargs: dict) -> tuple[dict, list]:
         # Drop alias-only kwargs that are still ``None`` — they were
         # injected by the synthetic signature but the client didn't
@@ -3026,7 +3066,7 @@ def _wrap_with_alias_normalization(name: str, fn):
         for alias in aliases_for_tool:
             if alias in kwargs and kwargs[alias] is None:
                 kwargs.pop(alias)
-        return _normalize_aliases(name, kwargs, accepted)
+        return _normalize_aliases(name, kwargs, accepted, defaults=canon_defaults)
 
     if _inspect.iscoroutinefunction(fn):
 
@@ -8044,11 +8084,11 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
 @_tool(
     name="roam_search_symbol",
     description=(
-        "Look up symbols by partial name. Returns PageRank-ranked file "
-        "paths, lines, kinds, qualified names. Triggers: 'where is "
-        "handleSave?', 'find AuthService.refresh', 'show me the login "
-        "handler'. Replaces Bash:grep + Read for symbol-shaped queries. "
-        "For references use roam_uses; for 3+ patterns use roam_batch_search."
+        "Use for: 'where is X defined?' / 'find function Y' / 'locate "
+        "class Z'. Pick over Bash grep for function/class/method lookups — "
+        "PageRank-ranked file:line + qualified names, no string/comment "
+        "false positives. For 3+ symbols use roam_batch_search; for "
+        "callers use roam_uses."
     ),
     output_schema=_SCHEMA_SEARCH,
 )
@@ -9678,9 +9718,11 @@ def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") 
 @_tool(
     name="roam_dead_code",
     description=(
-        "Find unreferenced exported symbols ranked as dead-code candidates. "
-        "Triggers: 'what can I delete?', 'find dead code', 'unused exports'. "
-        "Pair with roam_safe_delete for the deletion verdict per symbol."
+        "Use for: 'what can I safely delete?' / 'find dead code' / "
+        "'list unused exports'. Pick over manual grep sweeps — filters "
+        "out entry points and framework lifecycle hooks, ranks candidates "
+        "by deletion safety. Pair with roam_safe_delete for per-symbol "
+        "deletion verdicts."
     ),
 )
 def dead_code(root: str = ".") -> dict:
@@ -11759,10 +11801,11 @@ def roam_symbol(symbol: str, full: bool = False, root: str = ".") -> dict:
 @_tool(
     name="roam_deps",
     description=(
-        "List file-level imports and importers — what this file depends on "
-        "and what depends on it. Triggers: 'what depends on file.py?', "
-        "'show me the importers of module X'. Pair with roam_uses for "
-        "symbol-level reference lookups."
+        "Use for: 'what does file X import?' / 'which files depend on "
+        "module Y?' / 'show me the importers of Z'. Pick this for "
+        "file/module-level coupling before refactors; symbol-level "
+        "lookups belong in roam_uses. Run in parallel with roam_coupling "
+        "for the biggest token win."
     ),
 )
 def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
@@ -11780,11 +11823,11 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
 @_tool(
     name="roam_uses",
     description=(
-        "List every caller, importer, and subclass of a symbol — grouped "
-        "by edge type. Triggers: 'where is X used?', 'who calls Y?', "
-        "'what breaks if I rename Z?'. Graph-precise edges replace shell "
-        "grep (zero comment / string-literal false positives). For 3+ "
-        "symbols use roam_batch_get."
+        "Use for: 'who calls X?' / 'where is Y referenced?' / 'what "
+        "breaks if I rename Z?'. Pick over multi-pattern grep — "
+        "graph-resolved callers, importers, and subclasses grouped by "
+        "edge type, zero comment/string-literal false positives. For 3+ "
+        "symbols use roam_batch_get; for counts only, roam_impact."
     ),
 )
 def roam_uses(symbol: str, full: bool = False, root: str = ".") -> dict:
@@ -14112,11 +14155,11 @@ def roam_layers(mermaid: bool = False, root: str = ".") -> dict:
 @_tool(
     name="roam_coupling",
     description=(
-        "Show temporal coupling: file pairs that change together. Reads "
-        "git history to find files with high co-change frequency. "
-        "Different from ``roam_fan`` (structural connectivity) and "
-        "``roam_dark_matter`` (hidden co-change) -- this measures "
-        "file-level temporal coupling."
+        "Use for: 'what files change together?' / 'find hidden coupling "
+        "not visible in imports' / 'which sibling file should I also "
+        "update?'. Pick over reading git log manually — surfaces "
+        "co-change partners the call graph misses. Use roam_fan for "
+        "structural connectivity, roam_dark_matter for the latent variant."
     ),
 )
 def roam_coupling(
@@ -14164,6 +14207,56 @@ def roam_coupling(
     if min_cochanges != 2:
         args.extend(["--min-cochanges", str(min_cochanges)])
     return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_full_coupling",
+    description=(
+        "Composite coupling report for ONE file in a single envelope: "
+        "top-N temporal coupling pairs touching the file + structural "
+        "imports/importers + top-N file symbols. Use instead of chaining "
+        "roam_coupling + roam_deps + roam_file_info."
+    ),
+)
+def roam_full_coupling(path: str, top_n: int = 5, root: str = ".") -> dict:
+    """Composite coupling envelope for one file.
+
+    Bundles three existing tools — ``roam_coupling`` (temporal),
+    ``roam_deps`` (structural imports/importers), and ``roam_file_info``
+    (top symbols) — into a single response keyed on ``path``. Callers
+    that pass ``file_path=`` continue to work via the W347 alias.
+    """
+    coupling_full = roam_coupling(root=root)
+    pairs = coupling_full.get("pairs", []) if isinstance(coupling_full, dict) else []
+    if not isinstance(pairs, list):
+        pairs = []
+    file_pairs = [
+        p for p in pairs
+        if isinstance(p, dict)
+        and (p.get("file_a") == path or p.get("file_b") == path)
+    ][:top_n]
+
+    deps = roam_deps(path, root=root)
+
+    info = file_info(path, root=root)
+    syms = info.get("symbols", []) if isinstance(info, dict) else []
+    if not isinstance(syms, list):
+        syms = []
+    top_symbols = syms[:top_n]
+
+    return {
+        "command": "roam_full_coupling",
+        "file": path,
+        "coupling": {"pairs": file_pairs, "all_pairs_total": len(pairs)},
+        "deps": deps,
+        "top_symbols": top_symbols,
+        "summary": {
+            "verdict": (
+                f"{len(file_pairs)} coupled pairs, "
+                f"{len(top_symbols)} top symbols for {path}"
+            ),
+        },
+    }
 
 
 # W300: roam_fn_coupling

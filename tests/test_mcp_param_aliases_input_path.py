@@ -141,6 +141,198 @@ def test_input_path_canonical_wins_when_alias_also_supplied():
     assert "rules_path" in warns[0]
 
 
+def test_alias_promoted_when_canonical_at_signature_default():
+    """2026-05-24 regression: when FastMCP fills the canonical from the
+    wrapped function's declared default while the caller only sets the
+    alias, the alias value must be promoted to the canonical (rule 2a),
+    NOT dropped as a "duplicate".
+
+    Before the fix, ``roam_search_symbol(pattern='_FOO')`` triggered
+    rule 2b ("ignoring 'pattern' (use 'query' only)") because FastMCP
+    passed ``query=''`` (the wrapped fn's default) alongside the
+    user-supplied ``pattern='_FOO'``. The wrapped function then saw
+    ``query=''`` and the underlying CLI raised EMPTY_INPUT.
+
+    With the ``defaults`` arg, we detect that ``query`` matches its
+    declared default and treat it as "not user-set", so the alias wins.
+    """
+    from roam.mcp_server import _normalize_aliases
+
+    # Simulates the post-FastMCP-dispatch state for roam_search_symbol:
+    # caller passed pattern='_FOO'; FastMCP also filled query='' (default).
+    out, warns = _normalize_aliases(
+        "roam_search_symbol",
+        {"pattern": "_FOO", "query": ""},  # query at signature default
+        accepted={"query"},
+        defaults={"query": ""},
+    )
+    assert out == {"query": "_FOO"}, (
+        f"alias value should be promoted to canonical when canon is at "
+        f"its declared default. Got: {out}"
+    )
+    assert len(warns) == 1
+    assert "deprecated" in warns[0]
+    assert "pattern" in warns[0]
+    assert "query" in warns[0]
+    # NOT an "ignoring" warning — that would mean the value was dropped.
+    assert "ignoring" not in warns[0]
+
+
+def test_canonical_wins_when_both_user_set_and_canon_differs_from_default():
+    """Inverse of the bug-fix test: when BOTH canon and alias are user-set
+    (canon differs from declared default), canonical still wins per rule 2b.
+
+    Ensures the defaults-based fix doesn't accidentally regress the
+    existing duplicate-detection behavior. Mirrors
+    test_input_path_canonical_wins_when_alias_also_supplied but with the
+    defaults arg explicitly passed.
+    """
+    from roam.mcp_server import _normalize_aliases
+
+    out, warns = _normalize_aliases(
+        "roam_rules_validate",
+        {"rules_path": "wrong.yml", "input_path": "right.yml"},
+        accepted={"input_path"},
+        defaults={"input_path": ""},  # default is empty; user set "right.yml" — NOT default
+    )
+    assert out == {"input_path": "right.yml"}
+    assert len(warns) == 1
+    assert "ignoring" in warns[0]
+    assert "rules_path" in warns[0]
+
+
+# ---------------------------------------------------------------------------
+# Parametrized regression for the 9-tool bug class found 2026-05-24
+# ---------------------------------------------------------------------------
+#
+# Audit found 9 real wrappers where the canonical param has a non-empty
+# default (e.g. ``query: str = ""``, ``symbol: str = ""``,
+# ``input_path: str = ""``). Pre-fix, an alias-only call would have its
+# value silently dropped because FastMCP fills the canonical with its
+# declared default, then ``_normalize_aliases`` saw both kwargs and fired
+# the rule 2b "BOTH supplied" branch.
+#
+# Affected wrappers (from 2026-05-24 audit, src/roam/mcp_server.py):
+#   - roam_explore       (line 5599):  symbol = ""
+#   - roam_effects       (line 10757): symbol = "", path = ""
+#   - roam_pr_analyze    (line  9005): input_path = ""
+#   - roam_get_annotations (line 10508): symbol = ""
+#   - roam_generate_plan (line 10968): symbol = "", path = ""
+#   - roam_for_security_review (line 7939): symbol = ""
+#   - roam_cga_verify    (line  8756): input_path = ""
+#   - roam_pr_comment_render (line 9083): input_path = ""
+#   - roam_forecast      (line 10934): symbol = ""
+#
+# Rule 2a (in _normalize_aliases) handles them all generically via the
+# defaults dict — no per-tool patch needed. This parametrized test fires
+# an end-to-end alias-only call against a synthetic wrapper per
+# canonical/alias pair to prove the rule 2a fix protects every entry in
+# ``_PARAM_ALIASES`` (not just the ``pattern → query`` case the bug was
+# originally reported against).
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize(
+    "canonical,alias",
+    [
+        # symbol family — covers roam_explore, roam_effects, roam_forecast,
+        # roam_get_annotations, roam_generate_plan, roam_for_security_review
+        ("symbol", "name"),
+        ("symbol", "target"),
+        ("symbol", "subject"),
+        # path family — covers roam_effects, roam_generate_plan
+        ("path", "file"),
+        ("path", "file_path"),
+        ("path", "filename"),
+        ("path", "filepath"),
+        # query family — covers roam_search_symbol (the original bug)
+        ("query", "pattern"),
+        # input_path family — covers roam_pr_analyze, roam_cga_verify,
+        # roam_pr_comment_render, plus the W332 canonical
+        ("input_path", "rules_path"),
+        ("input_path", "rules_file"),
+        ("input_path", "statement_path"),
+        ("input_path", "envelope_path"),
+    ],
+    ids=lambda v: v,  # readable test IDs: symbol-name, path-file, ...
+)
+def test_alias_promoted_for_every_canonical_with_empty_default(canonical, alias):
+    """For every canonical/alias pair in _PARAM_ALIASES, an alias-only call
+    against a wrapper that declares ``<canonical>: str = ""`` must reach
+    the wrapped function with the alias value.
+
+    Pre-fix (rule 2b only): FastMCP filled the canonical with "" (the
+    declared default), _normalize_aliases saw both, dropped the alias.
+    Post-fix (rule 2a): defaults-aware check detects canon-at-default
+    and promotes the alias instead.
+    """
+    from roam.mcp_server import _wrap_with_alias_normalization
+
+    # Synthesize a wrapper with the canonical declared at empty-string
+    # default — mirrors the real wrappers identified in the 2026-05-24 audit.
+    def _make_fn(canon: str):
+        if canon == "symbol":
+            def fn(symbol: str = "", root: str = "."):
+                return {"command": "fake", "data": {"received": symbol}}
+        elif canon == "path":
+            def fn(path: str = "", root: str = "."):
+                return {"command": "fake", "data": {"received": path}}
+        elif canon == "query":
+            def fn(query: str = "", root: str = "."):
+                return {"command": "fake", "data": {"received": query}}
+        elif canon == "input_path":
+            def fn(input_path: str = "", root: str = "."):
+                return {"command": "fake", "data": {"received": input_path}}
+        else:
+            raise AssertionError(f"unhandled canonical {canon!r}")
+        return fn
+
+    fn = _make_fn(canonical)
+    wrapped = _wrap_with_alias_normalization(f"fake_{canonical}", fn)
+
+    # Alias-only call: the value the user actually wants.
+    result = wrapped(**{alias: "user_value"})
+
+    assert result["data"]["received"] == "user_value", (
+        f"alias '{alias}' was dropped instead of promoted to canonical "
+        f"'{canonical}'. Got: {result}. Pre-fix bug: rule 2b 'BOTH supplied' "
+        f"fired because FastMCP filled '{canonical}' with default ''."
+    )
+    warns = result["summary"]["alias_warnings"]
+    assert len(warns) == 1, f"expected exactly 1 deprecation warning, got: {warns}"
+    assert "deprecated" in warns[0], (
+        f"expected 'deprecated' (rule 2a path), got: {warns[0]}. "
+        f"If you see 'ignoring', rule 2b fired — the fix is broken."
+    )
+    assert alias in warns[0], f"warning should name alias '{alias}': {warns[0]}"
+    assert canonical in warns[0], f"warning should name canonical '{canonical}': {warns[0]}"
+
+
+def test_alias_dropped_when_both_user_set_and_canon_differs_from_default():
+    """Companion to the parametrized test: when BOTH are user-set and
+    canon is NOT at its default, canon still wins (rule 2b unchanged).
+
+    This is the inverse guard — if it ever flips to "alias wins" we've
+    broken the duplicate-detection contract.
+    """
+    from roam.mcp_server import _wrap_with_alias_normalization
+
+    def fn(symbol: str = "", root: str = "."):
+        return {"command": "fake", "data": {"received": symbol}}
+
+    wrapped = _wrap_with_alias_normalization("fake_symbol_dup", fn)
+
+    # Both supplied, canon is user-set (not at default "").
+    result = wrapped(symbol="canon_wins", target="alias_value")
+
+    assert result["data"]["received"] == "canon_wins"
+    warns = result["summary"]["alias_warnings"]
+    assert len(warns) == 1
+    assert "ignoring" in warns[0]
+
+
 # ---------------------------------------------------------------------------
 # _PARAM_ALIASES table — the four new entries are present
 # ---------------------------------------------------------------------------

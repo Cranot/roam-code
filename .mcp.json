@@ -5,7 +5,7 @@
       "args": [
         "mcp"
       ],
-      "alwaysLoad": true,
+      "alwaysLoad": false,
       "env": {
         "ROAM_MCP_PRESET": "full"
       }
