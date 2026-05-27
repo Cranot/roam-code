@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>241 commands · 227 MCP tools (15 in the default `core` preset) · 28 languages</sub>
+<sub>241 commands · 228 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -273,7 +273,7 @@ roam mcp
 ```
 
 <!-- BEGIN auto-count:readme-default-preset -->
-**Default preset:** `core` (16 tools: 15 core + `roam_expand_toolset` meta-tool).
+**Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
 227 tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
@@ -286,7 +286,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 227)</strong></summary>
+<summary><strong>MCP tool list (all 228)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -311,7 +311,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_api_drift` | Detect mismatches between backend models and frontend interfaces. Triggers: 'where do API contracts diverge?', 'find drift between TS types and Django models', 'audit serializer coverage'. Pair with roam_endpoints for full route inventory. |
 | `roam_architecture_drift` | Compute per-week growth rates for symbols / edges / cycles across a sliding window of persisted ``.roam/snapshots/`` and classify overall direction as ``improving`` / ``degrading`` / ``stable``. Different from ``roam_graph_diff`` (point-in-time delta between two commits) and ``roam_trends`` (metric-level time series) -- this is the snapshot-based architectural-trajectory report. |
 | `roam_article_12_check` | Run a 6-item EU AI Act Article 12 readiness checklist over the indexed repo: audit-trail directory, audit-trail records, retention policy doc, technical docs, attestation surface, high-risk classification heuristic. Emits a structured envelope mapping each item to its Article (12, 18, 19) or Annex (III). Different from ``roam_audit_trail_conformance_check`` (per-record chain integrity) -- this is the repo-level governance-readiness assessment. Per the agentic-assurance guardrails: 'maps to' / 'supports evidence for', never 'certifies' / 'makes compliant'. |
-| `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes to one of 25 graph-aware recipes. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
+| `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes intent to one recipe in the graph-aware 25-recipe registry. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
 | `roam_attest` | Proof-carrying PR attestation: evidence bundle + merge verdict. |
 | `roam_audit` | Run a one-shot codebase architecture audit: bundles health, debt, dead-code, risk, test-pyramid, coverage, and API-surface signals into a single envelope. Designed as the structured artifact a written audit report attaches. Different from ``roam_health`` (single 0-100 score) and ``roam_report`` (preset-driven Markdown report) -- this is the verdict-first audit packet for governance and onboarding. |
 | `roam_audit_trail_conformance_check` | Score the audit trail against an EU AI Act Article 12 checklist. |
@@ -345,17 +345,17 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_congestion` | Detect developer congestion: files with too many concurrent authors within a sliding time window. Combines author count, churn intensity, and complexity into a congestion score that predicts merge conflicts and coordination failures. Different from ``roam_bus_factor`` (knowledge-loss risk) and ``roam_owner`` (per-file blame breakdown) -- this measures too-many-cooks contention. |
 | `roam_context` | Get the minimum files + line ranges needed to understand or modify a symbol. Use when user says 'show me X', 'I need to change Y', 'how does Z work?'. Returns targeted reads ranked by PageRank — cheaper than Read'ing whole files. For pre-change safety (blast radius + tests + effects), use roam_prepare_change instead. |
 | `roam_conventions` | Auto-detect codebase naming, file, import, and export conventions with outliers. |
-| `roam_coupling` | Show temporal coupling: file pairs that change together. Reads git history to find files with high co-change frequency. Different from ``roam_fan`` (structural connectivity) and ``roam_dark_matter`` (hidden co-change) -- this measures file-level temporal coupling. |
+| `roam_coupling` | Use for: 'what files change together?' / 'find hidden coupling not visible in imports' / 'which sibling file should I also update?'. Pick over reading git log manually — surfaces co-change partners the call graph misses. Use roam_fan for structural connectivity, roam_dark_matter for the latent variant. |
 | `roam_coverage_gaps` | Find unprotected entry points: top-level exported functions / methods that have no call-graph path to a required gate symbol (auth / permission / validation). Supports exact gate names, regex patterns, framework presets (python / javascript / go / java-maven / rust), and a ``.roam-gates.yml`` sidecar config. Different from ``roam_auth_gaps`` (PHP/Laravel source analysis) and ``roam_test_gaps`` (untested symbols in changed files) -- this walks the call graph to verify every entry reaches a required gate. |
 | `roam_critique` | Post-edit patch verifier. Pass `git diff` output as diff_text. Catches clones-not-edited (sibling duplicates the agent missed) and high-blast-radius edits. Grounded in the indexed graph, not heuristics. Triggers: 'review my patch', 'is this PR safe?', after generating any non-trivial diff. |
 | `roam_cut` | Find fragile domain boundaries via minimum-cut analysis. Computes the thinnest edge cuts between architectural clusters and the highest-impact 'leak edges' whose removal would best improve domain isolation. Different from ``roam_split`` (decomposes a single file) -- this finds boundaries between clusters. |
 | `roam_cut_analysis` | Minimum cut analysis: fragile domain boundaries, highest-impact leak edges. |
 | `roam_dark_matter` | File pairs that co-change without structural links (hidden coupling). |
 | `roam_dashboard` | Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot. |
-| `roam_dead_code` | Find unreferenced exported symbols ranked as dead-code candidates. Triggers: 'what can I delete?', 'find dead code', 'unused exports'. Pair with roam_safe_delete for the deletion verdict per symbol. |
+| `roam_dead_code` | Use for: 'what can I safely delete?' / 'find dead code' / 'list unused exports'. Pick over manual grep sweeps — filters out entry points and framework lifecycle hooks, ranks candidates by deletion safety. Pair with roam_safe_delete for per-symbol deletion verdicts. |
 | `roam_debt` | Rank files by tech-debt score with SQALE remediation-cost estimates. Triggers: 'where's the worst debt?', 'what should we refactor next?', 'estimate cleanup cost'. Pair with roam_complexity_report for per-function brain-method targeting. |
 | `roam_delete_check` | Gate the diff (working / staged / PR / HEAD) on surviving references to deleted symbols and files. Per-deletion verdict: SAFE (no surviving references), LIKELY-SAFE (survivors only in tests / docs / unreachable code), or BREAK-RISK (survivors in reachable code). Different from ``roam_critique`` (PR-wide diff review) -- this targets the deletion surface specifically with CI-gate semantics (overall BREAK-RISK trips the gate). |
-| `roam_deps` | List file-level imports and importers — what this file depends on and what depends on it. Triggers: 'what depends on file.py?', 'show me the importers of module X'. Pair with roam_uses for symbol-level reference lookups. |
+| `roam_deps` | Use for: 'what does file X import?' / 'which files depend on module Y?' / 'show me the importers of Z'. Pick this for file/module-level coupling before refactors; symbol-level lookups belong in roam_uses. Run in parallel with roam_coupling for the biggest token win. |
 | `roam_describe` | Auto-generate a project description for AI coding agents: multi-section Markdown report covering overview, directories, entry points, key abstractions, architecture, and testing. Different from ``roam_understand`` (compact codebase overview) -- this is the comprehensive prose description for CLAUDE.md / AGENTS.md / .cursor/rules. The wrapper emits to stdout; on-disk writes are deferred to the CLI (``roam describe --write``) so the MCP surface stays read-only. |
 | `roam_dev_profile` | Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection. |
 | `roam_diagnose` | Root cause analysis: upstream/downstream suspects ranked by composite risk. |
@@ -395,6 +395,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_for_refactor` | Compound: preflight + impact + complexity_report + clones for a symbol you're about to refactor. |
 | `roam_for_security_review` | Compound: taint + vuln + critique + adversarial for a security review pass. |
 | `roam_forecast` | Predict when metrics will exceed thresholds (Theil-Sen regression). |
+| `roam_full_coupling` | Composite coupling report for ONE file in a single envelope: top-N temporal coupling pairs touching the file + structural imports/importers + top-N file symbols. Use instead of chaining roam_coupling + roam_deps + roam_file_info. |
 | `roam_generate_plan` | Structured execution plan for code modification: read order, invariants, tests. |
 | `roam_get_annotations` | Read annotations for symbols, files, or project. Filter by tag/date. |
 | `roam_get_invariants` | Implicit contracts for symbols: signature stability, usage spread, breaking risk. |
@@ -471,7 +472,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_safe_zones` | Classify the refactor containment zone around a symbol or file: ISOLATED (no external connections), CONTAINED (<=5 boundary symbols), or EXPOSED (>5). Reports strictly-internal vs boundary symbols and external caller / callee counts per boundary. Different from ``roam_impact`` (unbounded reverse blast radius) and ``roam_closure`` (exact locations needing modification) -- this maps the bounded zone where it is safe to refactor freely. |
 | `roam_sbom` | Emit a Software Bill of Materials (CycloneDX 1.7 by default, or SPDX 2.3) enriched with call-graph reachability — distinguishes phantom dependencies from those actually exercised. Pair with --aibom for the AIBOM extension required by EU AI Act Art. 50. |
 | `roam_search_semantic` | Find symbols by natural language query (hybrid BM25 + vector + framework packs). |
-| `roam_search_symbol` | Look up symbols by partial name. Returns PageRank-ranked file paths, lines, kinds, qualified names. Triggers: 'where is handleSave?', 'find AuthService.refresh', 'show me the login handler'. Replaces Bash:grep + Read for symbol-shaped queries. For references use roam_uses; for 3+ patterns use roam_batch_search. |
+| `roam_search_symbol` | Use for: 'where is X defined?' / 'find function Y' / 'locate class Z'. Pick over Bash grep for function/class/method lookups — PageRank-ranked file:line + qualified names, no string/comment false positives. For 3+ symbols use roam_batch_search; for callers use roam_uses. |
 | `roam_secrets` | Scan for hardcoded secrets, API keys, tokens, passwords (25 patterns). |
 | `roam_semantic_diff` | Structural change summary: what symbols were added/removed/modified. |
 | `roam_session_metrics` | Local-only telemetry: per-tool invocation counts grouped by outcome (success / rate_limited / error). Helps answer "which tools are agents actually using?" and "are 90 of the 227 tools dead weight?". Never phones home — counters live in the MCP server process and reset on restart. |
@@ -503,7 +504,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_trends` | Historical metric tracking: record and query health metric trends over time. |
 | `roam_tx_boundaries` | Classify functions by transactional safety: ``transactional`` (begin matched by commit/rollback, all mutations inside scope), ``partial_transactional`` (mutations both inside AND outside scope), ``unsafe_mutation`` (mutations OUTSIDE any transaction wrapper -- latent bug), ``unmatched_begin`` (begin without commit/rollback -- leak), ``unmatched_commit``, ``non_transactional``, or ``unknown``. Composes on top of ``roam_side_effects``. Different from ``roam_idempotency`` (retry safety) -- this gates transaction correctness. |
 | `roam_understand` | Codebase briefing in one call. Returns stack + architecture layers + entry points + hotspots + conventions in ~2-4K tokens. Triggers: 'what is this repo?', 'where do I start?', 'give me the lay of the land'. Run this FIRST in an unfamiliar repo — Glob/Grep around comes later. |
-| `roam_uses` | List every caller, importer, and subclass of a symbol — grouped by edge type. Triggers: 'where is X used?', 'who calls Y?', 'what breaks if I rename Z?'. Graph-precise edges replace shell grep (zero comment / string-literal false positives). For 3+ symbols use roam_batch_get. |
+| `roam_uses` | Use for: 'who calls X?' / 'where is Y referenced?' / 'what breaks if I rename Z?'. Pick over multi-pattern grep — graph-resolved callers, importers, and subclasses grouped by edge type, zero comment/string-literal false positives. For 3+ symbols use roam_batch_get; for counts only, roam_impact. |
 | `roam_validate_plan` | Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation. |
 | `roam_verify` | Check changed files for naming, import, error-handling, and duplicate issues. |
 | `roam_verify_imports` | Hallucination firewall: validate import statements resolve to indexed symbols. |
@@ -524,7 +525,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 </details>
 
 <!-- BEGIN auto-count:readme-mcp-core-preset-tools -->
-Core preset tools: `roam_alerts`, `roam_ask`, `roam_complexity_report`, `roam_critique`, `roam_dead_code`, `roam_diagnose_issue`, `roam_fetch_handle`, `roam_file_info`, `roam_grep`, `roam_metrics`, `roam_prepare_change`, `roam_search_symbol`, `roam_taint`, `roam_understand`, `roam_uses`.
+Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_coupling`, `roam_dead_code`, `roam_deps`, `roam_diagnose_issue`, `roam_fetch_handle`, `roam_file_info`, `roam_grep`, `roam_metrics`, `roam_prepare_change`, `roam_search_symbol`, `roam_taint`, `roam_understand`, `roam_uses`.
 <!-- END auto-count:readme-mcp-core-preset-tools -->
 
 <details>

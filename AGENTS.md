@@ -5,11 +5,11 @@
 <!-- BEGIN auto-count:Codex-headline -->
 roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **241 commands · 227 MCP tools (15 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
+a local SQLite DB. **241 commands · 228 MCP tools (16 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts (AST-derived, env-independent): `command_count: 241 · canonical_count: 234 · category_count: 7 · mcp tools registered: 227 · mcp tools in core preset: 15`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
+Authoritative counts (AST-derived, env-independent): `command_count: 241 · canonical_count: 234 · category_count: 7 · mcp tools registered: 228 · mcp tools in core preset: 16`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -152,7 +152,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 241 command names (234 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (15 tools in core preset; 227 in `full`) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (16 tools in core preset; 228 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -570,6 +570,44 @@ Full typed surface lives in `src/roam/plugins/registry.py`. Tests live in
 - Run full suite: `pytest tests/`
 - Run specific: `pytest tests/test_comprehensive.py::TestHealth -x -v -n 0`
 - Mark tests needing sequential execution with `@pytest.mark.xdist_group("groupname")`
+
+### Module-cache hygiene (the `sys.modules.pop` rule)
+
+A test that evicts a heavy module to force a cold import —
+`sys.modules.pop("roam.mcp_server", None)` (used by
+`test_cmd_mcp_fast_startup.py` / `test_cmd_mcp_status_cold_start.py` to
+prove the fast-startup wrapper doesn't eagerly import the 8.6k-line
+server) — **MUST restore the cache entry afterward**. `monkeypatch` does
+NOT track raw `sys.modules` pops, so an unrestored pop leaks: the next
+`import roam.mcp_server` anywhere builds a *second* module object, and
+every test file that did a top-level `from roam.mcp_server import X`
+now holds a reference to the orphaned first copy while monkeypatching
+the second — so its stubs silently miss and the real (index-touching)
+code runs. This surfaced as a 2026-05-27 cross-file flake: the three
+monkeypatching tests in `test_validate_plan.py` failed only when a
+popper ran earlier on the same xdist worker (an `xdist_group` marker
+could NOT fix it — the polluting tests live in different files). The
+fix is an autouse fixture in the popper file that snapshots and
+restores the entry:
+
+```python
+@pytest.fixture(autouse=True)
+def _preserve_module_cache():
+    saved = sys.modules.get("roam.mcp_server")
+    try:
+        yield
+    finally:
+        if saved is not None:
+            sys.modules["roam.mcp_server"] = saved
+        else:
+            sys.modules.pop("roam.mcp_server", None)
+```
+
+Rule: any test that pops or `importlib.reload`-with-fresh-import a
+module other tests import at top level must restore the original
+object in teardown. In-place `importlib.reload` is safe (it mutates the
+existing object's dict); `pop` + fresh `import` is not (it creates a
+distinct object).
 
 ## Dependencies
 
