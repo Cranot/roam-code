@@ -27,7 +27,32 @@ from __future__ import annotations
 import json
 import sys
 
+import pytest
 from click.testing import CliRunner
+
+
+# ---------------------------------------------------------------------------
+# Module-cache hygiene
+# ---------------------------------------------------------------------------
+#
+# ``_force_mcp_import_failure`` below ``sys.modules.pop("roam.mcp_server", None)``
+# to simulate a cold import. monkeypatch does NOT track raw ``sys.modules`` pops,
+# so without restoration the module stays evicted and the next import builds a
+# SECOND module object — orphaning every top-level ``from roam.mcp_server import
+# X`` reference held by other already-imported test files (notably
+# tests/test_validate_plan.py, whose 3 monkeypatching tests then flaked under
+# xdist when this file ran earlier on the same worker). Snapshot and restore the
+# canonical module object around every test so the cache stays single-copy.
+@pytest.fixture(autouse=True)
+def _preserve_module_cache():
+    saved = sys.modules.get("roam.mcp_server")
+    try:
+        yield
+    finally:
+        if saved is not None:
+            sys.modules["roam.mcp_server"] = saved
+        else:
+            sys.modules.pop("roam.mcp_server", None)
 
 
 def _force_mcp_import_failure(monkeypatch):

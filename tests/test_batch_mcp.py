@@ -803,37 +803,51 @@ class TestCoreToolsMembership:
 
         assert "roam_batch_search" in _CORE_TOOLS
 
-    def test_batch_get_in_core_tools(self):
-        from roam.mcp_server import _CORE_TOOLS
+    def test_batch_get_in_workflow_tools(self):
+        """``roam_batch_get`` lives in ``_WORKFLOW_TOOLS`` post-2026-05-24.
 
-        assert "roam_batch_get" in _CORE_TOOLS
+        The empirical-winners core rewrite kept ``roam_batch_search`` in
+        core (firing 5+ times per session) but moved the verification-
+        only ``roam_batch_get`` out. It still ships under every
+        workflow-style preset (review / refactor / debug /
+        architecture / full).
+        """
+        from roam.mcp_server import _CORE_TOOLS, _WORKFLOW_TOOLS
 
-    def test_core_tools_count_at_least_23(self):
-        """_CORE_TOOLS holds the curated subset shown by default to MCP
-        clients. v11 grew it to 23 (21 original + 2 batch). v12's
-        ``mcp_extras`` work pushed it to 24+. The hard floor is 23 — if
-        anything *removes* a tool from the curated set the test catches
-        it; growth is fine.
+        assert "roam_batch_get" in _WORKFLOW_TOOLS
+        assert "roam_batch_get" not in _CORE_TOOLS
+
+    def test_core_tools_count_floor(self):
+        """``_CORE_TOOLS`` floor pinned at 16.
+
+        v11 grew it to 23 (21 original + 2 batch). v12 pushed it to
+        24+. The 2026-05-24 empirical-winners rewrite shrank it to 16
+        (the dogfood-firing surface). The floor moves down with the
+        wave; this guards against an accidental further shrink.
         """
         from roam.mcp_server import _CORE_TOOLS
 
-        assert len(_CORE_TOOLS) >= 23, f"_CORE_TOOLS shrank below 23 ({len(_CORE_TOOLS)})"
+        assert len(_CORE_TOOLS) >= 16, f"_CORE_TOOLS shrank below 16 ({len(_CORE_TOOLS)})"
 
-    def test_presets_are_supersets_of_updated_core(self):
-        """All named presets must include the new batch tools.
+    def test_workflow_presets_include_batch_tools(self):
+        """Workflow-style presets must include both batch tools.
 
-        v12.2 exception: ``compliance`` is intentionally a focused, narrow
-        subset for regulated buyers (preflight + taint + sbom + cga + …),
-        not core++. It deliberately omits batch tools because batch
-        semantics aren't useful for an audit attestation flow.
+        ``roam_batch_search`` is in core; ``roam_batch_get`` is in
+        workflow. Both should reach the user under any of the
+        specialised presets (review / refactor / debug / architecture)
+        which expand to ``_CORE_TOOLS | _WORKFLOW_TOOLS``.
+
+        Skipped presets:
+        * ``core`` — by design omits ``roam_batch_get`` (workflow-only).
+        * ``full`` — empty-set sentinel (no filtering, everything ships).
+        * ``compliance`` — focused subset for regulated buyers; batch
+          semantics aren't useful for an audit attestation flow.
         """
         from roam.mcp_server import _PRESETS
 
         for name, tools in _PRESETS.items():
-            if name == "full":
-                continue  # full has empty set (no filtering)
-            if name == "compliance":
-                continue  # v12.2 — focused-subset preset, not core++
+            if name in {"core", "full", "compliance"}:
+                continue
             assert "roam_batch_search" in tools, f"{name} missing roam_batch_search"
             assert "roam_batch_get" in tools, f"{name} missing roam_batch_get"
 

@@ -122,84 +122,38 @@ class TestDeferLoading:
         assert len(names) == len(set(names)), f"Duplicate tool names found: {[n for n in names if names.count(n) > 1]}"
 
     def test_core_tools_match_preset(self, full_preset_tools):
-        """Verify the _CORE_TOOLS set matches what we expect."""
+        """Verify the _CORE_TOOLS set matches the empirical-winners snapshot.
+
+        Re-pinned 2026-05-26 after the 57 → 16 core rewrite. Previous
+        shape (57 tools) collapsed to the dogfood-firing subset:
+        compounds + comprehension + the empirical-winner pairs
+        (batch_search, coupling, deps) that posted the biggest token /
+        time wins in 25+ A/B runs.
+        """
         _, core_names, _ = full_preset_tools
         expected_core = {
-            # compound operations (4)
-            "roam_explore",
+            # Compound operations
             "roam_prepare_change",
-            "roam_review_change",
             "roam_diagnose_issue",
-            # comprehension (5)
+            # Comprehension flagships
             "roam_understand",
             "roam_search_symbol",
-            "roam_context",
             "roam_file_info",
-            "roam_deps",
-            # daily workflow (7)
-            "roam_preflight",
-            "roam_diff",
-            "roam_pr_risk",
-            "roam_affected_tests",
-            "roam_impact",
             "roam_uses",
-            "roam_syntax_check",
-            # code quality (5)
-            "roam_health",
-            "roam_dead_code",
-            "roam_complexity_report",
-            "roam_diagnose",
-            "roam_trace",
-            # batch operations (2)
+            # Empirical-winners (2026-05-23 A/B: -69 to -84% tokens)
             "roam_batch_search",
-            "roam_batch_get",
-            # mcp_extras (v12 — completion + future protocol-level helpers)
-            "roam_complete",
-            # v12 — retrieval / patch verification / agent fleet planning
-            "roam_retrieve",
-            "roam_critique",
-            "roam_fleet_plan",
-            # v12.1 — boolean oracles (5) + LLM-augmented taint classify (1)
-            "roam_oracle_symbol_exists",
-            "roam_oracle_route_exists",
-            "roam_oracle_is_test_only",
-            "roam_oracle_is_reachable_from_entry",
-            "roam_oracle_is_clone_of",
-            "roam_taint_classify",
-            # v12.6 — Python-pivot tools
-            "roam_py_types",
-            "roam_py_modern",
-            # v12.16 / machine-readable tool catalog
-            "roam_catalog",
-            # v12.19 / agent-actionable wrappers
+            "roam_coupling",
+            "roam_deps",
+            # Code quality / safety surface
+            "roam_dead_code",
+            "roam_taint",
+            "roam_grep",
+            "roam_metrics",
+            # Live-state alerts
             "roam_alerts",
-            "roam_timeline",
-            "roam_test_impact",
-            "roam_disambiguate",
-            "roam_why_fail",
-            # Roam Review hosted-product surface: PR-analyze pipeline +
-            # audit-trail tooling + dogfood loop + metrics push. All
-            # registered into the core preset because the GitHub App + CI
-            # pipelines need them present at startup.
-            "roam_pr_analyze",
-            "roam_pr_comment_render",
-            "roam_rules_validate",
-            "roam_audit_trail_export",
-            "roam_audit_trail_verify",
-            "roam_audit_trail_conformance_check",
-            "roam_dogfood",
-            "roam_metrics_push",
-            # v12.51 — free-form intent dispatcher + telemetry
+            # Free-form intent dispatcher
             "roam_ask",
-            "roam_session_metrics",
-            # R8.E3 — pre-apply change-plan validator
-            "roam_validate_plan",
-            # R8.E4 — situation-keyed compound entry points
-            "roam_for_new_feature",
-            "roam_for_bug_fix",
-            "roam_for_refactor",
-            "roam_for_security_review",
-            # R8.E8 — large-response handle retrieval
+            # Large-response handle retrieval
             "roam_fetch_handle",
         }
         assert core_names == expected_core, (

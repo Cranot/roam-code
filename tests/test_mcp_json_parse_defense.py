@@ -46,7 +46,10 @@ def test_empty_stdout_on_success_returns_no_data_envelope():
     summary = result.get("summary") or {}
     assert summary.get("state") == "no_data"
     assert summary.get("partial_success") is False
-    assert summary.get("verdict") == "no data"
+    # Verdict may be prefixed with "INDEX STALE — ..." when the local
+    # index is older than the staleness threshold; assert on the core
+    # phrase rather than exact equality.
+    assert summary.get("verdict", "").endswith("no data")
     assert result.get("data") == []
 
 
@@ -65,7 +68,9 @@ def test_empty_stdout_on_diff_command_returns_no_changes_verdict():
 
     summary = result.get("summary") or {}
     assert summary.get("state") == "no_data"
-    assert summary.get("verdict") == "no changes"
+    # Verdict may be prefixed with "INDEX STALE — ..." when the local
+    # index is older than the staleness threshold.
+    assert summary.get("verdict", "").endswith("no changes")
 
 
 def test_corrupted_stdout_returns_invalid_output_envelope():

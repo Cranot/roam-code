@@ -213,8 +213,15 @@ def test_phantom_annotation_format_is_consistent() -> None:
 def test_detector_flags_unannotated_fenced_path(tmp_path: Path) -> None:
     """Synthetic: a backtick-fenced phantom WITHOUT a PHANTOM annotation
     is reported as a violation.
+
+    Note: the 2026-05-23 privacy-scrub commit (``7ce3605``) replaced the
+    fixture's literal ``dev/NONEXISTENT-2026-05-18.md`` path with the
+    ``(internal memo)`` placeholder used in the customer-facing scrub
+    rewrite. Without the dev/*.md path the matcher had nothing to fire
+    on. Restore the synthetic path so the detector contract is testable
+    again — the path is intentionally never created on disk.
     """
-    lines = ["- Some bullet referencing `(internal memo)`."]
+    lines = ["- Some bullet referencing `dev/NONEXISTENT-2026-05-18.md`."]
     # Reuse the matcher with a synthetic in-memory line list and the real
     # repo root (the synthetic path will not exist on disk under it).
     violations = _collect_phantom_violations(lines)

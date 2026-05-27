@@ -282,10 +282,10 @@ class TestToolDecorator:
             "roam_search_symbol",
             "roam_uses",
             "roam_prepare_change",
-            "roam_critique",
             "roam_diagnose_issue",
-            # Verified-firing tools (8) — observed in the 2026-05-24 audit
-            "roam_complexity_report",
+            "roam_batch_search",
+            "roam_coupling",
+            "roam_deps",
             "roam_grep",
             "roam_fetch_handle",
             "roam_alerts",
@@ -299,19 +299,22 @@ class TestToolDecorator:
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # 2026-05-24 dogfood wave: 57 -> 15. The 7 flagships + 8
-        # verified-firing tools = 15 (the dogfood-firing surface). The
-        # specialised presets (review/refactor/debug/architecture) keep
-        # their full surface via the _WORKFLOW_TOOLS union.
-        assert len(_CORE_TOOLS) == 15
+        # 2026-05-24 dogfood wave: 57 -> 16. The empirical-winners 7 +
+        # verified-firing tools = 16 (the dogfood-firing surface).
+        # Dropped roam_critique + roam_complexity_report after 3/3
+        # variance losses; added roam_batch_search, roam_coupling,
+        # roam_deps (biggest token wins). The specialised presets
+        # (review/refactor/debug/architecture) keep their full surface
+        # via the _WORKFLOW_TOOLS union.
+        assert len(_CORE_TOOLS) == 16
 
     def test_workflow_tools_disjoint_from_core(self):
-        """_WORKFLOW_TOOLS holds the 45 tools that left core in the
-        2026-05-24 shrink. Must be set-disjoint from _CORE_TOOLS so the
-        union semantics in _PRESETS don't double-count."""
+        """_WORKFLOW_TOOLS holds the tools that left core in the 2026-05-24
+        shrink. Must be set-disjoint from _CORE_TOOLS so the union
+        semantics in _PRESETS don't double-count."""
         from roam.mcp_server import _CORE_TOOLS, _WORKFLOW_TOOLS
 
-        assert len(_WORKFLOW_TOOLS) == 45
+        assert len(_WORKFLOW_TOOLS) == 43
         assert _CORE_TOOLS & _WORKFLOW_TOOLS == set()
 
     def test_required_task_tools_declared(self):
@@ -442,10 +445,11 @@ class TestExpandToolset:
         # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools),
         # v12.51=51 (+roam_ask, +roam_session_metrics),
         # R8=57 (+roam_validate_plan, +4 roam_for_*, +roam_fetch_handle).
-        # 2026-05-24 dogfood wave: 57 -> 15 (Intervention A of the
-        # dogfood-next-interventions design memo; 7 flagships + 8
-        # verified-firing tools).
-        assert result["tool_count"] == 15
+        # 2026-05-24 dogfood wave: 57 -> 16 (Intervention A of the
+        # dogfood-next-interventions design memo; empirical-winners
+        # 7 flagships + 9 verified-firing tools, after adding
+        # roam_batch_search, roam_coupling, roam_deps in 2026-05-26).
+        assert result["tool_count"] == 16
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

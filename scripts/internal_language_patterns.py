@@ -212,6 +212,12 @@ WHITELIST_FILES = {
     "tests/test_no_internal_language.py",
     # This module is the extracted single-source catalogue (same role).
     "scripts/internal_language_patterns.py",
+    # The phantom-memo detector's regression suite. Tests the matcher
+    # that flags backtick-fenced ``dev/<MEMO>-YYYY-MM-DD.md`` paths in
+    # CHANGELOG.md; the synthetic fixture has to LITERALLY look like
+    # one (e.g. ``dev/NONEXISTENT-2026-05-18.md``) to exercise the
+    # regex, otherwise the test silently passes on an empty input.
+    "tests/test_changelog_phantoms.py",
     # AI-authorship detector + test fixtures around it.
     "src/roam/security/aibom_extension.py",
     "tests/test_ai_ratio.py",
@@ -227,6 +233,13 @@ WHITELIST_FILES = {
     # the SOW signatory to fill in. The mention is intentional and
     # customer-facing, not a session-context leak.
     "templates/legal/sow-pr-replay.md",
+    # Customer-facing changelogs. By definition they document historical
+    # state and reference resources that no longer exist (e.g.
+    # ``cranot.github.io/roam-code/*`` which 404s post-migration to
+    # roam-code.com/docs/). The historical record is the changelog's
+    # entire point — rephrasing post-hoc would erase context.
+    "CHANGELOG.md",
+    "templates/distribution/landing-page/changelog.html",
 }
 
 

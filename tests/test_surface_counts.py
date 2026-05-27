@@ -54,7 +54,8 @@ def test_mcp_surface_counts_self_consistent():
     assert counts["registered_tools"] == len(mcp_tool_names())
     assert counts["duplicate_tool_names"] == []
     # Core preset is intentionally a small curated subset; floor only.
-    assert counts["core_tools"] >= 23
+    # 2026-05-24 wave shrank it from ~57 to 16 (empirical-winners only).
+    assert counts["core_tools"] >= 16
     assert counts["registered_tools"] >= counts["core_tools"]
     # Sanity floor — never silently regress.
     assert counts["registered_tools"] >= 103
@@ -67,15 +68,19 @@ def _docs_command_count(text: str) -> int | None:
 
 
 def test_docs_command_count_matches_source():
-    """README, CLAUDE.md, and llms-install.md must quote the same integer
+    """README, AGENTS.md, and llms-install.md must quote the same integer
     that ``cli_surface_counts()`` reports — drift here is what bit us in
     v11 (138 vs 140 in different files). We accept either ``command_names``
     (counts aliases) or ``canonical_commands`` (deduped) since both are
     defensible public counts.
+
+    CLAUDE.md was collapsed to a 1-line ``@AGENTS.md`` pointer on
+    2026-02-27 (commit e5993a6); AGENTS.md is the source of truth for
+    the count phrases since then.
     """
     counts = cli_surface_counts()
     valid = {counts["command_names"], counts["canonical_commands"]}
-    for doc in ("README.md", "CLAUDE.md", "llms-install.md"):
+    for doc in ("README.md", "AGENTS.md", "llms-install.md"):
         if not Path(doc).exists():
             continue
         text = _read(doc)

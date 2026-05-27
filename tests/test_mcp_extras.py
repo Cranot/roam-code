@@ -346,17 +346,20 @@ class TestWatcherClassification:
 
 
 class TestMCPServerIntegration:
-    def test_roam_complete_in_core_preset(self):
-        from roam.mcp_server import _CORE_TOOLS, _REGISTERED_TOOLS
+    def test_roam_complete_in_workflow_preset(self):
+        """``roam_complete`` ships under workflow presets, not core.
 
-        assert "roam_complete" in _CORE_TOOLS
-        # When fastmcp is installed (it is, since we're running these tests
-        # with the [mcp] extra) the tool should also be registered.
-        try:
-            import fastmcp  # noqa: F401
-        except Exception:
-            return
-        assert "roam_complete" in _REGISTERED_TOOLS
+        The 2026-05-24 empirical-winners core rewrite moved completion
+        out of core (low fire rate in dogfood audits) into
+        ``_WORKFLOW_TOOLS``. It still reaches users under any of the
+        specialised presets via the ``_CORE_TOOLS | _WORKFLOW_TOOLS``
+        union — the tool function is always importable, but it only
+        registers as an MCP wrapper under non-core presets.
+        """
+        from roam.mcp_server import _CORE_TOOLS, _WORKFLOW_TOOLS
+
+        assert "roam_complete" in _WORKFLOW_TOOLS
+        assert "roam_complete" not in _CORE_TOOLS
 
     def test_summarize_param_optional(self):
         # The understand/health/explore/repo_map tools accept summarize as

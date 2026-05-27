@@ -81,10 +81,14 @@ def _resolve_mcp_to_capability_name(mcp_name: str) -> str:
 # Test 1 — _CORE_TOOLS size snapshot.
 # ---------------------------------------------------------------------------
 
-# Snapshot of len(_CORE_TOOLS) as of W954. Bump intentionally when adding
-# or removing a core MCP tool, and update tests/test_w954 + CLAUDE.md
-# 'core preset' references in lockstep.
-_CORE_TOOLS_SIZE_SNAPSHOT = 57
+# Snapshot of len(_CORE_TOOLS). Bump intentionally when adding or
+# removing a core MCP tool, and update CLAUDE.md / dev/ 'core preset'
+# references in lockstep. Last re-pinned 2026-05-26 after the
+# empirical-winners rewrite (57 -> 16): removed the entries that lost
+# 3/3 in A/B variance runs (roam_critique, roam_complexity_report) and
+# the auto-included slow workflows; kept the tools that fire reliably
+# (roam_ask, roam_batch_search, roam_coupling, roam_deps, ...).
+_CORE_TOOLS_SIZE_SNAPSHOT = 16
 
 
 def test_core_tools_size() -> None:
@@ -148,16 +152,16 @@ def test_mcp_preset_inheritance_is_boilerplate() -> None:
 # Test 3 — asymmetric diff between _CORE_TOOLS and mcp_preset='core'.
 # ---------------------------------------------------------------------------
 
-# Floors derived from the W954 snapshot run on roam-code HEAD:
-#   in_core_not_cap = 20  (MCP-only constructs — compound wrappers,
-#                          oracles, batch ops, diagnose-issue, explore,
-#                          fetch-handle, validate-plan, ...)
-#   in_cap_not_core = 191 (boilerplate-preset inheritors that are NOT
-#                          in _CORE_TOOLS)
-# Pinned as >= floors with ~10% headroom so adding a single decorated
-# command does not churn the test. Reductions below the floor mean
-# real progress and the floor should be lowered along with the work.
-_MIN_IN_CORE_NOT_CAPABILITY = 18
+# Floors re-pinned 2026-05-26 after the empirical-winners core rewrite
+# (57 -> 16):
+#   in_core_not_cap = 3   (MCP-only compound wrappers that stayed in
+#                          core: diagnose-issue, fetch-handle, prepare-
+#                          change — no per-capability decorator analog)
+#   in_cap_not_core = ~191 (boilerplate-preset inheritors that are NOT
+#                          in _CORE_TOOLS — most decorated commands)
+# Pinned as >= floors; reductions mean real progress and the floor
+# should be lowered along with the work.
+_MIN_IN_CORE_NOT_CAPABILITY = 3
 _MIN_IN_CAPABILITY_NOT_CORE = 180
 
 

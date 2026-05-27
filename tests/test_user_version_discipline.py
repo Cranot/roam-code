@@ -42,7 +42,15 @@ _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
 # Snapshot captured at commit time. Update both values together when
 # schema.py or _FTS5_SCHEMA_COLUMNS legitimately changes. See module
 # docstring for workflow.
-_SNAPSHOT_SCHEMA_HASH = "6bde165795461cb1"
+#
+# 2026-05-26 — snapshot hash refreshed without a USER_VERSION bump.
+# Commit 7ce3605 (privacy-scrub) edited a one-line comment in
+# schema.py (``-- work (CODE-BACKLOG D1) will hang off.`` →
+# ``-- work will hang off.``); no DDL changed, so forcing a downstream
+# migration #61 for a docstring scrub would be noise. The strict
+# "any byte change → bump" workflow in this module's docstring is the
+# default safety net; this entry documents the audited exception.
+_SNAPSHOT_SCHEMA_HASH = "d5558c4ddb515218"
 _SNAPSHOT_USER_VERSION = 18
 
 

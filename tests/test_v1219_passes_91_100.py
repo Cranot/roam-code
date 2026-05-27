@@ -78,7 +78,16 @@ def test_pass92_observability_silent_by_default(monkeypatch):
 
 @pytest.mark.skipif(not _HAS_FASTMCP, reason="fastmcp not installed (optional [mcp] extra)")
 def test_pass93_mcp_wrappers_registered():
-    from roam.mcp_server import _CORE_TOOLS, _TOOL_METADATA
+    """The 5 v12.19 wrappers must remain REGISTERED (live in ``_TOOL_METADATA``).
+
+    The 2026-05-24 core-preset rewrite shrank ``_CORE_TOOLS`` from 57 → 16
+    by removing empirical losers (per CLAUDE.md ``TASK→TOOL`` map). The
+    pre-shrink shape of this test also asserted core-preset membership for
+    every name — that's now decoupled. Membership in ``_TOOL_METADATA``
+    proves the wrapper still ships; ``_CORE_TOOLS`` membership is a
+    separate, empirically-driven decision.
+    """
+    from roam.mcp_server import _TOOL_METADATA
 
     expected = {
         "roam_alerts",
@@ -89,7 +98,6 @@ def test_pass93_mcp_wrappers_registered():
     }
     for name in expected:
         assert name in _TOOL_METADATA, f"{name} not registered"
-        assert name in _CORE_TOOLS, f"{name} not in core preset"
 
 
 def test_pass94_adversarial_completes_without_n1():

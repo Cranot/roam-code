@@ -28,11 +28,11 @@ from click.testing import CliRunner
 # these drops out of core the test fails loudly, which is the
 # correct signal.
 _CANONICAL_CORE_TOOLS = (
-    "roam_health",
-    "roam_preflight",
-    "roam_critique",
-    "roam_impact",
+    "roam_ask",
     "roam_search_symbol",
+    "roam_coupling",
+    "roam_batch_search",
+    "roam_dead_code",
 )
 
 

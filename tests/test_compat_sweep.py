@@ -86,12 +86,15 @@ def test_surface_command_count_matches_actual():
 
     # CLAUDE.md headline + the ``Authoritative counts:`` line.
     # CLAUDE.md is intentionally untracked on public clones / CI — skip the
-    # CLAUDE.md-specific assertions when absent. The README check above is
-    # the primary defence; CLAUDE.md is defence-in-depth on local dev only.
+    # CLAUDE.md-specific assertions when absent. As of 2026-02-27 (commit
+    # e5993a6), the tracked CLAUDE.md is also a 1-line ``@AGENTS.md``
+    # pointer with no body of its own; treat that pointer-only shape as
+    # equivalent to "absent" for this check. AGENTS.md carries the real
+    # headline + authoritative-counts block and is verified separately
+    # via the auto-count marker tests.
     claude = _claude_md_text()
-    if claude is not None:
+    if claude is not None and re.search(r"\*\*(\d+)\s+commands", claude):
         m_claude = re.search(r"\*\*(\d+)\s+commands", claude)
-        assert m_claude, "CLAUDE.md missing '**N commands' headline phrase"
         n_claude = int(m_claude.group(1))
         assert n_claude in valid, (
             f"CLAUDE.md headline says '{n_claude} commands' but live counts are "
