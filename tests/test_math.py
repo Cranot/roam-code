@@ -33,20 +33,22 @@ class TestCatalog:
         # missing-deps, dangerous-eval, unremoved-event-listener → 32.
         # added async-fire-and-forget-task,
         # async-nested-run → 34.
-        # The shared CATALOG now also hosts other super-optimizer families
-        # (agent-opt) tagged with a ``family`` key; the math invariant counts
-        # only the algorithm-family tasks (those WITHOUT an agent-opt family).
-        math_tasks = {tid for tid, t in CATALOG.items() if t.get("family") != "agent-opt"}
+        # The shared CATALOG now also hosts super-optimizer families
+        # (agent-opt, observability-opt, ...) tagged with a ``family`` key; the
+        # math invariant counts only the algorithm-family tasks — those with NO
+        # ``family`` tag. Generic so each new family is excluded for free.
+        math_tasks = {tid for tid, t in CATALOG.items() if not t.get("family")}
         assert len(math_tasks) == 34, f"Expected 34 algorithm-family tasks, got {len(math_tasks)}"
 
     def test_detector_registry_covers_catalog(self):
         from roam.catalog.detectors import _MATH_DETECTORS
         from roam.catalog.tasks import CATALOG
 
-        # agent-opt-family tasks have their own (non-conn) detectors in
-        # ``roam.agent_opt`` and are not run by ``_MATH_DETECTORS``; the 1:1
-        # coverage invariant is scoped to algorithm-family tasks.
-        math_task_keys = {tid for tid, t in CATALOG.items() if t.get("family") != "agent-opt"}
+        # Super-optimizer family tasks (agent-opt, observability-opt, ...) have
+        # their own family-local detectors and are not run by ``_MATH_DETECTORS``;
+        # the 1:1 coverage invariant is scoped to algorithm-family tasks (no
+        # ``family`` tag).
+        math_task_keys = {tid for tid, t in CATALOG.items() if not t.get("family")}
         detector_tasks = {task_id for task_id, _way_id, _fn in _MATH_DETECTORS}
         assert detector_tasks == math_task_keys
 
@@ -78,7 +80,8 @@ class TestCatalog:
         from roam.catalog.tasks import CATALOG
 
         # X2 added "error-handling" category (broad-except-swallow).
-        # agent-opt super-optimizer family added "agent-contract".
+        # agent-opt super-optimizer family added "agent-contract";
+        # observability-opt added "observability".
         valid = {
             "searching",
             "ordering",
@@ -88,6 +91,7 @@ class TestCatalog:
             "concurrency",
             "error-handling",
             "agent-contract",
+            "observability",
         }
         for task_id, task in CATALOG.items():
             assert task["category"] in valid, f"{task_id} has invalid category: {task['category']}"
@@ -95,8 +99,9 @@ class TestCatalog:
     def test_kinds_are_valid(self):
         from roam.catalog.tasks import CATALOG
 
-        # agent-opt super-optimizer family added "envelope-contract".
-        valid_kinds = {"algorithm", "idiom", "envelope-contract"}
+        # agent-opt added "envelope-contract"; observability-opt added
+        # "diagnosability".
+        valid_kinds = {"algorithm", "idiom", "envelope-contract", "diagnosability"}
         for task_id, task in CATALOG.items():
             assert "kind" in task, f"{task_id} missing kind"
             assert task["kind"] in valid_kinds, f"{task_id} has invalid kind: {task['kind']}"

@@ -894,6 +894,45 @@ CATALOG: dict[str, dict] = {
             },
         ],
     },
+    # observability-opt family (super-optimizer P2). Like agent-opt, these are
+    # NOT algorithm tasks: the ``family`` tag keeps them out of the math
+    # invariants (which now scope to tasks WITHOUT a family tag) and routes the
+    # surface selector. Detectors live in ``roam.observability_opt`` in a
+    # family-local registry. ``time``/``space`` are N/A for a diagnosability
+    # task; "weak way" is encoded as the high-rank way.
+    "print-debug-leftover": {
+        "name": "Debug print left in source",
+        "category": "observability",
+        "kind": "diagnosability",
+        "family": "observability-opt",
+        "ways": [
+            {
+                "id": "structured-logger",
+                "name": "Structured logger call",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Route diagnostics through the module logger "
+                    "(logger.debug/info with context fields), not a raw "
+                    "print/console.log/fmt.Println — so output is leveled, "
+                    "filterable, and shipped to your log sink."
+                ),
+            },
+            {
+                "id": "raw-debug-print",
+                "name": "Raw debug print",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": (
+                    "A bare print()/console.log/dbg!/var_dump left in non-test "
+                    "source leaks to stdout, carries no level or context, and is "
+                    "usually a forgotten debug line."
+                ),
+            },
+        ],
+    },
 }
 
 

@@ -9725,6 +9725,57 @@ def agent_opt(only: str = "", scope: str = "full", confidence: str = "", profile
 
 
 @_tool(
+    name="roam_observability_opt",
+    description="Detect code that leaves systems hard to debug (raw debug prints, ...) and recommend the structured-logging shape.",
+)
+def observability_opt(
+    only: str = "",
+    language: str = "",
+    confidence: str = "",
+    profile: str = "balanced",
+    max_files: int = 0,
+    root: str = ".",
+) -> dict:
+    """Optimize a repo's diagnosability surface.
+
+    WHEN TO USE: Call this to find code that leaves a system hard to debug —
+    raw debug prints left in non-test source (print / console.log / var_dump /
+    dbg!), with string-only logs and traces-without-status to follow. Returns
+    one finding per violation (path:line) with the rank-1 structured-logging
+    shape to adopt.
+
+    Parameters
+    ----------
+    only:
+        Restrict to a task id (e.g. "print-debug-leftover"). Empty means all.
+    language:
+        Restrict to one language (e.g. "python"). Empty means all supported.
+    confidence:
+        Minimum confidence floor: "high", "medium", or "low".
+    profile:
+        "balanced" (default), "strict" (drops heuristic-tier findings), or
+        "aggressive".
+    max_files:
+        Cap the number of source files harvested (0 = no cap).
+
+    Returns: findings grouped by task, each with the detected weak shape vs the
+    recommended structured-logging shape.
+    """
+    args = ["observability-opt"]
+    if only:
+        args.extend(["--only", only])
+    if language:
+        args.extend(["--language", language])
+    if confidence:
+        args.extend(["--confidence", confidence])
+    if profile:
+        args.extend(["--profile", profile])
+    if max_files:
+        args.extend(["--max-files", str(max_files)])
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_dark_matter",
     description="File pairs that co-change without structural links (hidden coupling).",
 )

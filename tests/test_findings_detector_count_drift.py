@@ -53,10 +53,10 @@ from tests._helpers.repo_root import repo_root
 REPO_ROOT = repo_root()
 COMMANDS_DIR = REPO_ROOT / "src" / "roam" / "commands"
 
-# Pinned live count. CLAUDE.md currently says "28 detectors persist
-# findings" as of 2026-05-18. Bump this AND the docs together when a
-# new detector module starts calling ``emit_finding``.
-LIVE_COUNT = 29
+# Pinned live count. Bump this AND the docs together when a new detector
+# module starts calling ``emit_finding`` (2026-05-27: observability-opt's
+# cmd module joined via --persist -> 30).
+LIVE_COUNT = 30
 
 # The canonical claim string in CLAUDE.md spans a line break:
 # ``**28\ndetectors persist findings**``. We scope the canonical

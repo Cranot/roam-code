@@ -69,6 +69,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
     {
         # --- Static / fixed-shape responses ----------------------------------
         "agent-opt",  # findings bounded by --limit; scans roam's own ~229-tool surface, not a scaling codebase
+        "observability-opt",  # findings bounded by --limit/--max-files; per-finding rows, not a paginating result set
         "version",  # single string (CLI version)
         "exit-codes",  # ~50-line enum
         "surface",  # registry index (already capped by inventory)

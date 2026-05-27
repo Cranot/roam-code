@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>242 commands · 229 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>243 commands · 230 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -155,7 +155,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~237 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **242 commands (235 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~238 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **243 commands (236 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -170,7 +170,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 235)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 236)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -286,7 +286,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 229)</strong></summary>
+<summary><strong>MCP tool list (all 230)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -427,6 +427,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_mutate` | Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite. |
 | `roam_n1` | Detect N+1 I/O patterns in ORM code (Laravel/Django/Rails/SQLAlchemy/JPA). |
 | `roam_next` | Suggest the next ``roam`` command based on cheap repo-state signals: index presence, staleness, working-tree dirtiness, recent envelope, and recent memory. Emits one imperative recommendation in <200ms. Different from ``roam_brief`` (multi-section session kickoff) and ``roam_workflow`` (curated multi-step recipes) -- this is the single-command router. |
+| `roam_observability_opt` | Detect code that leaves systems hard to debug (raw debug prints, ...) and recommend the structured-logging shape. |
 | `roam_onboard` | Generate a new-developer onboarding guide for the codebase. |
 | `roam_oracle_batch` | Run multiple oracle queries in one call. Items: [{name, oracle, max_hops?}, ...] where oracle is one of symbol-exists, route-exists, is-test-only, is-reachable-from-entry, is-clone-of. |
 | `roam_oracle_is_clone_of` | Answer the boolean oracle question: does this symbol have persisted clone siblings in the ``clone_pairs`` table? Returns a yes/no verdict envelope with the matched clone class size. Different from ``roam_clones`` (full clone-pair enumeration) -- this is the cheap boolean lookup for one symbol's clone status. |

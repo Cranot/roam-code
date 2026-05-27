@@ -66,6 +66,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # read-side surface, no edits (the optional --persist writes only to
         # the local findings registry, same risk profile as `findings`).
         "agent-opt",
+        # observability-opt scans source for debug-print / weak-logging shape;
+        # same pure read-side profile as agent-opt (--persist writes only the
+        # local findings registry).
+        "observability-opt",
         "describe",
         "impact",
         "fan",
