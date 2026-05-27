@@ -894,6 +894,118 @@ CATALOG: dict[str, dict] = {
             },
         ],
     },
+    "silent-degraded-state": {
+        "name": "Honest degraded-state disclosure",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "honest-disclosure",
+                "name": "partial_success + named failures",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Set summary.partial_success: true and name the failed "
+                    "subcommands/detectors whenever any check failed or did not "
+                    "run (Pattern 2). Make absent state explicit, never silent SAFE."
+                ),
+            },
+            {
+                "id": "silent-fallback",
+                "name": "Silent fallback on failure",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Reports clean/SAFE while an inner field (error, failed count, warnings) signals failure.",
+            },
+        ],
+    },
+    "large-envelope-no-handle": {
+        "name": "Bounded large-payload response",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "handle-or-file",
+                "name": "Handle or file-write for large payloads",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Return a handle_id (auto-handle pattern) or write to an "
+                    "output_file and return a tiny envelope when the payload "
+                    "exceeds ~20K tokens (Pattern 6)."
+                ),
+            },
+            {
+                "id": "inline-large-payload",
+                "name": "Inlined large payload",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Inlines a >20K-token payload with no handle_id / output_file.",
+            },
+        ],
+    },
+    "abstract-fact": {
+        "name": "Concrete-noun-anchored fact",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "concrete-noun-anchored",
+                "name": "Concrete-noun terminal",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "End each agent_contract fact on a concrete-noun terminal "
+                    "(LAW 4): 'useThemeClasses has 528 callers' — concrete nouns "
+                    "activate analytical processing."
+                ),
+            },
+            {
+                "id": "abstract-fact",
+                "name": "Abstract terminal token",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Fact ends on a bare adjective / abstract token ('5 critical') — activates summary mode.",
+            },
+        ],
+    },
+    "parameter-name-drift": {
+        "name": "Canonical MCP parameter name",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "canonical-param-name",
+                "name": "Canonical parameter name",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Declare the canonical param name (path / name / query / "
+                    "input_path) so the _PARAM_ALIASES table normalizes callers "
+                    "(Pattern 3b cross-MCP parameter divergence)."
+                ),
+            },
+            {
+                "id": "legacy-param-name",
+                "name": "Legacy alias as declared name",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Declares a legacy alias (file / filename / pattern / rules_file / ...) as the wrapper's param.",
+            },
+        ],
+    },
     # observability-opt family (super-optimizer P2). Like agent-opt, these are
     # NOT algorithm tasks: the ``family`` tag keeps them out of the math
     # invariants (which now scope to tasks WITHOUT a family tag) and routes the

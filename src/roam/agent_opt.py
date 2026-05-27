@@ -57,9 +57,14 @@ __all__ = [
     "detect_declarative_tool_description",
     "detect_weak_verdict",
     "detect_missing_next_command",
+    "detect_silent_degraded_state",
+    "detect_large_envelope_no_handle",
+    "detect_abstract_fact",
+    "detect_parameter_name_drift",
     "iter_tool_descriptions",
     "harvest_command_envelopes",
     "known_command_names",
+    "discover_tool_params",
     "run_agent_opt",
     "build_finding_records",
     "DEFAULT_RUNTIME_COMMANDS",
@@ -389,6 +394,312 @@ def detect_missing_next_command(
 
 
 # ---------------------------------------------------------------------------
+# Task 4: silent-degraded-state (Pattern 2 — disclose, never silent SAFE)
+# ---------------------------------------------------------------------------
+@agent_opt_detector(task_id="silent-degraded-state", confidence_basis=CONFIDENCE_STRUCTURAL)
+def detect_silent_degraded_state(envelopes: Iterable[tuple[str, dict]]) -> list[dict[str, Any]]:
+    """Flag envelopes that carry a failure signal but don't set partial_success.
+
+    A clean ABSENT state (``state: "not_initialized"`` etc.) is a CORRECT
+    Pattern-2 disclosure and is deliberately NOT flagged — only genuine failure
+    signals (error fields, non-zero failed counts, unflagged warnings) require
+    ``summary.partial_success: true``.
+    """
+    out: list[dict[str, Any]] = []
+    for label, env in envelopes:
+        if not isinstance(env, dict):
+            continue
+        summary = env.get("summary") or {}
+        if summary.get("partial_success") is True:
+            continue  # correctly disclosed — no violation
+        signals: list[str] = []
+        for key in ("error", "error_code"):
+            if summary.get(key) or env.get(key):
+                signals.append(key)
+        for key in ("detectors_failed", "subcommands_failed"):
+            v = summary.get(key)
+            if isinstance(v, int) and v > 0:
+                signals.append(key)
+        for key in ("failed_subcommands", "failed_detectors", "failed_subtasks"):
+            v = summary.get(key)
+            if isinstance(v, list) and v:
+                signals.append(key)
+        wc = summary.get("warnings_count")
+        if isinstance(wc, int) and wc > 0:
+            signals.append("warnings_count")
+        for key in ("warnings_out", "warnings"):
+            v = env.get(key) if isinstance(env.get(key), list) else summary.get(key)
+            if isinstance(v, list) and v:
+                signals.append(key)
+        if not signals:
+            continue
+        out.append(
+            _finding(
+                task_id="silent-degraded-state",
+                detected_way="silent-fallback",
+                subject=label,
+                subject_kind="command",
+                confidence="high",
+                confidence_basis=CONFIDENCE_STRUCTURAL,
+                reason=f"{label} envelope carries failure signal(s) {sorted(set(signals))} but summary.partial_success is not true (Pattern 2 silent fallback)",
+                evidence={"signals": sorted(set(signals)), "partial_success": summary.get("partial_success")},
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Task 5: large-envelope-no-handle (Pattern 6 — >20K tokens must use a handle)
+# ---------------------------------------------------------------------------
+# ~20K tokens at the common 4-chars/token heuristic.
+_LARGE_ENVELOPE_BYTE_THRESHOLD = 80_000
+_HANDLE_KEYS = ("handle_id", "_handle", "handle", "details_handle", "output_file", "output_path")
+
+
+@agent_opt_detector(task_id="large-envelope-no-handle", confidence_basis=CONFIDENCE_STRUCTURAL)
+def detect_large_envelope_no_handle(envelopes: Iterable[tuple[str, dict]]) -> list[dict[str, Any]]:
+    """Flag envelopes that inline a >~20K-token payload with no handle/output_file."""
+    out: list[dict[str, Any]] = []
+    for label, env in envelopes:
+        if not isinstance(env, dict):
+            continue
+        try:
+            size = len(json.dumps(env, default=str))
+        except (TypeError, ValueError):
+            continue
+        if size <= _LARGE_ENVELOPE_BYTE_THRESHOLD:
+            continue
+        summary = env.get("summary") or {}
+        if any(k in env for k in _HANDLE_KEYS) or any(k in summary for k in _HANDLE_KEYS):
+            continue
+        out.append(
+            _finding(
+                task_id="large-envelope-no-handle",
+                detected_way="inline-large-payload",
+                subject=label,
+                subject_kind="command",
+                confidence="medium",
+                confidence_basis=CONFIDENCE_STRUCTURAL,
+                reason=f"{label} envelope is {size} bytes (~{size // 4} tokens) with no handle_id/output_file — exceeds the ~20K-token inline cap (Pattern 6)",
+                evidence={"bytes": size, "approx_tokens": size // 4},
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Task 6: abstract-fact (LAW 4 — facts must anchor on concrete-noun terminals)
+# ---------------------------------------------------------------------------
+# The three frozensets + ``_fact_is_concrete_anchored`` below are a faithful
+# PRODUCTION mirror of the LAW-4 CI lint (``tests/test_law4_lint.py``:
+# _CONCRETE_NOUN_ANCHORS / _ANALYTICAL_VERBS / _MEASUREMENT_SUFFIXES +
+# _is_concrete_anchored). The repo deliberately keeps the lint's anchor set
+# decoupled from the formatter's (AGENTS.md § LAW 4), so agent-opt carries its
+# own copy; EXACT parity is pinned by
+# ``tests/test_agent_opt.py::test_abstract_fact_anchor_parity_with_law4`` so the
+# two definitions of "weak fact" can never silently diverge (Pattern 3a).
+_CONCRETE_NOUN_ANCHORS = frozenset({
+    'actions', 'added', 'affected', 'agents', 'alerts', 'analysed', 'analyzed', 'annotations',
+    'available', 'branches', 'budget', 'bytes', 'callees', 'callers', 'candidates',
+    'capabilities', 'challenges', 'characters', 'chars', 'checked', 'checks', 'checks-failed',
+    'checks-passed', 'clusters', 'commands', 'commits', 'confirmed', 'cycles', 'days',
+    'dependencies', 'diagnostics', 'direct', 'directories', 'downgrades', 'edges', 'effects',
+    'endpoints', 'entries', 'errors', 'events', 'exits', 'failed', 'fields', 'files',
+    'findings', 'flags', 'frameworks', 'gaps', 'heuristic', 'hotspots', 'hours', 'imports',
+    'issues', 'items', 'keys', 'kinds', 'languages', 'layers', 'leaks', 'lines', 'literals',
+    'logged', 'markers', 'matches', 'milliseconds', 'minutes', 'modules', 'months', 'movers',
+    'moves', 'nodes', 'options', 'owned', 'owners', 'packages', 'passed', 'paths', 'patterns',
+    'phantom', 'presets', 'queries', 'reachable', 'reached', 'records', 'removed', 'risks',
+    'routes', 'rules', 'scanned', 'scenarios', 'schemas', 'scored', 'seconds', 'secrets',
+    'seeds', 'shifts', 'skipped', 'smells', 'snapshots', 'subcommands', 'symbols', 'tests',
+    'tokens', 'tools', 'total', 'trending', 'types', 'upgrades', 'used', 'users', 'values',
+    'violations', 'vulnerabilities', 'warnings', 'weeks', 'years',
+})
+_ANALYTICAL_VERBS = frozenset({
+    'added', 'blocked', 'classified', 'computed', 'confirmed', 'detected', 'emitted', 'failed',
+    'flagged', 'found', 'introduced', 'logged', 'passed', 'ran', 'reached', 'rejected',
+    'removed', 'rendered', 'reported', 'scanned', 'scored', 'skipped', 'surfaced', 'verified',
+})
+_MEASUREMENT_SUFFIXES = frozenset({
+    'bytes', 'cohesion', 'count', 'depth', 'kb', 'mb', 'ms', 'pct', 'percent', 'percentage',
+    'rate', 'ratio', 'score', 'size', 'total',
+})
+_KNOWN_ABSTRACT_FACTS = frozenset({"no data", "ok", "completed", "see details", "tbd", "n/a", "done"})
+
+
+def _is_floatable(token: str) -> bool:
+    """True if *token* parses as a float. Helper (not an inline ``except: pass``)
+    so the loud-fallback lint (``test_loud_fallback_no_new_silent_except``) sees
+    a handled outcome, while preserving exact ``float()`` acceptance semantics."""
+    try:
+        float(token)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _fact_is_concrete_anchored(fact: Any) -> bool:
+    """Faithful mirror of ``test_law4_lint._is_concrete_anchored`` (LAW 4)."""
+    if not isinstance(fact, str):
+        return False
+    stripped = fact.strip()
+    if not stripped:
+        return False
+    if stripped.lower() in _KNOWN_ABSTRACT_FACTS:
+        return False
+    lower = stripped.lower()
+    for verb in _ANALYTICAL_VERBS:
+        if re.search(rf"\b{re.escape(verb)}\b", lower):
+            return True
+    tokens = stripped.split()
+    if not tokens:
+        return False
+    terminal = tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
+    if terminal in _CONCRETE_NOUN_ANCHORS:
+        return True
+    # Anchor can sit before a trailing parenthetical — strip and recheck.
+    stripped_paren = re.sub(r"\s*\([^)]*\)\s*$", "", stripped).strip()
+    if stripped_paren != stripped:
+        tail_tokens = stripped_paren.split()
+        if tail_tokens:
+            tail_terminal = tail_tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
+            if tail_terminal in _CONCRETE_NOUN_ANCHORS:
+                return True
+    # Measurement form: "<label> <suffix> <numeric>" — e.g. "health score 75".
+    if len(tokens) >= 2 and _is_floatable(tokens[-1]):
+        penultimate = tokens[-2].lower().rstrip(",.;:!?)")
+        if penultimate in _MEASUREMENT_SUFFIXES:
+            return True
+    # Long sentence with non-numeric lead — likely a verdict (self-anchors).
+    first = tokens[0]
+    if len(tokens) > 4 and not first[:1].isdigit() and first != "{X}":
+        return True
+    return False
+
+
+def _fact_is_abstract(fact: Any) -> bool:
+    """True iff *fact* FAILS LAW 4 (would be flagged by the lint)."""
+    return not _fact_is_concrete_anchored(fact)
+
+
+@agent_opt_detector(task_id="abstract-fact", confidence_basis=CONFIDENCE_STRUCTURAL)
+def detect_abstract_fact(envelopes: Iterable[tuple[str, dict]]) -> list[dict[str, Any]]:
+    """Flag ``agent_contract.facts`` whose terminal isn't concrete-noun-anchored (LAW 4)."""
+    out: list[dict[str, Any]] = []
+    for label, env in envelopes:
+        if not isinstance(env, dict):
+            continue
+        ac = env.get("agent_contract")
+        facts = ac.get("facts") if isinstance(ac, dict) else None
+        for fact in facts or []:
+            if _fact_is_abstract(fact):
+                out.append(
+                    _finding(
+                        task_id="abstract-fact",
+                        detected_way="abstract-fact",
+                        subject=label,
+                        subject_kind="command",
+                        confidence="medium",
+                        confidence_basis=CONFIDENCE_STRUCTURAL,
+                        reason=f"{label} agent_contract fact {fact!r} is not concrete-noun-anchored (LAW 4)",
+                        evidence={"fact": fact},
+                    )
+                )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Task 7: parameter-name-drift (Pattern 3b — cross-MCP param-name divergence)
+# ---------------------------------------------------------------------------
+def _legacy_param_map() -> dict[str, str]:
+    """{legacy_declared_name -> canonical} derived from the _PARAM_ALIASES table."""
+    from roam.mcp_server import _PARAM_ALIASES
+
+    legacy: dict[str, str] = {}
+    for _canon, alias_map in _PARAM_ALIASES.items():
+        for declared, target in alias_map.items():
+            if declared != target:
+                legacy[declared] = target
+    return legacy
+
+
+def discover_tool_params() -> list[tuple[str, tuple[str, ...]]]:
+    """AST-discover ``(tool_name, declared_param_names)`` for every @_tool wrapper.
+
+    Mirrors ``tests/test_mcp_param_names.py::_discover_tool_wrappers`` — runtime
+    signature introspection is unreliable after decoration, so this parses the
+    server source instead.
+    """
+    import ast
+    import inspect
+
+    from roam import mcp_server
+
+    src_path = inspect.getsourcefile(mcp_server)
+    if not src_path:
+        return []
+    with open(src_path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        tool_name = None
+        for dec in node.decorator_list:
+            func = dec.func if isinstance(dec, ast.Call) else dec
+            dname = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if dname != "_tool":
+                continue
+            if isinstance(dec, ast.Call):
+                for kw in dec.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                        tool_name = kw.value.value
+            break
+        if tool_name is None:
+            continue
+        params = tuple(a.arg for a in node.args.args if a.arg not in ("self", "cls"))
+        out.append((tool_name, params))
+    return out
+
+
+@agent_opt_detector(task_id="parameter-name-drift", confidence_basis=CONFIDENCE_STRUCTURAL)
+def detect_parameter_name_drift(
+    tool_params: Iterable[tuple[str, tuple[str, ...]]],
+    legacy_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Flag MCP wrappers that declare a legacy alias as their parameter name.
+
+    ``legacy_map`` defaults to the live ``_PARAM_ALIASES``-derived map. A
+    canonical-named wrapper produces nothing — the existing lint keeps the
+    surface clean, so this is the agent-facing regression guard.
+    """
+    lm = legacy_map if legacy_map is not None else _legacy_param_map()
+    out: list[dict[str, Any]] = []
+    for tool, params in tool_params:
+        for p in params:
+            canon = lm.get(p)
+            if canon and canon != p:
+                out.append(
+                    _finding(
+                        task_id="parameter-name-drift",
+                        detected_way="legacy-param-name",
+                        subject=f"{tool}.{p}",
+                        subject_kind="tool",
+                        # Advisory, not a break: existing callers are already
+                        # normalized by the alias table (and some legacy names
+                        # are grandfathered by the lint). `--confidence high`
+                        # filters these out; the value is the canonical-name
+                        # inventory, not a hard gate.
+                        confidence="low",
+                        confidence_basis=CONFIDENCE_STRUCTURAL,
+                        reason=f"MCP tool {tool} declares non-canonical param '{p}'; canonical is '{canon}' — callers are normalized via _PARAM_ALIASES, but new wrappers should declare '{canon}' (Pattern 3b)",
+                        evidence={"tool": tool, "param": p, "canonical": canon},
+                    )
+                )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Signal-source harvesters (reuse roam's OWN static surfaces, never re-run a
 # detector — Pattern 3)
 # ---------------------------------------------------------------------------
@@ -490,8 +801,17 @@ _DETECTOR_FN_BY_TASK = {
     "tool-description-declarative": "detect_declarative_tool_description",
     "weak-verdict": "detect_weak_verdict",
     "missing-next-command": "detect_missing_next_command",
+    "silent-degraded-state": "detect_silent_degraded_state",
+    "large-envelope-no-handle": "detect_large_envelope_no_handle",
+    "abstract-fact": "detect_abstract_fact",
+    "parameter-name-drift": "detect_parameter_name_drift",
 }
-_ENVELOPE_TASKS = frozenset({"weak-verdict", "missing-next-command"})
+# Tasks whose source is a harvested `roam --json` envelope corpus.
+_ENVELOPE_TASKS = frozenset(
+    {"weak-verdict", "missing-next-command", "silent-degraded-state", "large-envelope-no-handle", "abstract-fact"}
+)
+# Task whose source is the MCP wrapper parameter surface (AST-discovered).
+_PARAM_TASKS = frozenset({"parameter-name-drift"})
 
 
 def run_agent_opt(
@@ -502,6 +822,7 @@ def run_agent_opt(
     commands: list[tuple[str, list[str]]] | None = None,
     envelopes: list[tuple[str, dict]] | None = None,
     tool_descriptions: dict[str, str] | None = None,
+    tool_params: list[tuple[str, tuple[str, ...]]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run the selected agent-opt detectors and return ``(findings, meta)``.
 
@@ -566,6 +887,38 @@ def run_agent_opt(
             except Exception as exc:  # noqa: BLE001
                 failed.append({"detector": "detect_missing_next_command", "error": f"{type(exc).__name__}: {exc}"})
                 partial = True
+        if "silent-degraded-state" in env_tasks:
+            try:
+                findings.extend(detect_silent_degraded_state(harvested))
+                executed += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append({"detector": "detect_silent_degraded_state", "error": f"{type(exc).__name__}: {exc}"})
+                partial = True
+        if "large-envelope-no-handle" in env_tasks:
+            try:
+                findings.extend(detect_large_envelope_no_handle(harvested))
+                executed += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append({"detector": "detect_large_envelope_no_handle", "error": f"{type(exc).__name__}: {exc}"})
+                partial = True
+        if "abstract-fact" in env_tasks:
+            try:
+                findings.extend(detect_abstract_fact(harvested))
+                executed += 1
+            except Exception as exc:  # noqa: BLE001
+                failed.append({"detector": "detect_abstract_fact", "error": f"{type(exc).__name__}: {exc}"})
+                partial = True
+
+    # --- param-tier (MCP wrapper parameter surface, AST-discovered) ---
+    if active & _PARAM_TASKS:
+        try:
+            tps = tool_params if tool_params is not None else discover_tool_params()
+            sources["tool_params_scanned"] = len(tps)
+            findings.extend(detect_parameter_name_drift(tps))
+            executed += 1
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"detector": "detect_parameter_name_drift", "error": f"{type(exc).__name__}: {exc}"})
+            partial = True
 
     if failed:
         partial = True
