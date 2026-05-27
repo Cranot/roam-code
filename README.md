@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>243 commands · 230 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>244 commands · 231 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -155,7 +155,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~238 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **243 commands (236 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~239 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **244 commands (237 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -170,7 +170,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 236)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 237)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -286,7 +286,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 230)</strong></summary>
+<summary><strong>MCP tool list (all 231)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -339,6 +339,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_closure` | Minimal set of changes needed for rename/delete/modify (exact files + lines). |
 | `roam_clusters` | Show Louvain code clusters and directory mismatches. Returns per-cluster size, cohesion, conductance, modularity Q, mega-cluster sub-group breakdowns, and inter-cluster coupling. Different from ``roam_layers`` (dependency-layer violations) -- this groups by community detection, not by topological depth. |
 | `roam_codeowners` | CODEOWNERS coverage, ownership distribution, unowned files, drift detection. |
+| `roam_commands` | List the repo's own runnable build/test/lint commands, classified by kind/scope/cost with evidence. |
 | `roam_compare` | Diff two roam indices structurally: reports symbols added/removed/moved, per-file complexity deltas above a threshold, language counts, and a one-line health verdict (improved / regressed / sideways). Different from ``roam_graph_diff`` (commit-range graph delta from one index) -- this is the cross-index structural delta for release-vs-release comparisons. |
 | `roam_compatibility` | Detect outbound surface regressions vs a baseline snapshot. Closed-enum verdicts: no regressions / surface additions / surface drift / breaking changes. Compares commands, flags, envelope summary fields, MCP tools, and preset counts. Capture the baseline via CLI: roam compatibility --write-baseline PATH. |
 | `roam_complete` | Prefix completion for symbols / file paths / commands. Faster than search; returns just names. |

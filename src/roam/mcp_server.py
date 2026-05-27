@@ -9776,6 +9776,40 @@ def observability_opt(
 
 
 @_tool(
+    name="roam_commands",
+    description="List the repo's own runnable build/test/lint commands, classified by kind/scope/cost with evidence.",
+)
+def commands_tool(kind: str = "", scope: str = "", safe_only: bool = False, root: str = ".") -> dict:
+    """List the repo's runnable command graph — the build/test/lint commands it exposes.
+
+    WHEN TO USE: Call this BEFORE guessing how to build/test/lint a repo. It
+    returns the ACTUAL commands (`pnpm test` vs `npm run test` vs `pytest`), each
+    with kind / scope / cost / confidence and the EVIDENCE that proves it
+    (`package.json:scripts.test`, `vitest.config.ts`, ...). Powers verification
+    contracts and the agent-change proof bundle — agents stop guessing.
+
+    Parameters
+    ----------
+    kind:
+        Filter to one kind: test / typecheck / lint / build / run / other.
+    scope:
+        Filter to repo / package / file.
+    safe_only:
+        Only commands marked safe to auto-run.
+
+    Returns: classified, evidence-backed runnable commands for the repo.
+    """
+    args = ["commands"]
+    if kind:
+        args.extend(["--kind", kind])
+    if scope:
+        args.extend(["--scope", scope])
+    if safe_only:
+        args.append("--safe-only")
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_dark_matter",
     description="File pairs that co-change without structural links (hidden coupling).",
 )
