@@ -1,0 +1,4 @@
+.venv-agent/
+agent_compare_*.log
+agent_compare_focus.log
+agent_compare_wide.log

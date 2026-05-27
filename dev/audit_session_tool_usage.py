@@ -78,6 +78,44 @@ def _classify_bash(cmd: str) -> str:
     return f"other-{first}" if first else "other"
 
 
+# Code-relevance classification ---------------------------------------------
+
+
+def _is_code_relevant(name: str, inp: dict) -> bool:
+    """Whether a tool call is in the surface roam_* could substitute for.
+
+    Code-relevant = symbol/code-shaped queries where roam_* tools are
+    designed to win. Excludes WebSearch/WebFetch (external research),
+    TodoWrite, Glob (filesystem discovery), Write/Edit (production),
+    Bash for non-grep verbs, and Read of non-code files.
+
+    Use the code-relevant ratio when grading sessions whose dominant
+    work is code-comprehension. The whole-session ratio dilutes the
+    signal when research/design dominates the call mix.
+    """
+    if _is_roam_mcp(name):
+        return True
+    if name == "Grep":
+        pattern = inp.get("pattern") or ""
+        if not pattern:
+            return False
+        if any(c in pattern for c in r".*+?[](){}^$|\\"):
+            return False
+        return True
+    if name == "Bash":
+        cmd = inp.get("command") or ""
+        return _classify_bash(cmd) == "grep-shell"
+    if name == "Read":
+        path = inp.get("file_path") or ""
+        code_exts = (
+            ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs",
+            ".java", ".kt", ".rb", ".cpp", ".c", ".cs", ".php",
+            ".scala", ".swift",
+        )
+        return any(path.endswith(ext) for ext in code_exts)
+    return False
+
+
 # Project-dir → transcripts-dir mapping --------------------------------------
 
 
@@ -120,6 +158,9 @@ def audit_transcripts(paths: list[str]) -> dict:
     per_file: dict[str, int] = {}
     read_targets = collections.Counter()
 
+    code_relevant_total = 0
+    code_relevant_roam = 0
+
     for tp in paths:
         per = 0
         for name, inp in _iter_tool_uses(tp):
@@ -127,6 +168,10 @@ def audit_transcripts(paths: list[str]) -> dict:
             per += 1
             if _is_roam_mcp(name):
                 roam[name] += 1
+            if _is_code_relevant(name, inp):
+                code_relevant_total += 1
+                if _is_roam_mcp(name):
+                    code_relevant_roam += 1
             if name == "Bash":
                 cmd = inp.get("command") or ""
                 bash_classes[_classify_bash(cmd)] += 1
@@ -139,12 +184,19 @@ def audit_transcripts(paths: list[str]) -> dict:
     total_calls = sum(total.values())
     roam_calls = sum(roam.values())
     dogfood_ratio = (roam_calls / total_calls) if total_calls else 0.0
+    code_relevant_ratio = (
+        (code_relevant_roam / code_relevant_total) if code_relevant_total else 0.0
+    )
     return {
         "transcripts": [os.path.basename(p) for p in paths],
         "per_transcript_calls": per_file,
         "total_calls": total_calls,
         "roam_calls": roam_calls,
         "dogfood_ratio": round(dogfood_ratio, 4),
+        "code_relevant_total": code_relevant_total,
+        "code_relevant_roam": code_relevant_roam,
+        "code_relevant_ratio": round(code_relevant_ratio, 4),
+        "code_relevant_miss": code_relevant_total - code_relevant_roam,
         "tools_by_count": total.most_common(40),
         "roam_tools_by_count": roam.most_common(),
         "bash_classes_by_count": bash_classes.most_common(),
@@ -169,6 +221,12 @@ def _render_human(report: dict) -> str:
         f"TOTAL tool calls: {report['total_calls']}"
         f" | roam_* tool calls: {report['roam_calls']}"
         f" | dogfood ratio: {report['dogfood_ratio'] * 100:.1f}%"
+    )
+    lines.append(
+        f"CODE-RELEVANT calls: {report['code_relevant_total']}"
+        f" | roam: {report['code_relevant_roam']}"
+        f" | code-relevant ratio: {report['code_relevant_ratio'] * 100:.1f}%"
+        f" | misses (Grep/Bash:grep/code-Reads not on roam): {report['code_relevant_miss']}"
     )
     lines.append("")
     lines.append("VERDICT: " + _verdict_string(report))
@@ -225,13 +283,83 @@ def _verdict_string(report: dict) -> str:
 # Entry point ----------------------------------------------------------------
 
 
+def _all_project_dirs() -> list[str]:
+    """Every Claude Code project's transcripts directory under ~/.claude/projects/.
+
+    Each subdirectory there corresponds to one repo's slug
+    (e.g. ``-home-alice-projects-my-repo``). Returns sorted absolute paths.
+    """
+    base = os.path.expanduser("~/.claude/projects")
+    if not os.path.isdir(base):
+        return []
+    return sorted(
+        os.path.join(base, name)
+        for name in os.listdir(base)
+        if os.path.isdir(os.path.join(base, name))
+    )
+
+
+def _render_cross_project(reports: list[tuple[str, dict]]) -> str:
+    """Per-project comparison table — both whole-session and code-relevant ratios."""
+    lines = []
+    lines.append("=" * 80)
+    lines.append("Cross-project roam dogfood audit")
+    lines.append("=" * 80)
+    header = f"{'project':<48} {'calls':>6} {'roam%':>6} {'cr%':>6} {'miss':>5}"
+    lines.append(header)
+    lines.append("-" * 80)
+    for slug, report in reports:
+        if not report["total_calls"]:
+            continue
+        cr = report.get("code_relevant_ratio", 0.0) * 100
+        wr = report["dogfood_ratio"] * 100
+        miss = report.get("code_relevant_miss", 0)
+        lines.append(
+            f"{slug:<48} {report['total_calls']:>6} {wr:>5.1f}% {cr:>5.1f}% {miss:>5}"
+        )
+    lines.append("")
+    lines.append(
+        "Legend: roam% = whole-session ratio (diluted by non-substitutable calls);"
+        " cr% = code-relevant ratio (only Grep/Bash:grep/code-Reads/roam_*);"
+        " miss = code-relevant calls that did NOT go to roam_*."
+    )
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--project-dir", default=os.getcwd())
     parser.add_argument("--top", type=int, default=6)
     parser.add_argument("--transcripts-dir", default=None)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Scan every project dir under ~/.claude/projects/ and report per-project ratios.",
+    )
     args = parser.parse_args(argv)
+
+    if args.all_projects:
+        reports: list[tuple[str, dict]] = []
+        for pdir in _all_project_dirs():
+            paths = sorted(
+                glob.glob(os.path.join(pdir, "*.jsonl")),
+                key=os.path.getmtime,
+                reverse=True,
+            )[: args.top]
+            if not paths:
+                continue
+            slug = os.path.basename(pdir).lstrip("-")
+            reports.append((slug, audit_transcripts(paths)))
+        if not reports:
+            sys.stderr.write("No transcripts found under ~/.claude/projects/\n")
+            return 2
+        if args.json:
+            payload = {slug: rep for slug, rep in reports}
+            print(json.dumps(payload, indent=2, default=str))
+        else:
+            print(_render_cross_project(reports))
+        return 0
 
     tdir = args.transcripts_dir or _transcripts_dir_for(os.path.abspath(args.project_dir))
     paths = sorted(
