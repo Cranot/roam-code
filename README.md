@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>241 commands · 228 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>242 commands · 229 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -155,7 +155,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~236 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **241 commands (234 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~237 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **242 commands (235 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -170,7 +170,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 234)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 235)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -286,7 +286,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 228)</strong></summary>
+<summary><strong>MCP tool list (all 229)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -299,6 +299,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_affected_tests` | List the tests you actually need to run after editing a symbol or file. Use when user asks 'which tests do I run?', 'what tests cover X?', or after Edit/Write. Walks reverse-dependencies with hop distance — closer hops run first. For a full pre-commit check (blast radius + fitness + tests), use roam_prepare_change. |
 | `roam_agent_context` | Extract a single agent's partition from the full agent plan: write scope, read-only dependencies, interface contracts, coordination instructions, and key symbols. Different from ``roam_agent_plan`` (full multi-agent view) and ``roam_orchestrate`` (operational dispatch with merge order) -- this is the focused per-worker packet for one agent. |
 | `roam_agent_export` | Generate AI agent context file (CLAUDE.md/AGENTS.md/.cursorrules) from index. |
+| `roam_agent_opt` | Detect weak agent-contract shape in roam's tool descriptions and envelopes and recommend the stronger shape. |
 | `roam_agent_plan` | Decompose partitions into dependency-ordered multi-agent tasks: per-task write scope, read-only dependencies, interface contracts, phase schedule, and merge sequencing. Supports ``plain`` / ``json`` / ``claude-teams`` output formats. Different from ``roam_partition`` (raw analytical manifest) and ``roam_orchestrate`` (operational dispatch) -- this is the dependency-ordered phase schedule. |
 | `roam_agent_score` | Aggregate runs from the local ledger and score each agent on a 0..100 composite (run completion, gate adherence, preflight compliance, blast accuracy, replay survival). Empty state (no runs / no matching runs) returns a clean envelope with ``state: "no_data"`` -- never empty stdout, never a crash. Different from ``roam_runs_verify`` (HMAC tamper-detection) -- this is the per-agent quality score across runs. |
 | `roam_ai_ratio` | Estimate AI-generated code percentage from git commit heuristics. |

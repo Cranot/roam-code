@@ -68,6 +68,7 @@ from roam.cli import _COMMANDS  # noqa: E402
 _BUDGET_EXEMPT: frozenset[str] = frozenset(
     {
         # --- Static / fixed-shape responses ----------------------------------
+        "agent-opt",  # findings bounded by --limit; scans roam's own ~229-tool surface, not a scaling codebase
         "version",  # single string (CLI version)
         "exit-codes",  # ~50-line enum
         "surface",  # registry index (already capped by inventory)

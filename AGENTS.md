@@ -5,11 +5,11 @@
 <!-- BEGIN auto-count:Codex-headline -->
 roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **241 commands · 228 MCP tools (16 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
+a local SQLite DB. **242 commands · 229 MCP tools (16 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts (AST-derived, env-independent): `command_count: 241 · canonical_count: 234 · category_count: 7 · mcp tools registered: 228 · mcp tools in core preset: 16`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
+Authoritative counts (AST-derived, env-independent): `command_count: 242 · canonical_count: 235 · category_count: 7 · mcp tools registered: 229 · mcp tools in core preset: 16`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -151,8 +151,8 @@ roam health
 
 ```
 src/roam/
-  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 241 command names (234 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (16 tools in core preset; 228 in `full`) + `roam mcp` CLI command
+  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 242 command names (235 canonical + 7 aliases).
+  mcp_server.py       # FastMCP server (16 tools in core preset; 229 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -650,5 +650,5 @@ Index-aware text search (added on top of grep / refs):
 - `roam delete-check [--source working|staged|pr|head] [--ci]` — gates the diff on surviving references; exits 5 on BREAK-RISK with `--ci`.
 - `roam history-grep <pattern> [--polarity]` — git pickaxe (-S/-G) with author/date and introduced/removed annotation.
 
-Run `roam --help` for the 5-verb core; `roam --help-all` for all 241 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
+Run `roam --help` for the 5-verb core; `roam --help-all` for all 242 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).

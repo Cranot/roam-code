@@ -62,6 +62,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "retrieve",
         "context",
         "understand",
+        # agent-opt analyzes roam's OWN tool descriptions + envelopes; pure
+        # read-side surface, no edits (the optional --persist writes only to
+        # the local findings registry, same risk profile as `findings`).
+        "agent-opt",
         "describe",
         "impact",
         "fan",

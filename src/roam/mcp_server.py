@@ -9682,6 +9682,49 @@ def algo(task: str = "", confidence: str = "", root: str = ".") -> dict:
 
 
 @_tool(
+    name="roam_agent_opt",
+    description="Detect weak agent-contract shape in roam's tool descriptions and envelopes and recommend the stronger shape.",
+)
+def agent_opt(only: str = "", scope: str = "full", confidence: str = "", profile: str = "balanced", root: str = ".") -> dict:
+    """Optimize roam's own agent-facing contract surface.
+
+    WHEN TO USE: Call this to audit roam's MCP tool descriptions and
+    `roam --json` envelopes for agi-in-md LAW violations — declarative
+    (non-imperative) tool descriptions (LAW 2/11), summary verdicts that don't
+    work standalone (LAW 6), and findings with missing or non-runnable
+    next_commands (CONSTRAINT 12). Returns one finding per violation with the
+    rank-1 compliant shape to adopt. The substrate that protects the envelope
+    contract as new commands land.
+
+    Parameters
+    ----------
+    only:
+        Restrict to a task id: "tool-description-declarative", "weak-verdict",
+        or "missing-next-command". Empty means all tasks.
+    scope:
+        Tool-description scope: "core" (core preset) or "full" (default).
+    confidence:
+        Minimum confidence floor: "high", "medium", or "low".
+    profile:
+        "balanced" (default), "strict" (drops heuristic-tier findings), or
+        "aggressive".
+
+    Returns: findings grouped by task, each with the detected weak shape vs the
+    recommended LAW-compliant shape.
+    """
+    args = ["agent-opt"]
+    if only:
+        args.extend(["--only", only])
+    if scope:
+        args.extend(["--scope", scope])
+    if confidence:
+        args.extend(["--confidence", confidence])
+    if profile:
+        args.extend(["--profile", profile])
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_dark_matter",
     description="File pairs that co-change without structural links (hidden coupling).",
 )

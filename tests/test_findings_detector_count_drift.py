@@ -56,7 +56,7 @@ COMMANDS_DIR = REPO_ROOT / "src" / "roam" / "commands"
 # Pinned live count. CLAUDE.md currently says "28 detectors persist
 # findings" as of 2026-05-18. Bump this AND the docs together when a
 # new detector module starts calling ``emit_finding``.
-LIVE_COUNT = 28
+LIVE_COUNT = 29
 
 # The canonical claim string in CLAUDE.md spans a line break:
 # ``**28\ndetectors persist findings**``. We scope the canonical

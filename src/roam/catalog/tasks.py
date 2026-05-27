@@ -799,6 +799,101 @@ CATALOG: dict[str, dict] = {
             },
         ],
     },
+    # -------------------------------------------------------------------
+    # agent-opt family (super-optimizer P1). These tasks are NOT algorithm
+    # detectors run by ``roam math`` — they classify weak vs strong roam
+    # ENVELOPE / TOOL-DESCRIPTION shape per the agi-in-md LAWs (AGENTS.md
+    # § Quality discipline). Their detectors live in ``src/roam/agent_opt.py``
+    # (own registry — they read MCP descriptions / CLI envelopes, not the DB,
+    # so they violate the ``_DETECTOR_REGISTRY`` "(conn) -> [] on empty corpus"
+    # contract and stay out of it). The ``family`` tag is the surface
+    # selector: ``roam agent-opt --list-tasks`` filters CATALOG by it, and
+    # the math invariants (``_MATH_DETECTORS`` <-> CATALOG) are family-scoped
+    # to ``family != "agent-opt"``. ``time``/``space`` are N/A for a
+    # contract-shape task; the rank carries the weak/strong signal.
+    "tool-description-declarative": {
+        "name": "MCP tool-description voice",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "imperative-identity",
+                "name": "Imperative or identity-first description",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Open with a verb or an identity noun (LAW 2/11): "
+                    "'Detect ...', 'Score ...', 'Pre-change safety gate ...'. "
+                    "Identity activates the right consumption pattern."
+                ),
+            },
+            {
+                "id": "declarative-opening",
+                "name": "Declarative description",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Opens with This/Returns/Provides/Shows/Displays — describes rather than directs.",
+            },
+        ],
+    },
+    "weak-verdict": {
+        "name": "Standalone summary verdict",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "standalone-verdict",
+                "name": "Self-contained verdict (count + concrete noun)",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Make the verdict work without any other field (LAW 6): "
+                    "'Healthy 82/100 with 3 cycles' — an agent that reads only "
+                    "the verdict still acts correctly."
+                ),
+            },
+            {
+                "id": "non-standalone-verdict",
+                "name": "Non-standalone verdict",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Empty, 'see details', 'completed'/'done'/'ok', ends in ':', or < 4 words with no number.",
+            },
+        ],
+    },
+    "missing-next-command": {
+        "name": "Executable next command",
+        "category": "agent-contract",
+        "kind": "envelope-contract",
+        "family": "agent-opt",
+        "ways": [
+            {
+                "id": "executable-next-command",
+                "name": "Literal copy-paste `roam <cmd>` follow-up",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Every next_commands entry is a runnable 'roam <subcommand>' "
+                    "that resolves to a real command (CONSTRAINT 12)."
+                ),
+            },
+            {
+                "id": "no-next-command",
+                "name": "Missing or non-executable next command",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "Findings present but next_commands empty, or an entry that isn't a runnable 'roam <cmd>'.",
+            },
+        ],
+    },
 }
 
 
