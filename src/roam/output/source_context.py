@@ -1,7 +1,7 @@
 """Shared source-context primitives — "code AT a location, with a staleness
 guard."
 
-Why this module exists (2026-06-02 dogfood): the dominant fallback pattern
+Why this module exists (dogfood): the dominant fallback pattern
 in production telemetry is that roam tools return a LOCATION (file:line) and
 the agent then re-greps / re-Reads to see the actual code. We fixed this for
 `roam search` (body_preview) and `roam uses` (call_line) — but with DUPLICATED

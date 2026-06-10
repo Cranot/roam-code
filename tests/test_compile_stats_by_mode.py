@@ -1,4 +1,4 @@
-"""W5 (2026-06-02) — tests for the new ``--by-mode`` flag on
+"""W5 — tests for the new ``--by-mode`` flag on
 ``roam compile-stats``.
 
 The flag groups telemetry rows by ``agent_mode`` (compile/roam/vanilla/

@@ -15,6 +15,13 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands import cmd_bench
+from tests._helpers.repo_root import repo_root
+
+# The benchmark oracles live under the gitignored `internal/` and are absent in
+# a clean public checkout / CI; skip oracle-importing tests when they aren't
+# present so the public suite stays green without them.
+_HAS_INTERNAL = (repo_root() / "internal" / "benchmarks" / "oracle_fix_bug.py").exists()
+_requires_internal = pytest.mark.skipif(not _HAS_INTERNAL, reason="internal/ benchmark oracles absent")
 
 # ----- artifact extraction helpers -----
 
@@ -68,6 +75,7 @@ def test_classify_task_shape_other() -> None:
 # ----- oracle dispatch -----
 
 
+@_requires_internal
 def test_ground_truth_score_pytest_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When shape=write_pytest and a test block exists, oracle_pytest is called."""
     calls: list[dict] = []
@@ -88,6 +96,7 @@ def test_ground_truth_score_pytest_dispatch(monkeypatch: pytest.MonkeyPatch) -> 
     assert "def test_foo" in calls[0]["source"]
 
 
+@_requires_internal
 def test_ground_truth_score_pytest_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run_produced_test(source, project_root, *, timeout=30):  # noqa: ANN001
         return {"exit_code": 1, "stdout_tail": "", "stderr_tail": "", "duration_ms": 1, "timed_out": False}
@@ -102,6 +111,7 @@ def test_ground_truth_score_pytest_fail(monkeypatch: pytest.MonkeyPatch) -> None
     assert score == "0"
 
 
+@_requires_internal
 def test_ground_truth_score_fix_bug_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When shape=stack_trace_fix and a diff exists, oracle_fix_bug is called."""
     calls: list[dict] = []
@@ -161,6 +171,7 @@ def test_bench_compile_help_shows_ground_truth_flag() -> None:
     assert "--ground-truth" in res.output
 
 
+@_requires_internal
 def test_bench_compile_default_off_no_oracle_calls(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -223,6 +234,7 @@ def test_bench_compile_default_off_no_oracle_calls(
     assert bug_calls == []
 
 
+@_requires_internal
 def test_bench_compile_ground_truth_records_score(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -339,16 +351,8 @@ def test_bench_compile_ground_truth_unsupported_shape_empty_score(
 
 # ----- cwd-decoupling regression (SWE-bench readiness) -----
 
-# The benchmark oracles live under the gitignored `internal/` and are absent in
-# a clean public checkout / CI; skip these when they aren't present so the
-# public suite stays green without them. Use the repo_root helper (W588) rather
-# than a fragile Path(__file__) walk.
-from tests._helpers.repo_root import repo_root  # noqa: E402
 
-_HAS_INTERNAL = (repo_root() / "internal" / "benchmarks" / "oracle_fix_bug.py").exists()
-
-
-@pytest.mark.skipif(not _HAS_INTERNAL, reason="internal/ benchmark oracles absent")
+@_requires_internal
 def test_ensure_internal_importable_true() -> None:
     """The dev-repo root is derivable from roam.__file__ so internal/ resolves."""
     assert cmd_bench._ensure_internal_importable() is True

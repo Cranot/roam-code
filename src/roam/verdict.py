@@ -1,6 +1,6 @@
 """verdict — closed-enum verdict engine for AgentChangeProofBundle.
 
-Per the proof-bundle schema (`internal/planning/PROOF-BUNDLE-SCHEMA-2026-05-27.md`):
+Per the proof-bundle schema:
 
 Closed verdict enum, every value machine-reason-backed:
 

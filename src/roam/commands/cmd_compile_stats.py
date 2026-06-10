@@ -224,7 +224,7 @@ def _top_cache_misses(rows: list[dict], limit: int = 10) -> list[dict]:
     "--by-mode",
     is_flag=True,
     default=False,
-    help="W5 (2026-06-02) — group rows by agent_mode "
+    help="W5 — group rows by agent_mode "
     "(compile/roam/vanilla/unknown). Rows that pre-date the "
     "agent_mode field count as 'unknown'.",
 )
@@ -273,7 +273,7 @@ def compile_stats(
     # (one-off; not worth caching).
     if top_misses and rows:
         summary["top_cache_misses"] = _top_cache_misses(rows)
-    # W5 (2026-06-02) — by-mode breakdown. Joins on the `agent_mode` field
+    # W5 — by-mode breakdown. Joins on the `agent_mode` field
     # added to telemetry rows when ROAM_AGENT_MODE env var is set at compile
     # time (the host platform sets this per call). Pre-W5 rows lack the field,
     # so they bucket as 'unknown' — useful baseline.

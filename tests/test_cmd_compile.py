@@ -1,8 +1,8 @@
 """Tests for `roam compile` — freeform task → structured envelope.
 
 Empirically validated 2026-05-28 (Opus 4.8 spike): facts envelope
-delivers 99% of vanilla quality at 54% of cost. See
-internal/planning/FINAL-EVALUATION-2026-05-28.md.
+delivers 99% of vanilla quality at 54% of cost.
+
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def test_compile_json_mode_basic(runner):
 def test_compile_structural_routes_to_full(runner):
     """structural_* procedures route to `full` OR `l1_probe`.
 
-    W33 (2026-05-30): structural tasks with named paths now prefer the
+    W33: structural tasks with named paths now prefer the
     l1_probe envelope when the probe returns procedure-specific facts
     (the agent gets the answer, not just metadata). Either is the right
     choice; the test accepts both since the index may not always have

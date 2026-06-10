@@ -1,8 +1,7 @@
 """proof_bundle — AgentChangeProofBundle v1 composer.
 
 Reads a legacy `pr-bundle` JSON (at `.roam/pr-bundles/<branch>.json`) and
-produces the AgentChangeProofBundle v1 dict per the schema spec at
-`internal/planning/PROOF-BUNDLE-SCHEMA-2026-05-27.md`.
+produces the AgentChangeProofBundle v1 dict per the schema spec.
 
 Wires together the three already-shipped modules:
   * command_graph (G2 — what CAN be run)

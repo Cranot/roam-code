@@ -22,8 +22,7 @@ Architecture-seal mapping:
   proof_bundle         →  what actually ran + verdict (evidence + verdict — cmd_pr_bundle)
 
 Per the pivot memo (`project_pivot_to_roam_guard`), this is the gap between
-the G2 command_graph and the AgentChangeProofBundle v1 schema. The schema
-spec lives at `internal/planning/PROOF-BUNDLE-SCHEMA-2026-05-27.md`.
+the G2 command_graph and the AgentChangeProofBundle v1 schema.
 """
 
 from __future__ import annotations

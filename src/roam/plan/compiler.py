@@ -83,7 +83,7 @@ _STRUCTURAL_DEAD_RE = re.compile(
     re.IGNORECASE,
 )
 _STRUCTURAL_CYCLE_RE = re.compile(
-    # W31 (2026-05-30): Phase A --explain smoke discovered "are there cycles
+    # W31: Phase A --explain smoke discovered "are there cycles
     # in X imports?" fell through to freeform_explore. Pattern was anchored on
     # "cycle.*import" (singular). Now accepts the plural and direct "cycles in".
     r"\b(cyclical|cycles?\s+in\b|cycles?.*import|import.*cycles?|"
@@ -97,7 +97,7 @@ _STRUCTURAL_COMPLEXITY_RE = re.compile(
     # v0.3 fix: dropped "worst-case complexity" — that intent (deep07) needs
     # source reading, not file_info. Let it fall through to freeform_explore
     # which wins on algorithm-source questions.
-    # W31 (2026-05-30): Phase A --explain smoke discovered "top N most complex
+    # W31: Phase A --explain smoke discovered "top N most complex
     # symbols in X" fell through. Added "most complex" / "top N complex".
     r"\b(god[\s-]?components?|cognitive complexity|complexity refactor|"
     r"most complex|top\s+\d+.*complex|too\s+complex|"
@@ -861,7 +861,7 @@ def _extract_symbol_defined_where(task: str) -> str | None:
         # plausible identifiers (`file`, `code`, `that`, `what`, ...).
         if sym.lower() in _W11_STOPWORDS:
             continue
-        # Concept-search guard (2026-06-05 dogfood): "find SQL injection risks",
+        # Concept-search guard (dogfood): "find SQL injection risks",
         # "find security issues", "find performance problems", "find memory
         # leaks" — a PLAIN English noun (not identifier-shaped: no `_`, no digit,
         # all-lower or all-upper) FOLLOWED BY MORE content words is a conceptual
@@ -6994,7 +6994,7 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
             "entry_points",
         }
     ),
-    # W46 (2026-06-02) — telemetry-driven skips using the ACTUAL labels
+    # W46 — telemetry-driven skips using the ACTUAL labels
     # in _L1_ALWAYS_ON_PROBES (grep_replication / import_audit / compare /
     # pickaxe / criterion / scope_lock / output_shape / conventions /
     # module_name / reachability / config / find_by_desc / why_slow /
@@ -7419,7 +7419,7 @@ def _apply_always_on_extenders(
     return _run_always_on_probes(runnable, task, named_paths, cwd, procedure, prefetched, head)
 
 
-# W42 (2026-06-02): total wall budget across all always_on probes per call.
+# W42: total wall budget across all always_on probes per call.
 # Past this, remaining probes are cancelled. Set generously so we only
 # truncate the long tail. Override via env for tuning.
 _W42_ALWAYS_ON_BUDGET_MS = int(os.environ.get("ROAM_ALWAYS_ON_BUDGET_MS", "2500"))
@@ -8070,7 +8070,7 @@ _ARTIFACT_POLICY = {
     # the probe fires; this policy is the FALLBACK when probe returned no
     # readable frames (file deleted, glob mismatch, etc.).
     "stack_trace_fix": "full",
-    # W11/W12/W13 (2026-06-02): probe data IS the answer (symbol list / top-N
+    # W11/W12/W13: probe data IS the answer (symbol list / top-N
     # ranking / hotspots). "facts" policy minimises envelope size so the agent
     # gets just the probe payload + recommended_first_command, not full
     # structural context. Without these entries, `_ARTIFACT_POLICY.get(p, "full")`
@@ -8129,7 +8129,7 @@ _L1_PROBE_ELIGIBLE = (
     # W181 — refactor_move added; W166 classifier returns it but L1
     # eligibility was missing, silently degrading the envelope.
     "refactor_move",
-    # W11/W12/W13 (2026-06-02) — three new probe families need L1 eligibility
+    # W11/W12/W13 — three new probe families need L1 eligibility
     # so that when their probes fire (and return non-None data), the artifact
     # is labelled `l1_probe` instead of `full`. Without this, the L1 fire-rate
     # KPI under-counted by 46 calls in 2 days. See W22 → compiler-health
@@ -8338,7 +8338,7 @@ def _maybe_append_compile_telemetry(
         "prefetched_keys": keys,
         "envelope_bytes": envelope_bytes,
         "compile_ms": round(compile_ms, 1),
-        # W5 (2026-06-02): stamp agent_mode from env so `compile-stats --by-mode`
+        # W5: stamp agent_mode from env so `compile-stats --by-mode`
         # populates. Host platforms set ROAM_AGENT_MODE in their compile exec env.
         # Rows pre-dating this edit lack the field; `--by-mode` buckets them
         # as 'unknown'.
@@ -8787,7 +8787,7 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     matched-task comparison: -24% turns, -23% cost, +0.6pp HIGHER
     quality, +31% score-per-dollar.
 
-    W33 (2026-05-30): the auto-selector now prefers `to_l1_probe_envelope`
+    W33: the auto-selector now prefers `to_l1_probe_envelope`
     when (a) procedure is structural/trace, (b) named_paths exist, and
     (c) the probe returned procedure-specific facts. This is the "give
     the answer, not the recipe" path — agent receives precomputed
@@ -8834,7 +8834,7 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
         or _REFACTOR_MOVE_RE.search(plan.task or "") is not None
         or _W196_LITERAL_RE.search(plan.task or "") is not None  # W196
         or _W201_IMPORT_RE.search(plan.task or "") is not None  # W201
-        # W11/W12/W13 (2026-06-02) — three new probe families are entirely
+        # W11/W12/W13 — three new probe families are entirely
         # probe-driven: the answer IS the probe result (symbol_definitions /
         # top_n_ranking / cli_verb_slow_diagnosis). Promote unconditionally
         # when the policy picked "facts" so the L1 envelope embeds the
@@ -9001,7 +9001,7 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
             "structural_complexity": ("complexity_metrics",),
             "structural_cycle": ("cycles", "cycle_count"),
             "trace_query": ("trace_spans",),
-            # W11/W12/W13 (2026-06-02) — procedure-specific probe keys so the
+            # W11/W12/W13 — procedure-specific probe keys so the
             # L1 envelope recognizes that probe data is present and avoids
             # falling back to "full". Without these, the existing
             # `any(k in pre for k in procedure_keys[procedure])` test
@@ -9195,7 +9195,7 @@ def route_for_plan(plan: "PlanV0", cwd: str | None = None, profile_name: str | N
 # Extract explicit file paths mentioned in the task text. Most real tasks
 # name the file(s) they're about — that's a free signal before search-semantic.
 _PATH_RE = re.compile(
-    # W32 (2026-05-30): trailing boundary used to be [$|\s|['"`):.,] which
+    # W32: trailing boundary used to be [$|\s|['"`):.,] which
     # DROPPED paths followed by ? ! ; ] } > etc. — the most common case
     # being natural questions like "what is src/roam/cli.py?" Every prior
     # compile A/B was polluted by this: the obvious path went missing and
@@ -9229,7 +9229,7 @@ _DIR_RE = re.compile(
 def _extract_file_paths(task: str) -> list[str]:
     """Pull file and directory paths from task text. Higher signal than search.
 
-    R10 (2026-05-29): also extracts directory paths like `src/roam/commands/`
+    R10: also extracts directory paths like `src/roam/commands/`
     that are scope anchors even without a specific filename. Empirically
     this cuts ~30% of search-semantic calls (the ones where the user
     referenced a directory but not a specific file inside it).
@@ -9594,7 +9594,7 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     """Hybrid: explicit path mentions first, then symbol-resolution cache,
     then `roam search-semantic` as the fallback.
 
-    R10 (2026-05-29): search-semantic adds tangential noise when the task
+    R10: search-semantic adds tangential noise when the task
     already names files explicitly — skip the subprocess in that case (saves
     ~200ms AND removes the noise).
 
@@ -9716,7 +9716,7 @@ def clear_plan_cache() -> None:
 def compile_plan(task: str, cwd: str | None = None) -> PlanV0:
     """The v0 task compiler. Zero model calls.
 
-    R10 (2026-05-29) speedups:
+    R10 speedups:
     - Skip `roam search-semantic` when explicit paths exist in task text
     - Skip `roam commands` for read-only procedures (structural/trace/freeform);
       only call it when the procedure produces an artifact that needs

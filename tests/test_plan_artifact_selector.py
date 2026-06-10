@@ -185,7 +185,7 @@ def test_select_artifact_structural_routes_to_full():
 def test_compile_for_artifact_returns_correct_schema():
     """compile_for_artifact returns (envelope, label) tuple.
 
-    W33 (2026-05-30): when probe fires for a structural task with a named
+    W33: when probe fires for a structural task with a named
     path, the selector now prefers `l1_probe` over `full` (it contains the
     precomputed answer, not just metadata). Either label is acceptable; the
     schema reflects which one was picked.

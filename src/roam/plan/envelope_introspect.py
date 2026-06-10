@@ -1,7 +1,7 @@
 """Canonical compile-envelope introspection — the single source of truth for
 "what is in this envelope / is it a good L1 result."
 
-Why this exists (2026-06-02 dogfood): THREE diagnostic commands
+Why this exists (dogfood): THREE diagnostic commands
 (compiler-corpus, dispatch-trace, and ad-hoc checks) independently re-derived
 "is this L1 / probe-empty / which families." `compiler-corpus` drifted into a
 real bug — it checked ``agent_contract.facts`` when the probe data lives in

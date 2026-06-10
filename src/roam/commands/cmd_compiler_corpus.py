@@ -112,7 +112,7 @@ def _compile_one(prompt: str, cwd: str | None) -> dict:
 
     # "Probe empty" heuristic — delegated to the canonical introspector so
     # this command can never re-drift into the agent_contract.facts vs
-    # prefetched_facts bug (2026-06-02 dogfood). An L1 envelope is empty when
+    # prefetched_facts bug (dogfood). An L1 envelope is empty when
     # it carries no SUBSTANTIVE probe families; non-L1 labels are never
     # misses (lower-signal by design).
     from roam.plan.envelope_introspect import introspect as _introspect

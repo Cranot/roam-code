@@ -1,4 +1,4 @@
-"""W1 (2026-06-09) — module-level describe recall.
+"""W1 — module-level describe recall.
 
 Telemetry: "explain the compiler architecture" / "what does the constitution
 package do" / "what are the public functions exported by X" leaked to

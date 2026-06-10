@@ -11,7 +11,7 @@ the agent can consume.
 
 Empirically validated 2026-05-28: FactsEnvelope strictly dominates vanilla
 on capable models (Opus 4.8) — 99% of vanilla's quality at 54% of
-vanilla's cost. See internal/planning/FINAL-EVALUATION-2026-05-28.md.
+vanilla's cost.
 
 Output formats: ``--json`` (default), text.
 

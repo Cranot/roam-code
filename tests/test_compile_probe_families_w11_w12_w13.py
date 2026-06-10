@@ -29,7 +29,7 @@ from roam.plan.compiler import (
 
 _W11_POSITIVE = [
     "where is _evaluate_mcp_mode_policy defined",
-    "find where useKiniseisBalance is",
+    "find where useLedgerBalance is",
     "where is compile_plan defined",
     "which file defines RoamPluginContext",
     "where is run_produced_test",
@@ -54,7 +54,7 @@ _W11_NEGATIVE = [
     "where is the bug in src/roam/cli.py",
     # generic English question — no concrete bareword
     "where is the documentation",
-    # W11.5 (2026-06-05 dogfood) — concept searches: a PLAIN noun followed by
+    # W11.5 (dogfood) — concept searches: a PLAIN noun followed by
     # more words is conceptual, NOT "find symbol X" (was extracting SQL/security
     # /performance/memory as bogus symbols → garbage prefetch).
     "find SQL injection risks",
@@ -315,7 +315,7 @@ def test_extractor_helpers_consistent_with_classifier() -> None:
         assert _is_cli_verb_why_slow(task), f"W13 helper missed {task!r}"
 
 
-# ---- cli-command file resolution (2026-06-05 dogfood) ----
+# ---- cli-command file resolution (dogfood) ----
 
 
 def test_resolve_cli_command_files():
