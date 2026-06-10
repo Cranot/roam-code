@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.5.1] — 2026-06-10
+
+### Fixed
+
+- **Documentation-hygiene patch over 13.5.** Scrubbed stale internal-note
+  remnants (dated session markers, private-doc path references, a
+  project-specific symbol name in one test prompt) from shipped sources and
+  tests; the `doc-hygiene` CI gate now passes. No functional changes.
+- **Public-checkout test portability.** The `bench-compile --ground-truth`
+  oracle tests now skip cleanly when the development-only benchmark oracles
+  are absent (they are not part of the distribution), so the suite is green
+  on a clean install.
+
 ## [13.5] — 2026-06-10
 
 ### Compiler coverage waves + the Claude Code adapter (2026-06-09/10)

@@ -76,6 +76,12 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.5.1] — 2026-06-10</h2>
+<h3>Fixed</h3>
+<ul>
+<li><strong>Documentation-hygiene patch over 13.5.</strong> Scrubbed stale internal-note remnants (dated session markers, private-doc path references, a project-specific symbol name in one test prompt) from shipped sources and tests; the <code>doc-hygiene</code> CI gate now passes. No functional changes.</li>
+<li><strong>Public-checkout test portability.</strong> The <code>bench-compile --ground-truth</code> oracle tests now skip cleanly when the development-only benchmark oracles are absent (they are not part of the distribution), so the suite is green on a clean install.</li>
+</ul>
 <h2>[13.5] — 2026-06-10</h2>
 <h3>Compiler coverage waves + the Claude Code adapter (2026-06-09/10)</h3>
 <h4>Added</h4>
