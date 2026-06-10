@@ -11,6 +11,7 @@ W1148 audit memo.
 
 from __future__ import annotations
 
+import json
 import stat
 import subprocess
 import sys
@@ -488,3 +489,292 @@ def status(ctx):
     for entry in hook_statuses:
         state = "installed" if entry["installed"] else ("present" if entry["file_exists"] else "missing")
         click.echo(f"  {entry['hook']:20s} {state}")
+
+
+# ---------------------------------------------------------------------------
+# Claude Code hook integration (W-CC-SETUP, 2026-06-10)
+# ---------------------------------------------------------------------------
+# Makes the compiler's prompt-time channel available to ANY Claude Code CLI
+# user out of the box: a UserPromptSubmit hook that runs `roam --json compile`
+# on each prompt and prints the envelope as injected context. Fail-open by
+# design — any error inside the hook prints nothing and exits 0, so a broken
+# roam install can never block the user's turn. Evidence basis: the Fable 5
+# A/B numbers (turns -83%) were measured on plain `claude -p` with exactly
+# this prefix-injection shape — no orchestration layer required.
+
+_CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
+_CLAUDE_UPS_HOOK_SCRIPT = '''#!/usr/bin/env python3
+"""roam compile -> Claude Code UserPromptSubmit context injection.
+
+Installed by `roam hooks claude --write`. FAIL-OPEN: any error prints
+nothing and exits 0 (a broken roam install must never block a turn).
+"""
+import json
+import subprocess
+import sys
+
+_COMPILE_TIMEOUT_S = 6.0
+_MIN_PROMPT_CHARS = 8
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+        prompt = (payload.get("prompt") or "").strip()
+        if len(prompt) < _MIN_PROMPT_CHARS:
+            return
+        proc = subprocess.run(
+            ["roam", "--json", "compile", prompt],
+            capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return
+        d = json.loads(proc.stdout)
+        summary = d.get("summary") or {}
+        plan = (d.get("artifact") or {}).get("plan") or {}
+        facts = {k: v for k, v in (plan.get("prefetched_facts") or {}).items()
+                 if not k.startswith("_")}
+        block = {
+            "procedure": summary.get("procedure"),
+            "confidence": summary.get("classifier_confidence"),
+            "named_paths": (plan.get("named_paths") or [])[:6],
+            "recommended_first": plan.get("recommended_first_command"),
+            "answer_contract": plan.get("answer_contract"),
+            "prefetched_facts": facts,
+        }
+        block = {k: v for k, v in block.items() if v}
+        if not block:
+            return
+        print("PRE-COMPUTED PLAN (roam compile -- answer from these "
+              "embedded facts; do not re-gather what is already answered):")
+        print(json.dumps(block, ensure_ascii=False))
+    except Exception:
+        return  # fail open
+
+
+main()
+'''
+
+
+def _claude_settings_path(user_level: bool) -> Path:
+    if user_level:
+        return Path.home() / ".claude" / "settings.json"
+    return Path.cwd() / ".claude" / "settings.json"
+
+
+def _claude_hook_dir(user_level: bool) -> Path:
+    if user_level:
+        return Path.home() / ".claude" / "hooks"
+    return Path.cwd() / ".claude" / "hooks"
+
+
+# W-CC-VERIFY (2026-06-10) — the post-edit verify half of the decision-doc
+# MVP loop (compile before the model acts, verify after it edits). Stop-hook
+# script: scoped `roam verify --auto --diff-only`, fail-open, quiet on PASS.
+_CLAUDE_STOP_HOOK_FILENAME = "roam-verify-stop.py"
+_CLAUDE_STOP_HOOK_SCRIPT = '''#!/usr/bin/env python3
+"""roam verify -> Claude Code Stop-hook post-edit check.
+
+Installed by `roam hooks claude --write`. FAIL-OPEN and QUIET-ON-PASS:
+any error or a clean verdict prints nothing; only real findings surface.
+"""
+import json
+import subprocess
+import sys
+
+_VERIFY_TIMEOUT_S = 90
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+        if payload.get("stop_hook_active"):
+            return  # already inside a stop-hook continuation; never loop
+        proc = subprocess.run(
+            ["roam", "--json", "verify", "--auto", "--diff-only"],
+            capture_output=True, text=True, timeout=_VERIFY_TIMEOUT_S,
+        )
+        if not proc.stdout.strip():
+            return
+        d = json.loads(proc.stdout)
+        summary = d.get("summary") or {}
+        verdict = str(summary.get("verdict") or "")
+        if not verdict or verdict.upper().startswith("PASS"):
+            return  # quiet on pass — signal, not noise
+        print(f"roam verify (post-edit, changed lines vs HEAD): {verdict}")
+    except Exception:
+        return  # fail open
+
+
+main()
+'''
+
+
+def _hook_entry_present(settings: dict, event: str, filename: str) -> bool:
+    for rule in (settings.get("hooks") or {}).get(event, []):
+        for hk in rule.get("hooks", []):
+            if filename in (hk.get("command") or ""):
+                return True
+    return False
+
+
+def _merge_hook_entry(settings: dict, event: str, hook_cmd: str) -> dict:
+    hooks_block = settings.setdefault("hooks", {})
+    rules = hooks_block.setdefault(event, [])
+    rules.append({"hooks": [{"type": "command", "command": hook_cmd}]})
+    return settings
+
+
+def _remove_hook_entry(settings: dict, event: str, filename: str) -> bool:
+    rules = (settings.get("hooks") or {}).get(event)
+    if not rules:
+        return False
+    kept = []
+    removed = False
+    for rule in rules:
+        cmds = [hk.get("command") or "" for hk in rule.get("hooks", [])]
+        if any(filename in c for c in cmds):
+            removed = True
+            continue
+        kept.append(rule)
+    if removed:
+        settings["hooks"][event] = kept
+        if not kept:
+            del settings["hooks"][event]
+    return removed
+
+
+# Back-compat wrappers — the original UPS-specific names are part of the
+# tested surface (tests/test_hooks_claude_setup.py imports them).
+def _ups_entry_present(settings: dict) -> bool:
+    return _hook_entry_present(settings, "UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME)
+
+
+def _merge_ups_entry(settings: dict, hook_cmd: str) -> dict:
+    return _merge_hook_entry(settings, "UserPromptSubmit", hook_cmd)
+
+
+def _remove_ups_entry(settings: dict) -> bool:
+    return _remove_hook_entry(settings, "UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME)
+
+
+def _load_claude_settings(settings_path: Path) -> tuple[dict, str | None]:
+    """Parse settings.json. Returns (settings, error_message-or-None)."""
+    if not settings_path.exists():
+        return {}, None
+    try:
+        return json.loads(settings_path.read_text(encoding="utf-8")), None
+    except (OSError, ValueError) as exc:
+        return {}, f"Cannot parse {settings_path}: {exc}"
+
+
+def _emit_hooks_verdict(json_mode: bool, verdict: str, summary: dict, extra: dict, text_lines: list) -> None:
+    """Single output point for the claude subcommand (JSON envelope or text)."""
+    if json_mode:
+        click.echo(to_json(json_envelope("hooks", summary={"verdict": verdict, **summary}, **extra)))
+        return
+    click.echo(f"VERDICT: {verdict}")
+    for line in text_lines:
+        click.echo(line)
+
+
+def _claude_uninstall_hooks(settings: dict, settings_path: Path, hook_dir: Path, write: bool) -> tuple[str, bool]:
+    """Sweep BOTH managed hooks (regardless of --no-verify). (verdict, removed_any)."""
+    removed_any = False
+    for event, filename in (
+        ("UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME),
+        ("Stop", _CLAUDE_STOP_HOOK_FILENAME),
+    ):
+        if _remove_hook_entry(settings, event, filename):
+            removed_any = True
+            if write and (hook_dir / filename).exists():
+                (hook_dir / filename).unlink()
+    if write and removed_any:
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    verdict = "Removed roam Claude Code hooks" if removed_any else "No roam Claude Code hooks found"
+    if not write and removed_any:
+        verdict += " (dry-run; re-run with --write to apply)"
+    return verdict, removed_any
+
+
+def _claude_install_hooks(settings: dict, settings_path: Path, hook_dir: Path, to_install: list) -> str:
+    """Write the hook scripts + merge settings entries (settings.json backed up)."""
+    if settings_path.exists():
+        backup = settings_path.with_suffix(".json.bak")
+        backup.write_text(settings_path.read_text(encoding="utf-8"), encoding="utf-8")
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    for event, filename, script in to_install:
+        hook_path = hook_dir / filename
+        hook_path.write_text(script, encoding="utf-8")
+        _make_executable(hook_path)
+        _merge_hook_entry(settings, event, f"python3 {hook_path}")
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    wired = " + ".join(e for e, _f, _s in to_install)
+    return f"Wired roam compile+verify into Claude Code ({wired}): {settings_path}"
+
+
+@hooks.command("claude")
+@click.option("--write", is_flag=True, help="Apply: write the hook scripts + merge settings.json.")
+@click.option("--user", "user_level", is_flag=True, help="Install user-global (~/.claude) instead of project-local.")
+@click.option("--uninstall", "do_uninstall", is_flag=True, help="Remove the roam hook entries + scripts.")
+@click.option(
+    "--no-verify",
+    "no_verify",
+    is_flag=True,
+    help="Install only the compile hook; skip the post-edit verify Stop hook.",
+)
+@click.pass_context
+def claude_setup(ctx, write, user_level, do_uninstall, no_verify):
+    """Wire the roam compile+verify loop into Claude Code via hooks.
+
+    Run `roam hooks claude` to preview, `--write` to apply. Two hooks:
+    UserPromptSubmit runs `roam --json compile` on every prompt (p50 ~92ms)
+    and injects the envelope as context — the compile-prefix channel
+    measured at -83%% turns on Claude. Stop runs scoped
+    `roam verify --auto --diff-only` after the agent finishes editing and
+    surfaces only non-PASS verdicts. Both fail-open; `--no-verify` installs
+    the compile hook alone.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    settings_path = _claude_settings_path(user_level)
+    hook_dir = _claude_hook_dir(user_level)
+    # (event, filename, script) per managed hook.
+    managed = [("UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME, _CLAUDE_UPS_HOOK_SCRIPT)]
+    if not no_verify:
+        managed.append(("Stop", _CLAUDE_STOP_HOOK_FILENAME, _CLAUDE_STOP_HOOK_SCRIPT))
+
+    settings, load_error = _load_claude_settings(settings_path)
+    if load_error:
+        _emit_hooks_verdict(json_mode, load_error, {"partial_success": True}, {}, [])
+        ctx.exit(1)
+        return
+
+    if do_uninstall:
+        verdict, removed_any = _claude_uninstall_hooks(settings, settings_path, hook_dir, write)
+        _emit_hooks_verdict(json_mode, verdict, {"removed": removed_any, "settings_path": str(settings_path)}, {}, [])
+        return
+
+    to_install = [(e, f, s) for e, f, s in managed if not _hook_entry_present(settings, e, f)]
+    if not to_install:
+        verdict = f"roam Claude Code hooks already wired in {settings_path}"
+    elif write:
+        verdict = _claude_install_hooks(settings, settings_path, hook_dir, to_install)
+    else:
+        names = ", ".join(f for _e, f, _s in to_install)
+        verdict = (
+            f"Would write {names} under {hook_dir} and merge hook entries into {settings_path} (dry-run; add --write)"
+        )
+
+    text_lines = []
+    if to_install and not write:
+        text_lines = ["  hook script : " + str(hook_dir / f) for _e, f, _s in to_install]
+        text_lines.append("  settings    : " + str(settings_path))
+        text_lines.append("  apply with  : roam hooks claude --write" + (" --user" if user_level else ""))
+    _emit_hooks_verdict(
+        json_mode,
+        verdict,
+        {"already_installed": not to_install, "applied": bool(write and to_install)},
+        {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
+        text_lines,
+    )
