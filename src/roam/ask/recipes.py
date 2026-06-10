@@ -124,6 +124,150 @@ RECIPES: list[Recipe] = [
         ),
     ),
     Recipe(
+        name="locate-symbol",
+        intent=(
+            "Locate where a NAMED symbol is defined and what calls it — precise "
+            "definition site(s) + caller list, not fuzzy span retrieval"
+        ),
+        examples=(
+            "where is _canonicalize_task defined and what calls it",
+            "where is compile_plan defined",
+            "what calls handle_login",
+            "who calls UserSession.refresh",
+            "find the definition and callers of parse_config",
+            "definition of make_msgid",
+            "where is get_fqdn declared",
+            "callers of compile_for_artifact",
+        ),
+        # Symbol-precise shapes only — deliberately NOT "where"/"find"/"locate"
+        # (those belong to trace-task's fuzzy span retrieve for prose queries).
+        # These keywords fire when the query names a concrete symbol + asks for
+        # its definition or callers, so search+uses (exact) beats retrieve (fuzzy).
+        keywords=(
+            "defined",
+            "definition",
+            "declared",
+            "what calls",
+            "who calls",
+            "callers of",
+            "call sites",
+        ),
+        commands=(
+            ("search", ("{symbol}",)),
+            ("uses", ("{symbol}",)),
+        ),
+        summary=(
+            "Exact definition site(s) from `roam search` plus the inbound caller "
+            "list from `roam uses` — the precise answer for a NAMED symbol. roam "
+            "ask routes here (not the fuzzy retrieve) when the query names a "
+            "concrete identifier and asks where it's defined / what calls it."
+        ),
+        phase="locate",
+        perspectives=("definition-site", "caller-list", "precision"),
+        followups=("roam context {symbol}", "roam hover {symbol}", "roam trace <caller> {symbol}"),
+        gates=("If search returns multiple definitions, prefer the source (non-test) one",),
+    ),
+    Recipe(
+        name="module-deps",
+        intent=(
+            "Show what a named FILE/module imports and what imports it — "
+            "dependency direction (importers + imports) for a concrete file"
+        ),
+        examples=(
+            "what imports cmd_ask.py",
+            "what files import recipes.py",
+            "which files import utils.py",
+            "what depends on compiler.py",
+            "imports of formatter.py",
+            "who imports cli.py",
+            "importers of mcp_server.py",
+            "dependencies of indexer.py",
+            "what is the import graph for runner.py",
+        ),
+        # File-import direction. Distinct from dependency-update (PACKAGE upgrades)
+        # and architecture-debt (project-wide coupling). Needs the filename WITH
+        # extension — {file} extracts it; roam deps rejects a bare stem.
+        # "what FILES import X" added 2026-06-07: the "files" token diluted the
+        # match below threshold (codex nav A/B q2 phrasing → no-match → wasted
+        # fallback call); now routes + roam_ask executes module-deps in one call.
+        keywords=(
+            "imports",
+            "importers",
+            "depends on",
+            "dependencies of",
+            "who imports",
+            "what imports",
+            "import graph",
+            "files import",
+            "what files import",
+            "which files import",
+        ),
+        commands=(("deps", ("{file}",)),),
+        summary=(
+            "`roam deps <file>` — N imports + N importers in one envelope, the "
+            "precise dependency-direction answer for a named file. Pass the "
+            "filename WITH its extension. For PACKAGE upgrade/removal safety use "
+            "dependency-update; for project-wide coupling use architecture-debt."
+        ),
+        phase="dependency",
+        perspectives=("imports", "importers", "coupling-direction"),
+        followups=("roam coupling {file}", "roam impact {file}", "roam context {file}"),
+        gates=("File imports (this recipe) are not the same as package deps (dependency-update)",),
+    ),
+    Recipe(
+        name="complexity-ranking",
+        intent=(
+            "Rank the most complex / highest-cognitive-complexity functions — the "
+            "precise 'most complex' answer, not churn-weighted hotspots"
+        ),
+        examples=(
+            "top 5 most complex functions",
+            "most complex code",
+            "what are the most complex functions",
+            "complexity ranking",
+            "which functions are the gnarliest",
+            "rank functions by complexity",
+        ),
+        keywords=("most complex", "complexity ranking", "complex functions", "gnarliest", "by complexity"),
+        commands=(("complexity", ("-n", "10")),),
+        summary=(
+            "Top functions by cognitive complexity (SonarSource-compatible) from "
+            "`roam complexity`. The precise 'most complex' ranking — hot-spots "
+            "weights churn too, so use this when the question is purely complexity."
+        ),
+        phase="prioritize",
+        perspectives=("complexity", "refactor-priority"),
+        followups=("roam preflight {symbol}", "roam hotspots --top 10"),
+        gates=("Pair high complexity with test coverage before refactoring",),
+    ),
+    Recipe(
+        name="describe-file",
+        intent=(
+            "Explain what a named FILE/module is for — its role + exported surface (file-level, not a single symbol)"
+        ),
+        examples=(
+            "what does compiler.py do",
+            "what is cmd_ask.py for",
+            "explain the runner.py module",
+            "purpose of formatter.py",
+            "summarize what classifier.py does",
+            "overview of recipes.py",
+        ),
+        # File-anchored phrasings — deliberately NOT bare "what does X do" (that's
+        # symbol territory → why-this-exists); these fire on file-role questions.
+        keywords=("what is for", "purpose of", "overview of", "summarize", "what's in", "role of"),
+        commands=(("file", ("{file}",)),),
+        summary=(
+            "`roam file <path>` — the file's skeleton (exported defs/classes + "
+            "structure) IS the answer to 'what does this file do'. For a single "
+            "symbol's purpose use why-this-exists instead."
+        ),
+        phase="understand",
+        perspectives=("file-role", "exported-surface", "structure"),
+        followups=("roam understand", "roam deps {file}"),
+        gates=("For one symbol (not a whole file), prefer why-this-exists",),
+    ),
+    Recipe(
         name="verify-patch",
         intent="Audit a patch against the indexed graph before committing",
         examples=(

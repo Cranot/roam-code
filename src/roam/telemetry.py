@@ -101,12 +101,12 @@ def record(command: str, duration_ms: int, exit_code: int) -> None:
                 "DELETE FROM calls WHERE id NOT IN (SELECT id FROM calls ORDER BY id DESC LIMIT ?)",
                 (_RING_LIMIT,),
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 — telemetry must never break the command
         pass
     finally:
         try:
             conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — close() failure on cleanup is moot
             pass
 
 

@@ -259,7 +259,12 @@ def _check_anti_patterns(conn, changed_file_ids, status=None):
         return challenges
 
     try:
-        findings = run_detectors(conn)
+        # Scope the detectors to the changed files. The python-idiom detectors
+        # otherwise regex-scan EVERY Python file (measured ~70% of a project-wide
+        # run); passing the changed fileset collapses that to the files this
+        # adversarial pass actually cares about. The post-filter below is now
+        # redundant for symbol-bearing findings but kept as a safety net.
+        findings = run_detectors(conn, scope_file_ids=changed_file_ids)
     except Exception as exc:  # noqa: BLE001
         if status is not None:
             status["anti_patterns"] = f"errored:run_detectors:{type(exc).__name__}"

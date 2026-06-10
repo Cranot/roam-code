@@ -129,7 +129,7 @@ def mcp_status(ctx) -> None:
         _mcp_counts = mcp_surface_counts()
         tools_shipped_ceiling = int(_mcp_counts.get("registered_tools") or 0) or None
         core_tools_shipped_ceiling = int(_mcp_counts.get("core_tools") or 0) or None
-    except Exception:
+    except Exception:  # noqa: BLE001 — AST helper unavailable, see fallback below
         # AST helper unavailable (minimal install / sdist edge case);
         # silently fall back to runtime-only — old behaviour preserved.
         pass

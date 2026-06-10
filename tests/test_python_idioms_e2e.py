@@ -32,6 +32,7 @@ import asyncio
 import aiofiles
 import httpx
 import pandas as pd
+import re
 
 
 def mutable_default(x=[]):  # BAD: py-mutable-default-arg
@@ -92,6 +93,10 @@ async def async_with_leak():
 def lock_leak():
     lock = threading.Lock()
     lock.acquire()  # BAD: py-lock-without-with
+
+
+_REGEX_NAMES = ["alpha", "beta", "gamma"]
+_NAMES_RE = re.compile("|".join(re.escape(n) for n in _REGEX_NAMES))  # BAD: py-regex-alt-join
 
 
 # OK cases — these should NOT trigger any detector.
@@ -196,6 +201,7 @@ def _bad_line(content: str, pattern_id: str) -> int:
         ("detect_pandas_iterrows", "py-pandas-iterrows"),
         ("detect_async_with_missing", "py-async-with-missing"),
         ("detect_lock_without_with", "py-lock-without-with"),
+        ("detect_regex_alternation_join", "py-regex-alt-join"),
     ],
 )
 def test_detector_finds_known_bad_line(fixture_project: Path, detector_name: str, pattern_id: str):

@@ -34,6 +34,9 @@ PRE_COLLAPSE_NON_IDEMPOTENT = {
     "roam_mutate",
     "roam_init",
     "roam_reindex",
+    # Wave 10 (Roam Guard MCP wrappers): guard-pr appends to verdict-log.jsonl
+    # AND optionally POSTs a GitHub Check Run — both non-idempotent side effects.
+    "roam_guard_pr",
 }
 
 
@@ -227,7 +230,10 @@ def test_idempotent_axis_independent_of_read_only() -> None:
     # beyond the initial call". A second roam_reset finds nothing to
     # delete; a second roam_clean finds no orphans. These are textbook
     # idempotent destructive operations.
-    expected_divergence = {"roam_reset", "roam_clean"}
+    # Wave 20: `roam_guard_clean` rewrites the verdict log atomically — it
+    # mutates state (read_only=False) but re-running on an already-trimmed
+    # log is a no-op (idempotent=True). Same axis split as roam_clean / roam_reset.
+    expected_divergence = {"roam_reset", "roam_clean", "roam_guard_clean"}
     actual_divergence = mcp._NON_READ_ONLY_TOOLS - mcp._NON_IDEMPOTENT_TOOLS
     assert actual_divergence == expected_divergence, (
         f"Unexpected divergence between _NON_READ_ONLY_TOOLS and "

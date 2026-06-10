@@ -41,9 +41,7 @@ def test_full_coupling_pairs_filtered_to_target_file() -> None:
     assert isinstance(pairs, list)
     for pair in pairs:
         assert isinstance(pair, dict)
-        assert target in (pair.get("file_a"), pair.get("file_b")), (
-            f"pair does not touch {target!r}: {pair}"
-        )
+        assert target in (pair.get("file_a"), pair.get("file_b")), f"pair does not touch {target!r}: {pair}"
 
 
 def test_full_coupling_top_n_respected() -> None:
@@ -55,9 +53,7 @@ def test_full_coupling_top_n_respected() -> None:
 
 def test_full_coupling_handles_unknown_file_gracefully() -> None:
     """Unknown path should not crash — pairs/top_symbols may be empty."""
-    result = roam_full_coupling(
-        file_path="this/file/does/not/exist.py", top_n=3, root="."
-    )
+    result = roam_full_coupling(file_path="this/file/does/not/exist.py", top_n=3, root=".")
     assert result["coupling"]["pairs"] == []
     assert isinstance(result.get("top_symbols"), list)
     assert "verdict" in result["summary"]

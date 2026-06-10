@@ -212,7 +212,7 @@ def _strip_url_decorations(url: str) -> str:
     # sequences).
     try:
         url = urllib.parse.unquote(url)
-    except Exception:
+    except (ValueError, TypeError):
         pass
     return url
 
@@ -235,7 +235,7 @@ def _extract_fragment(url: str) -> str:
     fragment = fragment.split("?", 1)[0]
     try:
         fragment = urllib.parse.unquote(fragment)
-    except Exception:
+    except (ValueError, TypeError):
         pass
     return fragment.strip()
 

@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any, TypeAlias
 
 from roam.observability import log_swallowed
-from roam.search.framework_packs import search_pack_symbols
+from roam.search.framework_packs import packs_for_languages, search_pack_symbols
 from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarity, tokenize
 
 # W901: ``_camel_split`` is imported by ``roam.retrieve.seeds`` (single
@@ -508,6 +508,15 @@ def _fuse_hybrid_results(
     return merged[:top_k]
 
 
+def _repo_languages(conn) -> set[str]:
+    """Distinct lowercased file languages in the index (empty on any error)."""
+    try:
+        rows = conn.execute("SELECT DISTINCT language FROM files WHERE language IS NOT NULL").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(r[0]).strip().lower() for r in rows if r and r[0]}
+
+
 def search_stored(
     conn,
     query: str,
@@ -568,9 +577,18 @@ def search_stored(
     )
 
     # Optional pre-indexed framework/library packs (#96).
+    # When the caller didn't pin specific packs, gate them to the repo's
+    # actual languages so a TypeScript repo never gets Django/pytest noise.
+    effective_packs = packs
+    if include_packs and packs is None:
+        eligible = packs_for_languages(_repo_languages(conn))
+        if not eligible:
+            include_packs = False
+        else:
+            effective_packs = eligible
     if include_packs:
         try:
-            pack_results = search_pack_symbols(query, top_k=candidate_k, packs=packs)
+            pack_results = search_pack_symbols(query, top_k=candidate_k, packs=effective_packs)
         except Exception as exc:
             if warnings_out is not None:
                 warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")

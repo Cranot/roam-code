@@ -68,6 +68,7 @@ dict literal is removed.
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -134,7 +135,18 @@ def is_test_path(path: str) -> bool:
     CLAUDE.md "Verify the cycle before hedging" rule, W907).
 
     Returns ``False`` for empty / falsy inputs.
+
+    Memoized: test-path classification is a pure function of the path string
+    (naming + directory conventions, no file content or index state), and the
+    catalog detectors call this once per symbol/finding — ~129k calls in a
+    project-wide ``run_detectors`` on roam-code, with heavy path repetition.
+    The cache collapses that to one classification per distinct path.
     """
+    return _is_test_path_cached(path)
+
+
+@functools.lru_cache(maxsize=8192)
+def _is_test_path_cached(path: str) -> bool:
     from roam.commands.changed_files import is_test_file
 
     return is_test_file(path)

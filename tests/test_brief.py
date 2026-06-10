@@ -76,6 +76,11 @@ def test_brief_empty_repo_returns_clean_envelope(cli_runner, tmp_path, monkeypat
     """
     proj = tmp_path / "empty"
     proj.mkdir()
+    # Anchor project-root detection HERE so find_project_root() can't walk up to
+    # a polluted ancestor (e.g. a stray /tmp/.roam left by another roam run) and
+    # report a foreign index → index_present wrongly True. The test is about
+    # "no .roam"; the .git marker is orthogonal and only pins the root.
+    (proj / ".git").mkdir()
     monkeypatch.chdir(proj)
 
     result = invoke_cli(cli_runner, ["brief"], cwd=proj, json_mode=True)

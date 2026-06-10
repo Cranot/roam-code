@@ -8,6 +8,7 @@ inherit the transitive effects of their callees.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 
 # ---------------------------------------------------------------------------
 # Effect taxonomy
@@ -364,9 +365,74 @@ def _in_excluded(pos: int, excluded: list[tuple[int, int]]) -> bool:
     return False
 
 
+def _line_byte_prefix(source: bytes) -> tuple[list[int], int]:
+    """Cumulative byte offset of each line start, matching the
+    ``source.split(b"\\n")`` + ``len(line)+1`` convention.
+
+    ``prefix[i]`` is the byte offset of line ``i`` (0-based). Built ONCE per
+    file so per-symbol body-range mapping is an O(1) lookup instead of an
+    O(line) ``sum()`` rescan. Returns ``(prefix, n_lines)``.
+    """
+    lines = source.split(b"\n")
+    prefix = [0]
+    acc = 0
+    for ln in lines:
+        acc += len(ln) + 1
+        prefix.append(acc)
+    return prefix, len(lines)
+
+
+def _string_comment_ranges(tree) -> list[tuple[int, int]]:
+    """All string/comment byte ranges in the file via a SINGLE tree walk.
+
+    Replaces the per-symbol ``_collect_excluded_ranges`` walk-from-root (which
+    re-walked the entire tree for every symbol — millions of redundant node
+    visits on a large file). Uses the same stop-at-match semantics: a
+    string/comment node is recorded and its children are NOT descended, so
+    nested literals are not double-counted. Preorder walk → already sorted by
+    ``start_byte``.
+    """
+    if tree is None:
+        return []
+    out: list[tuple[int, int]] = []
+
+    def _walk(node):
+        if node.type in _STRING_COMMENT_TYPES:
+            out.append((node.start_byte, node.end_byte))
+            return
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    return out
+
+
+def _excluded_for_body(all_ranges: list[tuple[int, int]], body_start: int, body_end: int) -> list[tuple[int, int]]:
+    """Project the file-global string/comment ranges onto one symbol body.
+
+    Keeps ranges overlapping ``[body_start, body_end)`` (same predicate the old
+    per-symbol ``_walk`` prune used) and shifts them to be body-relative — byte
+    for byte identical to ``_collect_excluded_ranges``' output.
+    """
+    out: list[tuple[int, int]] = []
+    for s, e in all_ranges:
+        if e <= body_start or s >= body_end:
+            continue
+        out.append((s - body_start, e - body_start))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
+
+
+def _resolve_excluded_ranges(tree, source: bytes | None, line_start: int, line_end: int) -> list[tuple[int, int]]:
+    """Resolve per-symbol excluded (string/comment) ranges from the AST, or []
+    when the AST info needed for range mapping is unavailable."""
+    if tree is not None and source is not None and line_start > 0:
+        return _collect_excluded_ranges(tree, source, line_start, line_end)
+    return []
 
 
 def classify_symbol_effects(
@@ -376,6 +442,7 @@ def classify_symbol_effects(
     source: bytes | None = None,
     line_start: int = 0,
     line_end: int = 0,
+    excluded: list[tuple[int, int]] | None = None,
 ) -> set[str]:
     """Classify the side effects of a function body.
 
@@ -395,10 +462,11 @@ def classify_symbol_effects(
     if not patterns:
         return set()
 
-    # Build excluded ranges from tree-sitter AST if available
-    excluded: list[tuple[int, int]] = []
-    if tree is not None and source is not None and line_start > 0:
-        excluded = _collect_excluded_ranges(tree, source, line_start, line_end)
+    # When the caller already projected the excluded ranges (file-level
+    # precompute in classify_file_effects), use them directly; otherwise resolve
+    # them from the AST here.
+    if excluded is None:
+        excluded = _resolve_excluded_ranges(tree, source, line_start, line_end)
 
     effects: set[str] = set()
 
@@ -447,6 +515,11 @@ def classify_file_effects(
     lines = source.decode("utf-8", errors="replace").split("\n")
     results: dict[int, set[str]] = {}
 
+    # File-level precompute (once, not per symbol): byte-offset prefix for
+    # body-range mapping + every string/comment range from a single tree walk.
+    prefix, n_lines_b = _line_byte_prefix(source)
+    all_ranges = _string_comment_ranges(tree)
+
     for row in rows:
         sym_id = row["id"]
         ls = row["line_start"] or 1
@@ -456,13 +529,18 @@ def classify_file_effects(
         body_lines = lines[max(0, ls - 1) : le]
         body_text = "\n".join(body_lines)
 
+        # Project the file-global excluded ranges onto this symbol's body.
+        if all_ranges and ls > 0:
+            body_start = prefix[min(ls - 1, n_lines_b)]
+            body_end = prefix[min(le, n_lines_b)]
+            excluded = _excluded_for_body(all_ranges, body_start, body_end)
+        else:
+            excluded = []
+
         effects = classify_symbol_effects(
             body_text,
             language,
-            tree=tree,
-            source=source,
-            line_start=ls,
-            line_end=le,
+            excluded=excluded,
         )
         if effects:
             results[sym_id] = effects
@@ -511,20 +589,34 @@ def propagate_effects(
         for orig, scc_id in members.items():
             orig_to_scc[orig] = scc_id
 
-        # Process in reverse topological order (leaves first)
-        for scc_id in reversed(list(nx.topological_sort(condensation))):
-            scc_nodes = [n for n, s in orig_to_scc.items() if s == scc_id]
+        # Group original nodes by their SCC ONCE (O(N)). The previous
+        # implementation rebuilt this list with a full `orig_to_scc.items()`
+        # scan on every SCC iteration AND every successor edge, making the
+        # pass O(SCCs*N + edges*N) — ~100s on a 36K-symbol graph. With the
+        # reverse map + a per-SCC effect memo this is O(N + condensation edges).
+        scc_to_nodes: dict[int, list[int]] = defaultdict(list)
+        for orig, scc_id in orig_to_scc.items():
+            scc_to_nodes[scc_id].append(orig)
 
-            # Within an SCC, all nodes share the same effects
+        # Process in reverse topological order (callees finalized first), so a
+        # caller SCC can read each callee SCC's completed effect set in O(1).
+        scc_effect_set: dict[int, set[str]] = {}
+        for scc_id in reversed(list(nx.topological_sort(condensation))):
+            scc_nodes = scc_to_nodes.get(scc_id, ())
+
+            # Within an SCC, all nodes share the same effects: union of their
+            # direct effects plus every successor (callee) SCC's effects.
             scc_effects: set[str] = set()
             for n in scc_nodes:
-                scc_effects.update(all_effects.get(n, set()))
-
-            # Collect effects from successors (callees outside this SCC)
+                eff = all_effects.get(n)
+                if eff:
+                    scc_effects.update(eff)
             for succ_scc in condensation.successors(scc_id):
-                succ_nodes = [n for n, s in orig_to_scc.items() if s == succ_scc]
-                for sn in succ_nodes:
-                    scc_effects.update(all_effects.get(sn, set()))
+                succ_eff = scc_effect_set.get(succ_scc)
+                if succ_eff:
+                    scc_effects.update(succ_eff)
+
+            scc_effect_set[scc_id] = scc_effects
 
             # Apply to all nodes in this SCC
             if scc_effects:
@@ -589,7 +681,60 @@ def store_effects(
 # ---------------------------------------------------------------------------
 
 
-def compute_and_store_effects(conn, root, G=None, *, source_cache=None):
+def _reused_direct_effects(conn, changed: set[str]) -> dict[int, set[str]]:
+    """Stored DIRECT effects for files NOT in *changed* (an unchanged body has
+    unchanged direct effects). Joined to live symbols so orphaned rows never
+    leak in (independent of FK-cascade / PRAGMA foreign_keys settings)."""
+    out: dict[int, set[str]] = {}
+    for sym_id, effect_type, fpath in conn.execute(
+        "SELECT se.symbol_id, se.effect_type, f.path FROM symbol_effects se "
+        "JOIN symbols s ON s.id = se.symbol_id "
+        "JOIN files f ON f.id = s.file_id "
+        "WHERE se.source = 'direct'"
+    ):
+        if fpath not in changed:
+            out.setdefault(sym_id, set()).add(effect_type)
+    return out
+
+
+def _source_and_tree(root, rel_path, language, source_cache, parse_file):
+    """Return ``(source_bytes, tree)`` for a file, reusing the Phase-2 cache
+    when present (W440) else reading + parsing from disk. ``None`` on read
+    failure (caller skips the file)."""
+    cached = source_cache.get(rel_path) if source_cache else None
+    if cached is not None:
+        return cached
+    full_path = root / rel_path
+    try:
+        with open(full_path, "rb") as f:
+            source = f.read()
+    except OSError:
+        return None
+    tree, _parsed_source, _lang = parse_file(full_path, language)
+    return source, tree
+
+
+def _classify_direct_effects(conn, root, source_cache, parse_file, only_paths):
+    """Classify direct effects for function/method symbols. When *only_paths*
+    is a set, restrict classification to those files (incremental); ``None``
+    classifies every file."""
+    direct: dict[int, set[str]] = {}
+    for file_row in conn.execute("SELECT id, path, language FROM files").fetchall():
+        language = file_row["language"]
+        if language not in _LANGUAGE_PATTERNS:
+            continue
+        rel_path = file_row["path"]
+        if only_paths is not None and rel_path not in only_paths:
+            continue
+        st = _source_and_tree(root, rel_path, language, source_cache, parse_file)
+        if st is None:
+            continue
+        source, tree = st
+        direct.update(classify_file_effects(conn, file_row["id"], source, language, tree=tree))
+    return direct
+
+
+def compute_and_store_effects(conn, root, G=None, *, source_cache=None, changed_paths=None):
     """Full effects pipeline: classify per file, propagate, store.
 
     Called from the indexer after graph construction.
@@ -604,53 +749,25 @@ def compute_and_store_effects(conn, root, G=None, *, source_cache=None):
             instead of re-opening + re-parsing the file from disk — the
             single biggest win on cold Windows/OneDrive caches (W440).
             Defaults to ``None`` (backwards-compatible).
+        changed_paths: Optional set of repo-relative paths re-parsed this run
+            (incremental). When supplied, DIRECT effects for files OUTSIDE the
+            set are reused from the stored ``source='direct'`` rows — only the
+            changed files are re-parsed + re-classified, then propagation re-runs
+            over the full graph. ``None`` (default / --force) re-classifies every
+            file. An unchanged body has unchanged direct effects, so the reused +
+            re-classified union is identical to a full classification pass.
     """
     from roam.index.parser import parse_file
 
-    # 1. Classify direct effects for all files
-    direct_effects: dict[int, set[str]] = {}
-
-    files = conn.execute("SELECT id, path, language FROM files").fetchall()
-    for file_row in files:
-        file_id = file_row["id"]
-        language = file_row["language"]
-
-        if language not in _LANGUAGE_PATTERNS:
-            continue
-
-        rel_path = file_row["path"]
-        cached = source_cache.get(rel_path) if source_cache else None
-
-        if cached is not None:
-            # W440 hot path: reuse the parsed source + tree from Phase 2.
-            source, tree = cached
-        else:
-            full_path = root / rel_path
-            try:
-                with open(full_path, "rb") as f:
-                    source = f.read()
-            except OSError:
-                continue
-            # Parse for AST-aware filtering
-            tree, _parsed_source, _lang = parse_file(full_path, language)
-
-        effects = classify_file_effects(
-            conn,
-            file_id,
-            source,
-            language,
-            tree=tree,
-        )
-        direct_effects.update(effects)
+    # 1. Classify direct effects. On an incremental run, reuse stored direct
+    # effects for unchanged files and re-classify only the changed ones.
+    changed = set(changed_paths) if changed_paths is not None else None
+    direct_effects = _reused_direct_effects(conn, changed) if changed is not None else {}
+    direct_effects.update(_classify_direct_effects(conn, root, source_cache, parse_file, only_paths=changed))
 
     if not direct_effects:
         return
 
-    # 2. Propagate through call graph
-    if G is not None:
-        all_effects = propagate_effects(G, direct_effects)
-    else:
-        all_effects = dict(direct_effects)
-
-    # 3. Store
+    # 2. Propagate through call graph, then 3. store.
+    all_effects = propagate_effects(G, direct_effects) if G is not None else dict(direct_effects)
     store_effects(conn, all_effects, direct_effects)

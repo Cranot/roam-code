@@ -11,7 +11,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,7 +41,16 @@ class TestEngine:
             tmp_path,
             {
                 "package.json": json.dumps(
-                    {"scripts": {"test": "vitest run", "typecheck": "tsc -b", "lint": "eslint .", "build": "vite build", "dev": "vite", "deploy": "gh-pages -d dist"}}
+                    {
+                        "scripts": {
+                            "test": "vitest run",
+                            "typecheck": "tsc -b",
+                            "lint": "eslint .",
+                            "build": "vite build",
+                            "dev": "vite",
+                            "deploy": "gh-pages -d dist",
+                        }
+                    }
                 ),
                 "pnpm-lock.yaml": "",
                 "vitest.config.ts": "export default {}",

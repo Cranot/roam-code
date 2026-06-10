@@ -71,6 +71,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "agent-opt",  # findings bounded by --limit; scans roam's own ~229-tool surface, not a scaling codebase
         "observability-opt",  # findings bounded by --limit/--max-files; per-finding rows, not a paginating result set
         "commands",  # command-graph bounded by --limit; reads manifests, not a scaling corpus
+        "docs-index",  # scans one planning-memo dir (orphans/broken links); bounded by the dir, index-free, not a scaling corpus
         "version",  # single string (CLI version)
         "exit-codes",  # ~50-line enum
         "surface",  # registry index (already capped by inventory)
@@ -83,6 +84,13 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "help-search",  # tiny match list (search inside help text)
         "hover",  # single-symbol hover card
         "symbol",  # single-symbol metadata
+        # --- 2026-06-02 wave (W2/W18/W20) — diagnostic, fixed-shape envelopes ---
+        "envelope-diff",  # diff of two compile envelopes; fixed probe-family list
+        "dispatch-trace",  # classifier trace; bounded probe-decision list
+        "magic-numbers",  # findings bounded by --threshold + AST/tree-sitter walk
+        "compiler-health",  # 4-section compound dashboard; fixed sections
+        "compiler-corpus",  # corpus-driven analysis; bounded by --limit
+        "dict-consistency",  # single-file dict-key audit; bounded by file
         # --- Setup / config / housekeeping (single-record envelopes) ---------
         "init",  # one-shot indexer summary
         "reset",  # one-shot status
@@ -119,6 +127,21 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "workflow",  # recipe dispatch
         "recommend",  # short recommendation list
         "suppress",  # single suppression op
+        # --- Roam Guard family (small fixed-shape envelopes) ----------------
+        "guard-init",  # bootstrap status (paths created list)
+        "guard-clean",  # log-prune summary (counts only)
+        "guard-doctor",  # fixed 9-check list
+        "guard-history",  # already bounded by --limit (default 10)
+        "guard-pr",  # composite envelope + small reasons list
+        "guard-rules",  # rule-pack introspection, bounded by pack size
+        "guard-diff",  # single verdict-delta envelope
+        "proof-bundle",  # composite v1 envelope (changed_files capped by render)
+        "verdict",  # single closed-enum value + reasons
+        "verification-contract",  # small {required, skipped} set
+        "compile",  # plan + facts envelope (size bounded by classifier output)
+        "bench-compile",  # per-condition aggregate; bounded by n_runs × tasks
+        "compile-stats",  # W40 — fixed-shape summary (top-15 keys, percentiles)
+        "compile-cache",  # W56 — group with stats/clear/build subcmds; fixed-shape summaries
         # --- Compound recipes (delegate budget downstream) -------------------
         "ask",  # router — delegates downstream
         "pr-prep",  # compound recipe
@@ -232,7 +255,8 @@ _BUDGET_GAP_KNOWN: frozenset[str] = frozenset(
         "syntax-check",  # files list
         "taint",  # findings + warnings + errors
         "test-scaffold",  # symbols + scaffold body
-        "verify",  # categories + violations
+        # "verify" WIRED 2026-06-04 — forwards budget into its violations-list
+        # envelope; promoted out of the gap (gap 84 → 83). See _REAL_GAP_THRESHOLD.
         "visualize",  # diagram blob
         "ws",  # cross-repo matches + edges
         # --- Medium impact (smaller but still unbounded) ---------------------
@@ -283,6 +307,11 @@ assert not _OVERLAP, f"Commands in BOTH exempt and gap lists: {sorted(_OVERLAP)}
 # escape valve: ratchet UP only when the alternative is a CI break + the new
 # commands have a definite owner. Next wave: wire --budget into each and
 # lower this threshold back to 79.
+# 2026-06-04: working-tree drift pushed the gap to 84 (> 83). Rather than ratchet
+# UP, WIRED ``budget=token_budget`` into the ``verify`` command's violations-list
+# envelope (a real list payload) — that promotes verify out of the gap, dropping it
+# back to 83 and keeping the threshold honest. The remaining +N from new compiler/
+# guard commands stays a real gap; wire or exempt each as it lands.
 _REAL_GAP_THRESHOLD = 83
 
 

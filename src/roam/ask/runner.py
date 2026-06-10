@@ -49,20 +49,46 @@ def extract_symbol(query: str) -> str | None:
     return None
 
 
+# File/module arguments are a separate shape from code identifiers: file-oriented
+# commands (deps, coupling) need the name WITH extension ("formatter.py", not the
+# "formatter" stem extract_symbol would yield — and underscore-less stems don't
+# match the identifier regex at all). Extension whitelist avoids matching "3.5".
+_FILE_RE = re.compile(
+    r"(?:^|[^\w./-])"
+    r"([\w./-]*[\w-]\.(?:py|pyi|js|jsx|ts|tsx|go|rs|java|rb|php|c|h|hpp|cpp|cc|"
+    r"cs|kt|kts|swift|scala|sql|sh|md|rst|ya?ml|toml|json|cfg|ini|html|css))"
+    r"(?=$|[^\w/-])"
+)
+
+
+def extract_file(query: str) -> str | None:
+    """Return the single file path/name in *query* (e.g. ``cmd_ask.py`` or
+    ``src/x/formatter.py``), or ``None`` if there are zero or more than one."""
+    matches = _FILE_RE.findall(query or "")
+    unique = list(dict.fromkeys(matches))
+    if len(unique) == 1:
+        return unique[0]
+    return None
+
+
 def fill_args(
     template: tuple[str, ...],
     query: str,
     symbol: str | None,
+    file: str | None = None,
 ) -> list[str]:
-    """Substitute ``{symbol}`` / ``{task}`` placeholders in *template*.
+    """Substitute ``{symbol}`` / ``{file}`` / ``{task}`` placeholders.
 
-    ``{symbol}`` falls back to the full query when no single identifier
-    was extracted. ``{task}`` always uses the full query text.
+    ``{symbol}`` falls back to the full query when no single identifier was
+    extracted. ``{file}`` prefers the extracted file, then symbol, then query.
+    ``{task}`` always uses the full query text.
     """
     out: list[str] = []
     for tok in template:
         if tok == "{symbol}":
             out.append(symbol or query)
+        elif tok == "{file}":
+            out.append(file or symbol or query)
         elif tok == "{task}":
             out.append(query)
         else:
@@ -74,10 +100,12 @@ def fill_followups(
     followups: tuple[str, ...],
     query: str,
     symbol: str | None,
+    file: str | None = None,
 ) -> list[str]:
-    """Substitute ``{symbol}`` / ``{task}`` placeholders in follow-up commands."""
+    """Substitute ``{symbol}`` / ``{file}`` / ``{task}`` placeholders in follow-ups."""
     subject = symbol or query
-    return [item.replace("{symbol}", subject).replace("{task}", query) for item in followups]
+    fsub = file or symbol or query
+    return [item.replace("{symbol}", subject).replace("{file}", fsub).replace("{task}", query) for item in followups]
 
 
 def run_recipe(
@@ -94,10 +122,11 @@ def run_recipe(
     v12.0; the planner/orchestrator usage is what `roam fleet` is for.
     """
     symbol = extract_symbol(query)
+    file = extract_file(query)
     out: list[dict[str, Any]] = []
     for cmd_name, args_template in recipe.commands:
         args = [sys.executable, "-m", "roam", "--json", cmd_name]
-        args.extend(fill_args(args_template, query, symbol))
+        args.extend(fill_args(args_template, query, symbol, file))
         try:
             proc = subprocess.run(
                 args,

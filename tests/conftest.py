@@ -532,3 +532,6 @@ def project_with_snapshots(indexed_project, monkeypatch):
         roam("trends", "--save", "--tag", f"v{i}", cwd=indexed_project)
 
     return indexed_project
+
+
+# Roam Guard test helpers live in tests/helpers.py — explicit import there.

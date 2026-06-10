@@ -363,7 +363,10 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                             json_envelope(
                                 "coupling",
                                 budget=token_budget,
-                                summary={"verdict": f"No changes for {label} — nothing to score", "error": f"No changes for {label}"},
+                                summary={
+                                    "verdict": f"No changes for {label} — nothing to score",
+                                    "error": f"No changes for {label}",
+                                },
                             )
                         )
                     )
@@ -379,7 +382,10 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                             json_envelope(
                                 "coupling",
                                 budget=token_budget,
-                                summary={"verdict": "Changed files not found in index — run 'roam init' first", "error": "Changed files not in index"},
+                                summary={
+                                    "verdict": "Changed files not found in index — run 'roam init' first",
+                                    "error": "Changed files not in index",
+                                },
                             )
                         )
                     )

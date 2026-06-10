@@ -13,14 +13,18 @@ def _steps_for_health(context: dict) -> list[str]:
     score = context.get("score", 100)
     critical = context.get("critical_issues", 0)
     cycles = context.get("cycles", 0)
+    # CONSTRAINT 12: ``next_commands`` entries must be literal copy-paste
+    # ``roam <subcommand>`` strings, not imperative prose. The "why" lives in
+    # each subcommand's own help / docstring; surfacing it here violates the
+    # contract that agents can blindly exec ``next_commands[i]``.
     if score < 70:
-        steps.append("Run `roam hotspots` to find the highest-churn files contributing to low health")
+        steps.append("roam hotspots")
     if critical > 0 or cycles > 0:
-        steps.append("Run `roam debt` to quantify the refactoring effort required")
+        steps.append("roam debt")
     if score < 50:
-        steps.append("Run `roam vibe-check` to detect AI code rot patterns")
+        steps.append("roam vibe-check")
     else:
-        steps.append("Run `roam trends --days 30` to track the health score over time")
+        steps.append("roam trends --days 30")
     return steps
 
 

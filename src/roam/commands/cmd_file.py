@@ -57,6 +57,18 @@ def _get_deps_of_file(conn, frow):
     return [r["path"] for r in rows]
 
 
+def _get_importers_of_file(conn, frow):
+    """Get file paths that import the given file (incoming file edges)."""
+    rows = conn.execute(
+        "SELECT f.path FROM file_edges fe "
+        "JOIN files f ON fe.source_file_id = f.id "
+        "WHERE fe.target_file_id = ? "
+        "ORDER BY f.path",
+        (frow["id"],),
+    ).fetchall()
+    return [r["path"] for r in rows]
+
+
 def _build_file_skeleton(conn, frow):
     """Build the skeleton data for a single file row.
 
@@ -81,6 +93,9 @@ def _build_file_skeleton(conn, frow):
         enriched["cognitive_load"] = None
         enriched["health_score"] = None
 
+    enriched["imports"] = _get_deps_of_file(conn, frow)
+    enriched["importers"] = _get_importers_of_file(conn, frow)
+
     return enriched, symbols, kind_counts, parent_ids
 
 
@@ -103,6 +118,8 @@ def _skeleton_to_json(frow, symbols, kind_counts, parent_ids):
         "kind_summary": dict(kind_counts.most_common()),
         "cognitive_load": frow.get("cognitive_load"),
         "health_score": frow.get("health_score"),
+        "imports": frow.get("imports", []),
+        "importers": frow.get("importers", []),
         "symbols": [
             {
                 "name": s["name"],
@@ -137,8 +154,24 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
         lines.append(f"{frow['path']}  ({meta})")
     lines.append("")
 
+    def _append_deps(out):
+        imports = frow.get("imports") or []
+        importers = frow.get("importers") or []
+        if not imports and not importers:
+            return
+        out.append("")
+        if imports:
+            shown = ", ".join(imports[:8])
+            more = f" (+{len(imports) - 8})" if len(imports) > 8 else ""
+            out.append(f"imports ({len(imports)}): {shown}{more}")
+        if importers:
+            shown = ", ".join(importers[:8])
+            more = f" (+{len(importers) - 8})" if len(importers) > 8 else ""
+            out.append(f"importers ({len(importers)}): {shown}{more}")
+
     if not symbols:
         lines.append("  (no symbols)")
+        _append_deps(lines)
         return lines
 
     summary_parts = [f"{k}:{v}" for k, v in kind_counts.most_common()]
@@ -167,6 +200,7 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
         parts.append(line_info)
         lines.append(f"{prefix}{'  '.join(parts)}")
 
+    _append_deps(lines)
     return lines
 
 
@@ -330,6 +364,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                             kind_summary=obj["kind_summary"],
                             cognitive_load=obj.get("cognitive_load"),
                             health_score=obj.get("health_score"),
+                            imports=obj["imports"],
+                            importers=obj["importers"],
                             symbols=obj["symbols"],
                         )
                     )

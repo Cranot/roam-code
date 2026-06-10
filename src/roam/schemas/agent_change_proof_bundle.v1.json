@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roam-code.com/schemas/agent_change_proof_bundle.v1.json",
+  "title": "AgentChangeProofBundle",
+  "description": "Closed-schema proof-of-PR-readiness emitted by Roam Guard. JSON is the product; markdown is a view.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "changed_files",
+    "verification_contract",
+    "executed_checks",
+    "missing_checks",
+    "verdict"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "agent_change_proof_bundle"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "repo": {
+      "type": ["object", "null"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "head_sha": { "type": ["string", "null"] },
+        "fingerprint": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": ["object", "null"],
+      "properties": {
+        "run_id": { "type": ["string", "null"] },
+        "agent": { "type": ["string", "null"] },
+        "started": { "type": ["string", "null"] },
+        "ended": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["read_only", "safe_edit", "migration", "autonomous_pr"]
+    },
+    "policy_profile": {
+      "type": "string",
+      "enum": ["startup", "regulated"]
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "affected": {
+      "type": "object",
+      "properties": {
+        "areas": { "type": "array", "items": { "type": "string" } },
+        "symbols": { "type": "array" },
+        "downstream": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "risk": {
+      "type": "object",
+      "properties": {
+        "level": { "type": "string", "enum": ["low", "medium", "high"] },
+        "reasons": { "type": "array" },
+        "paths": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "command_graph_snapshot": {
+      "type": "object",
+      "properties": {
+        "commands": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "verification_contract": {
+      "type": "object",
+      "required": ["required", "skipped"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["command", "reason"],
+            "properties": {
+              "command": { "type": "string" },
+              "kind": { "type": "string" },
+              "invocation": { "type": "string" },
+              "reason": { "type": "string" },
+              "detail": {}
+            },
+            "additionalProperties": true
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["command", "reason"],
+            "properties": {
+              "command": { "type": "string" },
+              "reason": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "_meta": { "type": ["object", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "executed_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["pass", "fail", "error"] },
+          "evidence": {}
+        },
+        "additionalProperties": true
+      }
+    },
+    "missing_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["command", "reason"],
+        "properties": {
+          "command": { "type": "string" },
+          "reason": { "type": "string" },
+          "detail": {}
+        },
+        "additionalProperties": true
+      }
+    },
+    "optimizer_findings": { "type": "array" },
+    "scope_findings": { "type": "array" },
+    "mcp_tool_findings": { "type": "array" },
+    "ledger": { "type": ["object", "null"] },
+    "verdict": {
+      "type": "object",
+      "required": ["value", "reasons"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "enum": ["pass", "pass_with_warnings", "needs_review", "blocked"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "economy": { "type": ["object", "null"] }
+  },
+  "additionalProperties": true
+}

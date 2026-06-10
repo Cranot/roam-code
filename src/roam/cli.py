@@ -163,6 +163,7 @@ _COMMANDS = {
     "health": ("roam.commands.cmd_health", "health"),
     "clusters": ("roam.commands.cmd_clusters", "clusters"),
     "layers": ("roam.commands.cmd_layers", "layers"),
+    "cycles": ("roam.commands.cmd_cycles", "cycles"),
     "weather": ("roam.commands.cmd_weather", "weather"),
     "churn": ("roam.commands.cmd_weather", "weather"),
     "dead": ("roam.commands.cmd_dead", "dead"),
@@ -175,6 +176,7 @@ _COMMANDS = {
     # (no string-literal / comment false positives).
     "refs": ("roam.commands.cmd_uses", "uses"),
     "impact": ("roam.commands.cmd_impact", "impact"),
+    "dict-consistency": ("roam.commands.cmd_dict_consistency", "dict_consistency"),
     "owner": ("roam.commands.cmd_owner", "owner"),
     "coupling": ("roam.commands.cmd_coupling", "coupling"),
     "fan": ("roam.commands.cmd_fan", "fan"),
@@ -199,6 +201,7 @@ _COMMANDS = {
     "py-modern": ("roam.commands.cmd_py_modern", "py_modern"),
     "pytest-fixtures": ("roam.commands.cmd_pytest_fixtures", "pytest_fixtures"),
     "hover": ("roam.commands.cmd_hover", "hover"),
+    "at": ("roam.commands.cmd_at", "at"),
     "debt": ("roam.commands.cmd_debt", "debt"),
     "conventions": ("roam.commands.cmd_conventions", "conventions"),
     "bus-factor": ("roam.commands.cmd_bus_factor", "bus_factor"),
@@ -209,6 +212,7 @@ _COMMANDS = {
     "stale-refs": ("roam.commands.cmd_stale_refs", "stale_refs"),
     "lsp": ("roam.commands.cmd_lsp", "lsp"),
     "docs-coverage": ("roam.commands.cmd_docs_coverage", "docs_coverage"),
+    "docs-index": ("roam.commands.cmd_docs_index", "docs_index"),
     "suggest-refactoring": ("roam.commands.cmd_suggest_refactoring", "suggest_refactoring"),
     "plan-refactor": ("roam.commands.cmd_plan_refactor", "plan_refactor"),
     "fn-coupling": ("roam.commands.cmd_fn_coupling", "fn_coupling"),
@@ -301,6 +305,14 @@ _COMMANDS = {
     "recipes": ("roam.commands.cmd_recipes", "recipes"),
     "forecast": ("roam.commands.cmd_forecast", "forecast"),
     "plan": ("roam.commands.cmd_plan", "plan"),
+    "compile": ("roam.commands.cmd_compile", "compile_"),
+    "compile-stats": ("roam.commands.cmd_compile_stats", "compile_stats"),
+    "compile-cache": ("roam.commands.cmd_compile_cache", "compile_cache"),
+    "envelope-diff": ("roam.commands.cmd_envelope_diff", "envelope_diff"),
+    "dispatch-trace": ("roam.commands.cmd_dispatch_trace", "dispatch_trace"),
+    "magic-numbers": ("roam.commands.cmd_magic_numbers", "magic_numbers"),
+    "compiler-health": ("roam.commands.cmd_compiler_health", "compiler_health"),
+    "compiler-corpus": ("roam.commands.cmd_compiler_corpus", "compiler_corpus"),
     "adversarial": ("roam.commands.cmd_adversarial", "adversarial"),
     "cut": ("roam.commands.cmd_cut", "cut"),
     "invariants": ("roam.commands.cmd_invariants", "invariants"),
@@ -339,6 +351,17 @@ _COMMANDS = {
     "simulate-departure": ("roam.commands.cmd_simulate_departure", "simulate_departure"),
     "suggest-reviewers": ("roam.commands.cmd_suggest_reviewers", "suggest_reviewers"),
     "verify": ("roam.commands.cmd_verify", "verify"),
+    "verification-contract": ("roam.commands.cmd_verification_contract", "verification_contract"),
+    "verdict": ("roam.commands.cmd_verdict", "verdict"),
+    "proof-bundle": ("roam.commands.cmd_proof_bundle", "proof_bundle"),
+    "guard-pr": ("roam.commands.cmd_guard_pr", "guard_pr"),
+    "guard-history": ("roam.commands.cmd_guard_history", "guard_history"),
+    "guard-doctor": ("roam.commands.cmd_guard_doctor", "guard_doctor"),
+    "guard-rules": ("roam.commands.cmd_guard_rules", "guard_rules_group"),
+    "guard-diff": ("roam.commands.cmd_guard_diff", "guard_diff"),
+    "guard-init": ("roam.commands.cmd_guard_init", "guard_init"),
+    "guard-clean": ("roam.commands.cmd_guard_clean", "guard_clean"),
+    "bench-compile": ("roam.commands.cmd_bench", "bench_compile"),
     "api-changes": ("roam.commands.cmd_api_changes", "api_changes"),
     "test-gaps": ("roam.commands.cmd_test_gaps", "test_gaps"),
     "ai-ratio": ("roam.commands.cmd_ai_ratio", "ai_ratio"),
@@ -470,6 +493,19 @@ _CATEGORIES = {
         "postmortem",
         "pr-replay",
         "guard",
+        # Roam Guard family (Wave 11-20): the PR-gating surface.
+        "guard-pr",
+        "guard-doctor",
+        "guard-init",
+        "guard-clean",
+        "guard-diff",
+        "guard-history",
+        "guard-rules",
+        "proof-bundle",
+        "verdict",
+        "verification-contract",
+        # Wave 24: benchmark harness for compiler vs vanilla vs static.
+        "bench-compile",
         "agent-plan",
         "agent-context",
         "pr-risk",
@@ -518,6 +554,11 @@ _CATEGORIES = {
         "annotate",
         "annotations",
         "plan",
+        "compile",
+        "compile-stats",
+        "compile-cache",
+        "envelope-diff",
+        "dispatch-trace",
         "syntax-check",
         "triage",
         "oracle",
@@ -537,10 +578,14 @@ _CATEGORIES = {
     "Codebase Health": [
         "health",
         "smells",
+        "magic-numbers",
+        "compiler-health",
+        "compiler-corpus",
         "vibe-check",
         "llm-smells",
         "ai-readiness",
         "check-rules",
+        "dict-consistency",
         "ai-ratio",
         "trends",
         "weather",
@@ -577,6 +622,7 @@ _CATEGORIES = {
         "architecture-drift",
         "layers",
         "clusters",
+        "cycles",
         "spectral",
         "coupling",
         "dark-matter",
@@ -599,6 +645,7 @@ _CATEGORIES = {
     ],
     "Exploration": [
         "search",
+        "at",
         "search-semantic",
         "batch-search",
         "complete",
@@ -660,6 +707,7 @@ _CATEGORIES = {
         "fn-coupling",
         "doc-staleness",
         "docs-coverage",
+        "docs-index",
         "stale-refs",
         "lsp",
         "suggest-refactoring",
@@ -1147,7 +1195,7 @@ def _enforce_mode_gate(ctx: click.Context) -> None:
                 target=canonical,
                 repo_root=repo_root,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — audit logging must never block the override
             pass
         return
 
@@ -1541,7 +1589,7 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
                             f'{{"warning": {str(message)!r}, '
                             f'"category": {getattr(category, "__name__", str(category))!r}}}\n'
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001 — a warning handler must never crash the command
                         pass
 
             _warnings.showwarning = _stderr_showwarning
@@ -1572,7 +1620,7 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     except Exception:
         try:
             click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
-        except Exception:
+        except Exception:  # noqa: BLE001 — the gate must never block a command via its own bug
             pass
 
     # `_ACTIVE_DEPRECATION_NOTICE` is set by `resolve_command` *before* the
@@ -1596,7 +1644,7 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
             duration_ms = int((_time.perf_counter() - _start) * 1000)
             # exit code propagates through SystemExit; default 0 if not raised.
             _telemetry_record(cmd_name, duration_ms, exit_code=0)
-        except Exception:
+        except Exception:  # noqa: BLE001 — telemetry must never break command teardown
             pass
 
     ctx.call_on_close(_on_close)

@@ -262,6 +262,34 @@ _SOURCE_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"\bboto3\.(client|resource)\("), "io_write", "boto3"),
     (re.compile(r"\bpsycopg2\.connect\(|\bsqlite3\.connect\("), "io_write", "db.connect"),
     (re.compile(r"\.send\(|\.recv\("), "io_write", "socket.send/recv"),
+    # -- JavaScript / TypeScript (Node + Bun) — cross-language effects.
+    # The mechanism above is language-agnostic (it greps symbol bodies); it
+    # simply lacked JS/TS sink patterns, so TS functions doing real I/O were
+    # mis-classified as ``none``. High-precision anchors only (a string/backtick
+    # arg gates the SQL ones so ``regex.exec(var)`` is not a false positive).
+    (re.compile(r"\bfetch\s*\("), "io_write", "fetch (network egress)"),
+    (re.compile(r"\baxios\.(get|head)\b"), "io_read", "axios.get/head"),
+    (re.compile(r"\baxios\.(post|put|patch|delete)\b"), "io_write", "axios.write"),
+    (re.compile(r"\bnew\s+Database\s*\("), "io_read", "sqlite.open"),
+    (re.compile(r"\.exec\s*\(\s*['\"\x60]"), "io_write", "sqlite.exec(sql)"),
+    (
+        re.compile(
+            r"\.query\s*\(\s*['\"\x60]\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)",
+            re.IGNORECASE,
+        ),
+        "io_write",
+        "sqlite.query(write)",
+    ),
+    (
+        re.compile(r"\.query\s*\(\s*['\"\x60]\s*(?:SELECT|PRAGMA|WITH)", re.IGNORECASE),
+        "io_read",
+        "sqlite.query(read)",
+    ),
+    (re.compile(r"\.prepare\s*\(\s*['\"\x60]"), "io_read", "sqlite.prepare"),
+    (re.compile(r"\b(?:fs\.)?writeFile(?:Sync)?\s*\("), "io_write", "fs.writeFile"),
+    (re.compile(r"\b(?:fs\.)?readFile(?:Sync)?\s*\("), "io_read", "fs.readFile"),
+    (re.compile(r"\bBun\.serve\s*\(|\bcreateServer\s*\("), "process", "http.server"),
+    (re.compile(r"\bset(?:Interval|Timeout)\s*\("), "process", "timer"),
 )
 
 # `open(path, 'w'|'a'|'x'|'r+')` ⇒ io_write; `open(path, 'r')` or 1-arg
@@ -279,7 +307,10 @@ _PRE_FILTER_RE = re.compile(
     r"psycopg2|sqlite3|boto3|fetchone|fetchall|fetchmany|"
     r"write_text|write_bytes|read_text|read_bytes|writelines|"
     r"\.commit|\.execute|\.send|\.recv|global\s+\w+|nonlocal\s+\w+|"
-    r"Path\."
+    r"Path\.|"
+    # JS/TS sink anchors (gate Layer-2 patterns above for TypeScript bodies)
+    r"fetch|axios|Database|\.query|\.exec|\.prepare|writeFile|readFile|"
+    r"Bun\.|createServer|setInterval|setTimeout"
     r")"
 )
 
@@ -305,6 +336,106 @@ _SIDE_EFFECTING_IMPORTS = frozenset(
         "shutil",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Module-init (import-time) side effects
+# ---------------------------------------------------------------------------
+
+_MODULE_INIT_SKIP_PREFIXES = (
+    "import ",
+    "from ",
+    "export type",
+    "export interface",
+    "export {",
+    "export default",
+    "interface ",
+    "type ",
+    "enum ",
+    "//",
+    "/*",
+    "*",
+    "#",
+    "}",
+    ")",
+    "]",
+    "def ",
+    "async def ",
+    "class ",
+    "@",
+    "function ",
+    "async function ",
+    "export function",
+    "export async function",
+    "export class",
+    "export abstract",
+    "export enum",
+)
+
+
+def _module_init_line_effect(line: str) -> tuple[str, str] | None:
+    """Return ``(kind, label)`` if *line* is a top-level (column-0) statement
+    that matches a side-effect sink, else ``None``. Indented lines (function /
+    class bodies) and pure declarations are skipped."""
+    if not line or line[0].isspace():
+        return None
+    stripped = line.strip()
+    if not stripped or stripped.startswith(_MODULE_INIT_SKIP_PREFIXES):
+        return None
+    if not _PRE_FILTER_RE.search(line):
+        return None
+    for pat, kind, label in _SOURCE_PATTERNS:
+        if pat.search(line):
+            return kind, label
+    return None
+
+
+def _opens_unterminated_block(line: str) -> str | None:
+    """Return the triple-quote/backtick delimiter this line opens but does NOT
+    close (odd count), else None — used to skip multi-line string content."""
+    for delim in ('"""', "'''", "`"):
+        if line.count(delim) % 2 == 1:
+            return delim
+    return None
+
+
+def scan_module_init_effects(source: str) -> list[tuple[int, str, str]]:
+    """Detect I/O side effects in TOP-LEVEL (import-time) code.
+
+    A module that performs I/O at import time — opening a DB, executing DDL,
+    reading files, spawning a server/timer — is an anti-pattern: merely
+    importing it mutates the world, which breaks tests, multiple entry points,
+    and tooling. Function/class bodies are indented, so scanning column-0
+    (un-indented) executable lines isolates module-scope statements; we reuse
+    the same sink patterns as the per-symbol classifier.
+
+    Lines inside multi-line strings (docstrings / backtick templates) are
+    skipped — a docstring that *mentions* ``requests.post`` or a SQL string
+    literal is text, not an executing import-time call.
+
+    Returns ``[(line_number, kind, label), ...]`` for each top-level sink.
+    Language-agnostic (column-0 convention holds for Python and JS/TS).
+    """
+    findings: list[tuple[int, str, str]] = []
+    in_block: str | None = None
+    for i, line in enumerate(source.splitlines(), start=1):
+        if in_block is not None:
+            if in_block in line:
+                in_block = None
+            continue
+        opener = _opens_unterminated_block(line)
+        scan_text = line
+        if opener is not None:
+            # Code up to & including the opening delimiter is real; the string
+            # body after it is text. Keeping the delimiter preserves patterns
+            # whose anchor IS the delimiter (e.g. ``.exec(`` + backtick).
+            head, _, _ = line.partition(opener)
+            scan_text = head + opener
+        hit = _module_init_line_effect(scan_text)
+        if hit is not None:
+            findings.append((i, hit[0], hit[1]))
+        in_block = opener
+    return findings
 
 
 # ---------------------------------------------------------------------------

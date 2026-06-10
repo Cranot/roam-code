@@ -411,7 +411,7 @@ def _load_mcp_tool_names() -> frozenset[str]:
                     elif isinstance(deco, ast.Name) and deco.id == "_tool":
                         collected.add(node.name)
                         break
-    except Exception:
+    except Exception:  # noqa: BLE001 — file IO / ast parse / attr errors, see below
         # Bare except: file IO, ast parse, attribute errors — none of
         # these should ever break the dead command's readonly path.
         pass
@@ -779,21 +779,30 @@ def _dead_consumer_meta(conn, candidate_ids):
     return meta
 
 
-def _scan_one_test_file_combined(args):
-    """Worker: scan a test file with a combined alternation regex.
+_WORD_RE = re.compile(r"\w+")
 
-    Returns the set of names that appeared in the file. The combined regex
-    is ~100x faster than per-name searches because it traverses the source
-    text once.
+
+def _scan_one_test_file_combined(args):
+    """Worker: find which candidate names appear as whole words in a test file.
+
+    For identifier-shaped names (the overwhelming majority) this tokenizes the
+    file ONCE into ``\\w+`` words and set-intersects with the candidate set —
+    O(words) with O(1) membership. An N-alternation ``\\b(a|b|...)\\b`` regex
+    instead re-tries every candidate at each text position, which is
+    pathologically slow at 600+ names over ~20 MB of tests (measured 9.6s ->
+    ~1.5s on roam-code). Word-set membership is EQUIVALENT to ``\\b(name)\\b``
+    for ``\\w+`` names (a maximal ``\\w`` run is exactly a ``\\b``-bounded token).
+    Rare names containing non-``\\w`` chars are matched by ``fallback_rx``.
     """
-    project_root, path, combined_rx = args
+    project_root, path, names_set, fallback_rx = args
     try:
         source = (project_root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return path, set()
-    # findall on a regex with a single capture group returns the captured
-    # substrings — i.e. the names that matched.
-    matched = set(combined_rx.findall(source))
+    matched = names_set.intersection(_WORD_RE.findall(source))
+    if fallback_rx is not None:
+        matched = set(matched)
+        matched.update(fallback_rx.findall(source))
     return path, matched
 
 
@@ -829,17 +838,23 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
     if not test_files:
         return
 
-    # Build the combined alternation. We use a single capture group so
-    # findall returns just the matched name. Sort names for determinism.
+    # Build the candidate set. Identifier-shaped names (≈100%) go in a frozenset
+    # matched by O(1) word-set intersection in the worker; rare non-\w names keep
+    # the regex path via `fallback_rx`. Sorted for deterministic fallback order.
     name_to_row_ids = {name: [r["id"] for r in name_rows] for name, name_rows in by_name.items()}
     sorted_names = sorted(name_to_row_ids.keys())
-    # Escape and join. The wrapping \b ... \b ensures whole-word match.
-    combined_pattern = r"\b(" + "|".join(re.escape(n) for n in sorted_names) + r")\b"
-    try:
-        combined_rx = re.compile(combined_pattern)
-    except re.error:
-        # If the pattern is unparseable (shouldn't happen with escaped
-        # names, but defensively…) fall back to no-op rather than crash.
+    word_names: set[str] = set()
+    other_names: list[str] = []
+    for n in sorted_names:
+        (word_names.add(n) if _WORD_RE.fullmatch(n) else other_names.append(n))
+    names_set = frozenset(word_names)
+    fallback_rx = None
+    if other_names:
+        try:
+            fallback_rx = re.compile(r"\b(" + "|".join(re.escape(n) for n in other_names) + r")\b")
+        except re.error:
+            fallback_rx = None
+    if not names_set and fallback_rx is None:
         return
 
     use_parallel = not os.environ.get("ROAM_NO_PARALLEL") and len(test_files) >= 50
@@ -851,7 +866,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
             from concurrent.futures import ThreadPoolExecutor
 
             workers = max(1, min(os.cpu_count() or 4, 8))
-            args_iter = ((project_root, path, combined_rx) for path in test_files)
+            args_iter = ((project_root, path, names_set, fallback_rx) for path in test_files)
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for path, matched in ex.map(_scan_one_test_file_combined, args_iter):
                     if matched:
@@ -862,7 +877,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
 
     if not parallel_ok:
         for path in test_files:
-            path, matched = _scan_one_test_file_combined((project_root, path, combined_rx))
+            path, matched = _scan_one_test_file_combined((project_root, path, names_set, fallback_rx))
             if matched:
                 per_file_hits.append((path, matched))
 
@@ -1204,6 +1219,108 @@ def _blame_one_file(project_root, file_path):
         return file_path, []
 
 
+def _blame_uncached(project_root, file_paths: list[str]) -> dict[str, list]:
+    """Blame the given files via git subprocess — parallel for >=50 files (I/O-
+    bound on git children), else serial. Returns ``{file_path: blame_entries}``."""
+    blame_results: dict[str, list] = {}
+    if not file_paths:
+        return blame_results
+    use_parallel = not os.environ.get("ROAM_NO_PARALLEL") and len(file_paths) >= 50
+    if use_parallel:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = max(1, min(os.cpu_count() or 4, 8))
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for fp, entries in ex.map(lambda p: _blame_one_file(project_root, p), file_paths):
+                    blame_results[fp] = entries
+        except Exception:  # noqa: BLE001 — fall through to serial
+            blame_results = {}
+    if not blame_results:
+        for file_path in file_paths:
+            fp, entries = _blame_one_file(project_root, file_path)
+            blame_results[fp] = entries
+    return blame_results
+
+
+def _blame_files_cached(conn, project_root, file_paths: list[str]) -> dict[str, list]:
+    """Return ``{file_path: blame_entries}`` via a content-hash-keyed persistent
+    blame cache (``.roam/blame-cache.sqlite``).
+
+    A file's ``git blame`` is invariant while its CONTENT is unchanged, so blame
+    each file ONCE per content (keyed on the index's ``files.hash``) and reuse it
+    — turning the repeat ``roam dead`` blame phase from O(files) git subprocesses
+    (~3.3s on roam-code) into a few cheap cache reads. Cached entries keep only
+    ``timestamp``+``author`` (all `_blame_age_for_sym` reads). Robust: a missing/
+    unwritable cache, the light-index hash poison, or any error transparently
+    falls back to blaming every file (identical output, just slower)."""
+    import sqlite3 as _sq
+
+    from roam.observability import log_swallowed
+
+    if not file_paths:
+        return {}
+    # Current content hashes from the index. Skip the light-index poison value —
+    # it doesn't uniquely reflect content, so caching against it would go stale.
+    hashes: dict[str, str] = {}
+    try:
+        for r in batched_in(conn, "SELECT path, hash FROM files WHERE path IN ({ph})", file_paths):
+            h = r["hash"]
+            if h and h != "roam-light-pending":
+                hashes[r["path"]] = h
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("cmd_dead.blame_hashes", exc)
+    cache = None
+    try:
+        roam_dir = project_root / ".roam"
+        if roam_dir.exists():
+            cache = _sq.connect(str(roam_dir / "blame-cache.sqlite"), timeout=2.0)
+            cache.execute(
+                "CREATE TABLE IF NOT EXISTS blame_cache (file_path TEXT PRIMARY KEY, "
+                "content_hash TEXT NOT NULL, blame_json TEXT NOT NULL)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("cmd_dead.blame_cache_open", exc)
+        cache = None
+    results: dict[str, list] = {}
+    misses: list[str] = []
+    for fp in file_paths:
+        h = hashes.get(fp)
+        if cache is not None and h:
+            try:
+                row = cache.execute(
+                    "SELECT content_hash, blame_json FROM blame_cache WHERE file_path = ?", (fp,)
+                ).fetchone()
+                if row and row[0] == h:
+                    results[fp] = [{"timestamp": t, "author": a} for t, a in json.loads(row[1])]
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                log_swallowed("cmd_dead.blame_cache_read", exc)
+        misses.append(fp)
+    blamed = _blame_uncached(project_root, misses) if misses else {}
+    if cache is not None and blamed:
+        try:
+            for fp, entries in blamed.items():
+                h = hashes.get(fp)
+                if not h:
+                    continue
+                compact = json.dumps([[e["timestamp"], e["author"]] for e in entries])
+                cache.execute(
+                    "INSERT OR REPLACE INTO blame_cache (file_path, content_hash, blame_json) VALUES (?, ?, ?)",
+                    (fp, h, compact),
+                )
+            cache.commit()
+        except Exception as exc:  # noqa: BLE001
+            log_swallowed("cmd_dead.blame_cache_write", exc)
+        finally:
+            try:
+                cache.close()
+            except _sq.Error as exc:
+                log_swallowed("cmd_dead.blame_cache_close", exc)
+    results.update(blamed)
+    return results
+
+
 def _get_blame_ages(conn, dead_symbols):
     """Get age data for dead symbols by batching git blame per file.
 
@@ -1234,33 +1351,12 @@ def _get_blame_ages(conn, dead_symbols):
 
     project_root = find_project_root()
 
-    # Parallel git-blame phase: dispatch one git subprocess per file via
-    # threads. We're I/O-bound on git child processes, so threads beat
-    # processes (no pickle overhead, no Windows spawn).
+    # Blame phase — content-hash cached so an unchanged file is blamed at most
+    # once per content across `roam dead` runs (the repeat-run cost collapses
+    # from O(files) git subprocesses to cache reads). Falls back to blaming every
+    # file on any cache error.
     file_paths = list(by_file.keys())
-    blame_results: dict[str, list] = {}
-
-    use_parallel = (
-        not os.environ.get("ROAM_NO_PARALLEL") and len(file_paths) >= 50  # break-even point: ~50 files
-    )
-
-    if use_parallel:
-        try:
-            from concurrent.futures import ThreadPoolExecutor
-
-            # Cap at 8 — git itself is fast, and too many concurrent
-            # subprocesses just trash the OS scheduler.
-            workers = max(1, min(os.cpu_count() or 4, 8))
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                for fp, entries in ex.map(lambda p: _blame_one_file(project_root, p), file_paths):
-                    blame_results[fp] = entries
-        except Exception:
-            blame_results = {}  # Fall through to serial
-
-    if not blame_results:
-        for file_path in file_paths:
-            fp, entries = _blame_one_file(project_root, file_path)
-            blame_results[fp] = entries
+    blame_results = _blame_files_cached(conn, project_root, file_paths)
 
     # Reduction phase: blame data → per-symbol records. DB-touching
     # fallback (``_file_level_age``) runs in main thread on the existing
@@ -1761,6 +1857,17 @@ def _analyze_dataflow_dead(conn):
 @click.option("--aging", "show_aging", is_flag=True, help="Add age/staleness columns to output")
 @click.option("--effort", "show_effort", is_flag=True, help="Add effort estimation columns to output")
 @click.option("--decay", "show_decay", is_flag=True, help="Show decay score and distribution")
+@click.option(
+    "--no-decay",
+    "no_decay",
+    is_flag=True,
+    help=(
+        "Skip the git-blame age/decay pass (the dominant cost on large repos). "
+        "Keeps the full dead-export list + JSON envelope; only the decay/age "
+        "fields are omitted. Used by the compile structural_dead probe so it "
+        "completes within budget and prefetches the result."
+    ),
+)
 @click.option("--sort-by-age", "sort_by_age", is_flag=True, help="Sort dead code oldest-first")
 @click.option(
     "--sort-by-effort",
@@ -1822,6 +1929,7 @@ def dead(
     show_aging,
     show_effort,
     show_decay,
+    no_decay,
     sort_by_age,
     sort_by_effort,
     sort_by_decay,
@@ -1846,8 +1954,9 @@ def dead(
     # Decay distribution is now part of the default summary — the
     # fossilized/decayed/stale/fresh framing is a much better pitch than
     # a flat dead-export count, so we compute extended data unless the
-    # caller explicitly asked for the summary-only fast path.
-    compute_decay = not summary_only
+    # caller explicitly asked for the summary-only fast path OR --no-decay
+    # (the latency-sensitive compile-probe path: full list, no blame).
+    compute_decay = not summary_only and not no_decay
 
     # W607-BX -- substrate-boundary plumbing for cmd_dead.
     # ``_run_check_bx`` wraps each substrate helper so an uncaught raise

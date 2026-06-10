@@ -1045,6 +1045,45 @@ CATALOG: dict[str, dict] = {
             },
         ],
     },
+    # resilience family (super-optimizer P3). Same family-tag convention as
+    # agent-opt + observability-opt: keeps these out of the math invariants
+    # (which now scope to tasks WITHOUT a family tag) and routes the surface
+    # selector. Detectors live in ``roam.resilience``. ``time``/``space`` are
+    # N/A; the weak way is encoded as the high-rank way.
+    "missing-timeout": {
+        "name": "Network call without timeout",
+        "category": "reliability",
+        "kind": "reliability",
+        "family": "resilience",
+        "ways": [
+            {
+                "id": "explicit-timeout",
+                "name": "Explicit per-call timeout",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 1,
+                "tip": (
+                    "Pass an explicit timeout/deadline on every network call "
+                    "(requests.get(url, timeout=5); fetch(url, {signal: "
+                    "AbortSignal.timeout(5000)}); http.Client{Timeout: 5*time.Second}). "
+                    "A slow remote then surfaces as a fast, retriable error "
+                    "instead of a hung caller."
+                ),
+            },
+            {
+                "id": "no-explicit-timeout",
+                "name": "Default-client / no-timeout call",
+                "time": "n/a",
+                "space": "n/a",
+                "rank": 10,
+                "tip": (
+                    "Bare requests.get(url) / fetch(url) / http.Get(url) inherit "
+                    "the language default (often: block forever or until socket "
+                    "death). One unhealthy upstream then takes down the caller."
+                ),
+            },
+        ],
+    },
 }
 
 

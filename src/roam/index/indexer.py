@@ -707,6 +707,7 @@ class Indexer:
         include_excluded: bool = False,
         quiet: bool = False,
         progress_bar: bool = True,
+        light: bool = False,
     ):
         """Run the indexing pipeline.
 
@@ -718,6 +719,12 @@ class Indexer:
             quiet: If True, suppress all progress output to stderr.
             progress_bar: If True (default), show progress bars for file
                 processing. Set to False in non-TTY environments.
+            light: If True, refresh symbols + edges (parse + resolve) but skip
+                the O(repo) metric phases (graph metrics, git history, effects/
+                taint, health/load, search indexes). The changed files' metric
+                values + the search index stay stale until the next full run;
+                the graph structure is correct. Use for a fast post-edit
+                reindex (e.g. `roam verify`) where only symbols/edges are read.
         """
         global _quiet_mode
         self._quiet = quiet
@@ -730,7 +737,7 @@ class Indexer:
         if not _claim_index_lock(lock_path):
             return
         try:
-            self._do_run(force, verbose=verbose, include_excluded=include_excluded)
+            self._do_run(force, verbose=verbose, include_excluded=include_excluded, light=light)
         except KeyboardInterrupt:
             # graceful Ctrl-C: drop the lock so the user can
             # rerun without manual cleanup. Periodic commits in
@@ -819,7 +826,7 @@ class Indexer:
             return
         try:
             bar_ctx.__exit__(None, None, None)
-        except Exception:
+        except Exception:  # noqa: BLE001 — see guard rationale below
             # Intentional silent guard: closing a click progress bar is a
             # cosmetic UI teardown — a failure here has no effect on the
             # index result and would only add noise to surface.
@@ -1083,7 +1090,7 @@ class Indexer:
         try:
             row = conn.execute("SELECT source_file_id FROM edges LIMIT 1").fetchone()
             has_source_file_id = row is not None and row["source_file_id"] is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 — see capability-probe rationale below
             # Intentional capability probe: a failed SELECT means the column
             # is absent (pre-v11 DB). `has_source_file_id` stays False and the
             # slow-path branch runs — expected absence, not a broken state.
@@ -1220,7 +1227,7 @@ class Indexer:
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001 — see cleanup rationale below
                     # Intentional silent guard: best-effort close in a finally
                     # block — the real error (if any) was already surfaced by
                     # the try-body's WARN above; a close failure must not mask it.
@@ -1386,7 +1393,15 @@ class Indexer:
         )
         self._log(f"  {_format_count(len(file_edges))} file edges")
 
-    def _compute_graph_metrics(self, conn):
+    @staticmethod
+    def _has_existing_graph_metrics(conn) -> bool:
+        """Return True if the graph_metrics table has at least one row."""
+        try:
+            return conn.execute("SELECT 1 FROM graph_metrics LIMIT 1").fetchone() is not None
+        except Exception:
+            return False
+
+    def _compute_graph_metrics(self, conn, force: bool = False):
         (
             build_symbol_graph,
             _store_metrics,
@@ -1402,6 +1417,33 @@ class Indexer:
         # Phase header emitted by _begin_phase in _do_run.
         try:
             G = build_symbol_graph(conn)
+            # pagerank + centrality depend ONLY on graph topology. When the
+            # graph signature (n, m, top-degree nodes) matches the previous run
+            # and the table is already populated, the stored metrics are still
+            # valid — skip the ~26s recompute. Mirrors the Louvain cluster-cache
+            # gate (_run_clustering); shares the same persisted signature so a
+            # topology-unchanged reindex (e.g. a no-op or comment-only edit)
+            # skips both. --force always recomputes.
+            live_sig = self._compute_graph_signature(G)
+            self._cluster_signature = live_sig
+            prev_sig = self._previous_cluster_signature(conn) if not force else None
+            if (
+                live_sig is not None
+                and prev_sig is not None
+                and prev_sig.get("n") == live_sig["n"]
+                and prev_sig.get("m") == live_sig["m"]
+                and list(prev_sig.get("top") or ()) == live_sig["top"]
+                and self._has_existing_graph_metrics(conn)
+            ):
+                metric_count = conn.execute("SELECT COUNT(*) FROM graph_metrics").fetchone()[0]
+                self._log(
+                    f"  cached: graph signature unchanged "
+                    f"({live_sig['n']} nodes, {live_sig['m']} edges) "
+                    f"— reusing metrics for {_format_count(metric_count)} symbols; "
+                    f"pass --force to recompute"
+                )
+                self._record_step("graph_metrics", "ok:cached")
+                return G, _detect_clusters, _label_clusters, _store_clusters
             _store_metrics(conn, G)
             metric_count = conn.execute("SELECT COUNT(*) FROM graph_metrics").fetchone()[0]
             self._log(f"  Metrics for {_format_count(metric_count)} symbols")
@@ -1770,7 +1812,7 @@ class Indexer:
                 duration_ms=(time.monotonic() - start) * 1000.0,
             )
 
-    def _run_effect_analysis(self, conn, G) -> None:
+    def _run_effect_analysis(self, conn, G, changed_paths=None) -> None:
         effects_fn = _try_import_effects()
         if effects_fn is None:
             self._record_step("effect_analysis", "skipped:module_missing")
@@ -1783,7 +1825,10 @@ class Indexer:
             # doesn't re-open + re-parse every file. ``source_cache`` is
             # backwards-compatible (default None → original disk-read path).
             source_cache = self._phase5_cache_for_handoff()
-            effects_fn(conn, self.root, G, source_cache=source_cache)
+            # Incremental: only changed files are re-classified; unchanged
+            # files reuse their stored direct effects (changed_paths=None on a
+            # full / --force run re-classifies everything).
+            effects_fn(conn, self.root, G, source_cache=source_cache, changed_paths=changed_paths)
             effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
             if effect_count:
                 self._log(f"  {_format_count(effect_count)} effects classified")
@@ -1906,7 +1951,7 @@ class Indexer:
                 onnx_count = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()[0]
                 if onnx_count:
                     self._log(f"  ONNX vectors for {_format_count(onnx_count)} symbols")
-            except Exception:
+            except Exception:  # noqa: BLE001 — see optional-ONNX rationale below
                 # Intentional silent guard: ONNX is optional — a missing
                 # symbol_embeddings table or empty count is expected when the
                 # ONNX backend was never installed. This is a cosmetic log
@@ -2057,7 +2102,47 @@ class Indexer:
         self._record_phase(key, time.perf_counter() - t_start)
         self._phase_open = None
 
-    def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False):
+    def _run_metric_phases(self, conn, force: bool, changed_paths=None) -> None:
+        """Phases 3-7: graph metrics, git history, effects/taint, health/load,
+        search indexes. The O(repo) metric layer — skipped by a light reindex."""
+        self._begin_phase(3, "Computing graph metrics...")
+        G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn, force=force)
+        self._begin_phase(4, "Analyzing git history...")
+        self._run_git_analysis(conn)
+        self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters, force=force)
+        self._begin_phase(5, "Computing effects & taint flow...")
+        self._run_effect_analysis(conn, G, changed_paths=changed_paths)
+        self._run_taint_analysis(conn, G)
+        # W440: release the Phase 2 source/tree cache before Phase 6 so peak
+        # memory drops back before health + cognitive load.
+        self._clear_phase5_cache()
+        self._begin_phase(6, "Computing health & cognitive load...")
+        self._compute_health_and_load(conn, G)
+        self._begin_phase(7, "Building search indexes...")
+        self._build_search_indexes(conn, force=force)
+
+    def _finalize_light_reindex(self, conn, files_to_process: list[str]) -> None:
+        """Light reindex tail. Phases 1-2 already refreshed symbols + edges, so the
+        graph STRUCTURE is correct; light skips the O(repo) metric phases the caller
+        (e.g. `roam verify`) never reads — graph_metrics, git, effects/taint (~113s
+        on roam-code), health/load, search (~150s full → ~6s light on one edit).
+
+        The processed files now carry their REAL hash/mtime, so a later incremental
+        `roam index` would see them as unchanged and never recompute the skipped
+        metrics — leaving pagerank/effects/churn/health stale until --force. Poison
+        the stored hash so the next full run re-detects them. Set mtime=0 too:
+        `get_changed_files` takes an mtime fast-path and skips the hash check on an
+        mtime match, so poisoning the hash alone would be short-circuited; mtime=0
+        forces it past the fast-path into the (poisoned) hash comparison.
+        """
+        self._clear_phase5_cache()
+        if files_to_process:
+            conn.executemany(
+                "UPDATE files SET hash = 'roam-light-pending', mtime = 0 WHERE path = ?",
+                [(p,) for p in files_to_process],
+            )
+
+    def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False, light: bool = False):
         t0 = time.monotonic()
         # W408: phase wall-clock map. Persisted into the manifest ``notes``
         # JSON under "phase_timings". Stable keys live in ``_PHASE_KEYS``.
@@ -2168,23 +2253,17 @@ class Indexer:
             self._run_pytest_fixture_resolver(conn)
             self._run_registry_dispatch_resolver(conn)
             self._run_laravel_post_resolver(conn)
-            self._begin_phase(3, "Computing graph metrics...")
-            G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
-            self._begin_phase(4, "Analyzing git history...")
-            self._run_git_analysis(conn)
-            self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters, force=force)
-            self._begin_phase(5, "Computing effects & taint flow...")
-            self._run_effect_analysis(conn, G)
-            self._run_taint_analysis(conn, G)
-            # W440: release the Phase 2 source/tree cache before Phase 6
-            # so peak memory drops back before health + cognitive load.
-            self._clear_phase5_cache()
-            self._begin_phase(6, "Computing health & cognitive load...")
-            self._compute_health_and_load(conn, G)
+            if not light:
+                # Incremental effects: on a non-force reindex, only the files
+                # re-parsed this run (added + modified) need re-classification;
+                # unchanged files reuse their stored direct effects. --force
+                # passes None to re-classify everything.
+                effect_changed_paths = None if force else set(files_to_process)
+                self._run_metric_phases(conn, force, changed_paths=effect_changed_paths)
+            else:
+                self._finalize_light_reindex(conn, files_to_process)
             self._restore_or_relink_annotations(conn, force, saved_annotations)
-            self._begin_phase(7, "Building search indexes...")
-            self._build_search_indexes(conn, force=force)
-            # W408: close phase 7 before any post-phase bookkeeping.
+            # W408: close the last open phase before any post-phase bookkeeping.
             self._close_open_phase()
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)

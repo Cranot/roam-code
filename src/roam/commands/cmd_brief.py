@@ -795,7 +795,7 @@ def brief_cmd(
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001 — see cleanup-guard rationale below
                 # Genuine guard: a close() failure during cleanup has no
                 # recoverable action and no user-visible consequence.
                 pass

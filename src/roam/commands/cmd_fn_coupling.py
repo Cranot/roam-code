@@ -299,7 +299,11 @@ def fn_coupling(
                     to_json(
                         json_envelope(
                             "fn-coupling",
-                            summary={"verdict": "No co-change data — run 'roam index' on a git repository", "pairs": 0, "error": "No git co-change data"},
+                            summary={
+                                "verdict": "No co-change data — run 'roam index' on a git repository",
+                                "pairs": 0,
+                                "error": "No git co-change data",
+                            },
                         )
                     )
                 )
@@ -361,7 +365,12 @@ def fn_coupling(
                     to_json(
                         json_envelope(
                             "fn-coupling",
-                            summary={"verdict": "No hidden function coupling found", "pairs": 0, "hidden": 0, "connected": len(connected)},
+                            summary={
+                                "verdict": "No hidden function coupling found",
+                                "pairs": 0,
+                                "hidden": 0,
+                                "connected": len(connected),
+                            },
                         )
                     )
                 )

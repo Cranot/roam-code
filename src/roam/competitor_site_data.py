@@ -1361,7 +1361,7 @@ MAP_METADATA: dict[str, dict[str, object]] = {
         "relationship": "self",
         "peer": True,
         "graph": "PageRank + Tarjan + Louvain + layers",
-        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 231 MCP tools, 244 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.40). Audit-trail commands: permit / postmortem / article-12-check.",
+        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 243 MCP tools, 267 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.40). Audit-trail commands: permit / postmortem / article-12-check.",
         "version_evaluated": "12.48",
         "repo_url": "https://github.com/Cranot/roam-code",
     },
@@ -2071,7 +2071,7 @@ def build_site_payload(tracker_path: Path | None = None) -> dict[str, object]:
             entry["mcp"] = str(mcp_tools)
             entry["cli_commands"] = f"{public} commands"
             break
-    except Exception:
+    except Exception:  # noqa: BLE001 — payload generation must not fail on parse error
         # Do not fail payload generation if local surface-count parsing fails.
         pass
 

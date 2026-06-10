@@ -51,6 +51,17 @@ from roam.db.queries import FILE_BY_PATH, FILE_IMPORTED_BY, FILE_IMPORTS
 from roam.output.formatter import format_table, json_envelope, strip_list_payloads, to_json
 
 
+def _bounded_list_preview(items: list, cap: int) -> tuple[list, bool]:
+    """Top-``cap`` ``{path, symbol_count}`` entries + whether the list was capped.
+
+    Pure helper for the default-mode preview (added 2026-06-07 so `deps` answers
+    "what files import X" inline instead of agents shelling/SQL-ing for the paths).
+    Extracted so the cap is unit-testable without a >cap-importer fixture project.
+    """
+    preview = [{"path": i["path"], "symbol_count": i["symbol_count"]} for i in items[:cap]]
+    return preview, len(items) > cap
+
+
 @roam_capability(
     name="deps",
     category="exploration",
@@ -68,8 +79,18 @@ from roam.output.formatter import format_table, json_envelope, strip_list_payloa
 @click.command()
 @click.argument("path")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
+@click.option(
+    "--multi",
+    is_flag=True,
+    help=(
+        "W43 — JSON-only: also emit ``cochange_pairs`` (top git "
+        "co-changing files for ``path``) on the envelope so callers "
+        "can collapse the structural-deps + temporal-coupling axes "
+        "into one subprocess. No-op in text mode."
+    ),
+)
 @click.pass_context
-def deps(ctx, path, full):
+def deps(ctx, path, full, multi):
     """Show file import/imported-by relationships.
 
     Unlike ``uses`` (which shows symbol-level callers and consumers), this command shows
@@ -86,7 +107,12 @@ def deps(ctx, path, full):
     hotspots), and ``impact`` (blast radius for a symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
-    detail = ctx.obj.get("detail", False) if ctx.obj else False
+    # ``--full`` (this command's own flag) means "show all results without
+    # truncation" — same effect as the global ``--detail``. It was previously
+    # DECLARED but never read, so ``--full`` silently did nothing (the complete
+    # list only came from ``--detail``, contradicting --full's help + line ~463's
+    # "pass --full for the complete list" hint). Wire it here.
+    detail = (ctx.obj.get("detail", False) if ctx.obj else False) or full
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -243,6 +269,63 @@ def deps(ctx, path, full):
 
         imported_by = _run_check("fetch_imported_by", _fetch_imported_by, default=[]) or []
 
+        # W43 — when --multi, also compute git co-change counts so the
+        # caller (compile._probe_coupling) can collapse what was
+        # previously TWO subprocesses (deps + cochange) into ONE. The
+        # cochange query is git-only; on git failure / empty history /
+        # no .git dir, fall through with an empty list — never raise.
+        cochange_pairs: list[dict] = []
+        if multi:
+
+            def _compute_cochange_pairs():
+                import subprocess as _sp
+                from collections import Counter as _Counter
+
+                _target = frow["path"]
+                try:
+                    _shaproc = _sp.run(
+                        ["git", "log", "--max-count=200", "--format=%H", "--", _target],
+                        capture_output=True,
+                        text=True,
+                        timeout=5.0,
+                    )
+                except (OSError, _sp.TimeoutExpired):
+                    return []
+                if _shaproc.returncode != 0:
+                    return []
+                _shas = [s.strip() for s in _shaproc.stdout.splitlines() if s.strip()]
+                if not _shas:
+                    return []
+                try:
+                    _showproc = _sp.run(
+                        ["git", "show", "--name-only", "--pretty=format:__commit__", *_shas[:200]],
+                        capture_output=True,
+                        text=True,
+                        timeout=10.0,
+                    )
+                except (OSError, _sp.TimeoutExpired):
+                    return []
+                if _showproc.returncode != 0:
+                    return []
+                _counts: _Counter[str] = _Counter()
+                for _line in _showproc.stdout.splitlines():
+                    _line = _line.strip()
+                    if not _line or _line == "__commit__":
+                        continue
+                    if _line == _target or _line.endswith("/" + _target):
+                        continue
+                    _counts[_line] += 1
+                return [{"file": _fn, "count": _ct} for _fn, _ct in _counts.most_common(20)]
+
+            cochange_pairs = (
+                _run_check_db(
+                    "compute_cochange_pairs",
+                    _compute_cochange_pairs,
+                    default=[],
+                )
+                or []
+            )
+
         if json_mode:
             # W607-DB -- compute_predicate boundary. Wraps the per-result
             # predicate-field extraction so a future schema refactor that
@@ -314,6 +397,13 @@ def deps(ctx, path, full):
                 ],
                 "imported_by": [{"path": i["path"], "symbol_count": i["symbol_count"]} for i in imported_by],
             }
+            # W43 — surface the cochange_pairs axis on the envelope when
+            # --multi was requested. Empty list when git is unavailable
+            # or the file has no commit history; the key is still present
+            # so callers can distinguish "asked for it, got nothing" from
+            # "didn't ask".
+            if multi:
+                _success_kwargs["cochange_pairs"] = cochange_pairs
             # W607-V / W607-DB -- surface BOTH substrate-CALL markers
             # AND aggregation-phase markers on the success path.
             # partial_success flips so consumers can distinguish a clean
@@ -371,7 +461,23 @@ def deps(ctx, path, full):
                 envelope = _envelope_floor
 
             if not detail:
+                # Default mode strips the unbounded list payloads for token
+                # economy — but `deps` exists to answer "what files import X" /
+                # "what does X import", so returning ONLY counts forced agents to
+                # shell/grep/SQL for the actual paths (codex nav A/B q2,
+                # 2026-06-07: +757% tokens re-deriving the importer list). Re-inject
+                # a BOUNDED preview of both file lists so the question is answered
+                # inline; the complete list still comes from --full / --detail.
+                _PREVIEW_CAP = 25
+                _im_preview, _im_capped = _bounded_list_preview(imports, _PREVIEW_CAP)
+                _ib_preview, _ib_capped = _bounded_list_preview(imported_by, _PREVIEW_CAP)
                 envelope = strip_list_payloads(envelope)
+                if _im_preview:
+                    envelope["imports"] = _im_preview
+                if _ib_preview:
+                    envelope["imported_by"] = _ib_preview
+                if _im_capped or _ib_capped:
+                    envelope.setdefault("summary", {})["list_preview_capped_at"] = _PREVIEW_CAP
             click.echo(to_json(envelope))
             return
 

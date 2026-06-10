@@ -92,6 +92,7 @@ class TestCatalog:
             "error-handling",
             "agent-contract",
             "observability",
+            "reliability",
         }
         for task_id, task in CATALOG.items():
             assert task["category"] in valid, f"{task_id} has invalid category: {task['category']}"
@@ -100,8 +101,8 @@ class TestCatalog:
         from roam.catalog.tasks import CATALOG
 
         # agent-opt added "envelope-contract"; observability-opt added
-        # "diagnosability".
-        valid_kinds = {"algorithm", "idiom", "envelope-contract", "diagnosability"}
+        # "diagnosability"; resilience added "reliability".
+        valid_kinds = {"algorithm", "idiom", "envelope-contract", "diagnosability", "reliability"}
         for task_id, task in CATALOG.items():
             assert "kind" in task, f"{task_id} missing kind"
             assert task["kind"] in valid_kinds, f"{task_id} has invalid kind: {task['kind']}"

@@ -69,6 +69,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # commands lists the repo's own runnable commands (reads manifests
         # only — package.json/Makefile/justfile/pyproject); pure read-side.
         "commands",
+        # docs-index scans local Markdown planning memos for orphan files +
+        # broken local links (index-free; reads files only, no edits) — pure
+        # read-side, same risk profile as `commands`.
+        "docs-index",
         # observability-opt scans source for debug-print / weak-logging shape;
         # same pure read-side profile as agent-opt (--persist writes only the
         # local findings registry).
@@ -123,6 +127,48 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         #   readonly=True; networkx compute on graph snapshot).
         "weather",
         "why",
+        # Roam Guard read-only family (Wave 11-20). All open the DB / load
+        # bundles in readonly mode; the only writes are confined to the
+        # safe_edit members below (guard-init, guard-clean, guard-pr).
+        "guard-diff",
+        "guard-doctor",
+        "guard-history",
+        "guard-rules",
+        "proof-bundle",
+        "verdict",
+        "verification-contract",
+        # Wave 24 — bench-compile dispatches claude -p subprocesses; no edits.
+        "bench-compile",
+        # W40 — compile-stats reads .roam/compile-runs.jsonl; no edits.
+        "compile-stats",
+        # W56 — compile-cache (group: stats/clear/build); writes to
+        # .roam/compile-envelope-cache.sqlite, which is local-state.
+        "compile-cache",
+        # Pre-existing untracked alias surfaced by Wave 11-20 ceiling tightening:
+        # `vulns` is a read-only vulnerability summary (alias of vuln-map family).
+        "vulns",
+        # 2026-06-05 — compiler-diagnostic + inspection family. All read-only;
+        # any disk writes are LOCAL-STATE (compile-runs.jsonl telemetry +
+        # compile-envelope-cache.sqlite), the same basis on which compile-cache /
+        # compile-stats above sit in read_only. Commands with USER-DIRECTED write
+        # flags (compiler-health --emit-guard-findings, envelope-diff
+        # --update-baseline) are classified one tier up in safe_edit instead.
+        #   compile          — emits a compile envelope (analysis; local-state only)
+        #   compiler-corpus  — analyzes a saved prompt corpus (read-only)
+        #   dispatch-trace   — classifier path + per-probe fire/skip (read-only)
+        #   magic-numbers    — AST/tree-sitter unnamed-constant scan (read-only)
+        #   at               — show code at FILE:LINE + enclosing symbol (DB read)
+        "compile",
+        "compiler-corpus",
+        "dispatch-trace",
+        "magic-numbers",
+        "at",
+        # 2026-06-08 — `cycles` is a pure read-only graph query (Tarjan SCCs of
+        # the symbol graph; open_db readonly=True), the focused sibling of
+        # `clusters` / `layers`. Classifying it here keeps the unclassified
+        # ceiling at 152 after the command was added (W248 precedent: classify
+        # the new command rather than raise the ceiling).
+        "cycles",
     },
     "safe_edit": {
         "diff",
@@ -143,6 +189,14 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "stats",
         "audit-trail-conformance-check",
         "rules-validate",
+        # 2026-06-05 — compiler-diagnostic commands whose DEFAULT run is
+        # read-only but which carry a USER-DIRECTED write flag (same basis as
+        # audit-trail-conformance-check/--sarif-output and rules-validate/--fix
+        # above). Classified at the most-conservative tier across invocations.
+        #   compiler-health  — telemetry dashboard; --emit-guard-findings PATH writes
+        #   envelope-diff    — diff two envelopes; --update-baseline DIR writes
+        "compiler-health",
+        "envelope-diff",
         # W248 — `ws` is a Click GROUP with 7 subcommands. Classified at
         # the group level (most-conservative tier across subcommands):
         #   read-only:  ws status, ws understand, ws health, ws context,
@@ -167,6 +221,15 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # bootstrap-deadlock path (an agent can still `init` instead), so
         # it lives in safe_edit rather than `_MODE_ALWAYS_ALLOWED`.
         "watch",
+        # Roam Guard write-side family (Wave 11-20):
+        #   guard-init  — creates .roam/ + bundle dir + optional rules stub.
+        #   guard-clean — atomic rewrite of .roam/verdict-log.jsonl.
+        #   guard-pr    — composes proof bundle + appends ONE log line +
+        #                 optional GH Check POST. Writes confined to .roam/
+        #                 artifacts; never touches index.db schema.
+        "guard-init",
+        "guard-clean",
+        "guard-pr",
     },
     "migration": {
         "migration-plan",

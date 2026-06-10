@@ -315,6 +315,46 @@ def test_wrapper_demotes_required_canonical_to_optional():
     assert sig.parameters["symbol"].default == ""
 
 
+def test_wrapper_required_canonical_promotes_alias_value():
+    """Regression (2026-06-06): a REQUIRED canonical with an alias must still
+    promote an alias-only call to the alias VALUE — not silently drop it.
+
+    The wrapper demotes a required canonical (``path``/``symbol`` with no
+    default) to ``default=""`` in the synthesised signature so FastMCP accepts
+    alias-only calls. FastMCP then fills the canonical with that "" default and
+    invokes the wrapper with BOTH the canonical (at "") AND the alias set. The
+    promotion rule that distinguishes "FastMCP-filled-with-default" from
+    "user-set" reads a defaults snapshot — which previously came from the
+    ORIGINAL signature (where the required canonical has NO default), so the
+    rule could not fire and the alias value was dropped, leaving path="".
+    That made ``roam_deps(file="recipes.py")`` analyse path="" (the first repo
+    file, e.g. .dockerignore) instead of recipes.py. The snapshot now comes
+    from the merged signature, so the promotion fires.
+    """
+    from roam.mcp_server import _wrap_with_alias_normalization
+
+    def fake_tool(path: str, full: bool = False, root: str = ".") -> dict:  # path required
+        return {"data": {"received_path": path}, "summary": {"verdict": "ok"}}
+
+    wrapped = _wrap_with_alias_normalization("roam_deps", fake_tool)
+
+    # Faithful FastMCP shape: client sent only ``file=``; FastMCP fills the
+    # demoted canonical ``path`` with its synthesised "" default.
+    result = wrapped(path="", file="src/roam/ask/recipes.py", full=True)
+    assert result["data"]["received_path"] == "src/roam/ask/recipes.py"
+    warns = result["summary"]["alias_warnings"]
+    assert len(warns) == 1
+    # Promotion path — "deprecated", NOT the "ignoring" drop path.
+    assert "deprecated" in warns[0]
+    assert "ignoring" not in warns[0]
+
+    # When BOTH are genuinely user-set (canonical != its "" default), the
+    # canonical must still win and the alias be dropped loudly.
+    both = wrapped(path="real.py", file="other.py")
+    assert both["data"]["received_path"] == "real.py"
+    assert "ignoring" in both["summary"]["alias_warnings"][0]
+
+
 def test_wrapper_async_path():
     """Async tools must also be wrapped. The wrapper detects coroutine
     functions and preserves async-ness."""
@@ -386,3 +426,239 @@ def test_renamed_effects_callable_with_canonical_kwargs():
         actual_args = mock.call_args[0][0]
         # Args order: ["effects", symbol, "--path", path]  (W1099: --file is deprecated alias)
         assert actual_args == ["effects", "open_db", "--path", "src/auth.py"]
+
+
+# ---------------------------------------------------------------------------
+# ALL-TOOLS property test — the generalization that would have caught the
+# 2026-06-06 39-tool alias-drop bug instantly.
+#
+# The single-tool tests above call ``wrapped(name=X)`` WITHOUT the canonical,
+# which hits the safe rule-1 promote path — so they could NOT see the bug. The
+# bug only fires when FastMCP fills the DEMOTED canonical with its synthesised
+# default (both canonical AND alias present), which is exactly what happens over
+# the real MCP wire. This test simulates that fill for EVERY registered @_tool
+# with an aliased canonical and asserts the alias VALUE reaches the tool body
+# (forwarded to ``_run_roam``), instead of being dropped (→ canonical="" → the
+# tool silently analyses the wrong target, e.g. roam_deps→.dockerignore).
+# ---------------------------------------------------------------------------
+
+
+def _discover_tool_fn_names() -> list[tuple[str, str]]:
+    """AST-walk mcp_server.py → [(tool_name, fn_name)] for each @_tool."""
+    import ast
+    import pathlib
+
+    import roam.mcp_server as m
+
+    src = pathlib.Path(m.__file__).read_text(encoding="utf-8")
+    out: list[tuple[str, str]] = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "_tool":
+                tname = next(
+                    (
+                        kw.value.value
+                        for kw in dec.keywords
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+                    ),
+                    None,
+                )
+                if tname:
+                    out.append((tname, node.name))
+                break
+    return out
+
+
+def _unwrap_to_raw(obj):
+    """Follow ``.fn`` / ``__wrapped__`` to the undecorated function."""
+    seen: set[int] = set()
+    while obj is not None and id(obj) not in seen:
+        seen.add(id(obj))
+        inner = getattr(obj, "fn", None)
+        if callable(inner):
+            obj = inner
+            continue
+        wrapped = getattr(obj, "__wrapped__", None)
+        if wrapped is not None:
+            obj = wrapped
+            continue
+        break
+    return obj
+
+
+def test_all_aliased_tools_promote_alias_value_end_to_end():
+    """Every @_tool with an aliased canonical must deliver an alias-only call's
+    VALUE to the tool body. Regression for the 39-tool alias-drop class.
+
+    Faithfully simulates FastMCP: pass ``canonical=<merged-sig default>`` (what
+    FastMCP fills for the demoted required canonical) together with a synthesised
+    alias, then assert the alias value reaches ``_run_roam``. Reverting the
+    ``canon_defaults``-from-merged-signature fix makes this fail across dozens of
+    tools (canonical stays "" → SENTINEL never reaches the args).
+    """
+    import inspect
+
+    import roam.mcp_server as m
+    from roam.mcp_server import _PARAM_ALIASES, _wrap_with_alias_normalization
+
+    CANON = ("symbol", "path", "query", "input_path")
+    SENTINEL = "ZZ_alias_promote_sentinel_ZZ"
+
+    tool_fns = _discover_tool_fn_names()
+    assert len(tool_fns) >= 50, (
+        f"AST discovery found {len(tool_fns)} @_tool wrappers; expected >=50. "
+        f"Discovery is broken — this property test would silently pass."
+    )
+
+    verified: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    failures: list[str] = []
+
+    for tname, fname in tool_fns:
+        raw = _unwrap_to_raw(getattr(m, fname, None))
+        if not callable(raw):
+            skipped.append((tname, "not callable"))
+            continue
+        try:
+            rawsig = inspect.signature(raw)
+        except (TypeError, ValueError):
+            skipped.append((tname, "no signature"))
+            continue
+        canon = next((c for c in CANON if c in rawsig.parameters), None)
+        if canon is None:
+            continue  # tool declares no aliased canonical — out of scope
+
+        # Drive the REAL shared wrapper, but over a RECORDER that has the tool's
+        # real signature — so we assert exactly what the wrapper hands the body
+        # (the ``canon`` kwarg), independent of how each body USES it (compound
+        # recipes / flags / positional). That keeps the test precise: it isolates
+        # the wrapper's promotion, which is where the bug lived.
+        captured: dict = {}
+
+        def _recorder(*args, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            return {"summary": {}}
+
+        _recorder.__signature__ = rawsig  # wrapper introspects this
+        _recorder.__name__ = getattr(raw, "__name__", fname)
+
+        wrapped = _wrap_with_alias_normalization(tname, _recorder)
+        msig = inspect.signature(wrapped)
+        # Pick a GENUINELY-synthesised alias (present in merged sig, absent in raw
+        # sig — so it routes through the alias machinery, not a real same-name param).
+        alias = next(
+            (a for a in _PARAM_ALIASES[canon] if a != canon and a in msig.parameters and a not in rawsig.parameters),
+            None,
+        )
+        if alias is None:
+            skipped.append((tname, "no synthesised alias"))
+            continue
+
+        # FastMCP fills the demoted canonical with its merged-sig default; pass
+        # that + the alias, exactly as the real wire delivers an alias-only call.
+        canon_default = msig.parameters[canon].default
+        if canon_default is inspect.Parameter.empty:
+            canon_default = ""
+        try:
+            wrapped(**{canon: canon_default, alias: SENTINEL})
+        except Exception as e:  # noqa: BLE001
+            skipped.append((tname, f"wrapper raised {type(e).__name__}"))
+            continue
+
+        got = captured.get(canon)
+        if got == SENTINEL:
+            verified.append(tname)
+        elif got == canon_default:
+            failures.append(f"{tname}: alias '{alias}'='{SENTINEL}' DROPPED — body got {canon}={got!r}")
+        else:
+            skipped.append((tname, f"unexpected {canon}={got!r}"))
+
+    assert not failures, "alias VALUE was DROPPED (tool would analyse the wrong target) for:\n  " + "\n  ".join(
+        failures
+    )
+    assert len(verified) >= 25, (
+        f"only verified alias-promotion end-to-end for {len(verified)} tools "
+        f"(expected >=25); the property test is under-covering. skipped sample: "
+        f"{skipped[:12]}"
+    )
+
+
+def test_all_aliased_tools_both_set_canonical_wins():
+    """Complement to the promotion property: when BOTH the canonical (user-set to a
+    NON-default value) AND a legacy alias are supplied, the canonical VALUE must
+    win and the alias be dropped (rule 2b), for every aliased tool.
+
+    The promotion test guards the "alias dropped when it should be promoted"
+    failure (rule 1/2a). This guards the opposite — an alias WRONGLY overriding an
+    explicit canonical. A regression in _normalize_aliases' branch logic could
+    break either direction; both are now property-tested across the whole surface.
+    """
+    import inspect
+
+    import roam.mcp_server as m
+    from roam.mcp_server import _PARAM_ALIASES, _wrap_with_alias_normalization
+
+    CANON = ("symbol", "path", "query", "input_path")
+    REAL = "ZZ_canonical_user_value_ZZ"
+    WRONG = "ZZ_alias_should_lose_ZZ"
+
+    tool_fns = _discover_tool_fn_names()
+    assert len(tool_fns) >= 50
+
+    verified: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    failures: list[str] = []
+
+    for tname, fname in tool_fns:
+        raw = _unwrap_to_raw(getattr(m, fname, None))
+        if not callable(raw):
+            continue
+        try:
+            rawsig = inspect.signature(raw)
+        except (TypeError, ValueError):
+            continue
+        canon = next((c for c in CANON if c in rawsig.parameters), None)
+        if canon is None:
+            continue
+
+        captured: dict = {}
+
+        def _recorder(*args, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            return {"summary": {}}
+
+        _recorder.__signature__ = rawsig
+        _recorder.__name__ = getattr(raw, "__name__", fname)
+
+        wrapped = _wrap_with_alias_normalization(tname, _recorder)
+        msig = inspect.signature(wrapped)
+        alias = next(
+            (a for a in _PARAM_ALIASES[canon] if a != canon and a in msig.parameters and a not in rawsig.parameters),
+            None,
+        )
+        if alias is None:
+            skipped.append((tname, "no synthesised alias"))
+            continue
+
+        try:
+            wrapped(**{canon: REAL, alias: WRONG})
+        except Exception as e:  # noqa: BLE001
+            skipped.append((tname, f"wrapper raised {type(e).__name__}"))
+            continue
+
+        got = captured.get(canon)
+        if got == REAL:
+            verified.append(tname)
+        elif got == WRONG:
+            failures.append(f"{tname}: alias '{alias}' OVERRODE explicit {canon} (body got {got!r})")
+        else:
+            skipped.append((tname, f"unexpected {canon}={got!r}"))
+
+    assert not failures, "explicit canonical must win when both canonical + alias are set:\n  " + "\n  ".join(failures)
+    assert len(verified) >= 25, (
+        f"only verified rule-2b for {len(verified)} tools (expected >=25); skipped sample: {skipped[:12]}"
+    )

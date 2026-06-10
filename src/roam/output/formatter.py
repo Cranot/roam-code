@@ -1204,9 +1204,44 @@ def compact_json_envelope(command: str, **payload) -> dict:
 
     For agents using --compact: emits only command name, summary, and payload.
     Saves ~150-200 tokens per call.
+
+    W33f (2026-05-30): also runs the agent_contract derivation that
+    `json_envelope` applies, BUT only when there is real content to derive
+    from (summary, explicit contract, or payload). A bare
+    `compact_json_envelope("foo")` call still returns just `{"command": "foo"}`
+    so call sites that intentionally produce a minimal envelope aren't
+    silently bloated.
     """
-    out = {"command": command}
+    summary = payload.pop("summary", None)
+    explicit_contract = payload.pop("agent_contract", None)
+    out: dict = {"command": command}
+    if summary is not None:
+        out["summary"] = summary
     out.update(payload)
+
+    # Explicit contract always wins.
+    if explicit_contract is not None:
+        out["agent_contract"] = explicit_contract
+        return out
+
+    # Auto-derive only when there's something to derive from. Skip when the
+    # caller passed nothing but a command name (preserves backward-compat
+    # with the original minimal-envelope contract).
+    if not (summary or payload):
+        return out
+
+    # Narrow exception list per W531/W662 — only swallow data-shape errors
+    # the derivation function might raise when given an unusual summary.
+    # Programmer-class errors (NameError, TypeError on attr access)
+    # propagate so they surface in CI rather than producing silent bad output.
+    try:
+        out["agent_contract"] = _derive_agent_contract(out, summary or {})
+    except (KeyError, AttributeError) as exc:
+        # Log the swallow so this isn't a silent regression vector — but
+        # don't propagate; envelope generation must never break.
+        from roam.observability import log_swallowed
+
+        log_swallowed("formatter:compact_json_envelope.derive_contract", exc)
     return out
 
 

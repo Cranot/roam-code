@@ -306,3 +306,63 @@ class TestRoamTxBoundariesArgShape:
             args = mock.call_args[0][0]
             assert "--classification" in args and "unsafe_mutation" in args
             assert "--top" in args and "15" in args
+
+
+class TestRoamDepsArgShape:
+    """``multi`` mirrors the CLI ``--multi`` flag (imports+importers+cochange in
+    one envelope). Added so codex stops shelling out to ``roam deps --multi`` /
+    raw SQL on coupling questions (nav A/B q5)."""
+
+    def test_default_invocation(self) -> None:
+        from roam.mcp_server import roam_deps
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True}
+            roam_deps(path="src/auth.py")
+            mock.assert_called_once_with(["deps", "src/auth.py"], ".")
+
+    def test_multi_appends_flag(self) -> None:
+        from roam.mcp_server import roam_deps
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True}
+            roam_deps(path="src/auth.py", multi=True)
+            args = mock.call_args[0][0]
+            assert args[:2] == ["deps", "src/auth.py"]
+            assert "--multi" in args
+
+    def test_multi_false_omits_flag(self) -> None:
+        from roam.mcp_server import roam_deps
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True}
+            roam_deps(path="src/auth.py", full=True, multi=False)
+            args = mock.call_args[0][0]
+            assert "--full" in args
+            assert "--multi" not in args
+
+    def test_exposes_cli_data_flags_parity(self) -> None:
+        """roam_deps must expose the `deps` CLI's DATA flags (multi, full) so
+        agents reach them over MCP instead of shelling out — the parity gap that
+        caused the nav A/B q2 SQL fallback (2026-06-07). Guards against the
+        wrapper drifting behind the CLI again."""
+        import inspect
+
+        import click
+
+        from roam.cli import cli
+        from roam.mcp_server import roam_deps
+
+        cmd = cli.get_command(None, "deps")
+        cli_opts = {p.name for p in cmd.params if isinstance(p, click.Option)}
+        raw = roam_deps
+        for attr in ("fn", "__wrapped__", "func"):
+            inner = getattr(raw, attr, None)
+            if callable(inner):
+                raw = inner
+        wrapper_params = set(inspect.signature(raw).parameters)
+        for flag in ("multi", "full"):
+            assert flag in cli_opts, f"deps CLI unexpectedly lost --{flag}"
+            assert flag in wrapper_params, (
+                f"roam_deps must expose '{flag}' (MCP/CLI parity gap — agents would shell out for it)"
+            )

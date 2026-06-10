@@ -34,7 +34,7 @@ def _git_head_short() -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return None
 
@@ -52,7 +52,7 @@ def _git_dirty() -> bool:
         )
         if result.returncode == 0:
             return bool(result.stdout.strip())
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return False
 
@@ -119,7 +119,7 @@ def check_stale(
                     )
         else:
             conn.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 — manifest read is best-effort; fall back to mtime
         # Manifest not available — fall back to mtime-only result.
         pass
 

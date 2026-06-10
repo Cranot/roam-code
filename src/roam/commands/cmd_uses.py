@@ -36,6 +36,11 @@ from roam.languages import JS_FAMILY_LANGUAGES
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
+# Loop5 (2026-06-02): call-line reader. Canonical implementation now lives in
+# roam.output.source_context (shared with `roam search`'s body-preview
+# reader); thin re-export keeps call sites + tests unchanged.
+from roam.output.source_context import read_source_line as _read_call_line
+
 
 def _test_text_consumers(conn, name: str, existing_files: set[str]) -> list[dict]:
     """Find test-file mentions when no symbol edge could be created.
@@ -410,15 +415,26 @@ def uses(ctx, name, full):
             json_groups = {}
             for kind, items in by_kind.items():
                 deduped = _dedupe(items)
-                json_groups[kind] = [
-                    {
+                group_entries = []
+                for _i, r in enumerate(deduped):
+                    entry = {
                         "name": r["name"],
                         "kind": r["kind"],
                         "location": loc(r["path"], r["line_start"]),
                         "scope": _scope(r),
                     }
-                    for r in deduped
-                ]
+                    # Loop5 (2026-06-02): embed the actual call-site line so
+                    # the agent doesn't re-grep the symbol (76% of roam_uses
+                    # fallbacks). Cap to the first 20 consumers per group to
+                    # bound IO; the agent can roam-uses again for more.
+                    if _i < 20:
+                        edge_line = r["edge_line"] if "edge_line" in r.keys() else None
+                        call_line = _read_call_line(r["path"], edge_line, name)
+                        if call_line:
+                            entry["call_line"] = call_line
+                            entry["call_location"] = loc(r["path"], edge_line)
+                    group_entries.append(entry)
+                json_groups[kind] = group_entries
             files = set(r["path"] for r in rows)
 
             # W607-DE -- compute_verdict boundary. Wraps the verdict-string

@@ -3047,14 +3047,23 @@ def _wrap_with_alias_normalization(name: str, fn):
     merged_signature = _build_merged_signature(sig, accepted, aliases_for_tool)
     merged_annotations = _build_merged_annotations(fn, aliases_for_tool)
 
-    # Snapshot the wrapped function's declared defaults for the canonical
+    # Snapshot the defaults FastMCP will actually fill for the canonical
     # params. _normalize_aliases uses this to distinguish "user-set canon"
     # from "FastMCP-filled-with-default canon" — fixes the 2026-05-24 bug
     # where calling pattern=X (with query at "") would drop the user's
     # value because both kwargs were present.
+    #
+    # MUST read from ``merged_signature``, not ``sig``: a REQUIRED canonical
+    # with an alias (e.g. roam_deps's ``path``) is demoted to ``default=""``
+    # in the merged sig so alias-only calls pass schema validation. Reading
+    # from the original ``sig`` would omit it (no declared default there),
+    # so rule 2a could not fire and rule 2b would silently DROP the caller's
+    # alias value — e.g. ``roam_deps(file="x.py")`` analysing ``path=""``
+    # (the first repo file) instead of x.py. The merged sig is the source of
+    # truth for what FastMCP fills.
     canon_defaults: dict = {
         p.name: p.default
-        for p in sig.parameters.values()
+        for p in merged_signature.parameters.values()
         if p.name in accepted and p.default is not _inspect.Parameter.empty
     }
 
@@ -5671,13 +5680,7 @@ async def explore(
 
 @_tool(
     name="roam_prepare_change",
-    description=(
-        "Pre-edit safety gate for a symbol. Returns blast radius + "
-        "affected tests + files to read + side effects + fitness gates "
-        "in one envelope. Call BEFORE Edit/Write on non-trivial code. "
-        "Replaces three separate calls. Triggers: 'safe to change X?', "
-        "'what does Y depend on?', 'show me what breaks if I rename Z'."
-    ),
+    description="Pre-change safety gate. Run before any non-trivial edit — returns blast radius, affected tests, and fitness gates.",
     output_schema=_SCHEMA_PREPARE_CHANGE,
 )
 def prepare_change(
@@ -6439,7 +6442,7 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
         "Natural-language codebase question dispatcher. Examples: "
         "'is it safe to delete X?', 'where does login validate?', "
         "'what just broke?', 'who owns module Y?'. Routes intent to "
-        "one recipe in the graph-aware 25-recipe registry. One call "
+        "one recipe in the graph-aware 29-recipe registry. One call "
         "replaces Grep+Read for most questions. Run this FIRST when "
         "the user asks a code-comprehension question."
     ),
@@ -9685,7 +9688,9 @@ def algo(task: str = "", confidence: str = "", root: str = ".") -> dict:
     name="roam_agent_opt",
     description="Detect weak agent-contract shape in roam's tool descriptions and envelopes and recommend the stronger shape.",
 )
-def agent_opt(only: str = "", scope: str = "full", confidence: str = "", profile: str = "balanced", root: str = ".") -> dict:
+def agent_opt(
+    only: str = "", scope: str = "full", confidence: str = "", profile: str = "balanced", root: str = "."
+) -> dict:
     """Optimize roam's own agent-facing contract surface.
 
     WHEN TO USE: Call this to audit roam's MCP tool descriptions and
@@ -10380,6 +10385,23 @@ def hover_summary(symbol: str, root: str = ".") -> dict:
         Symbol name, qualified name, or ``file:symbol`` hint. Required.
     """
     return _run_roam(["hover", symbol], root)
+
+
+@_tool(
+    name="roam_at",
+    description="Show the code AT a file:line with its enclosing symbol + callers. Targeted alternative to Read-ing the whole file. location is 'file:line'.",
+)
+def at_location(location: str, context: int = 5, callers: bool = False, root: str = ".") -> dict:
+    """Return the source slice around ``location`` (``file:line``) plus the
+    enclosing symbol (which function/class contains the line) and, when
+    ``callers`` is set, who calls it. Inverse of ``roam_search_symbol``
+    (symbol→location); use when you already have a file:line and want the
+    code + structural context without reading the whole file.
+    """
+    args = ["at", location, "--context", str(context)]
+    if callers:
+        args.append("--callers")
+    return _run_roam(args, root)
 
 
 @_tool(
@@ -11932,19 +11954,26 @@ def roam_symbol(symbol: str, full: bool = False, root: str = ".") -> dict:
         "Use for: 'what does file X import?' / 'which files depend on "
         "module Y?' / 'show me the importers of Z'. Pick this for "
         "file/module-level coupling before refactors; symbol-level "
-        "lookups belong in roam_uses. Run in parallel with roam_coupling "
-        "for the biggest token win."
+        "lookups belong in roam_uses. Set multi=True to get imports + "
+        "importers + git co-change coupling in ONE envelope (do this "
+        "instead of shelling out to `roam deps --multi` or hand-querying "
+        "the index). Run in parallel with roam_coupling for the biggest "
+        "token win."
     ),
 )
-def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
+def roam_deps(path: str, full: bool = False, multi: bool = False, root: str = ".") -> dict:
     """File-level import/imported-by relationships.
 
     Call this to understand a file's dependencies -- what it imports
     and what imports it. Use for module boundary analysis and
-    refactoring impact."""
+    refactoring impact. ``multi=True`` mirrors the CLI ``--multi`` flag:
+    imports + importers + git co-change coupling in one call (saves the
+    agent a CLI/SQL round-trip)."""
     args = ["deps", path]
     if full:
         args.append("--full")
+    if multi:
+        args.append("--multi")
     return _run_roam(args, root)
 
 
@@ -14245,6 +14274,45 @@ def roam_clusters(
     return _run_roam(args, root)
 
 
+# roam_cycles
+@_tool(
+    name="roam_cycles",
+    description=(
+        "Show import/call cycles (Tarjan strongly-connected components) of the "
+        "symbol graph. Returns per-cycle size, member files/symbols, and an "
+        "`actionable` flag (spans >=2 distinct non-test files). The focused "
+        "counterpart to the cycles section of ``roam_health``; sibling of "
+        "``roam_clusters`` / ``roam_layers``."
+    ),
+)
+def roam_cycles(
+    min_size: int = 2,
+    limit: int = 20,
+    actionable_only: bool = False,
+    root: str = ".",
+) -> dict:
+    """List import/call cycles (SCCs) of the symbol graph.
+
+    Parameters
+    ----------
+    min_size:
+        Minimum SCC size to report (default 2).
+    limit:
+        Max cycles to list (default 20).
+    actionable_only:
+        Only cycles spanning >=2 distinct non-test files.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, cycle_count, actionable_count, ...},
+    cycles: [...]}``.
+    """
+    args: list[str] = ["cycles", "--min-size", str(min_size), "--limit", str(limit)]
+    if actionable_only:
+        args.append("--actionable-only")
+    return _run_roam(args, root)
+
+
 # W300: roam_layers
 @_tool(
     name="roam_layers",
@@ -14358,11 +14426,9 @@ def roam_full_coupling(path: str, top_n: int = 5, root: str = ".") -> dict:
     pairs = coupling_full.get("pairs", []) if isinstance(coupling_full, dict) else []
     if not isinstance(pairs, list):
         pairs = []
-    file_pairs = [
-        p for p in pairs
-        if isinstance(p, dict)
-        and (p.get("file_a") == path or p.get("file_b") == path)
-    ][:top_n]
+    file_pairs = [p for p in pairs if isinstance(p, dict) and (p.get("file_a") == path or p.get("file_b") == path)][
+        :top_n
+    ]
 
     deps = roam_deps(path, root=root)
 
@@ -14379,10 +14445,7 @@ def roam_full_coupling(path: str, top_n: int = 5, root: str = ".") -> dict:
         "deps": deps,
         "top_symbols": top_symbols,
         "summary": {
-            "verdict": (
-                f"{len(file_pairs)} coupled pairs, "
-                f"{len(top_symbols)} top symbols for {path}"
-            ),
+            "verdict": (f"{len(file_pairs)} coupled pairs, {len(top_symbols)} top symbols for {path}"),
         },
     }
 
@@ -17852,6 +17915,385 @@ def roam_workflow(
         args.extend(["--next", next_after])
     if recipe_name:
         args.append(recipe_name)
+    return _run_roam(args, root)
+
+
+# W307: roam_compile — compile a freeform task into a structured envelope
+@_tool(
+    name="roam_compile",
+    description=(
+        "Compile a freeform coding task into a structured envelope an "
+        "AI agent can consume. Returns the ArtifactSelector verdict "
+        "(facts / lean / full envelope) plus the deterministic plan. "
+        "Empirically validated on Opus 4.8 (2026-05-28): FactsEnvelope "
+        "delivers 99% of vanilla quality at 54% of vanilla cost. "
+        "Different from roam_plan (symbol-centric execution plan) -- "
+        "this is the freeform-task compiler."
+    ),
+)
+def roam_compile(
+    task: str,
+    artifact: str = "auto",
+    model_tier: str = "auto",
+    brief: bool = False,
+    explain: bool = False,
+    route: bool = False,
+    profile: str = "",
+    root: str = ".",
+) -> dict:
+    """Compile a freeform task into a deterministic agent envelope.
+
+    WHEN TO USE: agent receives a freeform task string and wants the
+    cheapest deterministic envelope before any model exploration. Pair
+    with the resulting envelope as the first user message for the
+    downstream agent.
+
+    Parameters
+    ----------
+    task:
+        Freeform task description (e.g. "Find files coupled to
+        src/roam/cli.py" or "Refactor the auth module").
+    artifact:
+        "auto" (default), "facts", "lean", "full", or "contract".
+        "auto" uses the ArtifactSelector policy.
+    model_tier:
+        "auto" (default), "weak", or "capable". Capable models prefer
+        "facts"; weak models prefer "full".
+    brief:
+        Emit the W22 brief envelope (~125-160 chars: procedure +
+        classifier_confidence + first-command hint only). For agents that
+        want the smallest possible routing hint.
+    explain:
+        Dump the classifier decision tree — which regexes matched, which
+        procedures were rejected, tiebreak rules. For debugging
+        surprising routing.
+    route:
+        Emit the full route_for_plan decision (model + envelope +
+        contract_id). The production-grade output (ALL-LEVERS routing).
+    profile:
+        Calibration profile name (default `claude-2026-05`). Use
+        `gpt-5-2026` for cross-model exploration (placeholder).
+    root:
+        Repo root (passed to `roam compile`). Defaults to cwd.
+
+    W33c (2026-05-30): exposed --brief / --explain / --route / --profile
+    that previously existed only on the CLI. Without them, MCP clients
+    couldn't access the brief envelope or routing decision.
+
+    Returns: ``{summary: {verdict, procedure, artifact_type, ...},
+    artifact: {schema, plan}, agent_contract: {facts, ...}}``.
+    """
+    args = ["compile", task]
+    # Mode flags are mutually exclusive with each other but compose with the
+    # base artifact / model_tier args. CLI handles precedence.
+    if explain:
+        args.append("--explain")
+    elif brief:
+        args.append("--brief")
+    elif route:
+        args.append("--route")
+        if profile:
+            args.extend(["--profile", profile])
+    else:
+        args.extend(["--artifact", artifact, "--model-tier", model_tier])
+    result = _run_roam(args, root)
+    # W34e (E9): brief mode is meant to return a tiny shape — the CLI
+    # already does that, but the MCP wrapper wraps it in an envelope.
+    # Flatten the brief output so MCP callers get the 3-key dict directly.
+    if brief and isinstance(result, dict):
+        # CLI brief output (JSON) is itself a flat dict — unwrap it from
+        # any outer envelope structure.
+        for candidate in (result.get("artifact"), result.get("envelope_data"), result):
+            if isinstance(candidate, dict) and "procedure" in candidate:
+                return candidate
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Roam Guard — adoption surface (Wave 10)
+# ---------------------------------------------------------------------------
+#
+# These wrappers expose the 8-command Roam Guard family on the MCP surface so
+# agents discover it without reading the CLI inventory. Pair: `guard_pr`
+# (writes log + optionally posts a GitHub Check) is the headline. The other
+# six are read-only inspectors. Wrappers mirror their CLI flags 1:1.
+
+
+@_tool(
+    name="roam_guard_pr",
+    description=(
+        "Aggregate Roam Guard PR check: auto-collect bundle, compose "
+        "AgentChangeProofBundle v1, render verdict (pass/pass_with_warnings/"
+        "needs_review/blocked), optionally POST a GitHub Check Run. The "
+        "headline tool — drop this into a CI step to gate any PR."
+    ),
+    read_only=False,
+    idempotent=False,
+)
+def roam_guard_pr(
+    bundle: str = "",
+    mode: str = "safe_edit",
+    policy_profile: str = "default",
+    strict: bool = False,
+    fmt: str = "text",
+    output: str = "",
+    skip_collect: bool = False,
+    init_if_missing: bool = False,
+    init_intent: str = "",
+    ci: bool = False,
+    rules: str = "",
+    dry_run: bool = False,
+    root: str = ".",
+) -> dict:
+    """Run the full Roam Guard pipeline against the active pr-bundle.
+
+    WHEN TO USE: in CI on every PR, OR locally after an edit to ask
+    "would this PR be blocked?". Pair `dry_run=True` for a read-only
+    probe (no log append, no output file, no GH POST).
+
+    Parameters
+    ----------
+    bundle:
+        Explicit bundle path; empty = auto-discover from `.roam/pr-bundles/`.
+    mode, policy_profile:
+        Substrate inputs for the verdict engine.
+    strict:
+        Non-zero exit when verdict is `blocked` (CI gate).
+    fmt:
+        `text` (default), `markdown`, or `json`.
+    ci:
+        Preset: enables `strict + init_if_missing + fmt=markdown`.
+    dry_run:
+        Compute the verdict but don't write log / output / GH check.
+    """
+    args = ["guard-pr", "--mode", mode, "--policy-profile", policy_profile, "--format", fmt]
+    if bundle:
+        args.extend(["--bundle", bundle])
+    if strict:
+        args.append("--strict")
+    if output:
+        args.extend(["--output", output])
+    if skip_collect:
+        args.append("--skip-collect")
+    if init_if_missing:
+        args.append("--init-if-missing")
+    if init_intent:
+        args.extend(["--init-intent", init_intent])
+    if ci:
+        args.append("--ci")
+    if rules:
+        args.extend(["--rules", rules])
+    if dry_run:
+        args.append("--dry-run")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_guard_doctor",
+    description=(
+        "Roam Guard preflight: 8 health checks (.roam dir, bundles, "
+        "rule pack, command graph, git, GitHub token, verdict log, yaml "
+        "lib). Run once before adopting Roam Guard in CI."
+    ),
+)
+def roam_guard_doctor(root: str = ".") -> dict:
+    """Diagnose Roam Guard adoption readiness."""
+    return _run_roam(["guard-doctor"], root)
+
+
+@_tool(
+    name="roam_guard_rules",
+    description=(
+        "Inspect or validate a Roam Guard rule pack. Subcommands: "
+        "`show` (default) renders the pack, `validate` checks schema, "
+        "`test` matches a path against the pack."
+    ),
+)
+def roam_guard_rules(
+    subcommand: str = "show",
+    rules: str = "",
+    path: str = "",
+    from_bundle: bool = False,
+    bundle: str = "",
+    root: str = ".",
+) -> dict:
+    """Inspect rule packs.
+
+    WHEN TO USE: before shipping a custom rule pack to CI, run
+    `subcommand='validate'`. Use `subcommand='test', path=...` to dry-fire
+    the pack against a single file path, or `subcommand='test',
+    from_bundle=True` to dry-fire against every file in the active bundle.
+    """
+    args = ["guard-rules", subcommand]
+    if rules:
+        args.extend(["--rules", rules])
+    if subcommand == "test":
+        if from_bundle:
+            args.append("--from-bundle")
+            if bundle:
+                args.extend(["--bundle", bundle])
+        elif path:
+            args.append(path)
+    elif path:
+        args.append(path)
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_guard_history",
+    description=(
+        "List past Roam Guard verdicts on this repo (reads "
+        "`.roam/verdict-log.jsonl` fast-path when present, falls back to "
+        "scanning `.roam/pr-bundles/`). Supports `--verdict` and "
+        "`--limit` filters."
+    ),
+)
+def roam_guard_history(
+    limit: int = 10,
+    verdict: str = "",
+    source: str = "auto",
+    branch: str = "",
+    root: str = ".",
+) -> dict:
+    """Show recent verdicts."""
+    args = ["guard-history", "--limit", str(limit), "--source", source]
+    if verdict:
+        args.extend(["--verdict", verdict])
+    if branch:
+        args.extend(["--branch", branch])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_guard_diff",
+    description=(
+        "Verdict diff between two bundle snapshots (or the two most-recent "
+        "verdict-log entries via `from_log=True`). Returns the verdict "
+        "delta + reasons added/resolved + file/check counts. Answers "
+        "'did my last commit help?'"
+    ),
+)
+def roam_guard_diff(
+    bundle_a: str = "",
+    bundle_b: str = "",
+    from_log: bool = False,
+    branch: str = "",
+    by_file: bool = False,
+    root: str = ".",
+) -> dict:
+    """Compare two bundle snapshots.
+
+    Pass `by_file=True` to also receive per-file annotations (status +
+    reasons that name each file) — useful for answering "which files
+    caused the verdict to move?"
+    """
+    args = ["guard-diff"]
+    if from_log:
+        args.append("--from-log")
+        if branch:
+            args.extend(["--branch", branch])
+    else:
+        if bundle_a:
+            args.append(bundle_a)
+        if bundle_b:
+            args.append(bundle_b)
+    if by_file:
+        args.append("--by-file")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_proof_bundle",
+    description=(
+        "Compose AgentChangeProofBundle v1 from the active pr-bundle. "
+        "Returns the structured verdict envelope an agent can attach to "
+        "a PR. Supports markdown / json / sarif output formats."
+    ),
+)
+def roam_proof_bundle(
+    bundle: str = "",
+    mode: str = "safe_edit",
+    policy_profile: str = "default",
+    strict: bool = False,
+    fmt: str = "json",
+    validate: bool = False,
+    root: str = ".",
+) -> dict:
+    """Compose a v1 proof bundle without writing log or GH check."""
+    args = ["proof-bundle", "--mode", mode, "--policy-profile", policy_profile, "--format", fmt]
+    if bundle:
+        args.extend(["--bundle", bundle])
+    if strict:
+        args.append("--strict")
+    if validate:
+        args.append("--validate")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_verification_contract",
+    description=(
+        "Compute the minimal `{required, skipped}` verification set for "
+        "the current changed_files × risk × mode × policy. Surfaces what "
+        "an agent MUST run before its PR can pass."
+    ),
+)
+def roam_verification_contract(
+    bundle: str = "",
+    mode: str = "safe_edit",
+    policy_profile: str = "default",
+    rules: str = "",
+    root: str = ".",
+) -> dict:
+    """Return the verification contract for the active bundle."""
+    args = ["verification-contract", "--mode", mode, "--policy-profile", policy_profile]
+    if bundle:
+        args.extend(["--bundle", bundle])
+    if rules:
+        args.extend(["--rules", rules])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_guard_clean",
+    description=(
+        "Prune the verdict log at `.roam/verdict-log.jsonl` to its last "
+        "N entries (default 500). Atomic rewrite — concurrent appenders "
+        "never see a partial file. Pair `dry_run=True` for a probe."
+    ),
+    read_only=False,
+    idempotent=True,
+)
+def roam_guard_clean(
+    keep: int = 500,
+    dry_run: bool = False,
+    root: str = ".",
+) -> dict:
+    """Prune the verdict log to its last N entries."""
+    args = ["guard-clean", "--keep", str(keep)]
+    if dry_run:
+        args.append("--dry-run")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_verdict",
+    description=(
+        "Compute a closed-enum verdict (pass / pass_with_warnings / "
+        "needs_review / blocked) from the active pr-bundle. Pure judgment "
+        "layer — no rendering, no log, no GH POST."
+    ),
+)
+def roam_verdict(
+    bundle: str = "",
+    mode: str = "safe_edit",
+    policy_profile: str = "default",
+    root: str = ".",
+) -> dict:
+    """Return the closed-enum verdict for the active bundle."""
+    args = ["verdict", "--mode", mode, "--policy-profile", policy_profile]
+    if bundle:
+        args.extend(["--bundle", bundle])
     return _run_roam(args, root)
 
 

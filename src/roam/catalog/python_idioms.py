@@ -447,9 +447,31 @@ def _strip_strings_and_comments(text: str) -> str:
     return out
 
 
+# Call-scoped file filter (mirrors `_INCLUDE_TESTS_OVERRIDE`). When set to a set
+# of file_ids, the idiom detectors analyze ONLY those files — turning the whole-
+# project sweep (17s on roam-code) into a changed-files sweep (sub-second), which
+# is what makes `roam verify --deep` viable as a post-edit review. None = all
+# files (the default whole-project behavior is unchanged).
+_SCOPE_FILE_IDS: set[int] | None = None
+
+
+def set_idiom_scope(file_ids) -> None:
+    """Restrict subsequent idiom-detector runs to ``file_ids`` (None = all).
+
+    Callers MUST reset to None in a ``finally`` (the scope is a module global, so
+    a leaked scope would silently narrow an unrelated later run)."""
+    global _SCOPE_FILE_IDS
+    _SCOPE_FILE_IDS = set(file_ids) if file_ids is not None else None
+
+
 def _python_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:
-    """Return ``(file_id, path)`` for every Python file in the index."""
-    return [(int(r[0]), r[1]) for r in conn.execute("SELECT id, path FROM files WHERE language = 'python'").fetchall()]
+    """Return ``(file_id, path)`` for every Python file in the index (or only the
+    files in the active ``_SCOPE_FILE_IDS`` when a scope is set)."""
+    rows = conn.execute("SELECT id, path FROM files WHERE language = 'python'").fetchall()
+    out = [(int(r[0]), r[1]) for r in rows]
+    if _SCOPE_FILE_IDS is not None:
+        out = [(fid, p) for fid, p in out if fid in _SCOPE_FILE_IDS]
+    return out
 
 
 def _line_to_symbol(conn: sqlite3.Connection, file_id: int) -> list[tuple[int, int, int, str]]:
@@ -606,41 +628,60 @@ def detect_none_eq(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+def _match_in_doc_or_comment(text: str, start: int) -> bool:
+    """True if the match at ``start`` is inside a ``#`` comment or a triple-
+    quoted docstring. Used by the detectors that must scan RAW text (they need
+    intact quotes — e.g. the ``f"`` indicator, or a ``"|"`` separator) and so
+    can't pre-strip strings: this keeps them from self-flagging their own
+    documentation / example prose."""
+    line_begin = text.rfind("\n", 0, start) + 1
+    if text[line_begin:start].lstrip().startswith("#"):
+        return True
+    head = text[:start]
+    return head.count('"""') % 2 == 1 or head.count("'''") % 2 == 1
+
+
+def _logger_fstring_finding(text: str, match, sym_index, path: str) -> dict | None:
+    """Map one logger-fstring regex match to a finding, or None when it's in a
+    docstring/comment (self-doc) or has no enclosing symbol."""
+    if _match_in_doc_or_comment(text, match.start()):
+        return None
+    line_no = text.count("\n", 0, match.start()) + 1
+    sym = _enclosing_symbol(line_no, sym_index)
+    if sym is None:
+        return None
+    return _idiom_finding(
+        task_id="py-logger-fstring",
+        detected_way="eager-format",
+        symbol_id=sym[0],
+        symbol_name=sym[1],
+        file_path=path,
+        line_no=line_no,
+        reason="f-string in logger call evaluates even when level discards the message",
+        confidence="high",
+        fix='logger.info("x=%s", x)',
+    )
+
+
 def detect_logger_fstring(conn: sqlite3.Connection) -> list[dict]:
     """Find ``logger.info(f"...")`` — eager-format anti-pattern.
 
     Doesn't pre-strip strings/comments because the f-string indicator
     (``f"`` / ``f'``) requires the opening quote to be intact — the
-    stripper blanks it out. Instead the regex itself anchors on
-    ``logger.<level>(`` so docstring/comment matches are extremely
-    rare (would need someone to write the literal ``logger.info(f"``
-    inside a docstring, which is itself usually a real example).
+    stripper blanks it out. Instead `_match_in_doc_or_comment` (in the
+    per-match helper) skips matches inside docstrings/comments so a detector
+    documenting ``logger.info(f"...")`` in its own docstring won't self-flag.
     """
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
-        # Skip string-strip for this detector (see docstring).
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
         for match in _LOGGER_FSTRING_RE.finditer(text):
-            line_no = text.count("\n", 0, match.start()) + 1
-            sym = _enclosing_symbol(line_no, sym_index)
-            if sym is None:
-                continue
-            findings.append(
-                _idiom_finding(
-                    task_id="py-logger-fstring",
-                    detected_way="eager-format",
-                    symbol_id=sym[0],
-                    symbol_name=sym[1],
-                    file_path=path,
-                    line_no=line_no,
-                    reason="f-string in logger call evaluates even when level discards the message",
-                    confidence="high",
-                    fix='logger.info("x=%s", x)',
-                )
-            )
+            f = _logger_fstring_finding(text, match, sym_index, path)
+            if f is not None:
+                findings.append(f)
     return findings
 
 
@@ -1025,6 +1066,16 @@ def detect_lambda_in_loop(conn: sqlite3.Connection) -> list[dict]:
             if sym is None:
                 continue
             var = match.group(1)
+            # Precision: the late-binding bug requires the lambda to CAPTURE the
+            # loop variable. A lambda whose body never references `var` — e.g. a
+            # sort key `sort(key=lambda c: -len(c))` that happens to sit within
+            # 200 chars of an unrelated `for nb in …:` — is safe. Check the
+            # lambda's tail on its own line (strings/comments already blanked).
+            lam_end = match.end()
+            line_end = text.find("\n", lam_end)
+            tail = text[lam_end : (line_end if line_end != -1 else len(text))]
+            if not re.search(rf"\b{re.escape(var)}\b", tail):
+                continue
             findings.append(
                 _idiom_finding(
                     task_id="py-lambda-in-loop",
@@ -1665,10 +1716,84 @@ def is_model_class(signature: str | None, decorators: str | None) -> tuple[bool,
     return False, None
 
 
+# A regex built from a ``"|".join(...)`` alternation. Matched on RAW source (the
+# ``|`` inside the string literal IS the signal, so this one detector does NOT
+# strip string contents). Captures both quote styles.
+_PIPE_JOIN_RE = re.compile(r"""['"]\|['"]\s*\.\s*join\(""")
+
+
+def detect_regex_alternation_join(conn: sqlite3.Connection) -> list[dict]:
+    """Flag ``re.compile("|".join(<variable collection>))`` — the speed flaw.
+
+    Python's ``re`` engine re-tries every alternative at each text position, so a
+    regex whose body is an N-way alternation of literals is O(text × N) to match.
+    Built from a RUNTIME collection (a variable or comprehension, not a small
+    literal list) N can be large — measured 9.6s on roam's own dead-code test
+    scan (641 names × ~20 MB), fixed by switching to O(text) word-set membership.
+
+    Precision: requires (a) ``re.compile`` within ~220 chars before the join and
+    (b) the join argument to be a NON-literal collection (first token after
+    ``join(`` is not ``[ ( { ' "`` — i.e. a name/call/comprehension, not a small
+    hand-written list). That admits the real flaw shapes (``join(names)``,
+    ``join(re.escape(n) for n in seq)``, ``join(sorted(xs))``) while skipping
+    ``join(["GET","POST"])``-style small constant alternations.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if not text or ('"|"' not in text and "'|'" not in text):
+            continue
+        sym_index = None
+        for m in _PIPE_JOIN_RE.finditer(text):
+            start = m.start()
+            if "re.compile" not in text[max(0, start - 220) : start]:
+                continue
+            # A tool that documents this very pattern must not flag its own prose.
+            if _match_in_doc_or_comment(text, start):
+                continue
+            # First non-space char of the join argument.
+            j = m.end()
+            while j < len(text) and text[j] in " \t\n":
+                j += 1
+            if j >= len(text) or text[j] in "[({\"'":
+                continue  # literal collection / generator-in-parens → not the flaw
+            if sym_index is None:
+                sym_index = _line_to_symbol(conn, file_id)
+            line_no = text.count("\n", 0, start) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-regex-alt-join",
+                    detected_way="alternation-regex",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=(
+                        'regex compiled from a `"|".join(<collection>)` alternation; '
+                        "`re` re-tries every alternative at each position, so matching is "
+                        "O(text x N). On a large collection this dominates (9.6s in roam's "
+                        "own dead-code scan before the fix)."
+                    ),
+                    confidence="medium",
+                    fix=(
+                        "For LITERAL alternations, tokenize once and test set membership: "
+                        "`names = frozenset(parts); hits = names.intersection("
+                        "re.findall(r'\\w+', text))` — O(text), independent of N. For "
+                        "overlapping / non-word patterns use an Aho-Corasick automaton."
+                    ),
+                )
+            )
+    return findings
+
+
 # Detector registry — same shape ``cmd_math`` expects from ``_MATH_DETECTORS``
 # (task_id, pattern_id, detect_fn). Re-exported so registration is one
 # import line elsewhere.
 PYTHON_IDIOM_DETECTORS = [
+    ("py-regex-alt-join", "alternation-regex", detect_regex_alternation_join),
     ("py-mutable-default-arg", "default-mutable", detect_mutable_default_arg),
     ("py-bare-except", "catch-all", detect_bare_except),
     ("py-none-eq", "eq-not-is", detect_none_eq),
@@ -1693,3 +1818,43 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-except-pass", "silent-swallow", detect_except_pass),
     ("py-broad-except", "catch-too-much", detect_broad_except),
 ]
+
+
+# Cheap applicability gate (2026-06-05): a detector whose trigger token can't
+# appear in the changed text CANNOT produce a finding, so don't even run it.
+# Library/framework detectors are the big win — irrelevant to most edits. A
+# detector with NO entry here is always-applicable (its pattern is generic).
+# This makes the post-edit `--deep` sweep CONTENT-DRIVEN: it fires only the
+# checks the change could actually trip.
+_IDIOM_TRIGGERS: dict[str, tuple[str, ...]] = {
+    "py-regex-alt-join": ("re.compile", "_re.compile"),
+    "py-logger-fstring": ("log",),  # logger. / logging. / log.<level>(
+    "py-lambda-in-loop": ("lambda",),
+    "py-open-without-with": ("open(",),
+    "py-star-import": ("import *",),
+    "py-dict-keys-iter": (".keys(",),
+    "py-type-eq": ("type(",),
+    "py-lock-without-with": (".acquire(",),
+    "py-pandas-iterrows": ("iterrows",),
+    "py-async-not-awaited": ("async", "await"),
+    "py-async-with-missing": ("aiofiles", "httpx", "async with"),
+    "py-sync-in-async": ("async def",),
+    "py-sync-calls-async": ("async def", "await"),
+    "py-django-n1": (".objects", "django"),
+    "py-sqlalchemy-lazy": ("relationship", "sqlalchemy"),
+    "py-fastapi-depends": ("Depends", "fastapi", "APIRouter"),
+    "py-flask-routes": ("flask", "Flask", "Blueprint", ".route("),
+    "py-flask-debug-true": ("debug=True", "flask", "Flask"),
+    "py-flask-secret-key-literal": ("SECRET_KEY", "secret_key"),
+}
+
+
+def applicable_idiom_detectors(scanned_text: str):
+    """Yield ``(task_id, way, fn)`` for the detectors that COULD fire on
+    ``scanned_text`` — i.e. those whose trigger token is present, plus every
+    detector that declares no trigger (generic patterns). Lets a caller skip the
+    framework/library detectors that can't possibly apply to the change."""
+    for task_id, way, fn in PYTHON_IDIOM_DETECTORS:
+        trig = _IDIOM_TRIGGERS.get(task_id)
+        if trig is None or any(t in scanned_text for t in trig):
+            yield task_id, way, fn

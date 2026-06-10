@@ -167,8 +167,7 @@ def test_alias_promoted_when_canonical_at_signature_default():
         defaults={"query": ""},
     )
     assert out == {"query": "_FOO"}, (
-        f"alias value should be promoted to canonical when canon is at "
-        f"its declared default. Got: {out}"
+        f"alias value should be promoted to canonical when canon is at its declared default. Got: {out}"
     )
     assert len(warns) == 1
     assert "deprecated" in warns[0]
@@ -274,15 +273,19 @@ def test_alias_promoted_for_every_canonical_with_empty_default(canonical, alias)
     # default — mirrors the real wrappers identified in the 2026-05-24 audit.
     def _make_fn(canon: str):
         if canon == "symbol":
+
             def fn(symbol: str = "", root: str = "."):
                 return {"command": "fake", "data": {"received": symbol}}
         elif canon == "path":
+
             def fn(path: str = "", root: str = "."):
                 return {"command": "fake", "data": {"received": path}}
         elif canon == "query":
+
             def fn(query: str = "", root: str = "."):
                 return {"command": "fake", "data": {"received": query}}
         elif canon == "input_path":
+
             def fn(input_path: str = "", root: str = "."):
                 return {"command": "fake", "data": {"received": input_path}}
         else:

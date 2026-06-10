@@ -17,6 +17,7 @@ they were consolidated here on 2026-05-26.
 from __future__ import annotations
 
 import pytest
+
 from roam.mcp_server import _REGISTERED_TOOLS, _TOOL_METADATA
 
 _REQUIRED_FLAGS = ("read_only", "destructive", "idempotent")
@@ -56,6 +57,4 @@ def test_all_registered_tools_have_metadata() -> None:
 def test_tool_has_side_effect_metadata(tool_name: str) -> None:
     """Per-tool check — pinpoints the exact failing tool by name."""
     issues = _problems(tool_name)
-    assert not issues, (
-        f"Tool {tool_name!r} is missing side-effect metadata: {', '.join(issues)}"
-    )
+    assert not issues, f"Tool {tool_name!r} is missing side-effect metadata: {', '.join(issues)}"

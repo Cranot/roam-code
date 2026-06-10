@@ -45,7 +45,9 @@ _STRICT_DROPS_BASIS = {"heuristic"}
     requires_index=False,
 )
 @click.command()
-@click.option("--list-tasks", "list_tasks", is_flag=True, default=False, help="Print agent-opt task ids + best ways, then exit.")
+@click.option(
+    "--list-tasks", "list_tasks", is_flag=True, default=False, help="Print agent-opt task ids + best ways, then exit."
+)
 @click.option(
     "--list-detectors",
     "list_detectors",
@@ -87,7 +89,9 @@ _STRICT_DROPS_BASIS = {"heuristic"}
     type=click.Choice(["balanced", "strict", "aggressive"], case_sensitive=False),
     help="strict drops heuristic-tier findings (e.g. tool-description-declarative); aggressive == balanced today.",
 )
-@click.option("--top", "--limit", "-n", "limit", default=50, type=int, help="Max findings to show (alias --limit/-n; 0 = all).")
+@click.option(
+    "--top", "--limit", "-n", "limit", default=50, type=int, help="Max findings to show (alias --limit/-n; 0 = all)."
+)
 @click.option(
     "--persist",
     is_flag=True,
@@ -214,7 +218,6 @@ def agent_opt_cmd(
 
     n_tools = meta.get("sources", {}).get("tool_descriptions_scanned", 0)
     n_env = meta.get("sources", {}).get("envelopes_scanned", 0)
-    n_sources = (1 if "tool_descriptions_scanned" in meta.get("sources", {}) else 0) + n_env
 
     # ---- verdict (LAW 6: works standalone) ----
     if total == 0:
@@ -293,7 +296,10 @@ def agent_opt_cmd(
     if meta.get("only_unknown"):
         click.echo(f"WARNING: unknown --only tasks: {', '.join(meta['only_unknown'])}")
     if persist:
-        click.echo(f"Persisted {persisted} finding(s) to the findings registry" + (f" (error: {persist_error})" if persist_error else ""))
+        click.echo(
+            f"Persisted {persisted} finding(s) to the findings registry"
+            + (f" (error: {persist_error})" if persist_error else "")
+        )
     for f in findings_out:
         click.echo(
             f"  [{f.get('confidence', '?'):>6}] {f['task_id']:<30} {f.get('subject', '?')}\n"

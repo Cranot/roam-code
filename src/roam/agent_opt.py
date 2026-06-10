@@ -73,9 +73,7 @@ __all__ = [
 FAMILY = "agent-opt"
 AGENT_OPT_DETECTOR_VERSION = "1.0.0"
 
-_VALID_BASES = frozenset(
-    {CONFIDENCE_HEURISTIC, CONFIDENCE_STRUCTURAL, CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_RUNTIME}
-)
+_VALID_BASES = frozenset({CONFIDENCE_HEURISTIC, CONFIDENCE_STRUCTURAL, CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_RUNTIME})
 _VALID_COSTS = frozenset({QUERY_COST_LOW, QUERY_COST_MEDIUM, QUERY_COST_HIGH})
 
 # ---------------------------------------------------------------------------
@@ -498,32 +496,173 @@ def detect_large_envelope_no_handle(envelopes: Iterable[tuple[str, dict]]) -> li
 # own copy; EXACT parity is pinned by
 # ``tests/test_agent_opt.py::test_abstract_fact_anchor_parity_with_law4`` so the
 # two definitions of "weak fact" can never silently diverge (Pattern 3a).
-_CONCRETE_NOUN_ANCHORS = frozenset({
-    'actions', 'added', 'affected', 'agents', 'alerts', 'analysed', 'analyzed', 'annotations',
-    'available', 'branches', 'budget', 'bytes', 'callees', 'callers', 'candidates',
-    'capabilities', 'challenges', 'characters', 'chars', 'checked', 'checks', 'checks-failed',
-    'checks-passed', 'clusters', 'commands', 'commits', 'confirmed', 'cycles', 'days',
-    'dependencies', 'diagnostics', 'direct', 'directories', 'downgrades', 'edges', 'effects',
-    'endpoints', 'entries', 'errors', 'events', 'exits', 'failed', 'fields', 'files',
-    'findings', 'flags', 'frameworks', 'gaps', 'heuristic', 'hotspots', 'hours', 'imports',
-    'issues', 'items', 'keys', 'kinds', 'languages', 'layers', 'leaks', 'lines', 'literals',
-    'logged', 'markers', 'matches', 'milliseconds', 'minutes', 'modules', 'months', 'movers',
-    'moves', 'nodes', 'options', 'owned', 'owners', 'packages', 'passed', 'paths', 'patterns',
-    'phantom', 'presets', 'queries', 'reachable', 'reached', 'records', 'removed', 'risks',
-    'routes', 'rules', 'scanned', 'scenarios', 'schemas', 'scored', 'seconds', 'secrets',
-    'seeds', 'shifts', 'skipped', 'smells', 'snapshots', 'subcommands', 'symbols', 'tests',
-    'tokens', 'tools', 'total', 'trending', 'types', 'upgrades', 'used', 'users', 'values',
-    'violations', 'vulnerabilities', 'warnings', 'weeks', 'years',
-})
-_ANALYTICAL_VERBS = frozenset({
-    'added', 'blocked', 'classified', 'computed', 'confirmed', 'detected', 'emitted', 'failed',
-    'flagged', 'found', 'introduced', 'logged', 'passed', 'ran', 'reached', 'rejected',
-    'removed', 'rendered', 'reported', 'scanned', 'scored', 'skipped', 'surfaced', 'verified',
-})
-_MEASUREMENT_SUFFIXES = frozenset({
-    'bytes', 'cohesion', 'count', 'depth', 'kb', 'mb', 'ms', 'pct', 'percent', 'percentage',
-    'rate', 'ratio', 'score', 'size', 'total',
-})
+_CONCRETE_NOUN_ANCHORS = frozenset(
+    {
+        "actions",
+        "added",
+        "affected",
+        "agents",
+        "alerts",
+        "analysed",
+        "analyzed",
+        "annotations",
+        "available",
+        "branches",
+        "budget",
+        "bytes",
+        "callees",
+        "callers",
+        "candidates",
+        "capabilities",
+        "challenges",
+        "characters",
+        "chars",
+        "checked",
+        "checks",
+        "checks-failed",
+        "checks-passed",
+        "clusters",
+        "commands",
+        "commits",
+        "confirmed",
+        "cycles",
+        "days",
+        "dependencies",
+        "diagnostics",
+        "direct",
+        "directories",
+        "downgrades",
+        "edges",
+        "effects",
+        "endpoints",
+        "entries",
+        "errors",
+        "events",
+        "exits",
+        "failed",
+        "fields",
+        "files",
+        "findings",
+        "flags",
+        "frameworks",
+        "gaps",
+        "heuristic",
+        "hotspots",
+        "hours",
+        "imports",
+        "issues",
+        "items",
+        "keys",
+        "kinds",
+        "languages",
+        "layers",
+        "leaks",
+        "lines",
+        "literals",
+        "logged",
+        "markers",
+        "matches",
+        "milliseconds",
+        "minutes",
+        "modules",
+        "months",
+        "movers",
+        "moves",
+        "nodes",
+        "options",
+        "owned",
+        "owners",
+        "packages",
+        "passed",
+        "paths",
+        "patterns",
+        "phantom",
+        "presets",
+        "queries",
+        "reachable",
+        "reached",
+        "records",
+        "removed",
+        "risks",
+        "routes",
+        "rules",
+        "scanned",
+        "scenarios",
+        "schemas",
+        "scored",
+        "seconds",
+        "secrets",
+        "seeds",
+        "shifts",
+        "skipped",
+        "smells",
+        "snapshots",
+        "subcommands",
+        "symbols",
+        "tests",
+        "tokens",
+        "tools",
+        "total",
+        "trending",
+        "types",
+        "upgrades",
+        "used",
+        "users",
+        "values",
+        "violations",
+        "vulnerabilities",
+        "warnings",
+        "weeks",
+        "years",
+    }
+)
+_ANALYTICAL_VERBS = frozenset(
+    {
+        "added",
+        "blocked",
+        "classified",
+        "computed",
+        "confirmed",
+        "detected",
+        "emitted",
+        "failed",
+        "flagged",
+        "found",
+        "introduced",
+        "logged",
+        "passed",
+        "ran",
+        "reached",
+        "rejected",
+        "removed",
+        "rendered",
+        "reported",
+        "scanned",
+        "scored",
+        "skipped",
+        "surfaced",
+        "verified",
+    }
+)
+_MEASUREMENT_SUFFIXES = frozenset(
+    {
+        "bytes",
+        "cohesion",
+        "count",
+        "depth",
+        "kb",
+        "mb",
+        "ms",
+        "pct",
+        "percent",
+        "percentage",
+        "rate",
+        "ratio",
+        "score",
+        "size",
+        "total",
+    }
+)
 _KNOWN_ABSTRACT_FACTS = frozenset({"no data", "ok", "completed", "see details", "tbd", "n/a", "done"})
 
 
@@ -730,7 +869,7 @@ def known_command_names() -> set[str]:
         from roam.cli import _DEPRECATED_COMMANDS
 
         names |= set(_DEPRECATED_COMMANDS.keys())
-    except Exception:
+    except ImportError:
         pass
     return names
 
@@ -964,9 +1103,7 @@ def build_finding_records(findings: list[dict[str, Any]]) -> list[FindingRecord]
         evidence_repr = json.dumps(evidence, sort_keys=True)
         records.append(
             FindingRecord(
-                finding_id_str=make_finding_id(
-                    "agent-opt", subject, task_id, f.get("detected_way", ""), evidence_repr
-                ),
+                finding_id_str=make_finding_id("agent-opt", subject, task_id, f.get("detected_way", ""), evidence_repr),
                 subject_kind="symbol",
                 subject_id=None,
                 claim=f.get("reason", f"{task_id} violation on {subject}"),

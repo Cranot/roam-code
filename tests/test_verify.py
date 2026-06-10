@@ -599,3 +599,41 @@ class TestEdgeCases:
         result = invoke_cli(cli_runner, ["verify", "readme.txt"], cwd=verify_project)
         # Should handle non-indexed files gracefully
         assert "VERDICT" in result.output
+
+
+class TestReportMode:
+    """`roam verify --report` — NON-gating whole-repo punch-list the agent acts on."""
+
+    def test_report_is_non_gating_and_flags_import_side_effect(self, verify_project, cli_runner, monkeypatch):
+        # a module that performs I/O at import time (the C6 class)
+        (verify_project / "boot.py").write_text(
+            "import requests\nrequests.post('http://x', json={})\n\ndef helper():\n    return 1\n"
+        )
+        git_commit(verify_project, "add boot")
+        monkeypatch.chdir(verify_project)
+        out, rc = index_in_process(verify_project, "--force")
+        assert rc == 0
+
+        result = invoke_cli(cli_runner, ["verify", "--report"], cwd=verify_project)
+        # NON-gating: exit 0 even when findings exist
+        assert result.exit_code == 0
+        assert "REPORT" in result.output
+        assert "import_side_effects" in result.output or "module-load side effect" in result.output
+
+    def test_report_scoped_to_path(self, verify_project, cli_runner, monkeypatch):
+        result = invoke_cli(cli_runner, ["verify", "--report", "service.py"], cwd=verify_project)
+        assert result.exit_code == 0
+        assert "REPORT" in result.output
+
+    def test_report_severity_filter_shows_only_fail(self, verify_project, cli_runner, monkeypatch):
+        # camelCase fn in a snake_case codebase → a FAIL-severity naming finding
+        (verify_project / "cammod.py").write_text("def getStuffNow():\n    return 1\n")
+        git_commit(verify_project, "add cam")
+        monkeypatch.chdir(verify_project)
+        out, rc = index_in_process(verify_project, "--force")
+        assert rc == 0
+        res = invoke_cli(cli_runner, ["verify", "--report", "--severity", "fail"], cwd=verify_project)
+        assert res.exit_code == 0  # report is non-gating
+        assert "REPORT" in res.output
+        # fail-only: no WARN/INFO lines leak through the filter
+        assert "[WARN]" not in res.output and "[INFO]" not in res.output

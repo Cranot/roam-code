@@ -61,7 +61,7 @@ class TestPrintDebugLeftover:
     def test_c_cpp_not_flagged(self):
         # C/C++ omitted: printf/cout are the normal output, not a logger anti-pattern.
         sources = [
-            ("a.c", "c", "int main(){ printf(\"x\"); }\n"),
+            ("a.c", "c", 'int main(){ printf("x"); }\n'),
             ("b.cpp", "cpp", "int main(){ std::cout << 1; }\n"),
         ]
         assert oo.detect_print_debug_leftover(sources) == []
@@ -166,6 +166,24 @@ class TestHarvester:
         conn.execute("INSERT INTO files (path, language, file_role) VALUES (?,?,?)", ("data.cob", "cobol", "source"))
         sources, _ = oo.harvest_source_files(conn, root=str(tmp_path))
         assert sources == []
+
+    def test_excludes_ci_workflow_paths(self, tmp_path):
+        # ``.github/scripts/*.py`` are CI workflow scripts: ``print("::warning::...")``
+        # is the GHA workflow-command mechanism, not a debug leftover. Same for
+        # ``.gitlab/`` / ``.circleci/`` / ``.buildkite/``.
+        (tmp_path / ".github").mkdir()
+        (tmp_path / ".github" / "scripts").mkdir()
+        (tmp_path / "src").mkdir()
+        (tmp_path / ".github" / "scripts" / "gate.py").write_text("print('::warning::x')\n", encoding="utf-8")
+        (tmp_path / "src" / "svc.py").write_text("print('debug')\n", encoding="utf-8")
+        conn = _files_db()
+        conn.executemany(
+            "INSERT INTO files (path, language, file_role) VALUES (?,?,?)",
+            [(".github/scripts/gate.py", "python", "source"), ("src/svc.py", "python", "source")],
+        )
+        sources, _ = oo.harvest_source_files(conn, root=str(tmp_path))
+        paths = {p for p, _l, _t in sources}
+        assert paths == {"src/svc.py"}, f"CI scripts should be excluded; got {paths}"
 
 
 # ---------------------------------------------------------------------------

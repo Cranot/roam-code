@@ -36,6 +36,10 @@ PRE_COLLAPSE_NON_READ_ONLY = {
     "roam_reindex",
     "roam_reset",  # W365
     "roam_clean",  # W365
+    # Wave 10: guard-pr writes verdict-log + optional GH Check POST.
+    "roam_guard_pr",
+    # Wave 20: guard-clean atomically rewrites verdict-log.jsonl.
+    "roam_guard_clean",
 }
 
 

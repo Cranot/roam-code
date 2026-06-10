@@ -155,7 +155,7 @@ def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
         import importlib.metadata as _md
 
         return _md.version(pkg_name)
-    except Exception:
+    except _md.PackageNotFoundError:
         pass
     if module_name:
         try:

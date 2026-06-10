@@ -2,8 +2,8 @@
 
 Evidence-backed, local, deterministic. The engine behind `roam commands`, the
 G3 minimal-verification contract, and the **Agent Change Proof Bundle**'s
-"checks available / required / ran" sections (see
-`internal/planning/PROOF-BUNDLE-SCHEMA-2026-05-27.md`).
+"checks available / required / ran" sections (full schema lives in an
+internal planning memo).
 
 Roam's moat is not just that it KNOWS the test command — it can PROVE why it
 knows (every command carries `evidence`). This module reuses
@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 from roam.output.project_shape import (
-    _BUILD_TOOL_HINTS,
     _PACKAGE_MANAGER_LOCKFILES,
     _TEST_RUNNER_HINTS,
 )
@@ -51,15 +50,70 @@ COSTS = frozenset({"low", "medium", "high"})
 # runner needles so the two detectors agree by construction.
 _TEST_NEEDLES = tuple(n for _runner, needles in _TEST_RUNNER_HINTS for n in needles) + ("test",)
 _TYPECHECK_NEEDLES = ("tsc", "typecheck", "type-check", "type:check", "mypy", "pyright", "tsgo")
-_LINT_NEEDLES = ("lint", "eslint", "ruff", "flake8", "clippy", "rubocop", "biome", "prettier --check", "fmt --check", "format:check")
-_BUILD_NEEDLES = ("build", "compile", "tsc -b", "tsc --build", "bundle", "webpack", "rollup", "vite build", "cargo build", "go build", "make ")
+_LINT_NEEDLES = (
+    "lint",
+    "eslint",
+    "ruff",
+    "flake8",
+    "clippy",
+    "rubocop",
+    "biome",
+    "prettier --check",
+    "fmt --check",
+    "format:check",
+)
+_BUILD_NEEDLES = (
+    "build",
+    "compile",
+    "tsc -b",
+    "tsc --build",
+    "bundle",
+    "webpack",
+    "rollup",
+    "vite build",
+    "cargo build",
+    "go build",
+    "make ",
+)
 _RUN_NEEDLES = ("start", "dev", "serve", "preview", "watch", "run ", "exec ")
 
 # Runners whose invocation accepts a path arg (so a targeted check is possible).
-_TARGETABLE_NEEDLES = ("pytest", "vitest", "jest", "mocha", "playwright test", "go test", "cargo test", "phpunit", "ava")
+_TARGETABLE_NEEDLES = (
+    "pytest",
+    "vitest",
+    "jest",
+    "mocha",
+    "playwright test",
+    "go test",
+    "cargo test",
+    "phpunit",
+    "ava",
+)
 # State-mutating / side-effecting verbs — never auto-run.
-_MUTATE_NEEDLES = ("deploy", "publish", "release", "migrate", "db:push", "db push", "prisma migrate", "seed", "push", "upload")
-_NETWORK_NEEDLES = ("install", "deploy", "publish", "fetch", "download", "docker push", "docker pull", "npm publish", "curl", "wget")
+_MUTATE_NEEDLES = (
+    "deploy",
+    "publish",
+    "release",
+    "migrate",
+    "db:push",
+    "db push",
+    "prisma migrate",
+    "seed",
+    "push",
+    "upload",
+)
+_NETWORK_NEEDLES = (
+    "install",
+    "deploy",
+    "publish",
+    "fetch",
+    "download",
+    "docker push",
+    "docker pull",
+    "npm publish",
+    "curl",
+    "wget",
+)
 
 # runner -> corroborating config-file globs (adds evidence + confidence).
 _RUNNER_CONFIG_GLOBS = {
@@ -109,7 +163,14 @@ def _classify_kind(name: str, body: str) -> str:
     return "other"
 
 
-_COST_BY_KIND = {"test": "high", "build": "high", "typecheck": "medium", "lint": "medium", "run": "low", "other": "medium"}
+_COST_BY_KIND = {
+    "test": "high",
+    "build": "high",
+    "typecheck": "medium",
+    "lint": "medium",
+    "run": "low",
+    "other": "medium",
+}
 
 
 def _make_fact(
@@ -297,19 +358,64 @@ def _extract_python_and_fallbacks(root: Path, already: bool) -> list[dict[str, A
     facts: list[dict[str, Any]] = []
     if any((root / f).exists() for f in ("pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini")):
         ev = [f for f in ("pytest.ini", "tox.ini", "pyproject.toml", "setup.cfg") if (root / f).exists()]
-        facts.append(_make_fact(fact_id="test.pytest", command="pytest", kind="test", scope="repo",
-                                source=ev[0], evidence=ev, confidence=0.6))
+        facts.append(
+            _make_fact(
+                fact_id="test.pytest",
+                command="pytest",
+                kind="test",
+                scope="repo",
+                source=ev[0],
+                evidence=ev,
+                confidence=0.6,
+            )
+        )
     elif (root / "go.mod").exists():
-        facts.append(_make_fact(fact_id="test.go", command="go test ./...", kind="test", scope="repo",
-                                source="go.mod", evidence=["go.mod"], confidence=0.6))
-        facts.append(_make_fact(fact_id="build.go", command="go build ./...", kind="build", scope="repo",
-                                source="go.mod", evidence=["go.mod"], confidence=0.6))
+        facts.append(
+            _make_fact(
+                fact_id="test.go",
+                command="go test ./...",
+                kind="test",
+                scope="repo",
+                source="go.mod",
+                evidence=["go.mod"],
+                confidence=0.6,
+            )
+        )
+        facts.append(
+            _make_fact(
+                fact_id="build.go",
+                command="go build ./...",
+                kind="build",
+                scope="repo",
+                source="go.mod",
+                evidence=["go.mod"],
+                confidence=0.6,
+            )
+        )
     elif (root / "Cargo.toml").exists():
-        facts.append(_make_fact(fact_id="test.cargo", command="cargo test", kind="test", scope="repo",
-                                source="Cargo.toml", evidence=["Cargo.toml"], confidence=0.6))
+        facts.append(
+            _make_fact(
+                fact_id="test.cargo",
+                command="cargo test",
+                kind="test",
+                scope="repo",
+                source="Cargo.toml",
+                evidence=["Cargo.toml"],
+                confidence=0.6,
+            )
+        )
     elif (root / "Gemfile").exists():
-        facts.append(_make_fact(fact_id="test.rspec", command="bundle exec rspec", kind="test", scope="repo",
-                                source="Gemfile", evidence=["Gemfile"], confidence=0.6))
+        facts.append(
+            _make_fact(
+                fact_id="test.rspec",
+                command="bundle exec rspec",
+                kind="test",
+                scope="repo",
+                source="Gemfile",
+                evidence=["Gemfile"],
+                confidence=0.6,
+            )
+        )
     return facts
 
 

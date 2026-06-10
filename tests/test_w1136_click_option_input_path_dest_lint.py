@@ -121,6 +121,13 @@ _PATH_INPUT: frozenset[tuple[str, str]] = frozenset(
         # @pr_analyze.command(...): --rules / rules_file is the rules.yml
         # file path passed through click.Path(). Single-input-file shape.
         ("cmd_pr_analyze.py", "rules_file"),
+        # Roam Guard family (Wave 5-20): --rules / rules_path resolves to
+        # a verification rule-pack YAML (see src/roam/guard_rules.py).
+        # Single-input-file shape; rename candidates for the v14.0 sweep.
+        ("cmd_guard_doctor.py", "rules_path"),
+        ("cmd_guard_pr.py", "rules_path"),
+        ("cmd_guard_rules.py", "rules_path"),
+        ("cmd_verification_contract.py", "rules_path"),
     }
 )
 

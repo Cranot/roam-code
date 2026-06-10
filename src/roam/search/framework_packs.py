@@ -624,6 +624,38 @@ def available_packs() -> list[str]:
     return sorted(_PACK_DEFINITIONS.keys())
 
 
+# Ecosystem language for each of the 8 packs (mirrors _PACK_DEFINITIONS). A pack
+# is only relevant to a repo that actually contains one of its languages —
+# injecting Django/pytest symbols into a TypeScript repo (or React/Express into a
+# pure-Python repo) is pure noise. 2026-06-07 dogfood: django/pytest `@pack/*`
+# leaked into a TS webhook repo's compile envelope; gating by language removed the
+# cross-language contamination.
+_PACK_LANGUAGES: dict[str, set[str]] = {
+    "python-stdlib": {"python"},
+    "django": {"python"},
+    "flask": {"python"},
+    "fastapi": {"python"},
+    "sqlalchemy": {"python"},
+    "pytest": {"python"},
+    "react": {"javascript", "typescript", "tsx", "jsx"},
+    "express": {"javascript", "typescript"},
+}
+
+
+def packs_for_languages(languages) -> list[str]:
+    """Return pack names whose ecosystem language is present in ``languages``.
+
+    Empty/unknown ``languages`` returns every pack (the conservative legacy
+    behaviour — better to over-include than to silently drop relevant packs
+    when language detection is unavailable). A non-empty language set that
+    matches no pack returns ``[]`` so the caller can skip pack search entirely.
+    """
+    langs = {str(lang).strip().lower() for lang in (languages or []) if lang}
+    if not langs:
+        return available_packs()
+    return sorted(p for p, pls in _PACK_LANGUAGES.items() if pls & langs)
+
+
 def search_pack_symbols(
     query: str,
     top_k: int = 10,

@@ -686,14 +686,34 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             _by_file_output(conn, rows, json_mode, warnings=_merged_warnings())
             return
 
-        # Compute distribution stats (W607-BJ: substrate boundary)
-        all_scores = _run_check_bj(
-            "compute_distribution_stats",
-            lambda: conn.execute(
-                "SELECT cognitive_complexity FROM symbol_metrics ORDER BY cognitive_complexity DESC"
-            ).fetchall(),
-            default=[],
-        )
+        # Compute distribution stats (W607-BJ: substrate boundary).
+        # When a `target`/`threshold` filter is active, the distribution must
+        # be scoped to the SAME filter as `rows` — otherwise a per-file query
+        # reported REPO-WIDE avg/p90/critical/high (Pattern-3 scope mismatch:
+        # `roam complexity <file>` showed identical critical_count across
+        # every file). No filter → fast whole-table path (unchanged).
+        if target or threshold is not None:
+            all_scores = _run_check_bj(
+                "compute_distribution_stats",
+                lambda: conn.execute(
+                    f"""SELECT sm.cognitive_complexity
+                        FROM symbol_metrics sm
+                        JOIN symbols s ON sm.symbol_id = s.id
+                        JOIN files f ON s.file_id = f.id
+                        WHERE {where_clause}
+                        ORDER BY sm.cognitive_complexity DESC""",
+                    params,
+                ).fetchall(),
+                default=[],
+            )
+        else:
+            all_scores = _run_check_bj(
+                "compute_distribution_stats",
+                lambda: conn.execute(
+                    "SELECT cognitive_complexity FROM symbol_metrics ORDER BY cognitive_complexity DESC"
+                ).fetchall(),
+                default=[],
+            )
         if all_scores is None:
             all_scores = []
         scores = [r[0] for r in all_scores]

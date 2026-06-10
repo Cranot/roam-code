@@ -50,7 +50,13 @@ _STRICT_DROPS_BASIS = {"heuristic"}
     requires_index=True,
 )
 @click.command()
-@click.option("--list-tasks", "list_tasks", is_flag=True, default=False, help="Print observability-opt task ids + best ways, then exit.")
+@click.option(
+    "--list-tasks",
+    "list_tasks",
+    is_flag=True,
+    default=False,
+    help="Print observability-opt task ids + best ways, then exit.",
+)
 @click.option(
     "--list-detectors",
     "list_detectors",
@@ -100,7 +106,9 @@ _STRICT_DROPS_BASIS = {"heuristic"}
     type=click.Choice(["balanced", "strict", "aggressive"], case_sensitive=False),
     help="strict drops heuristic-tier findings; aggressive == balanced today.",
 )
-@click.option("--top", "--limit", "-n", "limit", default=50, type=int, help="Max findings to show (alias --limit/-n; 0 = all).")
+@click.option(
+    "--top", "--limit", "-n", "limit", default=50, type=int, help="Max findings to show (alias --limit/-n; 0 = all)."
+)
 @click.option(
     "--persist",
     is_flag=True,
@@ -309,7 +317,10 @@ def observability_opt_cmd(
     if meta.get("only_unknown"):
         click.echo(f"WARNING: unknown --only tasks: {', '.join(meta['only_unknown'])}")
     if persist:
-        click.echo(f"Persisted {persisted} finding(s) to the findings registry" + (f" (error: {persist_error})" if persist_error else ""))
+        click.echo(
+            f"Persisted {persisted} finding(s) to the findings registry"
+            + (f" (error: {persist_error})" if persist_error else "")
+        )
     for f in findings_out:
         click.echo(
             f"  [{f.get('confidence', '?'):>6}] {f['task_id']:<24} {f.get('subject', '?')}\n"

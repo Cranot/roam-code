@@ -81,12 +81,10 @@ def test_dead_code_does_not_flag_intra_module_used_symbol(symbol, defining_file,
         safe_findings = []
 
     matched = [
-        f for f in safe_findings
-        if isinstance(f, dict) and (
-            f.get("name") == symbol
-            or f.get("qualified_name") == symbol
-            or f.get("symbol") == symbol
-        )
+        f
+        for f in safe_findings
+        if isinstance(f, dict)
+        and (f.get("name") == symbol or f.get("qualified_name") == symbol or f.get("symbol") == symbol)
     ]
 
     assert not matched, (

@@ -1097,7 +1097,10 @@ def _alerts_verdict(all_alerts: list[dict], counts: dict) -> str:
     if not all_alerts:
         return "no alerts — all metrics within normal ranges"
     parts = _alerts_summary_parts(counts)
-    return f"{len(all_alerts)} alert{'s' if len(all_alerts) != 1 else ''}: {', '.join(parts)}"
+    # LAW 4: terminal token must be a concrete-noun anchor. Put the plural
+    # ``alerts`` last (always plural to keep the anchor regardless of count;
+    # surfaces as ``facts[0]`` so the lint covers it).
+    return f"{', '.join(parts)} — {len(all_alerts)} alerts"
 
 
 def _emit_alerts_json(

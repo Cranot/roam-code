@@ -186,14 +186,14 @@ def _candidate_report_paths(report_path: str, project_root: Path) -> list[str]:
         try:
             rel = raw.resolve().relative_to(project_root.resolve()).as_posix()
             candidates.append(_normalise_path(rel))
-        except Exception:
+        except (OSError, ValueError):
             pass
     else:
         try:
             abs_candidate = (project_root / raw).resolve()
             rel = abs_candidate.relative_to(project_root.resolve()).as_posix()
             candidates.append(_normalise_path(rel))
-        except Exception:
+        except (OSError, ValueError):
             pass
 
     expanded: list[str] = []

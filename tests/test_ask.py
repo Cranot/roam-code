@@ -56,12 +56,25 @@ class TestRecipes:
             "visualize-architecture",
             # v12.48 — dangling-doc-reference scan
             "find-broken-links",
+            # 2026-06-06 — precise named-symbol definition+callers. Fixes roam_ask
+            # routing "where is X defined / what calls X" to search+uses instead of
+            # trace-task's fuzzy retrieve (which matched the query word "defined"
+            # against symbols literally named `definition`).
+            "locate-symbol",
+            # 2026-06-06 — file dependency-direction (what imports/depends on X.py)
+            # → roam deps; fixes the deps gap found in the roam_ask routing hunt.
+            "module-deps",
+            # 2026-06-06 (overnight) — top-N routing gaps from the comprehensive
+            # battery: precise "most complex" → roam complexity; file-role
+            # "what does X.py do" → roam file (was noise-routing to module-deps).
+            "complexity-ranking",
+            "describe-file",
         }
 
     def test_recipe_count(self):
         # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 25
+        assert len(RECIPES) == 29
 
     def test_readme_recipe_count_matches_registry(self):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
@@ -146,7 +159,9 @@ class TestClassifier:
     def test_trace_flow_match(self):
         ranked = classify("what calls UserSession.refresh")
         top = ranked[0][0].name
-        assert top in {"trace-flow", "trace-task"}
+        # locate-symbol (search+uses) is also a correct callers route — added
+        # 2026-06-06; "what calls X" is a precise caller query, which `uses` answers.
+        assert top in {"trace-flow", "trace-task", "locate-symbol"}
 
     def test_what_broke_match(self):
         ranked = classify("what regressed since last week")
@@ -162,6 +177,21 @@ class TestClassifier:
         ranked = classify("any sql injection or xss reach")
         top = ranked[0][0].name
         assert top == "security-audit"
+
+    def test_what_files_import_routes_to_module_deps(self):
+        # "what FILES import X": the "files" token used to dilute the match below
+        # the confidence threshold (codex nav A/B q2 phrasing → "no confident
+        # recipe match" → wasted roam_ask call + roam_deps fallback). Added the
+        # phrasing to module-deps 2026-06-07 so roam_ask routes + EXECUTES it in
+        # one call. Guards the routing so the phrasing can't silently regress.
+        for q in (
+            "what files import recipes.py",
+            "which files import compiler.py",
+            "what files import src/roam/ask/recipes.py",
+        ):
+            ranked = classify(q)
+            assert ranked, f"no recipe matched: {q!r}"
+            assert ranked[0][0].name == "module-deps", f"{q!r} -> {ranked[0][0].name}"
 
     def test_dead_code_sweep_match(self):
         ranked = classify("find dead code I can delete")

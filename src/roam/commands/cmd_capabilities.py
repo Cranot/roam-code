@@ -196,7 +196,7 @@ def _populate_registry() -> None:
         seen.add(module_path)
         try:
             importlib.import_module(module_path)
-        except Exception:
+        except Exception:  # noqa: BLE001 — a broken optional module may raise anything
             # Best-effort; missing optional deps shouldn't break the
             # registry dump.
             pass

@@ -740,7 +740,7 @@ def _find_clone_pairs(
                 pair_scores[(ia, ib)] = sim
                 uf.union(ia, ib)
             return pairs, uf, pair_scores
-        except Exception:
+        except Exception:  # noqa: BLE001 — any pool failure falls through to serial
             # Fall through to serial path on any pool failure.
             pass
 

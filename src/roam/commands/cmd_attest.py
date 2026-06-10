@@ -534,7 +534,7 @@ def _get_git_hashes(root, base_ref, head_ref):
             )
             if result.returncode == 0:
                 hashes[label] = result.stdout.strip()
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
     return hashes
 

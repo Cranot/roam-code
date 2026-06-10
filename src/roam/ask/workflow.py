@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from roam.ask.recipes import Recipe, by_name
-from roam.ask.runner import extract_symbol, fill_followups
+from roam.ask.runner import extract_file, extract_symbol, fill_followups
 
 
 def recipe_workflow_metadata(
@@ -14,7 +14,7 @@ def recipe_workflow_metadata(
 ) -> dict:
     """Return the public workflow metadata shape for a recipe."""
     if render_followups:
-        followups = fill_followups(recipe.followups, query, extract_symbol(query))
+        followups = fill_followups(recipe.followups, query, extract_symbol(query), extract_file(query))
     else:
         followups = list(recipe.followups)
     return {

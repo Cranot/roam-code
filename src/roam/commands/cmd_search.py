@@ -201,7 +201,85 @@ def _fallback_like_match(conn, like_pattern):
     return row[0] if row else 0
 
 
-def _extract_spans(rows, *, ref_counts, explanations, explain):
+# Loop3 (2026-06-02): body-preview reader. Canonical implementation now lives
+# in roam.output.source_context (shared with `roam uses`'s call-line reader);
+# kept as a thin re-export so existing call sites + tests are unchanged.
+from roam.output.source_context import read_body_preview as _read_body_preview
+
+
+def _enrich_top_results(conn, rows) -> dict:
+    """Loop3 (2026-06-02): for SMALL result sets (the agent clearly wants a
+    specific symbol), attach the top reference locations + a body preview —
+    exactly what production telemetry (scripts/roam_efficacy.py) showed
+    agents re-grep/re-Read for after roam_search_symbol (43% fallback rate;
+    49% re-grep occurrences, 24% Read the file). Disambiguation lists
+    (>3 matches) stay lean. Returns {symbol_id: {references, body_preview}}."""
+    if not rows or len(rows) > 3:
+        return {}
+    out: dict = {}
+    target_ids = [r["id"] for r in rows]
+    ph = ",".join("?" for _ in target_ids)
+    ref_locs: dict = {}
+    try:
+        for row in conn.execute(
+            f"""SELECT e.target_id AS tid, f.path AS path, e.line AS edge_line
+                FROM edges e
+                JOIN symbols s ON e.source_id = s.id
+                JOIN files f ON s.file_id = f.id
+                WHERE e.target_id IN ({ph})
+                ORDER BY f.path
+                LIMIT 80""",
+            target_ids,
+        ).fetchall():
+            bucket = ref_locs.setdefault(row["tid"], [])
+            if len(bucket) < 5:
+                bucket.append(f"{row['path']}:{row['edge_line']}")
+    except Exception:  # noqa: BLE001 — enrichment is best-effort
+        ref_locs = {}
+    # Loop9 (2026-06-03): the symbol NEIGHBORHOOD (outgoing callees) — the
+    # RELATED_grep fallback (roam_fallback_diag) showed agents grep for the
+    # symbol family/neighborhood right after a single-symbol hit. `references`
+    # above gives the callers; this gives the callees (what it calls), so the
+    # agent has the full local call-graph without re-grepping.
+    callee_locs: dict = {}
+    try:
+        for row in conn.execute(
+            f"""SELECT e.source_id AS sid, ts.name AS callee_name,
+                       ts.kind AS callee_kind, tf.path AS callee_path,
+                       ts.line_start AS callee_line
+                FROM edges e
+                JOIN symbols ts ON e.target_id = ts.id
+                JOIN files tf ON ts.file_id = tf.id
+                WHERE e.source_id IN ({ph}) AND ts.kind != 'import'
+                ORDER BY e.source_id, ts.name
+                LIMIT 80""",
+            target_ids,
+        ).fetchall():
+            bucket = callee_locs.setdefault(row["sid"], [])
+            entry = (
+                f"{row['callee_name']} ({abbrev_kind(row['callee_kind'])}) {row['callee_path']}:{row['callee_line']}"
+            )
+            if entry not in bucket and len(bucket) < 8:
+                bucket.append(entry)
+    except Exception:  # noqa: BLE001 — enrichment is best-effort
+        callee_locs = {}
+    for r in rows:
+        info: dict = {}
+        refs = ref_locs.get(r["id"])
+        if refs:
+            info["references"] = refs
+        callees = callee_locs.get(r["id"])
+        if callees:
+            info["callees"] = callees
+        body = _read_body_preview(r["file_path"], r["line_start"], symbol_name=r["name"])
+        if body:
+            info["body_preview"] = body
+        if info:
+            out[r["id"]] = info
+    return out
+
+
+def _extract_spans(rows, *, ref_counts, explanations, explain, enrichment=None):
     """W607-BR substrate-CALL: build the JSON results dict-list.
 
     Mirrors the cmd_search_semantic W607-BO ``_extract_spans`` shape:
@@ -210,6 +288,7 @@ def _extract_spans(rows, *, ref_counts, explanations, explain):
     degraded default returns ``[]`` so the envelope still emits.
     """
     results_list = []
+    enrichment = enrichment or {}
     for r in rows:
         entry = {
             "name": r["name"],
@@ -222,6 +301,13 @@ def _extract_spans(rows, *, ref_counts, explanations, explain):
         }
         if explain:
             entry["explanation"] = explanations.get(r["id"], {})
+        # Loop3 (2026-06-02): merge body_preview + reference locations for
+        # small result sets — see _enrich_top_results. Kills the re-grep /
+        # re-Read fallback that production telemetry measured at 43% on
+        # roam_search_symbol.
+        extra = enrichment.get(r["id"])
+        if extra:
+            entry.update(extra)
         results_list.append(entry)
     return results_list
 
@@ -792,6 +878,12 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             # W607-BR extract_spans substrate-CALL: build the JSON-result
             # dict-list. A raise surfaces ``search_extract_spans_failed:``;
             # degraded default returns ``[]`` so the envelope still emits.
+            # Loop3 (2026-06-02): enrich small result sets with body preview
+            # + reference locations. Best-effort; failure → no enrichment.
+            try:
+                _enrichment = _enrich_top_results(conn, rows)
+            except Exception:  # noqa: BLE001
+                _enrichment = {}
             results_list = _run_check_br(
                 "extract_spans",
                 _extract_spans,
@@ -799,6 +891,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
                 ref_counts=ref_counts,
                 explanations=explanations,
                 explain=explain,
+                enrichment=_enrichment,
                 default=[],
             )
 

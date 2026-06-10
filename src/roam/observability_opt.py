@@ -55,9 +55,7 @@ __all__ = [
 FAMILY = "observability-opt"
 OBSERVABILITY_OPT_DETECTOR_VERSION = "1.0.0"
 
-_VALID_BASES = frozenset(
-    {CONFIDENCE_HEURISTIC, CONFIDENCE_STRUCTURAL, CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_RUNTIME}
-)
+_VALID_BASES = frozenset({CONFIDENCE_HEURISTIC, CONFIDENCE_STRUCTURAL, CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_RUNTIME})
 _VALID_COSTS = frozenset({QUERY_COST_LOW, QUERY_COST_MEDIUM, QUERY_COST_HIGH})
 
 # ---------------------------------------------------------------------------
@@ -280,8 +278,17 @@ def detect_print_debug_leftover(
 # diagnosability. Tests / examples / scripts legitimately print; generated /
 # docs / config / data / build are not behavioural source. These are the
 # canonical roles from ``roam.index.file_roles`` (everything except "source").
-_NON_SOURCE_ROLES = frozenset(
-    {"test", "docs", "config", "generated", "data", "build", "examples", "scripts"}
+_NON_SOURCE_ROLES = frozenset({"test", "docs", "config", "generated", "data", "build", "examples", "scripts"})
+
+# Path prefixes that are CI / build infrastructure, not application source —
+# even when roam's file_role classifier scores them as "source". GitHub
+# Actions step scripts use ``print('::warning::...')`` for workflow commands,
+# which is the intended output mechanism, not a debug leftover.
+_NON_SOURCE_PATH_PREFIXES: tuple[str, ...] = (
+    ".github/",
+    ".circleci/",
+    ".gitlab/",
+    ".buildkite/",
 )
 
 
@@ -302,9 +309,7 @@ def harvest_source_files(
     import os
 
     rows = conn.execute(
-        "SELECT path, language, file_role FROM files "
-        "WHERE language IS NOT NULL AND language != '' "
-        "ORDER BY path"
+        "SELECT path, language, file_role FROM files WHERE language IS NOT NULL AND language != '' ORDER BY path"
     ).fetchall()
     want_langs = {name.lower() for name in languages} if languages else None
     sources: list[tuple[str, str, str]] = []
@@ -314,6 +319,8 @@ def harvest_source_files(
         language = (row["language"] if not isinstance(row, tuple) else row[1]) or ""
         role = (row["file_role"] if not isinstance(row, tuple) else row[2]) or "source"
         if role in _NON_SOURCE_ROLES:
+            continue
+        if any(path.startswith(prefix) for prefix in _NON_SOURCE_PATH_PREFIXES):
             continue
         lang = language.lower()
         if lang not in _DEBUG_PRINT_PATTERNS:
@@ -371,9 +378,7 @@ def run_observability_opt(
 
     if active:
         if sources is None:
-            harvested, unreadable = harvest_source_files(
-                conn, root=root, languages=languages, max_files=max_files
-            )
+            harvested, unreadable = harvest_source_files(conn, root=root, languages=languages, max_files=max_files)
         else:
             harvested, unreadable = sources, []
         sources_meta["source_files_scanned"] = len(harvested)

@@ -1618,7 +1618,11 @@ def _handle_compare(ctx, cmd_name, json_mode, since_tag):
                         to_json(
                             json_envelope(
                                 cmd_name,
-                                summary={"verdict": f"Tag '{since_tag}' not found in {len(snaps)} snapshots", "error": f"Tag '{since_tag}' not found", "mode": "compare"},
+                                summary={
+                                    "verdict": f"Tag '{since_tag}' not found in {len(snaps)} snapshots",
+                                    "error": f"Tag '{since_tag}' not found",
+                                    "mode": "compare",
+                                },
                                 budget=token_budget,
                                 available_tags=tags[:20],
                             )

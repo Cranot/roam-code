@@ -238,7 +238,7 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
             counts[fid][label] = counts[fid].get(label, 0) + 1
         for fid, labels in counts.items():
             file_clusters[fid] = max(labels, key=labels.get)
-    except Exception:
+    except Exception:  # noqa: BLE001 — cluster map is best-effort decoration
         pass
 
     # Build file_id -> layer map
@@ -268,7 +268,7 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
                 layer_counts[fid][layer] = layer_counts[fid].get(layer, 0) + 1
             for fid, layers_dict in layer_counts.items():
                 file_layers[fid] = max(layers_dict, key=layers_dict.get)
-    except Exception:
+    except Exception:  # noqa: BLE001 — layer map is best-effort decoration
         pass
 
     # Flag cross-cluster and layer violations

@@ -483,7 +483,7 @@ def _row_value(row, key, default=None):
     """Safely read a sqlite row key with a fallback."""
     try:
         return row[key]
-    except Exception:
+    except (IndexError, KeyError, TypeError):
         return default
 
 
@@ -493,7 +493,7 @@ def _json_list(value) -> list[str]:
         return []
     try:
         data = json.loads(value)
-    except Exception:
+    except (ValueError, TypeError):
         return []
     if not isinstance(data, list):
         return []
@@ -536,6 +536,14 @@ def _dedupe(seq: list[str]) -> list[str]:
 _FILE_LINES_CACHE: dict[tuple[str, float], list[str]] = {}
 _FILE_LINES_CACHE_MAX = 4096  # entries; ~10MB at a typical 2.5KB/file avg
 
+# File-scope for catalog detectors (set by run_detectors when scope_file_ids is
+# given). When set, `_read_symbol_source` returns "" for any path NOT in the
+# set, so every source-reading detector skips out-of-scope files without a file
+# read or regex pass. This is a pure perf optimization: run_detectors already
+# post-filters catalog findings to the scope, so an out-of-scope finding would
+# be discarded anyway — skipping the read just avoids computing it.
+_DETECTOR_SCOPE_PATHS: set[str] | None = None
+
 
 def _file_lines_cached(path: str) -> list[str]:
     # key by (path, mtime). Without the mtime guard,
@@ -571,7 +579,13 @@ def _read_symbol_source(path: str, line_start: int | None, line_end: int | None)
     Reuses an in-memory line cache so sibling detectors don't re-read
     the same file. Cache lives for the duration of the process; safe
     because `roam math` runs detectors against a snapshotted index.
+
+    When a detector file-scope is active (``_DETECTOR_SCOPE_PATHS``), an
+    out-of-scope path short-circuits to "" so the caller skips it without a
+    file read or regex pass — see the module-global's docstring.
     """
+    if _DETECTOR_SCOPE_PATHS is not None and path not in _DETECTOR_SCOPE_PATHS:
+        return ""
     lines = _file_lines_cached(path)
     if not lines:
         return ""
@@ -1136,7 +1150,7 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 1 "
             "AND ms.loop_with_multiplication = 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, ms.loop_depth, 0 as loop_with_multiplication, "
@@ -1193,7 +1207,7 @@ def detect_manual_gcd(conn: sqlite3.Connection) -> list[dict]:
             "AND s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, ms.loop_depth, 0 as loop_with_modulo, "
@@ -1249,7 +1263,7 @@ def detect_string_reverse(conn: sqlite3.Connection) -> list[dict]:
             "AND s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, ms.loop_depth, ms.loop_with_accumulator, "
@@ -1304,7 +1318,7 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 3 "
             "AND ms.subscript_in_loops = 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, ms.loop_depth, ms.subscript_in_loops, "
@@ -2567,7 +2581,7 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "f.language as language, s.line_start, s.line_end, ms.loop_depth, ms.calls_in_loops, "
@@ -2705,7 +2719,7 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND ms.front_ops_in_loop = 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         # Fallback for older indexes without front_ops_in_loop.
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -2957,7 +2971,7 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
             "AND s.is_async = 1 "
             "AND f.language = 'python'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     _BLOCKING_CALLS = {
@@ -3059,7 +3073,7 @@ def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language = 'python'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3129,7 +3143,7 @@ def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
             "AND s.is_async = 1 "
             "AND f.language = 'python'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3199,7 +3213,7 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language = 'python'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     _RECOVERY_PREFIXES = (
@@ -3287,7 +3301,7 @@ def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3360,7 +3374,7 @@ def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language = 'go'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3427,7 +3441,7 @@ def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3500,7 +3514,7 @@ def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3571,7 +3585,7 @@ def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
             "JOIN files f ON s.file_id = f.id "
             "WHERE s.kind IN ('function', 'method')"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3658,7 +3672,7 @@ def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     results = []
     for r in rows:
@@ -3724,7 +3738,7 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, '' as loop_lookup_calls, ms.calls_in_loops, "
@@ -3806,7 +3820,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND ms.self_call_count >= 2"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     results = []
@@ -3972,7 +3986,7 @@ def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
             "WHERE s.kind IN ('function', 'method') "
             "AND ms.str_concat_in_loop = 1"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     results = []
@@ -4014,7 +4028,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_invariant_calls IS NOT NULL "
             "AND ms.loop_invariant_calls != '[]'"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     # Calls that are intentionally per-iteration (suppress)
@@ -4309,7 +4323,7 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             avg_sq = float(row["avg_sq_cc"] or 0.0)
             variance = max(0.0, avg_sq - (complexity_mean * complexity_mean))
             complexity_std = variance**0.5
-    except Exception:
+    except sqlite3.Error:
         complexity_mean = 0.0
         complexity_std = 0.0
 
@@ -4772,7 +4786,7 @@ def _iter_registered_detectors():
         for task_id, way_id, detect_fn in get_plugin_detectors():
             if callable(detect_fn):
                 yield (task_id, way_id, detect_fn)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- plugin code may raise anything; isolate it
         # Plugin loading errors should not impact built-in detection.
         return
 
@@ -4788,6 +4802,7 @@ def run_detectors(
     include_tests=False,
     only=None,
     exclude=None,
+    scope_file_ids=None,
 ):
     """Run all detectors and return combined findings.
 
@@ -4818,11 +4833,20 @@ def run_detectors(
         A3 — drop these decorated-detector names. Non-registered detectors
         are unaffected. ``only`` wins over ``exclude`` when both name the
         same detector.
+    scope_file_ids : iterable of int or None
+        Restrict the run to symbols/files in this file-id set. The dominant
+        cost (measured: ~70% of a project-wide run on roam-code) is the
+        python-idiom detectors' full-text regex scan of EVERY Python file;
+        a scope collapses that to the changed files via ``set_idiom_scope``.
+        The decorated catalog detectors still query the whole index, but
+        their findings are filtered to the scope before enrichment. Callers
+        that already know the changed fileset (e.g. ``roam adversarial``)
+        should pass it. ``None`` = whole project (unchanged behaviour).
 
     Returns list of finding dicts, or ``(findings, meta)`` when
     ``return_meta=True``.
     """
-    global _ACTIVE_FRAMEWORK_PROFILE, _INCLUDE_TESTS_OVERRIDE
+    global _ACTIVE_FRAMEWORK_PROFILE, _INCLUDE_TESTS_OVERRIDE, _DETECTOR_SCOPE_PATHS
     # S2/S3/ caches scoped to a single `run_detectors`
     # invocation. Without this reset, fixture tests that rewrite the
     # same path between runs would see stale content.
@@ -4853,6 +4877,32 @@ def run_detectors(
     # the happy path keep the meta envelope byte-identical to pre-W1057.
     only_unknown = sorted(only_set - known_detector_names) if only_set else []
     exclude_unknown = sorted(exclude_set - known_detector_names) if exclude_set else []
+    # File-scoping (the biggest single run_detectors lever). The python-idiom
+    # detectors regex-scan every Python file's full text — measured ~70% of a
+    # project-wide run. Restricting `_python_files` via set_idiom_scope collapses
+    # that to the changed files. Reset in the finally so the module-global scope
+    # never leaks into a later unscoped run.
+    scope_ids = {int(f) for f in scope_file_ids} if scope_file_ids is not None else None
+    _idiom_scope_reset = None  # bound to set_idiom_scope once it's applied
+    _catalog_scope_applied = False
+    if scope_ids is not None:
+        try:
+            from roam.catalog.python_idioms import set_idiom_scope
+
+            set_idiom_scope(scope_ids)
+            _idiom_scope_reset = set_idiom_scope  # captured for the finally
+        except Exception as exc:  # noqa: BLE001
+            log.warning("run_detectors: could not apply idiom scope: %s", exc)
+        # Resolve scope file-ids to paths so the catalog detectors' source-read
+        # chokepoint (`_read_symbol_source`) can skip out-of-scope files.
+        try:
+            from roam.db.connection import batched_in as _bi
+
+            paths = {r["path"] for r in _bi(conn, "SELECT path FROM files WHERE id IN ({ph})", list(scope_ids))}
+            _DETECTOR_SCOPE_PATHS = paths
+            _catalog_scope_applied = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("run_detectors: could not apply catalog scope: %s", exc)
     try:
         findings = []
         failed_detectors = []
@@ -4931,6 +4981,21 @@ def run_detectors(
                 h.setdefault("tags", list(dmeta["tags"]))
             findings.extend(hits)
 
+        # Catalog detectors query the whole index, so scope their findings by
+        # file_id here (idiom detectors are already scoped at the source via
+        # set_idiom_scope). Filtering before enrichment also keeps the costly
+        # _symbol_context / _calibrate / _build_evidence passes off out-of-scope
+        # findings. One batched symbol->file lookup; no per-finding round-trips.
+        if scope_ids is not None and findings:
+            from roam.db.connection import batched_in as _batched_in
+
+            sids = _dedupe([f["symbol_id"] for f in findings if f.get("symbol_id")])
+            sym_file: dict = {}
+            if sids:
+                for r in _batched_in(conn, "SELECT id, file_id FROM symbols WHERE id IN ({ph})", sids):
+                    sym_file[r["id"]] = r["file_id"]
+            findings = [f for f in findings if sym_file.get(f.get("symbol_id")) in scope_ids]
+
         profile_key = (profile or _PROFILE_BALANCED).lower()
         if profile_key not in _VALID_PROFILES:
             profile_key = _PROFILE_BALANCED
@@ -4991,3 +5056,12 @@ def run_detectors(
         # into subsequent invocations or other commands sharing the process.
         _ACTIVE_FRAMEWORK_PROFILE = previous_profile
         _INCLUDE_TESTS_OVERRIDE = previous_include_tests
+        # Reset the module-global idiom scope so it can't narrow a later run.
+        # `_idiom_scope_reset` is the already-imported set_idiom_scope (captured
+        # at apply-time); calling it with None is a trivial global assignment
+        # that can't raise, so no guard is needed in the finally.
+        if _idiom_scope_reset is not None:
+            _idiom_scope_reset(None)
+        # Reset the catalog source-read scope for the same reason.
+        if _catalog_scope_applied:
+            _DETECTOR_SCOPE_PATHS = None

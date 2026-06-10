@@ -443,9 +443,7 @@ class TestPersistence:
         conn = sqlite3.connect(str(db))
         conn.row_factory = sqlite3.Row
         ensure_schema(conn)
-        recs = ao.build_finding_records(
-            ao.detect_weak_verdict([("health", {"summary": {"verdict": "see details"}})])
-        )
+        recs = ao.build_finding_records(ao.detect_weak_verdict([("health", {"summary": {"verdict": "see details"}})]))
         assert recs
         for rec in recs:
             emit_finding(conn, rec)

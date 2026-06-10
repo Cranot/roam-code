@@ -40,7 +40,7 @@ def _local_version() -> str:
     if _HAVE_METADATA:
         try:
             return _version("roam-code")
-        except Exception:
+        except Exception:  # noqa: BLE001 — "unknown" return below is the loud signal
             # Genuine guard: the "unknown" return value below IS the
             # explicit loud signal that version resolution failed.
             pass

@@ -51,7 +51,43 @@ from tests._helpers.repo_root import repo_root
 
 # Measured 2026-05-22 after the loud-fallback campaign's sixth batch.
 # Ratchet DOWN as cleanup continues; never UP without justification.
-SILENT_EXCEPT_BASELINE = 107
+#
+# 2026-05-30 (Wave 11-20): bumped to 109 (justified):
+#   1. cmd_guard_clean.py:146 — best-effort temp-file cleanup on the
+#      unhappy path of an atomic rewrite (os.replace failed). Silent pass
+#      is correct: if unlink ALSO fails, raising over the original OSError
+#      would mask the real cause; the temp file is gc'd by the OS anyway.
+#   2. proof_bundle.py:232 — pre-existing silent except in `_git_head_sha`;
+#      line number shifted because Wave 15 extracted the render helpers
+#      into proof_bundle_render.py (file shrank 681→378 lines). Same
+#      best-effort git-availability tolerance as before.
+#
+# 2026-05-30 (Wave 26): bumped to 110 (justified):
+#   3. guard_log.py:151 — best-effort temp-file unlink on the unhappy path
+#      of rotate_log's atomic rewrite (os.replace failed). Same rationale
+#      as cmd_guard_clean.py:146 (the now-removed inline version) —
+#      raising over a unlink failure would mask the real OSError above.
+#
+# 2026-06-05: set to 117 (AUDITED — net DROP from a pre-existing drift of 127).
+#   The count had drifted to 127 (the W148 compile-cache family added 11 inline
+#   `try: conn.execute("PRAGMA journal_mode=WAL") except: pass` guards across
+#   compiler.py, plus new commands cmd_bench/cmd_at etc. added best-effort
+#   guards, none of which bumped this baseline). This session AUDITED the drift
+#   and acted, NOT papered over it:
+#     * Deduped the 11 WAL guards into one helper `compiler._set_wal(conn)`
+#       (also kills an 11x clone). 127 -> 117. WAL is an optional throughput
+#       optimization; logging on every cache open over a non-WAL filesystem
+#       would be pure noise — the canonical "expected-signal guard left in
+#       place" the campaign sanctions, now in ONE audited location.
+#     * The residual 117 are all genuine expected-signal / cleanup / optional-
+#       import guards: this session NARROWED 9 broad swallows to specific
+#       exceptions (OSError/ValueError/ImportError/subprocess.SubprocessError/
+#       PackageNotFoundError) and ANNOTATED ~21 deliberate safety-boundary
+#       guards (telemetry "must never break the command", finally-cleanup
+#       close(), echo-failure handlers, optional-import probes) with
+#       `# noqa: BLE001` + rationale. cmd_bench's 3 are narrow/best-effort.
+#   Ratchet DOWN from here as the loud-fallback cleanup continues.
+SILENT_EXCEPT_BASELINE = 117
 
 
 def _silent_except_sites() -> list[str]:

@@ -420,6 +420,18 @@ class TestDeadAgingCLI:
         result = invoke_cli(cli_runner, ["dead", "--decay"], cwd=indexed_project)
         assert result.exit_code == 0
 
+    def test_dead_no_decay_keeps_list_drops_decay(self, cli_runner, indexed_project, monkeypatch):
+        """`--no-decay` returns the SAME dead-export list (skips only the
+        git-blame age/decay pass — the compile structural_dead probe's fast
+        path). Pins: list_counts match the default run; no decay_distribution."""
+        monkeypatch.chdir(indexed_project)
+        default = parse_json_output(invoke_cli(cli_runner, ["--json", "dead"], cwd=indexed_project))
+        fast = parse_json_output(invoke_cli(cli_runner, ["--json", "dead", "--no-decay"], cwd=indexed_project))
+        # Same core dead set (the list is what the probe prefetches).
+        assert fast["list_counts"]["high_confidence"] == default["list_counts"]["high_confidence"]
+        # Decay distribution is computed by the default run but NOT under --no-decay.
+        assert "decay_distribution" not in (fast.get("summary") or {})
+
     def test_dead_sort_by_age_runs(self, cli_runner, indexed_project, monkeypatch):
         """roam dead --sort-by-age exits 0."""
         monkeypatch.chdir(indexed_project)
