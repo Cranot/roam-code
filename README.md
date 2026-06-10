@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>244 commands · 231 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>267 commands · 243 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -99,9 +99,63 @@ Works on Linux, macOS, and Windows. **Windows:** if `roam` is not found after in
 
 ---
 
+## The Compiler — your agent's first token already knows the answer
+
+Roam ships a **task compiler**: it classifies your prompt into one of 24
+intent procedures (deterministic — zero model calls), pre-executes the
+matching code-graph probes, and hands your agent the *answers* before its
+first model token. Callers, blame history, blast radius, the source around
+a cited bug line — already in the prompt, in a 1–9 KB envelope, compiled in
+~90 ms from the local index.
+
+For Claude Code this is **one command, zero configuration**:
+
+```bash
+pip install "roam-code[mcp]"
+cd your-repo && roam init
+roam hooks claude --write     # compile-before + verify-after, wired into Claude Code
+```
+
+Then use `claude` exactly as you always do. Every prompt gets compiled
+facts injected before the model sees it; every edit gets a scoped
+`roam verify` pass after (quiet on pass, fail-open by design — a broken
+install can never block your agent). Undo anytime with
+`roam hooks claude --uninstall --write`.
+
+**Measured, Claude head-to-head vs vanilla (June 2026, 41 cells, n=2/cell):**
+
+| Metric (median/task) | vanilla | compiled | delta |
+|---|---|---|---|
+| Agent turns (nav/comprehension) | 6 | 1 | **−83%** |
+| Input tokens | 271K | 53K | **−80%** |
+| Cost | $1.30 | $0.48 | **−63%** |
+| Wall time | — | — | **−50%** |
+
+The same shape reproduces on Opus (−86% turns). Single-task peaks: a config
+lookup collapsed 9→1 turns (497K→53K tokens); "explain the architecture"
+went 13→6. Honest caveats, always attached: trivial prompts the agent
+one-shots anyway gain nothing and pay the small envelope; pure code
+*generation* is neutral (the wins are comprehension, navigation, debugging,
+review); cells are n=2–3 with medians and ranges. Full run history under
+[Performance](#performance).
+
+Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
+Prefer a dedicated product CLI? The same loop ships as
+[**compile-code**](https://github.com/Cranot/compile-code) —
+`pip install compile-code && compile claude`.
+
+---
+
 ## What's New
 
+**v13.5 (2026-06-10) — Compiler coverage waves + the Claude Code adapter.** Eight new compile intent procedures land from production-telemetry mining (`file_history` "what changed in X last week", `repo_structure` layers/clusters/health, `entry_point_where` with the authoritative `[project.scripts]` answer, `config_where` env-var lookup, module-name `describe_file` recall, `session_meta`, a zero-probe fast-path for self-contained batch prompts, and a `bug_site_slice` that embeds the source around "fix the bug in cli.py:45"); **`roam hooks claude --write`** wires the full compile-before/verify-after loop into Claude Code in one command (fail-open, idempotent, `--no-verify` / `--uninstall`); two reliability fixes seal a CliRunner stdout-swap race in the in-process probe pool and add a compiler fingerprint to all three compile cache keys; `envelope-diff` regression rules stop false-flagging budget bookkeeping keys. Compiler A/B on Claude (Fable 5): −83% turns / −80% input tokens / −63% cost on nav-comprehension (41 cells). Full diff in [CHANGELOG.md](CHANGELOG.md).
+
+<details>
+<summary><strong>v13.4 (released 2026-05-21)</strong></summary>
+
 **v13.4 (released 2026-05-21) — Perf wave + Pattern-1 stabilisation + assurance hardening.** Major detector speed-ups (`clones` 43.8s → 13.1s, `intent` 66s → 12s, `doc-staleness` 93s → 19s, `sbom` 30s → 9s — all byte-identical output), 17 commands now emit `isError`/`status` on error envelopes + 11 commands route their argless `--json` path through a proper envelope (Pattern-1C drift-guards added), a persisted per-snapshot spectral gap powering a real `roam forecast` failure budget, MCP prompt-injection marker scan on tool-call egress, release supply-chain hardening (PEP 740 attestations, tag-bound artifacts), and large false-positive cuts in `feature-envy` / `shotgun-surgery` / `god-components`. Full diff in [CHANGELOG.md](CHANGELOG.md).
+
+</details>
 
 <details>
 <summary><strong>Earlier releases (v13.3 / v13.2 / v13.1 / v13.0)</strong></summary>
@@ -155,7 +209,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~239 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **244 commands (237 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~262 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **267 commands (260 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -170,7 +224,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 237)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 260)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -236,7 +290,13 @@ Top CRITICAL issues (run `roam --detail health` for the full breakdown):
 
 *The verdict line works alone — an agent that reads nothing else still knows where to look.* Pipe `--json` for the structured envelope your agent consumes.
 
-**Fastest setup:** point your agent at Roam by writing instructions into its config file.
+**Fastest setup (Claude Code):** wire the compile/verify loop in one command — no config files, no MCP setup, no rules to write:
+
+```bash
+roam hooks claude --write           # compile-before + verify-after hooks; --uninstall to undo
+```
+
+For other agents (or alongside the hooks), point them at Roam via instructions in their config file:
 
 ```bash
 roam describe --write               # auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc.
@@ -286,7 +346,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 231)</strong></summary>
+<summary><strong>MCP tool list (all 243)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -312,7 +372,8 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_api_drift` | Detect mismatches between backend models and frontend interfaces. Triggers: 'where do API contracts diverge?', 'find drift between TS types and Django models', 'audit serializer coverage'. Pair with roam_endpoints for full route inventory. |
 | `roam_architecture_drift` | Compute per-week growth rates for symbols / edges / cycles across a sliding window of persisted ``.roam/snapshots/`` and classify overall direction as ``improving`` / ``degrading`` / ``stable``. Different from ``roam_graph_diff`` (point-in-time delta between two commits) and ``roam_trends`` (metric-level time series) -- this is the snapshot-based architectural-trajectory report. |
 | `roam_article_12_check` | Run a 6-item EU AI Act Article 12 readiness checklist over the indexed repo: audit-trail directory, audit-trail records, retention policy doc, technical docs, attestation surface, high-risk classification heuristic. Emits a structured envelope mapping each item to its Article (12, 18, 19) or Annex (III). Different from ``roam_audit_trail_conformance_check`` (per-record chain integrity) -- this is the repo-level governance-readiness assessment. Per the agentic-assurance guardrails: 'maps to' / 'supports evidence for', never 'certifies' / 'makes compliant'. |
-| `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes intent to one recipe in the graph-aware 25-recipe registry. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
+| `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes intent to one recipe in the graph-aware 29-recipe registry. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
+| `roam_at` | Show the code AT a file:line with its enclosing symbol + callers. Targeted alternative to Read-ing the whole file. location is 'file:line'. |
 | `roam_attest` | Proof-carrying PR attestation: evidence bundle + merge verdict. |
 | `roam_audit` | Run a one-shot codebase architecture audit: bundles health, debt, dead-code, risk, test-pyramid, coverage, and API-surface signals into a single envelope. Designed as the structured artifact a written audit report attaches. Different from ``roam_health`` (single 0-100 score) and ``roam_report`` (preset-driven Markdown report) -- this is the verdict-first audit packet for governance and onboarding. |
 | `roam_audit_trail_conformance_check` | Score the audit trail against an EU AI Act Article 12 checklist. |
@@ -342,6 +403,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_commands` | List the repo's own runnable build/test/lint commands, classified by kind/scope/cost with evidence. |
 | `roam_compare` | Diff two roam indices structurally: reports symbols added/removed/moved, per-file complexity deltas above a threshold, language counts, and a one-line health verdict (improved / regressed / sideways). Different from ``roam_graph_diff`` (commit-range graph delta from one index) -- this is the cross-index structural delta for release-vs-release comparisons. |
 | `roam_compatibility` | Detect outbound surface regressions vs a baseline snapshot. Closed-enum verdicts: no regressions / surface additions / surface drift / breaking changes. Compares commands, flags, envelope summary fields, MCP tools, and preset counts. Capture the baseline via CLI: roam compatibility --write-baseline PATH. |
+| `roam_compile` | Compile a freeform coding task into a structured envelope an AI agent can consume. Returns the ArtifactSelector verdict (facts / lean / full envelope) plus the deterministic plan. Empirically validated on Opus 4.8 (2026-05-28): FactsEnvelope delivers 99% of vanilla quality at 54% of vanilla cost. Different from roam_plan (symbol-centric execution plan) -- this is the freeform-task compiler. |
 | `roam_complete` | Prefix completion for symbols / file paths / commands. Faster than search; returns just names. |
 | `roam_complexity_report` | Functions ranked by cognitive complexity above threshold. |
 | `roam_congestion` | Detect developer congestion: files with too many concurrent authors within a sliding time window. Combines author count, churn intensity, and complexity into a congestion score that predicts merge conflicts and coordination failures. Different from ``roam_bus_factor`` (knowledge-loss risk) and ``roam_owner`` (per-file blame breakdown) -- this measures too-many-cooks contention. |
@@ -352,12 +414,13 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_critique` | Post-edit patch verifier. Pass `git diff` output as diff_text. Catches clones-not-edited (sibling duplicates the agent missed) and high-blast-radius edits. Grounded in the indexed graph, not heuristics. Triggers: 'review my patch', 'is this PR safe?', after generating any non-trivial diff. |
 | `roam_cut` | Find fragile domain boundaries via minimum-cut analysis. Computes the thinnest edge cuts between architectural clusters and the highest-impact 'leak edges' whose removal would best improve domain isolation. Different from ``roam_split`` (decomposes a single file) -- this finds boundaries between clusters. |
 | `roam_cut_analysis` | Minimum cut analysis: fragile domain boundaries, highest-impact leak edges. |
+| `roam_cycles` | Show import/call cycles (Tarjan strongly-connected components) of the symbol graph. Returns per-cycle size, member files/symbols, and an `actionable` flag (spans >=2 distinct non-test files). The focused counterpart to the cycles section of ``roam_health``; sibling of ``roam_clusters`` / ``roam_layers``. |
 | `roam_dark_matter` | File pairs that co-change without structural links (hidden coupling). |
 | `roam_dashboard` | Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot. |
 | `roam_dead_code` | Use for: 'what can I safely delete?' / 'find dead code' / 'list unused exports'. Pick over manual grep sweeps — filters out entry points and framework lifecycle hooks, ranks candidates by deletion safety. Pair with roam_safe_delete for per-symbol deletion verdicts. |
 | `roam_debt` | Rank files by tech-debt score with SQALE remediation-cost estimates. Triggers: 'where's the worst debt?', 'what should we refactor next?', 'estimate cleanup cost'. Pair with roam_complexity_report for per-function brain-method targeting. |
 | `roam_delete_check` | Gate the diff (working / staged / PR / HEAD) on surviving references to deleted symbols and files. Per-deletion verdict: SAFE (no surviving references), LIKELY-SAFE (survivors only in tests / docs / unreachable code), or BREAK-RISK (survivors in reachable code). Different from ``roam_critique`` (PR-wide diff review) -- this targets the deletion surface specifically with CI-gate semantics (overall BREAK-RISK trips the gate). |
-| `roam_deps` | Use for: 'what does file X import?' / 'which files depend on module Y?' / 'show me the importers of Z'. Pick this for file/module-level coupling before refactors; symbol-level lookups belong in roam_uses. Run in parallel with roam_coupling for the biggest token win. |
+| `roam_deps` | Use for: 'what does file X import?' / 'which files depend on module Y?' / 'show me the importers of Z'. Pick this for file/module-level coupling before refactors; symbol-level lookups belong in roam_uses. Set multi=True to get imports + importers + git co-change coupling in ONE envelope (do this instead of shelling out to `roam deps --multi` or hand-querying the index). Run in parallel with roam_coupling for the biggest token win. |
 | `roam_describe` | Auto-generate a project description for AI coding agents: multi-section Markdown report covering overview, directories, entry points, key abstractions, architecture, and testing. Different from ``roam_understand`` (compact codebase overview) -- this is the comprehensive prose description for CLAUDE.md / AGENTS.md / .cursor/rules. The wrapper emits to stdout; on-disk writes are deferred to the CLI (``roam describe --write``) so the MCP surface stays read-only. |
 | `roam_dev_profile` | Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection. |
 | `roam_diagnose` | Root cause analysis: upstream/downstream suspects ranked by composite risk. |
@@ -405,6 +468,12 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_graph_stats` | Report graph-level invariants: density, connected components, average in/out degree, top in-degree symbols, and approximate diameter. One overview number for 'how dense, connected, and cyclic is this codebase'. |
 | `roam_grep` | Run index-aware grep across the codebase. Returns matches with their enclosing symbol, reachability badge, PageRank, clone-class, and bridge annotations. Supports multi-pattern, source-only / test-only filters, reachable-from / unreachable filters, co-occurrence across patterns, and rank-by importance. |
 | `roam_guard` | Check breaking-change risk for a symbol before editing: 0..100 risk score with component breakdown (blast radius, complexity, centrality, test gap, layer analysis) plus caller / callee lists and covering tests -- all within a ~2K-token budget. Different from ``roam_preflight`` (file / staged / coupling / convention / fitness composite) -- this is the per-symbol quantified risk score for sub-agent dispatch. |
+| `roam_guard_clean` | Prune the verdict log at `.roam/verdict-log.jsonl` to its last N entries (default 500). Atomic rewrite — concurrent appenders never see a partial file. Pair `dry_run=True` for a probe. |
+| `roam_guard_diff` | Verdict diff between two bundle snapshots (or the two most-recent verdict-log entries via `from_log=True`). Returns the verdict delta + reasons added/resolved + file/check counts. Answers 'did my last commit help?' |
+| `roam_guard_doctor` | Roam Guard preflight: 8 health checks (.roam dir, bundles, rule pack, command graph, git, GitHub token, verdict log, yaml lib). Run once before adopting Roam Guard in CI. |
+| `roam_guard_history` | List past Roam Guard verdicts on this repo (reads `.roam/verdict-log.jsonl` fast-path when present, falls back to scanning `.roam/pr-bundles/`). Supports `--verdict` and `--limit` filters. |
+| `roam_guard_pr` | Aggregate Roam Guard PR check: auto-collect bundle, compose AgentChangeProofBundle v1, render verdict (pass/pass_with_warnings/needs_review/blocked), optionally POST a GitHub Check Run. The headline tool — drop this into a CI step to gate any PR. |
+| `roam_guard_rules` | Inspect or validate a Roam Guard rule pack. Subcommands: `show` (default) renders the pack, `validate` checks schema, `test` matches a path against the pack. |
 | `roam_health` | Codebase health score (0-100) with issue breakdown, cycles, bottlenecks. |
 | `roam_history_grep` | Run git pickaxe (``-S`` / ``-G``) through commit history. Returns commits that introduced or removed the literal string, with author, date, short SHA, and summary per commit. |
 | `roam_hotspots` | Show runtime hotspots: symbols ranked by static analysis vs real production traces (requires ``roam ingest-trace`` to have populated ``runtime_stats``). Each row is tagged UPGRADE (runtime-critical but statically safe), CONFIRMED (both agree), or DOWNGRADE (statically risky but low traffic). Different from ``roam_why_slow`` (top-N by latency alone) -- this classifies static vs runtime mismatch. |
@@ -454,7 +523,8 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_pr_prep` | One-shot pre-PR fitness check: bundles ``diff`` blast radius + ``critique`` + ``pr-risk`` into a single envelope with a ``ready_to_open`` verdict. Different from ``roam_pr_risk`` (composite risk score alone) and ``roam_critique`` (clones-not-edited + blast-radius alone) -- this is the three-section pre-PR rollup with the go/no-go verdict. |
 | `roam_pr_risk` | Risk score (0-100) for pending changes with per-file breakdown. |
 | `roam_preflight` | Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code. |
-| `roam_prepare_change` | Pre-edit safety gate for a symbol. Returns blast radius + affected tests + files to read + side effects + fitness gates in one envelope. Call BEFORE Edit/Write on non-trivial code. Replaces three separate calls. Triggers: 'safe to change X?', 'what does Y depend on?', 'show me what breaks if I rename Z'. |
+| `roam_prepare_change` | Pre-change safety gate. Run before any non-trivial edit — returns blast radius, affected tests, and fitness gates. |
+| `roam_proof_bundle` | Compose AgentChangeProofBundle v1 from the active pr-bundle. Returns the structured verdict envelope an agent can attach to a PR. Supports markdown / json / sarif output formats. |
 | `roam_py_modern` | Python modernisation signal: walrus, match, PEP 604/585, f-strings vs legacy. |
 | `roam_py_types` | Python type-annotation health: % public fns fully typed, Any usage, legacy typing. |
 | `roam_pytest_fixtures` | pytest fixture chain: top fixtures by dependent count, or per-symbol dependency walk. |
@@ -509,6 +579,8 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_understand` | Codebase briefing in one call. Returns stack + architecture layers + entry points + hotspots + conventions in ~2-4K tokens. Triggers: 'what is this repo?', 'where do I start?', 'give me the lay of the land'. Run this FIRST in an unfamiliar repo — Glob/Grep around comes later. |
 | `roam_uses` | Use for: 'who calls X?' / 'where is Y referenced?' / 'what breaks if I rename Z?'. Pick over multi-pattern grep — graph-resolved callers, importers, and subclasses grouped by edge type, zero comment/string-literal false positives. For 3+ symbols use roam_batch_get; for counts only, roam_impact. |
 | `roam_validate_plan` | Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation. |
+| `roam_verdict` | Compute a closed-enum verdict (pass / pass_with_warnings / needs_review / blocked) from the active pr-bundle. Pure judgment layer — no rendering, no log, no GH POST. |
+| `roam_verification_contract` | Compute the minimal `{required, skipped}` verification set for the current changed_files × risk × mode × policy. Surfaces what an agent MUST run before its PR can pass. |
 | `roam_verify` | Check changed files for naming, import, error-handling, and duplicate issues. |
 | `roam_verify_imports` | Hallucination firewall: validate import statements resolve to indexed symbols. |
 | `roam_vibe_check` | AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns. |
@@ -595,6 +667,69 @@ jobs:
 
 For GitLab / Jenkins / Azure / Bitbucket templates, severity gates, and upload guardrails, see [docs/ci-integration.md](docs/ci-integration.md).
 
+## Roam Guard for PRs
+
+`roam guard-pr` is the one-call CI gate that emits an **Agent Change Proof Bundle v1** + closed-enum verdict (`pass` / `pass_with_warnings` / `needs_review` / `blocked`) for the current PR. Every fact carries evidence — what changed, which checks were required, which ran, why the verdict landed where it did.
+
+```bash
+# Local — show the markdown verdict for your current branch's pr-bundle.
+roam guard-pr --format markdown
+
+# CI — one line; --ci is shorthand for --strict + --init-if-missing + markdown.
+roam guard-pr --ci --output guard.md
+
+# CI — post to GitHub Check Runs (works with the default GITHUB_TOKEN).
+roam guard-pr --post-check --gh-repo $REPO --gh-sha $SHA
+```
+
+**Example reviewer markdown:**
+
+```markdown
+## 🛑 Roam Guard verdict: `blocked`
+
+> **0** of **4** required checks ran. **4** missing. Risk: `low`.
+
+### Verdict reasons
+- `required_checks_not_run` (×4) — `because=config_file_changed`
+  - `lint.make.lint` (detail=['.mcp.json'])
+  - `test.make.test` (detail=['.mcp.json'])
+
+### Verification checks
+| Status | Command | Why |
+|---|---|---|
+| 🛑 missing | `lint.make.lint` | config_file_changed |
+| 🛑 missing | `test.make.test` | config_file_changed |
+```
+
+**Verdict → CI exit + GitHub conclusion map:**
+
+| Roam verdict | Exit code | GitHub conclusion | Build status |
+|---|---|---|---|
+| `pass` | 0 | `success` | ✅ green |
+| `pass_with_warnings` | 0 (4 with `--strict`) | `neutral` | 🟡 yellow |
+| `needs_review` | 4 | `action_required` | 🟠 attention |
+| `blocked` | 5 | `failure` | 🛑 red |
+
+**Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1), `sarif` (GitHub Code Scanning / GitLab SAST / Defender).
+
+**Pluggable rule packs.** The verification contract (what counts as a required check for a given change) lives in YAML, not code. Default pack ships with the binary; override with `roam guard-pr --rules .roam/guard-rules.yml`:
+
+```yaml
+name: my-repo
+extends: default
+file_patterns:
+  - id: api_schema_changed
+    regex: '^src/api/.*\.proto$'
+    applies_to_kinds: [test, build]
+```
+
+**JSON Schema** for the v1 bundle ships at `src/roam/schemas/agent_change_proof_bundle.v1.json`. Validate any bundle with `roam proof-bundle --validate`.
+
+**See also:**
+- [templates/examples/roam-guard-pr.github-actions.yml](templates/examples/roam-guard-pr.github-actions.yml) — drop-in GHA workflow
+- [templates/examples/roam-guard-pr.README.md](templates/examples/roam-guard-pr.README.md) — full adoption guide
+- [templates/examples/roam-guard-rules.default.yml](templates/examples/roam-guard-rules.default.yml) — default rule pack
+
 ## Paid layers (free CLI stays Apache 2.0)
 
 The CLI is Apache 2.0, fully local, zero-API-key, and never expires. Three optional paid layers build on the same engine:
@@ -658,6 +793,73 @@ Tier 2 languages (and `.jsonc` / `.mdx`) get basic symbol extraction via a gener
 | Any query command | <0.5s |
 
 After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). Detailed indexing benchmarks across Express / Axios / Vue / Laravel / Svelte live in [`benchmarks/`](benchmarks/).
+
+### Compiler — measured A/B (current: June 2026, Claude head-to-head)
+
+The quotable current result — 10-task corpus (3 navigation, 5 exercising the
+newest intent procedures, 2 hard comprehension/synthesis), 41 cells, n=2 per
+cell, offline structural judge, June 2026:
+
+| Condition | Turns (median) | Input tokens (median) | Cost (median) |
+|---|---|---|---|
+| vanilla | 6 | 271K | $1.30 |
+| **compile** | **1** | **53K** | **$0.48** |
+
+**−83% turns / −80% input tokens / −63% cost / −50% wall**, with the same
+shape on Opus (−86% nav turns). On a separate ground-truth-graded bug-fix
+bench (20 cells, planted bugs, failing→passing oracle) compile and vanilla
+both solved 10/10 with compile slightly cheaper — easy bugs with precise
+tracebacks don't discriminate; the compiler's bug-fix edge shows on hard
+multi-step tasks (3/3 vs 1/3, Docker-graded, 2026-06-07). Caveats ship with
+every number: trivial prompts pay a small envelope tax for no gain;
+generation-shaped tasks are neutral; Ns are 2–3 with medians and ranges.
+
+<details>
+<summary><strong>Benchmark history — how the compiler earned these numbers (runs #1–#4, May 2026)</strong></summary>
+
+Two independent A/B runs at different scales — the larger sample inverts the smaller. Reporting both honestly.
+
+**Run #1 (n=3 per cell, 27 cells, $16.88):** compile appeared to dominate (−29% wall vs static). That static prompt included a `"Hard cap: 4 tool calls"` line that turned out to act as a quota.
+
+**Run #2 (n=3–7 per cell, 78 cells, $54.88, "Hard cap" line removed from static):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 7.0 | 33.2s | $0.68 |
+| **static / roam_agent** | **5.8** | **25.1s** | **$0.66** |
+| compile | 8.2 | 47.9s | $0.78 |
+
+At scale, **static (with the "Hard cap" line removed) is the winner**: −17% turns and −24% wall vs vanilla, with cost within 3%. The compile-mode envelope was **+91% wall vs static on hard structural tasks** — variance probe revealed compile occasionally pushes the agent into over-tool-use (one t1 run hit 41 turns and $2.43). The compile-the-COMMAND itself is robust (250/250 latency cells, 14/15 fuzz, brief mode <300 chars across all 10 procedure families) — the issue is over-direction of the consuming agent, not the compiler.
+
+Private raw cells are retained for audit; the public summary above is the quotable result.
+
+**Run #3 (2026-05-31, n=1, 24 cells, $12.78, on 8-task user-shape corpus after W34→W37 fixes):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 6.00 | 28.6s | $0.58 (1 cell timed out at 240s) |
+| static / roam_agent | 5.38 | 39.9s | $0.63 |
+| **compile** | **2.75** | 35.6s | **$0.46** |
+
+This run inverts Run #2 on a different corpus. Compile **wins 7/8 shapes** including stack-trace, "what does X do", "what changed recently", `compare files`, `who calls X`, file coupling, and trace-flow. The compiler fix wave between Run #2 and Run #3 added six new probes (stack-trace source slice, body-embed for explain, git-log for history, sibling-test embed, path-comparison diff, symbol-pickaxe) and four real bug fixes (callers-backtick fallback, dead-code wrong CLI, consumer-dict flattening, stack-trace classifier missing PascalCase Errors). Headline win: a "what files are coupled to X" task that took vanilla 20 turns / $1.20 / 64s collapsed to compile's 1 turn / $0.32 / 11s — embedded coupling pairs eliminate 19 turns of exploration. The +24% wall vs vanilla is the envelope cache-creation tax at n=1; expected to amortize at n≥3.
+
+Static remains a non-improvement (0/8 wins vs vanilla, 1/8 marginal vs compile). Caveat: Run #3 is n=1 per cell; n=3 replication ($30-40) is pending.
+
+Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
+
+**Run #4 (2026-05-31, n=1, 24 cells, $13.00, same corpus after W43→W45 polish/improvements/corrections):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 5.25 | 39.6s | $0.63 |
+| static / roam_agent | 4.75 | 32.8s | $0.61 |
+| **compile** | **1.88** | **25.2s** | **$0.40** |
+
+Compile now **wins 8/8 shapes** and the +24% wall penalty from Run #3 is **gone**: compile is −36% wall vs vanilla. Aggregate **−64% turns / −36% cost / −36% wall** vs vanilla on Opus 4.7. The flip came from three wave-43-to-45 changes: (a) a 60-second bounded cache on `_run_roam` subprocess calls, (b) anti-Read directives in the `stack_trace_fix` and `synthesis_query` answer contracts, and (c) richer enrichment in the `write_pytest` probe (sibling test + source under test + nearest `conftest.py` together). The biggest single delta: `write_pytest` went from 10 vanilla turns to 6 compile turns (−40%, saving $0.29 / cell). Static remains 0/8 wins and should be retired from the default bench-compile conditions in a future release.
+
+Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
+
+</details>
 
 ## How It Works
 

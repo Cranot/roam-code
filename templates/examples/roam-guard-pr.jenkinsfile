@@ -1,0 +1,114 @@
+// Roam Guard for PRs — Jenkins declarative pipeline template.
+//
+// Drop into your repo as `Jenkinsfile` (or include from a shared library)
+// and Roam Guard will run on every PR build, emit the verdict envelope
+// as a build artifact, and fail the build when the verdict is `blocked`.
+//
+// Required environment / credentials:
+//   * Jenkins agent must have Python 3.10+ + pip
+//   * (Optional) GITHUB_TOKEN credential bound as `github-token` to POST
+//     a GitHub Check Run; omit for verdict-only mode.
+//
+// Required steps the agent should have run BEFORE this pipeline triggers:
+//   * `roam pr-bundle init`
+//   * `roam preflight`, `roam impact`, `roam critique` during PR prep
+//   * `roam guard-pr --ci` auto-collects their response envelopes.
+
+pipeline {
+    agent any
+
+    triggers {
+        // Run on every PR build (assuming a multibranch pipeline + GitHub Branch Source plugin)
+        GenericTrigger(
+            genericVariables: [
+                [key: 'PR_NUMBER', value: '$.pull_request.number'],
+                [key: 'HEAD_SHA',  value: '$.pull_request.head.sha']
+            ],
+            causeString: 'Roam Guard triggered by PR #$PR_NUMBER',
+            token: 'roam-guard',
+            printContributedVariables: true
+        )
+    }
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('Setup') {
+            steps {
+                sh '''
+                    python3 -m venv .venv-roam
+                    . .venv-roam/bin/activate
+                    pip install --quiet roam-code
+                    roam --version
+                '''
+            }
+        }
+
+        stage('Index') {
+            steps {
+                // Build (or refresh) the local index. Cached between PR builds
+                // via the standard Jenkins workspace persistence.
+                sh '. .venv-roam/bin/activate && roam index'
+            }
+        }
+
+        stage('Roam Guard') {
+            steps {
+                script {
+                    // --ci preset = --strict + --init-if-missing + --format markdown
+                    // The exit-code map: 0=pass, 4=needs_review, 5=blocked
+                    def status = sh(
+                        script: '''
+                            . .venv-roam/bin/activate
+                            roam guard-pr --ci --output verdict.md
+                        ''',
+                        returnStatus: true
+                    )
+                    archiveArtifacts artifacts: 'verdict.md', allowEmptyArchive: true
+
+                    if (status == 5) {
+                        currentBuild.result = 'FAILURE'
+                        error('Roam Guard verdict: BLOCKED — see verdict.md artifact')
+                    } else if (status == 4) {
+                        currentBuild.result = 'UNSTABLE'
+                        echo 'Roam Guard verdict: NEEDS_REVIEW (not failing build)'
+                    } else if (status != 0) {
+                        currentBuild.result = 'FAILURE'
+                        error("Roam Guard pipeline error — exit ${status}")
+                    } else {
+                        echo 'Roam Guard verdict: PASS'
+                    }
+                }
+            }
+        }
+
+        stage('Post Check (optional)') {
+            when { expression { return env.GITHUB_TOKEN != null } }
+            steps {
+                withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        . .venv-roam/bin/activate
+                        roam guard-pr --post-check \
+                          --gh-repo "${GIT_URL#https://github.com/}" \
+                          --gh-sha "${HEAD_SHA:-$(git rev-parse HEAD)}" \
+                          --gh-name "Roam Guard" \
+                          || true   # don't fail build on POST hiccup
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Persist the verdict log between runs so `roam guard-history`
+            // accumulates across PRs.
+            sh 'tar -czf roam-verdict-log.tgz .roam/verdict-log.jsonl 2>/dev/null || true'
+            archiveArtifacts artifacts: 'roam-verdict-log.tgz', allowEmptyArchive: true
+        }
+    }
+}

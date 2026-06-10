@@ -1209,6 +1209,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin-top: 8px;
 }
 @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
+.demo-single { max-width: 660px; margin: 0 auto; text-align: left; }
 .demo-col { display: flex; flex-direction: column; }
 .demo-col > * {
   min-width: 0;

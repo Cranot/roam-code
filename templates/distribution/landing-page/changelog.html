@@ -76,6 +76,27 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.5] — 2026-06-10</h2>
+<h3>Compiler coverage waves + the Claude Code adapter (2026-06-09/10)</h3>
+<h4>Added</h4>
+<ul>
+<li><strong>Eight new compile intent procedures</strong>, all telemetry-mined from production prompt corpora and gated by a frozen-corpus routing ratchet (still-missed freeform 447 → 353 unique prompts, zero routing drift): <code>file_history</code> ("what changed in X recently / last week" → embedded <code>git log</code> with <code>--since</code> window), <code>repo_structure</code> (layers / clusters / health summaries), <code>entry_point_where</code> (surfaces the authoritative <code>[project.scripts]</code> console script first), <code>config_where</code> (env-var/config definition sites), module-name recall for <code>describe_file</code> ("explain the compiler architecture"), <code>session_meta</code> (contentless continuation directives get a tiny repo-state brief instead of blind probes), <code>self_contained_task</code> (zero-probe fast-path for batch payloads that need no repo facts), and a <code>bug_site_slice</code> freeform augment ("fix the bug in cli.py:45" embeds the gutter-numbered source around the cited line).</li>
+<li><strong><code>roam hooks claude --write</code></strong> — one-command Claude Code adapter: installs a UserPromptSubmit hook (compile the prompt, inject pre-resolved facts) + a Stop hook (scoped <code>roam verify --auto --diff-only</code> after edits, quiet on pass). Fail-open by design, idempotent, <code>--no-verify</code> opt-out, <code>--uninstall</code> sweeps both. 13 lifecycle tests.</li>
+<li><strong>W-GENLEAN</strong> — test-write synthesis tasks emit a 2KB lean envelope and skip the probe pipeline (A/B showed generation tasks ignore the rich envelope; lean is behavior-identical and cheaper to compile).</li>
+<li><strong><code>compiler_fp</code> telemetry field</strong> — every <code>.roam/compile-runs.jsonl</code> row now stamps the compiler-code fingerprint, making routing/latency shifts attributable to compiler revisions.</li>
+<li><strong>Frozen-corpus routing lock</strong> (<code>tests/test_corpus_routing_lock.py</code>) — replay ratchet over the production prompt corpora: coverage can only improve.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li><strong>CliRunner stdout-swap race in the in-process probe pool</strong> — concurrent probe invokes raced the process-global <code>sys.stdout</code> swap, occasionally leaking a probe's envelope to real stdout while swallowing the parent command's output (observed: <code>compiler-corpus</code> losing its aggregate, exit 0). The in-proc dispatch lock now guards every invoke (re-entrant); regression test records invoke concurrency.</li>
+<li><strong>Compile caches ignored compiler revisions</strong> — the plan cache and in-process cache lacked the compiler fingerprint the envelope cache had, so classifier changes kept serving stale routing under unchanged git HEAD. All three cache keys now fold in the fingerprint.</li>
+<li><strong><code>envelope-diff</code> regression false-positives</strong> — underscore-prefixed budget-bookkeeping keys (<code>_envelope_budget_pruned</code>) counted as probe families, so an envelope <em>shrinking under budget</em> tripped <code>probe_family_missing</code>; the text printer also crashed (KeyError) on rules without <code>actual</code>/<code>threshold</code> fields, masking which rule tripped.</li>
+<li><strong>Synthesis target extraction</strong> — "write a pytest for <code>_resolve_module_names</code> in &lt;file&gt;" (bare identifier, no backticks) failed extraction and degraded the source excerpt to the module docstring; identifier-shape-gated patterns now extract correctly, and the excerpt carries an explicit <code>file:line</code> location.</li>
+</ul>
+<h4>Measured</h4>
+<ul>
+<li>Compiler A/B on Claude (Fable 5), 41 cells, n=2/cell: <strong>−83% agent turns (median 6 → 1), −80% input tokens (271K → 53K), −63% cost, −50% wall</strong> on navigation/comprehension tasks; same shape on Opus (−86% turns). Ground-truth bug-fix bench (20 cells, planted bugs): saturated 10/10 vs 10/10 with compile slightly cheaper. Compile overhead p50 92ms / p95 305ms per prompt.</li>
+</ul>
 <h3>Perf + drift-truth wave (2026-05-22)</h3>
 <h4>Performance</h4>
 <ul>

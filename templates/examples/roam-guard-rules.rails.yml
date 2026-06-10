@@ -1,0 +1,40 @@
+# Roam Guard rule pack — Ruby on Rails archetype.
+#
+# Extends the default pack and adds Rails-specific patterns. Drop this file
+# at `.roam/guard-rules.yml` (or pass `--rules templates/examples/...`).
+
+name: rails-default
+version: 1.0
+extends: default
+
+file_patterns:
+  # Controllers — touching one means request-handling tests should run.
+  - id: rails_controller_changed
+    regex: 'app/controllers/.*_controller\.rb$'
+    applies_to_kinds: [test]
+
+  # Models — touching one means model + integration tests should run.
+  - id: rails_model_changed
+    regex: 'app/models/.*\.rb$'
+    applies_to_kinds: [test]
+
+  # Routes — changing routes is a high-impact API surface change.
+  - id: rails_routes_changed
+    regex: 'config/routes\.rb$'
+    applies_to_kinds: [test, lint]
+
+  # Jobs — background-job changes need their dedicated tests.
+  - id: rails_job_changed
+    regex: 'app/jobs/.*_job\.rb$'
+    applies_to_kinds: [test]
+
+  # Initializers — touching these can break boot, lint should run.
+  - id: rails_initializer_changed
+    regex: 'config/initializers/.*\.rb$'
+    applies_to_kinds: [lint, test]
+
+  # Gemfile / Gemfile.lock — dependency changes are blast-radius events.
+  # OVERRIDES default config_file_changed to be stricter on Ruby.
+  - id: ruby_dependency_changed
+    regex: '^Gemfile(\.lock)?$|^.ruby-version$'
+    applies_to_kinds: [test, lint, build]

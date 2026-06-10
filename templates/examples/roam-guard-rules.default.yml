@@ -1,0 +1,37 @@
+# Roam Guard — DEFAULT rule pack (built-in).
+#
+# Copy this file, edit `file_patterns`, and pass `--rules my-pack.yml` to
+# `roam guard-pr` (or `roam verification-contract --rules my-pack.yml`).
+#
+# Each `file_patterns` entry:
+#   id:               verdict reason code emitted when the pattern matches.
+#   regex:            Python re.IGNORECASE pattern matched against changed files.
+#   applies_to_kinds: command_graph kinds (test / lint / migration / build / ...)
+#                     that should run when this pattern fires.
+
+name: default
+version: '1.0'
+file_patterns:
+- id: auth_file_changed
+  regex: (?:^|/)auth[/_]|(?:^|/)(?:sessions?|login|jwt|oauth|sanctum)\.|/middleware/auth\b
+  applies_to_kinds:
+  - test
+- id: migration_file_changed
+  regex: /(?:migrations?|migrate)/|\.migration\.|database/migrations/
+  applies_to_kinds:
+  - migration
+  - test
+- id: public_api_changed
+  regex: ^(?:src/.*\.py|src/.*\.ts|lib/.*\.rb|app/.*\.php)$
+  applies_to_kinds:
+  - test
+- id: config_file_changed
+  regex: \.(?:env|toml|yaml|yml|json)$|^pyproject\.toml$|^package\.json$|^Cargo\.toml$
+  applies_to_kinds:
+  - lint
+  - test
+- id: test_file_changed
+  regex: (?:^|/)(?:tests?|spec|__tests__)(?:/|$)|_test\.|\.test\.|\.spec\.
+  applies_to_kinds:
+  - test
+

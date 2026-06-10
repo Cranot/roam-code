@@ -1,0 +1,45 @@
+# Roam Guard for PRs — GitLab CI template.
+#
+# Copy this snippet into your `.gitlab-ci.yml` (or include as a job).
+# Runs on every merge request and gates the pipeline on the verdict.
+
+roam-guard:
+  stage: test
+  image: python:3.12-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git
+    - pip install --quiet roam-code
+  script:
+    # Index, then run the aggregate verdict.
+    - roam init --quiet || true
+    # --ci is shorthand for --strict + --init-if-missing + --format markdown.
+    # Exit codes: pass=0, needs_review=4, blocked=5.
+    - roam guard-pr --ci --output guard.md
+  artifacts:
+    when: always
+    paths:
+      - guard.md
+    reports:
+      # SARIF upload for GitLab's Vulnerability Report.
+      sast: guard.sarif
+    expire_in: 1 week
+  allow_failure: false  # pipeline fails on blocked verdict
+
+# Optional: also upload SARIF for GitLab Security Dashboard.
+roam-guard-sarif:
+  stage: test
+  image: python:3.12-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  before_script:
+    - pip install --quiet roam-code
+  script:
+    - roam proof-bundle --format sarif --output guard.sarif || true
+  artifacts:
+    when: always
+    paths:
+      - guard.sarif
+    expire_in: 1 week
+  allow_failure: true  # non-blocking; the gating happens in roam-guard

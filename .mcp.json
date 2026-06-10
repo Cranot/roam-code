@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "roam-code": {
-      "command": "roam",
+      "command": "/root/repos/roam-code/.venv/bin/roam",
       "args": [
         "mcp"
       ],

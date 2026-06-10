@@ -1,0 +1,44 @@
+# Roam Guard rule pack — Next.js / TypeScript-frontend archetype.
+#
+# Extends the default pack with patterns for Next.js (app router and pages
+# router) + TypeScript-frontend conventions.
+
+name: nextjs-default
+version: 1.0
+extends: default
+
+file_patterns:
+  # API routes — changing one is a public API surface change.
+  - id: nextjs_api_route_changed
+    regex: '(?:^|/)(?:app|pages)/api/.*\.(ts|tsx|js)$'
+    applies_to_kinds: [test, lint]
+
+  # Pages / app-router routes — UI surface; smoke tests should run.
+  - id: nextjs_page_changed
+    regex: '(?:^|/)(?:app|pages)/(?!api/).*\.(tsx|jsx)$'
+    applies_to_kinds: [test]
+
+  # Middleware — authentication / authorization surface.
+  - id: nextjs_middleware_changed
+    regex: '(?:^|/)middleware\.(ts|tsx|js)$'
+    applies_to_kinds: [test, lint]
+
+  # next.config — boot-affecting; build + lint should run.
+  - id: nextjs_config_changed
+    regex: '^next\.config\.(mjs|js|ts)$|^tsconfig\.json$'
+    applies_to_kinds: [test, lint, build]
+
+  # Server actions / use-server boundaries.
+  - id: nextjs_server_action_changed
+    regex: '"use server"|^app/.*/_actions\.(ts|tsx)$'
+    applies_to_kinds: [test]
+
+  # Package lock — dependency blast radius.
+  - id: js_dependency_changed
+    regex: '^package(-lock)?\.json$|^pnpm-lock\.yaml$|^yarn\.lock$'
+    applies_to_kinds: [test, lint, build]
+
+  # Tailwind / PostCSS config — visual regression risk.
+  - id: nextjs_styling_config_changed
+    regex: '^tailwind\.config\.(ts|js)$|^postcss\.config\.(js|cjs)$'
+    applies_to_kinds: [test]

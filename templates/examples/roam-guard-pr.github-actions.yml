@@ -1,0 +1,86 @@
+# Roam Guard for PRs — GitHub Actions workflow template.
+#
+# Copy to `.github/workflows/roam-guard.yml` and the action will run on
+# every pull request, post a Roam Guard verdict as a GitHub Check Run, and
+# (optionally) fail the build when the verdict is `blocked`.
+#
+# Required secrets / inputs:
+#   * GITHUB_TOKEN  (provided automatically by GitHub Actions)
+#
+# Required steps the agent should have run BEFORE this workflow:
+#   - `roam pr-bundle init` (or `--init-if-missing` here will bootstrap)
+#   - `roam preflight <symbol>`, `roam impact <symbol>`, `roam critique` etc.
+#     during the PR-prep phase. `roam guard-pr --ci` will auto-collect
+#     their response envelopes from `.roam/responses/`.
+
+name: Roam Guard
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  roam-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write          # required to POST a Check Run
+      pull-requests: write   # optional, only if you also post a PR comment
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install roam-code
+        run: pip install roam-code
+
+      - name: Index the repo
+        run: roam init --quiet || true
+
+      - name: Run Roam Guard verdict
+        id: guard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          # --ci is shorthand for --strict --init-if-missing --format markdown
+          # Output is markdown; exit code drives the gate (5 = blocked).
+          roam guard-pr --ci --output guard.md
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          set -e
+
+      - name: Post Check Run to GitHub
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          roam guard-pr \
+            --skip-collect \
+            --format markdown \
+            --post-check \
+            --gh-repo ${{ github.repository }} \
+            --gh-sha ${{ github.event.pull_request.head.sha }} \
+            --gh-name "Roam Guard" \
+            --details-url ${{ github.event.pull_request.html_url }}
+
+      - name: Upload guard.md as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roam-guard-verdict
+          path: guard.md
+          if-no-files-found: ignore
+
+      - name: Fail the build on blocked verdict
+        if: steps.guard.outputs.exit_code == '5'
+        run: |
+          echo "::error::Roam Guard returned BLOCKED. See the Check Run for details."
+          exit 1

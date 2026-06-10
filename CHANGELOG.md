@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.5] — 2026-06-10
+
+### Compiler coverage waves + the Claude Code adapter (2026-06-09/10)
+
+#### Added
+
+- **Eight new compile intent procedures**, all telemetry-mined from production prompt corpora and gated by a frozen-corpus routing ratchet (still-missed freeform 447 → 353 unique prompts, zero routing drift): `file_history` ("what changed in X recently / last week" → embedded `git log` with `--since` window), `repo_structure` (layers / clusters / health summaries), `entry_point_where` (surfaces the authoritative `[project.scripts]` console script first), `config_where` (env-var/config definition sites), module-name recall for `describe_file` ("explain the compiler architecture"), `session_meta` (contentless continuation directives get a tiny repo-state brief instead of blind probes), `self_contained_task` (zero-probe fast-path for batch payloads that need no repo facts), and a `bug_site_slice` freeform augment ("fix the bug in cli.py:45" embeds the gutter-numbered source around the cited line).
+- **`roam hooks claude --write`** — one-command Claude Code adapter: installs a UserPromptSubmit hook (compile the prompt, inject pre-resolved facts) + a Stop hook (scoped `roam verify --auto --diff-only` after edits, quiet on pass). Fail-open by design, idempotent, `--no-verify` opt-out, `--uninstall` sweeps both. 13 lifecycle tests.
+- **W-GENLEAN** — test-write synthesis tasks emit a 2KB lean envelope and skip the probe pipeline (A/B showed generation tasks ignore the rich envelope; lean is behavior-identical and cheaper to compile).
+- **`compiler_fp` telemetry field** — every `.roam/compile-runs.jsonl` row now stamps the compiler-code fingerprint, making routing/latency shifts attributable to compiler revisions.
+- **Frozen-corpus routing lock** (`tests/test_corpus_routing_lock.py`) — replay ratchet over the production prompt corpora: coverage can only improve.
+
+#### Fixed
+
+- **CliRunner stdout-swap race in the in-process probe pool** — concurrent probe invokes raced the process-global `sys.stdout` swap, occasionally leaking a probe's envelope to real stdout while swallowing the parent command's output (observed: `compiler-corpus` losing its aggregate, exit 0). The in-proc dispatch lock now guards every invoke (re-entrant); regression test records invoke concurrency.
+- **Compile caches ignored compiler revisions** — the plan cache and in-process cache lacked the compiler fingerprint the envelope cache had, so classifier changes kept serving stale routing under unchanged git HEAD. All three cache keys now fold in the fingerprint.
+- **`envelope-diff` regression false-positives** — underscore-prefixed budget-bookkeeping keys (`_envelope_budget_pruned`) counted as probe families, so an envelope *shrinking under budget* tripped `probe_family_missing`; the text printer also crashed (KeyError) on rules without `actual`/`threshold` fields, masking which rule tripped.
+- **Synthesis target extraction** — "write a pytest for `_resolve_module_names` in <file>" (bare identifier, no backticks) failed extraction and degraded the source excerpt to the module docstring; identifier-shape-gated patterns now extract correctly, and the excerpt carries an explicit `file:line` location.
+
+#### Measured
+
+- Compiler A/B on Claude (Fable 5), 41 cells, n=2/cell: **−83% agent turns (median 6 → 1), −80% input tokens (271K → 53K), −63% cost, −50% wall** on navigation/comprehension tasks; same shape on Opus (−86% turns). Ground-truth bug-fix bench (20 cells, planted bugs): saturated 10/10 vs 10/10 with compile slightly cheaper. Compile overhead p50 92ms / p95 305ms per prompt.
+
 ### Perf + drift-truth wave (2026-05-22)
 
 #### Performance

@@ -1,0 +1,40 @@
+# Roam Guard rule pack — Go archetype.
+#
+# Extends the default pack with Go-specific patterns. Designed for both
+# library and service repos.
+
+name: go-default
+version: 1.0
+extends: default
+
+file_patterns:
+  # Main entry points — high-impact changes; full test + build.
+  - id: go_main_changed
+    regex: '(?:^|/)main\.go$|(?:^|/)cmd/[^/]+/main\.go$'
+    applies_to_kinds: [test, build]
+
+  # Any Go source — public API surface.
+  - id: go_source_changed
+    regex: '\.go$'
+    applies_to_kinds: [test]
+
+  # Test files — only run tests (lint can skip on test-only changes).
+  - id: go_test_changed
+    regex: '_test\.go$'
+    applies_to_kinds: [test]
+
+  # Module surface — go.mod / go.sum changes are dependency blast events.
+  - id: go_module_changed
+    regex: '^go\.(mod|sum)$'
+    applies_to_kinds: [test, lint, build]
+
+  # Build tags / cgo — CI matrix-affecting.
+  - id: go_build_constraints_changed
+    regex: '//go:build|^//\s*\+build'
+    applies_to_kinds: [test, build]
+
+  # Generated code markers — usually safe to skip tests on pure regen.
+  # (Authors override this rule in their own pack if they want strict gating.)
+  - id: go_generated_changed
+    regex: '(?:^|/)zz_generated_|^.*\.pb\.go$'
+    applies_to_kinds: [build]

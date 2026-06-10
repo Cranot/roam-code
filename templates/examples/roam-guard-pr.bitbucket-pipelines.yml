@@ -1,0 +1,35 @@
+# Roam Guard for PRs — Bitbucket Pipelines template.
+#
+# Copy this into `bitbucket-pipelines.yml` (top level OR under `pipelines:`).
+# Runs on every PR; gates the build on Roam Guard's verdict.
+
+image: python:3.12-slim
+
+pipelines:
+  pull-requests:
+    '**':
+      - step:
+          name: Roam Guard
+          caches:
+            - pip
+          script:
+            # Install + index
+            - apt-get update && apt-get install -y --no-install-recommends git
+            - pip install --quiet roam-code
+            - roam init --quiet || true
+            # --ci is shorthand for --strict + --init-if-missing + --format markdown.
+            # Build fails on `blocked` (exit 5) or `needs_review` (exit 4).
+            - roam guard-pr --ci --output guard.md
+          artifacts:
+            - guard.md
+            - guard.sarif
+
+      # Optional second step for SARIF upload (if you have a downstream
+      # security dashboard that consumes SARIF artifacts).
+      - step:
+          name: Roam Guard SARIF
+          script:
+            - pip install --quiet roam-code
+            - roam proof-bundle --format sarif --output guard.sarif || true
+          artifacts:
+            - guard.sarif

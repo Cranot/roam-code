@@ -1,0 +1,46 @@
+# Roam Guard for PRs — CircleCI 2.1 template.
+#
+# Copy into `.circleci/config.yml`. The `roam-guard` job runs on every
+# branch push; filter to PR branches in the workflow if you prefer.
+
+version: 2.1
+
+jobs:
+  roam-guard:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install roam-code
+          command: pip install --quiet roam-code
+      - run:
+          name: Index repo
+          command: roam init --quiet || true
+      - run:
+          name: Roam Guard verdict (gates the build)
+          command: |
+            # --ci is shorthand for --strict + --init-if-missing + --format markdown.
+            # Exit codes: pass=0, needs_review=4, blocked=5.
+            roam guard-pr --ci --output guard.md
+      - run:
+          name: Emit SARIF for downstream tools
+          when: always
+          command: roam proof-bundle --format sarif --output guard.sarif || true
+      - store_artifacts:
+          path: guard.md
+          destination: roam-guard.md
+      - store_artifacts:
+          path: guard.sarif
+          destination: roam-guard.sarif
+
+workflows:
+  version: 2
+  pr:
+    jobs:
+      - roam-guard:
+          filters:
+            branches:
+              ignore:
+                - main
+                - master
