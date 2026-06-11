@@ -1,6 +1,6 @@
 """Tests for G3 verification_contract + closed-enum verdict engine.
 
-Per project_pivot_to_roam_guard memo: these are the two new modules feeding
+Per the Roam Guard pivot decision: these are the two new modules feeding
 the AgentChangeProofBundle v1 schema emission.
 """
 

@@ -1,6 +1,6 @@
 """Pre-flag dogfood findings that match already-fixed evals.
 
-Surfaced by W36.8's "50% already-fixed" pattern in the 2026-05-13 dogfood
+Surfaced by W36.8's "50% already-fixed" pattern in the dogfood
 batch — the matching eval docs already carried `status: fixed-in-*` but
 the dispatcher didn't grep first.
 
@@ -18,7 +18,9 @@ Output: a table for each input command showing the most recent eval doc
 and its `status:` frontmatter value (if any). Exit code 0 always; this is
 informational, not a gate.
 """
+
 from __future__ import annotations
+
 import argparse
 import re
 import sys
@@ -47,8 +49,8 @@ def _find_evals(command: str) -> list[Path]:
 def _extract_status(eval_path: Path) -> tuple[str | None, str | None]:
     """Extract status + fix_ref frontmatter from an eval doc."""
     text = eval_path.read_text(encoding="utf-8", errors="replace")
-    status = (m.group(1) if (m := _STATUS_RE.search(text)) else None)
-    fix_ref = (m.group(1) if (m := _FIX_REF_RE.search(text)) else None)
+    status = m.group(1) if (m := _STATUS_RE.search(text)) else None
+    fix_ref = m.group(1) if (m := _FIX_REF_RE.search(text)) else None
     return status, fix_ref
 
 
@@ -75,20 +77,30 @@ def check_commands(commands: list[str]) -> list[dict]:
     for cmd in commands:
         evals = _find_evals(cmd)
         if not evals:
-            rows.append({"command": cmd, "evals_found": 0, "latest": None,
-                         "status": None, "fix_ref": None, "verdict": "no_evals"})
+            rows.append(
+                {
+                    "command": cmd,
+                    "evals_found": 0,
+                    "latest": None,
+                    "status": None,
+                    "fix_ref": None,
+                    "verdict": "no_evals",
+                }
+            )
             continue
         latest = evals[0]
         status, fix_ref = _extract_status(latest)
         verdict = _classify_verdict(status, fix_ref)
-        rows.append({
-            "command": cmd,
-            "evals_found": len(evals),
-            "latest": str(latest.relative_to(_REPO_ROOT)),
-            "status": status,
-            "fix_ref": fix_ref,
-            "verdict": verdict,
-        })
+        rows.append(
+            {
+                "command": cmd,
+                "evals_found": len(evals),
+                "latest": str(latest.relative_to(_REPO_ROOT)),
+                "status": status,
+                "fix_ref": fix_ref,
+                "verdict": verdict,
+            }
+        )
     return rows
 
 
@@ -96,12 +108,7 @@ def _format_table(rows: list[dict]) -> str:
     lines = ["command           evals  verdict      latest"]
     lines.append("-" * 80)
     for r in rows:
-        lines.append(
-            f"{r['command']:<18}"
-            f"{r['evals_found']:<7}"
-            f"{r['verdict']:<13}"
-            f"{r['latest'] or '-'}"
-        )
+        lines.append(f"{r['command']:<18}{r['evals_found']:<7}{r['verdict']:<13}{r['latest'] or '-'}")
         if r["status"]:
             lines.append(f"  status: {r['status']}")
         if r["fix_ref"]:
@@ -147,6 +154,7 @@ def main(argv=None):
     rows = check_commands(commands)
     if args.json:
         import json
+
         print(json.dumps(rows, indent=2))
     else:
         print(_format_table(rows))

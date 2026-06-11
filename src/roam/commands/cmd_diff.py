@@ -583,7 +583,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
     )
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
-        # Pattern 1 fix (Fix A from internal/dogfood/SYNTHESIS-2026-05-12.md):
+        # Pattern 1 fix (Fix A from the dogfood synthesis notes):
         # never emit empty stdout in --json mode. MCP wrappers crash with
         # `Expecting value: line 1 column 1 (char 0)` when given empty
         # output. Always emit a structured envelope. Mirrors the shape

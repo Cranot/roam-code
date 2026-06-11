@@ -524,7 +524,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
 
         # W165 — per-bucket cluster counts surfaced in the verdict line
         # (Pattern-3 vocabulary improvement from internal/dogfood/
-        # SYNTHESIS-2026-05-12.md: separate buckets exposed at the
+        # the dogfood synthesis notes: separate buckets exposed at the
         # surface, not hidden in JSON).
         # W607-BQ: wrap the bucket-classification pass. A raise inside
         # ``_role_bucket_for_cluster`` (e.g. on a malformed file path)

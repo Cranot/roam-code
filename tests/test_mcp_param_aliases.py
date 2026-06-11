@@ -1,6 +1,6 @@
 """Tests for Fix D — MCP parameter-alias normalization layer.
 
-Closes 6 H findings from ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern
+Closes 6 H findings from `the dogfood synthesis notes` Pattern
 3b (vocabulary mismatch across tools). Verifies that legacy parameter
 names (``name``, ``target``, ``file``, ``pattern``) are still accepted at
 the MCP dispatch boundary, that they translate to the canonical names

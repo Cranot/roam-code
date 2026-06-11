@@ -11,6 +11,7 @@ ADVISORY: prints a report; exit 0. Run: python scripts/audit_dead_cli_flags.py
 Heuristic (AST Name-usage), so triage hits: a real dead flag = the body genuinely
 ignores it; a false positive = used only via **kwargs forwarding or rebound name.
 """
+
 from __future__ import annotations
 
 import ast
@@ -89,8 +90,10 @@ def main() -> int:
     print(f"DEAD-CLI-FLAG audit — scanned {scanned} command fns; {len(dead)} with unused param(s)\n")
     for fname, fn, unused in dead:
         print(f"  {fname}::{fn}  unused param(s): {unused}")
-    print("\nAdvisory. A true hit = the body ignores the flag (like deps --full did pre-2026-06-07). "
-          "False positives: params forwarded via **kwargs or consumed by a nested closure.")
+    print(
+        "\nAdvisory. A true hit = the body ignores the flag (like deps --full did pre-2026-06-07). "
+        "False positives: params forwarded via **kwargs or consumed by a nested closure."
+    )
     return 0
 
 

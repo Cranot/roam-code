@@ -293,7 +293,7 @@ def audit(ctx, brief) -> None:
     # better tools).  Several commands produce signal not available
     # elsewhere — surface them as imperative pointers so agents reading
     # the audit envelope discover them without scraping prose.  See
-    # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+    # `the dogfood synthesis notes` section "NEW in v3".
     discoverable_via = {
         "danger_score": "roam metrics-push --dry-run",
         "algo_anti_patterns": "roam algo",

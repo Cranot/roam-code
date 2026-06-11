@@ -12,7 +12,7 @@ Exit codes:
     4 = needs_review (human required)
     5 = blocked (hard gate failed)
 
-Per project_pivot_to_roam_guard memo, this is the CI-facing standalone
+Per the Roam Guard pivot decision, this is the CI-facing standalone
 verdict tool. The same logic is also called inline from pr-bundle emit
 to populate the AgentChangeProofBundle's `verdict` field.
 

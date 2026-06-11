@@ -4,7 +4,7 @@ These tests pin the contract that commands report empty/absent-state cleanly
 instead of emitting success-shaped envelopes that mislead consumers about
 whether the underlying check actually ran.
 
-Reference: internal/dogfood/SYNTHESIS-2026-05-12.md Pattern 2 + Fix E.
+Reference: the dogfood synthesis notes Pattern 2 + Fix E.
 
 The reference for the correct pattern is ``article-12-check`` which frames
 "directory exists vs trail empty" as two distinct states.

@@ -11,7 +11,7 @@ Before this module existed, two commands disagreed:
   the same codebase.
 
 This is exactly the Pattern 3 ("vocabulary mismatch across commands")
-defect documented in ``internal/dogfood/SYNTHESIS-2026-05-12.md``. The fix
+defect documented in `the dogfood synthesis notes`. The fix
 mirrors Fix C (``caller_metric_definition``): one canonical computation
 plus an ``ai_rot_definition`` label on every envelope that emits the
 number.

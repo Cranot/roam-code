@@ -1221,7 +1221,7 @@ def _build_rationale(
 def _inspect_prep_subcommand_failures(prep_payload: dict) -> tuple[list[str], str | None, str]:
     """Look inside the pr-prep envelope for failed/no-changes subcommands.
 
-    Fix B (Pattern 2 from internal/dogfood/SYNTHESIS-2026-05-12.md): when an
+    Fix B (Pattern 2 from the dogfood synthesis notes): when an
     internal step (``diff`` / ``critique`` / ``pr-risk``) returned an
     error or a structured ``no_changes`` envelope, surface that here so
     the top-level verdict never fabricates SAFE/READY on a failed cascade.

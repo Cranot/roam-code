@@ -326,7 +326,7 @@ def _severity_icon(sev: str) -> str:
         "Include CI scripts, examples, generated code, vendor, and "
         "workspaces directories. Excluded by default — high complexity "
         "in tooling/codegen is expected and uninteresting (Python pivot "
-        "dogfood 2026-05-02 found agent-generated workspaces dominating)."
+        "dogfood found agent-generated workspaces dominating)."
     ),
 )
 @click.option(

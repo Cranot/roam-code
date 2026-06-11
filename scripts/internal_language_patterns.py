@@ -47,8 +47,16 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Dogfood-notes session marker",
         re.compile(r"\bdogfood notes \d{4}-\d{2}-\d{2}\b|\bdogfood R\d+ \d{4}-\d{2}-\d{2}"),
     ),
-    # "(2026-05-XX dogfood)" parentheticals
-    ("Dated dogfood parenthetical", re.compile(r"\(\d{4}-\d{2}-\d{2} dogfood\)")),
+    # Dated dogfood markers in ANY adjacency form: "(2026-05-XX dogfood)",
+    # "(2026-06-10 dogfood: ...)", "dogfood 2026-05-04 —", "2026-06-07
+    # dogfood:". The original paren-only pattern missed every variant with
+    # trailing text; the separator-gap form catches them while leaving
+    # "internal/dogfood/<FILE>-<date>.md" path mentions to the memo-filename
+    # pattern below (letters in the gap don't match).
+    (
+        "Dated dogfood parenthetical",
+        re.compile(r"\d{4}-\d{2}-\d{2}[ ,:;)]{0,3}dogfood\b|\bdogfood\b[ ,:;(]{0,3}\d{4}-\d{2}-\d{2}"),
+    ),
     # Personal local-machine paths
     ("Windows personal path", re.compile(r"C:\\Users\\Dimitris|D:\\OneDrive - CosmoHac")),
     # Real customer name (the user's day-job employer)
@@ -196,6 +204,36 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Internal/ folder revenue-ops or planning cross-reference",
         re.compile(r"\binternal/(?:pr-replay-engagement-playbook|planning/[A-Z])"),
     ),
+    # Date-stamped ALLCAPS memo filenames ANYWHERE (generalizes the dev/-
+    # scoped pattern above). Session-cadence memos follow the
+    # ``<TOPIC>-YYYY-MM-DD[-slug].md`` convention; naming one from a shipped
+    # docstring points readers at a private file and leaks the cadence.
+    # Cite the content neutrally ("the dogfood synthesis notes") instead.
+    (
+        "Dated internal memo filename",
+        re.compile(r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{4}-\d{2}-\d{2}[A-Za-z0-9-]*\.md\b"),
+    ),
+    # Claude-memory slug references in shipped code/docs. Memory names are
+    # session-private; describing the decision ("per the Roam Guard pivot")
+    # carries the same information without naming the memory system.
+    (
+        "Claude-memory slug reference",
+        re.compile(
+            r"\bproject_pivot_to_roam_guard\b|\bproject_all_levers_breakthrough\b|"
+            r"\bproject_deep_levers_inventory\b|\bproject_x3_haiku_l1_breakthrough\b|"
+            r"\[\[(?:project|feedback|reference|user)_[a-z0-9_]+\]\]"
+        ),
+    ),
+    # Host-platform name. The agent-orchestration platform this project is
+    # developed alongside is private; "the host platform" is the shipped
+    # phrasing (10 mentions scrubbed in a prior sweep — this pins them out).
+    ("Host-platform name", re.compile(r"\bStoa\b")),
+    # Absolute VPS filesystem paths — leak the deployment box's layout.
+    # Tracked configs must use PATH-resolved commands / relative paths.
+    (
+        "VPS absolute path",
+        re.compile(r"/root/(?:apps|services|repos|legacy|accounting-source)/"),
+    ),
 ]
 
 
@@ -212,6 +250,9 @@ WHITELIST_FILES = {
     "tests/test_no_internal_language.py",
     # This module is the extracted single-source catalogue (same role).
     "scripts/internal_language_patterns.py",
+    # The exemplar ratchet suite: synthetic leak-shaped lines that pin every
+    # pattern class so a regex tidy-up can't silently weaken the gate.
+    "tests/test_leak_gate_exemplars.py",
     # The phantom-memo detector's regression suite. Tests the matcher
     # that flags backtick-fenced ``dev/<MEMO>-YYYY-MM-DD.md`` paths in
     # CHANGELOG.md; the synthetic fixture has to LITERALLY look like

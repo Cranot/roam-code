@@ -12,7 +12,7 @@ the trailing test block validates that every persisted clones finding
 carries a ``role_bucket`` evidence field (production / test_intentional /
 mixed), that the CLI flags drop test-intentional findings while preserving
 the mixed (potential-leakage) signal, and that the verdict line surfaces
-per-bucket counts. See ``internal/dogfood/SYNTHESIS-2026-05-12.md`` for the
+per-bucket counts. See `the dogfood synthesis notes` for the
 noise problem this fixes (250+/584 clones in language-extractor mirrors
 plus 130+ in test fixtures drowned real refactor candidates).
 """

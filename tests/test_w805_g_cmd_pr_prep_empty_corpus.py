@@ -442,7 +442,7 @@ def test_compound_verdict_consistent_with_children(empty_corpus):
     contract surface; if it disagrees with every child's contract surface,
     an agent reading only the compound verdict gets a different answer than
     one reading the children. That's the canonical Pattern-2 silent SAFE
-    shape from internal/dogfood/SYNTHESIS-2026-05-12.md.
+    shape from the dogfood synthesis notes.
     """
     runner = CliRunner()
     result = _invoke_pr_prep(runner, empty_corpus, json_mode=True)

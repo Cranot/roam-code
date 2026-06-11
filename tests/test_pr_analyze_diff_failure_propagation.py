@@ -8,7 +8,7 @@ structured ``no_changes`` / ``index_stale`` envelope rather than empty
 stdout; pr-analyze must now propagate that state to the top-level
 verdict instead of silently defaulting to SAFE.
 
-See ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 2 ("Silent
+See `the dogfood synthesis notes` Pattern 2 ("Silent
 fallback") for context.
 """
 
@@ -142,8 +142,7 @@ def test_pr_analyze_no_changes_does_not_fabricate_safe(clean_indexed_project, cl
     # The exact fabricated-verdict regression: must NOT be SAFE / READY
     # / INTENTIONAL when there is literally nothing to analyse.
     assert verdict not in ("SAFE", "READY", "INTENTIONAL"), (
-        f"pr-analyze fabricated a clean verdict {verdict!r} on a clean tree. "
-        "See internal/dogfood/SYNTHESIS-2026-05-12.md Pattern 2."
+        f"pr-analyze fabricated a clean verdict {verdict!r} on a clean tree. See the dogfood synthesis notes Pattern 2."
     )
     # Positive assertion: state must reflect the empty cascade.
     assert summary.get("state") == "no_changes"

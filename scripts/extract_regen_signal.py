@@ -23,8 +23,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Iterable, Iterator
-
+from typing import Iterator
 
 _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB hard skip
 
@@ -282,9 +281,7 @@ def _default_since() -> _dt.date:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Extract regen / dissatisfaction signal counts per Claude Code session."
-    )
+    p = argparse.ArgumentParser(description="Extract regen / dissatisfaction signal counts per Claude Code session.")
     p.add_argument(
         "--since",
         type=lambda s: _dt.datetime.strptime(s, "%Y-%m-%d").date(),

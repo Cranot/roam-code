@@ -267,7 +267,7 @@ class TestToolDecorator:
     def test_core_tools_set_has_expected_members(self):
         """Core tools set should contain the documented 15 dogfood-firing tools.
 
-        Shrunk from 57 to 15 in the 2026-05-24 dogfood wave per
+        Shrunk from 57 to 15 in the dogfood wave per
         the dogfood-next-interventions design Intervention A. The 42
         tools that left core remain accessible via ``_WORKFLOW_TOOLS``
         (covered by the specialised presets and via
@@ -299,7 +299,7 @@ class TestToolDecorator:
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # 2026-05-24 dogfood wave: 57 -> 16. The empirical-winners 7 +
+        # dogfood wave: 57 -> 16. The empirical-winners 7 +
         # verified-firing tools = 16 (the dogfood-firing surface).
         # Dropped roam_critique + roam_complexity_report after 3/3
         # variance losses; added roam_batch_search, roam_coupling,
@@ -445,7 +445,7 @@ class TestExpandToolset:
         # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools),
         # v12.51=51 (+roam_ask, +roam_session_metrics),
         # R8=57 (+roam_validate_plan, +4 roam_for_*, +roam_fetch_handle).
-        # 2026-05-24 dogfood wave: 57 -> 16 (Intervention A of the
+        # dogfood wave: 57 -> 16 (Intervention A of the
         # dogfood-next-interventions design memo; empirical-winners
         # 7 flagships + 9 verified-firing tools, after adding
         # roam_batch_search, roam_coupling, roam_deps in 2026-05-26).

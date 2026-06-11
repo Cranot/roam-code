@@ -63,6 +63,19 @@ if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
     exit 1
 fi
 
+# --- A2. Anti-leak gate over COMMIT MESSAGES being pushed -------------------
+# A leaky message publishes with the code; rewriting pushed history is far
+# costlier than rewording before push. Scans @{upstream}..HEAD (fail-open
+# when no upstream is configured yet).
+if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+    if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --commits '@{upstream}..HEAD'; then
+        echo "" >&2
+        echo "BLOCKED: internal-language leak in a commit MESSAGE -- see above." >&2
+        echo "  Reword with: git rebase -i (reword) before pushing." >&2
+        exit 1
+    fi
+fi
+
 # --- B. Structural-gate bundle (FAST tier) ----------------------------------
 # For a release-prep / doc-heavy push, run the FULL tier manually:
 #   python scripts/prepush_check.py --full

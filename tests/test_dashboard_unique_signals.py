@@ -1,7 +1,7 @@
 """Tests for unique-signal discovery promotion in dashboard/understand/audit.
 
 Six commands produce signal not surfaced anywhere else (per
-``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3"):
+`the dogfood synthesis notes` section "NEW in v3"):
 ``metrics-push --dry-run`` (danger_score), ``algo``/``math``
 (anti-pattern counts), ``ai-ratio`` (ai_generated_percentage),
 ``ai-readiness`` (ai_readiness_score), ``vibe-check`` (ai_rot_score),

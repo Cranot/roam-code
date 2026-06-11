@@ -17,7 +17,7 @@ One CLI invocation that runs the full Phase 1+2 flow:
 
 Distinct from `roam guard` (per-symbol pre-edit packet).
 
-Per the pivot memo (`project_pivot_to_roam_guard`), this is the
+Per the Roam Guard pivot decision, this is the
 demoable Roam Guard CLI sigil.
 """
 

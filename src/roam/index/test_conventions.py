@@ -5,7 +5,7 @@ This module is the **single source of truth** for "is this a test file" and
 were two parallel implementations: this file's per-language adapters and
 ``file_roles._TEST_PATTERNS`` (a flat global regex list). Consumer commands
 called whichever happened to be imported, producing inconsistent
-classifications (Pattern 4 from ``internal/dogfood/SYNTHESIS-2026-05-12.md``,
+classifications (Pattern 4 from `the dogfood synthesis notes`,
 mirror of the naming-conventions divergence Fix G addressed).
 
 Two-layer API

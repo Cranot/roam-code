@@ -627,7 +627,7 @@ def available_packs() -> list[str]:
 # Ecosystem language for each of the 8 packs (mirrors _PACK_DEFINITIONS). A pack
 # is only relevant to a repo that actually contains one of its languages —
 # injecting Django/pytest symbols into a TypeScript repo (or React/Express into a
-# pure-Python repo) is pure noise. 2026-06-07 dogfood: django/pytest `@pack/*`
+# pure-Python repo) is pure noise. dogfood: django/pytest `@pack/*`
 # leaked into a TS webhook repo's compile envelope; gating by language removed the
 # cross-language contamination.
 _PACK_LANGUAGES: dict[str, set[str]] = {

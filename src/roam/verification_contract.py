@@ -21,7 +21,7 @@ Architecture-seal mapping:
   verification_contract →  what MUST run for THIS change (judgment, this module)
   proof_bundle         →  what actually ran + verdict (evidence + verdict — cmd_pr_bundle)
 
-Per the pivot memo (`project_pivot_to_roam_guard`), this is the gap between
+Per the Roam Guard pivot decision, this is the gap between
 the G2 command_graph and the AgentChangeProofBundle v1 schema.
 """
 

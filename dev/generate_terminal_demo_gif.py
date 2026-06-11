@@ -13,7 +13,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-
 WIDTH = 1120
 HEIGHT = 640
 PADDING_X = 48

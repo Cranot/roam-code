@@ -25,7 +25,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-
 DEFAULT_BENCH_TSV = "/var/log/roam-dogfood/ab-bench.tsv"
 DEFAULT_TOOL_CALLS_TSV = "/var/log/roam-dogfood/all-tool-calls.tsv"
 DEFAULT_MODE_USAGE_TSV = "/var/log/roam-dogfood/mode-usage.tsv"
@@ -247,9 +246,7 @@ def render_per_task_variant(
                 continue
             median_turns = _median_or_zero(cell["turns"])
             status_bits = ", ".join(f"{k}={n}" for k, n in sorted(cell["statuses"].items()))
-            cells.append(
-                f"<td>median turns <b>{median_turns:.1f}</b><br>{html.escape(status_bits)}</td>"
-            )
+            cells.append(f"<td>median turns <b>{median_turns:.1f}</b><br>{html.escape(status_bits)}</td>")
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
     body = "".join(body_rows) if body_rows else "<tr><td colspan='4' class='missing'>no rows in window</td></tr>"
@@ -350,17 +347,23 @@ def build_html(
         "</head><body>",
         render_header(generated_at, since, file_status),
         render_per_mode_summary(
-            mode_usage_rows, regen_rows, mode_usage_tsv, regen_tsv,
-            mode_usage_present, regen_present,
+            mode_usage_rows,
+            regen_rows,
+            mode_usage_tsv,
+            regen_tsv,
+            mode_usage_present,
+            regen_present,
         ),
         render_per_task_variant(bench_rows, bench_tsv, bench_present),
         render_mode_usage_topn(mode_usage_rows, mode_usage_tsv, mode_usage_present),
-        render_footer({
-            "bench": bench_tsv,
-            "tool-calls": tool_calls_tsv,
-            "mode-usage": mode_usage_tsv,
-            "regen-signal": regen_tsv,
-        }),
+        render_footer(
+            {
+                "bench": bench_tsv,
+                "tool-calls": tool_calls_tsv,
+                "mode-usage": mode_usage_tsv,
+                "regen-signal": regen_tsv,
+            }
+        ),
         "</body></html>",
     ]
     return "\n".join(parts)

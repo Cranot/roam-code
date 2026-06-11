@@ -145,7 +145,7 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
     by_classification: Counter = Counter(c.classification for c in all_results)
 
     # Verdict prioritises the high-severity bucket — pattern from
-    # internal/dogfood/SYNTHESIS-2026-05-12.md (LAW 6: compression forces
+    # the dogfood synthesis notes (LAW 6: compression forces
     # domain neutrality — verdict must stand on its own).
     high_sev = sum(by_classification.get(k, 0) for k in _HIGH_SEVERITY_KINDS)
 

@@ -936,7 +936,7 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             # algo anti-patterns, 30d forecast).  An agent reading
             # ``roam understand`` should know which command surfaces each
             # one without scraping prose.  See
-            # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+            # `the dogfood synthesis notes` section "NEW in v3".
             discoverable_via = {
                 "danger_score": "roam metrics-push --dry-run",
                 "algo_anti_patterns": "roam algo",
@@ -1217,7 +1217,7 @@ def _understand_text(
     # Advanced discovery — surface commands that produce signal not
     # available elsewhere (LAW 11: server-side hints teaching tools).
     # Compact: one line each, copy-paste-executable, ordered by breadth
-    # of utility.  See ``internal/dogfood/SYNTHESIS-2026-05-12.md``.
+    # of utility.  See `the dogfood synthesis notes`.
     click.echo()
     click.echo("Advanced discovery (unique signals):")
     click.echo("  roam metrics-push --dry-run   -- danger_score per file (churn × complexity × fan_in)")

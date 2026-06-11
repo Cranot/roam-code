@@ -108,9 +108,22 @@ def _is_code_relevant(name: str, inp: dict) -> bool:
     if name == "Read":
         path = inp.get("file_path") or ""
         code_exts = (
-            ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs",
-            ".java", ".kt", ".rb", ".cpp", ".c", ".cs", ".php",
-            ".scala", ".swift",
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".rb",
+            ".cpp",
+            ".c",
+            ".cs",
+            ".php",
+            ".scala",
+            ".swift",
         )
         return any(path.endswith(ext) for ext in code_exts)
     return False
@@ -184,9 +197,7 @@ def audit_transcripts(paths: list[str]) -> dict:
     total_calls = sum(total.values())
     roam_calls = sum(roam.values())
     dogfood_ratio = (roam_calls / total_calls) if total_calls else 0.0
-    code_relevant_ratio = (
-        (code_relevant_roam / code_relevant_total) if code_relevant_total else 0.0
-    )
+    code_relevant_ratio = (code_relevant_roam / code_relevant_total) if code_relevant_total else 0.0
     return {
         "transcripts": [os.path.basename(p) for p in paths],
         "per_transcript_calls": per_file,
@@ -292,11 +303,7 @@ def _all_project_dirs() -> list[str]:
     base = os.path.expanduser("~/.claude/projects")
     if not os.path.isdir(base):
         return []
-    return sorted(
-        os.path.join(base, name)
-        for name in os.listdir(base)
-        if os.path.isdir(os.path.join(base, name))
-    )
+    return sorted(os.path.join(base, name) for name in os.listdir(base) if os.path.isdir(os.path.join(base, name)))
 
 
 def _render_cross_project(reports: list[tuple[str, dict]]) -> str:
@@ -314,9 +321,7 @@ def _render_cross_project(reports: list[tuple[str, dict]]) -> str:
         cr = report.get("code_relevant_ratio", 0.0) * 100
         wr = report["dogfood_ratio"] * 100
         miss = report.get("code_relevant_miss", 0)
-        lines.append(
-            f"{slug:<48} {report['total_calls']:>6} {wr:>5.1f}% {cr:>5.1f}% {miss:>5}"
-        )
+        lines.append(f"{slug:<48} {report['total_calls']:>6} {wr:>5.1f}% {cr:>5.1f}% {miss:>5}")
     lines.append("")
     lines.append(
         "Legend: roam% = whole-session ratio (diluted by non-substitutable calls);"

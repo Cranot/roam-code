@@ -12,7 +12,7 @@ same indexed codebase:
   method, interface, struct, enum} AND file is not a test.
 
 This is Pattern 3 ("vocabulary mismatch across commands") from the
-dogfood ``SYNTHESIS-2026-05-12.md``. Unlike the cycles / god-components
+dogfood `the dogfood synthesis notes`. Unlike the cycles / god-components
 chasms, this is NOT a single-algorithm reconciliation — the two
 counts measure genuinely different things:
 

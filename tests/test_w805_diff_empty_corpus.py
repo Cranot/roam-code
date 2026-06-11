@@ -18,7 +18,7 @@ empty-state path; the ``index_stale`` branch's logic lives next to
 this code in cmd_diff.py and is visible via diff for human review.
 
 The no_changes branch must emit a structured JSON envelope (Pattern 1
-fix A from internal/dogfood/SYNTHESIS-2026-05-12.md): MCP wrappers
+fix A from the dogfood synthesis notes): MCP wrappers
 crash with ``Expecting value: line 1 column 1 (char 0)`` when given
 empty output.
 

@@ -164,27 +164,89 @@ def _print_hits(findings: list[tuple[str, str, int, str]], *, mode: str) -> None
     sys.stderr.write("  - tighten the offending regex to exclude the legitimate case.\n")
 
 
-def main(argv: list[str]) -> int:
-    flags = set(argv)
+def _collect_commit_message_hits(repo_root: str, rev_range: str) -> list[tuple[str, str, int, str]]:
+    """Scan COMMIT MESSAGES in *rev_range* (e.g. ``origin/main..HEAD``).
+
+    Commit messages are published with the code — a leaky message reaches the
+    public repo even when every file is clean (and rewriting pushed history
+    is far costlier than rewording a file). Returns the same finding tuples
+    as :func:`_collect_hits`, with ``<short-sha> (commit message)`` standing
+    in for the file path.
+    """
+    proc = subprocess.run(
+        ["git", "log", "--format=%h%x00%B%x01", rev_range],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # Range doesn't resolve (no upstream yet, shallow clone) — nothing to
+        # scan is the correct fail-open behaviour for a hook context.
+        return []
+    findings: list[tuple[str, str, int, str]] = []
+    for chunk in proc.stdout.split("\x01"):
+        chunk = chunk.strip("\n")
+        if not chunk:
+            continue
+        sha, _, body = chunk.partition("\x00")
+        for name, line_no, text_snippet in scan_text(f"{sha.strip()} (commit message)", body):
+            findings.append((f"{sha.strip()} (commit message)", name, line_no, text_snippet))
+    return findings
+
+
+_USAGE = "Usage: python scripts/scan_internal_language.py (--staged | --all | --commits <range>)\n"
+
+
+def _parse_mode(argv: list[str]) -> tuple[bool, str | None] | None:
+    """Resolve CLI args to exactly one scan mode.
+
+    Returns ``(staged, commits_range)`` — ``commits_range`` set means
+    commit-message mode; otherwise ``staged`` picks staged vs all-tracked.
+    Returns None (after printing the error) on bad arguments.
+    """
+    commits_range: str | None = None
+    flags: list[str] = []
+    it = iter(argv)
+    for a in it:
+        if a == "--commits":
+            commits_range = next(it, None)
+            if not commits_range:
+                sys.stderr.write("ERROR: --commits requires a rev range (e.g. origin/main..HEAD).\n")
+                return None
+        else:
+            flags.append(a)
     staged = "--staged" in flags
     scan_all = "--all" in flags
-    unknown = [a for a in argv if a not in ("--staged", "--all")]
-
+    unknown = [a for a in flags if a not in ("--staged", "--all")]
     if unknown:
         sys.stderr.write(f"ERROR: unknown argument(s): {' '.join(unknown)}\n")
-        sys.stderr.write("Usage: python scripts/scan_internal_language.py (--staged | --all)\n")
+        sys.stderr.write(_USAGE)
+        return None
+    if sum((staged, scan_all, commits_range is not None)) != 1:
+        sys.stderr.write("ERROR: pass exactly one of --staged, --all, or --commits <range>.\n")
+        sys.stderr.write(_USAGE)
+        return None
+    return staged, commits_range
+
+
+def main(argv: list[str]) -> int:
+    mode_args = _parse_mode(argv)
+    if mode_args is None:
         return 1
-    if staged == scan_all:  # neither, or both
-        sys.stderr.write("ERROR: pass exactly one of --staged or --all.\n")
-        sys.stderr.write("Usage: python scripts/scan_internal_language.py (--staged | --all)\n")
-        return 1
+    staged, commits_range = mode_args
 
     repo_root = _repo_root()
-    findings = _collect_hits(repo_root, staged=staged)
+    if commits_range is not None:
+        findings = _collect_commit_message_hits(repo_root, commits_range)
+        mode = f"commit-messages {commits_range}"
+    else:
+        findings = _collect_hits(repo_root, staged=staged)
+        mode = "staged" if staged else "all-tracked"
     if not findings:
         return 0
 
-    _print_hits(findings, mode="staged" if staged else "all-tracked")
+    _print_hits(findings, mode=mode)
     return 1
 
 

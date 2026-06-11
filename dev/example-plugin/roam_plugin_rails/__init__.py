@@ -91,8 +91,7 @@ def register(ctx) -> None:
         name="rails",
         version="0.1.0",
         description=(
-            "Detects Ruby on Rails projects via Gemfile contents. "
-            "Dogfood plugin validating the R25 substrate."
+            "Detects Ruby on Rails projects via Gemfile contents. Dogfood plugin validating the R25 substrate."
         ),
     )
     ctx.register_framework_detector(detect_rails)

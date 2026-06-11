@@ -18,7 +18,7 @@ torn file on disk:
   invalidates the signature.
 * Telemetry pings, response caches, suppression lists — small files
   that consumers ``json.loads`` on read. A torn JSON crashes the
-  reader (Pattern 1 from ``internal/dogfood/SYNTHESIS-2026-05-12.md``).
+  reader (Pattern 1 from `the dogfood synthesis notes`).
 
 Strategy
 ========

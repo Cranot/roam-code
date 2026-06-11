@@ -1,6 +1,6 @@
 """Tests for ``roam dogfood-aggregate`` — eval corpus triage view.
 
-Covers Task 3 from ``internal/dogfood/IMPLEMENTATION-2026-05-12.md``: status field
+Covers Task 3 from `the implementation notes`: status field
 + ``--status`` filter that closes the resolution feedback loop.
 """
 

@@ -148,7 +148,7 @@ def test_claude_md_claim_string_present_exactly_once() -> None:
     if not claude_md.exists():  # pragma: no cover - defensive
         pytest.skip(f"CLAUDE.md missing at {claude_md}")
     text = claude_md.read_text(encoding="utf-8")
-    # 2026-05-22 dogfood wiring: CLAUDE.md is now a pointer (``@AGENTS.md``)
+    # dogfood wiring: CLAUDE.md is now a pointer (``@AGENTS.md``)
     # rather than a 263-line mirror. The 28-detectors claim lives in AGENTS.md;
     # skip the CLAUDE.md gate when the pointer is detected.
     if text.strip().startswith("@AGENTS.md"):

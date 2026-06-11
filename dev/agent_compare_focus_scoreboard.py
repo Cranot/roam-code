@@ -8,13 +8,13 @@ Reads dev/agent_compare_focus_results.json and prints:
     4. Synthesis-quality marker (output length as a weak proxy for
        whether the model produced an actual artifact vs hedged)
 """
+
 from __future__ import annotations
 
 import json
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-
 
 HERE = os.path.dirname(__file__)
 PATH = os.path.join(HERE, "agent_compare_focus_results.json")
@@ -76,7 +76,9 @@ def per_task_table(rows: list[Row]) -> None:
     print("\n" + "=" * 120)
     print("PER-TASK HEAD-TO-HEAD (vanilla vs roam-agent)")
     print("=" * 120)
-    print(f"{'task':<32} {'agent':<11} {'turns':>5} {'tools':>5} {'roam%':>6} {'wall':>7} {'cost':>8} {'out_tok':>7} {'ans_chars':>10} {'err':>4}")
+    print(
+        f"{'task':<32} {'agent':<11} {'turns':>5} {'tools':>5} {'roam%':>6} {'wall':>7} {'cost':>8} {'out_tok':>7} {'ans_chars':>10} {'err':>4}"
+    )
     print("-" * 120)
     for task in sorted(by_task):
         rs = sorted(by_task[task], key=lambda x: 0 if x.name == "vanilla" else 1)
@@ -96,7 +98,9 @@ def overall(rows: list[Row]) -> None:
     print("=" * 120)
     print("OVERALL SCOREBOARD")
     print("=" * 120)
-    print(f"{'agent':<11} {'#tasks':>6} {'Σ turns':>8} {'Σ tools':>8} {'Σ wall':>8} {'Σ cost':>9} {'Σ out_tok':>10} {'avg roam%':>10} {'Σ ans_chars':>13} {'errors':>7}")
+    print(
+        f"{'agent':<11} {'#tasks':>6} {'Σ turns':>8} {'Σ tools':>8} {'Σ wall':>8} {'Σ cost':>9} {'Σ out_tok':>10} {'avg roam%':>10} {'Σ ans_chars':>13} {'errors':>7}"
+    )
     print("-" * 120)
     rows_summary = {}
     for a in ["vanilla", "roam-agent"]:
@@ -123,8 +127,10 @@ def overall(rows: list[Row]) -> None:
         )
     if "vanilla" in rows_summary and "roam-agent" in rows_summary:
         v, r = rows_summary["vanilla"], rows_summary["roam-agent"]
+
         def ratio(a, b):
             return f"{(b - a) / max(a, 1) * 100:+.0f}%"
+
         print("-" * 120)
         print(
             f"{'Δ roam-agent vs vanilla':<11} "
@@ -145,7 +151,13 @@ def wins(rows: list[Row]) -> None:
             continue
         by_task[r.task].append(r)
 
-    w = {"cheapest": Counter(), "fastest": Counter(), "fewest_turns": Counter(), "fewest_tools": Counter(), "longest_answer": Counter()}
+    w = {
+        "cheapest": Counter(),
+        "fastest": Counter(),
+        "fewest_turns": Counter(),
+        "fewest_tools": Counter(),
+        "longest_answer": Counter(),
+    }
     for task, rs in by_task.items():
         if len(rs) < 2:
             continue

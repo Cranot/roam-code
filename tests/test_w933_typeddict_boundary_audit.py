@@ -192,7 +192,7 @@ def test_typeddict_inventory_matches_allowlist() -> None:
         f"W933 audit drift — new TypedDict subclass(es) found without "
         f"audit entries: {sorted(unapproved)}. Read CLAUDE.md 'Don't "
         f"TypedDict a boundary you don't validate' + dev/W933-EXTENSION-"
-        f"AUDIT-2026-05-18.md. Confirm the TypedDict is populated via "
+        f"the audit notes. Confirm the TypedDict is populated via "
         f"controlled construction OR validated boundary input, then add "
         f"an entry to APPROVED_TYPEDDICTS with rationale."
     )

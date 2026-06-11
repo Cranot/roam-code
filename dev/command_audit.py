@@ -73,10 +73,20 @@ COMMANDS: tuple[AuditCommand, ...] = (
     AuditCommand(7, "Function definition scan", ("rg", "-n", "^def ", "src", "-g", "*.py")),
     AuditCommand(8, "TODO policy guard", ("python", "dev/todo_guard.py"), expected_exit_codes=(0, 1)),
     AuditCommand(9, "TODO/FIXME/HACK sample", ("rg", "-n", "TODO|FIXME|HACK", "src", "tests", "-g", "*.py")),
-    AuditCommand(10, "Runtime print() scan in src", ("rg", "-n", r"\bprint\(", "src", "-g", "*.py"), expected_exit_codes=(0, 1)),
-    AuditCommand(11, "Ruff lint", ("ruff", "check", "--no-cache", "src", "tests", "--output-format", "concise"), timeout_sec=180),
+    AuditCommand(
+        10, "Runtime print() scan in src", ("rg", "-n", r"\bprint\(", "src", "-g", "*.py"), expected_exit_codes=(0, 1)
+    ),
+    AuditCommand(
+        11, "Ruff lint", ("ruff", "check", "--no-cache", "src", "tests", "--output-format", "concise"), timeout_sec=180
+    ),
     AuditCommand(12, "Python version", ("python", "--version")),
-    AuditCommand(13, "Environment doctor", ("python", "dev/env_doctor.py", "--no-require-venv"), timeout_sec=180, expected_exit_codes=(0, 1, 2)),
+    AuditCommand(
+        13,
+        "Environment doctor",
+        ("python", "dev/env_doctor.py", "--no-require-venv"),
+        timeout_sec=180,
+        expected_exit_codes=(0, 1, 2),
+    ),
     AuditCommand(14, "Test collection", ("pytest", "-q", "tests", "--collect-only"), timeout_sec=240),
     AuditCommand(
         15,
@@ -174,8 +184,16 @@ def _run(cmd: AuditCommand, cwd: Path) -> CommandResult:
         duration = time.perf_counter() - start
         return CommandResult(cmd, result.returncode, result.stdout, result.stderr, False, duration)
     except subprocess.TimeoutExpired as exc:
-        stdout = (exc.stdout or "").decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        stderr = (exc.stderr or "").decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        stdout = (
+            (exc.stdout or "").decode("utf-8", errors="replace")
+            if isinstance(exc.stdout, bytes)
+            else (exc.stdout or "")
+        )
+        stderr = (
+            (exc.stderr or "").decode("utf-8", errors="replace")
+            if isinstance(exc.stderr, bytes)
+            else (exc.stderr or "")
+        )
         duration = time.perf_counter() - start
         return CommandResult(cmd, 124, stdout, stderr, True, duration)
 

@@ -64,10 +64,12 @@ class ExampleBridge(LanguageBridge):
             for target_path in target_files:
                 if os.path.splitext(target_path)[1].lower() not in self._TARGET_EXTS:
                     continue
-                edges.append({
-                    "source": sym_name,
-                    "target": f"{target_path}:imported",
-                    "kind": "x-lang",
-                    "bridge": self.name,
-                })
+                edges.append(
+                    {
+                        "source": sym_name,
+                        "target": f"{target_path}:imported",
+                        "kind": "x-lang",
+                        "bridge": self.name,
+                    }
+                )
         return edges

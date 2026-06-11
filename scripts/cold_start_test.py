@@ -149,8 +149,7 @@ def build_summary(
         "failed": failed,
         "partial_success": failed > 0,
         "verdict_definition": (
-            "passed_repos = repos where all of init/understand/health/brief "
-            "exit 0 within --step-timeout"
+            "passed_repos = repos where all of init/understand/health/brief exit 0 within --step-timeout"
         ),
     }
 
@@ -198,9 +197,7 @@ def _run(
                 stderr_raw = stderr_raw.decode("utf-8", errors="replace")
             except Exception:
                 stderr_raw = ""
-        result["stderr_tail"] = _truncate_text(
-            stderr_raw + f"\n[timeout after {timeout}s]"
-        )
+        result["stderr_tail"] = _truncate_text(stderr_raw + f"\n[timeout after {timeout}s]")
         result["error"] = f"timeout after {timeout}s"
     except FileNotFoundError as exc:
         result["exit_code"] = -2
@@ -297,9 +294,7 @@ def test_one_repo(
     step_timeout: int,
 ) -> dict:
     started = _now_iso()
-    checkout, clone_step = _clone_repo(
-        repo, workspace, clone_timeout=clone_timeout
-    )
+    checkout, clone_step = _clone_repo(repo, workspace, clone_timeout=clone_timeout)
     if clone_step.get("exit_code") not in (0, None):
         return {
             "name": repo["name"],
@@ -394,13 +389,10 @@ def render_text(envelope: dict) -> str:
     )
     lines.append("-" * (col_name + col_lang + col_verd + col_step + 10))
     for entry in envelope["per_repo"]:
-        durations = [
-            step.get("duration_s", 0.0) or 0.0
-            for step in entry.get("step_results", [])
-        ]
+        durations = [step.get("duration_s", 0.0) or 0.0 for step in entry.get("step_results", [])]
         total_s = round(sum(durations), 1)
         lines.append(
-            f"{entry['name'][:col_name - 1].ljust(col_name)}"
+            f"{entry['name'][: col_name - 1].ljust(col_name)}"
             f"{entry['language'].ljust(col_lang)}"
             f"{entry['verdict'].ljust(col_verd)}"
             f"{str(entry.get('failed_step') or '-').ljust(col_step)}"
@@ -408,10 +400,7 @@ def render_text(envelope: dict) -> str:
         )
 
     lines.append("")
-    lines.append(
-        f"Total: {summary['total']}  Passed: {summary['passed']}  "
-        f"Failed: {summary['failed']}"
-    )
+    lines.append(f"Total: {summary['total']}  Passed: {summary['passed']}  Failed: {summary['failed']}")
     if envelope["_meta"].get("dry_run"):
         lines.append("(dry-run — no repos were cloned, no roam invocations)")
     return "\n".join(lines) + "\n"
@@ -434,10 +423,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=(
-            "Validate harness logic without cloning or invoking roam. "
-            "Exits 0 with a DRY-RUN per-repo verdict."
-        ),
+        help=("Validate harness logic without cloning or invoking roam. Exits 0 with a DRY-RUN per-repo verdict."),
     )
     parser.add_argument(
         "--workspace",
@@ -453,19 +439,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--step-timeout",
         type=int,
         default=DEFAULT_STEP_TIMEOUT_S,
-        help=(
-            f"Per-step timeout in seconds (default: "
-            f"{DEFAULT_STEP_TIMEOUT_S})."
-        ),
+        help=(f"Per-step timeout in seconds (default: {DEFAULT_STEP_TIMEOUT_S})."),
     )
     parser.add_argument(
         "--clone-timeout",
         type=int,
         default=DEFAULT_CLONE_TIMEOUT_S,
-        help=(
-            f"Per-clone timeout in seconds (default: "
-            f"{DEFAULT_CLONE_TIMEOUT_S})."
-        ),
+        help=(f"Per-clone timeout in seconds (default: {DEFAULT_CLONE_TIMEOUT_S})."),
     )
     parser.add_argument(
         "--repos-file",
@@ -487,8 +467,7 @@ def _load_repos(path: Path | None) -> list[dict[str, str]]:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         print(
-            f"WARNING: --repos-file {path} unreadable ({exc}); "
-            f"falling back to defaults.",
+            f"WARNING: --repos-file {path} unreadable ({exc}); falling back to defaults.",
             file=sys.stderr,
         )
         return list(DEFAULT_REPOS)
@@ -496,14 +475,12 @@ def _load_repos(path: Path | None) -> list[dict[str, str]]:
         loaded = json.loads(text)
     except json.JSONDecodeError as exc:
         print(
-            f"WARNING: --repos-file {path} is not valid JSON ({exc}); "
-            f"falling back to defaults.",
+            f"WARNING: --repos-file {path} is not valid JSON ({exc}); falling back to defaults.",
             file=sys.stderr,
         )
         return list(DEFAULT_REPOS)
     if not isinstance(loaded, list) or not all(
-        isinstance(entry, dict) and "name" in entry and "url" in entry
-        for entry in loaded
+        isinstance(entry, dict) and "name" in entry and "url" in entry for entry in loaded
     ):
         print(
             f"WARNING: --repos-file {path} must be a JSON list of "

@@ -21,7 +21,7 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # W165 — Test / fixture / production bucketing for duplicates findings.
 #
-# The 212-eval dogfood corpus (internal/dogfood/SYNTHESIS-2026-05-12.md)
+# The 212-eval dogfood corpus (the dogfood synthesis notes)
 # surfaced 713/853 (84%) duplicate clusters living in tests/ — intentional
 # pytest parametrize patterns that drown real refactor candidates. The fix
 # is symmetric with W165 on the clones detector: classify each cluster into

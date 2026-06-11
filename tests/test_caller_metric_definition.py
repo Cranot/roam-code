@@ -1,6 +1,6 @@
 """Tests for the ``caller_metric_definition`` label on JSON envelopes.
 
-Fix C from the 2026-05-12 dogfood corpus: every command that reports a
+Fix C from the dogfood corpus: every command that reports a
 "callers" / "consumers" / "fan_in" / "in-degree" count must label which
 of the four canonical metrics it emits — see
 ``docs/concepts/caller-metrics.md``. The canonical labels are:

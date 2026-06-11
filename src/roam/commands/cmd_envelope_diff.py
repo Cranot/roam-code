@@ -374,7 +374,7 @@ def _total_pf_bytes(env: dict) -> int:
     return sum(_probe_size_bytes(v) for v in _prefetched_facts(env).values())
 
 
-# 2026-06-02 dogfood: some always_on EXTENDER probes spawn subprocesses
+# dogfood: some always_on EXTENDER probes spawn subprocesses
 # (ripgrep) and fire non-deterministically under concurrent execution
 # (grep_replication measured ~15% miss). They are BONUS context, not the
 # procedure's core answer. Excluding them from the family-level rules keeps the
@@ -577,7 +577,7 @@ def _compile_envelope(task: str, cwd: str) -> dict:
 
     plan = compile_plan(task, cwd=cwd)
     env, label = compile_for_artifact(plan, cwd=cwd)
-    # 2026-06-02 dogfood fix: the inner artifact env (from
+    # dogfood fix: the inner artifact env (from
     # `compile_for_artifact`) carries only {plan, schema, schema_version};
     # it has NEITHER `summary.classifier_confidence` NOR
     # `plan.classifier_confidence`. `_classifier_signal` read 0.0 for every

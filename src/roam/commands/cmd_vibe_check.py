@@ -2248,7 +2248,7 @@ def vibe_check(ctx, threshold, persist):
                 # source for AI rot. Downstream consumers (dashboard,
                 # audit aggregates) read this label to confirm they
                 # agree on what the number means. See
-                # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 3.
+                # `the dogfood synthesis notes` Pattern 3.
                 "ai_rot_score": score,
                 "ai_rot_definition": AI_ROT_DEFINITION,
                 # W19 / Pattern 3: the ``dead_exports`` count here

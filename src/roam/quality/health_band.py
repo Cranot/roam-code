@@ -8,7 +8,7 @@ the SAME score:
 - ``roam understand`` called 75 "healthy" using a ``score >= 70`` cutoff.
 
 That is Pattern 3a ("cross-command metric divergence") from the dogfood
-``SYNTHESIS-2026-05-12.md`` and a LAW-6 violation: an agent reading
+`the dogfood synthesis notes` and a LAW-6 violation: an agent reading
 ``roam understand`` then ``roam health`` sees contradictory health verdicts
 for one number. The fix mirrors the ``cycles`` / ``god_components``
 reconciliation: one canonical band table + a ``health_band_definition``

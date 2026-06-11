@@ -12,6 +12,7 @@ Agents:
 Run:
     dev/.venv-agent/bin/python dev/agent_compare.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +30,6 @@ from claude_agent_sdk import (
     ToolUseBlock,
     query,
 )
-
 
 VANILLA_SYSTEM = "You are a helpful coding assistant. Be terse and accurate."
 
@@ -83,7 +83,7 @@ ROAM_BASH_SYSTEM = (
     "roam-code expert. Be fast. Use `roam` CLI via Bash for structural queries. "
     "Always pass `--json` BEFORE the subcommand: `roam --json <cmd> ...`. "
     "Recipes (copy verbatim, substitute FILE/SYMBOL/N): "
-    "`roam --json coupling -n 500 | jq '[.pairs[] | select(.file_a==\"FILE\" or .file_b==\"FILE\")] | sort_by(-.strength) | .[0:N]'` (top-N coupling for FILE), "
+    '`roam --json coupling -n 500 | jq \'[.pairs[] | select(.file_a=="FILE" or .file_b=="FILE")] | sort_by(-.strength) | .[0:N]\'` (top-N coupling for FILE), '
     "`roam --json deps FILE` (imports), "
     "`roam --json uses SYMBOL` (callers), "
     "`roam --json search PATTERN` (find symbol by name substring), "
@@ -178,12 +178,8 @@ async def run_agent(name: str, options: ClaudeAgentOptions, prompt: str) -> Agen
                 u = msg.usage or {}
                 run.input_tokens += int(u.get("input_tokens", 0) or 0)
                 run.output_tokens += int(u.get("output_tokens", 0) or 0)
-                run.cache_creation_tokens += int(
-                    u.get("cache_creation_input_tokens", 0) or 0
-                )
-                run.cache_read_tokens += int(
-                    u.get("cache_read_input_tokens", 0) or 0
-                )
+                run.cache_creation_tokens += int(u.get("cache_creation_input_tokens", 0) or 0)
+                run.cache_read_tokens += int(u.get("cache_read_input_tokens", 0) or 0)
     except Exception as e:
         run.is_error = True
         run.text_output += f"\n[exception: {e}]"
@@ -241,9 +237,7 @@ async def compare(task_id: str) -> list[AgentRun]:
     for name, opts in configs:
         print(f"  [running {name}...]", flush=True)
         r = await run_agent(name, opts, prompt)
-        roam_pct = (
-            100.0 * _roam_call_count(r.tool_counts) / max(sum(r.tool_counts.values()), 1)
-        )
+        roam_pct = 100.0 * _roam_call_count(r.tool_counts) / max(sum(r.tool_counts.values()), 1)
         print(
             f"  → {r.total_turns} turns, {r.wall_time:.1f}s, "
             f"${r.total_cost:.4f}, {sum(r.tool_counts.values())} tools "

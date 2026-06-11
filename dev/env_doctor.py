@@ -152,10 +152,7 @@ def _classify_conflicts(lines: list[str], relevant_pkgs: set[str]) -> tuple[list
     external: list[Conflict] = []
     for line in lines:
         offender, required, provided = _parse_conflict_line(line)
-        is_relevant = any(
-            pkg and pkg in relevant_pkgs
-            for pkg in (offender, required, provided)
-        )
+        is_relevant = any(pkg and pkg in relevant_pkgs for pkg in (offender, required, provided))
         conflict = Conflict(
             line=line,
             offender=offender,
@@ -213,7 +210,7 @@ def main() -> int:
     if args.require_venv and not in_venv:
         print("ERROR: not running inside a virtual environment.")
         print("Create one with: python -m venv .venv")
-        print("Then install deps with: python -m pip install -e \".[dev,mcp,semantic]\"")
+        print('Then install deps with: python -m pip install -e ".[dev,mcp,semantic]"')
         payload["status"] = "error"
         payload["reason"] = "missing_venv"
         if args.json:

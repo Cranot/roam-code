@@ -472,7 +472,7 @@ def _cluster_for_value_with_context(value: int | float, line: str) -> str:
     """Context-aware sibling of ``_cluster_for_value``.
 
     Peeks at the source-line text to break the systemic FPs observed in
-    the 2026-06-02 dogfood of ``src/roam/plan/compiler.py``:
+    the dogfood of ``src/roam/plan/compiler.py``:
 
     - ``sqlite3.connect(path, timeout=1.0)`` mis-classified as
       ``percentage``

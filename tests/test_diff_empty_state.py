@@ -7,7 +7,7 @@ to always emit a ``json_envelope("diff", ...)`` with a ``no_changes``
 state, even on the empty path.
 
 These tests pin the envelope shape so the regression cannot reappear.
-See ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 1 for context.
+See `the dogfood synthesis notes` Pattern 1 for context.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """Tests for the proof_bundle composer + `roam proof-bundle` CLI.
 
-Per project_pivot_to_roam_guard Item 3: composes the AgentChangeProofBundle
+Per the Roam Guard pivot plan, item 3: composes the AgentChangeProofBundle
 v1 schema from a pr-bundle dict.
 """
 

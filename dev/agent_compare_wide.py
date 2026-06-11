@@ -18,6 +18,7 @@ data on disk.
 Run:
     dev/.venv-agent/bin/python dev/agent_compare_wide.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,15 +28,6 @@ import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-    query,
-)
-
 # Reuse system prompts from the v1 harness — keep agents identical so
 # only the task corpus is the new variable.
 from agent_compare import (  # type: ignore[import-not-found]
@@ -43,6 +35,14 @@ from agent_compare import (  # type: ignore[import-not-found]
     ROAM_BASH_SYSTEM,
     VANILLA_SYSTEM,
     WIRED_SYSTEM,
+)
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+    query,
 )
 
 
@@ -230,9 +230,7 @@ def _serialize_run(r: AgentRun) -> dict:
 async def run_wave(task_id: str, prompt: str) -> list[AgentRun]:
     print(f"\n{'=' * 72}\nWAVE: {task_id}\n{'=' * 72}\n{prompt}\n")
     t0 = time.monotonic()
-    runs = await asyncio.gather(
-        *(run_agent(name, opts_fn(), prompt) for name, opts_fn in CONFIGS)
-    )
+    runs = await asyncio.gather(*(run_agent(name, opts_fn(), prompt) for name, opts_fn in CONFIGS))
     wall = time.monotonic() - t0
     print(f"  [parallel wall: {wall:.1f}s]")
 

@@ -17,6 +17,7 @@ Usage:
   python3 scripts/roam_fallback_diag.py roam_file_info [--since YYYY-MM-DD]
   python3 scripts/roam_fallback_diag.py roam_uses
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,7 +50,7 @@ def _tool_calls(path: str):
                 m = e.get("message", {})
                 if not isinstance(m, dict):
                     continue
-                for b in (m.get("content") or []):
+                for b in m.get("content") or []:
                     if isinstance(b, dict) and b.get("type") == "tool_use":
                         yield (b.get("name") or "", b.get("input") or {})
     except OSError:
@@ -57,8 +58,7 @@ def _tool_calls(path: str):
 
 
 def _target(ti: dict) -> str:
-    for k in ("query", "symbol", "name", "pattern", "path", "file",
-              "file_path", "filename", "filepath"):
+    for k in ("query", "symbol", "name", "pattern", "path", "file", "file_path", "filename", "filepath"):
         v = ti.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip().strip("\"'`").lower()
@@ -86,9 +86,11 @@ def main() -> int:
     else:
         cutoff = (_dt.datetime.utcnow() - _dt.timedelta(days=14)).timestamp()
 
-    files = [f for f in glob.glob(os.path.join(args.projects_dir, "**", "*.jsonl"),
-                                  recursive=True)
-             if os.path.exists(f) and os.path.getmtime(f) >= cutoff][: args.max_files]
+    files = [
+        f
+        for f in glob.glob(os.path.join(args.projects_dir, "**", "*.jsonl"), recursive=True)
+        if os.path.exists(f) and os.path.getmtime(f) >= cutoff
+    ][: args.max_files]
 
     cases = collections.Counter()
     samples = collections.defaultdict(list)
@@ -106,7 +108,7 @@ def main() -> int:
             tgt_tokens = {t for t in re.split(r"[\W_]+", tgt) if len(t) >= 3}
             if not tgt_tokens:
                 continue
-            for nm, nti in calls[i + 1: i + 4]:
+            for nm, nti in calls[i + 1 : i + 4]:
                 if nm.startswith(_PREFIX):
                     break  # chained into more roam → not a fallback
                 txt = ""
@@ -132,10 +134,12 @@ def main() -> int:
                     samples[key].append((tgt[:34], txt[:56]))
                 break
 
-    print(f"=== {args.tool}: {n_calls} calls, {n_fallbacks} fallbacks "
-          f"({n_fallbacks*100//n_calls if n_calls else 0}%) ===\n")
+    print(
+        f"=== {args.tool}: {n_calls} calls, {n_fallbacks} fallbacks "
+        f"({n_fallbacks * 100 // n_calls if n_calls else 0}%) ===\n"
+    )
     for k, v in cases.most_common():
-        print(f"  {k}: {v} ({v*100//n_fallbacks if n_fallbacks else 0}%)")
+        print(f"  {k}: {v} ({v * 100 // n_fallbacks if n_fallbacks else 0}%)")
     print()
     for k, ss in samples.items():
         print(f"--- {k} ---")

@@ -1,4 +1,5 @@
 """Profile MCP server cold import to find slow modules."""
+
 import cProfile
 import io
 import pstats

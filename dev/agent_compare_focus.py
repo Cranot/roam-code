@@ -18,6 +18,7 @@ generation, not just precise file:line retrieval.
 Run:
     dev/.venv-agent/bin/python dev/agent_compare_focus.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 
+from agent_compare import ROAM_AGENT_SYSTEM, VANILLA_SYSTEM  # type: ignore[import-not-found]
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -35,8 +37,6 @@ from claude_agent_sdk import (
     ToolUseBlock,
     query,
 )
-
-from agent_compare import ROAM_AGENT_SYSTEM, VANILLA_SYSTEM  # type: ignore[import-not-found]
 
 
 @dataclass

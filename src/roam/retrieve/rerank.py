@@ -92,7 +92,7 @@ def structural_score(
     # consistently lifts the right files into top-K.
     path_token_boost = _path_token_boost(candidates, task)
 
-    # R.6 (dogfood 2026-05-01) — rule-YAML demotion. For
+    # R.6 (dogfood ) — rule-YAML demotion. For
     # implementation-style queries ("where is X", "how does Y work"),
     # the rules/community/*.yaml files clog 30% of top-K because they
     # contain literal token matches like "clone" or "match" but are
@@ -100,7 +100,7 @@ def structural_score(
     # in rule-corpus paths *unless* the query is rule-shaped.
     rule_yaml_penalty = _rule_yaml_penalty(candidates, task)
 
-    # dogfood 2026-05-04 — test-file demotion. Same family
+    # dogfood — test-file demotion. Same family
     # of false positive: implementation-style queries surfaced
     # ``test_verify_patch_match`` above the actual
     # ``check_clones_not_edited`` because the test had higher
@@ -109,7 +109,7 @@ def structural_score(
     # wants tests.
     test_file_penalty = _test_file_penalty(candidates, task)
 
-    # R.7 (dogfood 2026-05-01) — cmd-companion boost. The
+    # R.7 (dogfood ) — cmd-companion boost. The
     # ``commands/cmd_FOO.py`` file is the CLI wrapper for module
     # ``FOO/``; the two are conceptually linked but share no tokens
     # in their paths. When a candidate file is a cmd_FOO.py and any
@@ -159,7 +159,7 @@ def structural_score(
         cfg = get_retrieve_config(config_root)
         lexical_baseline = float(cfg.get("lexical_baseline", DEFAULT_LEXICAL_BASELINE))
 
-    # dogfood 2026-05-04 — implementation-style queries shift
+    # dogfood — implementation-style queries shift
     # weight from structural (alpha) toward lexical (lexical_baseline).
     # The query "where is the symbol resolver" had ``_resolve_file``
     # (PR=0.99, fts=0.65) ranking #1 over ``find_symbol`` (PR=0.16,
@@ -373,7 +373,7 @@ def _is_test_path(path: str) -> bool:
 
 
 def _test_file_penalty(candidates: list[dict], task: str) -> dict[int, float]:
-    """Demote test-file candidates for implementation-style queries. dogfood, 2026-05-04: a query like *"where is the patch
+    """Demote test-file candidates for implementation-style queries. dogfood: a query like *"where is the patch
     verifier with clones-not-edited check"* surfaced
     ``test_verify_patch_match`` (a test) as the top result and the
     actual ``check_clones_not_edited`` implementation at #4. The

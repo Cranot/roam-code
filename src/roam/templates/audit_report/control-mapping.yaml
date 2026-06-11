@@ -2,7 +2,7 @@
 #
 # Maps Roam-produced change evidence to external governance frameworks.
 #
-# WORDING DISCIPLINE (per BUILD-PRIORITIES-2026-05-13.md):
+# WORDING DISCIPLINE (per the build-priority notes):
 #   - This file uses "maps to" and "supports evidence for."
 #   - This file does NOT make legal compliance claims.
 #   - A control passing in this map does NOT certify the customer is compliant
@@ -13,7 +13,7 @@
 #   control_id        - stable identifier
 #   source_framework  - short name of the framework (e.g., eu_ai_act_art_12).
 #                       Renamed from `standard` in v0 to match the crosswalk
-#                       vocabulary (AGENTIC-ASSURANCE-CROSSWALK-2026-05-13.md).
+#                       vocabulary (the assurance-crosswalk notes).
 #   claim             - human-readable one-line claim
 #   required_evidence - Roam evidence fields needed (dotted refs)
 #   evidence_types    - ChangeEvidence field categories that satisfy the
@@ -300,7 +300,7 @@ controls:
       Gate-evaluation events are emitted by the constitution substrate; the
       surface for "decision input hash -> decision output hash" decision
       receipts is on the roadmap but not fully wired today (see
-      ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md "MCP trust boundary").
+      the evidence-compiler architecture notes "MCP trust boundary").
 
   # ---------------------------------------------------------------------------
   # SOC 2 CC8.1 (change management)
@@ -418,7 +418,7 @@ controls:
       relevant context before editing.
     notes: |
       `changed_subjects` is a `ChangeEvidence` field defined in
-      ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md and currently in flight
+      the evidence-compiler architecture notes and currently in flight
       (W174). Until the evidence package schema v0 lands, audit-report
       renderers should fall back to `pr_bundle.affected_symbols[].name` as
       the substitute key.

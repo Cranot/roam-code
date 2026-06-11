@@ -13,6 +13,7 @@ Tag selection:
 
 Compares multiple tagged runs side-by-side when given >1 tag.
 """
+
 from __future__ import annotations
 
 import json
@@ -58,7 +59,9 @@ def load(tag: str) -> tuple[str, list[Row]]:
                 total = sum(tc.values()) or 1
                 rows.append(
                     Row(
-                        repo=repo, task=task, name=r["name"],
+                        repo=repo,
+                        task=task,
+                        name=r["name"],
                         turns=r.get("total_turns", 0),
                         tools=sum(tc.values()),
                         roam_pct=100.0 * _roam(tc) / total,
@@ -78,7 +81,9 @@ def per_repo_table(rows: list[Row]) -> None:
         by[r.repo][r.task].append(r)
     for repo in sorted(by):
         print(f"\n{'=' * 110}\nREPO: {repo}\n{'=' * 110}")
-        print(f"{'task':<32} {'agent':<11} {'turns':>5} {'tools':>5} {'roam%':>6} {'wall':>7} {'cost':>8} {'out':>6} {'ans_chars':>10} {'err':>4}")
+        print(
+            f"{'task':<32} {'agent':<11} {'turns':>5} {'tools':>5} {'roam%':>6} {'wall':>7} {'cost':>8} {'out':>6} {'ans_chars':>10} {'err':>4}"
+        )
         print("-" * 110)
         for task in sorted(by[repo]):
             rs = sorted(by[repo][task], key=lambda x: 0 if x.name == "vanilla" else 1)
@@ -114,7 +119,9 @@ def agg(rows: list[Row]) -> dict[str, dict[str, float]]:
 
 def _print_agg(name: str, a: dict[str, dict[str, float]]) -> None:
     print(f"\n{'=' * 110}\n{name}\n{'=' * 110}")
-    print(f"{'agent':<11} {'#':>4} {'Σturns':>7} {'Σtools':>7} {'Σwall':>8} {'Σcost':>9} {'Σout':>8} {'Σans':>8} {'avg roam%':>10} {'err':>4}")
+    print(
+        f"{'agent':<11} {'#':>4} {'Σturns':>7} {'Σtools':>7} {'Σwall':>8} {'Σcost':>9} {'Σout':>8} {'Σans':>8} {'avg roam%':>10} {'err':>4}"
+    )
     print("-" * 100)
     for ag in ["vanilla", "roam-agent"]:
         if ag not in a:
@@ -127,8 +134,10 @@ def _print_agg(name: str, a: dict[str, dict[str, float]]) -> None:
         )
     if "vanilla" in a and "roam-agent" in a:
         v, r = a["vanilla"], a["roam-agent"]
+
         def d(x, y):
             return f"{(y - x) / max(x, 1) * 100:+.0f}%"
+
         print(
             f"{'Δ ra/van':<11} {'':>4} {d(v['turns'], r['turns']):>7} {d(v['tools'], r['tools']):>7} "
             f"{d(v['wall'], r['wall']):>8} {d(v['cost'], r['cost']):>9} {d(v['out_tok'], r['out_tok']):>8} {d(v['ans'], r['ans']):>8}"
@@ -170,7 +179,7 @@ def main() -> None:
         for repo in sorted({r.repo for r in rows}):
             _print_agg(f"AGGREGATE — {repo}", agg([r for r in rows if r.repo == repo]))
             wins([r for r in rows if r.repo == repo], f"{repo}")
-        _print_agg(f"OVERALL — all repos", agg(rows))
+        _print_agg("OVERALL — all repos", agg(rows))
         wins(rows, "all repos")
 
     if len(all_rows) > 1:

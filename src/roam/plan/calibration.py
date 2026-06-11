@@ -69,7 +69,7 @@ class CalibrationProfile:
 
 
 # --- The default profile: validated this session on Claude 4.x ---
-# Source: project_all_levers_breakthrough.md, project_x3_haiku_l1_breakthrough.md
+# Source: the compiler lever-inventory notes
 CLAUDE_2026_05 = CalibrationProfile(
     name="claude-2026-05",
     family="claude",

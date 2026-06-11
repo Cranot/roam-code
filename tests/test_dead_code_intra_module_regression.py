@@ -91,5 +91,5 @@ def test_dead_code_does_not_flag_intra_module_used_symbol(symbol, defining_file,
         f"{symbol} (defined at {defining_file}) is flagged as SAFE to delete "
         f"but has real intra-module usage: {usage_description}. "
         f"Bug: roam_dead_code missed the intra-module edge. "
-        f"See ROAM-DEAD-CODE-BUG-2026-05-24.md."
+        f"See the dead-code regression notes."
     )

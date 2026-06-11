@@ -1,7 +1,7 @@
 """Unit tests for roam.plan.compiler ArtifactSelector policy.
 
 The policy was empirically locked 2026-05-28 from a 670-cell Sonnet 4.6
-benchmark + 19-cell Opus 4.8 spike. See FINAL-EVALUATION-2026-05-28.md.
+benchmark + 19-cell Opus 4.8 spike. See the final evaluation notes.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ def test_facts_contract_omits_starter_for_freeform_post_v04_revert():
     dispatcher made agents do extra round-trips without resolution.
     Reverted: freeform_explore has no starter again. The R9 minimal
     envelope is the production winner; surface envelope-shape lever is
-    exhausted. See [[project_v04_envelope_regression]]."""
+    exhausted. See the envelope-regression notes."""
     plan = compile_plan("investigate why authentication is slow")
     env = plan.to_facts_contract_envelope()
     plan_obj = env["plan"]

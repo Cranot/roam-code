@@ -652,7 +652,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
         if candidates
         else "No candidates matched the task text"
     )
-    # R.5 (dogfood 2026-05-01): "trace the login flow" against a repo
+    # R.5 (dogfood ): "trace the login flow" against a repo
     # with no login flow returned 20 spans with no warning. The agent
     # had no signal that the answer was junk. We now prepend a
     # confidence tag to the verdict when (a) the top score is below

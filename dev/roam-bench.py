@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 import sqlite3
 import subprocess
 import sys
@@ -18,40 +17,70 @@ print = partial(print, flush=True)
 # ── Repo catalogue ──────────────────────────────────────────────────────────
 
 REPOS = {
-    "fastapi":      {"url": "https://github.com/tiangolo/fastapi.git",       "lang": "py"},
-    "django":       {"url": "https://github.com/django/django.git",          "lang": "py"},
-    "cli":          {"url": "https://github.com/cli/cli.git",                "lang": "go"},
-    "gin":          {"url": "https://github.com/gin-gonic/gin.git",          "lang": "go"},
-    "express":      {"url": "https://github.com/expressjs/express.git",      "lang": "js"},
-    "axios":        {"url": "https://github.com/axios/axios.git",            "lang": "js"},
-    "svelte":       {"url": "https://github.com/sveltejs/svelte.git",        "lang": "ts"},
-    "vue":          {"url": "https://github.com/vuejs/core.git",             "lang": "ts"},
-    "nextjs":       {"url": "https://github.com/vercel/next.js.git",         "lang": "ts"},
-    "ripgrep":      {"url": "https://github.com/BurntSushi/ripgrep.git",     "lang": "rs"},
-    "tokio":        {"url": "https://github.com/tokio-rs/tokio.git",         "lang": "rs"},
-    "spring-boot":  {"url": "https://github.com/spring-projects/spring-boot.git", "lang": "java"},
-    "laravel":      {"url": "https://github.com/laravel/framework.git",          "lang": "php"},
+    "fastapi": {"url": "https://github.com/tiangolo/fastapi.git", "lang": "py"},
+    "django": {"url": "https://github.com/django/django.git", "lang": "py"},
+    "cli": {"url": "https://github.com/cli/cli.git", "lang": "go"},
+    "gin": {"url": "https://github.com/gin-gonic/gin.git", "lang": "go"},
+    "express": {"url": "https://github.com/expressjs/express.git", "lang": "js"},
+    "axios": {"url": "https://github.com/axios/axios.git", "lang": "js"},
+    "svelte": {"url": "https://github.com/sveltejs/svelte.git", "lang": "ts"},
+    "vue": {"url": "https://github.com/vuejs/core.git", "lang": "ts"},
+    "nextjs": {"url": "https://github.com/vercel/next.js.git", "lang": "ts"},
+    "ripgrep": {"url": "https://github.com/BurntSushi/ripgrep.git", "lang": "rs"},
+    "tokio": {"url": "https://github.com/tokio-rs/tokio.git", "lang": "rs"},
+    "spring-boot": {"url": "https://github.com/spring-projects/spring-boot.git", "lang": "java"},
+    "laravel": {"url": "https://github.com/laravel/framework.git", "lang": "php"},
 }
 
 SLOW_REPOS = {"django", "spring-boot", "nextjs"}
 
 ALL_COMMANDS = [
-    "index", "map", "file", "symbol", "trace", "deps", "module", "health",
-    "clusters", "layers", "weather", "dead", "search", "grep", "uses",
-    "impact", "owner", "coupling", "fan", "diff", "describe", "test-map",
-    "sketch", "context", "safe-delete", "pr-risk", "split", "risk", "why",
+    "index",
+    "map",
+    "file",
+    "symbol",
+    "trace",
+    "deps",
+    "module",
+    "health",
+    "clusters",
+    "layers",
+    "weather",
+    "dead",
+    "search",
+    "grep",
+    "uses",
+    "impact",
+    "owner",
+    "coupling",
+    "fan",
+    "diff",
+    "describe",
+    "test-map",
+    "sketch",
+    "context",
+    "safe-delete",
+    "pr-risk",
+    "split",
+    "risk",
+    "why",
 ]
 
 BENCH_DIR = Path(__file__).resolve().parent / "bench-repos"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+
 def run(cmd, cwd=None, timeout=120, capture=True):
     """Run a subprocess, return (returncode, stdout, stderr)."""
     try:
         r = subprocess.run(
-            cmd, cwd=cwd, timeout=timeout, capture_output=capture,
-            encoding="utf-8", errors="replace",
+            cmd,
+            cwd=cwd,
+            timeout=timeout,
+            capture_output=capture,
+            encoding="utf-8",
+            errors="replace",
         )
         return r.returncode, r.stdout or "", r.stderr or ""
     except subprocess.TimeoutExpired:
@@ -94,6 +123,7 @@ def bar(value, max_val=10, width=20):
 
 # ── Phase 1: Clone / update repos ──────────────────────────────────────────
 
+
 def setup_repos(names):
     BENCH_DIR.mkdir(exist_ok=True)
     for i, name in enumerate(names, 1):
@@ -115,6 +145,7 @@ def setup_repos(names):
 
 # ── Phase 2: Index repos ───────────────────────────────────────────────────
 
+
 def index_repo(name, idx, total):
     repo_dir = BENCH_DIR / name
     print(f"  [{idx}/{total}] {name}: indexing ...")
@@ -129,8 +160,7 @@ def index_repo(name, idx, total):
     if conn:
         f, s, e = basic_counts(conn)
         rate = f / elapsed if elapsed > 0 else 0
-        print(f"    done in {fmt_duration(elapsed)} - {f} files, {s} symbols, "
-              f"{e} edges ({rate:.0f} files/s)")
+        print(f"    done in {fmt_duration(elapsed)} - {f} files, {s} symbols, {e} edges ({rate:.0f} files/s)")
         conn.close()
     else:
         print(f"    done in {fmt_duration(elapsed)}")
@@ -138,6 +168,7 @@ def index_repo(name, idx, total):
 
 
 # ── Phase 3: Measure quality metrics ───────────────────────────────────────
+
 
 def open_db(repo_dir):
     db_path = repo_dir / ".roam" / "index.db"
@@ -158,32 +189,42 @@ def basic_counts(conn):
 def language_breakdown(conn):
     """Count files per detected language."""
     rows = conn.execute(
-        "SELECT language, COUNT(*) as cnt FROM files "
-        "WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
+        "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
     ).fetchall()
     return {r[0]: r[1] for r in rows}
 
 
 def symbol_kind_breakdown(conn):
     """Count symbols per kind."""
-    rows = conn.execute(
-        "SELECT kind, COUNT(*) as cnt FROM symbols GROUP BY kind ORDER BY cnt DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT kind, COUNT(*) as cnt FROM symbols GROUP BY kind ORDER BY cnt DESC").fetchall()
     return {r[0]: r[1] for r in rows}
 
 
 def edge_kind_breakdown(conn):
     """Count edges per kind."""
-    rows = conn.execute(
-        "SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC").fetchall()
     return {r[0]: r[1] for r in rows}
 
 
 CODE_LANGUAGES = {
-    "python", "javascript", "typescript", "go", "rust", "java", "c", "cpp",
-    "csharp", "ruby", "php", "swift", "kotlin", "scala", "vue", "svelte",
-    "tsx", "jsx",
+    "python",
+    "javascript",
+    "typescript",
+    "go",
+    "rust",
+    "java",
+    "c",
+    "cpp",
+    "csharp",
+    "ruby",
+    "php",
+    "swift",
+    "kotlin",
+    "scala",
+    "vue",
+    "svelte",
+    "tsx",
+    "jsx",
 }
 
 
@@ -195,18 +236,25 @@ def symbol_coverage(conn):
     # Exclude build artifacts, vendored code, minified files, test/fixture dirs
     # Each pattern needs both slash variants (fwd/back) AND root-level start
     skip_dirs = [
-        "dist", "vendor", "build", "node_modules",
-        "__tests__", "tests", "test", "__test__",
-        "spec", "__benchmarks__", "fixtures", "__fixtures__",
+        "dist",
+        "vendor",
+        "build",
+        "node_modules",
+        "__tests__",
+        "tests",
+        "test",
+        "__test__",
+        "spec",
+        "__benchmarks__",
+        "fixtures",
+        "__fixtures__",
     ]
     parts = ["AND path NOT LIKE '%.min.js' AND path NOT LIKE '%.min.css'"]
     for d in skip_dirs:
         parts.append(f"AND path NOT LIKE '%/{d}/%' AND path NOT LIKE '%\\{d}\\%'")
         parts.append(f"AND path NOT LIKE '{d}/%' AND path NOT LIKE '{d}\\%'")
     exclusion = "\n        ".join(parts)
-    code_files = conn.execute(
-        f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter}) {exclusion}"
-    ).fetchone()[0]
+    code_files = conn.execute(f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter}) {exclusion}").fetchone()[0]
     if code_files == 0:
         code_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         if code_files == 0:
@@ -308,13 +356,16 @@ def hidden_coupling_pct(conn):
     hidden = 0
     for r in rows:
         a, b = r[0], r[1]
-        has_edge = conn.execute("""
+        has_edge = conn.execute(
+            """
             SELECT 1 FROM file_edges
             WHERE ((source_file_id = ? AND target_file_id = ?)
                 OR (source_file_id = ? AND target_file_id = ?))
               AND symbol_count >= 2
             LIMIT 1
-        """, (a, b, b, a)).fetchone()
+        """,
+            (a, b, b, a),
+        ).fetchone()
         if not has_edge:
             hidden += 1
     return (hidden / len(rows)) * 100
@@ -324,8 +375,8 @@ def graph_richness(conn, repo_dir):
     """Compute layer count, cycle count, cluster count using roam internals."""
     try:
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
         from roam.graph.cycles import find_cycles
+        from roam.graph.layers import detect_layers
 
         G = build_symbol_graph(conn)
         layers = detect_layers(G)
@@ -337,9 +388,7 @@ def graph_richness(conn, repo_dir):
         layer_count = 0
         cycle_count = 0
 
-    cluster_count = conn.execute(
-        "SELECT COUNT(DISTINCT cluster_id) FROM clusters"
-    ).fetchone()[0]
+    cluster_count = conn.execute("SELECT COUNT(DISTINCT cluster_id) FROM clusters").fetchone()[0]
 
     return layer_count, cycle_count, cluster_count
 
@@ -392,12 +441,10 @@ def qualified_name_usage(conn):
 def orphan_file_rate(conn):
     """% of code files not involved in any file_edge (neither source nor target)."""
     lang_filter = ",".join(f"'{l}'" for l in CODE_LANGUAGES)
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter})"
-    ).fetchone()[0]
+    total = conn.execute(f"SELECT COUNT(*) FROM files WHERE language IN ({lang_filter})").fetchone()[0]
     if total == 0:
         return 0.0
-    connected = conn.execute(f"""
+    connected = conn.execute("""
         SELECT COUNT(DISTINCT id) FROM (
             SELECT source_file_id as id FROM file_edges
             UNION
@@ -474,21 +521,18 @@ def measure(name, index_time):
 
 # ── Phase 4: Command validation ────────────────────────────────────────────
 
+
 def sample_args(conn):
     """Pick sample args for commands that need them."""
     # Get a file path with symbols (more interesting than random)
     file_row = conn.execute(
-        "SELECT f.path FROM files f "
-        "JOIN symbols s ON s.file_id = f.id "
-        "GROUP BY f.id ORDER BY COUNT(*) DESC LIMIT 1"
+        "SELECT f.path FROM files f JOIN symbols s ON s.file_id = f.id GROUP BY f.id ORDER BY COUNT(*) DESC LIMIT 1"
     ).fetchone()
     file_path = file_row[0] if file_row else ""
 
     # Get two different symbol names for trace (src != dst)
     sym_rows = conn.execute(
-        "SELECT DISTINCT name FROM symbols "
-        "WHERE kind IN ('function','method','class') "
-        "ORDER BY RANDOM() LIMIT 2"
+        "SELECT DISTINCT name FROM symbols WHERE kind IN ('function','method','class') ORDER BY RANDOM() LIMIT 2"
     ).fetchall()
     sym_name = sym_rows[0][0] if sym_rows else ""
     sym_name2 = sym_rows[1][0] if len(sym_rows) > 1 else sym_name
@@ -509,8 +553,7 @@ def validate_commands(name):
     repo_dir = BENCH_DIR / name
     conn = open_db(repo_dir)
     if conn is None:
-        return {"total": 28, "passed": 0, "failed": 28, "failures": ["NO DB"],
-                "timings": {}, "sampled_args": {}}
+        return {"total": 28, "passed": 0, "failed": 28, "failures": ["NO DB"], "timings": {}, "sampled_args": {}}
 
     file_path, sym_name, sym_name2, dir_path = sample_args(conn)
     conn.close()
@@ -523,36 +566,36 @@ def validate_commands(name):
     # Build command invocations
     cmds = {
         # No-arg commands
-        "map":      ["map"],
-        "health":   ["health"],
+        "map": ["map"],
+        "health": ["health"],
         "clusters": ["clusters"],
-        "layers":   ["layers"],
-        "dead":     ["dead"],
+        "layers": ["layers"],
+        "dead": ["dead"],
         "coupling": ["coupling"],
-        "weather":  ["weather"],
-        "fan":      ["fan", "symbol"],
+        "weather": ["weather"],
+        "fan": ["fan", "symbol"],
         "describe": ["describe"],
-        "diff":     ["diff"],
+        "diff": ["diff"],
         # With-arg commands
-        "file":     ["file", file_path] if file_path else None,
-        "deps":     ["deps", file_path] if file_path else None,
-        "owner":    ["owner", file_path] if file_path else None,
+        "file": ["file", file_path] if file_path else None,
+        "deps": ["deps", file_path] if file_path else None,
+        "owner": ["owner", file_path] if file_path else None,
         "test-map": ["test-map", sym_name] if sym_name else None,
-        "symbol":   ["symbol", sym_name] if sym_name else None,
-        "uses":     ["uses", sym_name] if sym_name else None,
-        "impact":   ["impact", sym_name] if sym_name else None,
-        "search":   ["search", sym_name] if sym_name else None,
-        "trace":    ["trace", sym_name, sym_name2] if sym_name and sym_name2 else None,
-        "module":   ["module", dir_path] if dir_path else None,
-        "sketch":   ["sketch", dir_path] if dir_path else None,
-        "grep":     ["grep", sym_name] if sym_name else None,
+        "symbol": ["symbol", sym_name] if sym_name else None,
+        "uses": ["uses", sym_name] if sym_name else None,
+        "impact": ["impact", sym_name] if sym_name else None,
+        "search": ["search", sym_name] if sym_name else None,
+        "trace": ["trace", sym_name, sym_name2] if sym_name and sym_name2 else None,
+        "module": ["module", dir_path] if dir_path else None,
+        "sketch": ["sketch", dir_path] if dir_path else None,
+        "grep": ["grep", sym_name] if sym_name else None,
         # Compound / new commands
-        "context":     ["context", sym_name] if sym_name else None,
+        "context": ["context", sym_name] if sym_name else None,
         "safe-delete": ["safe-delete", sym_name] if sym_name else None,
-        "pr-risk":     ["pr-risk"],
-        "split":       ["split", file_path] if file_path else None,
-        "risk":        ["risk"],
-        "why":         ["why", sym_name] if sym_name else None,
+        "pr-risk": ["pr-risk"],
+        "split": ["split", file_path] if file_path else None,
+        "risk": ["risk"],
+        "why": ["why", sym_name] if sym_name else None,
     }
 
     passed = 0
@@ -582,8 +625,16 @@ def validate_commands(name):
             # Count output lines for context
             out_lines = len(stdout.strip().split("\n")) if stdout.strip() else 0
             # Warn if output looks suspect
-            min_expected = {"map": 3, "health": 3, "file": 3, "describe": 10,
-                           "layers": 3, "clusters": 3, "fan": 3, "sketch": 1}
+            min_expected = {
+                "map": 3,
+                "health": 3,
+                "file": 3,
+                "describe": 10,
+                "layers": 3,
+                "clusters": 3,
+                "fan": 3,
+                "sketch": 1,
+            }
             warn = ""
             if cmd_name in min_expected and out_lines < min_expected[cmd_name]:
                 warn = f"  [WARN: only {out_lines} lines]"
@@ -600,14 +651,16 @@ def validate_commands(name):
             if not err_line:
                 err_line = snippet[-1][:150] if snippet else f"exit {rc}"
 
-            failures.append({
-                "command": cmd_name,
-                "invocation": full_cmd,
-                "time_s": elapsed,
-                "exit_code": rc,
-                "error": err_line,
-                "stderr": err.strip()[:500],
-            })
+            failures.append(
+                {
+                    "command": cmd_name,
+                    "invocation": full_cmd,
+                    "time_s": elapsed,
+                    "exit_code": rc,
+                    "error": err_line,
+                    "stderr": err.strip()[:500],
+                }
+            )
             print(f"    FAIL  {elapsed:>6.1f}s  {full_cmd}")
             print(f"                     -> {err_line}")
 
@@ -626,6 +679,7 @@ def validate_commands(name):
 
 
 # ── Composite score ────────────────────────────────────────────────────────
+
 
 def clamp(v, lo=0.0, hi=10.0):
     return max(lo, min(hi, v))
@@ -684,20 +738,20 @@ def score_command_pass(passed, total):
 def compute_sub_scores(quality, commands):
     """Return individual sub-scores dict and composite."""
     weights = {
-        "coverage":   2.0,
-        "misres":     2.5,
-        "ambiguity":  1.0,
-        "density":    1.5,
-        "richness":   1.0,
-        "commands":   1.5,
+        "coverage": 2.0,
+        "misres": 2.5,
+        "ambiguity": 1.0,
+        "density": 1.5,
+        "richness": 1.0,
+        "commands": 1.5,
     }
     scores = {
-        "coverage":  round(score_coverage(quality["symbol_coverage_pct"]), 1),
-        "misres":    round(score_misres(quality["misres_rate_pct"]), 1),
+        "coverage": round(score_coverage(quality["symbol_coverage_pct"]), 1),
+        "misres": round(score_misres(quality["misres_rate_pct"]), 1),
         "ambiguity": round(score_ambiguity(quality["ambig_rate_pct"]), 1),
-        "density":   round(score_edge_density(quality["edge_density"]), 1),
-        "richness":  round(score_graph_richness(quality["layers"], quality["clusters"], quality["cycles"]), 1),
-        "commands":  round(score_command_pass(commands["passed"], commands["total"]), 1),
+        "density": round(score_edge_density(quality["edge_density"]), 1),
+        "richness": round(score_graph_richness(quality["layers"], quality["clusters"], quality["cycles"]), 1),
+        "commands": round(score_command_pass(commands["passed"], commands["total"]), 1),
     }
     total_weight = sum(weights.values())
     composite = round(sum(scores[k] * weights[k] for k in weights) / total_weight, 2)
@@ -705,6 +759,7 @@ def compute_sub_scores(quality, commands):
 
 
 # ── Phase 5: Report ────────────────────────────────────────────────────────
+
 
 def print_repo_card(name, data):
     """Print a detailed per-repo summary card."""
@@ -721,9 +776,11 @@ def print_repo_card(name, data):
 
     # Index stats
     t = fmt_duration(idx["time_s"]) if idx["time_s"] else "n/a"
-    cf = idx.get('code_files', '?')
-    print(f"  Index: {t} | {idx['files']} files ({cf} code) | {idx['symbols']} symbols | "
-          f"{idx['edges']} edges | {idx['file_edges']} file-edges")
+    cf = idx.get("code_files", "?")
+    print(
+        f"  Index: {t} | {idx['files']} files ({cf} code) | {idx['symbols']} symbols | "
+        f"{idx['edges']} edges | {idx['file_edges']} file-edges"
+    )
 
     # Language breakdown (top 5)
     if bd["languages"]:
@@ -744,20 +801,26 @@ def print_repo_card(name, data):
         print(f"  Edges: {', '.join(parts)}")
 
     # Quality metrics
-    print(f"  Coverage: {q['symbol_coverage_pct']:.1f}% | "
-          f"MisRes: {q['same_file_misres']} ({q['misres_rate_pct']:.2f}%) | "
-          f"Ambiguity: {q['cross_file_ambig']} ({q['ambig_rate_pct']:.1f}%)")
-    print(f"  E/S: {q['edge_density']:.2f} | Dead: {q['dead_high_conf']} | "
-          f"Hidden coupling: {q['hidden_coupling_pct']:.1f}%")
+    print(
+        f"  Coverage: {q['symbol_coverage_pct']:.1f}% | "
+        f"MisRes: {q['same_file_misres']} ({q['misres_rate_pct']:.2f}%) | "
+        f"Ambiguity: {q['cross_file_ambig']} ({q['ambig_rate_pct']:.1f}%)"
+    )
+    print(
+        f"  E/S: {q['edge_density']:.2f} | Dead: {q['dead_high_conf']} | "
+        f"Hidden coupling: {q['hidden_coupling_pct']:.1f}%"
+    )
     print(f"  Layers: {q['layers']} | Cycles: {q['cycles']} | Clusters: {q['clusters']}")
     # Enriched quality metrics
-    print(f"  Cross-file edges: {q.get('cross_file_edge_pct', 0)}% | "
-          f"Reachability: {q.get('symbol_reachability_pct', 0)}% | "
-          f"Qualified: {q.get('qualified_name_pct', 0)}% | "
-          f"Orphan files: {q.get('orphan_file_pct', 0)}%")
+    print(
+        f"  Cross-file edges: {q.get('cross_file_edge_pct', 0)}% | "
+        f"Reachability: {q.get('symbol_reachability_pct', 0)}% | "
+        f"Qualified: {q.get('qualified_name_pct', 0)}% | "
+        f"Orphan files: {q.get('orphan_file_pct', 0)}%"
+    )
 
     # Score breakdown with bars
-    print(f"  Score breakdown:")
+    print("  Score breakdown:")
     for dim in ["coverage", "misres", "ambiguity", "density", "richness", "commands"]:
         s = scores[dim]
         w = weights[dim]
@@ -775,9 +838,11 @@ def print_repo_card(name, data):
 
 def print_table(results):
     """Compact comparison table."""
-    hdr = (f"{'Repo':<14} {'Lang':>4} {'Files':>6} {'Syms':>7} {'Edges':>7} "
-           f"{'Cov%':>5} {'MisR%':>6} {'Ambig%':>6} {'E/S':>5} {'Lyrs':>4} "
-           f"{'Cmds':>5} {'Score':>6}")
+    hdr = (
+        f"{'Repo':<14} {'Lang':>4} {'Files':>6} {'Syms':>7} {'Edges':>7} "
+        f"{'Cov%':>5} {'MisR%':>6} {'Ambig%':>6} {'E/S':>5} {'Lyrs':>4} "
+        f"{'Cmds':>5} {'Score':>6}"
+    )
     print()
     print(hdr)
     print("-" * len(hdr))
@@ -804,16 +869,19 @@ def print_table(results):
     if scores:
         avg = sum(scores) / len(scores)
         print("-" * len(hdr))
-        print(f"{'AVERAGE':<14} {'':>4} {'':>6} {'':>7} {'':>7} "
-              f"{'':>5} {'':>6} {'':>6} {'':>5} {'':>4} "
-              f"{'':>5} {avg:>6.2f}")
+        print(
+            f"{'AVERAGE':<14} {'':>4} {'':>6} {'':>7} {'':>7} "
+            f"{'':>5} {'':>6} {'':>6} {'':>5} {'':>4} "
+            f"{'':>5} {avg:>6.2f}"
+        )
     print()
 
 
 def print_enriched_table(results):
     """Enriched metrics table showing deeper quality indicators."""
-    hdr = (f"{'Repo':<14} {'XFile%':>6} {'Reach%':>6} {'Qual%':>5} "
-           f"{'Orphan%':>7} {'Dead':>5} {'HidCpl%':>7} {'Score':>6}")
+    hdr = (
+        f"{'Repo':<14} {'XFile%':>6} {'Reach%':>6} {'Qual%':>5} {'Orphan%':>7} {'Dead':>5} {'HidCpl%':>7} {'Score':>6}"
+    )
     print()
     print("Enriched Quality Metrics:")
     print(hdr)
@@ -844,9 +912,8 @@ def print_language_summary(results):
         by_lang.setdefault(lang, []).append((name, data))
 
     print("Per-language summary:")
-    print(f"  {'Lang':<6} {'Repos':>5} {'Avg Score':>10} {'Avg Cov%':>9} "
-          f"{'Avg MisR%':>10} {'Avg E/S':>8}")
-    print(f"  {'-'*50}")
+    print(f"  {'Lang':<6} {'Repos':>5} {'Avg Score':>10} {'Avg Cov%':>9} {'Avg MisR%':>10} {'Avg E/S':>8}")
+    print(f"  {'-' * 50}")
     for lang in sorted(by_lang.keys()):
         entries = by_lang[lang]
         n = len(entries)
@@ -855,8 +922,9 @@ def print_language_summary(results):
         avg_misres = sum(d["quality"]["misres_rate_pct"] for _, d in entries) / n
         avg_ed = sum(d["quality"]["edge_density"] for _, d in entries) / n
         repo_names = ", ".join(nm for nm, _ in entries)
-        print(f"  {lang:<6} {n:>5} {avg_score:>10.2f} {avg_cov:>9.1f} "
-              f"{avg_misres:>10.2f} {avg_ed:>8.2f}  ({repo_names})")
+        print(
+            f"  {lang:<6} {n:>5} {avg_score:>10.2f} {avg_cov:>9.1f} {avg_misres:>10.2f} {avg_ed:>8.2f}  ({repo_names})"
+        )
     print()
 
 
@@ -901,12 +969,8 @@ def print_delta(results, baseline):
 
 
 def save_json(results, output_path, repo_names, wall_time):
-    total_pass = sum(
-        r["commands"]["passed"] for r in results.values() if r
-    )
-    total_fail = sum(
-        r["commands"]["failed"] for r in results.values() if r
-    )
+    total_pass = sum(r["commands"]["passed"] for r in results.values() if r)
+    total_fail = sum(r["commands"]["failed"] for r in results.values() if r)
     scores = [r["score"] for r in results.values() if r]
     avg_score = round(sum(scores) / len(scores), 2) if scores else 0
 
@@ -931,22 +995,20 @@ def save_json(results, output_path, repo_names, wall_time):
 
 # ── Main ────────────────────────────────────────────────────────────────────
 
+
 def main():
     wall_t0 = time.time()
 
     parser = argparse.ArgumentParser(description="Roam benchmark suite")
     parser.add_argument("--repos", help="Comma-separated repo subset")
-    parser.add_argument("--skip-slow", action="store_true",
-                        help="Skip django, spring-boot, nextjs")
-    parser.add_argument("--skip-clone", action="store_true",
-                        help="Skip git clone/update phase")
-    parser.add_argument("--skip-index", action="store_true",
-                        help="Skip indexing phase (use existing DBs)")
-    parser.add_argument("--skip-commands", action="store_true",
-                        help="Skip command validation phase")
+    parser.add_argument("--skip-slow", action="store_true", help="Skip django, spring-boot, nextjs")
+    parser.add_argument("--skip-clone", action="store_true", help="Skip git clone/update phase")
+    parser.add_argument("--skip-index", action="store_true", help="Skip indexing phase (use existing DBs)")
+    parser.add_argument("--skip-commands", action="store_true", help="Skip command validation phase")
     parser.add_argument("--baseline", help="Path to previous JSON for delta comparison")
-    parser.add_argument("--output", help="Output JSON path",
-                        default=f"bench-results-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json")
+    parser.add_argument(
+        "--output", help="Output JSON path", default=f"bench-results-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    )
 
     args = parser.parse_args()
 
@@ -965,7 +1027,7 @@ def main():
         names = [n for n in names if n not in SLOW_REPOS]
 
     print(f"{'=' * 65}")
-    print(f"  ROAM BENCHMARK - v3.8")
+    print("  ROAM BENCHMARK - v3.8")
     print(f"  {len(names)} repos: {', '.join(names)}")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 65}")
@@ -1002,24 +1064,31 @@ def main():
         print(f"  {'-' * 30}")
         data = measure(name, index_times.get(name))
         if data is None:
-            print(f"    SKIPPED (no DB)")
+            print("    SKIPPED (no DB)")
             results[name] = None
             continue
 
         # Print quick measure summary
         q = data["quality"]
         idx = data["index"]
-        print(f"    {idx['files']} files, {idx['symbols']} symbols, "
-              f"{idx['edges']} edges, coverage {q['symbol_coverage_pct']:.1f}%")
+        print(
+            f"    {idx['files']} files, {idx['symbols']} symbols, "
+            f"{idx['edges']} edges, coverage {q['symbol_coverage_pct']:.1f}%"
+        )
 
         # Validate commands
         if not args.skip_commands:
             cmd_results = validate_commands(name)
             data["commands"] = cmd_results
         else:
-            data["commands"] = {"total": len(ALL_COMMANDS), "passed": len(ALL_COMMANDS),
-                                "failed": 0, "failures": [], "timings": {},
-                                "sampled_args": {}}
+            data["commands"] = {
+                "total": len(ALL_COMMANDS),
+                "passed": len(ALL_COMMANDS),
+                "failed": 0,
+                "failures": [],
+                "timings": {},
+                "sampled_args": {},
+            }
 
         # Composite score
         sub_scores, _, composite = compute_sub_scores(data["quality"], data["commands"])
@@ -1032,7 +1101,7 @@ def main():
 
     # Phase 5: Report
     print(f"\n{'=' * 65}")
-    print(f"  RESULTS")
+    print("  RESULTS")
     print(f"{'=' * 65}")
 
     # Per-repo detail cards
@@ -1042,7 +1111,7 @@ def main():
 
     # Compact comparison table
     print(f"\n{'=' * 65}")
-    print(f"  COMPARISON TABLE")
+    print("  COMPARISON TABLE")
     print(f"{'=' * 65}")
     print_table(results)
 

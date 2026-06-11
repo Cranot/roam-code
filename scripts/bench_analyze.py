@@ -23,6 +23,7 @@ Usage
 By default the timeout cap is 90s (matches the `--timeout 90` flag the
 2026-06-02 benches were run with). Override with `--timeout-cap N`.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +38,7 @@ import sys
 def _load_cell(path: str) -> dict:
     """Classify a cell JSON into success / timeout / error.
 
-    Three on-disk shapes (2026-06-02 dogfood — there are more than two):
+    Three on-disk shapes (dogfood — there are more than two):
       - SUCCESS: full Claude SDK result envelope with `subtype == "success"`
       - TIMEOUT: `{reason, type}` (the bench wall-cap path)
       - ERROR:   `{returncode, stderr, type}` (subprocess crash / rate-limit /
@@ -94,7 +95,7 @@ def report(directory: str, timeout_cap_ms: int) -> None:
     by_cond = _aggregate(directory)
     print(f"\n{'=' * 72}")
     print(f"  {directory}")
-    print('=' * 72)
+    print("=" * 72)
 
     rows = []
     for cond in ("vanilla", "compile"):
@@ -129,44 +130,60 @@ def report(directory: str, timeout_cap_ms: int) -> None:
         pd_cost = (sum_ok_cost + n_timeout * timeout_cost_est) / denom
         success_rate = n_ok / n_dispatched
 
-        rows.append((cond, n_dispatched, n_ok, n_timeout, n_error,
-                     po_turns, po_wall, po_cost,
-                     pd_turns, pd_wall, pd_cost, success_rate))
+        rows.append(
+            (
+                cond,
+                n_dispatched,
+                n_ok,
+                n_timeout,
+                n_error,
+                po_turns,
+                po_wall,
+                po_cost,
+                pd_turns,
+                pd_wall,
+                pd_cost,
+                success_rate,
+            )
+        )
 
     if any(r[4] for r in rows):
-        print("\n  ⚠ ERROR cells detected (rate-limit / crash) — excluded from "
-              "metric averages; bench may be contaminated. Re-run when clear.")
+        print(
+            "\n  ⚠ ERROR cells detected (rate-limit / crash) — excluded from "
+            "metric averages; bench may be contaminated. Re-run when clear."
+        )
 
-    print(f"\n{'cond':10} {'n':>3} {'ok':>3} {'to':>3} {'err':>3} | "
-          f"{'ok_turns':>9} {'ok_wall_s':>10} {'ok_cost':>8} | "
-          f"{'disp_turns':>10} {'disp_wall_s':>11} {'disp_cost':>9} | success%")
+    print(
+        f"\n{'cond':10} {'n':>3} {'ok':>3} {'to':>3} {'err':>3} | "
+        f"{'ok_turns':>9} {'ok_wall_s':>10} {'ok_cost':>8} | "
+        f"{'disp_turns':>10} {'disp_wall_s':>11} {'disp_cost':>9} | success%"
+    )
     print("-" * 112)
     for r in rows:
         (cond, nd, no, nt, ne, pot, pow_, poc, pdt, pdw, pdc, sr) = r
-        print(f"  {cond:10} {nd:>3} {no:>3} {nt:>3} {ne:>3} | "
-              f"{pot:>9.2f} {pow_/1000:>9.1f}s ${poc:>6.2f} | "
-              f"{pdt:>10.2f} {pdw/1000:>10.1f}s ${pdc:>6.2f} | {sr*100:>5.0f}%")
+        print(
+            f"  {cond:10} {nd:>3} {no:>3} {nt:>3} {ne:>3} | "
+            f"{pot:>9.2f} {pow_ / 1000:>9.1f}s ${poc:>6.2f} | "
+            f"{pdt:>10.2f} {pdw / 1000:>10.1f}s ${pdc:>6.2f} | {sr * 100:>5.0f}%"
+        )
 
     # Print compile-vs-vanilla deltas for per-DISPATCHED view (the honest one)
     if len(rows) == 2:
         v, c = rows
         # tuple: (cond,nd,no,nt,ne, po_turns,po_wall,po_cost, pd_turns,pd_wall,pd_cost, sr)
         print("\n  per-DISPATCHED deltas (compile vs vanilla — the honest view):")
-        print(f"    turns:  vanilla={v[8]:>6.2f}  compile={c[8]:>6.2f}  "
-              f"delta={_percent(c[8], v[8])}")
-        print(f"    wall:   vanilla={v[9]/1000:>5.1f}s  compile={c[9]/1000:>5.1f}s  "
-              f"delta={_percent(c[9], v[9])}")
-        print(f"    cost:   vanilla=${v[10]:>5.2f}  compile=${c[10]:>5.2f}  "
-              f"delta={_percent(c[10], v[10])}")
-        print(f"    success: vanilla={v[11]*100:>3.0f}%  compile={c[11]*100:>3.0f}%")
+        print(f"    turns:  vanilla={v[8]:>6.2f}  compile={c[8]:>6.2f}  delta={_percent(c[8], v[8])}")
+        print(f"    wall:   vanilla={v[9] / 1000:>5.1f}s  compile={c[9] / 1000:>5.1f}s  delta={_percent(c[9], v[9])}")
+        print(f"    cost:   vanilla=${v[10]:>5.2f}  compile=${c[10]:>5.2f}  delta={_percent(c[10], v[10])}")
+        print(f"    success: vanilla={v[11] * 100:>3.0f}%  compile={c[11] * 100:>3.0f}%")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("directories", nargs="+",
-                    help="One or more bench-compile --out-dir paths.")
-    ap.add_argument("--timeout-cap", type=int, default=90,
-                    help="Wall cap in SECONDS used by the bench run (default 90).")
+    ap.add_argument("directories", nargs="+", help="One or more bench-compile --out-dir paths.")
+    ap.add_argument(
+        "--timeout-cap", type=int, default=90, help="Wall cap in SECONDS used by the bench run (default 90)."
+    )
     args = ap.parse_args()
     for directory in args.directories:
         if not os.path.isdir(directory):

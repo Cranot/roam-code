@@ -101,14 +101,14 @@ from roam.surface_counts import (  # noqa: E402, I001
 
 @dataclass(frozen=True)
 class Counts:
-    command_names: int       # ``roam --help-all`` row count (counts aliases)
+    command_names: int  # ``roam --help-all`` row count (counts aliases)
     canonical_commands: int  # alias-collapsed command count
-    alias_names: int         # number of alias names (command_names - canonical)
-    category_count: int      # number of categories in _CATEGORIES
-    mcp_core: int            # tools in the default ``core`` preset
-    mcp_full: int            # tools in the full preset (every @_tool decorator)
+    alias_names: int  # number of alias names (command_names - canonical)
+    category_count: int  # number of categories in _CATEGORIES
+    mcp_core: int  # tools in the default ``core`` preset
+    mcp_full: int  # tools in the full preset (every @_tool decorator)
     mcp_default_preset: int  # core + 1 meta-tool (``roam_expand_toolset``)
-    pyproject_version: str   # ``version`` string from pyproject.toml (truth)
+    pyproject_version: str  # ``version`` string from pyproject.toml (truth)
 
 
 def collect_counts(root: Path | None = None) -> Counts:
@@ -192,9 +192,7 @@ MARKER_END = "<!-- END auto-count:{name} -->"
 def _block_pattern(name: str) -> re.Pattern[str]:
     """Match the marker pair (inclusive) plus everything between them."""
     return re.compile(
-        re.escape(MARKER_BEGIN.format(name=name))
-        + r"(?P<body>.*?)"
-        + re.escape(MARKER_END.format(name=name)),
+        re.escape(MARKER_BEGIN.format(name=name)) + r"(?P<body>.*?)" + re.escape(MARKER_END.format(name=name)),
         flags=re.DOTALL,
     )
 
@@ -310,9 +308,7 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
         # truth: ``_CORE_TOOLS`` literal in ``src/roam/mcp_server.py``. W449.
         "readme-mcp-core-preset-tools": _mcp_core_preset_inline(c, root),
         # Collapsed ``<summary>`` header for the MCP tool table. W449.
-        "readme-mcp-tool-list-summary": (
-            f"<summary><strong>MCP tool list (all {c.mcp_full})</strong></summary>"
-        ),
+        "readme-mcp-tool-list-summary": (f"<summary><strong>MCP tool list (all {c.mcp_full})</strong></summary>"),
         # Collapsed ``<summary>`` header for the CLI command tables. W685 —
         # symmetric counterpart to the MCP ``(all N)`` pin so a silently
         # deleted CLI row (where deletion + addition cancel out) fails the
@@ -366,14 +362,10 @@ def _llms_install_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG0
     return {
         # Line 4: "N commands, M MCP tools, 28 languages, 100% local, zero API keys."
         "llms-install-headline": (
-            f"{c.command_names} commands, {c.mcp_full} MCP tools, 28 "
-            f"languages, 100% local, zero API keys."
+            f"{c.command_names} commands, {c.mcp_full} MCP tools, 28 languages, 100% local, zero API keys."
         ),
         # Line 81: "Run roam --help for all N commands (+ alias pairs)."
-        "llms-install-footer": (
-            f"Run `roam --help` for all {c.command_names} commands "
-            f"(+ alias pairs)."
-        ),
+        "llms-install-footer": (f"Run `roam --help` for all {c.command_names} commands (+ alias pairs)."),
     }
 
 
@@ -449,14 +441,7 @@ def _markdown_targets(root: Path) -> tuple[tuple[Path, Callable[[Counts, Path], 
 # ---------------------------------------------------------------------------
 
 
-MCP_CARD_PATH = (
-    ROOT
-    / "templates"
-    / "distribution"
-    / "landing-page"
-    / ".well-known"
-    / "mcp-server-card.json"
-)
+MCP_CARD_PATH = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
 BUNDLED_MCP_CARD_PATH = ROOT / "src" / "roam" / "mcp-server-card.json"
 
 # W844 — the two extra .well-known mirrors that ``--apply`` used to leave
@@ -465,8 +450,8 @@ BUNDLED_MCP_CARD_PATH = ROOT / "src" / "roam" / "mcp-server-card.json"
 # closes the W1308 manual-sync gap.
 _WELL_KNOWN_DIR = ROOT / "templates" / "distribution" / "landing-page" / ".well-known"
 WELL_KNOWN_MIRROR_PATHS: tuple[Path, ...] = (
-    _WELL_KNOWN_DIR / "mcp" / "server-card.json",   # SEP-1649 nested
-    _WELL_KNOWN_DIR / "mcp-server-card",            # SEP-2127 no-suffix
+    _WELL_KNOWN_DIR / "mcp" / "server-card.json",  # SEP-1649 nested
+    _WELL_KNOWN_DIR / "mcp-server-card",  # SEP-2127 no-suffix
 )
 
 
@@ -538,7 +523,7 @@ def _update_mcp_card_text(text: str, c: Counts) -> str:
     # the ``count=1`` constraint.
     new_text = re.sub(
         r'("version"\s*:\s*")[^"]+(")',
-        lambda m: f'{m.group(1)}{c.pyproject_version}{m.group(2)}',
+        lambda m: f"{m.group(1)}{c.pyproject_version}{m.group(2)}",
         new_text,
         count=1,
     )
@@ -586,10 +571,11 @@ class FileResult:
     missing_blocks: list[str]
 
 
-def _apply_markdown(path: Path, builder: Callable[[Counts, Path], dict[str, str]], c: Counts,
-                    write: bool, root: Path) -> FileResult:
+def _apply_markdown(
+    path: Path, builder: Callable[[Counts, Path], dict[str, str]], c: Counts, write: bool, root: Path
+) -> FileResult:
     text = path.read_text(encoding="utf-8")
-    # Pointer-file pattern (2026-05-22 dogfood wiring): CLAUDE.md was reduced
+    # Pointer-file pattern (dogfood wiring): CLAUDE.md was reduced
     # to a one-line ``@AGENTS.md`` import to restore Claude Code auto-load
     # WITHOUT re-introducing the internal-content mirror. The blocks the
     # script otherwise expects live in AGENTS.md, which IS swept (see
@@ -653,8 +639,7 @@ def _rotate_card_hash_pin(canonical: Path, write: bool, card_hash_test_path: Pat
     the 64-hex digit run between the quotes is touched.
     """
     if not canonical.exists() or not card_hash_test_path.exists():
-        return FileResult(path=card_hash_test_path, changed=False,
-                          missing_blocks=["<file-missing>"])
+        return FileResult(path=card_hash_test_path, changed=False, missing_blocks=["<file-missing>"])
     digest = hashlib.sha256(_canonical_card_bytes(canonical)).hexdigest()
     text = card_hash_test_path.read_text(encoding="utf-8")
     new_text, count = CARD_HASH_PIN_PATTERN.subn(
@@ -665,16 +650,14 @@ def _rotate_card_hash_pin(canonical: Path, write: bool, card_hash_test_path: Pat
     if count == 0:
         # Pin moved or was renamed — surface as a missing block so callers
         # notice rather than silently failing to update.
-        return FileResult(path=card_hash_test_path, changed=False,
-                          missing_blocks=["_EXPECTED_CARD_SHA256"])
+        return FileResult(path=card_hash_test_path, changed=False, missing_blocks=["_EXPECTED_CARD_SHA256"])
     changed = new_text != text
     if changed and write:
         card_hash_test_path.write_text(new_text, encoding="utf-8")
     return FileResult(path=card_hash_test_path, changed=changed, missing_blocks=[])
 
 
-def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True,
-        root: Path | None = None) -> int:
+def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True, root: Path | None = None) -> int:
     if root is None:
         root = ROOT
     c = collect_counts(root)
@@ -722,10 +705,12 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True,
     any_missing = any(r.missing_blocks for r in results)
 
     print(f"[build_readme_counts] mode={mode_label}")
-    print(f"  truth: command_names={c.command_names} canonical={c.canonical_commands} "
-          f"aliases={c.alias_names} categories={c.category_count} "
-          f"mcp_core={c.mcp_core} mcp_full={c.mcp_full} "
-          f"default_preset={c.mcp_default_preset}")
+    print(
+        f"  truth: command_names={c.command_names} canonical={c.canonical_commands} "
+        f"aliases={c.alias_names} categories={c.category_count} "
+        f"mcp_core={c.mcp_core} mcp_full={c.mcp_full} "
+        f"default_preset={c.mcp_default_preset}"
+    )
     for r in results:
         status = "changed" if r.changed else "ok"
         # Use the configured root for the relative display path; fall back to
@@ -740,19 +725,18 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True,
 
     if mode_label == "check":
         if any_change:
-            print("DRIFT: docs disagree with truth; run "
-                  "`python dev/build_readme_counts.py --apply` to fix.",
-                  file=sys.stderr)
+            print(
+                "DRIFT: docs disagree with truth; run `python dev/build_readme_counts.py --apply` to fix.",
+                file=sys.stderr,
+            )
             return 1
         if any_missing:
-            print("MISSING-MARKERS: some auto-count blocks are missing; "
-                  "see report above.", file=sys.stderr)
+            print("MISSING-MARKERS: some auto-count blocks are missing; see report above.", file=sys.stderr)
             return 2
         return 0
     # apply mode
     if any_missing:
-        print("WARN: some auto-count blocks were missing; those sites "
-              "were skipped.", file=sys.stderr)
+        print("WARN: some auto-count blocks were missing; those sites were skipped.", file=sys.stderr)
     return 0
 
 
@@ -761,24 +745,22 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     grp = parser.add_mutually_exclusive_group()
-    grp.add_argument("--check", action="store_true",
-                     help="exit non-zero if any file would change")
-    grp.add_argument("--apply", action="store_true",
-                     help="rewrite files in place (default)")
+    grp.add_argument("--check", action="store_true", help="exit non-zero if any file would change")
+    grp.add_argument("--apply", action="store_true", help="rewrite files in place (default)")
     parser.add_argument(
         "--no-rotate-card-hash",
         action="store_true",
         help="W844: skip auto-rotation of _EXPECTED_CARD_SHA256 in "
-             "tests/test_mcp_server_card_hash.py (default: rotate)",
+        "tests/test_mcp_server_card_hash.py (default: rotate)",
     )
     parser.add_argument(
         "--root",
         type=Path,
         default=None,
         help="Override the repo root that the script reads/writes "
-             "(default: the script's own ancestor). The ROAM_REPO_ROOT "
-             "env var sets the same value. Used by parallel-safe tests "
-             "that operate on a tmp_path copy of the count-bearing files.",
+        "(default: the script's own ancestor). The ROAM_REPO_ROOT "
+        "env var sets the same value. Used by parallel-safe tests "
+        "that operate on a tmp_path copy of the count-bearing files.",
     )
     args = parser.parse_args()
     rotate = not args.no_rotate_card_hash

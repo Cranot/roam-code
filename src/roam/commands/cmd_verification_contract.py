@@ -8,7 +8,7 @@ surfaces verdicts on what ran — that ships from `roam proof-bundle
 The judgment layer that consumes G2's command_graph and produces
 {required: [...], skipped: [...]} based on changed_files × risk × mode × policy.
 
-Per project_pivot_to_roam_guard memo, this is the gap module between
+Per the Roam Guard pivot decision, this is the gap module between
 `roam commands` (G2) and `pr-bundle emit` (proof bundle).
 
 Output formats: ``--json`` (default), text.

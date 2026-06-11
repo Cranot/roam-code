@@ -8,7 +8,7 @@ have?". Before this module existed, three commands disagreed:
 - ``roam agent-export`` reported 13 (raw SCC count, no filtering).
 
 This is Pattern 3 ("vocabulary mismatch across commands") from the
-dogfood ``SYNTHESIS-2026-05-12.md``. The fix mirrors the W16.3 ``ai_rot``
+dogfood `the dogfood synthesis notes`. The fix mirrors the W16.3 ``ai_rot``
 reconciliation: one canonical computation + a ``cycles_definition``
 label on every envelope that emits a cycle count.
 

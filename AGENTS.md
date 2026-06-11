@@ -39,7 +39,7 @@ This section codifies what makes a roam command good. Distilled from 212 dogfood
 
 ### Six systemic anti-patterns to NEVER ship
 
-From `internal/dogfood/SYNTHESIS-2026-05-12.md` — validated unchanged across 30 → 59 → 212 evals as failure classes. Several of the original incidents are now SEALED behind regression tests; they are kept here as regression-invariant examples, not as claims that the bug is currently live.
+From the dogfood synthesis notes — validated unchanged across 30 → 59 → 212 evals as failure classes. Several of the original incidents are now SEALED behind regression tests; they are kept here as regression-invariant examples, not as claims that the bug is currently live.
 
 1. **Pattern-1 family — "structured signal lost or never reached".** One root failure family. (A) Hang on missing prerequisite — SEALED (live guard `src/roam/mcp_extras/preflight.py`). (B) Structured signal collapsed to generic `COMMAND_FAILED` by an intermediate layer — SEALED (try-parse stdout as JSON at the wrapper-bridge). (C) Empty-stdout crash on `json.loads()` — SEALED (CLI always emits a structured envelope, even on no-results). (D) Silent success on degraded resolution — LIVE: disclose the resolution state via a `resolution` field + `partial_success: true` + a degraded verdict. Every wrapper that cannot complete normally emits the canonical failure envelope (closed `status` / `error_code` enums; `isError: true` inside a successful JSON-RPC result).
 

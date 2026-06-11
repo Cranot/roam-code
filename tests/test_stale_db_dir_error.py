@@ -9,7 +9,7 @@ then saw empty stdout + opaque stderr and reported a useless
 ``COMMAND_FAILED``. ``StaleDbDirError`` makes that case structured and
 re-catchable at the MCP boundary with a remediation hint.
 
-See ``internal/dogfood/IMPLEMENTATION-2026-05-12.md`` Task 2 for the full
+See `the implementation notes` Task 2 for the full
 root-cause analysis.
 """
 

@@ -29,6 +29,7 @@ REPL slash commands (the in-session dropdown):
     /clear           reset conversation (keep mode)
     /quit            exit (also empty line / Ctrl+D)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,10 +44,8 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     ResultMessage,
     StreamEvent,
-    ThinkingConfigDisabled,
     ToolUseBlock,
 )
-
 
 # --- System prompts (kept identical to dev/agent_compare.py so the daily
 #     driver matches the harness that picked the winner) -------------------
@@ -78,7 +77,7 @@ CLI_SYSTEM_PROMPT = (
     "(multiple tool_use blocks in a single assistant message). Never serialize independent reads/greps. "
     "Use `roam` CLI via Bash for structural queries. Pass `--json` BEFORE the subcommand. "
     "Recipes (copy verbatim, substitute FILE/SYMBOL/N): "
-    "`roam --json coupling -n 500 | jq '[.pairs[] | select(.file_a==\"FILE\" or .file_b==\"FILE\")] | sort_by(-.strength) | .[0:N]'` (top-N coupling for FILE), "
+    '`roam --json coupling -n 500 | jq \'[.pairs[] | select(.file_a=="FILE" or .file_b=="FILE")] | sort_by(-.strength) | .[0:N]\'` (top-N coupling for FILE), '
     "`roam --json deps FILE` (imports), "
     "`roam --json uses SYMBOL` (callers), "
     "`roam --json search PATTERN` (find symbol by name substring), "
@@ -256,10 +255,7 @@ async def run_repl(initial_mode: str) -> int:
     sess = Session()
     sess.record_mode(initial_mode)
     active = initial_mode
-    print(
-        f"roam-agent REPL — mode={active}. "
-        f"Type /help for slash commands, /quit (or empty line) to exit.\n"
-    )
+    print(f"roam-agent REPL — mode={active}. Type /help for slash commands, /quit (or empty line) to exit.\n")
 
     client = ClaudeSDKClient(options=MODES[active].options())
     await client.__aenter__()

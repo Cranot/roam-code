@@ -250,7 +250,7 @@ def _health_label(score):
 # tools).  Several commands produce signal not available anywhere else; agents
 # never discover them by name.  Surface them here as imperative pointers
 # rather than replicating their full output (which would blow the response
-# budget).  See ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+# budget).  See `the dogfood synthesis notes` section "NEW in v3".
 # ---------------------------------------------------------------------------
 
 

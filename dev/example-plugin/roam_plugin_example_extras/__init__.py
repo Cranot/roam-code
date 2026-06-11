@@ -72,8 +72,7 @@ def register(ctx) -> None:
         name="example-extras",
         version="0.1.0",
         description=(
-            "Reference plugin demonstrating register_command / "
-            "register_bridge / register_language_extractor."
+            "Reference plugin demonstrating register_command / register_bridge / register_language_extractor."
         ),
     )
 

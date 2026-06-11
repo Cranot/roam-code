@@ -23,6 +23,7 @@ Usage:
   python3 scripts/roam_efficacy.py [--since YYYY-MM-DD] [--projects-dir DIR]
                                    [--max-files N] [--out PATH]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,7 +33,6 @@ import glob
 import json
 import os
 import re
-import sys
 
 _ROAM_PREFIX = "mcp__roam-code__"
 _SEARCH_TOOLS = {"Grep", "Glob"}
@@ -72,8 +72,7 @@ def _iter_tool_calls(jsonl_path: str):
 
 def _roam_target(tool_input: dict) -> str:
     """Best-effort extract the symbol/path a roam call is about."""
-    for k in ("query", "symbol", "name", "pattern", "path", "file",
-              "file_path", "filename"):
+    for k in ("query", "symbol", "name", "pattern", "path", "file", "file_path", "filename"):
         v = tool_input.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip().strip("\"'`").lower()
@@ -116,7 +115,7 @@ def _classify_after(calls: list, idx: int) -> str:
     """Classify the roam call at `calls[idx]` by looking at the next calls."""
     name, tinput = calls[idx]
     target = _roam_target(tinput)
-    nxt = calls[idx + 1: idx + 1 + _LOOKAHEAD]
+    nxt = calls[idx + 1 : idx + 1 + _LOOKAHEAD]
     if not nxt:
         return "END"
     # Immediate next call.
@@ -137,8 +136,7 @@ def _classify_after(calls: list, idx: int) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--since", default=None,
-                    help="YYYY-MM-DD; default 14 days ago.")
+    ap.add_argument("--since", default=None, help="YYYY-MM-DD; default 14 days ago.")
     ap.add_argument("--projects-dir", default="/root/.claude/projects")
     ap.add_argument("--max-files", type=int, default=4000)
     ap.add_argument("--out", default=None)
@@ -153,8 +151,7 @@ def main() -> int:
         cutoff = (_dt.datetime.utcnow() - _dt.timedelta(days=14)).timestamp()
 
     files = []
-    for f in glob.glob(os.path.join(args.projects_dir, "**", "*.jsonl"),
-                       recursive=True):
+    for f in glob.glob(os.path.join(args.projects_dir, "**", "*.jsonl"), recursive=True):
         try:
             if os.path.getmtime(f) >= cutoff:
                 files.append(f)
@@ -176,7 +173,7 @@ def main() -> int:
                 continue
             had_roam = True
             verdict = _classify_after(calls, i)
-            short = name[len(_ROAM_PREFIX):]
+            short = name[len(_ROAM_PREFIX) :]
             per_tool[short][verdict] += 1
             total[verdict] += 1
         if had_roam:
@@ -188,24 +185,23 @@ def main() -> int:
     won = total["WON"] + total["END"]
     fb = total["FALLBACK"]
     chain = total["CHAIN"]
-    lines.append(f"sessions scanned: {len(files)} | with roam calls: "
-                 f"{n_sessions_with_roam}")
+    lines.append(f"sessions scanned: {len(files)} | with roam calls: {n_sessions_with_roam}")
     lines.append(f"roam tool calls classified: {grand}")
     if grand:
-        lines.append(f"  WON (acted/moved-on/end): {won} ({won*100//grand}%)")
-        lines.append(f"  FALLBACK (manual re-search): {fb} ({fb*100//grand}%)")
-        lines.append(f"  CHAIN (composed more roam): {chain} "
-                     f"({chain*100//grand}%)")
+        lines.append(f"  WON (acted/moved-on/end): {won} ({won * 100 // grand}%)")
+        lines.append(f"  FALLBACK (manual re-search): {fb} ({fb * 100 // grand}%)")
+        lines.append(f"  CHAIN (composed more roam): {chain} ({chain * 100 // grand}%)")
     lines.append("")
-    lines.append(f"{'tool':28} {'n':>5} {'won%':>5} {'fallback%':>10} "
-                 f"{'chain%':>7}")
+    lines.append(f"{'tool':28} {'n':>5} {'won%':>5} {'fallback%':>10} {'chain%':>7}")
     lines.append("-" * 60)
     for tool, c in sorted(per_tool.items(), key=lambda kv: -sum(kv[1].values())):
         n = sum(c.values())
         w = c["WON"] + c["END"]
-        lines.append(f"{tool:28} {n:>5} {w*100//n if n else 0:>4}% "
-                     f"{c['FALLBACK']*100//n if n else 0:>9}% "
-                     f"{c['CHAIN']*100//n if n else 0:>6}%")
+        lines.append(
+            f"{tool:28} {n:>5} {w * 100 // n if n else 0:>4}% "
+            f"{c['FALLBACK'] * 100 // n if n else 0:>9}% "
+            f"{c['CHAIN'] * 100 // n if n else 0:>6}%"
+        )
 
     report = "\n".join(lines)
     print(report)

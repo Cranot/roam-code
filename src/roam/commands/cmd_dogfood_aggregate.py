@@ -13,8 +13,8 @@ to include resolved findings, or ``--status fixed-in-12.51`` to inspect what a
 specific release closed. Evals lacking a ``status:`` field are treated as
 ``open`` for backward compatibility.
 
-Closes Gap C from ``internal/dogfood/DEEP-DIVE-2026-05-12.md`` — the resolution
-feedback loop. See ``internal/dogfood/IMPLEMENTATION-2026-05-12.md`` Task 3.
+Closes Gap C from `the deep-dive notes` — the resolution
+feedback loop. See `the implementation notes` Task 3.
 
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because dogfood-aggregate outputs are invocation-scoped

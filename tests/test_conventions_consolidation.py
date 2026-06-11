@@ -1,6 +1,6 @@
 """Tests for Fix G — conventions detector consolidation.
 
-Pattern 4 of the dogfood corpus (``internal/dogfood/SYNTHESIS-2026-05-12.md``)
+Pattern 4 of the dogfood corpus (`the dogfood synthesis notes`)
 identified that 5 commands (describe, understand, minimap, preflight,
 conventions) computed naming conventions differently and disagreed on
 the same codebase. Fix G consolidates them onto the canonical helper at

@@ -10,7 +10,7 @@ two commands disagreed:
   avg_degree, computed across every node — a different algorithm).
 
 This is Pattern 3 ("vocabulary mismatch across commands") from the
-dogfood ``SYNTHESIS-2026-05-12.md``. The fix mirrors the W16.3 ``ai_rot``
+dogfood `the dogfood synthesis notes`. The fix mirrors the W16.3 ``ai_rot``
 reconciliation: one canonical computation + a ``god_components_definition``
 label on every envelope that emits the number.
 

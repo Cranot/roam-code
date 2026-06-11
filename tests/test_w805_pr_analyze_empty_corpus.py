@@ -6,7 +6,7 @@ verdict that aggregates ``pr-prep`` (diff + critique + pr-risk) into a
 single INTENTIONAL / SAFE / REVIEW / BLOCK / NOCHANGES verdict.
 
 Before Fix B (Pattern 2 from
-internal/dogfood/SYNTHESIS-2026-05-12.md), ``pr-analyze`` would emit a
+the dogfood synthesis notes), ``pr-analyze`` would emit a
 default ``SAFE`` verdict even when its internal ``diff`` step reported
 no_changes -- pretending the cascade ran on real changes. The fix
 inspects ``_inspect_prep_subcommand_failures`` and overrides the

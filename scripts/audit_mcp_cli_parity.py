@@ -12,6 +12,7 @@ ADVISORY: prints a report; exit 0 always. Run on demand:
     python scripts/audit_mcp_cli_parity.py
 Not a CI gate — many omissions are intentional; a human triages the list.
 """
+
 from __future__ import annotations
 
 import ast
@@ -22,12 +23,43 @@ from unittest.mock import patch
 
 # Flags that legitimately stay CLI-only (output format / IO / CI / setup / cwd).
 _ALLOWLIST = {
-    "json", "sarif", "detail", "plain", "no_color", "color", "quiet", "verbose",
-    "pretty", "format", "fmt", "output_format", "output", "out", "persist", "apply",
-    "force", "dry_run", "write", "emit_guard_findings", "save", "export",
-    "update_baseline", "no_rotate_card_hash", "ci", "strict", "fail_on",
-    "exit_code", "exit_zero", "help", "yes", "interactive", "root", "budget",
-    "limit", "top_n", "mermaid_mode",
+    "json",
+    "sarif",
+    "detail",
+    "plain",
+    "no_color",
+    "color",
+    "quiet",
+    "verbose",
+    "pretty",
+    "format",
+    "fmt",
+    "output_format",
+    "output",
+    "out",
+    "persist",
+    "apply",
+    "force",
+    "dry_run",
+    "write",
+    "emit_guard_findings",
+    "save",
+    "export",
+    "update_baseline",
+    "no_rotate_card_hash",
+    "ci",
+    "strict",
+    "fail_on",
+    "exit_code",
+    "exit_zero",
+    "help",
+    "yes",
+    "interactive",
+    "root",
+    "budget",
+    "limit",
+    "top_n",
+    "mermaid_mode",
 }
 # Prefixes/suffixes that mark format / pagination / filter / setup flags — these
 # shape PRESENTATION not WHICH DATA the agent can reach, so they're CLI-only by
@@ -37,11 +69,7 @@ _ALLOW_SUFFIX = ("_filter", "_mode", "_path", "_output", "_baseline", "_ref", "_
 
 
 def _is_allowed(name: str) -> bool:
-    return (
-        name in _ALLOWLIST
-        or name.startswith(_ALLOW_PREFIX)
-        or name.endswith(_ALLOW_SUFFIX)
-    )
+    return name in _ALLOWLIST or name.startswith(_ALLOW_PREFIX) or name.endswith(_ALLOW_SUFFIX)
 
 
 def _discover():
@@ -54,9 +82,14 @@ def _discover():
             continue
         for dec in node.decorator_list:
             if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "_tool":
-                t = next((k.value.value for k in dec.keywords
-                          if k.arg == "name" and isinstance(k.value, ast.Constant)
-                          and isinstance(k.value.value, str)), None)
+                t = next(
+                    (
+                        k.value.value
+                        for k in dec.keywords
+                        if k.arg == "name" and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)
+                    ),
+                    None,
+                )
                 if t:
                     out.append((t, node.name))
                 break
@@ -95,6 +128,7 @@ def _capture_verb(raw, sig):
             res = raw(**call)
             if inspect.iscoroutine(res):
                 import asyncio
+
                 asyncio.run(res)
         except Exception:
             return None
@@ -130,10 +164,7 @@ def main() -> int:
             cmd = None
         if cmd is None:
             continue
-        cli_opts = {
-            p.name for p in cmd.params
-            if isinstance(p, click.Option) and not _is_allowed(p.name)
-        }
+        cli_opts = {p.name for p in cmd.params if isinstance(p, click.Option) and not _is_allowed(p.name)}
         wrapper_params = set(sig.parameters)
         missing = sorted(cli_opts - wrapper_params)
         if missing:

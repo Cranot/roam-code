@@ -11,7 +11,6 @@ Stdlib only.
 
 import argparse
 import json
-import os
 import statistics
 import sys
 from datetime import datetime, timedelta, timezone
@@ -164,10 +163,7 @@ def aggregate_session(jsonl_path: Path, session_id: str | None = None) -> dict |
         # Best-effort TTFT — if the assistant record carries a
         # `firstTokenTimestamp` (or `first_token_timestamp`), prefer it;
         # otherwise approximate as (assistant_ts − prior_user_ts).
-        ft_raw = (
-            rec.get("firstTokenTimestamp")
-            or rec.get("first_token_timestamp")
-        )
+        ft_raw = rec.get("firstTokenTimestamp") or rec.get("first_token_timestamp")
         ft_ts = parse_timestamp(ft_raw)
         anchor = prev_user_ts
         if anchor is not None:
@@ -225,13 +221,7 @@ def write_tsv(rows: list[dict], out_path: Path) -> None:
     with out_path.open("w", encoding="utf-8") as fh:
         fh.write("\t".join(TSV_HEADER) + "\n")
         for row in rows:
-            fh.write(
-                "\t".join(
-                    str(row.get(col, "")) if row.get(col, "") != "" else ""
-                    for col in TSV_HEADER
-                )
-                + "\n"
-            )
+            fh.write("\t".join(str(row.get(col, "")) if row.get(col, "") != "" else "" for col in TSV_HEADER) + "\n")
 
 
 def run(
@@ -260,9 +250,7 @@ def parse_since(value: str) -> datetime:
     try:
         dt = datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"--since must be YYYY-MM-DD (got {value!r})"
-        ) from exc
+        raise argparse.ArgumentTypeError(f"--since must be YYYY-MM-DD (got {value!r})") from exc
     return dt.replace(tzinfo=timezone.utc)
 
 

@@ -9,13 +9,13 @@ Outputs three blocks:
 
 Usage: dev/.venv-agent/bin/python dev/agent_compare_scoreboard.py
 """
+
 from __future__ import annotations
 
 import json
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-
 
 HERE = os.path.dirname(__file__)
 V1_PATH = os.path.join(HERE, "agent_compare_results.json")
@@ -84,7 +84,14 @@ def per_task_table(rows: list[Row]) -> None:
     print(header)
     print("-" * 110)
     for task in sorted(by_task):
-        for r in sorted(by_task[task], key=lambda x: ["vanilla", "wired", "roam-agent", "roam-bash"].index(x.name) if x.name in ["vanilla", "wired", "roam-agent", "roam-bash"] else 99):
+        for r in sorted(
+            by_task[task],
+            key=lambda x: (
+                ["vanilla", "wired", "roam-agent", "roam-bash"].index(x.name)
+                if x.name in ["vanilla", "wired", "roam-agent", "roam-bash"]
+                else 99
+            ),
+        ):
             err = "ERR" if r.is_error else "ok"
             print(
                 f"{task:<32} {r.name:<11} {r.turns:>5} {r.tools:>5} {r.roam_pct:>5.0f}% "

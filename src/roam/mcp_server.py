@@ -116,7 +116,7 @@ except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades g
 # Default: "core" (15 tools + `roam_expand_toolset` meta-tool = 16 total).
 # The dogfood-firing surface: 7 flagship tools targeted for selection
 # lift + 8 tools observed firing in the 2026-05-24 audit. Shrunk from
-# 57 in the 2026-05-24 dogfood wave (per Intervention A of the
+# 57 in the dogfood wave (per Intervention A of the
 # dogfood-next-interventions design memo). Tools that left core are
 # in `_WORKFLOW_TOOLS` below
 # and remain part of the specialised presets (review / refactor /

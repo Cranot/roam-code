@@ -123,7 +123,12 @@ def _read_baseline(path: Path) -> tuple[dict | None, str | None]:
     return payload, None
 
 
-def _write_baseline(path: Path, counts_global: dict[str, int], untracked_top: list[dict[str, int | str]], dirty_top: list[dict[str, int | str]]) -> None:
+def _write_baseline(
+    path: Path,
+    counts_global: dict[str, int],
+    untracked_top: list[dict[str, int | str]],
+    dirty_top: list[dict[str, int | str]],
+) -> None:
     payload = {
         "created_at": dt.datetime.now().isoformat(timespec="seconds"),
         "counts_global": counts_global,
@@ -177,7 +182,9 @@ def main() -> int:
     parser.add_argument("--max-unstaged", type=int, default=None)
     parser.add_argument("--max-conflicts", type=int, default=0)
     parser.add_argument("--debt-baseline", type=Path, default=None, help="Path to global hygiene debt baseline JSON.")
-    parser.add_argument("--write-debt-baseline", action="store_true", help="Write current global state as debt baseline.")
+    parser.add_argument(
+        "--write-debt-baseline", action="store_true", help="Write current global state as debt baseline."
+    )
     parser.add_argument(
         "--require-debt-baseline",
         action="store_true",
