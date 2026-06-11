@@ -275,6 +275,7 @@ def math_cmd(
         entries = sorted(list_detector_surface(), key=lambda e: (e["source"], e["task_id"], e["name"]))
         decorated_count = sum(1 for e in entries if e.get("source") == "catalog")
         python_idiom_count = sum(1 for e in entries if e.get("source") == "python_idioms")
+        js_idiom_count = sum(1 for e in entries if e.get("source") == "js_idioms")
         if json_mode:
             click.echo(
                 to_json(
@@ -284,11 +285,13 @@ def math_cmd(
                             "verdict": (
                                 f"{len(entries)} registered detectors "
                                 f"({decorated_count} decorated detectors, "
-                                f"{python_idiom_count} Python idiom detectors)"
+                                f"{python_idiom_count} Python idiom detectors, "
+                                f"{js_idiom_count} JS idiom detectors)"
                             ),
                             "detector_count": len(entries),
                             "decorated_detector_count": decorated_count,
                             "python_idiom_detector_count": python_idiom_count,
+                            "js_idiom_detector_count": js_idiom_count,
                         },
                         detectors=entries,
                     )
@@ -297,7 +300,8 @@ def math_cmd(
             return
         click.echo(
             f"VERDICT: {len(entries)} registered detectors "
-            f"({decorated_count} decorated detectors, {python_idiom_count} Python idiom detectors)"
+            f"({decorated_count} decorated detectors, {python_idiom_count} Python idiom detectors, "
+            f"{js_idiom_count} JS idiom detectors)"
         )
         if not entries:
             return
@@ -336,7 +340,11 @@ def math_cmd(
                 {
                     "task_id": task_id,
                     "name": task["name"] if task else task_id,
-                    "category": task["category"] if task else "python",
+                    "category": (
+                        task["category"]
+                        if task
+                        else ("javascript" if "js_idioms" in sources_by_task[task_id] else "python")
+                    ),
                     "kind": task["kind"] if task else "idiom",
                     "detector_count": counts[task_id],
                     "sources": sorted(sources_by_task[task_id]),
@@ -348,7 +356,8 @@ def math_cmd(
             )
 
         catalog_task_count = sum(1 for t in tasks if t["task_id"] in CATALOG)
-        python_task_count = len(tasks) - catalog_task_count
+        js_task_count = sum(1 for t in tasks if t["task_id"] not in CATALOG and "js_idioms" in t["sources"])
+        python_task_count = len(tasks) - catalog_task_count - js_task_count
         if json_mode:
             click.echo(
                 to_json(
@@ -358,11 +367,13 @@ def math_cmd(
                             "verdict": (
                                 f"{len(tasks)} algo task ids "
                                 f"({catalog_task_count} catalog tasks, "
-                                f"{python_task_count} Python idiom tasks)"
+                                f"{python_task_count} Python idiom tasks, "
+                                f"{js_task_count} JS idiom tasks)"
                             ),
                             "task_count": len(tasks),
                             "catalog_task_count": catalog_task_count,
                             "python_idiom_task_count": python_task_count,
+                            "js_idiom_task_count": js_task_count,
                             "detector_count": len(entries),
                         },
                         tasks=tasks,
@@ -373,7 +384,8 @@ def math_cmd(
 
         click.echo(
             f"VERDICT: {len(tasks)} algo task ids "
-            f"({catalog_task_count} catalog tasks, {python_task_count} Python idiom tasks)"
+            f"({catalog_task_count} catalog tasks, {python_task_count} Python idiom tasks, "
+            f"{js_task_count} JS idiom tasks)"
         )
         if not tasks:
             return

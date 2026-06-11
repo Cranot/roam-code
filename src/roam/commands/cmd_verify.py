@@ -1944,6 +1944,24 @@ def _collect_scoped_idiom_findings(conn, file_ids: list[int]) -> list:
                 raw.extend(_safe_run_idiom(fn, task_id, conn))
     finally:
         set_idiom_scope(None)
+    # JS/TS edits fire the JS idiom pack the same content-driven way
+    # (2026-06-11 — the pack landed after the Python wiring above; this keeps
+    # the deep sweep language-honest instead of silently Python-only).
+    try:
+        from roam.catalog.js_idioms import applicable_js_idiom_detectors
+        from roam.catalog.js_idioms import set_idiom_scope as set_js_idiom_scope
+    except Exception as exc:  # noqa: BLE001 — deep mode is optional/advisory
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.deep.js_import", exc)
+        return raw
+    set_js_idiom_scope(file_ids)
+    try:
+        for task_id, _way, fn in applicable_js_idiom_detectors(scanned):
+            if task_id not in _DEEP_IDIOM_DENY:
+                raw.extend(_safe_run_idiom(fn, task_id, conn))
+    finally:
+        set_js_idiom_scope(None)
     return raw
 
 

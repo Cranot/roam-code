@@ -239,6 +239,28 @@ def list_detector_surface() -> list[dict[str, Any]]:
         # — an expected, non-error state. No lineage needed.
         pass
 
+    try:
+        from roam.catalog.js_idioms import JS_IDIOM_DETECTORS
+        from roam.catalog.versions import detector_version
+
+        for task_id, _way_id, detect_fn in JS_IDIOM_DETECTORS:
+            entries.append(
+                {
+                    "name": getattr(detect_fn, "__name__", ""),
+                    "task_id": task_id,
+                    "languages": ("javascript", "typescript"),
+                    "confidence_basis": CONFIDENCE_HEURISTIC,
+                    "query_cost": QUERY_COST_LOW,
+                    "version": detector_version(task_id),
+                    "source": "js_idioms",
+                }
+            )
+    except ImportError:
+        # Genuine optional-module guard: js_idioms is an optional detector
+        # pack. Its absence simply yields fewer surface entries — an
+        # expected, non-error state. No lineage needed.
+        pass
+
     return entries
 
 
@@ -4780,6 +4802,18 @@ def _iter_registered_detectors():
         # lineage needed — expected non-error state.
         pass
 
+    # JS/TS sibling pack — same isolation rationale as python_idioms.
+    try:
+        from roam.catalog.js_idioms import JS_IDIOM_DETECTORS
+
+        for det in JS_IDIOM_DETECTORS:
+            yield det
+    except ImportError:
+        # Genuine optional-module guard: js_idioms is an optional detector
+        # pack; its absence just yields the built-in set. No lineage
+        # needed — expected non-error state.
+        pass
+
     try:
         from roam.plugins import get_plugin_detectors
 
@@ -4884,6 +4918,7 @@ def run_detectors(
     # never leaks into a later unscoped run.
     scope_ids = {int(f) for f in scope_file_ids} if scope_file_ids is not None else None
     _idiom_scope_reset = None  # bound to set_idiom_scope once it's applied
+    _js_idiom_scope_reset = None  # bound to js_idioms.set_idiom_scope once applied
     _catalog_scope_applied = False
     if scope_ids is not None:
         try:
@@ -4893,6 +4928,14 @@ def run_detectors(
             _idiom_scope_reset = set_idiom_scope  # captured for the finally
         except Exception as exc:  # noqa: BLE001
             log.warning("run_detectors: could not apply idiom scope: %s", exc)
+        # The JS pack keeps its own module-global scope; apply it the same way.
+        try:
+            from roam.catalog.js_idioms import set_idiom_scope as set_js_idiom_scope
+
+            set_js_idiom_scope(scope_ids)
+            _js_idiom_scope_reset = set_js_idiom_scope  # captured for the finally
+        except Exception as exc:  # noqa: BLE001
+            log.warning("run_detectors: could not apply js idiom scope: %s", exc)
         # Resolve scope file-ids to paths so the catalog detectors' source-read
         # chokepoint (`_read_symbol_source`) can skip out-of-scope files.
         try:
@@ -5062,6 +5105,8 @@ def run_detectors(
         # that can't raise, so no guard is needed in the finally.
         if _idiom_scope_reset is not None:
             _idiom_scope_reset(None)
+        if _js_idiom_scope_reset is not None:
+            _js_idiom_scope_reset(None)
         # Reset the catalog source-read scope for the same reason.
         if _catalog_scope_applied:
             _DETECTOR_SCOPE_PATHS = None
