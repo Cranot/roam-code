@@ -332,6 +332,51 @@ _SKIP_NAMES = frozenset(
         "toString",
         "valueOf",
     }
+    # Framework lifecycle / override points: renaming them breaks the
+    # framework contract, so they are never naming-convention signal and
+    # never naming-convention violations (dogfood: `setUp` in a
+    # PHPUnit TestCase was flagged for rename to snake_case).
+    | {
+        # PHPUnit / xUnit / Python unittest
+        "setUp",
+        "tearDown",
+        "setUpBeforeClass",
+        "tearDownAfterClass",
+        "setUpClass",
+        "tearDownClass",
+        "setUpModule",
+        "tearDownModule",
+        "assertPreConditions",
+        # JS test runners (Jest/Vitest/Mocha)
+        "beforeEach",
+        "afterEach",
+        "beforeAll",
+        "afterAll",
+        # Vue lifecycle + composition entry point
+        "beforeCreate",
+        "beforeMount",
+        "beforeUpdate",
+        "beforeUnmount",
+        "beforeDestroy",
+        "errorCaptured",
+        "renderTracked",
+        "renderTriggered",
+        # React class components
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "shouldComponentUpdate",
+        "getDerivedStateFromProps",
+        "getSnapshotBeforeUpdate",
+        "componentDidCatch",
+        # Angular
+        "ngOnInit",
+        "ngOnChanges",
+        "ngOnDestroy",
+        "ngAfterViewInit",
+        "ngAfterContentInit",
+        "ngDoCheck",
+    }
 )
 
 
@@ -350,7 +395,13 @@ def classify_case(name: str) -> str | None:
     if _SINGLE_PASCAL.match(name):
         return "PascalCase"
     if _SINGLE_LOWER.match(name):
-        return "snake_case"  # single lowercase word is compatible with snake
+        # A single lowercase word (`props`, `run`, `delay`) is written
+        # identically under snake_case and camelCase — it carries no case
+        # signal. Counting it as snake_case both inflated the snake bucket
+        # in the majority sample AND flagged it against camelCase repos
+        # (dogfood: every Vue SFC destructure re-flagged).
+        # Case-neutral: never a sample vote, never a violation.
+        return None
     if _SINGLE_UPPER.match(name):
         return "UPPER_SNAKE"
 

@@ -152,9 +152,14 @@ def triage_list(ctx):
     help="Suppression status.",
 )
 @click.option("--line", "line_num", default=None, type=int, help="Optional line number.")
+@click.option(
+    "--symbol",
+    default=None,
+    help="Symbol name (function/class) to key the suppression on — survives refactors that shift lines.",
+)
 @click.option("--author", default=None, help="Author identifier (e.g. email).")
 @click.pass_context
-def triage_add(ctx, rule, file_path, reason, status, line_num, author):
+def triage_add(ctx, rule, file_path, reason, status, line_num, author, symbol):
     """Add a new suppression to .roam-suppressions.yml."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
@@ -171,6 +176,7 @@ def triage_add(ctx, rule, file_path, reason, status, line_num, author):
             status=status,
             line=line_num,
             author=author,
+            symbol=symbol,
         )
     except ValueError as exc:
         if json_mode:

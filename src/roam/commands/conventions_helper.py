@@ -7,7 +7,7 @@ conflicting verdicts on the same codebase. They now all delegate here.
 
 Why one detector?
 -----------------
-The 212-eval dogfood corpus (``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 4)
+The 212-eval dogfood corpus (`the dogfood synthesis notes` Pattern 4)
 documented exactly this divergence:
 
 * ``describe`` / ``understand`` correctly reported per-kind percentage breakdowns
@@ -104,6 +104,13 @@ DEFAULT_EXCLUDE_PREFIXES: tuple[str, ...] = (
     # of the empirical pool.
     "templates/",
 )
+
+# File roles whose identifiers must not vote in (or be flagged against) the
+# project's naming convention. Test files follow the TEST FRAMEWORK's idiom
+# (PHPUnit/pytest `test_*` snake_case), so on test-heavy repos they outvote
+# production code and invert the detected convention; vendored/generated
+# code carries someone else's style.
+CONVENTION_NEUTRAL_FILE_ROLES: frozenset[str] = frozenset({"test", "vendored", "generated"})
 
 
 def is_excluded_path(path: str, exclude_prefixes: tuple[str, ...] | None = None) -> bool:
@@ -232,7 +239,8 @@ def compute_conventions(
     all_symbols = conn.execute(
         f"""
         SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
-               COALESCE(f.language, '') as language
+               COALESCE(f.language, '') as language,
+               COALESCE(f.file_role, 'source') as file_role
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE s.kind IN ({kinds_csv})
@@ -250,6 +258,16 @@ def compute_conventions(
     for sym in all_symbols:
         path = sym["file_path"] or ""
         if is_excluded_path(path, exclude):
+            excluded_count += 1
+            continue
+        # Test files follow the test framework's naming idiom (PHPUnit
+        # `test_creates_invoice_*`, pytest `test_*`), not the project's own
+        # convention — and on test-heavy repos they OUTVOTE production code
+        # (dogfood: a PSR-12 camelCase PHP repo reported
+        # "snake_case 62.8%" because PHPUnit method names dominated the
+        # sample, then every production method was flagged). Vendored and
+        # generated code is third-party style, not the project's either.
+        if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
             excluded_count += 1
             continue
         language = (sym["language"] or "").lower()

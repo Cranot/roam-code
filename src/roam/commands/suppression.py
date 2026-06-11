@@ -231,7 +231,7 @@ def _serialize_suppressions(suppressions: list[dict]) -> str:
     for sup in suppressions:
         first = True
         # Emit fields in a stable, readable order
-        for key in ("rule", "file", "line", "reason", "status", "author", "date"):
+        for key in ("rule", "file", "symbol", "line", "reason", "status", "author", "date"):
             val = sup.get(key)
             if val is None:
                 continue
@@ -346,19 +346,30 @@ def load_suppressions_typed(
     ]
 
 
+# A line-keyed suppression still matches when the finding has drifted by up
+# to this many lines: any edit ABOVE the suppressed symbol shifts it, and
+# exact-line matching meant the same false positive re-fired after every
+# refactor while the suppression file accreted dead entries (2026-06-10
+# dogfood: suppressed findings re-fired at 76→74 and 99→102).
+LINE_MATCH_TOLERANCE = 3
+
+
 def is_suppressed(
     suppressions: list[dict],
     rule: str,
     file: str,
     line: int | None = None,
+    symbol: str | None = None,
 ) -> bool:
     """Check if a finding is suppressed.
 
     Matching logic:
     - ``rule`` and ``file`` must match exactly.
-    - If the suppression specifies a ``line``, the finding's line must also
-      match.  If the suppression has no ``line``, it suppresses all lines
-      in that file for that rule.
+    - If the suppression specifies a ``symbol``, it matches the finding's
+      symbol (function/class name) — refactor-proof, lines are ignored.
+    - Else if it specifies a ``line``, the finding's line must match within
+      ``LINE_MATCH_TOLERANCE`` lines.
+    - With neither, it suppresses the whole file for that rule.
 
     Parameters
     ----------
@@ -370,6 +381,8 @@ def is_suppressed(
         The file path (relative to project root, forward slashes).
     line:
         Optional line number of the finding.
+    symbol:
+        Optional symbol name (function/class) the finding is attached to.
     """
     # Normalise path separators for comparison
     norm_file = file.replace("\\", "/")
@@ -383,11 +396,23 @@ def is_suppressed(
         if sup_file != norm_file:
             continue
 
-        # If the suppression specifies a line, require an exact match
+        # Symbol-keyed suppression: match on the symbol name, ignore lines.
+        sup_symbol = sup.get("symbol")
+        if sup_symbol is not None:
+            if symbol is not None and str(sup_symbol) == symbol:
+                return True
+            continue
+
+        # Line-keyed: match within tolerance so edits above the symbol
+        # don't invalidate the suppression.
         sup_line = sup.get("line")
         if sup_line is not None:
-            if line is not None and int(sup_line) != int(line):
-                continue
+            if line is not None:
+                try:
+                    if abs(int(sup_line) - int(line)) > LINE_MATCH_TOLERANCE:
+                        continue
+                except (TypeError, ValueError):
+                    continue
 
         return True
 
@@ -402,6 +427,7 @@ def save_suppression(
     status: str,
     line: int | None = None,
     author: str | None = None,
+    symbol: str | None = None,
 ) -> None:
     """Append a new suppression to ``.roam-suppressions.yml``.
 
@@ -424,16 +450,20 @@ def save_suppression(
         Optional line number to narrow the suppression.
     author:
         Optional author identifier (e.g. email).
+    symbol:
+        Optional symbol name (function/class). Symbol-keyed suppressions
+        survive refactors that shift line numbers — prefer them over
+        ``line`` for symbol-attached findings (naming, complexity).
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_STATUSES))}")
 
     root = Path(project_root)
-    # W738 (W692 Phase C-1c): typed dedup check via load_suppressions_typed.
-    # We project back to dicts for the serialiser, which writes the on-disk
-    # YAML. Malformed pre-existing entries (invalid status / unparseable date)
-    # are dropped by the typed coercion; this is intentional — save is also
-    # a chance to normalise the file.
+    # Dedup check only — the parsed view is NEVER written back. Rewriting the
+    # file from the typed view silently dropped every row the coercion
+    # couldn't parse (hand-edited entries, foreign keys, unquoted reasons),
+    # and a fully-unparseable file loaded as [] and was REPLACED by the one
+    # new entry. Save must append, not normalise.
     existing_typed = load_suppressions_typed(root)
 
     # Check for duplicates against the typed view (match keys: rule, file, line).
@@ -443,12 +473,13 @@ def save_suppression(
             # Already suppressed -- nothing to do
             return
 
-    # Build the new entry (legacy dict shape consumed by _serialize_suppressions).
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     entry: dict = {
         "rule": rule,
         "file": norm_file,
     }
+    if symbol:
+        entry["symbol"] = symbol
     if line is not None:
         entry["line"] = int(line)
     entry["reason"] = reason
@@ -457,13 +488,26 @@ def save_suppression(
         entry["author"] = author
     entry["date"] = today
 
-    # Round-trip the pre-existing typed rows back to dicts so the serialiser
-    # sees the canonical key set. Append the new dict entry last.
-    existing = [s.to_dict() for s in existing_typed]
-    existing.append(entry)
-
     config_path = root / ".roam-suppressions.yml"
-    config_path.write_text(_serialize_suppressions(existing), encoding="utf-8")
+    if not config_path.exists():
+        config_path.write_text(_serialize_suppressions([entry]), encoding="utf-8")
+        return
+
+    # Append-only: preserve the existing file byte-for-byte and add the new
+    # entry at the end of the `suppressions:` list. Entries the loader warned
+    # about (and therefore can't match) stay on disk for the human to fix.
+    text = config_path.read_text(encoding="utf-8")
+    if text and not text.endswith("\n"):
+        text += "\n"
+    if "suppressions:" not in text:
+        # Root key absent (empty or comment-only file) — add it so the
+        # appended list item parses.
+        text += "suppressions:\n"
+    entry_lines = _serialize_suppressions([entry]).splitlines()
+    # _serialize_suppressions emits two comment lines + the root key before
+    # the entry; keep only the entry body for the append.
+    body = "\n".join(line for line in entry_lines if line.startswith(("  - ", "    ")))
+    config_path.write_text(text + body + "\n", encoding="utf-8")
 
 
 def suppression_stats(suppressions: list[dict]) -> dict:

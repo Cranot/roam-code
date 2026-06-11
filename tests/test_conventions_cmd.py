@@ -449,11 +449,15 @@ class TestClassifyCase:
         assert classify_case("MAX_RETRIES") == "UPPER_SNAKE"
         assert classify_case("DB_HOST") == "UPPER_SNAKE"
 
-    def test_single_word_lower(self):
+    def test_single_word_lower_is_case_neutral(self):
         from roam.commands.cmd_conventions import classify_case
 
-        # Single lowercase words are classified as snake_case-compatible
-        assert classify_case("validate") == "snake_case"
+        # A single lowercase word is written identically under snake_case
+        # and camelCase — no case signal, so it neither votes in the
+        # majority sample nor gets flagged (dogfood: `props`,
+        # `run`, `delay` re-flagged on every Vue SFC against camelCase).
+        assert classify_case("validate") is None
+        assert classify_case("props") is None
 
     def test_single_word_pascal(self):
         from roam.commands.cmd_conventions import classify_case

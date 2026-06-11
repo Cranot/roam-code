@@ -13,6 +13,7 @@ W1198-audit memo.
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
@@ -35,7 +36,7 @@ from roam.commands.cmd_conventions import (
     is_python_type_alias_signature,
     is_upper_snake_constant_name,
 )
-from roam.commands.conventions_helper import is_excluded_path
+from roam.commands.conventions_helper import CONVENTION_NEUTRAL_FILE_ROLES, is_excluded_path
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
@@ -65,6 +66,12 @@ _CATEGORY_WEIGHTS = {
     "cycles": 0.20,
     # The EXECUTABLE signal — highest weight; only runs when explicitly selected.
     "tests": 0.30,
+    # The leak gate. The weight barely matters for the composite — a
+    # FAIL-severity secrets finding (credential shape) FORCES the verdict
+    # below PASS regardless of the weighted average (see the verdict-floor
+    # logic at the _compute_verdict call site): averaging away a leaked
+    # credential is exactly the silent-fallback pattern this repo bans.
+    "secrets": 0.15,
 }
 
 # Severity levels for violations
@@ -316,6 +323,11 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     "duplicates",
     "syntax",
     "import_side_effects",
+    # The leak gate rides the default loop: built-in credential shapes plus
+    # the optional repo-local `.roam-leak-patterns.py` catalogue. Cheap
+    # (regex over changed files only) and the cost of missing one is a
+    # public credential / internal-language leak.
+    "secrets",
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + ("complexity", "cycles", "tests")
 _VERIFY_CONFIG_REL = (".roam", "verify.yaml")
@@ -385,6 +397,10 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
     selected: set[str] = set()
     has_py = any(p.endswith(".py") for p in target_paths)
     has_nontest_source = any(not is_test_file(p) and "." in p.rsplit("/", 1)[-1] for p in target_paths)
+    if target_paths:
+        # The leak gate runs on EVERY touched file, test or not — credentials
+        # and never-publish language are wrong anywhere in the tree.
+        selected.add("secrets")
     if has_nontest_source:
         # import_side_effects is language-agnostic (py/ts/js/go/rb/java) — any
         # source edit can introduce an import-time side effect, so it belongs
@@ -465,7 +481,8 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
 
     # 1. Get the dominant style per kind-group from ALL symbols
     all_symbols = conn.execute("""
-        SELECT s.name, s.kind, s.signature, f.language AS language, f.path AS path
+        SELECT s.name, s.kind, s.signature, f.language AS language, f.path AS path,
+               COALESCE(f.file_role, 'source') AS file_role
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE s.kind IN ('function', 'method', 'class', 'interface',
@@ -485,6 +502,13 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
         # convention — they're deliberately written in varied styles (e.g. a
         # Kotlin fixture's 78%-snake mix), not the project's own conventions.
         if is_excluded_path(sym["path"]):
+            continue
+        # Test files follow the test framework's idiom (`test_*` snake_case
+        # in PHPUnit/pytest); on test-heavy repos they OUTVOTE production
+        # code and invert the convention (dogfood: PSR-12 PHP
+        # repo reported snake_case 62.8% → ~2000 naming FPs). Vendored and
+        # generated files carry third-party style.
+        if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
             continue
         group = _naming_group_or_skip(sym["name"], sym["kind"], sym["language"], sym["signature"])
         if group is None:
@@ -507,7 +531,8 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
     changed_symbols = batched_in(
         conn,
         """SELECT s.name, s.kind, s.line_start, s.signature,
-                  f.path as file_path, f.language AS language
+                  f.path as file_path, f.language AS language,
+                  COALESCE(f.file_role, 'source') AS file_role
            FROM symbols s
            JOIN files f ON s.file_id = f.id
            WHERE s.file_id IN ({ph})
@@ -522,6 +547,12 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
     for sym in changed_symbols:
         # Don't flag names INSIDE fixtures/templates (parser test data / codegen).
         if is_excluded_path(sym["file_path"]):
+            continue
+        # Test-framework idiom isn't the project convention; never flag
+        # test/vendored/generated files for naming (mirror of the model
+        # loop's exclusion above — flagging them against the production
+        # convention is the same FP in the other direction).
+        if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
             continue
         name = sym["name"]
         if len(name) < _MIN_NAME_LEN or name in _SKIP_NAMES:
@@ -980,6 +1011,15 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
 
     new_ids = {s["id"] for s in new_symbols}
 
+    # The similar-name pass costs ~(public changed symbols × distinct repo
+    # names) Python iterations. On a hook-typical diff (1-3 files, a handful
+    # of new symbols) that's negligible; on a sweeping refactor diff it
+    # dominated the whole gate. Past the cap, keep the exact-name pass
+    # (cheap, dict lookup) and skip similarity — disclosed in the result.
+    _SIMILARITY_PASS_CAP = 150
+    eligible = [s for s in new_symbols if len(s["name"]) >= 4 and not s["name"].startswith("_")]
+    similarity_enabled = len(eligible) <= _SIMILARITY_PASS_CAP
+
     for new_sym in new_symbols:
         name = new_sym["name"]
         if len(name) < 4:
@@ -1020,10 +1060,19 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
             break  # one match per new symbol is enough
 
         # Check for similar names (ratio > 0.8) in existing symbols
-        if not any(v["symbol"] == name if "symbol" in v else False for v in violations):
+        if similarity_enabled and not any(v["symbol"] == name if "symbol" in v else False for v in violations):
             name_lower = name.lower()
-            # Only check a subset to avoid O(n^2) explosion
+            # The full ratio() against EVERY distinct repo name was the
+            # whole-gate hot spot: a diff touching one large module ran tens
+            # of millions of O(n*m) ratio() calls (~200s measured). The
+            # documented difflib fast path fixes it: seq2 is set ONCE per
+            # changed symbol (its preprocessing is cached), and the two
+            # cheap upper bounds (real_quick_ratio = length math,
+            # quick_ratio = char-multiset match) gate the expensive ratio()
+            # — both are guaranteed >= ratio(), so no candidate is lost.
             candidates = []
+            _sm = SequenceMatcher()
+            _sm.set_seq2(name_lower)
             for existing_name, existing_list in existing_by_name.items():
                 if abs(len(existing_name) - len(name_lower)) > 5:
                     continue
@@ -1033,7 +1082,10 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
                 # duplicate. Substring relation = intentional naming family.
                 if name_lower in existing_name or existing_name in name_lower:
                     continue
-                ratio = SequenceMatcher(None, name_lower, existing_name).ratio()
+                _sm.set_seq1(existing_name)
+                if _sm.real_quick_ratio() < 0.8 or _sm.quick_ratio() < 0.8:
+                    continue
+                ratio = _sm.ratio()
                 if ratio >= 0.8 and ratio < 1.0:
                     for ex in existing_list:
                         if (
@@ -1073,7 +1125,12 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
         penalty = fail_count * 20 + warn_count * 10 + info_count * 5
         score = max(0, 100 - penalty)
 
-    return {"score": score, "violations": violations}
+    result: dict = {"score": score, "violations": violations}
+    if not similarity_enabled:
+        # W-Pattern2: part of the check did not run — disclose, never imply
+        # a full-fidelity pass.
+        result["similarity_pass_skipped"] = len(eligible)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1163,13 @@ _SYNTAX_SKIP_LANGS: frozenset[str] = frozenset(
         "css",
         "scss",
         "less",
+        # Regex-only languages (no tree-sitter grammar): parse_file returns
+        # None for every file, which was disclosed as "could not parse"
+        # noise on each verify pass over legacy FoxPro .prg/.scx artifacts.
+        # The extractor never syntax-checks them, so
+        # reporting them as unverified-code is misleading — they're out of
+        # scope for this rule, like markup.
+        "foxpro",
     }
 )
 
@@ -1265,11 +1329,37 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     return result_dict
 
 
+# String-literal node types across the tree-sitter grammars we verify.
+# ERROR nodes INSIDE a string are the string's content (unicode-control fuzz
+# corpora, embedded snippets), not code syntax errors — treat strings as
+# opaque (dogfood: an intentional fuzz corpus in a test file
+# produced syntax FAILs).
+_STRING_NODE_TYPES = frozenset(
+    {
+        "string",
+        "string_literal",
+        "template_string",
+        "raw_string_literal",
+        "interpreted_string_literal",
+        "heredoc_body",
+        "string_content",
+        "char_literal",
+    }
+)
+
+
 def _find_error_nodes(node) -> list:
-    """Recursively find ERROR nodes in a tree-sitter AST."""
+    """Recursively find ERROR nodes in a tree-sitter AST.
+
+    Does not descend into string literals — their content is opaque data,
+    not code, so an ERROR inside one is never an actionable syntax finding.
+    """
     errors = []
     if node.type == "ERROR":
         errors.append(node)
+        return errors
+    if node.type in _STRING_NODE_TYPES:
+        return errors
     for child in node.children:
         errors.extend(_find_error_nodes(child))
     return errors
@@ -1283,6 +1373,18 @@ _COMPLEXITY_WARN = 15  # SonarSource-grade threshold cmd_complexity uses
 _COMPLEXITY_FAIL = 25
 
 
+# Vue composables / React hooks keep their closures INSIDE one `use*()`
+# container over shared refs — that's the framework idiom, not bloat. The
+# extractor scores the whole container (inner closures aren't separate
+# symbols), so the number is the SUM over all closures and unactionable at
+# function thresholds: extracting closures to module scope threads every
+# shared ref through every signature, hurting the code to please the metric
+# (dogfood: `useMyDataSyncDriver` scored 204 vs threshold 15).
+# Until closures are scored individually, container findings are ADVISORY.
+_COMPOSABLE_CONTAINER_RE = re.compile(r"^use[A-Z]\w*$")
+_COMPOSABLE_LANGS = frozenset({"javascript", "typescript", "tsx", "jsx", "vue"})
+
+
 def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WARN) -> dict:
     """Flag changed functions/methods whose cognitive complexity is too high."""
     if not file_ids:
@@ -1290,6 +1392,7 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
     rows = batched_in(
         conn,
         """SELECT s.name, s.line_start, f.path AS file_path,
+                  COALESCE(f.language, '') AS language,
                   sm.cognitive_complexity AS cc
            FROM symbols s
            JOIN symbol_metrics sm ON sm.symbol_id = s.id
@@ -1304,6 +1407,29 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
         checked += 1
         cc = float(r["cc"] or 0)
         if cc >= threshold:
+            is_composable_container = (
+                r["language"] or ""
+            ).lower() in _COMPOSABLE_LANGS and _COMPOSABLE_CONTAINER_RE.match(r["name"] or "")
+            if is_composable_container:
+                violations.append(
+                    {
+                        "category": "complexity",
+                        "severity": SEVERITY_INFO,
+                        "file": r["file_path"],
+                        "line": r["line_start"],
+                        "message": (
+                            f"composable `{r['name']}` container complexity {round(cc)} — sum over its "
+                            f"inner closures, advisory only (container idiom, not per-function load)"
+                        ),
+                        "symbol": r["name"],
+                        "cognitive_complexity": round(cc),
+                        "fix": (
+                            f"Review the inner closures of `{r['name']}` individually; extract only "
+                            f"closures that don't share refs"
+                        ),
+                    }
+                )
+                continue
             violations.append(
                 {
                     "category": "complexity",
@@ -1319,7 +1445,7 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
     if checked == 0:
         score = 100
     else:
-        penalty = sum(15 if v["severity"] == SEVERITY_FAIL else 8 for v in violations)
+        penalty = sum(15 if v["severity"] == SEVERITY_FAIL else 8 for v in violations if v["severity"] != SEVERITY_INFO)
         score = max(0, 100 - penalty)
     return {"score": score, "violations": violations}
 
@@ -1424,6 +1550,158 @@ def _collect_cycle_violations(graph, changed_set: set[str]) -> list[dict]:
                 }
             )
     return violations
+
+
+# ---------------------------------------------------------------------------
+# Secrets / leak check — credential patterns + optional repo-local catalogue
+# ---------------------------------------------------------------------------
+
+# Extensions worth scanning for leaked credentials / forbidden language.
+# Mirrors the anti-leak scanner's surface: text-bearing source/config/docs.
+_SECRETS_SCAN_EXTENSIONS = (
+    ".py",
+    ".md",
+    ".html",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".txt",
+    ".tmpl",
+    ".css",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".vue",
+    ".php",
+    ".rb",
+    ".go",
+    ".java",
+    ".sh",
+    ".env",
+    ".toml",
+    ".ini",
+    ".cfg",
+)
+_SECRETS_MAX_PER_FILE = 5
+_LEAK_PATTERNS_FILENAME = ".roam-leak-patterns.py"
+
+
+def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | None]:
+    """Load the optional repo-local leak catalogue ``.roam-leak-patterns.py``.
+
+    Contract: the module exposes ``FORBIDDEN_PATTERNS`` (a list of
+    ``(name, compiled_regex)`` tuples) and optionally ``should_scan(rel_path)
+    -> bool`` to exempt files that intentionally contain the patterns (the
+    catalogue itself, exemplar test fixtures). Returns
+    ``(patterns, should_scan_fn, error)`` — fail-open: a broken catalogue
+    yields no patterns plus a disclosed error string, never a crash.
+    """
+    cat_path = root / _LEAK_PATTERNS_FILENAME
+    if not cat_path.is_file():
+        return [], None, None
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("_roam_leak_patterns", cat_path)
+        if spec is None or spec.loader is None:
+            return [], None, f"{_LEAK_PATTERNS_FILENAME}: not importable"
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        patterns = list(getattr(mod, "FORBIDDEN_PATTERNS", []) or [])
+        should_scan = getattr(mod, "should_scan", None)
+        return patterns, should_scan, None
+    except Exception as exc:  # noqa: BLE001 — gate must fail open, disclosed
+        return [], None, f"{_LEAK_PATTERNS_FILENAME}: {exc}"
+
+
+def _check_secrets(changed_paths: list[str], root: Path) -> dict:
+    """Flag leaked credentials and repo-forbidden language in changed files.
+
+    Two pattern layers, both zero-network and line-scoped:
+
+    * Built-in credential shapes (``roam.security.redact.SECRET_PATTERNS`` —
+      GitHub PATs, sk- keys, AWS key IDs, Bearer tokens, PEM markers, JWTs)
+      — severity FAIL: a credential in a tracked file is never intended.
+    * Optional repo-local catalogue ``.roam-leak-patterns.py`` (internal
+      codenames, private doc references — whatever the project must never
+      publish) — severity WARN.
+
+    Operates on raw changed paths (not the index) so brand-new files are
+    covered before they're ever indexed. This is the leak gate riding the
+    compile/verify loop: every `roam verify --auto` (and therefore the
+    Claude Code Stop hook installed by `roam hooks claude` /
+    `compile wire claude`) runs it by default.
+    """
+    from roam.security.redact import SECRET_PATTERNS, pattern_id
+
+    repo_patterns, repo_should_scan, repo_error = _load_repo_leak_patterns(root)
+
+    violations: list[dict] = []
+    checked = 0
+    for rel in changed_paths:
+        norm = rel.replace("\\", "/")
+        if not norm.endswith(_SECRETS_SCAN_EXTENSIONS):
+            continue
+        fpath = root / rel
+        if not fpath.is_file():
+            continue
+        try:
+            text = fpath.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        checked += 1
+        per_file = 0
+        scan_repo_patterns = bool(repo_patterns) and (repo_should_scan is None or repo_should_scan(norm))
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if per_file >= _SECRETS_MAX_PER_FILE:
+                break
+            hit = None
+            for pat in SECRET_PATTERNS:
+                if pat.search(line):
+                    hit = (
+                        SEVERITY_FAIL,
+                        f"credential-shaped string ({pattern_id(pat)}) in `{norm}`",
+                        "Remove the credential and rotate it; load secrets from the environment instead",
+                    )
+                    break
+            if hit is None and scan_repo_patterns:
+                for name, pat in repo_patterns:
+                    if pat.search(line):
+                        hit = (
+                            SEVERITY_WARN,
+                            f"repo-forbidden pattern [{name}] in `{norm}`",
+                            f"Reword the line — [{name}] is on this repo's never-publish list "
+                            f"({_LEAK_PATTERNS_FILENAME})",
+                        )
+                        break
+            if hit is not None:
+                severity, message, fix = hit
+                violations.append(
+                    {
+                        "category": "secrets",
+                        "severity": severity,
+                        "file": norm,
+                        "line": line_no,
+                        "message": message,
+                        "fix": fix,
+                    }
+                )
+                per_file += 1
+
+    if checked == 0 or not violations:
+        score = 100
+    else:
+        penalty = sum(25 if v["severity"] == SEVERITY_FAIL else 8 for v in violations)
+        score = max(0, 100 - penalty)
+    result: dict = {"score": score, "violations": violations}
+    if repo_error:
+        # Pattern 2 — the repo catalogue did NOT run; disclose, never
+        # silently pass as if it had.
+        result["repo_patterns_error"] = repo_error
+    if repo_patterns:
+        result["repo_pattern_count"] = len(repo_patterns)
+    return result
 
 
 def _check_cycles(conn, file_ids: list[int], changed_paths: list[str]) -> dict:
@@ -1964,6 +2242,14 @@ def verify(
     # Select WHICH checks run (freedom): --checks > --auto/config.auto > config > all.
     selected = resolve_selected_checks(checks_opt, auto, cfg, target_paths)
 
+    # --auto implies the DEEP advisory sweep: the algorithm/idiom detectors
+    # scoped to the touched files (~1-2s, content-driven, never gates).
+    # The catalog's Current/Better/Fix findings are exactly the post-edit
+    # signal the hook loop exists to surface. ROAM_VERIFY_NO_DEEP=1 opts out
+    # (e.g. minimal CI environments).
+    if auto and not deep and os.environ.get("ROAM_VERIFY_NO_DEEP") not in ("1", "true", "yes"):
+        deep = True
+
     if report:
         # REPORT mode: whole-repo scan (unless a path was given), all static
         # checks, NON-gating. Skip the executable `tests` check (too heavy for a
@@ -2054,6 +2340,7 @@ def verify(
         import_side_effects_result = _run_check(
             "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
         )
+        secrets_result = _run_check("secrets", lambda: _check_secrets(target_paths, root))
 
         categories = {
             "naming": naming_result,
@@ -2065,6 +2352,7 @@ def verify(
             "cycles": cycles_result,
             "tests": tests_result,
             "import_side_effects": import_side_effects_result,
+            "secrets": secrets_result,
         }
 
         # --deep: advisory algorithm/idiom anti-patterns scoped to the target
@@ -2077,6 +2365,16 @@ def verify(
         # Composite score over the selected checks only.
         score = _compute_composite(categories, selected)
         verdict = _compute_verdict(score)
+        # Verdict floor: a FAIL-severity secrets finding (credential-shaped
+        # string in a tracked file) can never be averaged into a PASS — the
+        # quiet-on-pass hook loop would swallow it. WARN keeps the gate
+        # advisory (fail-open philosophy) while guaranteeing it SURFACES.
+        secrets_fails = sum(
+            1 for v in (categories.get("secrets", {}).get("violations") or []) if v.get("severity") == SEVERITY_FAIL
+        )
+        if verdict == "PASS" and secrets_fails:
+            verdict = "WARN"
+            score = min(score, 79)
 
         # W-Pattern2: detect degraded sub-checks -- a crashed parse or an
         # unavailable syntax category means part of the gate did NOT run.
@@ -2128,7 +2426,13 @@ def verify(
             if _sups:
 
                 def _is_sup(v):
-                    return is_suppressed(_sups, v.get("category", ""), v.get("file", ""), v.get("line"))
+                    return is_suppressed(
+                        _sups,
+                        v.get("category", ""),
+                        v.get("file", ""),
+                        v.get("line"),
+                        symbol=v.get("symbol"),
+                    )
 
                 suppressed_count = sum(1 for v in all_violations if _is_sup(v))
                 if suppressed_count:

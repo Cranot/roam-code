@@ -1,0 +1,52 @@
+# Secrets-gate fixture suppressions: these files DEFINE or TEST the
+# credential patterns — synthetic credential-shaped strings are their
+# test fixtures, not leaks (the detector reading its own training data).
+suppressions:
+  - rule: secrets
+    file: tests/test_secrets.py
+    reason: synthetic credential fixtures for the secrets command tests
+    status: safe
+  - rule: secrets
+    file: tests/test_secrets_v2.py
+    reason: synthetic credential fixtures for the secrets command tests
+    status: safe
+  - rule: secrets
+    file: tests/test_evidence_redaction_snapshots.py
+    reason: golden-hash redaction fixtures require literal credential shapes
+    status: safe
+  - rule: secrets
+    file: tests/test_security_redact.py
+    reason: redactor unit tests require literal credential shapes
+    status: safe
+  - rule: secrets
+    file: tests/test_w_mcp_redact_egress.py
+    reason: MCP egress-redaction tests require literal credential shapes
+    status: safe
+  - rule: secrets
+    file: tests/test_pr_bundle.py
+    reason: bundle redaction tests embed synthetic PATs/keys
+    status: safe
+  - rule: secrets
+    file: tests/test_evidence_collector.py
+    reason: collector layer-2 redaction tests embed synthetic keys
+    status: safe
+  - rule: secrets
+    file: tests/test_evidence_pr_replay.py
+    reason: replay redaction test embeds a synthetic key
+    status: safe
+  - rule: secrets
+    file: src/roam/commands/cmd_secrets.py
+    reason: the secrets command documents the shapes it detects
+    status: safe
+  - rule: secrets
+    file: tests/test_w_mcp_mode_enforcement.py
+    reason: synthetic sk-test fixture for MCP egress-redaction assertions
+    status: safe
+  - rule: secrets
+    file: tests/test_w_mcp_injection_marker_egress.py
+    reason: synthetic sk-test fixture for MCP egress-redaction assertions
+    status: safe
+  - rule: secrets
+    file: tests/test_w_mcp_security_pipeline_e2e.py
+    reason: synthetic sk-test fixture for MCP egress-redaction assertions
+    status: safe

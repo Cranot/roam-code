@@ -39,6 +39,7 @@ from typing import Any, Mapping
 
 __all__ = [
     "SECRET_PATTERNS",
+    "pattern_id",
     "redact_secrets_in_string",
     "redact_secrets_in_string_with_counts",
     "redact_secrets",
@@ -72,7 +73,12 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     # OpenAI / Anthropic-shaped keys.
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),  # AWS access key ID
-    re.compile(r"\bBearer [A-Za-z0-9\-._~+/]+=*\b"),  # Bearer token
+    # Bearer token — payload must be ≥20 chars so the ENGLISH PHRASE
+    # "Bearer token" in help text / docs never matches (real bearer
+    # payloads — JWTs, opaque OAuth tokens — are all far longer; a loose
+    # charset here made the redactor blank prose and the secrets gate
+    # flag its own documentation).
+    re.compile(r"\bBearer [A-Za-z0-9\-._~+/]{20,}=*\b"),
     re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----"),  # PEM private key marker
     re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),  # JWT
 )
@@ -89,6 +95,15 @@ _PATTERN_IDS: dict[re.Pattern[str], str] = {
     SECRET_PATTERNS[5]: "pem_private_key",
     SECRET_PATTERNS[6]: "jwt",
 }
+
+
+def pattern_id(pattern: re.Pattern[str]) -> str:
+    """Stable identifier for a SECRET_PATTERNS member (consumer-facing).
+
+    Used by the MCP receipt wrapper and the verify ``secrets`` check to
+    name WHICH credential shape matched without echoing the match itself.
+    """
+    return _PATTERN_IDS.get(pattern, "unknown_secret_shape")
 
 
 # ---------------------------------------------------------------------------
