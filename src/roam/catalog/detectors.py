@@ -255,11 +255,12 @@ def list_detector_surface() -> list[dict[str, Any]]:
                     "source": "js_idioms",
                 }
             )
-    except ImportError:
-        # Genuine optional-module guard: js_idioms is an optional detector
-        # pack. Its absence simply yields fewer surface entries — an
-        # expected, non-error state. No lineage needed.
-        pass
+    except ImportError as exc:
+        # Optional-module guard: js_idioms absence just yields fewer surface
+        # entries — logged loud rather than silently swallowed.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.surface.js_idioms_import", exc)
 
     return entries
 
@@ -4808,11 +4809,12 @@ def _iter_registered_detectors():
 
         for det in JS_IDIOM_DETECTORS:
             yield det
-    except ImportError:
-        # Genuine optional-module guard: js_idioms is an optional detector
-        # pack; its absence just yields the built-in set. No lineage
-        # needed — expected non-error state.
-        pass
+    except ImportError as exc:
+        # Optional-module guard: js_idioms absence just yields the built-in
+        # set — logged loud rather than silently swallowed.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.iter.js_idioms_import", exc)
 
     try:
         from roam.plugins import get_plugin_detectors

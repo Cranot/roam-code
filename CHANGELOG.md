@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.6.1] — 2026-06-12
+
+### The algo command grows teeth — and goes cross-language
+
+- **Six Python loop-body performance detectors** (manual Counter builds,
+  quadratic list-reassign concat, append-then-sort accumulators, pop(0)
+  list-as-queues, deepcopy-per-iteration, DataFrame/array concat-in-loop)
+  on a shared loop-window scanner with an indent guard. Dogfooded three
+  rounds on this repo: two false-positive classes (mid-identifier
+  backreference matches; post-loop window matches) were found by the
+  dogfood and sealed with regression tests before release.
+- **Five JavaScript/TypeScript detectors** — .shift() queues,
+  concat-reassign rebuilds, push-then-sort, JSON.parse(JSON.stringify())
+  roundtrip clones, delete-in-loop — on the same scanner, Vue/Svelte SFCs
+  included. The detector surface goes 58 -> 69, and  now
+  fires the JS pack on JS/TS edits.
+- **44 findings fixed in roam itself** (Counter/defaultdict conversions,
+  BFS queues to deque, O(1) partition pops). The full test suite got 39%
+  faster in the same pass.
+- **top_n_ranking gains a native cycles dimension** — "biggest cycles"
+  prompts now ship the Tarjan SCCs in the envelope (re-measured n=3:
+  bash.65 -> bash.07, 6 turns -> 1).
+- Entry-point routing accepts qualifiers ("CLI entry point"); first
+  parallel-CI races sealed with xdist groups; envelope/probe caches now
+  invalidate on re-index (index stamp + generation sweep).
+
 ## [13.6] — 2026-06-11
 
 ### The verify loop grows teeth (field-feedback wave)

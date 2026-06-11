@@ -76,6 +76,9 @@ __all__ = [
 # patterns — every detector needs a JS-specific call shape (``.shift()``,
 # ``.concat(``, ``JSON.parse(JSON.stringify(``, ``delete x[``) that template
 # directive syntax does not produce, so scanning the whole SFC is safe.
+# 6 entries — 4 core JS-family labels + 2 SFC labels (vue/svelte). The SFC
+# inclusion is load-bearing: a Vue3 production app indexed 370 vue vs 6 js
+# files, so excluding SFCs blinded the sweep to ~98% of its JS surface.
 _JS_LANGUAGES = ("javascript", "jsx", "typescript", "tsx", "vue", "svelte")
 
 # Call-scoped file filter — the JS pack keeps its OWN module global (it cannot
@@ -210,18 +213,7 @@ def _detect_js_loop_idiom(
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
-        for match in regex.finditer(text):
-            header_indent = len(match.group("ind") or "")
-            line_start = text.rfind("\n", 0, match.end() - 1) + 1
-            trigger_line = text[line_start : match.end()]
-            trigger_indent = len(trigger_line) - len(trigger_line.lstrip(" \t"))
-            if trigger_indent <= header_indent:
-                continue
-            line_no = text.count("\n", 0, match.end()) + 1
-            sym = _enclosing_symbol(line_no, sym_index)
-            if sym is None:
-                continue
-            name = match.group("name") if "name" in regex.groupindex else ""
+        for line_no, sym, name in _guarded_window_hits(text, regex, sym_index):
             findings.append(
                 _idiom_finding(
                     task_id=task_id,
@@ -236,6 +228,24 @@ def _detect_js_loop_idiom(
                 )
             )
     return findings
+
+
+def _guarded_window_hits(text: str, regex: re.Pattern[str], sym_index):
+    """Yield ``(line_no, enclosing_symbol, name)`` for each regex hit that
+    passes the indent guard and resolves to an enclosing symbol."""
+    for match in regex.finditer(text):
+        header_indent = len(match.group("ind") or "")
+        line_start = text.rfind("\n", 0, match.end() - 1) + 1
+        trigger_line = text[line_start : match.end()]
+        trigger_indent = len(trigger_line) - len(trigger_line.lstrip(" \t"))
+        if trigger_indent <= header_indent:
+            continue
+        line_no = text.count("\n", 0, match.end()) + 1
+        sym = _enclosing_symbol(line_no, sym_index)
+        if sym is None:
+            continue
+        name = match.group("name") if "name" in regex.groupindex else ""
+        yield line_no, sym, name
 
 
 # ---------------------------------------------------------------------------
