@@ -7,6 +7,14 @@ D1 compile telemetry sidecar appends one JSONL entry per call
 
 from __future__ import annotations
 
+import pytest
+
+# xdist: these tests compile against the MAIN repo (shared
+# .roam/compile-envelope-cache.sqlite + live probe subprocesses), so they
+# serialize on one worker. Surfaced on the first parallel CI run
+# (2026-06-11): the blast probe returned empty under 4-worker contention.
+pytestmark = pytest.mark.xdist_group("mainrepo_compile")
+
 import json
 import os
 

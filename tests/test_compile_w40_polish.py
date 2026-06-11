@@ -12,6 +12,12 @@ import os
 
 import pytest
 
+# xdist: these tests compile against the MAIN repo (shared
+# .roam/compile-envelope-cache.sqlite + live probe subprocesses), so they
+# serialize on one worker. Surfaced on the first parallel CI run
+# (2026-06-11): the blast probe returned empty under 4-worker contention.
+pytestmark = pytest.mark.xdist_group("mainrepo_compile")
+
 from roam.plan.compiler import (
     _extract_file_paths,
     _extract_stack_frames,

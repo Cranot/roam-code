@@ -152,12 +152,19 @@ spends your tokens only where it wins.
 | "explain the compiler module's architecture" | 13 → **6** | 618K → 240K | $1.85 → $1.01 |
 | "trace how a command becomes an MCP tool" | 12 → **8** | 464K → 303K | $1.25 → $1.01 |
 | security-hook comprehension (hard, multi-file) | 6 → **2** | 267K → 117K | $1.15 → $0.56 |
-| "where is the CLI entry point?" (trivial) | 1 → 1 | 49K → 51K | $0.25 → $0.45 |
-| "write a pytest for X" (generation) | 10 → 10 | 489K → **611K** | $1.82 → **$2.13** |
+| "where is the CLI entry point?" (trivial, re-measured 06-11) | 1 → 1 | 48K → 50K | $0.21 → $0.22 |
+| "write a pytest for X" (generation, re-measured 06-11) | 5 → 7 | 275K → 396K | $0.61 → **$0.45** |
 
-The last two rows are the published losses — and the source of the
-generation-skip rule above (measured 3.5% of a 723-prompt real corpus,
-every hit a genuine write-code prompt).
+The last two rows were the published LOSSES (trivial prompts once paid
+the envelope for nothing at +$0.20; generation once cost +17%). After the
+generation-skip lever (write-code prompts get a ~0.6 KB lean envelope or
+none — measured 3.5% of a 723-prompt real corpus) and the entry-point
+routing fix, both cells were re-measured at n=3 medians on the same
+model: generation flipped to a −26% cost / −18% wall win — input tokens
+rise (cache-read-heavy, cheap) while expensive output tokens drop −29%
+across more-but-cheaper turns — and the trivial cell is a tie within
+noise. Losses are findable because we publish them — and fixable because
+the compiler routes them.
 
 **Bug-fixing, ground-truth graded** (a failing test must transition to
 passing — no LLM judging): 20 cells of planted bugs with real tracebacks —
@@ -170,9 +177,8 @@ route at L1** — the envelope already contains the literal answer — at
 **p50 92 ms / p95 305 ms** compile latency, fully local.
 
 Caveats that always ship with these numbers: trivial prompts the agent
-one-shots anyway gain nothing and pay the small envelope; pure code
-generation is neutral-to-negative (hence the skip rule); cells are n=2–3
-with medians and ranges. Full run history under
+one-shots anyway gain nothing (now a within-noise tie after the lean/skip
+levers); cells are n=2–3 with medians and ranges. Full run history under
 [Performance](#performance).
 </details>
 

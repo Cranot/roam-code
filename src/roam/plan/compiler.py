@@ -513,7 +513,11 @@ _TEST_IMPACT_STOPWORDS: frozenset[str] = frozenset(
 _ENTRY_POINT_RE = re.compile(
     # "where/what is the entry point" — the most literal phrasings were
     # misses (only "what's ..." and "where does X start" matched).
-    r"\b((what'?s?|what\s+is|where\s+(is|are))\s+the\s+(main\s+)?entry\s*.?points?|"
+    # 2026-06-11: a qualifier before "entry point" broke the match — the
+    # README-gallery loss cell "where is the CLI entry point?" routed to
+    # freeform_explore instead of the L1 answer. Allow the common ones.
+    r"\b((what'?s?|what\s+is|where\s+(is|are))\s+the\s+"
+    r"((main|cli|app|application|program|service|server|primary)\s+)?entry\s*.?points?|"
     r"where\s+does\s+\S+\s+start|"
     r"how\s+does\s+the\s+(cli|app|service|worker|server)\s+start|"
     r"main\s+entry|startup\s+(flow|path|sequence))\b",

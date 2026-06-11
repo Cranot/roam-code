@@ -22,6 +22,13 @@ from pathlib import Path
 
 import pytest
 
+# xdist: these tests read or mutate the REAL repo card JSONs + the
+# _EXPECTED_CARD_SHA256 pin (no --target override exists), so they must
+# serialize on one worker. Surfaced on the first parallel CI run
+# (2026-06-11): two w844 tests raced across workers and flagged a real
+# --apply as non-idempotent.
+pytestmark = pytest.mark.xdist_group("card_pin_mutation")
+
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()

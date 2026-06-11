@@ -9,14 +9,11 @@ above the bridge-file threshold.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
-from roam.commands.cmd_xlang import xlang
 from tests.conftest import git_init, index_in_process
 
 
@@ -73,14 +70,33 @@ def huge_proto_project(tmp_path, monkeypatch):
     return proj
 
 
+class _SubprocessResult:
+    """Duck-typed stand-in for click.testing.Result (exit_code + output)."""
+
+    def __init__(self, proc):
+        self.exit_code = proc.returncode
+        self.output = proc.stdout
+
+
 def _invoke_xlang(args, cwd, json_mode=True):
-    runner = CliRunner()
-    old_cwd = os.getcwd()
-    try:
-        os.chdir(str(cwd))
-        return runner.invoke(xlang, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False)
-    finally:
-        os.chdir(old_cwd)
+    """Invoke x-lang in a SUBPROCESS, not via CliRunner.
+
+    This file's huge-graph test flaked under xdist when an unidentified
+    earlier test on the same worker left in-process state that made every
+    bridge invisible ("no cross-language bridges detected" on a project
+    with 1200 seeded stub rows; passes solo and in every targeted batch).
+    A fresh interpreter is hermetic by construction — module registries,
+    caches, and monkeypatch leftovers cannot reach it. Costs ~1s per call.
+    """
+    import subprocess
+    import sys
+
+    argv = [sys.executable, "-m", "roam"]
+    if json_mode:
+        argv.append("--json")
+    argv += ["x-lang", *[str(a) for a in args]]
+    proc = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=180)
+    return _SubprocessResult(proc)
 
 
 class TestXLangScope:
