@@ -1796,6 +1796,184 @@ def detect_regex_alternation_join(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+# ---- loop-body performance idioms (2026-06-11 wave) -----------------------
+#
+# Six classic quadratic-or-worse shapes that survive review because each
+# iteration looks innocent. All share the lambda-in-loop detection model:
+# a loop header followed by the trigger pattern within a bounded body
+# window (strings/comments already blanked by the caller pipeline).
+
+_LOOP_PREFIX = r"^\s*(?:for|while)\s[^\n]*:\s*\n[\s\S]{0,300}?"
+
+# counts[k] = counts.get(k, 0) + 1  → collections.Counter / defaultdict(int)
+_MANUAL_COUNTER_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"(\w+)\[([^\]]+)\]\s*=\s*\1\.get\(\2,\s*0\)\s*\+\s*1",
+    re.MULTILINE,
+)
+# acc = acc + [x]  → acc.append(x) / acc.extend(...)  (quadratic rebuild)
+_LIST_REASSIGN_CONCAT_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"(\w+)\s*=\s*\1\s*\+\s*\[",
+    re.MULTILINE,
+)
+# acc.append(x) ... acc.sort() / sorted(acc) in the SAME loop body
+# (sorting a fresh per-iteration collection is fine; sorting the
+# accumulator every pass is O(n^2 log n) → bisect.insort / one sort after)
+_APPEND_THEN_SORT_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"(\w+)\.append\([^\n]*\)[\s\S]{0,200}?(?:\1\.sort\(|sorted\(\s*\1\b)",
+    re.MULTILINE,
+)
+# queue.pop(0) in a loop — O(n) per dequeue → collections.deque.popleft()
+_POP0_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"(\w+)\.pop\(\s*0\s*\)",
+    re.MULTILINE,
+)
+# copy.deepcopy(...) per iteration — often hoistable or shallow-copyable
+_DEEPCOPY_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"\bdeepcopy\(",
+    re.MULTILINE,
+)
+# pd.concat / np.concatenate / np.vstack per iteration — quadratic copying;
+# collect parts in a list and concat ONCE after the loop
+_FRAME_CONCAT_IN_LOOP_RE = re.compile(
+    _LOOP_PREFIX + r"\b(?:pd\.concat|np\.concatenate|np\.vstack|np\.hstack)\(",
+    re.MULTILINE,
+)
+
+
+def _detect_loop_idiom(
+    conn: sqlite3.Connection,
+    regex: "re.Pattern[str]",
+    *,
+    task_id: str,
+    detected_way: str,
+    reason: str,
+    fix: str,
+    confidence: str,
+) -> list[dict]:
+    """Shared scan for the loop-body performance idioms above. The reason/fix
+    strings may reference ``{name}`` — replaced with the first capture group
+    (the accumulator/collection variable) when the regex has one."""
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in regex.finditer(text):
+            line_no = text.count("\n", 0, match.end()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            name = match.group(1) if regex.groups else ""
+            findings.append(
+                _idiom_finding(
+                    task_id=task_id,
+                    detected_way=detected_way,
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=reason.format(name=name),
+                    confidence=confidence,
+                    fix=fix.format(name=name),
+                )
+            )
+    return findings
+
+
+def detect_manual_counter_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``counts[k] = counts.get(k, 0) + 1`` inside a loop — hand-rolled
+    Counter. collections.Counter(iterable) is C-speed and clearer."""
+    return _detect_loop_idiom(
+        conn,
+        _MANUAL_COUNTER_IN_LOOP_RE,
+        task_id="py-manual-counter",
+        detected_way="dict-get-increment",
+        reason="hand-rolled counting via ``{name}[k] = {name}.get(k, 0) + 1`` in a loop",
+        fix="from collections import Counter; {name} = Counter(iterable)  # or defaultdict(int)",
+        confidence="high",
+    )
+
+
+def detect_list_reassign_concat_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``acc = acc + [x]`` inside a loop — rebuilds the list every pass
+    (quadratic). ``append``/``extend`` mutate in place at O(1) amortized."""
+    return _detect_loop_idiom(
+        conn,
+        _LIST_REASSIGN_CONCAT_IN_LOOP_RE,
+        task_id="py-quadratic-list-concat",
+        detected_way="list-reassign-concat",
+        reason="``{name} = {name} + [...]`` in a loop copies the whole list every iteration (O(n^2))",
+        fix="{name}.append(item)  # or {name}.extend(items)",
+        confidence="high",
+    )
+
+
+def detect_append_then_sort_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``acc.append(...)`` then ``acc.sort()``/``sorted(acc)`` in the same
+    loop body — re-sorts the accumulator every pass (O(n^2 log n)).
+
+    Confidence is MEDIUM, not high: the regex cannot tell a persistent
+    accumulator from a collection rebuilt fresh each outer iteration
+    (e.g. ``for g in graphs: g.inputs.append(...); g.inputs.sort()`` sorts
+    a per-graph list once — legitimate). Dogfooded 2026-06-11: ~half the
+    hits on this repo were the fresh-per-iteration shape."""
+    return _detect_loop_idiom(
+        conn,
+        _APPEND_THEN_SORT_IN_LOOP_RE,
+        task_id="py-sort-in-loop",
+        detected_way="append-then-sort",
+        reason="``{name}`` is appended to AND re-sorted inside the same loop (O(n^2 log n) if it persists across iterations)",
+        fix="bisect.insort({name}, item)  # keeps it sorted in O(n) per insert; or sort ONCE after the loop",
+        confidence="medium",
+    )
+
+
+def detect_pop0_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``queue.pop(0)`` inside a loop — every dequeue shifts the whole list
+    (O(n)). collections.deque.popleft() is O(1)."""
+    return _detect_loop_idiom(
+        conn,
+        _POP0_IN_LOOP_RE,
+        task_id="py-pop0-queue",
+        detected_way="list-as-queue",
+        reason="``{name}.pop(0)`` in a loop shifts every remaining element (O(n) per dequeue)",
+        fix="from collections import deque; {name} = deque(items); {name}.popleft()",
+        confidence="high",
+    )
+
+
+def detect_deepcopy_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``copy.deepcopy(...)`` per iteration — frequently hoistable (template
+    copied from an invariant) or replaceable with a shallow copy."""
+    return _detect_loop_idiom(
+        conn,
+        _DEEPCOPY_IN_LOOP_RE,
+        task_id="py-deepcopy-in-loop",
+        detected_way="deepcopy-per-iteration",
+        reason="``deepcopy`` inside a loop — full recursive copy every iteration",
+        fix="hoist the deepcopy above the loop if the source is invariant; use dict(x)/list(x)/x.copy() when one level suffices",
+        confidence="medium",
+    )
+
+
+def detect_frame_concat_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """``pd.concat``/``np.concatenate``/``np.vstack`` per iteration — each
+    call copies the whole accumulated frame/array (quadratic). Collect the
+    parts and concatenate once."""
+    return _detect_loop_idiom(
+        conn,
+        _FRAME_CONCAT_IN_LOOP_RE,
+        task_id="py-frame-concat-in-loop",
+        detected_way="concat-per-iteration",
+        reason="DataFrame/array concatenation inside a loop copies all accumulated rows every iteration",
+        fix="parts.append(chunk) inside the loop; ONE pd.concat(parts) / np.concatenate(parts) after it",
+        confidence="high",
+    )
+
+
 # Detector registry — same shape ``cmd_math`` expects from ``_MATH_DETECTORS``
 # (task_id, pattern_id, detect_fn). Re-exported so registration is one
 # import line elsewhere.
@@ -1824,6 +2002,13 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
     ("py-except-pass", "silent-swallow", detect_except_pass),
     ("py-broad-except", "catch-too-much", detect_broad_except),
+    # loop-body performance idioms (2026-06-11 wave)
+    ("py-manual-counter", "dict-get-increment", detect_manual_counter_in_loop),
+    ("py-quadratic-list-concat", "list-reassign-concat", detect_list_reassign_concat_in_loop),
+    ("py-sort-in-loop", "append-then-sort", detect_append_then_sort_in_loop),
+    ("py-pop0-queue", "list-as-queue", detect_pop0_in_loop),
+    ("py-deepcopy-in-loop", "deepcopy-per-iteration", detect_deepcopy_in_loop),
+    ("py-frame-concat-in-loop", "concat-per-iteration", detect_frame_concat_in_loop),
 ]
 
 
@@ -1853,6 +2038,12 @@ _IDIOM_TRIGGERS: dict[str, tuple[str, ...]] = {
     "py-flask-routes": ("flask", "Flask", "Blueprint", ".route("),
     "py-flask-debug-true": ("debug=True", "flask", "Flask"),
     "py-flask-secret-key-literal": ("SECRET_KEY", "secret_key"),
+    "py-manual-counter": (".get(",),
+    "py-quadratic-list-concat": ("+ [",),
+    "py-sort-in-loop": (".sort(", "sorted("),
+    "py-pop0-queue": (".pop(0", ".pop( 0", ".pop(\t0"),
+    "py-deepcopy-in-loop": ("deepcopy",),
+    "py-frame-concat-in-loop": ("pd.concat", "np.concatenate", "np.vstack", "np.hstack"),
 }
 
 

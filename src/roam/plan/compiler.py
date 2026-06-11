@@ -5519,6 +5519,17 @@ def _probe_top_n_ranking_for_task(task: str, cwd: str | None) -> dict | None:
             ("node", "name", "symbol"),
             ("in_degree", "callers", "count"),
         ),
+        # 2026-06-11 — "biggest cycles" prompts routed here but the table had
+        # no cycles dimension, so the envelope shipped an honest-but-empty
+        # `unavailable` and the agent re-derived everything (the +56% w11w13
+        # t4 bench cell). `roam cycles` returns Tarjan SCCs largest-first;
+        # `files` carries the member list, `size` the symbol count.
+        "cycles": (
+            ["cycles"],
+            ("cycles", "sccs", "items"),
+            ("files", "symbols", "name"),
+            ("size", "file_count", "count"),
+        ),
     }
     args, key_candidates, name_keys, score_keys = dispatch.get(dimension, ([], (), (), ()))
     # W12 fallback (2026-06-02): always emit a remediation envelope so L1
@@ -6942,9 +6953,9 @@ def _probe_known_findings_for_task(named_paths: list[str], cwd: str | None) -> d
     rows = [v for v in report.get("violations") or [] if v.get("file") in targets]
     if not rows:
         return None
-    by_category: dict[str, int] = {}
-    for v in rows:
-        by_category[v.get("category") or "?"] = by_category.get(v.get("category") or "?", 0) + 1
+    from collections import Counter
+
+    by_category: dict[str, int] = dict(Counter((v.get("category") or "?") for v in rows))
     top = [
         {
             "category": v.get("category"),

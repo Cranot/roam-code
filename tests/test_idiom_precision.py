@@ -73,3 +73,96 @@ def test_applicable_idiom_detectors_is_content_driven():
     assert "py-lambda-in-loop" in ids("g = lambda y: y")
     # plain code runs strictly fewer detectors than the full registry
     assert len(plain) < len(PYTHON_IDIOM_DETECTORS)
+
+
+# ---- loop-body performance idioms (2026-06-11 wave) ----
+
+
+def _hits(regex, code):
+    from roam.catalog.python_idioms import _strip_strings_and_comments as strip
+
+    return list(regex.finditer(strip(code)))
+
+
+def test_manual_counter_in_loop():
+    from roam.catalog.python_idioms import _MANUAL_COUNTER_IN_LOOP_RE as R
+
+    bug = "    for x in xs:\n        counts[x] = counts.get(x, 0) + 1\n"
+    assert _hits(R, bug)
+    # different dict on the right side — not the counting idiom
+    safe = "    for x in xs:\n        counts[x] = other.get(x, 0) + 1\n"
+    assert not _hits(R, safe)
+    # outside any loop — single increment is fine
+    safe2 = "    counts[x] = counts.get(x, 0) + 1\n"
+    assert not _hits(R, safe2)
+
+
+def test_quadratic_list_concat_in_loop():
+    from roam.catalog.python_idioms import _LIST_REASSIGN_CONCAT_IN_LOOP_RE as R
+
+    bug = "    for x in xs:\n        acc = acc + [x]\n"
+    assert _hits(R, bug)
+    safe = "    for x in xs:\n        acc = other + [x]\n"  # not self-concat
+    assert not _hits(R, safe)
+    safe2 = "    acc = acc + [x]\n"  # outside a loop
+    assert not _hits(R, safe2)
+
+
+def test_append_then_sort_in_loop():
+    from roam.catalog.python_idioms import _APPEND_THEN_SORT_IN_LOOP_RE as R
+
+    bug = "    for x in xs:\n        acc.append(x)\n        acc.sort()\n"
+    assert _hits(R, bug)
+    bug2 = "    for x in xs:\n        acc.append(x)\n        top = sorted(acc)[:3]\n"
+    assert _hits(R, bug2)
+    # sorting a DIFFERENT, per-iteration collection is legitimate
+    safe = "    for g in groups:\n        acc.append(g)\n        ordered = sorted(g.items())\n"
+    assert not _hits(R, safe)
+
+
+def test_pop0_in_loop():
+    from roam.catalog.python_idioms import _POP0_IN_LOOP_RE as R
+
+    bug = "    while q:\n        item = q.pop(0)\n"
+    assert _hits(R, bug)
+    safe = "    item = q.pop(0)\n"  # one-off dequeue outside a loop
+    assert not _hits(R, safe)
+    safe2 = "    while q:\n        item = q.pop()\n"  # pop from the END is O(1)
+    assert not _hits(R, safe2)
+
+
+def test_deepcopy_in_loop():
+    from roam.catalog.python_idioms import _DEEPCOPY_IN_LOOP_RE as R
+
+    bug = "    for x in xs:\n        y = deepcopy(template)\n"
+    assert _hits(R, bug)
+    safe = "    y = deepcopy(template)\n    for x in xs:\n        pass\n"
+    assert not _hits(R, safe)
+
+
+def test_frame_concat_in_loop():
+    from roam.catalog.python_idioms import _FRAME_CONCAT_IN_LOOP_RE as R
+
+    bug = "    for chunk in chunks:\n        df = pd.concat([df, chunk])\n"
+    assert _hits(R, bug)
+    bug2 = "    for a in arrays:\n        out = np.vstack([out, a])\n"
+    assert _hits(R, bug2)
+    safe = "    df = pd.concat(parts)\n"  # single concat after collecting
+    assert not _hits(R, safe)
+
+
+def test_new_perf_idioms_are_registered_with_triggers():
+    """Registry + applicability-gate wiring for the six new detectors."""
+    from roam.catalog.python_idioms import _IDIOM_TRIGGERS, PYTHON_IDIOM_DETECTORS
+
+    new = {
+        "py-manual-counter",
+        "py-quadratic-list-concat",
+        "py-sort-in-loop",
+        "py-pop0-queue",
+        "py-deepcopy-in-loop",
+        "py-frame-concat-in-loop",
+    }
+    registered = {t for t, _w, _f in PYTHON_IDIOM_DETECTORS}
+    assert new <= registered
+    assert new <= set(_IDIOM_TRIGGERS), "every new detector must carry a trigger gate"

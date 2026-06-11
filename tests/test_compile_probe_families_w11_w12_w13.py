@@ -330,3 +330,28 @@ def test_resolve_cli_command_files():
     assert _resolve_cli_command_files("why is roam dead slow", cwd) == ["src/roam/commands/cmd_dead.py"]
     assert _resolve_cli_command_files("roam is a great tool", cwd) == []  # 'is' not a command
     assert _resolve_cli_command_files("no command here", cwd) == []
+
+
+# ---- cycles dimension (2026-06-11) ----
+
+
+def test_w12_cycles_dimension_has_native_dispatch():
+    """ "Biggest cycles" prompts route to top_n_ranking; before 2026-06-11 the
+    dispatch table had no cycles entry, so the probe emitted an empty
+    `unavailable` envelope and the agent re-derived the answer (the +56%
+    w11w13 t4 bench cell). Run the probe against THIS repo (indexed, has
+    real SCCs) and require non-empty ranked items."""
+    import os
+
+    import pytest as _pytest
+
+    from roam.plan.compiler import _probe_top_n_ranking_for_task
+
+    if not os.path.exists(os.path.join(os.getcwd(), ".roam", "index.db")):
+        _pytest.skip("requires the roam-code index")
+    out = _probe_top_n_ranking_for_task("What are the biggest cycles in this codebase?", os.getcwd())
+    assert out, "probe returned nothing for a cycles ranking prompt"
+    ranking = out.get("top_n_ranking") or {}
+    assert ranking.get("dimension") == "cycles"
+    unavailable = out.get("top_n_ranking_unavailable")
+    assert ranking.get("items"), f"cycles dispatch returned no items: {unavailable}"
