@@ -1941,9 +1941,73 @@ def _run_roam_persist_path(cwd: str | None) -> str | None:
         roam_dir = os.path.join(cwd, ".roam")
         if not os.path.isdir(roam_dir):
             return None
-        return os.path.join(roam_dir, "compile-envelope-cache.sqlite")
+        path = os.path.join(roam_dir, "compile-envelope-cache.sqlite")
+        _persist_sweep_stale_generation(path, cwd)
+        return path
     except (OSError, TypeError):
         return None
+
+
+# Tables whose rows are DERIVED FROM THE INDEX but invalidated only by
+# TTL + repo HEAD. Under uncommitted dev edits HEAD never moves, so a row
+# captured from a stale index outlives `roam index --force` and keeps
+# feeding poisoned facts (stale line numbers) into freshly-stamped
+# envelopes — observed live 2026-06-11 via probe_pos/run_roam on the
+# structural_callers path. env_cache is NOT listed: it carries per-row
+# dep mtimes + its own index stamp and self-evicts with precision.
+_INDEX_DERIVED_TABLES = (
+    "run_roam_cache",
+    "probe_pos_cache",
+    "probe_neg_cache",
+    "symbol_resolution_cache",
+    "plan_cache",
+)
+_PERSIST_GENERATION_SWEPT: set[str] = set()
+
+
+def _persist_sweep_stale_generation(path: str, cwd: str | None) -> None:
+    """Once per process per cache DB: if .roam/index.db's mtime differs
+    from the generation recorded in the DB, wipe every index-derived
+    table. Re-indexing thereby invalidates all coarse-keyed caches at
+    once; precision-keyed tables keep their own row-level checks."""
+    if path in _PERSIST_GENERATION_SWEPT:
+        return
+    _PERSIST_GENERATION_SWEPT.add(path)
+    try:
+        generation = str(int(os.path.getmtime(_index_db_path(cwd)) * 1000))
+    except OSError:
+        return  # no index yet — nothing derived from it can be stale
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(path, timeout=1.0)
+        try:
+            _apply_generation_sweep(conn, generation)
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — cache hygiene must never break a compile
+        log_swallowed("compile.persist_sweep", exc)
+
+
+def _apply_generation_sweep(conn, generation: str) -> None:
+    """Wipe the index-derived tables unless `generation` matches the one
+    recorded in persist_meta; record the new generation either way."""
+    import sqlite3
+
+    conn.execute("CREATE TABLE IF NOT EXISTS persist_meta (k TEXT PRIMARY KEY, v TEXT)")
+    row = conn.execute("SELECT v FROM persist_meta WHERE k='index_generation'").fetchone()
+    if row and row[0] == generation:
+        return
+    for table in _INDEX_DERIVED_TABLES:
+        try:
+            conn.execute(f"DELETE FROM {table}")  # noqa: S608 — closed enum above
+        except sqlite3.OperationalError as exc:
+            log_swallowed("compile.persist_sweep.missing_table", exc)
+    conn.execute(
+        "INSERT OR REPLACE INTO persist_meta VALUES ('index_generation', ?)",
+        (generation,),
+    )
+    conn.commit()
 
 
 def _run_roam_persist_ensure_schema(conn) -> None:
@@ -8837,7 +8901,26 @@ def _envelope_dep_files(plan: "PlanV0", env: dict, cwd: str | None) -> dict:
         except OSError as exc:
             log_swallowed("compile.envelope_dep_files.stat", exc)
             continue  # missing file → not a dependency we can fingerprint
+    # The envelope's structural facts (callers, blast, layers, ...) derive
+    # from the INDEX, not from the source files directly. Without stamping
+    # the index itself, an envelope compiled from a stale index keeps being
+    # served even after `roam index --force`: the source mtimes recorded at
+    # store time already matched the edited files, so the W70 check could
+    # never evict the poisoned row (observed 2026-06-11: cached callers
+    # cited pre-edit line numbers across a forced re-index). Re-indexing
+    # moves index.db's mtime, which now busts every row compiled before it.
+    try:
+        out[_INDEX_DEP_KEY] = round(os.path.getmtime(_index_db_path(cwd)), 3)
+    except OSError as exc:
+        log_swallowed("compile.envelope_dep_files.index_stat", exc)
     return out
+
+
+_INDEX_DEP_KEY = "__index_db__"
+
+
+def _index_db_path(cwd: str | None) -> str:
+    return os.path.join(cwd or ".", ".roam", "index.db")
 
 
 def _envelope_deps_are_fresh(cwd: str | None, dep_json: str | None) -> bool:
@@ -8852,8 +8935,18 @@ def _envelope_deps_are_fresh(cwd: str | None, dep_json: str | None) -> bool:
         return True
     if not deps:
         return True
+    # Rows with dep fingerprints but NO index stamp predate the index-stamp
+    # fix (2026-06-11). They may hold facts compiled from an index that has
+    # since been rebuilt — the poisoned-row class the stamp exists to catch —
+    # and nothing else can prove their consistency. Evict once; the next
+    # compile re-caches with the stamp.
+    if _INDEX_DEP_KEY not in deps and os.path.exists(_index_db_path(cwd)):
+        return False
     for rel, cached_mtime in deps.items():
-        full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
+        if rel == _INDEX_DEP_KEY:
+            full = _index_db_path(cwd)
+        else:
+            full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
         try:
             current = round(os.path.getmtime(full), 3)
         except OSError as exc:

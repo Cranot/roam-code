@@ -297,3 +297,128 @@ def test_w70_dep_files_extracts_from_prefetched_facts(tmp_path):
     deps = _envelope_dep_files(_MockPlan(), env, str(tmp_path))
     assert "src/x.py" not in deps, "file_excerpt is illustrative — W45 excludes it"
     assert "src/y.py" in deps, "structural_imports is answer-determining — keep it"
+
+
+# ---- Index-stamp invalidation (2026-06-11): re-index must bust the cache ----
+#
+# The poisoned-row scenario: envelope compiled while index.db lagged the
+# sources (its structural facts cite pre-edit line numbers), then cached
+# with dep mtimes that already matched the edited files. Source-file stats
+# can never evict that row; only the index stamp can. Pin (a) the stamp is
+# recorded, (b) touching index.db evicts, (c) the freshness helper handles
+# the synthetic key without treating it as a source path.
+
+
+def test_index_db_is_stamped_into_dep_map(tmp_path):
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    plan = compile_plan("what does src/a.py do", cwd=str(repo))
+    env, _ = compile_for_artifact(plan, cwd=str(repo))
+    deps = _envelope_dep_files(plan, env, str(repo))
+    assert "__index_db__" in deps
+    assert isinstance(deps["__index_db__"], (int, float))
+
+
+def test_reindex_invalidates_cached_envelope(tmp_path):
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    plan = compile_plan("what does src/a.py do", cwd=str(repo))
+    compile_for_artifact(plan, cwd=str(repo))
+    db = repo / ".roam" / "compile-envelope-cache.sqlite"
+    if not db.exists():
+        pytest.skip("envelope cache not populated")
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT dep_mtimes_json FROM env_cache LIMIT 1").fetchone()
+    conn.close()
+    if not (row and row[0] and "__index_db__" in json.loads(row[0])):
+        pytest.skip("no index stamp stored — envelope not cached with deps")
+
+    # Simulate `roam index --force`: index.db mtime moves, sources do not.
+    time.sleep(0.02)
+    os.utime(repo / ".roam" / "index.db", None)
+
+    _clear_in_memory()
+    plan2 = compile_plan("what does src/a.py do", cwd=str(repo))
+    cached = _envelope_cache_lookup(plan2, str(repo))
+    assert cached is None, "row compiled from the older index must be evicted on re-index"
+
+
+def test_missing_index_db_does_not_break_dep_map(tmp_path):
+    # A compile auto-creates index.db, so absence can only be exercised by
+    # pointing the helper at a cwd with no .roam dir at all.
+    repo = _setup_repo(tmp_path)
+    plan = compile_plan("what does src/a.py do", cwd=str(repo))
+    env, _ = compile_for_artifact(plan, cwd=str(repo))
+    bare = tmp_path / "no-roam-here"
+    bare.mkdir()
+    deps = _envelope_dep_files(plan, env, str(bare))
+    assert "__index_db__" not in deps  # absent index → no stamp, no crash
+
+
+def test_freshness_helper_resolves_index_key_specially(tmp_path):
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    mt = round(os.path.getmtime(repo / ".roam" / "index.db"), 3)
+    fresh = _envelope_deps_are_fresh(str(repo), json.dumps({"__index_db__": mt}))
+    assert fresh is True
+    stale = _envelope_deps_are_fresh(str(repo), json.dumps({"__index_db__": mt - 1.0}))
+    assert stale is False
+
+
+# ---- Generation sweep: re-index wipes ALL index-derived persist tables ----
+#
+# probe_pos / probe_neg / run_roam / symbol_resolution / plan_cache rows are
+# keyed on TTL + repo HEAD only. Under uncommitted edits HEAD never moves, so
+# a probe result captured from a stale index outlived `roam index --force`
+# and laundered stale line numbers into freshly-stamped envelopes (observed
+# live 2026-06-11). The sweep records the index generation in persist_meta
+# and wipes the derived tables when it moves.
+
+
+def test_generation_sweep_wipes_derived_tables_on_reindex(tmp_path):
+    from roam.plan.compiler import (
+        _PERSIST_GENERATION_SWEPT,
+        _run_roam_persist_path,
+    )
+
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    db = repo / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE probe_pos_cache (key TEXT PRIMARY KEY, head TEXT, label TEXT, result_json TEXT, ts REAL)"
+    )
+    conn.execute("INSERT INTO probe_pos_cache VALUES (?,?,?,?,?)", ("k1", "h", "callers", "{}", 1.0))
+    conn.commit()
+    conn.close()
+
+    _PERSIST_GENERATION_SWEPT.clear()
+    assert _run_roam_persist_path(str(repo)) == str(db)
+    conn = sqlite3.connect(str(db))
+    (count,) = conn.execute("SELECT COUNT(*) FROM probe_pos_cache").fetchone()
+    gen = conn.execute("SELECT v FROM persist_meta WHERE k=?", ("index_generation",)).fetchone()
+    conn.close()
+    assert count == 0, "stale-generation probe rows must be wiped"
+    assert gen is not None
+
+    # Same generation: rows survive across a fresh process (cleared set).
+    conn = sqlite3.connect(str(db))
+    conn.execute("INSERT INTO probe_pos_cache VALUES (?,?,?,?,?)", ("k2", "h", "callers", "{}", 2.0))
+    conn.commit()
+    conn.close()
+    _PERSIST_GENERATION_SWEPT.clear()
+    _run_roam_persist_path(str(repo))
+    conn = sqlite3.connect(str(db))
+    (count,) = conn.execute("SELECT COUNT(*) FROM probe_pos_cache").fetchone()
+    conn.close()
+    assert count == 1, "same-generation rows must survive the sweep"
+
+    # Re-index (mtime bump): rows wiped again.
+    time.sleep(0.002)
+    os.utime(repo / ".roam" / "index.db", (time.time() + 5, time.time() + 5))
+    _PERSIST_GENERATION_SWEPT.clear()
+    _run_roam_persist_path(str(repo))
+    conn = sqlite3.connect(str(db))
+    (count,) = conn.execute("SELECT COUNT(*) FROM probe_pos_cache").fetchone()
+    conn.close()
+    assert count == 0, "re-index must wipe index-derived rows"
