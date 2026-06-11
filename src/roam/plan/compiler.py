@@ -6836,7 +6836,66 @@ _L1_ALWAYS_ON_PROBES = (
     ("deprecation", lambda task, named, cwd, proc: _probe_deprecation_for_task(task, named, cwd)),
     # W113 — subprocess audit probe.
     ("subprocess_audit", lambda task, named, cwd, proc: _probe_subprocess_audit_for_task(task, named, cwd)),
+    # Cross-channel memory: verify's persisted findings ride into the
+    # envelope for the file the task names.
+    ("known_findings", lambda task, named, cwd, proc: _probe_known_findings_for_task(named, cwd)),
 )
+
+
+def _probe_known_findings_for_task(named_paths: list[str], cwd: str | None) -> dict | None:
+    """Embed the named file's OPEN verify findings from the persisted
+    whole-repo report (``.roam/verify-report.json``, written by
+    ``roam verify --report --persist``).
+
+    The verify channel already knows each file's debt; without this the
+    agent re-derives it (or worse, edits around an open N+1 it can't see).
+    Pure local JSON read — no subprocess, no model calls. Context, not an
+    answer: deliberately NOT in the L1 promotion keys, it only rides along.
+    """
+    if not named_paths or not cwd:
+        return None
+    report_path = os.path.join(cwd, ".roam", "verify-report.json")
+    try:
+        mtime = os.path.getmtime(report_path)
+        with open(report_path, encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError) as exc:
+        log_swallowed("compile.known_findings.read", exc)
+        return None
+    targets = set(named_paths[:2])
+    rows = [v for v in report.get("violations") or [] if v.get("file") in targets]
+    if not rows:
+        return None
+    by_category: dict[str, int] = {}
+    for v in rows:
+        by_category[v.get("category") or "?"] = by_category.get(v.get("category") or "?", 0) + 1
+    top = [
+        {
+            "category": v.get("category"),
+            "severity": v.get("severity"),
+            "line": v.get("line"),
+            "symbol": v.get("symbol"),
+            "message": (v.get("message") or "")[:160],
+        }
+        for v in rows[:5]
+    ]
+    age_h = max(0.0, (time.time() - mtime) / 3600.0)
+    return {
+        "known_findings": {
+            "files": sorted(targets & {v.get("file") for v in rows}),
+            "total": len(rows),
+            "by_category": by_category,
+            "top": top,
+            "report_age_hours": round(age_h, 1),
+        },
+        "known_findings_definition": (
+            "OPEN verify findings already on record for the named file(s) "
+            "(from the persisted whole-repo report; age disclosed in "
+            "report_age_hours). If your change touches these lines, fix the "
+            "finding in the same pass; do not re-run a whole-repo scan to "
+            "rediscover them."
+        ),
+    }
 
 
 def _apply_task_text_probe(
