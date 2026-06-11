@@ -101,14 +101,18 @@ Works on Linux, macOS, and Windows. **Windows:** if `roam` is not found after in
 
 ## The Compiler — your agent's first token already knows the answer
 
-Roam ships a **task compiler**: it classifies your prompt into one of 24
-intent procedures (deterministic — zero model calls), pre-executes the
-matching code-graph probes, and hands your agent the *answers* before its
-first model token. Callers, blame history, blast radius, the source around
-a cited bug line — already in the prompt, in a 1–9 KB envelope, compiled in
-~90 ms from the local index.
+You ask your agent *"who calls `handleSave`?"* and watch it grep, open
+three files, grep again, read a fourth — six turns and $1.30 later you get
+the answer the repo's call graph held all along.
 
-For Claude Code this is **one command, zero configuration**:
+Roam ships a **task compiler** that ends that loop. Before your prompt
+reaches the model, roam recognizes what kind of question it is, runs the
+right code-graph lookups locally (~90 ms, zero model calls), and puts the
+*answers* into the prompt: the caller list with line numbers, the git
+history already filtered, the source around the bug line you cited. The
+agent's first words can be the answer.
+
+For Claude Code it's **one command, zero configuration**:
 
 ```bash
 pip install "roam-code[mcp]"
@@ -116,25 +120,27 @@ cd your-repo && roam init
 roam hooks claude --write     # compile-before + verify-after, wired into Claude Code
 ```
 
-Then use `claude` exactly as you always do. Every prompt gets compiled
-facts injected before the model sees it; every edit gets a scoped
-`roam verify` pass after (quiet on pass, fail-open by design — a broken
-install can never block your agent). Undo anytime with
-`roam hooks claude --uninstall --write`.
+Then use `claude` exactly as you always do. Undo anytime with
+`roam hooks claude --uninstall --write`. A broken install can never block
+your agent — every hook is fail-open.
 
-**Measured, Claude head-to-head vs vanilla (June 2026, 41 cells, n=2/cell):**
+**What that buys you, measured head-to-head on Claude** (same prompts, same
+repo, with and without the compiler — June 2026, 41 cells):
 
-| Metric (median/task) | vanilla | compiled | delta |
+| Median per task | vanilla | compiled | delta |
 |---|---|---|---|
-| Agent turns (nav/comprehension) | 6 | 1 | **−83%** |
+| Agent turns (navigation/comprehension) | 6 | 1 | **−83%** |
 | Input tokens | 271K | 53K | **−80%** |
 | Cost | $1.30 | $0.48 | **−63%** |
 | Wall time | — | — | **−50%** |
 
-The same shape reproduces on Opus (−86% turns).
+The same shape reproduces on Opus (−86% turns). And the compiler knows
+where it *doesn't* help: prompts that ask the agent to **write** code get
+no envelope at all — injection there was measured as pure overhead, so it
+spends your tokens only where it wins.
 
 <details>
-<summary><b>Per-task gallery</b> — every cell from the same bench, including the losses</summary>
+<summary><b>The full data</b> — every bench cell (including the losses), the ground-truth bug bench, and routing stats</summary>
 
 | Task | turns | input tokens | cost |
 |---|---|---|---|
@@ -149,29 +155,26 @@ The same shape reproduces on Opus (−86% turns).
 | "where is the CLI entry point?" (trivial) | 1 → 1 | 49K → 51K | $0.25 → $0.45 |
 | "write a pytest for X" (generation) | 10 → 10 | 489K → **611K** | $1.82 → **$2.13** |
 
-The last two rows are the honest losses — and the compiler now **acts on
-them**: generation-shaped prompts ("write a test", "implement X") are
-detected and the hook injects *nothing* (measured 3.5% of a 723-prompt real
-corpus, every one a genuine write-code prompt). The envelope only spends
-tokens where it wins.
-</details>
+The last two rows are the published losses — and the source of the
+generation-skip rule above (measured 3.5% of a 723-prompt real corpus,
+every hit a genuine write-code prompt).
 
-**Bug-fixing, ground-truth graded** (failing-test-transitions-to-passing
-oracle, not LLM-judged): 20 cells of planted bugs with real tracebacks —
-**10/10 fixed in both arms** at **−13% cost**, because the envelope ships
-the source slice around the cited `path:line` so the typical fix lands
-within 2 turns.
+**Bug-fixing, ground-truth graded** (a failing test must transition to
+passing — no LLM judging): 20 cells of planted bugs with real tracebacks —
+**10/10 fixed in both arms** at **−13% cost**; the envelope ships the
+source around the cited `path:line`, so the typical fix lands within 2
+turns.
 
 **Routing, replayed on 723 real prompts** from live agent sessions: **53%
-route at L1** — the envelope already contains the literal answer (caller
-list, git log, env-var location) — at **p50 92 ms / p95 305 ms** compile
-latency, zero model calls, fully local.
+route at L1** — the envelope already contains the literal answer — at
+**p50 92 ms / p95 305 ms** compile latency, fully local.
 
-Honest caveats, always attached: trivial prompts the agent one-shots anyway
-gain nothing and pay the small envelope; pure code *generation* is neutral
-(the wins are comprehension, navigation, debugging, review); cells are
-n=2–3 with medians and ranges. Full run history under
+Caveats that always ship with these numbers: trivial prompts the agent
+one-shots anyway gain nothing and pay the small envelope; pure code
+generation is neutral-to-negative (hence the skip rule); cells are n=2–3
+with medians and ranges. Full run history under
 [Performance](#performance).
+</details>
 
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
 Prefer a dedicated product CLI? The same loop ships as
