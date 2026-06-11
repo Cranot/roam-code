@@ -638,6 +638,29 @@ distinct object).
 - Optional: fastmcp >= 2.0 (MCP server — `pip install "roam-code[mcp]"`)
 - Dev: pytest >= 7.0, pytest-xdist >= 3.0, ruff >= 0.4
 
+## Release discipline — green BEFORE the push, always
+
+Hard rule distilled from the 2026-06-10/11 fix-forward cascade (three CI
+failures — a constant-citation lint, a stale skip-table pin, golden-fixture
+drift — each caught AFTER a push because local gates ran only the targeted
+bundles):
+
+1. **Any push that precedes a tag runs `python scripts/prepush_check.py
+   --release` first.** The release tier = FULL gates + the ENTIRE test suite
+   (`-m "not slow"`, exactly CI's surface) + commit-message leak scan +
+   doc-consistency + landing-page linkcheck (~15-25 min). Green here means
+   CI will be green; a tag never points at an unverified commit.
+2. Routine development pushes keep the FAST tier (the pre-push hook), but a
+   batch of waves accumulated across sessions counts as release-sized —
+   run `--release` before pushing the batch.
+3. Long test runs MUST be setsid-detached with a `DONE_RC` marker
+   (`setsid nohup bash -c '... ; echo DONE_RC=$? >> log' &`) — plain
+   background tasks die with their session and report nothing.
+4. The release flow after green: push → wait CI green → bump version +
+   changelog + sync scripts → `--release` again (fast re-run; caches warm)
+   → push → tag at the verified SHA → approve the PyPI environment gate →
+   fresh-venv `pip install roam-code==<v>` confirm.
+
 ## Version bumping
 
 Update **one place only**: `pyproject.toml` → `version`

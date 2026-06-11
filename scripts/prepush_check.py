@@ -244,13 +244,24 @@ def main(argv: list[str] | None = None) -> int:
     tier = parser.add_mutually_exclusive_group()
     tier.add_argument("--fast", action="store_true", help="FAST tier (default): ~43s structural-drift bundle")
     tier.add_argument("--full", action="store_true", help="FULL tier: FAST + heavy doc-hygiene guards (~70s)")
+    tier.add_argument(
+        "--release",
+        action="store_true",
+        help=(
+            "RELEASE tier: FULL + the ENTIRE test suite (-m 'not slow', "
+            "what CI runs) + commit-message scan + doc-consistency + "
+            "landing-page linkcheck. Run before ANY push that precedes a "
+            "tag — green here means CI will be green. ~15-25 min."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    full = args.full  # --fast is the default; --full opts into the superset
+    release = args.release
+    full = args.full or release  # each tier is a superset of the previous
 
     root = repo_root()
     print(f"[prepush] repo root: {root}")
-    print(f"[prepush] tier: {'FULL' if full else 'FAST'}")
+    print(f"[prepush] tier: {'RELEASE' if release else 'FULL' if full else 'FAST'}")
 
     runner = GateRunner(root=root)
     runner.run_leak_gate()
@@ -259,6 +270,31 @@ def main(argv: list[str] | None = None) -> int:
     runner.run_pytest_bundle(FAST_PYTEST_GUARDS, "FAST")
     if full:
         runner.run_pytest_bundle(FULL_PYTEST_GUARDS, "FULL")
+    if release:
+        # The CI fix-forward cascade of 2026-06-10/11 (citation lint, a
+        # stale skip-table pin, fixture drift) was caught by CI AFTER the
+        # push because local gates ran only the targeted bundles. The
+        # release tier closes that gap: what CI runs, runs HERE first.
+        runner._run(
+            "commit-message leak scan (@{upstream}..HEAD)",
+            [sys.executable, "scripts/scan_internal_language.py", "--commits", "@{upstream}..HEAD"],
+            fix_hint="reword the offending commit message (git rebase -i) before pushing",
+        )
+        runner._run(
+            "doc-consistency suite",
+            [sys.executable, "-m", "pytest", "tests/test_doc_consistency.py", "-q", "-n", "0"],
+            fix_hint="version/count literals drifted — run the sync scripts and fix the named spots",
+        )
+        runner._run(
+            "landing-page linkcheck",
+            [sys.executable, "scripts/linkcheck.py"],
+            fix_hint="fix the dead anchor/link named above",
+        )
+        runner._run(
+            "FULL test suite (-m 'not slow', what CI runs)",
+            [sys.executable, "-m", "pytest", "tests/", "-q", "-m", "not slow", "-n", "auto"],
+            fix_hint="fix the failing tests — CI runs exactly this surface",
+        )
 
     ok = _print_summary(runner.results)
     return 0 if ok else 1
