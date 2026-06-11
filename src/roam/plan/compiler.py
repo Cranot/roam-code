@@ -8330,6 +8330,10 @@ _ARTIFACT_POLICY = {
     "structural_blast": "full",
     "structural_query": "full",  # legacy fallback
     "synthesis_query": "full",
+    # refactor_move needs the full move surface (impact + callers + target
+    # skeleton); was hitting the implicit `.get(p, "full")` fallback —
+    # explicit now so the registry lint can pin every procedure's intent.
+    "refactor_move": "full",
     "trace_query": "lean",
     "freeform_explore": "facts",  # R7 revision (was "full")
     "describe_file": "facts",  # W-LIFT — file skeleton/summary IS the answer
