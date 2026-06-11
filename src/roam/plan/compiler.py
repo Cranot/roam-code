@@ -172,9 +172,15 @@ _STRUCTURAL_RE = re.compile(
 )
 _TRACE_RE = re.compile(
     # v0.5.1: also "trace what happens" pattern (py03_trace_health miss).
-    r"\b(trace\s+(how|the|this|that|to|through|from|command|call|route|flow|user|login|method|function|what)|"
+    # Corpus wave: "where does the login flow start", "follow the path from
+    # X to Y", "pick one route ... trace it through" all fell to freeform.
+    # The "where does ... start" form is restricted to flow-ish nouns so
+    # entry-point prompts ("where does the cli start") keep their procedure.
+    r"\b(trace\s+(how|the|this|that|to|through|from|command|call|route|flow|user|login|method|function|what|it|them)|"
     r"how does.*work|pipeline|flow\b.*\bfrom\b|reach\b|"
     r"walk\s+(me\s+)?through|step.by.step|"
+    r"follow\s+the\s+(path|flow|call|request)|\bpath\s+from\b|"
+    r"where\s+does\s+(the\s+)?\w*\s*(flow|request|login|auth)\s+(start|begin|enter)|"
     r"trace\s+what\s+happens|from\s+the\s+CLI|entry\s+point.*through)",
     re.IGNORECASE,
 )
@@ -505,7 +511,9 @@ _TEST_IMPACT_STOPWORDS: frozenset[str] = frozenset(
 # Probe runs `roam entry-points` (protocol-classified). Lets the agent
 # orient on REPL/CLI/HTTP/WORKER entry points without exploring.
 _ENTRY_POINT_RE = re.compile(
-    r"\b(what'?s?\s+the\s+entry\s+point|"
+    # "where/what is the entry point" — the most literal phrasings were
+    # misses (only "what's ..." and "where does X start" matched).
+    r"\b((what'?s?|what\s+is|where\s+(is|are))\s+the\s+(main\s+)?entry\s*.?points?|"
     r"where\s+does\s+\S+\s+start|"
     r"how\s+does\s+the\s+(cli|app|service|worker|server)\s+start|"
     r"main\s+entry|startup\s+(flow|path|sequence))\b",
