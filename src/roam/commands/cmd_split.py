@@ -45,13 +45,13 @@ def _label_group(symbols):
         "new",
         "run",
     }
-    word_counts: dict[str, int] = {}
+    word_counts: Counter[str] = Counter()
     for s in symbols:
         parts = _split_re.findall(s["name"])
         for p in parts:
             w = p.lower()
             if len(w) >= 3 and w not in _stop:
-                word_counts[w] = word_counts.get(w, 0) + 1
+                word_counts[w] += 1
 
     if not word_counts:
         return "misc"
@@ -81,13 +81,13 @@ def _label_suffix(symbols, exclude_word):
         "new",
         "run",
     }
-    word_counts: dict[str, int] = {}
+    word_counts: Counter[str] = Counter()
     for s in symbols:
         parts = _split_re.findall(s["name"])
         for p in parts:
             w = p.lower()
             if len(w) >= 3 and w not in _stop and w != exclude_word:
-                word_counts[w] = word_counts.get(w, 0) + 1
+                word_counts[w] += 1
     if not word_counts:
         return None
     top = sorted(word_counts.items(), key=lambda x: -x[1])

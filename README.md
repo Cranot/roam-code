@@ -173,9 +173,24 @@ passing — no LLM judging): 20 cells of planted bugs with real tracebacks —
 source around the cited `path:line`, so the typical fix lands within 2
 turns.
 
-**Routing, replayed on 723 real prompts** from live agent sessions: **53%
-route at L1** — the envelope already contains the literal answer — at
-**p50 92 ms / p95 305 ms** compile latency, fully local.
+**Routing, replayed on 723 real prompts** from live agent sessions: **91%
+of envelopes ship pre-executed answers** (L1 probes) — the envelope already
+contains the literal answer — at **p50 0.45 s cold / p50 92 ms live**
+(warm cache) compile latency, fully local. Zero model calls.
+
+**Eval history by version** — re-measured on every kernel change; losses are
+published, attacked, then re-measured (full per-cell history in the repo):
+
+| measured | kernel | what | result |
+|---|---|---|---|
+| Jun 09 | v13.4 | 41-cell nav/comprehension A/B | turns −83%, tokens −80%, cost −63% |
+| Jun 09 | v13.4 | 20-cell ground-truth bugbench | 10/10 both arms, cost −13% |
+| Jun 09 | v13.4 | trivial-prompt cell | **+80% cost — published loss** |
+| Jun 09 | v13.4 | generation cell | **+17% cost — published loss** |
+| Jun 11 | v13.6 | trivial-prompt cell, re-measured n=3 | tie ($0.21 → $0.22) |
+| Jun 11 | v13.6 | generation cell, re-measured n=3 | **−26% cost win** |
+| Jun 11 | v13.6 | "biggest cycles" cell, re-measured n=3 | **−89% cost win** ($0.65 → $0.07, 6→1 turns) |
+| Jun 11 | v13.6 | 723-prompt routing replay | 91% L1, p50 0.45 s cold |
 
 Caveats that always ship with these numbers: trivial prompts the agent
 one-shots anyway gain nothing (now a within-noise tie after the lean/skip

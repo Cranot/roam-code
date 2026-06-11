@@ -13,6 +13,8 @@ action.yml _SUPPORTED_SARIF allowlist + W1224-audit memo.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import click
 
 from roam.capability import roam_capability
@@ -211,8 +213,8 @@ def safe_zones(ctx, target, depth):
         # A boundary symbol is an internal node that has at least one
         # neighbor outside the internal zone.
         boundary_ids: set[int] = set()
-        external_caller_count: dict[int, int] = {}  # boundary_id -> count of external callers
-        external_callee_count: dict[int, int] = {}  # boundary_id -> count of external callees
+        external_caller_count: defaultdict[int, int] = defaultdict(int)  # boundary_id -> count of external callers
+        external_callee_count: defaultdict[int, int] = defaultdict(int)  # boundary_id -> count of external callees
 
         for nid in internal_ids:
             if nid not in G:
@@ -221,12 +223,12 @@ def safe_zones(ctx, target, depth):
             for succ in G.successors(nid):
                 if succ not in internal_ids:
                     boundary_ids.add(nid)
-                    external_callee_count[nid] = external_callee_count.get(nid, 0) + 1
+                    external_callee_count[nid] += 1
             # Check incoming edges from external nodes
             for pred in G.predecessors(nid):
                 if pred not in internal_ids:
                     boundary_ids.add(nid)
-                    external_caller_count[nid] = external_caller_count.get(nid, 0) + 1
+                    external_caller_count[nid] += 1
 
         # Strictly internal = internal minus boundary
         strictly_internal_ids = internal_ids - boundary_ids

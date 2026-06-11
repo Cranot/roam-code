@@ -1807,16 +1807,16 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
         # 5th-discipline: ``findings`` passed as a raw arg; counting /
         # iteration lives INSIDE the closure.
         def _compute_predicate_fields(_findings):
-            _by_kind: dict[str, int] = {}
+            _by_kind: defaultdict[str, int] = defaultdict(int)
             _files: set[str] = set()
-            _model_counts: dict[str, int] = {}
+            _model_counts: defaultdict[str, int] = defaultdict(int)
             for _f in _findings:
                 # Missing-index findings carry an ``issue`` slug (e.g.
                 # ``unconditional_predicate`` / ``unbounded_join``) on
                 # the W18.4 + W36.3 classification path. Fall back to a
                 # bucket-collapsed key when absent.
                 _k = _f.get("issue") or _f.get("reason") or "missing_index"
-                _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                _by_kind[_k] += 1
                 _loc = _f.get("query_location") or ""
                 if _loc:
                     _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
@@ -1824,7 +1824,7 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
                         _files.add(_file)
                 _table = _f.get("table") or ""
                 if _table:
-                    _model_counts[_table] = _model_counts.get(_table, 0) + 1
+                    _model_counts[_table] += 1
             # hottest_models: top 3 (table, count) tuples by count desc
             _hottest = sorted(_model_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
             return {

@@ -42,6 +42,7 @@ from __future__ import annotations
 import hashlib as _hashlib
 import json as _json
 import subprocess as _subprocess
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -476,8 +477,8 @@ def _aggregate_by_detector(commits: list[dict]) -> list[dict]:
     sum across commits, and emit a list ranked by total hits — that's
     the "what does Roam keep catching across this window" table.
     """
-    totals: dict[str, int] = {}
-    commits_per_detector: dict[str, int] = {}
+    totals: dict[str, int] = defaultdict(int)
+    commits_per_detector: dict[str, int] = defaultdict(int)
     for c in commits:
         seen_in_this_commit: set[str] = set()
         for kind_str in c.get("kinds") or []:
@@ -487,9 +488,9 @@ def _aggregate_by_detector(commits: list[dict]) -> list[dict]:
                 n = int(count)
             except (ValueError, AttributeError):
                 continue
-            totals[name] = totals.get(name, 0) + n
+            totals[name] += n
             if name not in seen_in_this_commit:
-                commits_per_detector[name] = commits_per_detector.get(name, 0) + 1
+                commits_per_detector[name] += 1
                 seen_in_this_commit.add(name)
     return [
         {

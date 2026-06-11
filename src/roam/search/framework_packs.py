@@ -565,7 +565,7 @@ def _stable_pack_symbol_id(pack: str, name: str, qualified_name: str) -> int:
 
 def _compile_entries() -> list[dict]:
     docs: list[dict] = []
-    df: dict[str, int] = {}
+    df: Counter[str] = Counter()
 
     for pack_name, entries in sorted(_PACK_DEFINITIONS.items()):
         for entry in entries:
@@ -586,8 +586,7 @@ def _compile_entries() -> list[dict]:
                     "tf": tf,
                 }
             )
-            for term in tf:
-                df[term] = df.get(term, 0) + 1
+            df.update(tf.keys())
 
     n_docs = len(docs)
     if n_docs == 0:

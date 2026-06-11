@@ -2166,11 +2166,11 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         # ``findings`` list passed as raw arg; counting / iteration
         # lives INSIDE the closure.
         def _compute_predicate_fields(_findings):
-            _by_kind: dict[str, int] = {}
+            _by_kind: defaultdict[str, int] = defaultdict(int)
             _files: set[str] = set()
             for _f in _findings:
                 _k = _f.get("io_type") or "unknown"
-                _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                _by_kind[_k] += 1
                 _loc = _f.get("model_location") or ""
                 # ``model_location`` is "path:line"; strip the line
                 # to derive the file scope.

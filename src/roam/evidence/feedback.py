@@ -43,6 +43,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -396,13 +397,11 @@ def aggregate_dismissal_reasons(
 
     all_feedback = load_feedback(feedback_dir=feedback_dir)
     prefix = f"{detector}:"
-    counts: dict[str, int] = {}
-    for rec in all_feedback:
-        if rec.decision not in _DISMISSAL_DECISIONS:
-            continue
-        if not rec.finding_id_str.startswith(prefix):
-            continue
-        counts[rec.rationale] = counts.get(rec.rationale, 0) + 1
+    counts = Counter(
+        rec.rationale
+        for rec in all_feedback
+        if rec.decision in _DISMISSAL_DECISIONS and rec.finding_id_str.startswith(prefix)
+    )
 
     # Return ordered dict: descending count, alphabetical tie-break.
     # Python 3.7+ dicts preserve insertion order — relied on by

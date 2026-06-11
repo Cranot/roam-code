@@ -10,6 +10,7 @@ from 1).
 from __future__ import annotations
 
 import subprocess
+from collections import defaultdict
 
 import click
 
@@ -147,7 +148,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         # symbol. Tests are typically callers (or transitive callers).
         RG = G.reverse(copy=False)
 
-        test_hits: dict[str, int] = {}
+        test_hits: defaultdict[str, int] = defaultdict(int)
         for sid in seed_ids:
             if sid not in RG:
                 continue
@@ -161,7 +162,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 node = G.nodes.get(nid, {}) or {}
                 path = (node.get("file_path") or "").replace("\\", "/")
                 if path and is_test(path):
-                    test_hits[path] = test_hits.get(path, 0) + 1
+                    test_hits[path] += 1
 
     ranked = sorted(test_hits.items(), key=lambda x: -x[1])
     # W1142-followup: cap-hit disclosure. ``ranked`` holds every reachable

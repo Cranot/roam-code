@@ -166,3 +166,81 @@ def test_new_perf_idioms_are_registered_with_triggers():
     registered = {t for t, _w, _f in PYTHON_IDIOM_DETECTORS}
     assert new <= registered
     assert new <= set(_IDIOM_TRIGGERS), "every new detector must carry a trigger gate"
+
+
+def test_backref_regexes_do_not_match_mid_identifier():
+    """Dogfood FP (2026-06-11): ``new_path = path + [x]`` matched the
+    quadratic-concat regex because the scan started mid-identifier (the
+    substring ``path = path + [`` inside ``new_path = …``). All three
+    backreference regexes now anchor the captured name."""
+    from roam.catalog.python_idioms import (
+        _LIST_REASSIGN_CONCAT_IN_LOOP_RE,
+        _MANUAL_COUNTER_IN_LOOP_RE,
+    )
+
+    # path-building BFS: a NEW list per branch is correct, not quadratic
+    safe = "    for n in adj:\n        new_path = path + [n]\n"
+    assert not _hits(_LIST_REASSIGN_CONCAT_IN_LOOP_RE, safe)
+    # suffix-named dicts must not cross-match via substring containment
+    safe2 = "    for x in xs:\n        my_counts[x] = other_counts.get(x, 0) + 1\n"
+    assert not _hits(_MANUAL_COUNTER_IN_LOOP_RE, safe2)
+    # the genuine patterns still match
+    bug = "    for x in xs:\n        acc = acc + [x]\n"
+    assert _hits(_LIST_REASSIGN_CONCAT_IN_LOOP_RE, bug)
+    bug2 = "    for x in xs:\n        counts[x] = counts.get(x, 0) + 1\n"
+    assert _hits(_MANUAL_COUNTER_IN_LOOP_RE, bug2)
+
+
+def test_loop_idioms_require_trigger_inside_loop_body():
+    """Dogfood FP round 2 (2026-06-11): the loop-window regexes also matched
+    triggers AFTER the loop (e.g. append-in-loop + ONE sort after = the
+    correct idiom). The shared helper now compares trigger-line indentation
+    with the loop header; pin it end-to-end through a detector run."""
+    import sqlite3
+
+    from roam.catalog.python_idioms import (
+        detect_append_then_sort_in_loop,
+        detect_manual_counter_in_loop,
+        set_idiom_scope,
+    )
+
+    # In-memory project: one file with a post-loop sort (SAFE) and one
+    # genuine in-loop sort (BUG).
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, language TEXT)")
+    conn.execute(
+        "CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT,"
+        " kind TEXT, line_start INTEGER, line_end INTEGER)"
+    )
+    code = (
+        "def safe(xs):\n"
+        "    acc = []\n"
+        "    for x in xs:\n"
+        "        acc.append(x)\n"
+        "    acc.sort()\n"  # post-loop: correct idiom
+        "    return acc\n"
+        "\n"
+        "def bug(xs):\n"
+        "    acc = []\n"
+        "    for x in xs:\n"
+        "        acc.append(x)\n"
+        "        acc.sort()\n"  # in-loop: O(n^2 log n)
+        "    return acc\n"
+    )
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "mod.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        conn.execute("INSERT INTO files VALUES (1, ?, ?)", (path, "python"))
+        conn.execute("INSERT INTO symbols VALUES (1, 1, ?, ?, 1, 6)", ("safe", "function"))
+        conn.execute("INSERT INTO symbols VALUES (2, 1, ?, ?, 8, 13)", ("bug", "function"))
+        set_idiom_scope(None)
+        findings = detect_append_then_sort_in_loop(conn)
+        names = {f["symbol_name"] for f in findings}
+        assert "bug" in names, "in-loop sort must still be caught"
+        assert "safe" not in names, "post-loop sort must NOT be flagged"
+        assert detect_manual_counter_in_loop(conn) == []

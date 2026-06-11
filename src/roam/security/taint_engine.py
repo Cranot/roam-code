@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import sqlite3
 import warnings
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -397,12 +398,12 @@ def _bfs_path(
     if not start_ids or not goal_ids:
         return None, False, False
 
-    queue: list[tuple[int, list[int], bool]] = [(s, [s], s in sanitizer_ids) for s in start_ids]
+    queue: deque[tuple[int, list[int], bool]] = deque((s, [s], s in sanitizer_ids) for s in start_ids)
     visited: set[int] = set(start_ids)
     truncated = False
 
     while queue:
-        node, path, has_sanitizer = queue.pop(0)
+        node, path, has_sanitizer = queue.popleft()
         if node in goal_ids and node not in start_ids:
             return path, has_sanitizer, truncated
         if len(path) > max_hops:

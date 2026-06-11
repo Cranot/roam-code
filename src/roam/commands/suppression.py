@@ -13,6 +13,7 @@ handles the structured list format used by ``.roam-suppressions.yml``.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -520,23 +521,13 @@ def suppression_stats(suppressions: list[dict]) -> dict:
     - ``by_rule`` -- dict mapping rule to count
     - ``by_file`` -- dict mapping file to count
     """
-    by_status: dict[str, int] = {}
-    by_rule: dict[str, int] = {}
-    by_file: dict[str, int] = {}
-
-    for sup in suppressions:
-        st = sup.get("status", "unknown")
-        by_status[st] = by_status.get(st, 0) + 1
-
-        rl = sup.get("rule", "unknown")
-        by_rule[rl] = by_rule.get(rl, 0) + 1
-
-        fl = sup.get("file", "unknown")
-        by_file[fl] = by_file.get(fl, 0) + 1
+    by_status = Counter(sup.get("status", "unknown") for sup in suppressions)
+    by_rule = Counter(sup.get("rule", "unknown") for sup in suppressions)
+    by_file = Counter(sup.get("file", "unknown") for sup in suppressions)
 
     return {
         "total": len(suppressions),
-        "by_status": by_status,
-        "by_rule": by_rule,
-        "by_file": by_file,
+        "by_status": dict(by_status),
+        "by_rule": dict(by_rule),
+        "by_file": dict(by_file),
     }

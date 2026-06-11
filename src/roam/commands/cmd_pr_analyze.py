@@ -45,6 +45,7 @@ import json as _json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import click
@@ -176,11 +177,7 @@ def _compute_drift(current: dict, baseline: dict | None) -> dict | None:
     common_rules = cur_rule_ids & base_rule_ids
 
     def _count_by_rule(violations: list[dict]) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for v in violations:
-            rid = v.get("rule_id", "")
-            out[rid] = out.get(rid, 0) + 1
-        return out
+        return dict(Counter(v.get("rule_id", "") for v in violations))
 
     cur_counts = _count_by_rule(cur_violations)
     base_counts = _count_by_rule(base_violations)
@@ -562,12 +559,12 @@ def _detect_primary_language(file_paths: list[str]) -> str | None:
     """Return the most-touched recognised language across the diff's files."""
     if not file_paths:
         return None
-    counts: dict[str, int] = {}
+    counts: Counter[str] = Counter()
     for p in file_paths:
         low = p.lower()
         for ext, lang in _LANG_BY_EXT.items():
             if low.endswith(ext):
-                counts[lang] = counts.get(lang, 0) + 1
+                counts[lang] += 1
                 break
     if not counts:
         return None

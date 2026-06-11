@@ -24,6 +24,7 @@ agent-context Markdown document. See action.yml _SUPPORTED_SARIF allowlist
 from __future__ import annotations
 
 import os
+from collections import Counter
 
 import click
 
@@ -413,10 +414,7 @@ def _gather_layers(conn):
                 f"WHERE s.id IN ({ph})",
                 sym_list,
             ).fetchall()
-            dirs = {}
-            for r in dir_rows:
-                d = r["dir"]
-                dirs[d] = dirs.get(d, 0) + 1
+            dirs = Counter(r["dir"] for r in dir_rows)
             top_dirs = sorted(dirs.items(), key=lambda x: -x[1])[:3]
             results.append(
                 {

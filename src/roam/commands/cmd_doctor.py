@@ -1559,8 +1559,10 @@ def _normalize_workflow_yaml(text: str) -> str:
             prev_blank = False
         out.append(line)
     # Trim leading + trailing blank lines.
-    while out and not out[0]:
-        out.pop(0)
+    start = 0
+    while start < len(out) and not out[start]:
+        start += 1
+    out = out[start:]
     while out and not out[-1]:
         out.pop()
     return "\n".join(out) + "\n"

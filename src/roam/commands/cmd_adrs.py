@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 
 import click
@@ -488,11 +489,11 @@ def adrs(ctx, filter_status, limit):
     displayed = parsed[:limit]
 
     # Compute summary stats
-    status_counts: dict[str, int] = {}
+    status_counts: defaultdict[str, int] = defaultdict(int)
     linked_count = 0
     for a in parsed:
         s = a["status"]
-        status_counts[s] = status_counts.get(s, 0) + 1
+        status_counts[s] += 1
         if a.get("linked_modules"):
             linked_count += 1
 
@@ -516,7 +517,7 @@ def adrs(ctx, filter_status, limit):
                         "adr_count": total_count,
                         "displayed": len(displayed),
                         "linked_count": linked_count,
-                        "status_counts": status_counts,
+                        "status_counts": dict(status_counts),
                         "filter_status": filter_status,
                     },
                     adrs=[

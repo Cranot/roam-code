@@ -6,6 +6,7 @@ import json
 import math
 import re
 import sqlite3
+from collections import Counter
 from typing import Any, TypeAlias
 
 from roam.observability import log_swallowed
@@ -920,9 +921,7 @@ def _search_tfidf_stored(
     if not query_tokens:
         return []
 
-    query_vec: dict[str, float] = {}
-    for t in query_tokens:
-        query_vec[t] = query_vec.get(t, 0) + 1
+    query_vec: Counter[str] = Counter(query_tokens)
 
     vectors = load_tfidf_vectors(conn, warnings_out=warnings_out)
     if not vectors:

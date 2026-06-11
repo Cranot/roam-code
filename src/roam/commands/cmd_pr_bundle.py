@@ -48,6 +48,7 @@ W1149 audit memo.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -919,8 +920,8 @@ def _world_model_distributions(bundle: dict) -> dict:
     - ``risk_severity_distribution``: ``{H: N, M: M, L: K}``
     - ``io_write_count``: convenience scalar surfaced in the verdict
     """
-    se_dist: dict[str, int] = {}
-    idem_dist: dict[str, int] = {}
+    se_dist: dict[str, int] = defaultdict(int)
+    idem_dist: dict[str, int] = defaultdict(int)
     risk_dist: dict[str, int] = {"H": 0, "M": 0, "L": 0}
     io_write_count = 0
     for rec in bundle.get("affected_symbols") or []:
@@ -932,13 +933,13 @@ def _world_model_distributions(bundle: dict) -> dict:
             for k in kinds:
                 if not isinstance(k, str):
                     continue
-                se_dist[k] = se_dist.get(k, 0) + 1
+                se_dist[k] += 1
                 if k == "io_write" and not counted_io_write:
                     io_write_count += 1
                     counted_io_write = True
         idem = rec.get("idempotency_kind")
         if isinstance(idem, str) and idem:
-            idem_dist[idem] = idem_dist.get(idem, 0) + 1
+            idem_dist[idem] += 1
     for r in bundle.get("risks") or []:
         if not isinstance(r, dict):
             continue
@@ -946,8 +947,8 @@ def _world_model_distributions(bundle: dict) -> dict:
         if isinstance(sev, str) and sev.upper() in risk_dist:
             risk_dist[sev.upper()] += 1
     return {
-        "side_effect_distribution": se_dist,
-        "idempotency_distribution": idem_dist,
+        "side_effect_distribution": dict(se_dist),
+        "idempotency_distribution": dict(idem_dist),
         "risk_severity_distribution": risk_dist,
         "io_write_count": io_write_count,
     }

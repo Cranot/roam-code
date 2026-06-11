@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import deque
 
 import click
 
@@ -138,10 +139,10 @@ def _bfs_to_gate(adj, start_id, gates, max_depth):
 
     visited = {start_id}
     # Queue entries: (node_id, depth, path)
-    queue = [(start_id, 0, [start_id])]
+    queue = deque([(start_id, 0, [start_id])])
 
     while queue:
-        current, depth, path = queue.pop(0)
+        current, depth, path = queue.popleft()
         if depth >= max_depth:
             continue
         for neighbor in adj.get(current, set()):

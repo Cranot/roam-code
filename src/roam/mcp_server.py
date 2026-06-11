@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time as _time
 import warnings
+from collections import Counter
 from pathlib import Path
 from typing import Literal
 
@@ -8855,14 +8856,11 @@ async def taint_classify(
 
     # Roll classification labels into the summary so agents can see at a
     # glance which categories were detected.
-    label_counts: dict[str, int] = {}
-    for f in classified:
-        cls = f.get("classification") or {}
-        lbl = cls.get("label")
-        if lbl:
-            label_counts[lbl] = label_counts.get(lbl, 0) + 1
+    label_counts: Counter[str] = Counter(
+        lbl for f in classified if (lbl := (f.get("classification") or {}).get("label"))
+    )
     summary = dict(out.get("summary") or {})
-    summary["classification_counts"] = label_counts
+    summary["classification_counts"] = dict(label_counts)
     summary["classified_count"] = sum(label_counts.values())
     out["summary"] = summary
     return out
@@ -12406,11 +12404,8 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
     summary["llm_per_target"] = per_target
     if added:
         # Re-derive ``by_confidence`` so the count reflects the new hints.
-        new_by_confidence: dict[str, int] = {}
-        for t in targets:
-            c = (t.get("hint") or {}).get("confidence", "NONE")
-            new_by_confidence[c] = new_by_confidence.get(c, 0) + 1
-        summary["by_confidence"] = new_by_confidence
+        new_by_confidence = Counter((t.get("hint") or {}).get("confidence", "NONE") for t in targets)
+        summary["by_confidence"] = dict(new_by_confidence)
     envelope["summary"] = summary
     return envelope
 

@@ -10,6 +10,7 @@ envelope directly. See action.yml _SUPPORTED_SARIF allowlist
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 import click
 import networkx as nx
@@ -54,13 +55,13 @@ def _label_cluster(conn, sym_ids):
         "new",
         "run",
     }
-    word_counts: dict[str, int] = {}
+    word_counts: Counter[str] = Counter()
     for r in rows:
         parts = split_re.findall(r["name"])
         for p in parts:
             w = p.lower()
             if len(w) >= 3 and w not in stop:
-                word_counts[w] = word_counts.get(w, 0) + 1
+                word_counts[w] += 1
     if not word_counts:
         return "misc"
     top = sorted(word_counts.items(), key=lambda x: -x[1])

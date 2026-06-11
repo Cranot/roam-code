@@ -14,6 +14,7 @@ from __future__ import annotations
 import json as _json
 import re as _re
 import sqlite3 as _sqlite3
+from collections import Counter
 
 import click
 
@@ -625,10 +626,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
 
         # aggregate clone pairs into (file_a, file_b) coupling.
         if by_file:
-            file_pair_counts: dict[tuple[str, str], int] = {}
-            for p in pairs:
-                key = tuple(sorted((p.file_a, p.file_b)))
-                file_pair_counts[key] = file_pair_counts.get(key, 0) + 1
+            file_pair_counts: Counter[tuple[str, str]] = Counter(tuple(sorted((p.file_a, p.file_b))) for p in pairs)
             file_pairs = [
                 {"file_a": a, "file_b": b, "clone_pairs": n}
                 for (a, b), n in sorted(file_pair_counts.items(), key=lambda x: -x[1])

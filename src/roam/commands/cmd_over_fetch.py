@@ -1616,14 +1616,14 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     # 5th-discipline: ``findings`` + ``endpoint_findings`` passed as
     # raw args; counting / iteration lives INSIDE the closure.
     def _compute_predicate_fields(_findings, _endpoint_findings):
-        _by_kind: dict[str, int] = {}
+        _by_kind: defaultdict[str, int] = defaultdict(int)
         _files: set[str] = set()
         for _f in _findings:
             # Over-fetch model-level findings are classified by reason
             # bucket ("missing_hidden" / "no_resource" / "direct_return"
             # / "missing_select"); collapse to "model_level" if absent.
             _k = _f.get("kind") or _f.get("io_type") or "model_level"
-            _by_kind[_k] = _by_kind.get(_k, 0) + 1
+            _by_kind[_k] += 1
             _loc = _f.get("model_location") or ""
             if _loc:
                 _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
@@ -1631,7 +1631,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
                     _files.add(_file)
         for _ep in _endpoint_findings:
             _state_key = _ep.get("state") or "unknown_state"
-            _by_kind[_state_key] = _by_kind.get(_state_key, 0) + 1
+            _by_kind[_state_key] += 1
             _loc = _ep.get("location") or ""
             if _loc:
                 _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc

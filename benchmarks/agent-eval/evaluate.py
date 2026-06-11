@@ -7,6 +7,7 @@ Usage:
 
 Runs roam init + all analysis commands, collects scores into a structured JSON result.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -58,7 +60,10 @@ def get_agent_signature(agent: str) -> dict:
     if version_cmd:
         try:
             result = subprocess.run(
-                version_cmd, capture_output=True, text=True, timeout=10,
+                version_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             cli_version = result.stdout.strip().split("\n")[0]
         except Exception:
@@ -67,7 +72,10 @@ def get_agent_signature(agent: str) -> dict:
     roam_version = "unknown"
     try:
         result = subprocess.run(
-            ["roam", "--version"], capture_output=True, text=True, timeout=10,
+            ["roam", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         roam_version = result.stdout.strip().split("\n")[0]
     except Exception:
@@ -136,16 +144,22 @@ def check_git_init(workspace: Path) -> bool:
     # Initialize git if needed
     try:
         subprocess.run(
-            ["git", "init"], cwd=str(workspace),
-            capture_output=True, timeout=30,
+            ["git", "init"],
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=30,
         )
         subprocess.run(
-            ["git", "add", "-A"], cwd=str(workspace),
-            capture_output=True, timeout=30,
+            ["git", "add", "-A"],
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=30,
         )
         subprocess.run(
-            ["git", "commit", "-m", "initial"], cwd=str(workspace),
-            capture_output=True, timeout=30,
+            ["git", "commit", "-m", "initial"],
+            cwd=str(workspace),
+            capture_output=True,
+            timeout=30,
         )
         return True
     except Exception:
@@ -154,13 +168,13 @@ def check_git_init(workspace: Path) -> bool:
 
 def count_files(workspace: Path) -> dict:
     """Count files by type in workspace."""
-    counts = {}
+    counts: defaultdict[str, int] = defaultdict(int)
     total_lines = 0
     total_files = 0
     for f in workspace.rglob("*"):
         if f.is_file() and ".git" not in f.parts and "node_modules" not in f.parts:
             ext = f.suffix.lower() or "(no ext)"
-            counts[ext] = counts.get(ext, 0) + 1
+            counts[ext] += 1
             total_files += 1
             try:
                 total_lines += len(f.read_text(encoding="utf-8", errors="ignore").splitlines())
@@ -176,8 +190,11 @@ def count_files(workspace: Path) -> dict:
 def check_tests_exist(workspace: Path) -> dict:
     """Check if test files exist."""
     test_patterns = [
-        "**/*test*.*", "**/*spec*.*", "**/test_*.*",
-        "**/tests/**/*.*", "**/__tests__/**/*.*",
+        "**/*test*.*",
+        "**/*spec*.*",
+        "**/test_*.*",
+        "**/tests/**/*.*",
+        "**/__tests__/**/*.*",
     ]
     test_files = set()
     for pattern in test_patterns:
@@ -267,6 +284,7 @@ def evaluate_workspace(workspace: Path) -> dict:
 
     # --- Composite AQS ---
     from scoring import compute_aqs, format_aqs_report
+
     aqs = compute_aqs(results)
     results["aqs"] = aqs
 
@@ -390,6 +408,7 @@ def main():
     aqs = results.get("aqs", {})
     if aqs:
         from scoring import format_aqs_report
+
         print(f"\n=== AGENT QUALITY SCORE ===")
         print(format_aqs_report(aqs))
 

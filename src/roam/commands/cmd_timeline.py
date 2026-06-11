@@ -15,6 +15,7 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 
 import click
@@ -99,7 +100,7 @@ def timeline(ctx, symbol: str, limit: int) -> None:
         ).fetchall()
 
     commits = []
-    authors: dict[str, int] = {}
+    authors: defaultdict[str, int] = defaultdict(int)
     total_added = 0
     total_removed = 0
     for r in commit_rows:
@@ -108,7 +109,7 @@ def timeline(ctx, symbol: str, limit: int) -> None:
         total_added += added
         total_removed += removed
         author = r["author"] or "?"
-        authors[author] = authors.get(author, 0) + 1
+        authors[author] += 1
         commits.append(
             {
                 "sha": (r["hash"] or "")[:12],
@@ -143,7 +144,7 @@ def timeline(ctx, symbol: str, limit: int) -> None:
                         "top_author": top_author,
                     },
                     commits=commits,
-                    authors=authors,
+                    authors=dict(authors),
                 )
             )
         )

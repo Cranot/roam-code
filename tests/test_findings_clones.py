@@ -24,6 +24,7 @@ import os
 import sqlite3
 import subprocess
 import textwrap
+from collections import Counter
 
 from click.testing import CliRunner
 
@@ -389,12 +390,11 @@ def _multi_role_project(tmp_path, *, include_fixture: bool = False):
 
 def _bucket_counts(rows: list[sqlite3.Row]) -> dict[str, int]:
     """Group registry rows by their ``role_bucket`` evidence field."""
-    counts = {"production": 0, "test_intentional": 0, "mixed": 0}
+    counts = Counter({"production": 0, "test_intentional": 0, "mixed": 0})
     for r in rows:
         ev = json.loads(r["evidence_json"])
-        bucket = ev.get("role_bucket", "production")
-        counts[bucket] = counts.get(bucket, 0) + 1
-    return counts
+        counts[ev.get("role_bucket", "production")] += 1
+    return dict(counts)
 
 
 def test_clones_emits_role_bucket_in_evidence(tmp_path):

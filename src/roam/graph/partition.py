@@ -211,8 +211,8 @@ def _adjust_cluster_count(
 
     # If fewer clusters than agents: split largest
     while len(sorted_groups) < n_agents:
-        sorted_groups.sort(key=len, reverse=True)
-        largest = sorted_groups.pop(0)
+        sorted_groups.sort(key=len)
+        largest = sorted_groups.pop()
         if len(largest) < 2:
             # Cannot split a singleton; add it back and create an empty one
             sorted_groups.append(largest)

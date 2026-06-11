@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 import time as _time
-from collections import defaultdict
+from collections import Counter, defaultdict, deque
 from statistics import median
 
 import click
@@ -669,11 +669,11 @@ def _predict_extinction(conn, target_name):
     # BFS cascade
     cascade = []
     removed = {target_id}
-    queue = [target_id]
+    queue = deque([target_id])
     orphan_ids: list = []  # for batched info lookup at the end
 
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         for caller_id in callers_of.get(current, ()):
             if caller_id in removed:
                 continue
@@ -1593,9 +1593,7 @@ def _extended_summary(extended_data):
     scores = [d["decay_score"] for d in extended_data.values()]
 
     dist = {"fresh": 0, "stale": 0, "decayed": 0, "fossilized": 0}
-    for s in scores:
-        tier = _decay_tier(s).lower()
-        dist[tier] = dist.get(tier, 0) + 1
+    dist.update(Counter(_decay_tier(s).lower() for s in scores))
 
     return {
         "total_dead_loc": total_loc,
@@ -2625,17 +2623,17 @@ def dead(
             # W978 5th-discipline: ``high`` / ``low`` lists passed as
             # raw args; counting / iteration lives INSIDE the closure.
             def _compute_predicate_fields(_high, _low):
-                _by_kind: dict[str, int] = {}
+                _by_kind: defaultdict[str, int] = defaultdict(int)
                 _files: set[str] = set()
                 for _r in _high:
                     _k = _r["kind"] if "kind" in _r.keys() else "unknown"
-                    _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                    _by_kind[_k] += 1
                     _fp = _r["file_path"] if "file_path" in _r.keys() else None
                     if _fp:
                         _files.add(_fp)
                 for _r in _low:
                     _k = _r["kind"] if "kind" in _r.keys() else "unknown"
-                    _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                    _by_kind[_k] += 1
                     _fp = _r["file_path"] if "file_path" in _r.keys() else None
                     if _fp:
                         _files.add(_fp)

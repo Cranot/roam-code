@@ -272,17 +272,14 @@ def _write_verify_baseline(violations: list, root: Path) -> int:
     from roam.atomic_io import atomic_write_json
 
     line_cache: dict = {}
-    counts: dict[str, int] = {}
-    for v in violations:
-        fp = _finding_fingerprint(v, line_cache, root)
-        counts[fp] = counts.get(fp, 0) + 1
+    counts = Counter(_finding_fingerprint(v, line_cache, root) for v in violations)
     atomic_write_json(
         _verify_baseline_path(root),
         {
             "schema": 1,
             "created": datetime.now(timezone.utc).isoformat(),
             "count": sum(counts.values()),
-            "fingerprints": counts,
+            "fingerprints": dict(counts),
         },
     )
     return sum(counts.values())
@@ -2754,10 +2751,7 @@ def _render_verify_report(envelope: dict, violations: list, json_mode: bool, cap
         f"VERDICT: REPORT -- {total} finding{'s' if total != 1 else ''} "
         f"({fails} FAIL, {warns} WARN) across {files_n} files (non-gating)"
     )
-    counts: dict[str, int] = {}
-    for v in violations:
-        c = v.get("category", "?")
-        counts[c] = counts.get(c, 0) + 1
+    counts = Counter(v.get("category", "?") for v in violations)
     if counts:
         click.echo("by category: " + ", ".join(f"{k}={n}" for k, n in sorted(counts.items(), key=lambda x: -x[1])))
     click.echo("")
@@ -2796,10 +2790,8 @@ def _persist_verify_report(envelope: dict, violations: list, out, root: Path, js
     out_path = Path(out) if out else (root / ".roam" / "verify-report.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sev_counts: dict[str, int] = {}
-    for v in violations:
-        s = v.get("severity", "?")
-        sev_counts[s] = sev_counts.get(s, 0) + 1
+    # dict-wrapped: serialized into the persisted report + the compact envelope.
+    sev_counts: dict[str, int] = dict(Counter(v.get("severity", "?") for v in violations))
     cat_counts = {
         c: d.get("violation_count", 0)
         for c, d in (envelope.get("categories") or {}).items()

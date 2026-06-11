@@ -13,6 +13,7 @@ memo.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
 
 import click
@@ -37,11 +38,11 @@ def _ownership_for_file(project_root, file_path):
     if not blame:
         return None
 
-    author_lines = {}
+    author_lines: dict[str, int] = defaultdict(int)
     last_active = {}
     for entry in blame:
         author = entry["author"]
-        author_lines[author] = author_lines.get(author, 0) + 1
+        author_lines[author] += 1
         ts = entry.get("timestamp", 0)
         if ts and (author not in last_active or ts > last_active[author]):
             last_active[author] = ts

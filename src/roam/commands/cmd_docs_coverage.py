@@ -205,12 +205,12 @@ def docs_coverage(ctx, limit, days, threshold, quality):
     missing = _missing_docs(symbols)
     stale = _stale_docs(symbols, days)
 
-    quality_buckets: dict[str, int] = {"ABSENT": 0, "SHALLOW": 0, "RICH": 0}
+    quality_buckets: defaultdict[str, int] = defaultdict(int, {"ABSENT": 0, "SHALLOW": 0, "RICH": 0})
     quality_samples: dict[str, list[dict]] = {"ABSENT": [], "SHALLOW": [], "RICH": []}
     if quality:
         for s in symbols:
             bucket, _signals = _docstring_quality(s.get("docstring") or "")
-            quality_buckets[bucket] = quality_buckets.get(bucket, 0) + 1
+            quality_buckets[bucket] += 1
             samples = quality_samples.setdefault(bucket, [])
             if len(samples) < 5:
                 samples.append(
@@ -255,7 +255,7 @@ def docs_coverage(ctx, limit, days, threshold, quality):
             "verdict": (f"{coverage_pct:.1f}% doc coverage ({documented_public}/{total_public} public symbols)"),
         }
         if quality:
-            summary_payload["quality_buckets"] = quality_buckets
+            summary_payload["quality_buckets"] = dict(quality_buckets)
         payload = json_envelope(
             "docs-coverage",
             summary=summary_payload,

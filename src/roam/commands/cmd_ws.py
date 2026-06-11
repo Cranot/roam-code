@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import Counter
 from pathlib import Path
 
 import click
@@ -472,13 +473,11 @@ def _ws_resolve_build_facts(total_fe_calls: int, total_unmatched: int, all_unmat
 
     facts: list[str] = [f"{total_unmatched} frontend URLs do not match any backend route"]
 
-    reason_counts: dict[str, int] = {}
-    for u in all_unmatched:
-        reason_counts[u["reason"]] = reason_counts.get(u["reason"], 0) + 1
+    reason_counts = Counter(u["reason"] for u in all_unmatched)
     for reason_name, count in sorted(reason_counts.items(), key=lambda x: -x[1])[:3]:
         facts.append(f"{count} unmatched have reason `{reason_name}`")
 
-    prefix_counts: dict[str, int] = {}
+    prefix_counts: Counter[str] = Counter()
     for u in all_unmatched:
         url = u["url"]
         segs = [s for s in url.split("/") if s]
@@ -488,7 +487,7 @@ def _ws_resolve_build_facts(total_fe_calls: int, total_unmatched: int, all_unmat
             prefix = "/" + segs[0]
         else:
             continue
-        prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+        prefix_counts[prefix] += 1
     top_prefixes = sorted(prefix_counts.items(), key=lambda x: -x[1])
     if top_prefixes and top_prefixes[0][1] >= 2:
         p, n = top_prefixes[0]

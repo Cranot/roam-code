@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import defaultdict
 from pathlib import Path
 
 import click
@@ -475,7 +476,7 @@ def _score_navigability(conn) -> tuple[int, dict]:
 
     # Max directory depth score (30 points)
     max_depth = 0
-    dir_counts: dict[str, int] = {}
+    dir_counts: dict[str, int] = defaultdict(int)
     for f in files:
         path = f["path"].replace("\\", "/")
         parts = path.split("/")
@@ -485,7 +486,7 @@ def _score_navigability(conn) -> tuple[int, dict]:
 
         # Count files per directory
         dir_path = "/".join(parts[:-1]) if len(parts) > 1 else "."
-        dir_counts[dir_path] = dir_counts.get(dir_path, 0) + 1
+        dir_counts[dir_path] += 1
 
     # depth <= 5 -> 30 pts, >= 10 -> 0 pts
     if max_depth <= 5:

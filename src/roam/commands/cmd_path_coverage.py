@@ -14,7 +14,7 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 
 import click
 
@@ -260,11 +260,7 @@ def _suggest_test_points(untested_paths, tested_set):
         return []
 
     # Count how many untested paths each node (that is itself untested) appears in
-    node_path_count = {}
-    for path in untested_paths:
-        for nid in path:
-            if nid not in tested_set:
-                node_path_count[nid] = node_path_count.get(nid, 0) + 1
+    node_path_count = Counter(nid for path in untested_paths for nid in path if nid not in tested_set)
 
     suggestions = []
     remaining_paths = list(range(len(untested_paths)))

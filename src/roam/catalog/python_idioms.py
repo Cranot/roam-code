@@ -1803,28 +1803,29 @@ def detect_regex_alternation_join(conn: sqlite3.Connection) -> list[dict]:
 # a loop header followed by the trigger pattern within a bounded body
 # window (strings/comments already blanked by the caller pipeline).
 
-_LOOP_PREFIX = r"^\s*(?:for|while)\s[^\n]*:\s*\n[\s\S]{0,300}?"
+_LOOP_PREFIX = r"^(?P<ind>[ \t]*)(?:for|while)\s[^\n]*:\s*\n[\s\S]{0,300}?"
 
 # counts[k] = counts.get(k, 0) + 1  → collections.Counter / defaultdict(int)
 _MANUAL_COUNTER_IN_LOOP_RE = re.compile(
-    _LOOP_PREFIX + r"(\w+)\[([^\]]+)\]\s*=\s*\1\.get\(\2,\s*0\)\s*\+\s*1",
+    _LOOP_PREFIX + r"(?<![\w.])(?P<name>\w+)\[(?P<key>[^\]]+)\]\s*=\s*(?P=name)\.get\((?P=key),\s*0\)\s*\+\s*1",
     re.MULTILINE,
 )
 # acc = acc + [x]  → acc.append(x) / acc.extend(...)  (quadratic rebuild)
 _LIST_REASSIGN_CONCAT_IN_LOOP_RE = re.compile(
-    _LOOP_PREFIX + r"(\w+)\s*=\s*\1\s*\+\s*\[",
+    _LOOP_PREFIX + r"(?<![\w.])(?P<name>\w+)\s*=\s*(?P=name)\s*\+\s*\[",
     re.MULTILINE,
 )
 # acc.append(x) ... acc.sort() / sorted(acc) in the SAME loop body
 # (sorting a fresh per-iteration collection is fine; sorting the
 # accumulator every pass is O(n^2 log n) → bisect.insort / one sort after)
 _APPEND_THEN_SORT_IN_LOOP_RE = re.compile(
-    _LOOP_PREFIX + r"(\w+)\.append\([^\n]*\)[\s\S]{0,200}?(?:\1\.sort\(|sorted\(\s*\1\b)",
+    _LOOP_PREFIX
+    + r"(?<![\w.])(?P<name>\w+)\.append\([^\n]*\)[\s\S]{0,200}?(?:(?<![\w.])(?P=name)\.sort\(|sorted\(\s*(?P=name)\b)",
     re.MULTILINE,
 )
 # queue.pop(0) in a loop — O(n) per dequeue → collections.deque.popleft()
 _POP0_IN_LOOP_RE = re.compile(
-    _LOOP_PREFIX + r"(\w+)\.pop\(\s*0\s*\)",
+    _LOOP_PREFIX + r"(?P<name>\w+)\.pop\(\s*0\s*\)",
     re.MULTILINE,
 )
 # copy.deepcopy(...) per iteration — often hoistable or shallow-copyable
@@ -1862,11 +1863,22 @@ def _detect_loop_idiom(
             continue
         sym_index = _line_to_symbol(conn, file_id)
         for match in regex.finditer(text):
+            # Indent guard: the trigger must sit INSIDE the loop body. The
+            # window regex alone also matches code AFTER the loop (dogfood
+            # 2026-06-11: 'append in loop, sort once after' — the correct
+            # idiom — accounted for most sort-in-loop hits). Compare the
+            # trigger line's indentation with the loop header's.
+            header_indent = len(match.group("ind") or "")
+            line_start = text.rfind("\n", 0, match.end() - 1) + 1
+            trigger_line = text[line_start : match.end()]
+            trigger_indent = len(trigger_line) - len(trigger_line.lstrip(" \t"))
+            if trigger_indent <= header_indent:
+                continue
             line_no = text.count("\n", 0, match.end()) + 1
             sym = _enclosing_symbol(line_no, sym_index)
             if sym is None:
                 continue
-            name = match.group(1) if regex.groups else ""
+            name = match.group("name") if "name" in regex.groupindex else ""
             findings.append(
                 _idiom_finding(
                     task_id=task_id,

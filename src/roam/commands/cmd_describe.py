@@ -494,13 +494,13 @@ def _section_domain(conn):
         "SELECT name FROM symbols WHERE kind IN ('function', 'class', 'method', 'interface', 'struct') LIMIT 2000"
     ).fetchall()
 
-    word_counts: dict[str, int] = {}
+    word_counts: Counter[str] = Counter()
     _split_re = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
     for s in symbols:
         for p in _split_re.findall(s["name"]):
             w = p.lower()
             if len(w) >= 3 and w not in _DOMAIN_STOP_WORDS:
-                word_counts[w] = word_counts.get(w, 0) + 1
+                word_counts[w] += 1
 
     top_words = sorted(
         word_counts.items(),

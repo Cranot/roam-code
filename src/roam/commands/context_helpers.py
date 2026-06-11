@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections import deque
+from collections import defaultdict, deque
 
 from roam.commands.changed_files import is_test_file
 from roam.commands.graph_helpers import build_forward_adj
@@ -1151,13 +1151,13 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
     shared_callees = _resolve_ids(shared_callee_ids)
 
     file_reasons = {}
-    file_edges_to_query = {}
+    file_edges_to_query: defaultdict[str, int] = defaultdict(int)
     for ctx_data in contexts:
         for f in ctx_data["files_to_read"]:
             path = f["path"]
             file_reasons.setdefault(path, set()).add(f["reason"])
             if f["reason"] in ("caller", "callee"):
-                file_edges_to_query[path] = file_edges_to_query.get(path, 0) + 1
+                file_edges_to_query[path] += 1
 
     file_total_edges = {}
     all_paths = list(file_reasons.keys())

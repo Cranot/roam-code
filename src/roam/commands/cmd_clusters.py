@@ -9,6 +9,8 @@ Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import click
 
 from roam.capability import roam_capability
@@ -38,24 +40,26 @@ def _compute_cohesion(conn):
     sym_to_cluster = {r["symbol_id"]: r["cluster_id"] for r in cluster_rows}
     edges = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
 
-    intra: dict[int, int] = {}
-    total: dict[int, int] = {}
-    inter_pairs: dict[tuple, int] = {}
+    intra: dict[int, int] = defaultdict(int)
+    total: dict[int, int] = defaultdict(int)
+    inter_pairs: dict[tuple, int] = defaultdict(int)
     for e in edges:
         c_src = sym_to_cluster.get(e["source_id"])
         c_tgt = sym_to_cluster.get(e["target_id"])
         if c_src is None or c_tgt is None:
             continue
         if c_src == c_tgt:
-            intra[c_src] = intra.get(c_src, 0) + 1
-            total[c_src] = total.get(c_src, 0) + 1
+            intra[c_src] += 1
+            total[c_src] += 1
         else:
             pair = (min(c_src, c_tgt), max(c_src, c_tgt))
-            inter_pairs[pair] = inter_pairs.get(pair, 0) + 1
-            total[c_src] = total.get(c_src, 0) + 1
-            total[c_tgt] = total.get(c_tgt, 0) + 1
+            inter_pairs[pair] += 1
+            total[c_src] += 1
+            total[c_tgt] += 1
 
-    return edges, intra, total, inter_pairs
+    # Plain dicts out: callers index these directly (e.g. ``total[cid]``) and
+    # must keep KeyError-on-missing semantics.
+    return edges, dict(intra), dict(total), dict(inter_pairs)
 
 
 def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, total_count, median_cohesion, edges):
@@ -139,17 +143,17 @@ def _print_coupling_matrix(big_groups, edges):
         for sid in sids:
             sym_to_grp[sid] = lbl
 
-    pair_edges: dict[tuple, int] = {}
-    grp_internal: dict[str, int] = {}
+    pair_edges: dict[tuple, int] = defaultdict(int)
+    grp_internal: dict[str, int] = defaultdict(int)
     for e in edges:
         g_src = sym_to_grp.get(e["source_id"])
         g_tgt = sym_to_grp.get(e["target_id"])
         if g_src and g_tgt:
             if g_src == g_tgt:
-                grp_internal[g_src] = grp_internal.get(g_src, 0) + 1
+                grp_internal[g_src] += 1
             else:
                 pair = (min(g_src, g_tgt), max(g_src, g_tgt))
-                pair_edges[pair] = pair_edges.get(pair, 0) + 1
+                pair_edges[pair] += 1
 
     click.echo("    Coupling matrix:")
     total_internal = sum(grp_internal.values())

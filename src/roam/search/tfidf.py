@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 
 # ---------------------------------------------------------------------------
 # Pre-compiled regex patterns for tokenization
@@ -176,7 +177,7 @@ def build_corpus(conn) -> dict[int, dict[str, float]]:
 
     # Build per-document term frequencies
     doc_tfs: dict[int, dict[str, float]] = {}
-    df: dict[str, int] = {}  # document frequency per term
+    df: Counter[str] = Counter()  # document frequency per term
 
     for row in rows:
         sid = row["id"]
@@ -193,20 +194,16 @@ def build_corpus(conn) -> dict[int, dict[str, float]]:
             continue
 
         # Compute raw TF
-        tf: dict[str, float] = {}
-        for t in tokens:
-            tf[t] = tf.get(t, 0) + 1
+        tf_raw = Counter(tokens)
 
         # Normalize TF by max frequency
-        max_freq = max(tf.values()) if tf else 1
-        for t in tf:
-            tf[t] = tf[t] / max_freq
+        max_freq = max(tf_raw.values()) if tf_raw else 1
+        tf: dict[str, float] = {t: c / max_freq for t, c in tf_raw.items()}
 
         doc_tfs[sid] = tf
 
         # Update document frequency (each term counted once per doc)
-        for t in tf:
-            df[t] = df.get(t, 0) + 1
+        df.update(tf.keys())
 
     # Compute IDF
     n_docs = len(doc_tfs)
@@ -271,9 +268,7 @@ def search(conn, query: str, top_k: int = 10) -> list[dict]:
         return []
 
     # Build query vector (simple TF, no IDF needed for short queries)
-    query_vec: dict[str, float] = {}
-    for t in query_tokens:
-        query_vec[t] = query_vec.get(t, 0) + 1
+    query_vec: Counter[str] = Counter(query_tokens)
 
     # Build corpus
     corpus = build_corpus(conn)

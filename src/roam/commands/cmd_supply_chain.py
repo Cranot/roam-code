@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
@@ -956,9 +957,7 @@ def supply_chain(ctx, top):
     risky = _run_check_ak("top_risky", top_risky, deps, top, default=[])
     risky_truncated = total_risky_full > len(risky)
     found_files = sorted({d.source_file for d in deps})
-    ecosystems: dict[str, int] = {}
-    for d in deps:
-        ecosystems[d.ecosystem] = ecosystems.get(d.ecosystem, 0) + 1
+    ecosystems: dict[str, int] = dict(Counter(d.ecosystem for d in deps))
 
     # W607-CD -- compute_predicate boundary. Wraps the per-field extraction
     # of metrics so a future ``compute_risk_score`` schema refactor that

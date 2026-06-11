@@ -7,6 +7,7 @@ import json as _json
 import os
 import re
 import sqlite3
+from collections import defaultdict
 
 import click
 
@@ -1770,7 +1771,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         # W978 5th-discipline: ``all_findings`` passed as a raw arg;
         # counting / iteration lives INSIDE the closure.
         def _compute_predicate_fields(_findings):
-            _by_kind: dict[str, int] = {}
+            _by_kind: defaultdict[str, int] = defaultdict(int)
             _files: set[str] = set()
             _endpoints: set[str] = set()
             for _f in _findings:
@@ -1781,7 +1782,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
                 _t = _f.get("type") or "auth_gap"
                 _r = _f.get("reason") or _t
                 _k = f"{_t}:{_r}"
-                _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                _by_kind[_k] += 1
                 _file = _f.get("file") or ""
                 if _file:
                     _files.add(_file)

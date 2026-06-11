@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json as _json
 import subprocess
+from collections import Counter
 
 import click
 from click.testing import CliRunner
@@ -131,12 +132,9 @@ def _summarize_finding_count(critique_payload: dict) -> tuple[int, int, int]:
 def _short_finding_summary(critique_payload: dict, *, max_kinds: int = 3) -> list[str]:
     """Pull the top-N finding kinds from a critique envelope."""
     findings = critique_payload.get("findings") or critique_payload.get("checks") or []
-    kinds: dict[str, int] = {}
-    for f in findings:
-        if not isinstance(f, dict):
-            continue
-        kind = f.get("check") or f.get("kind") or f.get("rule") or "?"
-        kinds[kind] = kinds.get(kind, 0) + 1
+    kinds: Counter[str] = Counter(
+        f.get("check") or f.get("kind") or f.get("rule") or "?" for f in findings if isinstance(f, dict)
+    )
     return [f"{k} x{v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])[:max_kinds]]
 
 
