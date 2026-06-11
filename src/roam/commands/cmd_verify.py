@@ -1557,7 +1557,10 @@ def _collect_cycle_violations(graph, changed_set: set[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 # Extensions worth scanning for leaked credentials / forbidden language.
-# Mirrors the anti-leak scanner's surface: text-bearing source/config/docs.
+# Mirrors the anti-leak scanner's surface (10 extensions there): text-bearing
+# source/config/docs. Calibration on the self-index: the first cut produced
+# 40 findings, 37 of them fixture false positives — 0 after the bearer-regex
+# payload floor + 12 file-level suppressions.
 _SECRETS_SCAN_EXTENSIONS = (
     ".py",
     ".md",
