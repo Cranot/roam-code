@@ -76,6 +76,38 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.6] — 2026-06-11</h2>
+<h3>The verify loop grows teeth (field-feedback wave)</h3>
+<h4>Added</h4>
+<ul>
+<li><strong><code>secrets</code> verify category, on by default</strong> — credential shapes fail the check on every touched file; an optional repo-local <code>.roam-leak-patterns.py</code> catalogue catches project-specific never-publish strings (fail-open, errors disclosed).</li>
+<li><strong>Symbol-keyed suppressions</strong> — <code>.roam-suppressions.yml</code> entries can carry <code>symbol:</code> and survive refactors that shift line numbers; line-keyed entries now match within a 3-line tolerance. <code>roam triage add --symbol</code>.</li>
+<li><strong><code>verify --auto</code> implies the advisory patterns sweep</strong> — the algorithm/idiom detectors scoped to the touched files (N+1 shapes, loop-invariant calls, each with a fix sketch). <code>ROAM_VERIFY_NO_DEEP=1</code> opts out.</li>
+<li><strong><code>roam algo --path &lt;file|dir&gt;</code></strong> (repeatable) — scoped scans in ~2s vs the whole-project sweep, with <code>scoped_paths</code> / <code>scope_file_count</code> disclosure.</li>
+</ul>
+<h4>Fixed</h4>
+<ul>
+<li><strong>Suppression data loss</strong> — saving a suppression no longer rewrites the file through a lossy parse (hand-edited entries silently vanished); save is append-only and an unparseable file is never replaced.</li>
+<li><strong>Naming convention sampling</strong> — test/vendored/generated files no longer vote in (or get flagged against) the project convention; single lowercase words are case-neutral; ~45 framework lifecycle names (<code>setUp</code>, <code>beforeEach</code>, <code>ngOnInit</code>, ...) are never flagged. On a test-heavy PSR-12 codebase this removed ~2000 false positives.</li>
+<li><strong>Composable complexity</strong> — <code>use*</code> containers in JS/TS/Vue report as INFO advisories (the container score sums inner closures and is not actionable at function thresholds). FoxPro files skipped by the syntax rule; ERROR nodes inside string literals are opaque.</li>
+<li><strong><code>verify --auto</code> is 16× faster on sweeping diffs</strong> (3m27s → ~13s) — the duplicates similar-name pass used full <code>SequenceMatcher.ratio()</code> against every repo symbol; now gated by the difflib quick-ratio fast path with a disclosed cap. <code>roam algo</code> whole-project sweep 35.7s → 18.1s.</li>
+</ul>
+<h3>Compiler: injection economics + answer probes</h3>
+<h4>Added</h4>
+<ul>
+<li><strong><code>injection_advice</code></strong> — generation-shaped prompts ("write a test", "implement X") advise injection channels to inject NOTHING (measured pure overhead: same turns, +25% input tokens). Stamped in the JSON summary, the text envelope, and telemetry; honored by the Claude Code hook.</li>
+<li><strong>Graph-ranked retrieval</strong> — freeform <code>named_paths</code> blend percentile-ranked text score, path-token match (mini-IDF), file role, and symbol PageRank; basename recall pulls the module the task literally names into the pool.</li>
+<li><strong>New answer probes</strong> — security-shaped tasks embed the whole-repo taint scan; "is X idempotent" / "what does X mutate" embed the world-model classifiers; design-pattern asks embed detected instances; perf-shaped tasks embed scoped algorithm-catalog findings; <strong>verify findings ride into compile envelopes</strong> (<code>known_findings</code>) so agents fix adjacent debt in the same pass.</li>
+<li><strong>Probe-trigger override</strong> — bare-symbol phrasings of probe-answerable shapes ("which tests cover X", "find SQL injection risks", "list TODOs in F") now run the probe pipeline instead of shipping empty envelopes.</li>
+<li><strong>Routing waves</strong> — trace-shaped ("where does the login flow start", "follow the path from X to Y") and literal entry-point phrasings route to their procedures.</li>
+</ul>
+<h4>Infrastructure</h4>
+<ul>
+<li><strong><code>prepush_check.py --release</code></strong> — one command proves a release-sized push: full gates + the entire test suite + commit-message leak scan + doc-consistency + landing-page linkcheck.</li>
+<li><strong>Offline lock suites</strong> — procedure-registry lint (closed-enumeration over all per-procedure tables; found two real gaps on first run), suppression adversarial corpus (14 hostile files), verify self-dogfood FP lock, envelope byte-budget ratchets, L1-rate floor (56.7% at introduction, floor 45%).</li>
+<li><strong>Leak gate</strong> — generalized dated-marker patterns, commit-message scanning in pre-push, exemplar ratchet suite so patterns can't silently weaken.</li>
+<li>CGA/VSA sibling attestations share one clock (CI flake sealed).</li>
+</ul>
 <h2>[13.5.1] — 2026-06-10</h2>
 <h3>Fixed</h3>
 <ul>

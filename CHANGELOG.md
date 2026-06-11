@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.6] — 2026-06-11
+
+### The verify loop grows teeth (field-feedback wave)
+
+#### Added
+- **`secrets` verify category, on by default** — credential shapes fail the
+  check on every touched file; an optional repo-local `.roam-leak-patterns.py`
+  catalogue catches project-specific never-publish strings (fail-open, errors
+  disclosed).
+- **Symbol-keyed suppressions** — `.roam-suppressions.yml` entries can carry
+  `symbol:` and survive refactors that shift line numbers; line-keyed entries
+  now match within a 3-line tolerance. `roam triage add --symbol`.
+- **`verify --auto` implies the advisory patterns sweep** — the algorithm/idiom
+  detectors scoped to the touched files (N+1 shapes, loop-invariant calls, each
+  with a fix sketch). `ROAM_VERIFY_NO_DEEP=1` opts out.
+- **`roam algo --path <file|dir>`** (repeatable) — scoped scans in ~2s vs the
+  whole-project sweep, with `scoped_paths` / `scope_file_count` disclosure.
+
+#### Fixed
+- **Suppression data loss** — saving a suppression no longer rewrites the file
+  through a lossy parse (hand-edited entries silently vanished); save is
+  append-only and an unparseable file is never replaced.
+- **Naming convention sampling** — test/vendored/generated files no longer vote
+  in (or get flagged against) the project convention; single lowercase words
+  are case-neutral; ~45 framework lifecycle names (`setUp`, `beforeEach`,
+  `ngOnInit`, ...) are never flagged. On a test-heavy PSR-12 codebase this
+  removed ~2000 false positives.
+- **Composable complexity** — `use*` containers in JS/TS/Vue report as INFO
+  advisories (the container score sums inner closures and is not actionable at
+  function thresholds). FoxPro files skipped by the syntax rule; ERROR nodes
+  inside string literals are opaque.
+- **`verify --auto` is 16× faster on sweeping diffs** (3m27s → ~13s) — the
+  duplicates similar-name pass used full `SequenceMatcher.ratio()` against
+  every repo symbol; now gated by the difflib quick-ratio fast path with a
+  disclosed cap. `roam algo` whole-project sweep 35.7s → 18.1s.
+
+### Compiler: injection economics + answer probes
+
+#### Added
+- **`injection_advice`** — generation-shaped prompts ("write a test",
+  "implement X") advise injection channels to inject NOTHING (measured pure
+  overhead: same turns, +25% input tokens). Stamped in the JSON summary, the
+  text envelope, and telemetry; honored by the Claude Code hook.
+- **Graph-ranked retrieval** — freeform `named_paths` blend percentile-ranked
+  text score, path-token match (mini-IDF), file role, and symbol PageRank;
+  basename recall pulls the module the task literally names into the pool.
+- **New answer probes** — security-shaped tasks embed the whole-repo taint
+  scan; "is X idempotent" / "what does X mutate" embed the world-model
+  classifiers; design-pattern asks embed detected instances; perf-shaped tasks
+  embed scoped algorithm-catalog findings; **verify findings ride into compile
+  envelopes** (`known_findings`) so agents fix adjacent debt in the same pass.
+- **Probe-trigger override** — bare-symbol phrasings of probe-answerable
+  shapes ("which tests cover X", "find SQL injection risks", "list TODOs in
+  F") now run the probe pipeline instead of shipping empty envelopes.
+- **Routing waves** — trace-shaped ("where does the login flow start",
+  "follow the path from X to Y") and literal entry-point phrasings route to
+  their procedures.
+
+#### Infrastructure
+- **`prepush_check.py --release`** — one command proves a release-sized push:
+  full gates + the entire test suite + commit-message leak scan +
+  doc-consistency + landing-page linkcheck.
+- **Offline lock suites** — procedure-registry lint (closed-enumeration over
+  all per-procedure tables; found two real gaps on first run), suppression
+  adversarial corpus (14 hostile files), verify self-dogfood FP lock, envelope
+  byte-budget ratchets, L1-rate floor (56.7% at introduction, floor 45%).
+- **Leak gate** — generalized dated-marker patterns, commit-message scanning
+  in pre-push, exemplar ratchet suite so patterns can't silently weaken.
+- CGA/VSA sibling attestations share one clock (CI flake sealed).
+
+
 ## [13.5.1] — 2026-06-10
 
 ### Fixed
