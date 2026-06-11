@@ -16,6 +16,7 @@ Architecture-seal mapping:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -189,6 +190,35 @@ _SYNTHESIS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Generation-shaped synthesis tasks where injection is measured NET-NEGATIVE:
+# the 2026-06-09/10 Fable 5 A/B's write-pytest cells ran the SAME 10 turns
+# with +25% input tokens (489K→611K) — the envelope is re-read as cache every
+# turn while saving nothing, and the lean-envelope variant (3 reps, 11 turns,
+# ~615K) lost too. For code-WRITING tasks the agent must read/edit/run
+# regardless, so the prompt-time channel advises the hook to inject nothing.
+# Refactor-proposal shapes (propose a refactor / unified diff / extract X)
+# stay injected — impact/caller facts feed those answers directly.
+_GENERATION_SKIP_RE = re.compile(
+    r"\b(write\s+(?:a\s+)?(?:pytest|unit\s+test|integration\s+test|spec|test|docstring)|"
+    r"implement\s+\w+|add\s+(?:a|an|the|this|that|new)\s+\w+|"
+    r"create\s+(?:a|an|the|this|that|new)\s+\w+\s+feature|draft\s+a)\b",
+    re.IGNORECASE,
+)
+
+
+def injection_advice(procedure: str, task: str | None) -> str:
+    """Advise the prompt-injection channel (Claude Code UPS hook) whether the
+    envelope is worth injecting for this task.
+
+    Returns ``"inject"`` or ``"skip_generation_task"``. Explicit
+    ``roam compile`` callers always get the full envelope either way — the
+    advice only gates the per-prompt auto-injection channel.
+    """
+    if procedure == "synthesis_query" and task and _GENERATION_SKIP_RE.search(task):
+        return "skip_generation_task"
+    return "inject"
+
+
 # W35a — stack-trace shape. Real user task: "fix this: ... File 'x.py',
 # line 42, in foo()". When the task carries an actual stack trace, the
 # optimal compile path is to extract every (file, line) frame and embed
@@ -214,6 +244,17 @@ _STACK_ERROR_CONTEXT_RE = re.compile(
     r"\b(Traceback|Exception|raised|panicked|FAIL|"
     r"[A-Z]\w*Error\b|Error\b|"
     r"NullPointerException|IndexOutOfBounds)\b",
+)
+
+# Perf-shaped freeform tasks ("optimize X", "fix the n+1 in Y", "make Z
+# faster") get the scoped algorithm-catalog findings embedded — `roam algo
+# --path` returns Current/Better/Tip/Fix per anti-pattern, which IS the
+# answer the agent would otherwise derive by reading the file. Scoped runs
+# are ~1.8s (vs 18s whole-project), inside probe budget.
+_ALGO_PERF_RE = re.compile(
+    r"\b(optimi[sz]e|n\+1|too slow|slowness|slow\b|faster|speed up|"
+    r"perf(?:ormance)?\b|inefficien|algorithmic|big-?o|quadratic|hot ?spots?)\b",
+    re.IGNORECASE,
 )
 
 # W35b — "what does this file do" trigger inside freeform_explore.
@@ -824,7 +865,7 @@ _CLI_CMD_REF_RE = re.compile(r"\broam\s+([a-z][a-z0-9-]{1,30})\b")
 
 def _resolve_cli_command_files(task: str, cwd: str | None) -> list[str]:
     """Resolve ``roam <subcommand>`` references to the subcommand's module file
-    (2026-06-05 dogfood: "add a --json flag to roam smells" used to land in
+    (dogfood: "add a --json flag to roam smells" used to land in
     empty freeform — the agent got no file to edit). The cli-verb registry maps
     the subcommand → its `roam.commands.cmd_*` module; converted to a repo path
     and kept ONLY if it exists in ``cwd`` (so it fires when editing roam itself
@@ -6025,7 +6066,11 @@ def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str
     if not named_paths:
         # W-ENTITY — no file anchor: fall back to entity grounding so a bare-
         # identifier prompt still gets prefetch instead of an empty envelope.
-        return _probe_freeform_entities_for_task(task, cwd)
+        # Intent boosters that key on the TASK TEXT (introduced-when, which-
+        # tests, taint, TODO scan) still apply without a file anchor.
+        entity = _probe_freeform_entities_for_task(task, cwd) or {}
+        entity.update(_probe_freeform_intent_boosters(task, [], cwd))
+        return entity or None
     import os
     import subprocess
 
@@ -6081,7 +6126,169 @@ def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str
     # freeform with no code at the cited line.
     facts.update(_freeform_bug_site_slice(task, named_paths, cwd))
 
+    # Intent boosters: shape-gated probes (perf/algo, ownership, history,
+    # tests-for, security/taint, TODO scan) mined from the frozen corpus's
+    # still-missed freeform prompts. Each fires only on its regex.
+    facts.update(_probe_freeform_intent_boosters(task, named_paths, cwd))
+
     return facts or None
+
+
+def _probe_algo_findings(task: str, named_paths: list[str], cwd: str | None) -> dict:
+    """Embed `roam algo --path <named>` findings for perf-shaped tasks.
+
+    The catalog detector output (Current/Better/Tip/Fix per anti-pattern,
+    impact-ranked) is the literal answer to "optimize X" / "fix the n+1 in
+    Y" — without it the agent re-derives the analysis by reading the file.
+    """
+    if not named_paths or not _ALGO_PERF_RE.search(task):
+        return {}
+    args = ["algo", "-n", "5"]
+    for p in named_paths[:2]:
+        args += ["--path", p]
+    d = _run_roam(args, cwd, timeout=10.0)
+    findings = (d or {}).get("findings") or []
+    if not findings:
+        return {}
+    items = [
+        {
+            "task_id": f.get("task_id"),
+            "symbol": f.get("symbol_name"),
+            "location": f.get("location"),
+            "reason": f.get("reason"),
+            "suggested_way": f.get("suggested_way"),
+            "tip": f.get("tip"),
+            "fix": (f.get("fix") or "")[:240],
+            "confidence": f.get("confidence"),
+            "impact_score": f.get("impact_score"),
+        }
+        for f in findings[:5]
+    ]
+    return {
+        "algo_findings": items,
+        "algo_findings_definition": (
+            f"Algorithm anti-patterns detected in {', '.join(named_paths[:2])}, "
+            f"impact-ranked, each with the better approach and a fix sketch. "
+            f"Base your optimization on THESE findings — do not re-derive the "
+            f"analysis; cite location + suggested_way directly."
+        ),
+    }
+
+
+# Security-shaped freeform tasks ("find SQL injection risks", "trace tainted
+# data") embed the whole-repo taint scan — the only corpus-recurring shape
+# with NO existing probe (ownership/TODO/test-impact/history already have
+# W109/W111/W80/pickaxe probes; the gap there was promotion keys + the
+# test-impact probe's named-path requirement, fixed separately).
+_SECURITY_TAINT_RE = re.compile(
+    r"\binjection\b|\btaint(?:ed)?\b|\bxss\b|\bvulnerab|\bsanitiz|\bsecurity\s+(?:risk|review|audit|holes?)\b",
+    re.IGNORECASE,
+)
+# World-model asks ("is X idempotent", "what does X mutate", "side effects
+# of X") — the R28 classifiers answer these outright in ~0.13s.
+_WORLD_MODEL_RE = re.compile(
+    r"\bidempoten|\bside.?effects?\b|\bwhat\s+does\s+\w+\s+(?:mutate|write\s+to|touch)\b|\bsafe\s+to\s+retry\b",
+    re.IGNORECASE,
+)
+# Design-pattern asks ("find all the singletons", "which factories exist").
+_DESIGN_PATTERN_RE = re.compile(
+    r"\b(?:singletons?|factor(?:y|ies)|observers?|repositor(?:y|ies)|strateg(?:y|ies)|decorators?)\b.{0,30}\b(?:pattern|exist|are there|find|list|implement)|"
+    r"\b(?:find|list|show)\b.{0,20}\b(?:singletons?|factor(?:y|ies)|observers?|repositor(?:y|ies)|strateg(?:y|ies)|decorators?)\b|"
+    r"\bdesign\s+patterns?\b",
+    re.IGNORECASE,
+)
+
+_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]+)`|\b([a-z_]+_[a-z0-9_]+|[a-z]+[A-Z][A-Za-z0-9]+)\b")
+
+
+def _booster_target_symbol(task: str) -> str | None:
+    """Backticked token first; else the first snake_case/camelCase identifier."""
+    for m in _IDENT_RE.finditer(task):
+        tok = m.group(1) or m.group(2)
+        if tok:
+            return tok
+    return None
+
+
+def _probe_freeform_intent_boosters(task: str, named_paths: list[str], cwd: str | None) -> dict:
+    """Shape-gated facts for freeform intents with no procedure of their own.
+
+    Currently: security/taint (whole-repo scan measured ~0.7s here). The
+    perf/algo probe lives in :func:`_probe_algo_findings`; ownership, TODO,
+    and test-impact shapes are owned by the W109/W111/W80 extenders.
+    """
+    facts: dict = {}
+
+    if _SECURITY_TAINT_RE.search(task):
+        d = _run_roam(["taint"], cwd, timeout=15.0)
+        summ = (d or {}).get("summary") or {}
+        if summ:
+            top = ((d or {}).get("findings") or [])[:10]
+            facts["taint_summary"] = {
+                "verdict": summ.get("verdict"),
+                "findings": summ.get("findings"),
+                "risk_score": summ.get("risk_score"),
+                "top_findings": top,
+            }
+            facts["taint_summary_definition"] = (
+                "Whole-repo taint/dataflow scan (source→sink with sanitizer "
+                "tracking). Ground the security answer on THIS — zero findings "
+                "means the scan ran clean, not that it didn't run."
+            )
+
+    if _WORLD_MODEL_RE.search(task):
+        sym = _booster_target_symbol(task)
+        if sym:
+            wm: dict = {}
+            d_idem = _run_roam(["idempotency", sym], cwd, timeout=8.0)
+            if d_idem and (d_idem.get("summary") or d_idem.get("symbols")):
+                wm["idempotency"] = {
+                    "verdict": (d_idem.get("summary") or {}).get("verdict"),
+                    "symbols": (d_idem.get("symbols") or [])[:5],
+                }
+            d_se = _run_roam(["side-effects", sym], cwd, timeout=8.0)
+            if d_se and (d_se.get("summary") or d_se.get("symbols")):
+                wm["side_effects"] = {
+                    "verdict": (d_se.get("summary") or {}).get("verdict"),
+                    "symbols": (d_se.get("symbols") or [])[:5],
+                }
+            if wm:
+                facts["world_model"] = {"symbol": sym, **wm}
+                facts["world_model_definition"] = (
+                    f"Static world-model classification of `{sym}`: effect kinds "
+                    f"(io_read/io_write/mutation/process/none) and retry-safety "
+                    f"(idempotent/non_idempotent/unknown). Answer from THESE "
+                    f"classifications; cite the kind labels directly."
+                )
+
+    if _DESIGN_PATTERN_RE.search(task):
+        d = _run_roam(["patterns"], cwd, timeout=10.0)
+        summ = (d or {}).get("summary") or {}
+        if summ:
+            raw = (d or {}).get("patterns") or (d or {}).get("results") or []
+            # `roam patterns` groups instances by type ({"singleton": [...]});
+            # flatten with the type stamped on each instance.
+            if isinstance(raw, dict):
+                pats = [
+                    {"pattern": ptype, **(inst if isinstance(inst, dict) else {"item": inst})}
+                    for ptype, insts in raw.items()
+                    for inst in (insts or [])
+                ]
+            else:
+                pats = list(raw)
+            facts["design_patterns"] = {
+                "verdict": summ.get("verdict"),
+                "types_found": summ.get("types_found"),
+                "total": summ.get("total_patterns"),
+                "instances": pats[:15],
+            }
+            facts["design_patterns_definition"] = (
+                "Detected design-pattern instances (singleton/factory/observer/"
+                "repository/strategy/decorator) with locations. List from THESE "
+                "instances — do not grep for class shapes."
+            )
+
+    return facts
 
 
 _BUG_SITE_SLICE_BEFORE = 12
@@ -6915,13 +7122,12 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
     "stack_trace_fix": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
+            "why_slow",
             "todo_audit",
-            "deprecation_audit",
-            "env_vars_audit",
-            "owner_probe",
+            "deprecation",
+            "env_vars",
             "entry_points",
-            "config_by_name",
+            "config",
             "refactor_move",
             "api_surface",
         }
@@ -6929,30 +7135,29 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
     "synthesis_query": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
-            "deprecation_audit",
-            "config_by_name",
-            "owner_probe",
+            "why_slow",
+            "deprecation",
+            "config",
         }
     ),
     "structural_callers": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
+            "why_slow",
             "todo_audit",
-            "deprecation_audit",
-            "env_vars_audit",
-            "config_by_name",
+            "deprecation",
+            "env_vars",
+            "config",
             "api_surface",
         }
     ),
     "structural_coupling": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
+            "why_slow",
             "todo_audit",
-            "deprecation_audit",
-            "env_vars_audit",
+            "deprecation",
+            "env_vars",
             "api_surface",
         }
     ),
@@ -6960,8 +7165,8 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
         {
             "subprocess_audit",
             "todo_audit",
-            "deprecation_audit",
-            "env_vars_audit",
+            "deprecation",
+            "env_vars",
         }
     ),
     # W133 — extend skip table. freeform_explore correlates with prose
@@ -6971,26 +7176,29 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
     # surface; perf/runtime probes are noise.
     # W189c — api_surface REMOVED; W165 iter-7 t4 audit (freeform_explore)
     # genuinely needs api_surface + stability_markers grounding.
+    # todo_audit REMOVED: it self-gates on _TODO_AUDIT_RE (a microsecond
+    # regex, no I/O before the gate), so the 10-40ms cost rationale never
+    # applied — and the skip silently blanked "list TODO comments in X"
+    # prompts that the probe answers outright. "owner_probe" REMOVED: dead
+    # label (the registered extender label is "owners"), it never matched —
+    # which is the only reason "who owns X" prompts kept working.
     "freeform_explore": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
-            "todo_audit",
-            "deprecation_audit",
-            "env_vars_audit",
-            "config_by_name",
-            "owner_probe",
+            "why_slow",
+            "deprecation",
+            "env_vars",
+            "config",
         }
     ),
     "refactor_move": frozenset(
         {
             "subprocess_audit",
-            "runtime_hotspots",
-            "deprecation_audit",
-            "env_vars_audit",
+            "why_slow",
+            "deprecation",
+            "env_vars",
             "todo_audit",
-            "config_by_name",
-            "owner_probe",
+            "config",
             "entry_points",
         }
     ),
@@ -7796,7 +8004,7 @@ class PlanV0:
     def to_l1_probe_envelope(self, cwd: str | None = None) -> dict:
         """v0.5 L1 PROBE-AND-FILL envelope — embed ANSWERS, not pointers.
 
-        Memo-driven (project_deep_levers_inventory): the highest single
+        Per the lever-inventory notes: the highest single
         lever for cost reduction. Compiler runs roam queries AT COMPILE
         TIME and embeds results in `prefetched_facts`. Agent collapses
         from gather+synthesize to synthesize-only — 1-2 turns instead
@@ -8264,6 +8472,12 @@ _L1_PROCEDURE_KEYS: dict[str, tuple[str, ...]] = {
         "todo_items",
         "deprecation_markers",
         "subprocess_sites",
+        # Security taint scan + perf algo-catalog findings.
+        "taint_summary",
+        "algo_findings",
+        # World-model classifiers + design-pattern instances.
+        "world_model",
+        "design_patterns",
     ),
     "stack_trace_fix": ("stack_frames", "import_audit", "grep_results"),
     "refactor_move": ("refactor_move", "grep_results"),
@@ -8348,6 +8562,9 @@ def _maybe_append_compile_telemetry(
         # to compiler revisions. Without this, a classifier change and a
         # workload change are indistinguishable in compile-stats.
         "compiler_fp": _compiler_fingerprint(),
+        # 2026-06-10 — what the hook channel was advised to do, so the
+        # skip rate for generation-shaped tasks is measurable per repo.
+        "injection_advice": injection_advice(plan.procedure, plan.task),
     }
     # W43 P3 — per-section timings if the plan attached them as
     # `_W43_TIMINGS_MS`. Optional: only present when L1 routing fired.
@@ -8982,11 +9199,31 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # task). Other procedures still require named_paths.
     probe_attempted = False
     has_target = _l1_has_target(plan)
+    # Probe-trigger override: these shape regexes map 1:1 to L1-promotable
+    # probes (test-impact / owner / TODO / taint / perf-algo) whose output
+    # IS the answer. Bare-symbol phrasings of these shapes score only 0.35
+    # confidence (no path bump), so the confidence-band policy chose "facts"
+    # and the probe pipeline never ran — "which tests cover X" / "find SQL
+    # injection risks" shipped empty envelopes while the probes that answer
+    # them outright sat idle. A matched trigger attempts L1 regardless; the
+    # existing fall-through still demotes to facts when probes return nothing.
+    _probe_trigger = bool(plan.task) and any(
+        r.search(plan.task)
+        for r in (
+            _TEST_IMPACT_RE,
+            _OWNER_RE,
+            _TODO_AUDIT_RE,
+            _SECURITY_TAINT_RE,
+            _ALGO_PERF_RE,
+            _WORLD_MODEL_RE,
+            _DESIGN_PATTERN_RE,
+        )
+    )
     # W167/W168/W169 — when gated to lean, skip the L1 probe path entirely.
     if (
         plan.procedure in _L1_PROBE_ELIGIBLE
         and has_target
-        and art != "facts"
+        and (art != "facts" or _probe_trigger)
         and not _w_gen_synth  # W-GENLEAN — lean is final for test-writes
         and not (_w167_169_low_conf or _w167_169_bare_stack or _w167_169_opinion)
     ):
@@ -9064,6 +9301,12 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
                 "todo_items",
                 "deprecation_markers",
                 "subprocess_sites",
+                # Security taint scan + perf algo-catalog findings.
+                "taint_summary",
+                "algo_findings",
+                # World-model classifiers + design-pattern instances.
+                "world_model",
+                "design_patterns",
             ),
             "stack_trace_fix": ("stack_frames", "import_audit", "grep_results"),
             "refactor_move": ("refactor_move", "grep_results"),  # W181 + W196
@@ -9106,7 +9349,7 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
 
 # ALL-LEVERS production routing (2026-05-29, validated +220% score/$ on 68% of corpus).
 # Per-procedure model + envelope + contract dispatch.
-# Memory anchor: [[project_all_levers_breakthrough]].
+# See the compiler lever-inventory notes.
 #
 # v5 (2026-05-29 16:30): MECHANISM/CALIBRATION SPLIT. The routing logic below
 # is the universal mechanism. Model strings + cost ratios live in
@@ -9590,6 +9833,158 @@ def _symbol_resolution_cache_store(task: str, cwd: str | None, files: list[str])
         log_swallowed("compile.symbol_resolution_cache.store", exc)
 
 
+# Freeform-candidate rerank weights. search-semantic text scores on
+# conceptual tasks are nearly FLAT (~0.28-0.32 observed on the live repo), so
+# ordering by them alone is noise — a comprehension task about "the compiler
+# and verify" surfaced six unrelated test files. Three offline signals break
+# the tie without overriding a strong text match (exact symbol hits score
+# 0.6+ and stay on top): a task token literally in the file path is the
+# strongest freeform signal; test/vendored/generated files are rarely the
+# subject of comprehension tasks; structural importance (summed symbol
+# PageRank from graph_metrics) separates load-bearing modules from leaves.
+_RERANK_PATH_TOKEN_BOOST = 0.12  # per matched task token in the path, capped
+_RERANK_PATH_TOKEN_CAP = 2
+_RERANK_ROLE_ADJUST = {"source": 0.04, "test": -0.06, "vendored": -0.06, "generated": -0.06}
+_RERANK_PAGERANK_BOOST = 0.04  # × log-normalized rank among the candidates
+_RERANK_STOP_TOKENS = frozenset(
+    "the a an and or of in on for to is are with how what where why does do "
+    "use uses used like check find show me i you we it this that try improve "
+    "can any want next study well also command".split()
+)
+
+
+def _task_path_tokens(task: str) -> set[str]:
+    """Lowercase task tokens worth matching against path components."""
+    words = re.findall(r"[a-zA-Z_]{3,}", task.lower())
+    return {w for w in words if w not in _RERANK_STOP_TOKENS}
+
+
+def _path_token_recall(task: str, cwd: str | None, known: set[str], cap: int = 6) -> list[tuple[str, float]]:
+    """Pull source files whose BASENAME contains a task token into the pool.
+
+    search-semantic ranks only what its text index surfaces; on conceptual
+    tasks the module the user literally NAMED ("the compiler", "verify")
+    often isn't in its top-10 at all. A task token matching a filename
+    component is near-certain relevance — recall those files directly from
+    the index (read-only SQLite, no subprocess), highest-PageRank first.
+    Entries join with text score 0.0; the rerank boosts do the rest.
+    """
+    tokens = _task_path_tokens(task)
+    if not tokens:
+        return []
+    out: list[tuple[str, float]] = []
+    try:
+        import sqlite3
+
+        index_path = os.path.join(cwd or "", ".roam", "index.db")
+        if not os.path.isfile(index_path):
+            return []
+        conn = sqlite3.connect(index_path, timeout=1.0)
+        try:
+            # Basename matching happens in Python: a SQL LIKE over the full
+            # path is too loose (the repo-name token matches every path
+            # under src/<repo>/, crowding out real basename hits). The
+            # source-role file list is small (hundreds of rows).
+            paths = [r[0] for r in conn.execute("SELECT path FROM files WHERE COALESCE(file_role,'source') = 'source'")]
+            matches = [p for p in paths if p not in known and any(t in os.path.basename(p).lower() for t in tokens)]
+            if not matches:
+                return []
+            qmarks = ",".join("?" for _ in matches)
+            rows = conn.execute(
+                f"""SELECT f.path, COALESCE(SUM(g.pagerank), 0) pr
+                    FROM files f
+                    LEFT JOIN symbols s ON s.file_id = f.id
+                    LEFT JOIN graph_metrics g ON g.symbol_id = s.id
+                    WHERE f.path IN ({qmarks})
+                    GROUP BY f.id ORDER BY pr DESC LIMIT ?""",
+                [*matches, cap],
+            ).fetchall()
+        finally:
+            conn.close()
+        out = [(path, 0.0) for path, _pr in rows]
+    except Exception as exc:  # noqa: BLE001 — recall must never break compile
+        log_swallowed("compile.likely_files.token_recall", exc)
+    return out
+
+
+def _rerank_likely_files(task: str, scored: list[tuple[str, float]], cwd: str | None) -> list[str]:
+    """Blend text score + path-token match + file role + PageRank.
+
+    Pure local math over the existing index — one read-only SQLite query,
+    no subprocess, no model calls. Fail-open: any DB problem returns the
+    text-score order unchanged.
+    """
+    if len(scored) <= 1:
+        return [p for p, _ in scored]
+    role_pr: dict[str, tuple[str, float]] = {}
+    try:
+        import sqlite3
+
+        roam_dir = os.path.join(cwd or "", ".roam")
+        index_path = os.path.join(roam_dir, "index.db")
+        if os.path.isfile(index_path):
+            conn = sqlite3.connect(index_path, timeout=1.0)
+            try:
+                qmarks = ",".join("?" for _ in scored)
+                rows = conn.execute(
+                    f"""SELECT f.path, COALESCE(f.file_role,'source'),
+                               COALESCE(SUM(g.pagerank), 0)
+                        FROM files f
+                        LEFT JOIN symbols s ON s.file_id = f.id
+                        LEFT JOIN graph_metrics g ON g.symbol_id = s.id
+                        WHERE f.path IN ({qmarks})
+                        GROUP BY f.id""",
+                    [p for p, _ in scored],
+                ).fetchall()
+            finally:
+                conn.close()
+            role_pr = {r[0]: (r[1], float(r[2])) for r in rows}
+    except Exception as exc:  # noqa: BLE001 — rerank must never break compile
+        log_swallowed("compile.likely_files.rerank", exc)
+
+    # Mini-IDF: a token that matches most of the pool discriminates nothing
+    # (the repo-name token matches every path under src/<repo>/). Keep only
+    # tokens hitting <60% of candidates.
+    all_tokens = _task_path_tokens(task)
+    n = len(scored)
+    tokens = {t for t in all_tokens if sum(1 for p, _ in scored if t in p.lower()) < 0.6 * n}
+    max_pr = max((pr for _, pr in role_pr.values()), default=0.0)
+
+    # Signal-aware text weight, continuous form: the text contribution is
+    # the candidate's PERCENTILE RANK within the pool, scaled by a band that
+    # tracks the observed score spread (clamped 0.08-0.25). A flat
+    # conceptual pool (spread ~0.03) yields a small band, so the structural
+    # boosts decide; a real symbol hit (spread 0.3+) yields a wide band and
+    # stays on top. No threshold cliff — 0.09 vs 0.11 spread behaves almost
+    # identically (the binary flat/raw branch flipped orderings around it).
+    nonzero = sorted(s for _, s in scored if s > 0)
+    spread = (nonzero[-1] - nonzero[0]) if nonzero else 0.0
+    text_band = min(max(spread, 0.08), 0.25)
+
+    def _percentile(raw: float) -> float:
+        if not nonzero or raw <= 0:
+            return 0.0
+        return sum(1 for s in nonzero if s <= raw) / len(nonzero)
+
+    def blended(item: tuple[str, float]) -> float:
+        path, text_score = item
+        score = text_band * _percentile(float(text_score or 0.0))
+        base = os.path.basename(path).lower()
+        path_lower = path.lower()
+        # Basename hits are the strong form; directory hits count half.
+        matched_base = sum(1 for t in tokens if t in base)
+        matched_dir = sum(1 for t in tokens if t in path_lower and t not in base)
+        boost_units = min(matched_base + 0.5 * matched_dir, float(_RERANK_PATH_TOKEN_CAP))
+        score += _RERANK_PATH_TOKEN_BOOST * boost_units
+        role, pr = role_pr.get(path, ("source", 0.0))
+        score += _RERANK_ROLE_ADJUST.get(role, 0.0)
+        if max_pr > 0 and pr > 0:
+            score += _RERANK_PAGERANK_BOOST * (math.log1p(pr) / math.log1p(max_pr))
+        return score
+
+    return [p for p, _ in sorted(scored, key=blended, reverse=True)]
+
+
 def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tuple[list[str], bool]:
     """Hybrid: explicit path mentions first, then symbol-resolution cache,
     then `roam search-semantic` as the fallback.
@@ -9626,13 +10021,21 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
         _symbol_resolution_cache_store(task, cwd, [])
         return [], True  # subprocess invoked even if it failed
     results = env.get("results") or []
-    seen: list[str] = []
+    scored: list[tuple[str, float]] = []
+    best: dict[str, float] = {}
     for r in results:
         path = r.get("file_path") or r.get("file") or r.get("path") or ""
-        if path and path not in seen:
-            seen.append(path)
-        if len(seen) >= top_n:
-            break
+        if not path:
+            continue
+        score = float(r.get("score") or 0.0)
+        if path not in best or score > best[path]:
+            best[path] = score
+    scored = list(best.items())
+    # Text scores alone are nearly flat on conceptual tasks — widen the pool
+    # with basename-token recall (the module the task literally names), then
+    # blend path-token match, file role, and PageRank before trimming.
+    scored += _path_token_recall(task, cwd, known=set(best))
+    seen = _rerank_likely_files(task, scored, cwd)[:top_n]
     # Store the full resolution (top_n trim happens at consumer; cache the
     # superset so future top_n values up to the cap are served).
     _symbol_resolution_cache_store(task, cwd, seen)

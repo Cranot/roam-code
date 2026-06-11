@@ -15,6 +15,31 @@ from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
+def _resolve_scope_file_ids(conn, scope_paths) -> tuple[set[int], list[str]]:
+    """Map ``--path`` values to indexed file ids.
+
+    Each value matches an exact indexed path OR, as a directory, every
+    indexed path under it (prefix match on the normalized form). Returns
+    ``(file_ids, misses)`` — misses are values that matched nothing, so
+    the caller can disclose them instead of silently scanning zero files.
+    """
+    rows = conn.execute("SELECT id, path FROM files").fetchall()
+    ids: set[int] = set()
+    misses: list[str] = []
+    for raw in scope_paths:
+        norm = str(raw).replace("\\", "/").lstrip("./").rstrip("/")
+        if not norm:
+            continue
+        matched = False
+        for fid, path in rows:
+            if path == norm or path.startswith(norm + "/"):
+                ids.add(int(fid))
+                matched = True
+        if not matched:
+            misses.append(str(raw))
+    return ids, misses
+
+
 def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tuple[list[dict], int]:
     """Apply a first-page per-task cap, then backfill to preserve limit."""
     if limit <= 0:
@@ -176,6 +201,18 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
         "this flag when you want to lint your test code too."
     ),
 )
+@click.option(
+    "--path",
+    "scope_paths",
+    multiple=True,
+    default=(),
+    help=(
+        "Restrict the scan to these files or directories (repeatable). "
+        "Scoping collapses the whole-project sweep to the named files — "
+        "the dominant cost is the per-file idiom scan, so a scoped run is "
+        "sub-second. Directories match by prefix."
+    ),
+)
 @click.pass_context
 def math_cmd(
     ctx,
@@ -192,6 +229,7 @@ def math_cmd(
     exclude_detectors,
     since_baseline,
     include_tests,
+    scope_paths,
 ):
     """Detect suboptimal algorithms and suggest better approaches.
 
@@ -393,6 +431,11 @@ def math_cmd(
             framework_autodetected = True
 
     with open_db(readonly=True) as conn:
+        scope_file_ids = None
+        scope_misses: list[str] = []
+        if scope_paths:
+            scope_file_ids, scope_misses = _resolve_scope_file_ids(conn, scope_paths)
+
         findings, detector_meta = run_detectors(
             conn,
             task_filter,
@@ -403,7 +446,13 @@ def math_cmd(
             include_tests=include_tests,
             only=only_detectors,
             exclude=exclude_detectors,
+            scope_file_ids=scope_file_ids,
         )
+        if scope_misses:
+            click.echo(
+                f"NOTE: --path matched no indexed files for: {', '.join(scope_misses)}",
+                err=True,
+            )
 
         if detector_meta.get("framework_unknown"):
             click.echo(
@@ -671,6 +720,11 @@ def math_cmd(
                 "framework_unknown": detector_meta.get("framework_unknown"),
                 "max_per_task": effective_cap,
                 "deferred_by_task_cap": deferred_by_cap,
+                # --path scoping disclosure: which paths were requested and
+                # how many indexed files they resolved to (None = unscoped
+                # whole-project sweep, the historical default).
+                "scoped_paths": list(scope_paths) or None,
+                "scope_file_count": (len(scope_file_ids) if scope_file_ids is not None else None),
                 "max_impact_score": max(
                     [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
                     default=0.0,

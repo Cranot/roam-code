@@ -107,3 +107,44 @@ def test_cross_repo_batch_family_stays_captured():
     assert _classify(payload)[0] == "self_contained_task"
     # and the corpus itself still loads (provenance intact)
     assert len(rows) > 500
+
+
+# ---------------------------------------------------------------------------
+# Injection-advice lock (generation-skip lever)
+# ---------------------------------------------------------------------------
+# The write-test/generation skip lever must stay PRECISE: 25/723 (3.5%) of
+# the frozen corpus advised skip when introduced, every one a genuine
+# write-a-test prompt. A regex change that balloons this is silently turning
+# off the compiler for tasks it wins on.
+_INJECTION_SKIP_CEILING_PCT = 5.0
+
+
+def test_generation_skip_rate_stays_bounded():
+    from roam.plan.compiler import injection_advice
+
+    rows = _load(_CORPUS)
+    total = skipped = 0
+    for r in rows:
+        task = r.get("task") or r.get("prompt") or ""
+        if not task:
+            continue
+        total += 1
+        proc = _classify(task)[0]
+        if injection_advice(proc, task) != "inject":
+            skipped += 1
+    pct = 100.0 * skipped / max(1, total)
+    assert pct <= _INJECTION_SKIP_CEILING_PCT, (
+        f"injection_advice skips {skipped}/{total} = {pct:.1f}% of the frozen corpus "
+        f"(ceiling {_INJECTION_SKIP_CEILING_PCT}%) — the generation-skip regex over-triggers."
+    )
+
+
+def test_injection_advice_sentinels():
+    from roam.plan.compiler import injection_advice
+
+    # Generation-shaped synthesis: skip (measured net-negative to inject).
+    proc, _ = _classify("write a pytest for atomic_write_text")
+    assert injection_advice(proc, "write a pytest for atomic_write_text") == "skip_generation_task"
+    # Navigation: always inject (the −83%-turns channel).
+    proc, _ = _classify("who calls open_db?")
+    assert injection_advice(proc, "who calls open_db?") == "inject"

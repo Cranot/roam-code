@@ -435,12 +435,19 @@ def _strip_strings_and_comments(text: str) -> str:
         _STRIP_CACHE.move_to_end(key)
         return cached
 
-    def _blank(match: re.Match) -> str:
-        return "".join(" " if c != "\n" else "\n" for c in match.group(0))
+    def _blank_multiline(match: re.Match) -> str:
+        # Per-SEGMENT instead of per-character: O(lines) not O(chars).
+        # The per-char generator join was ~25% of the whole `roam algo`
+        # wall time (424K matches × char-wise join on a full sweep).
+        return "\n".join(" " * len(seg) for seg in match.group(0).split("\n"))
 
-    out = _TRIPLE_QUOTE_RE.sub(_blank, text)
-    out = _SINGLE_QUOTE_RE.sub(_blank, out)
-    out = _COMMENT_RE.sub(_blank, out)
+    def _blank_inline(match: re.Match) -> str:
+        # Single-line strings and comments can't contain newlines.
+        return " " * (match.end() - match.start())
+
+    out = _TRIPLE_QUOTE_RE.sub(_blank_multiline, text)
+    out = _SINGLE_QUOTE_RE.sub(_blank_inline, out)
+    out = _COMMENT_RE.sub(_blank_inline, out)
     _STRIP_CACHE[key] = out
     if len(_STRIP_CACHE) > _STRIP_CACHE_MAX:
         _STRIP_CACHE.popitem(last=False)

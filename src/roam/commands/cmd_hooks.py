@@ -531,6 +531,11 @@ def main():
             return
         d = json.loads(proc.stdout)
         summary = d.get("summary") or {}
+        # Generation-shaped tasks (write a test / implement X): measured
+        # net-negative to inject — the envelope is cache-re-read every turn
+        # while the agent must read/edit/run regardless. Compiler advises.
+        if str(summary.get("injection_advice") or "").startswith("skip"):
+            return
         plan = (d.get("artifact") or {}).get("plan") or {}
         facts = {k: v for k, v in (plan.get("prefetched_facts") or {}).items()
                  if not k.startswith("_")}
@@ -601,7 +606,29 @@ def main():
         verdict = str(summary.get("verdict") or "")
         if not verdict or verdict.upper().startswith("PASS"):
             return  # quiet on pass — signal, not noise
-        print(f"roam verify (post-edit, changed lines vs HEAD): {verdict}")
+        lines = [f"roam verify (post-edit, changed lines vs HEAD): {verdict}"]
+        findings = []
+        for cat, res in (d.get("categories") or {}).items():
+            for v in (res or {}).get("violations") or []:
+                findings.append(v)
+        for v in findings[:8]:
+            loc = f"{v.get('file')}:{v.get('line')}" if v.get("line") else str(v.get("file"))
+            lines.append(f"  - [{v.get('category')}] {loc} -- {v.get('message')}")
+            if v.get("fix"):
+                lines.append(f"      fix: {v['fix']}")
+        if len(findings) > 8:
+            lines.append(f"  ... and {len(findings) - 8} more")
+        # AUTO-FIX directive — on by default. The block makes the agent
+        # resolve findings on lines it just touched instead of stopping;
+        # the stop_hook_active guard above bounds it to one fix round.
+        lines.append(
+            "AUTO-FIX: resolve these now. EDIT the file(s) to fix each "
+            "finding on a line your change touched; a genuine false "
+            "positive goes in .roam-suppressions.yml (rule/file/symbol or "
+            "line + reason); only clearly pre-existing, unrelated findings "
+            "may be left. Verify re-runs automatically after your fix."
+        )
+        print(json.dumps({"decision": "block", "reason": "\\n".join(lines)}))
     except Exception:
         return  # fail open
 
@@ -732,9 +759,12 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify):
     UserPromptSubmit runs `roam --json compile` on every prompt (p50 ~92ms)
     and injects the envelope as context — the compile-prefix channel
     measured at -83%% turns on Claude. Stop runs scoped
-    `roam verify --auto --diff-only` after the agent finishes editing and
-    surfaces only non-PASS verdicts. Both fail-open; `--no-verify` installs
-    the compile hook alone.
+    `roam verify --auto --diff-only` after the agent finishes editing —
+    including the default-on leak gate (credential shapes + the repo's
+    `.roam-leak-patterns.py` catalogue) — and on findings blocks once with
+    an AUTO-FIX directive so the agent resolves them before stopping;
+    quiet on PASS. Both fail-open; `--no-verify` installs the compile
+    hook alone.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     settings_path = _claude_settings_path(user_level)

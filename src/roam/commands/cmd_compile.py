@@ -33,6 +33,7 @@ from roam.plan.calibration import get_profile
 from roam.plan.compiler import (
     compile_for_artifact,
     compile_plan,
+    injection_advice,
     route_for_plan,
 )
 
@@ -370,6 +371,7 @@ def compile_(
                 "plan_quality": plan.plan_quality,
                 "classifier_confidence": plan.classifier_confidence,
                 "model_calls_avoided": plan.model_calls_avoided,
+                "injection_advice": injection_advice(plan.procedure, task),
                 "partial_success": False,
             },
             agent_contract={
@@ -407,6 +409,13 @@ def compile_(
     click.echo(f"task:              {task[:200]}")
     click.echo(f"procedure:         {plan.procedure}")
     click.echo(f"artifact_type:     {art_label}")
+    _advice = injection_advice(plan.procedure, task)
+    if _advice != "inject":
+        # Injection channels (host-platform prepend, Claude Code UPS hook)
+        # parse this line and inject NOTHING — generation-shaped tasks are
+        # measured net-negative under injection. Only printed on skip so
+        # existing envelopes stay byte-identical.
+        click.echo(f"injection_advice:  {_advice}")
     click.echo(f"plan_quality:      {plan.plan_quality}")
     click.echo(f"classifier_conf:   {plan.classifier_confidence}")
     click.echo(f"named_paths:       {plan.likely_files}")
