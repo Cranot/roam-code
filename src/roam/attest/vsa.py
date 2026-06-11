@@ -276,6 +276,7 @@ def build_vsa_predicate(
     *,
     verifier_id: str = "https://roam-code.com",
     policy_uri: str | None = None,
+    time_verified: str | None = None,
 ) -> dict[str, Any]:
     """Build the SLSA Source VSA predicate body from a ChangeEvidence.
 
@@ -290,6 +291,12 @@ def build_vsa_predicate(
     against. When the ChangeEvidence carries a ``constitution_hash``
     AND ``rules_config_hash`` we synthesise a ``urn:roam:policy:...``
     URI; otherwise the caller can pass an explicit one.
+
+    ``time_verified`` pins ``timeVerified`` to an externally-collected
+    timestamp. Sibling emitters (the CGA ``--also-vsa`` path) pass the
+    CGA predicate's ``indexed_at`` so both attestations of the same
+    emission event carry ONE clock reading — independent wall-clock
+    stamps straddle second boundaries on slow runners.
     """
     if policy_uri is None:
         # Synthesise from constitution + rules hashes when both are
@@ -315,7 +322,7 @@ def build_vsa_predicate(
                 "roam-code": change_evidence.roam_version or "unknown",
             },
         },
-        "timeVerified": change_evidence.completed_at or _utc_now_iso(),
+        "timeVerified": time_verified or change_evidence.completed_at or _utc_now_iso(),
         "resourceUri": _resource_uri(change_evidence),
         "policy": {"uri": policy_uri},
         "inputAttestations": _input_attestations(change_evidence),
@@ -330,6 +337,7 @@ def build_vsa_statement(
     *,
     verifier_id: str = "https://roam-code.com",
     policy_uri: str | None = None,
+    time_verified: str | None = None,
 ) -> dict[str, Any]:
     """Wrap :func:`build_vsa_predicate` in an in-toto v1 Statement.
 
@@ -346,6 +354,7 @@ def build_vsa_statement(
         change_evidence,
         verifier_id=verifier_id,
         policy_uri=policy_uri,
+        time_verified=time_verified,
     )
     return {
         "_type": STATEMENT_TYPE,

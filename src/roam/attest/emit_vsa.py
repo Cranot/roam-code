@@ -378,7 +378,12 @@ def emit_cga_vsa_sibling(
     else:
         vsa_path = written_path.with_name(f"{written_path.stem}.vsa.json")
     try:
-        vsa_statement = build_vsa_statement(change_evidence)
+        # One clock for both attestations of the same emission event: the
+        # sibling's timeVerified pins to the CGA predicate's indexed_at.
+        # Independent now() calls straddle second boundaries on slow
+        # runners (W805-KKKKK axis C).
+        _cga_indexed_at = (statement.get("predicate") or {}).get("indexed_at")
+        vsa_statement = build_vsa_statement(change_evidence, time_verified=_cga_indexed_at)
         atomic_write_text(vsa_path, serialize_statement(vsa_statement) + "\n")
         result["vsa_path"] = str(vsa_path)
     except Exception as exc:
