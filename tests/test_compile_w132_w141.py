@@ -30,11 +30,19 @@ def test_w132_lock_bypass_when_cwd_matches(monkeypatch):
 
 
 def test_w133_broaden_skip_table_includes_refactor_move_and_freeform():
+    # The dead-label audit corrected this table: every skip label must be a
+    # REGISTERED extender label (the original "owner_probe" pin was a dead
+    # label that never applied — see test_procedure_registry_lint /
+    # test_compile_intent_probes.test_dead_skip_labels_never_reappear).
+    # todo_audit/owners are deliberately NOT skipped for freeform anymore:
+    # they self-gate on microsecond regexes and answer real prompt shapes.
     assert "freeform_explore" in _PROCEDURE_PROBE_SKIPS
     assert "refactor_move" in _PROCEDURE_PROBE_SKIPS
     assert "refactor_move" in _PROCEDURE_PROBE_SKIPS["stack_trace_fix"]
     assert "api_surface" in _PROCEDURE_PROBE_SKIPS["stack_trace_fix"]
-    assert "owner_probe" in _PROCEDURE_PROBE_SKIPS["freeform_explore"]
+    assert "subprocess_audit" in _PROCEDURE_PROBE_SKIPS["freeform_explore"]
+    assert "owner_probe" not in _PROCEDURE_PROBE_SKIPS["freeform_explore"]
+    assert "todo_audit" not in _PROCEDURE_PROBE_SKIPS["freeform_explore"]
 
 
 def test_w134_refactor_move_emits_destination_skeleton(tmp_path):
