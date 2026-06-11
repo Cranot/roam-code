@@ -1,0 +1,31 @@
+{
+    "name": "roam-code",
+    "version": "13.5.1",
+    "description": "Local codebase intelligence + change-safety gates for coding agents. Pre-indexes your repo's symbols, call graph, deps, and git history into SQLite (28 languages, 100% local, zero API keys), then exposes a lean 16-tool MCP core preset: graph-precise search, callers/impact blast radius, coupling, dead code, taint reachability, and pre-merge verify/critique gates that catch regressions, broken references, AI-slop duplication, and convention drift before they ship.",
+    "author": {
+        "name": "Cranot",
+        "url": "https://github.com/Cranot"
+    },
+    "homepage": "https://roam-code.com/",
+    "repository": "https://github.com/Cranot/roam-code",
+    "license": "Apache-2.0",
+    "keywords": [
+        "codebase-intelligence",
+        "call-graph",
+        "blast-radius",
+        "code-review",
+        "mergeability",
+        "taint-analysis",
+        "mcp",
+        "local-first"
+    ],
+    "mcpServers": {
+        "roam-code": {
+            "command": "roam",
+            "args": ["mcp"],
+            "env": {
+                "ROAM_MCP_PRESET": "core"
+            }
+        }
+    }
+}
