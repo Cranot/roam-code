@@ -151,7 +151,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --tb=short"
+# ``-p roam.testing.ci_xdist`` loads the CI auto-parallelism plugin (injects
+# ``-n auto --dist loadgroup`` only when CI is set, xdist is importable, and
+# no explicit -n/--dist was given — see that module's docstring for why the
+# workflow file and a bare ``-n auto`` here are both unavailable channels).
+# Requires roam to be installed (``pip install -e .``), which every test
+# environment already needs because the tests import roam.
+addopts = "-q --tb=short -p roam.testing.ci_xdist"
 # W403: pytest-asyncio config options (asyncio_mode, asyncio_default_fixture_loop_scope)
 # previously lived here, but they're only recognised when the optional
 # pytest-asyncio plugin is installed (`pip install roam-code[dev]`). In minimal

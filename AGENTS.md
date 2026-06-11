@@ -660,6 +660,18 @@ bundles):
    changelog + sync scripts → `--release` again (fast re-run; caches warm)
    → push → tag at the verified SHA → approve the PyPI environment gate →
    fresh-venv `pip install roam-code==<v>` confirm.
+5. A release that spans agent sessions is driven by a disk state machine +
+   system cron, never by in-session schedulers (they die with the session):
+   phase file + driver script under `internal/release-driver/`, cron entry
+   in `/etc/cron.d/`, terminal failure phases park as NEEDS-ATTENTION for
+   the next session. Check `internal/release-driver/*.phase` at session
+   start. Full standard: the ops durable-followthrough memo under the
+   private planning folder.
+6. The CI matrix runs the suite in parallel via the `roam.testing.ci_xdist`
+   plugin (loaded from pyproject `addopts`; injects `-n auto --dist
+   loadgroup` only when `CI` is set). History: the 3.10 lane outgrew its
+   job timeout three times sequentially (20 → 30 → 45 min). New tests that
+   are xdist-unsafe must carry an `xdist_group` marker.
 
 ## Version bumping
 
