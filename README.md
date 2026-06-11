@@ -131,18 +131,77 @@ install can never block your agent). Undo anytime with
 | Cost | $1.30 | $0.48 | **−63%** |
 | Wall time | — | — | **−50%** |
 
-The same shape reproduces on Opus (−86% turns). Single-task peaks: a config
-lookup collapsed 9→1 turns (497K→53K tokens); "explain the architecture"
-went 13→6. Honest caveats, always attached: trivial prompts the agent
-one-shots anyway gain nothing and pay the small envelope; pure code
-*generation* is neutral (the wins are comprehension, navigation, debugging,
-review); cells are n=2–3 with medians and ranges. Full run history under
+The same shape reproduces on Opus (−86% turns).
+
+<details>
+<summary><b>Per-task gallery</b> — every cell from the same bench, including the losses</summary>
+
+| Task | turns | input tokens | cost |
+|---|---|---|---|
+| "where is `open_db` defined?" | 3 → **1** | 156K → 51K | $0.67 → $0.28 |
+| "which files depend on `cli.py`?" | 6 → **1** | 252K → 51K | $1.15 → $0.30 |
+| "where is the env var configured?" | 9 → **1** | 497K → 53K | $1.40 → $0.31 |
+| "what are the layers of this codebase?" | 5 → **1** | 271K → 50K | $1.42 → $0.41 |
+| "what changed in `cli.py` recently?" | 4 → **2** | 186K → 104K | $0.62 → $0.40 |
+| "explain the compiler module's architecture" | 13 → **6** | 618K → 240K | $1.85 → $1.01 |
+| "trace how a command becomes an MCP tool" | 12 → **8** | 464K → 303K | $1.25 → $1.01 |
+| security-hook comprehension (hard, multi-file) | 6 → **2** | 267K → 117K | $1.15 → $0.56 |
+| "where is the CLI entry point?" (trivial) | 1 → 1 | 49K → 51K | $0.25 → $0.45 |
+| "write a pytest for X" (generation) | 10 → 10 | 489K → **611K** | $1.82 → **$2.13** |
+
+The last two rows are the honest losses — and the compiler now **acts on
+them**: generation-shaped prompts ("write a test", "implement X") are
+detected and the hook injects *nothing* (measured 3.5% of a 723-prompt real
+corpus, every one a genuine write-code prompt). The envelope only spends
+tokens where it wins.
+</details>
+
+**Bug-fixing, ground-truth graded** (failing-test-transitions-to-passing
+oracle, not LLM-judged): 20 cells of planted bugs with real tracebacks —
+**10/10 fixed in both arms** at **−13% cost**, because the envelope ships
+the source slice around the cited `path:line` so the typical fix lands
+within 2 turns.
+
+**Routing, replayed on 723 real prompts** from live agent sessions: **53%
+route at L1** — the envelope already contains the literal answer (caller
+list, git log, env-var location) — at **p50 92 ms / p95 305 ms** compile
+latency, zero model calls, fully local.
+
+Honest caveats, always attached: trivial prompts the agent one-shots anyway
+gain nothing and pay the small envelope; pure code *generation* is neutral
+(the wins are comprehension, navigation, debugging, review); cells are
+n=2–3 with medians and ranges. Full run history under
 [Performance](#performance).
 
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
 Prefer a dedicated product CLI? The same loop ships as
 [**compile-code**](https://github.com/Cranot/compile-code) —
 `pip install compile-code && compile claude`.
+
+### The verify half of the loop — what runs after every edit
+
+The compile half front-loads facts; the verify half reviews what the agent
+just changed. `roam verify --auto` scopes to the touched files and runs:
+
+- **naming** — against the codebase's own per-language convention (sampled
+  from production code only: test/vendored/generated files neither vote nor
+  get flagged, framework lifecycle names like `setUp` are never touched)
+- **imports** — the hallucination firewall: every import must resolve to an
+  indexed symbol
+- **error handling / syntax / complexity / cycles / duplicates** — scoped
+  structural review with honest disclosure when any sub-check could not run
+- **secrets** — a leak gate over every touched file: credential shapes
+  (cloud keys, tokens, PEM blocks) fail the check, and an optional
+  repo-local `.roam-leak-patterns.py` catalogue catches the strings *your*
+  project must never publish
+- **patterns** *(advisory)* — the algorithm/idiom catalog scoped to the
+  diff: N+1 query shapes, loop-invariant calls, string-concat loops, each
+  with the better approach and a fix sketch
+
+Findings the agent disagrees with go to `.roam-suppressions.yml` — keyed by
+**symbol**, so a suppression survives refactors that shift line numbers.
+Everything is fail-open and quiet-on-pass: the loop surfaces only real
+findings, and a broken install can never block a turn.
 
 ---
 

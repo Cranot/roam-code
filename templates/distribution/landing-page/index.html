@@ -177,6 +177,54 @@
     </div>
   </section>
 
+  <!-- ──────────────────────────────────────────────────────────
+       THE COMPILER — prompt-time channel (v13.5, measured)
+       ────────────────────────────────────────────────────────── -->
+  <section class="how-it-works" id="compiler" aria-label="The task compiler">
+    <div class="how-it-works-inner">
+      <p class="eyebrow">The Compiler · before the agent's first token</p>
+      <h2>Your agent's first token already knows the answer</h2>
+      <p>
+        Roam ships a <strong>task compiler</strong>: it classifies your prompt
+        into one of 24 intent procedures (deterministic — zero model calls),
+        pre-executes the matching code-graph probes, and hands your agent the
+        <em>answers</em> before its first model token. Callers, blame history,
+        blast radius, the source around a cited bug line — already in the
+        prompt, in a 1–9&nbsp;KB envelope, compiled in ~90&nbsp;ms locally.
+      </p>
+      <pre class="terminal" aria-label="One-command Claude Code setup"><span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[mcp]" &amp;&amp; roam init</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam hooks claude --write</span>
+<span class="t-line">Wired roam compile+verify into Claude Code — use `claude` as always.</span></pre>
+      <div class="compare-table-wrap">
+        <table class="compare-table" aria-label="Compiler vs vanilla, measured head-to-head">
+          <thead>
+            <tr><th scope="col">Metric (median/task)</th><th scope="col">vanilla</th><th scope="col">compiled</th><th scope="col">delta</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Agent turns (nav/comprehension)</td><td>6</td><td>1</td><td><strong>−83%</strong></td></tr>
+            <tr><td>Input tokens</td><td>271K</td><td>53K</td><td><strong>−80%</strong></td></tr>
+            <tr><td>Cost</td><td>$1.30</td><td>$0.48</td><td><strong>−63%</strong></td></tr>
+            <tr><td>Wall time</td><td>—</td><td>—</td><td><strong>−50%</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Claude head-to-head vs vanilla, June 2026, 41 cells. Bug-fixing graded
+        by a failing-test-transitions-to-passing oracle: 10/10 fixed in both
+        arms at −13% cost. Replayed on 723 real prompts: 53% route at L1 —
+        the envelope already contains the literal answer.
+        <em>Honest caveats attached: trivial prompts gain nothing; pure code
+        generation is neutral — the wins are comprehension, navigation,
+        debugging, and review.</em>
+      </p>
+      <p>
+        Prefer a dedicated CLI? The same loop ships as
+        <a href="https://github.com/Cranot/compile-code">compile-code</a> —
+        <code>pip install compile-code &amp;&amp; compile claude</code>.
+      </p>
+    </div>
+  </section>
+
   <!-- ════ ACT 1 · MAPS — before the agent edits ════ -->
 
   <section class="how-it-works" id="how-it-works">
