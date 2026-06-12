@@ -9168,6 +9168,46 @@ def _plan_cache_store(task: str, cwd: str | None, plan: "PlanV0") -> None:
         log_swallowed("compile.plan_cache.store", exc)
 
 
+def _stamp_index_staleness(env_obj: dict, plan: "PlanV0", cwd: str | None) -> None:
+    """Pattern 1D — disclose when the envelope was compiled from an index
+    OLDER than the task's named files.
+
+    The cache side of this failure class is sealed (index stamp + generation
+    sweep), but a compile against a lagging index still embeds drifted line
+    numbers silently. Tell the agent instead: which files are newer than the
+    index, and what to do about it. Best-effort; never raises.
+    """
+    try:
+        files = list(getattr(plan, "likely_files", None) or [])[:12]
+        if not files:
+            return
+        idx_mtime = os.path.getmtime(_index_db_path(cwd))
+        stale = []
+        for rel in files:
+            full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
+            try:
+                if os.path.getmtime(full) > idx_mtime + 1.0:
+                    stale.append(rel)
+            except OSError:
+                continue
+        if not stale:
+            return
+        plan_obj = env_obj.get("plan")
+        if not isinstance(plan_obj, dict):
+            return
+        plan_obj["index_stale"] = True
+        pf = plan_obj.setdefault("prefetched_facts", {})
+        pf["index_stale"] = {"files_newer_than_index": stale}
+        pf["index_stale_definition"] = (
+            "These files were edited AFTER the index was built, so embedded "
+            "line numbers and structural facts for them may have drifted. "
+            "Trust the file content over embedded coordinates for these "
+            "files, and run `roam index` to refresh."
+        )
+    except Exception as exc:  # noqa: BLE001 — disclosure must never break a compile
+        log_swallowed("compile.index_staleness_stamp", exc)
+
+
 def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, str]:
     """Compile the right envelope for this plan's artifact type.
 
@@ -9358,8 +9398,12 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
         art = "lean"
 
     def _emit(env_obj: dict, label: str) -> tuple[dict, str]:
-        """W39 D1 — telemetry-on-return wrapper; never alters env.
-        W56 — also stores envelope in persistent cache."""
+        """W39 D1 — telemetry-on-return wrapper.
+        W56 — also stores envelope in persistent cache.
+        2026-06-12 — stamps the stale-index disclosure first (the one
+        mutation allowed here; it must precede the cache store so the
+        cached row carries the same disclosure)."""
+        _stamp_index_staleness(env_obj, plan, cwd)
         _envelope_cache_store(plan, env_obj, label, cwd)
         _maybe_append_compile_telemetry(
             plan,

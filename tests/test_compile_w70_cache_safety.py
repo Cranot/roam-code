@@ -422,3 +422,37 @@ def test_generation_sweep_wipes_derived_tables_on_reindex(tmp_path):
     (count,) = conn.execute("SELECT COUNT(*) FROM probe_pos_cache").fetchone()
     conn.close()
     assert count == 0, "re-index must wipe index-derived rows"
+
+
+# ---- Stale-index DISCLOSURE (the compile-time honesty half) ----------------
+#
+# The cache half is sealed above (index stamp + generation sweep); this pins
+# the Pattern-1D disclosure: an envelope compiled while index.db lags the
+# named files must SAY so instead of silently serving drifted coordinates.
+
+
+def test_stale_index_discloses_files_newer_than_index(tmp_path):
+    repo = _setup_repo(tmp_path)
+    plan = compile_plan("what does src/a.py do", cwd=str(repo))
+    compile_for_artifact(plan, cwd=str(repo))  # builds the index via ensure_index
+
+    # Edit a named file AFTER the index was built (2s past the tolerance).
+    idx = repo / ".roam" / "index.db"
+    future = os.path.getmtime(idx) + 5
+    (repo / "src" / "a.py").write_text("def alpha(x):\n    return x\n")
+    os.utime(repo / "src" / "a.py", (future, future))
+
+    _clear_in_memory()
+    plan2 = compile_plan("what does src/a.py do", cwd=str(repo))
+    env, _label = compile_for_artifact(plan2, cwd=str(repo))
+    plan_obj = env.get("plan") or {}
+    assert plan_obj.get("index_stale") is True, "stale index must be disclosed"
+    pf = plan_obj.get("prefetched_facts") or {}
+    assert "src/a.py" in (pf.get("index_stale") or {}).get("files_newer_than_index", [])
+
+    # Refresh the index past the file mtime -> disclosure disappears.
+    os.utime(idx, (future + 5, future + 5))
+    _clear_in_memory()
+    plan3 = compile_plan("what does src/a.py do", cwd=str(repo))
+    env3, _ = compile_for_artifact(plan3, cwd=str(repo))
+    assert (env3.get("plan") or {}).get("index_stale") is None, "fresh index must not flag"
