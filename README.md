@@ -194,8 +194,54 @@ published, attacked, then re-measured (full per-cell history in the repo):
 
 Caveats that always ship with these numbers: trivial prompts the agent
 one-shots anyway gain nothing (now a within-noise tie after the lean/skip
-levers); cells are n=2–3 with medians and ranges. Full run history under
-[Performance](#performance).
+levers); cells are n=2–3 with medians and ranges.
+
+<details>
+<summary><strong>Benchmark archaeology — runs #1–#4 (May 2026), including the honest negative result that drove the fixes</strong></summary>
+
+Two independent A/B runs at different scales — the larger sample inverts the smaller. Reporting both honestly.
+
+**Run #1 (n=3 per cell, 27 cells, $16.88):** compile appeared to dominate (−29% wall vs static). That static prompt included a `"Hard cap: 4 tool calls"` line that turned out to act as a quota.
+
+**Run #2 (n=3–7 per cell, 78 cells, $54.88, "Hard cap" line removed from static):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 7.0 | 33.2s | $0.68 |
+| **static / roam_agent** | **5.8** | **25.1s** | **$0.66** |
+| compile | 8.2 | 47.9s | $0.78 |
+
+At scale, **static (with the "Hard cap" line removed) is the winner**: −17% turns and −24% wall vs vanilla, with cost within 3%. The compile-mode envelope was **+91% wall vs static on hard structural tasks** — variance probe revealed compile occasionally pushes the agent into over-tool-use (one t1 run hit 41 turns and $2.43). The compile-the-COMMAND itself is robust (250/250 latency cells, 14/15 fuzz, brief mode <300 chars across all 10 procedure families) — the issue is over-direction of the consuming agent, not the compiler.
+
+Private raw cells are retained for audit; the public summary above is the quotable result.
+
+**Run #3 (2026-05-31, n=1, 24 cells, $12.78, on 8-task user-shape corpus after W34→W37 fixes):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 6.00 | 28.6s | $0.58 (1 cell timed out at 240s) |
+| static / roam_agent | 5.38 | 39.9s | $0.63 |
+| **compile** | **2.75** | 35.6s | **$0.46** |
+
+This run inverts Run #2 on a different corpus. Compile **wins 7/8 shapes** including stack-trace, "what does X do", "what changed recently", `compare files`, `who calls X`, file coupling, and trace-flow. The compiler fix wave between Run #2 and Run #3 added six new probes (stack-trace source slice, body-embed for explain, git-log for history, sibling-test embed, path-comparison diff, symbol-pickaxe) and four real bug fixes (callers-backtick fallback, dead-code wrong CLI, consumer-dict flattening, stack-trace classifier missing PascalCase Errors). Headline win: a "what files are coupled to X" task that took vanilla 20 turns / $1.20 / 64s collapsed to compile's 1 turn / $0.32 / 11s — embedded coupling pairs eliminate 19 turns of exploration. The +24% wall vs vanilla is the envelope cache-creation tax at n=1; expected to amortize at n≥3.
+
+Static remains a non-improvement (0/8 wins vs vanilla, 1/8 marginal vs compile). Caveat: Run #3 is n=1 per cell; n=3 replication ($30-40) is pending.
+
+Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
+
+**Run #4 (2026-05-31, n=1, 24 cells, $13.00, same corpus after W43→W45 polish/improvements/corrections):**
+
+| Condition | Mean turns | Mean wall | Mean cost |
+|---|---|---|---|
+| vanilla | 5.25 | 39.6s | $0.63 |
+| static / roam_agent | 4.75 | 32.8s | $0.61 |
+| **compile** | **1.88** | **25.2s** | **$0.40** |
+
+Compile now **wins 8/8 shapes** and the +24% wall penalty from Run #3 is **gone**: compile is −36% wall vs vanilla. Aggregate **−64% turns / −36% cost / −36% wall** vs vanilla on Opus 4.7. The flip came from three wave-43-to-45 changes: (a) a 60-second bounded cache on `_run_roam` subprocess calls, (b) anti-Read directives in the `stack_trace_fix` and `synthesis_query` answer contracts, and (c) richer enrichment in the `write_pytest` probe (sibling test + source under test + nearest `conftest.py` together). The biggest single delta: `write_pytest` went from 10 vanilla turns to 6 compile turns (−40%, saving $0.29 / cell). Static remains 0/8 wins and should be retired from the default bench-compile conditions in a future release.
+
+Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
+
+</details>
 </details>
 
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
@@ -206,27 +252,64 @@ Prefer a dedicated product CLI? The same loop ships as
 ### The verify half of the loop — what runs after every edit
 
 The compile half front-loads facts; the verify half reviews what the agent
-just changed. `roam verify --auto` scopes to the touched files and runs:
+just changed. `roam verify --auto` scopes to the touched files, auto-selects
+the checks that make sense for what changed (Python edits unlock the Python
+checks, source edits unlock naming/duplicates), and runs:
 
 - **naming** — against the codebase's own per-language convention (sampled
   from production code only: test/vendored/generated files neither vote nor
   get flagged, framework lifecycle names like `setUp` are never touched)
-- **imports** — the hallucination firewall: every import must resolve to an
-  indexed symbol
+- **imports** — the hallucination firewall: every import must resolve — to
+  the index, the stdlib, or a declared dependency. A module path that
+  resolves to nothing fails as a likely hallucination; near-miss names get
+  fuzzy did-you-mean candidates
 - **error handling / syntax / complexity / cycles / duplicates** — scoped
   structural review with honest disclosure when any sub-check could not run
 - **secrets** — a leak gate over every touched file: credential shapes
   (cloud keys, tokens, PEM blocks) fail the check, and an optional
   repo-local `.roam-leak-patterns.py` catalogue catches the strings *your*
   project must never publish
-- **patterns** *(advisory)* — the algorithm/idiom catalog scoped to the
-  diff: N+1 query shapes, loop-invariant calls, string-concat loops, each
-  with the better approach and a fix sketch
+- **patterns** *(advisory, `--deep`)* — the algorithm/idiom catalog scoped
+  to the diff: N+1 query shapes, loop-invariant calls, string-concat loops,
+  each with the better approach and a fix sketch
 
-Findings the agent disagrees with go to `.roam-suppressions.yml` — keyed by
-**symbol**, so a suppression survives refactors that shift line numbers.
-Everything is fail-open and quiet-on-pass: the loop surfaces only real
-findings, and a broken install can never block a turn.
+**The fix loop.** Wired via `roam hooks claude --write`, findings come back
+to the agent as an actionable list — *fix or suppress, then re-verify* — and
+the loop re-runs automatically until quiet (bounded rounds). Findings the
+agent disagrees with go to `.roam-suppressions.yml`, keyed by **symbol** so
+a suppression survives refactors that shift line numbers; the file is
+append-only (a suppression is never silently dropped). Everything is
+fail-open and quiet-on-pass: the loop surfaces only real findings, and a
+broken install can never block a turn.
+
+**Scoping and debt control** — the flags that make verify usable on a
+codebase with history:
+
+```bash
+roam verify --auto                      # changed files, auto-selected checks
+roam verify --diff-only                 # only lines you changed vs HEAD
+roam verify --changed-lines cli.py:40-90   # exact ranges (agent harnesses)
+roam verify --baseline-write            # snapshot current findings as accepted debt
+roam verify --new-only                  # then: only NEW findings fail
+roam verify --report --severity fail    # whole-repo ranked punch-list (non-gating)
+roam verify --off / --on               # pause / resume the loop repo-wide
+```
+
+**The commands that run beside it** in the same post-edit stance:
+
+| Command | Role in the loop |
+|---|---|
+| `roam verify-imports <file>` | The hallucination firewall, standalone — validates every import resolves |
+| `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK) |
+| `git diff \| roam critique` | Clones-not-edited check + blast radius on the patch (exit 5 on high severity) |
+| `roam verify --report --persist` | Writes findings to the registry so the **compiler** embeds them as `known_findings` in future envelopes — debt gets fixed opportunistically |
+
+**Measured, not asserted.** The detector quality is pinned by three eval
+suites in CI: a planted-issues recall corpus (every category must catch its
+canonical positives), a clean-corpus false-positive lock (dogfooded on this
+repo: the naming rule alone dropped ~2000 FPs when test files stopped
+voting), and an adversarial suppression fuzz suite (suppressions survive
+refactors, never lose entries).
 
 ---
 
@@ -880,72 +963,9 @@ Tier 2 languages (and `.jsonc` / `.mdx`) get basic symbol extraction via a gener
 
 After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). Detailed indexing benchmarks across Express / Axios / Vue / Laravel / Svelte live in [`benchmarks/`](benchmarks/).
 
-### Compiler — measured A/B (current: June 2026, Claude head-to-head)
-
-The quotable current result — 10-task corpus (3 navigation, 5 exercising the
-newest intent procedures, 2 hard comprehension/synthesis), 41 cells, n=2 per
-cell, offline structural judge, June 2026:
-
-| Condition | Turns (median) | Input tokens (median) | Cost (median) |
-|---|---|---|---|
-| vanilla | 6 | 271K | $1.30 |
-| **compile** | **1** | **53K** | **$0.48** |
-
-**−83% turns / −80% input tokens / −63% cost / −50% wall**, with the same
-shape on Opus (−86% nav turns). On a separate ground-truth-graded bug-fix
-bench (20 cells, planted bugs, failing→passing oracle) compile and vanilla
-both solved 10/10 with compile slightly cheaper — easy bugs with precise
-tracebacks don't discriminate; the compiler's bug-fix edge shows on hard
-multi-step tasks (3/3 vs 1/3, Docker-graded, 2026-06-07). Caveats ship with
-every number: trivial prompts pay a small envelope tax for no gain;
-generation-shaped tasks are neutral; Ns are 2–3 with medians and ranges.
-
-<details>
-<summary><strong>Benchmark history — how the compiler earned these numbers (runs #1–#4, May 2026)</strong></summary>
-
-Two independent A/B runs at different scales — the larger sample inverts the smaller. Reporting both honestly.
-
-**Run #1 (n=3 per cell, 27 cells, $16.88):** compile appeared to dominate (−29% wall vs static). That static prompt included a `"Hard cap: 4 tool calls"` line that turned out to act as a quota.
-
-**Run #2 (n=3–7 per cell, 78 cells, $54.88, "Hard cap" line removed from static):**
-
-| Condition | Mean turns | Mean wall | Mean cost |
-|---|---|---|---|
-| vanilla | 7.0 | 33.2s | $0.68 |
-| **static / roam_agent** | **5.8** | **25.1s** | **$0.66** |
-| compile | 8.2 | 47.9s | $0.78 |
-
-At scale, **static (with the "Hard cap" line removed) is the winner**: −17% turns and −24% wall vs vanilla, with cost within 3%. The compile-mode envelope was **+91% wall vs static on hard structural tasks** — variance probe revealed compile occasionally pushes the agent into over-tool-use (one t1 run hit 41 turns and $2.43). The compile-the-COMMAND itself is robust (250/250 latency cells, 14/15 fuzz, brief mode <300 chars across all 10 procedure families) — the issue is over-direction of the consuming agent, not the compiler.
-
-Private raw cells are retained for audit; the public summary above is the quotable result.
-
-**Run #3 (2026-05-31, n=1, 24 cells, $12.78, on 8-task user-shape corpus after W34→W37 fixes):**
-
-| Condition | Mean turns | Mean wall | Mean cost |
-|---|---|---|---|
-| vanilla | 6.00 | 28.6s | $0.58 (1 cell timed out at 240s) |
-| static / roam_agent | 5.38 | 39.9s | $0.63 |
-| **compile** | **2.75** | 35.6s | **$0.46** |
-
-This run inverts Run #2 on a different corpus. Compile **wins 7/8 shapes** including stack-trace, "what does X do", "what changed recently", `compare files`, `who calls X`, file coupling, and trace-flow. The compiler fix wave between Run #2 and Run #3 added six new probes (stack-trace source slice, body-embed for explain, git-log for history, sibling-test embed, path-comparison diff, symbol-pickaxe) and four real bug fixes (callers-backtick fallback, dead-code wrong CLI, consumer-dict flattening, stack-trace classifier missing PascalCase Errors). Headline win: a "what files are coupled to X" task that took vanilla 20 turns / $1.20 / 64s collapsed to compile's 1 turn / $0.32 / 11s — embedded coupling pairs eliminate 19 turns of exploration. The +24% wall vs vanilla is the envelope cache-creation tax at n=1; expected to amortize at n≥3.
-
-Static remains a non-improvement (0/8 wins vs vanilla, 1/8 marginal vs compile). Caveat: Run #3 is n=1 per cell; n=3 replication ($30-40) is pending.
-
-Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
-
-**Run #4 (2026-05-31, n=1, 24 cells, $13.00, same corpus after W43→W45 polish/improvements/corrections):**
-
-| Condition | Mean turns | Mean wall | Mean cost |
-|---|---|---|---|
-| vanilla | 5.25 | 39.6s | $0.63 |
-| static / roam_agent | 4.75 | 32.8s | $0.61 |
-| **compile** | **1.88** | **25.2s** | **$0.40** |
-
-Compile now **wins 8/8 shapes** and the +24% wall penalty from Run #3 is **gone**: compile is −36% wall vs vanilla. Aggregate **−64% turns / −36% cost / −36% wall** vs vanilla on Opus 4.7. The flip came from three wave-43-to-45 changes: (a) a 60-second bounded cache on `_run_roam` subprocess calls, (b) anti-Read directives in the `stack_trace_fix` and `synthesis_query` answer contracts, and (c) richer enrichment in the `write_pytest` probe (sibling test + source under test + nearest `conftest.py` together). The biggest single delta: `write_pytest` went from 10 vanilla turns to 6 compile turns (−40%, saving $0.29 / cell). Static remains 0/8 wins and should be retired from the default bench-compile conditions in a future release.
-
-Private per-task tables and raw cells are retained for audit; the public summary above is the quotable result.
-
-</details>
+Compiler A/B results, the per-task gallery, routing stats, and the
+version-keyed eval history live in [The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer)
+section — one home, no duplicate numbers.
 
 ## How It Works
 

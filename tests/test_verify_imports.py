@@ -288,9 +288,8 @@ class TestPythonPatterns:
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
 
         names = _extract_import_names_from_line("from models import User, Admin", "python")
-        assert "models" in names
-        assert "User" in names
-        assert "Admin" in names
+        # Module-only contract (2026-06-12): see test_from_import_with_alias.
+        assert names == ["models"]
 
     def test_simple_import(self):
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
@@ -308,9 +307,10 @@ class TestPythonPatterns:
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
 
         names = _extract_import_names_from_line("from models import User as U", "python")
-        assert "models" in names
-        assert "User" in names
-        assert "U" not in names  # alias should not be checked
+        # Module-only contract (2026-06-12): member names are not validated —
+        # stdlib members and internal re-exports made member checks FP-heavy
+        # (28 FPs on 4 of this repo's own files). The module is the signal.
+        assert names == ["models"]
 
     def test_star_import_excluded(self):
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
@@ -344,15 +344,17 @@ class TestJavaScriptPatterns:
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
 
         names = _extract_import_names_from_line("import { render } from 'react-dom'", "javascript")
-        assert "render" in names
-        # Module name should be extracted (last segment)
-        assert "react-dom" in names
+        # Module-path-only contract (2026-06-12): braced members ride the
+        # module; the package specifier is the validation target.
+        assert names == ["react-dom"]
 
     def test_default_import(self):
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
 
         names = _extract_import_names_from_line("import React from 'react'", "javascript")
-        assert "React" in names
+        # Module-path-only contract (2026-06-12): the default-import NAME is
+        # a member binding; the package specifier is the validation target.
+        assert names == ["react"]
 
     def test_require_path(self):
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
@@ -638,3 +640,44 @@ class TestMultipleImports:
         # Project has both resolved (service.py -> models) and unresolved (broken.py)
         assert data["summary"]["resolved"] >= 1
         assert data["summary"]["unresolved"] >= 1
+
+
+class TestJsFirewallSemantics:
+    """2026-06-12 — the JS side of the in-loop firewall. Dogfooded on a
+    production Vue3 app: member names + npm packages + Vite alias dirs
+    produced 30 FPs on one SFC before these contracts."""
+
+    def test_js_import_module_path_only(self):
+        from roam.commands.cmd_verify_imports import _extract_import_names_from_line
+
+        names = _extract_import_names_from_line('import { ref, computed } from "vue";', "vue")
+        assert names == ["vue"]  # members ride the module
+        names = _extract_import_names_from_line('import Modal from "@/components/Modal.vue";', "typescript")
+        assert names == ["@/components/Modal.vue"]  # FULL path kept
+
+    def test_js_declared_package_matching(self):
+        from roam.commands.cmd_verify_imports import _js_module_is_declared
+
+        deps = frozenset({"vue", "@tanstack/vue-query", "lodash"})
+        assert _js_module_is_declared("vue", deps)
+        assert _js_module_is_declared("@tanstack/vue-query", deps)
+        assert _js_module_is_declared("@tanstack/vue-query/devtools", deps)
+        assert _js_module_is_declared("lodash/debounce", deps)
+        assert not _js_module_is_declared("totally-fake-package", deps)
+        assert not _js_module_is_declared("./relative/path", deps)
+
+    def test_package_json_declared_packages(self, tmp_path):
+        from roam.commands.cmd_verify_imports import _declared_js_dependency_packages
+
+        (tmp_path / "package.json").write_text('{"dependencies": {"vue": "^3"}, "devDependencies": {"vitest": "^1"}}')
+        deps = _declared_js_dependency_packages(str(tmp_path))
+        assert deps == frozenset({"vue", "vitest"})
+        assert _declared_js_dependency_packages(str(tmp_path / "nope")) == frozenset()
+
+    def test_node_builtins_resolved(self):
+        from roam.commands.cmd_verify_imports import _is_node_builtin
+
+        for mod in ("crypto", "node:crypto", "fs", "fs/promises", "path", "os"):
+            assert _is_node_builtin(mod), mod
+        assert not _is_node_builtin("totally-fake-package")
+        assert not _is_node_builtin("./crypto")  # relative path, not a builtin

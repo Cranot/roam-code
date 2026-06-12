@@ -267,8 +267,10 @@ def test_verify_imports_resolves_vue_target(vue_project):
     data = json.loads(result.stdout or result.output)
     imports = data.get("imports", [])
 
-    # Find the Bar.vue import record (extracted name == 'Bar.vue').
-    bar_records = [i for i in imports if i.get("name") == "Bar.vue"]
+    # Module-path-only contract (2026-06-12): the scanner records the FULL
+    # specifier (./Bar.vue), not the basename, so package.json matching can
+    # see scoped packages. The probe still resolves it via the file index.
+    bar_records = [i for i in imports if i.get("name", "").endswith("Bar.vue")]
     assert bar_records, "Bar.vue import was not scanned at all"
     # Every Bar.vue record must resolve.
     unresolved = [i for i in bar_records if i.get("status") != "resolved"]

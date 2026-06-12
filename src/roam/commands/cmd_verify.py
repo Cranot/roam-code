@@ -612,6 +612,23 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     if not file_ids:
         return {"score": 100, "violations": []}
 
+    # Resolution pass first — the hallucination firewall, INSIDE the loop.
+    # Until 2026-06-12 this check was style-only (absolute vs relative) while
+    # the README promised "every import must resolve"; a fully hallucinated
+    # import passed clean (found by the planted-recall eval). Computed before
+    # the style analysis because every style early-return below (no edges /
+    # no imports / mixed style) must still surface resolution failures.
+    resolution = _unresolved_import_violations(conn, file_ids)
+
+    def _with_resolution(style_score: int, style_violations: list) -> dict:
+        fails = sum(1 for v in resolution if v.get("severity") == SEVERITY_FAIL)
+        warns = len(resolution) - fails
+        res_score = max(0, 100 - 25 * fails - 10 * warns)
+        return {
+            "score": min(style_score, res_score),
+            "violations": style_violations + resolution,
+        }
+
     # 1. Determine the codebase import style from ALL file_edges
     all_edges = conn.execute("""
         SELECT fe.source_file_id, sf.path as source_path, tf.path as target_path
@@ -622,7 +639,7 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     """).fetchall()
 
     if not all_edges:
-        return {"score": 100, "violations": []}
+        return _with_resolution(100, [])
 
     # Classify each import edge
     absolute_count = 0
@@ -649,7 +666,7 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
 
     total_imports = absolute_count + relative_count
     if total_imports == 0:
-        return {"score": 100, "violations": []}
+        return _with_resolution(100, [])
 
     abs_pct = round(100 * absolute_count / total_imports, 1)
     dominant_style = "absolute" if abs_pct >= 60 else "relative" if abs_pct <= 40 else "mixed"
@@ -658,7 +675,7 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     )
 
     if dominant_style == "mixed":
-        return {"score": 100, "violations": []}
+        return _with_resolution(100, [])
 
     # 2. Check changed files' import edges
     changed_edges = batched_in(
@@ -717,7 +734,76 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
         score = round(100 * (checked - len(violations)) / checked)
         score = max(0, min(100, score))
 
-    return {"score": score, "violations": violations}
+    return _with_resolution(score, violations)
+
+
+def _unresolved_import_violations(conn, file_ids: list[int]) -> list[dict]:
+    """Run import RESOLUTION over the changed files; map unresolved imports
+    to violations. No-suggestion misses are the canonical hallucination
+    signal (FAIL); near-miss names with fuzzy candidates are WARN."""
+    from roam.commands.cmd_verify_imports import (
+        _build_file_path_index,
+        _declared_dependency_modules,
+        _scan_file_imports,
+    )
+    from roam.db.connection import batched_in, find_project_root
+
+    rows = batched_in(conn, "SELECT id, path FROM files WHERE id IN ({ph})", file_ids)
+    paths = [r["path"] for r in rows]
+    if not paths:
+        return []
+    project_root = str(find_project_root())
+    symbol_names: set[str] = set()
+    symbol_qnames: set[str] = set()
+    for r in conn.execute("SELECT name, qualified_name FROM symbols"):
+        if r["name"]:
+            symbol_names.add(r["name"])
+        if r["qualified_name"]:
+            symbol_qnames.add(r["qualified_name"])
+    file_index = _build_file_path_index(conn)
+    declared = _declared_dependency_modules(project_root)
+    out: list[dict] = []
+    for path in paths:
+        for imp in _scan_file_imports(
+            conn,
+            path,
+            project_root,
+            symbol_names=symbol_names,
+            symbol_qnames=symbol_qnames,
+            file_index=file_index,
+            declared_deps=declared,
+        ):
+            if imp.get("status") == "unresolved":
+                out.append(_unresolved_violation(imp))
+    return out
+
+
+def _unresolved_violation(imp: dict) -> dict:
+    """Map one unresolved-import scanner row to a verify violation."""
+    suggestions = imp.get("suggestions") or []
+    if suggestions:
+        msg = (
+            f"import `{imp['name']}` does not resolve to any indexed "
+            f"symbol or file — did you mean: {', '.join(suggestions[:3])}?"
+        )
+        severity = SEVERITY_WARN
+        fix = f"Use one of: {', '.join(suggestions[:3])}"
+    else:
+        msg = (
+            f"import `{imp['name']}` resolves to NOTHING in this "
+            "codebase (no symbol, no file, not stdlib, not a declared "
+            "dependency) — likely hallucinated"
+        )
+        severity = SEVERITY_FAIL
+        fix = "Remove or correct the import; add the package to dependencies if it is real"
+    return {
+        "category": "imports",
+        "severity": severity,
+        "file": imp["file"],
+        "line": imp.get("line"),
+        "message": msg,
+        "fix": fix,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1936,14 +2022,7 @@ def _collect_scoped_idiom_findings(conn, file_ids: list[int]) -> list:
         return []
     # One cheap pass over the scoped files' text drives detector selection.
     scanned = "\n".join(_file_text(conn, fid) or "" for fid in file_ids)
-    raw: list = []
-    set_idiom_scope(file_ids)
-    try:
-        for task_id, _way, fn in applicable_idiom_detectors(scanned):
-            if task_id not in _DEEP_IDIOM_DENY:
-                raw.extend(_safe_run_idiom(fn, task_id, conn))
-    finally:
-        set_idiom_scope(None)
+    raw = _run_idiom_pack(conn, file_ids, scanned, applicable_idiom_detectors, set_idiom_scope)
     # JS/TS edits fire the JS idiom pack the same content-driven way
     # (2026-06-11 — the pack landed after the Python wiring above; this keeps
     # the deep sweep language-honest instead of silently Python-only).
@@ -1955,13 +2034,20 @@ def _collect_scoped_idiom_findings(conn, file_ids: list[int]) -> list:
 
         log_swallowed("verify.deep.js_import", exc)
         return raw
-    set_js_idiom_scope(file_ids)
+    raw.extend(_run_idiom_pack(conn, file_ids, scanned, applicable_js_idiom_detectors, set_js_idiom_scope))
+    return raw
+
+
+def _run_idiom_pack(conn, file_ids: list[int], scanned: str, applicable_fn, scope_fn) -> list:
+    """Run one idiom pack (Python or JS) scoped + content-driven."""
+    raw: list = []
+    scope_fn(file_ids)
     try:
-        for task_id, _way, fn in applicable_js_idiom_detectors(scanned):
+        for task_id, _way, fn in applicable_fn(scanned):
             if task_id not in _DEEP_IDIOM_DENY:
                 raw.extend(_safe_run_idiom(fn, task_id, conn))
     finally:
-        set_js_idiom_scope(None)
+        scope_fn(None)
     return raw
 
 

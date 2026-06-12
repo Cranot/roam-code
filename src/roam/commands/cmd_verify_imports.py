@@ -43,6 +43,195 @@ def _is_stdlib_module(name: str) -> bool:
     return top in _PYTHON_STDLIB
 
 
+# ---------------------------------------------------------------------------
+# Declared third-party dependencies (for filtering false positives)
+# ---------------------------------------------------------------------------
+
+# Distribution name -> import name, for the common mismatches. 10 entries —
+# the high-frequency offenders; everything else assumes dist == import name
+# after lowercasing and dash->underscore.
+_DIST_TO_IMPORT_ALIASES: dict[str, str] = {
+    "pyyaml": "yaml",
+    "pillow": "PIL",
+    "beautifulsoup4": "bs4",
+    "scikit-learn": "sklearn",
+    "python-dateutil": "dateutil",
+    "opencv-python": "cv2",
+    "protobuf": "google",
+    "msgpack-python": "msgpack",
+    "attrs": "attr",
+    "pyjwt": "jwt",
+}
+
+_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _import_name_for_requirement(req: str) -> str | None:
+    """Map one requirement string to its top-level import name (or None)."""
+    m = _REQ_NAME_RE.match(req)
+    if not m:
+        return None
+    dist = m.group(1).lower()
+    return _DIST_TO_IMPORT_ALIASES.get(dist, dist.replace("-", "_"))
+
+
+def _pyproject_requirements(project_root: str) -> list[str]:
+    """Every requirement string from pyproject [project] dependencies +
+    all optional-dependency groups. Empty list when absent/broken."""
+    pyproject = os.path.join(project_root, "pyproject.toml")
+    if not os.path.isfile(pyproject):
+        return []
+    try:
+        try:
+            import tomllib
+        except ImportError:  # Python 3.10 — tomli backport (a dependency)
+            import tomli as tomllib
+        with open(pyproject, "rb") as fh:
+            data = tomllib.load(fh)
+        proj = data.get("project") or {}
+        reqs = [str(r) for r in proj.get("dependencies") or []]
+        for group in (proj.get("optional-dependencies") or {}).values():
+            reqs.extend(str(r) for r in group or [])
+        return reqs
+    except Exception as exc:  # noqa: BLE001 — a broken pyproject must not kill the scan
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify_imports.declared_deps.pyproject", exc)
+        return []
+
+
+def _requirements_txt_requirements(project_root: str) -> list[str]:
+    """Requirement strings from every requirements*.txt at the root."""
+    reqs: list[str] = []
+    try:
+        import glob as _glob
+
+        for req_file in _glob.glob(os.path.join(project_root, "requirements*.txt")):
+            with open(req_file, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith(("#", "-")):
+                        reqs.append(line)
+    except OSError as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify_imports.declared_deps.requirements", exc)
+    return reqs
+
+
+def _declared_dependency_modules(project_root: str) -> frozenset[str]:
+    """Top-level import names declared as dependencies of this project.
+
+    Sources: pyproject ``[project] dependencies`` + every optional-dependency
+    group, plus any ``requirements*.txt`` at the root. A declared dependency
+    cannot be a hallucinated import — it just is not in the index (we index
+    the repo, not site-packages). Dogfooded on this repo: without this
+    allowlist the firewall flagged ``click`` (a literal [project] dependency)
+    as unresolved in every file that imports it.
+    """
+    reqs = _pyproject_requirements(project_root) + _requirements_txt_requirements(project_root)
+    return frozenset(name for req in reqs if (name := _import_name_for_requirement(req)))
+
+
+# Node.js built-in modules — the JS analog of _PYTHON_STDLIB. 41 entries
+# (the stable core set; both bare and `node:`-prefixed forms are accepted).
+# Dogfooded on a Node/TS server repo: without this, `import crypto from
+# "crypto"` FAILed as a hallucination in every server file.
+_NODE_BUILTINS: frozenset[str] = frozenset(
+    {
+        "assert",
+        "async_hooks",
+        "buffer",
+        "child_process",
+        "cluster",
+        "console",
+        "constants",
+        "crypto",
+        "dgram",
+        "diagnostics_channel",
+        "dns",
+        "domain",
+        "events",
+        "fs",
+        "http",
+        "http2",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "path",
+        "perf_hooks",
+        "process",
+        "punycode",
+        "querystring",
+        "readline",
+        "repl",
+        "stream",
+        "string_decoder",
+        "sys",
+        "timers",
+        "tls",
+        "trace_events",
+        "tty",
+        "url",
+        "util",
+        "v8",
+        "vm",
+        "worker_threads",
+        "zlib",
+    }
+)
+
+
+def _is_node_builtin(module_path: str) -> bool:
+    """True for Node built-ins, bare (``crypto``) or prefixed (``node:crypto``),
+    including subpaths (``fs/promises``)."""
+    name = module_path[5:] if module_path.startswith("node:") else module_path
+    return name.split("/")[0] in _NODE_BUILTINS
+
+
+def _declared_js_dependency_packages(project_root: str) -> frozenset[str]:
+    """Package names declared in package.json (dependencies, devDependencies,
+    peerDependencies, optionalDependencies). The npm analog of
+    :func:`_declared_dependency_modules`: a declared package cannot be a
+    hallucinated import — node_modules is never indexed. Dogfooded on a Vue3
+    app: without this, `import { ref } from "vue"` flagged `vue` in every
+    SFC."""
+    import json as _json
+
+    pkg = os.path.join(project_root, "package.json")
+    if not os.path.isfile(pkg):
+        return frozenset()
+    try:
+        with open(pkg, encoding="utf-8", errors="replace") as fh:
+            data = _json.load(fh)
+        names: set[str] = set()
+        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            names.update((data.get(key) or {}).keys())
+        return frozenset(names)
+    except (OSError, ValueError) as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify_imports.declared_deps.package_json", exc)
+        return frozenset()
+
+
+def _js_module_is_declared(module_path: str, js_deps: frozenset[str]) -> bool:
+    """True when a bare JS module specifier belongs to a declared package.
+
+    Handles scoped packages (``@scope/pkg`` and ``@scope/pkg/sub``) and
+    deep imports (``lodash/debounce`` -> ``lodash``). Relative/absolute
+    specifiers are never matched here (they resolve via the file index)."""
+    if not js_deps or module_path.startswith((".", "/")):
+        return False
+    if module_path in js_deps:
+        return True
+    parts = module_path.split("/")
+    top = "/".join(parts[:2]) if module_path.startswith("@") and len(parts) >= 2 else parts[0]
+    return top in js_deps
+
+
 def _is_python_file(language: str | None, file_path: str) -> bool:
     """Return True if the file is a Python source file."""
     if language and language.lower() in ("python", "py"):
@@ -97,18 +286,13 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
     if is_js_like:
         m = _JS_IMPORT_FROM.match(line)
         if m:
-            braced = m.group(1)
-            default = m.group(2)
-            module_path = m.group(3)
-            names.append(module_path.split("/")[-1])  # last segment
-            if braced:
-                for part in braced.split(","):
-                    part = part.strip()
-                    if part:
-                        name = part.split(" as ")[0].strip() if " as " in part else part
-                        names.append(name)
-            if default:
-                names.append(default)
+            # Module-path-only contract (2026-06-12, mirrors the Python
+            # from-import fix): braced/default names are MEMBERS of the
+            # module and cannot be validated against the index — `import
+            # { ref } from "vue"` flagged `ref` and `vue` on every Vue file
+            # (30 FPs on one SFC). The FULL module path is kept (not the
+            # last segment) so package.json matching sees scoped packages.
+            names.append(m.group(3))
             return names
 
         m = _JS_REQUIRE.search(line)
@@ -122,15 +306,15 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
     # Python
     m = _PY_FROM_IMPORT.match(line)
     if m:
-        module = m.group(1)
-        imports_str = m.group(2)
-        names.append(module)
-        for part in imports_str.split(","):
-            part = part.strip()
-            if part and part != "*":
-                # Handle "as" aliases: "foo as bar" -> "foo"
-                name = part.split(" as ")[0].strip() if " as " in part else part
-                names.append(name)
+        # Validate the MODULE path only. Member names cannot be reliably
+        # validated against the index: stdlib members (``from collections
+        # import defaultdict``) are not modules, and internal re-exports /
+        # ``__init__`` aliases are not always indexed symbols — dogfooded
+        # 2026-06-12: member checking produced 28 false positives across 4
+        # of this repo's own files while the module check alone caught the
+        # planted hallucination. Precision-first: the module IS the
+        # hallucination signal.
+        names.append(m.group(1))
         return names
 
     m = _PY_IMPORT.match(line)
@@ -373,6 +557,21 @@ def _check_name_exists(
         ).fetchone()
         if row:
             return True
+        # The last segment of an internal dotted module path is a FILE, not
+        # a symbol ("roam.capability" -> src/roam/capability.py defines no
+        # symbol named "capability"). Dogfooded on this repo: the symbols
+        # probe alone flagged the package's own modules as unresolved. Try
+        # the same module-file match the bare-name path uses.
+        if file_index is not None and "/" not in last_part and "%" not in last_part:
+            if file_index.module_file_match(last_part):
+                return True
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM files WHERE path LIKE ? OR path LIKE ? LIMIT 1",
+                (f"%/{last_part}.%", f"{last_part}.%"),
+            ).fetchone()
+            if row:
+                return True
 
     return False
 
@@ -472,6 +671,7 @@ def _scan_file_imports(
     symbol_qnames: set[str] | None = None,
     lang_by_path: dict[str, str | None] | None = None,
     file_index: _FilePathIndex | None = None,
+    declared_deps: frozenset[str] | None = None,
 ) -> list[dict]:
     """Scan a source file for import statements and validate each one.
 
@@ -483,12 +683,34 @@ def _scan_file_imports(
         return []
 
     language = _get_file_language(conn, file_path, lang_by_path=lang_by_path)
+    lang_lower = (language or "").lower()
+    js_deps = (
+        _declared_js_dependency_packages(project_root)
+        if lang_lower in ("javascript", "typescript", "tsx", "jsx", "vue", "svelte")
+        else None
+    )
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
 
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            prev_stripped = ""
             for line_num, line in enumerate(f, start=1):
+                stripped = line.strip()
+                # Comment lines are documentation, not imports — without this
+                # the scanner matched import shapes inside its OWN regex-doc
+                # comments (dogfooded: `require('X')` in a comment flagged X).
+                if _is_python_file(language, file_path) and stripped.startswith("#"):
+                    prev_stripped = stripped
+                    continue
+                # A try-guarded import is a deliberate OPTIONAL dependency
+                # (`try: import orjson` + clean fallback) — by definition not
+                # a hallucination. Skip the line directly under `try:`.
+                if stripped.startswith(("import ", "from ")) and prev_stripped == "try:":
+                    prev_stripped = stripped
+                    continue
+                if stripped:
+                    prev_stripped = stripped
                 import_names = _extract_import_names_from_line(line, language)
                 for name in import_names:
                     key = (name, line_num)
@@ -509,13 +731,64 @@ def _scan_file_imports(
                         )
                         continue
 
+                    # JS-family: Node built-ins and bare package specifiers
+                    # resolve via the builtin set / package.json; relative
+                    # specifiers fall through to the file-index probe.
+                    if js_deps is not None and (_is_node_builtin(name) or _js_module_is_declared(name, js_deps)):
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "name": name,
+                                "status": "resolved",
+                                "suggestions": [],
+                            }
+                        )
+                        continue
+                    if js_deps is not None and "/" in name:
+                        # Deep or relative specifier: probe the last segment
+                        # (strip a Vue/TS extension) against the file index.
+                        name_for_probe = name.split("/")[-1].rsplit(".", 1)[0] or name
+                    else:
+                        name_for_probe = name
+
+                    # Skip DECLARED third-party dependencies — they are not in
+                    # the index (we index the repo, not site-packages), so the
+                    # symbol probe can only false-positive on them.
+                    if (
+                        declared_deps
+                        and _is_python_file(language, file_path)
+                        and name.split(".")[0].lower() in declared_deps
+                    ):
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "name": name,
+                                "status": "resolved",
+                                "suggestions": [],
+                            }
+                        )
+                        continue
+
                     resolved = _check_name_exists(
                         conn,
-                        name,
+                        name_for_probe,
                         symbol_names=symbol_names,
                         symbol_qnames=symbol_qnames,
                         file_index=file_index,
                     )
+                    if not resolved and js_deps is not None and "/" in name:
+                        # JS alias/relative DIRECTORY import (`@/utils/core`
+                        # -> src/utils/core/index.js): the file index matches
+                        # file stems only, so probe for a directory segment.
+                        resolved = (
+                            conn.execute(
+                                "SELECT 1 FROM files WHERE path LIKE ? LIMIT 1",
+                                (f"%/{name_for_probe}/%",),
+                            ).fetchone()
+                            is not None
+                        )
                     entry: dict = {
                         "file": file_path,
                         "line": line_num,
@@ -592,6 +865,7 @@ def verify_imports(
     # ``files`` per unresolved import) become in-memory set lookups. Semantics
     # are identical to the SQL (see _FilePathIndex docstring).
     file_index = _build_file_path_index(conn)
+    declared_deps = _declared_dependency_modules(project_root)
 
     # 2. Scan each file
     all_imports: list[dict] = []
@@ -606,6 +880,7 @@ def verify_imports(
             symbol_qnames=symbol_qnames,
             lang_by_path=lang_by_path,
             file_index=file_index,
+            declared_deps=declared_deps,
         )
         if file_imports:
             files_checked.add(fp)

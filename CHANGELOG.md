@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **top_n_ranking gains a native cycles dimension** — "biggest cycles"
   prompts now ship the Tarjan SCCs in the envelope (re-measured n=3:
   bash.65 -> bash.07, 6 turns -> 1).
+- **The hallucination firewall now runs INSIDE the verify loop** — the
+  imports check was style-only while the docs promised resolution (caught
+  by the new planted-recall eval). Unresolvable module paths now FAIL as
+  likely hallucinations; near-misses WARN with did-you-mean candidates.
+  Three precision classes sealed in the same pass: declared dependencies
+  (pyproject + requirements) are never flagged, dotted internal modules
+  resolve via the file index, and from-import member names / comment
+  lines / try-guarded optional imports are excluded. Self-scan on this
+  repo: 28 false positives -> 0 with the planted hallucination still
+  caught. New recall suite: tests/test_verify_planted_recall.py (every
+  verify category must catch its canonical planted positive).
 - Entry-point routing accepts qualifiers ("CLI entry point"); first
   parallel-CI races sealed with xdist groups; envelope/probe caches now
   invalidate on re-index (index stamp + generation sweep).
