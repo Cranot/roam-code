@@ -14,6 +14,7 @@ from ``_KNOWN_MISSING``).
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import sqlite3
@@ -191,30 +192,174 @@ def _is_node_builtin(module_path: str) -> bool:
     return name.split("/")[0] in _NODE_BUILTINS
 
 
+_JS_DEP_SECTIONS = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+
+# Hard cap on workspace package.json files read per scan — keeps a pathological
+# `workspaces: ["**"]` monorepo bounded.
+_MAX_WORKSPACE_PACKAGE_FILES = 50
+
+
+def _workspace_package_files(project_root: str, workspaces) -> list[str]:
+    """Glob workspace patterns (npm/yarn/pnpm-style ``packages/*``) relative to
+    *project_root* and return the existing workspace ``package.json`` paths,
+    capped at :data:`_MAX_WORKSPACE_PACKAGE_FILES`. Best-effort: a malformed
+    ``workspaces`` value yields an empty list."""
+    import glob as _glob
+
+    if isinstance(workspaces, dict):  # yarn object form: {"packages": [...]}
+        workspaces = workspaces.get("packages")
+    if not isinstance(workspaces, list):
+        return []
+    files: list[str] = []
+    for pattern in workspaces:
+        if not isinstance(pattern, str) or not pattern:
+            continue
+        for hit in sorted(_glob.glob(os.path.join(project_root, pattern))):
+            pkg = os.path.join(hit, "package.json")
+            if os.path.isfile(pkg):
+                files.append(pkg)
+                if len(files) >= _MAX_WORKSPACE_PACKAGE_FILES:
+                    return files
+    return files
+
+
+# Per-process cache keyed on project_root: the helper used to be re-invoked per
+# FILE inside _scan_file_imports (one package.json parse per scanned JS file).
+@functools.lru_cache(maxsize=8)
 def _declared_js_dependency_packages(project_root: str) -> frozenset[str]:
     """Package names declared in package.json (dependencies, devDependencies,
     peerDependencies, optionalDependencies). The npm analog of
     :func:`_declared_dependency_modules`: a declared package cannot be a
     hallucinated import — node_modules is never indexed. Dogfooded on a Vue3
     app: without this, `import { ref } from "vue"` flagged `vue` in every
-    SFC."""
+    SFC.
+
+    Monorepo-aware: when the root package.json declares ``workspaces`` (array
+    or yarn ``{"packages": [...]}`` object), the dep sections of each globbed
+    workspace package.json are merged in, PLUS each workspace package's own
+    ``name`` — intra-monorepo imports like ``@myorg/utils`` must resolve even
+    though only the consuming app declares them transitively."""
     import json as _json
 
     pkg = os.path.join(project_root, "package.json")
     if not os.path.isfile(pkg):
         return frozenset()
+    names: set[str] = set()
     try:
         with open(pkg, encoding="utf-8", errors="replace") as fh:
             data = _json.load(fh)
-        names: set[str] = set()
-        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        for key in _JS_DEP_SECTIONS:
             names.update((data.get(key) or {}).keys())
-        return frozenset(names)
     except (OSError, ValueError) as exc:
         from roam.observability import log_swallowed
 
         log_swallowed("verify_imports.declared_deps.package_json", exc)
         return frozenset()
+
+    for ws_pkg in _workspace_package_files(project_root, data.get("workspaces")):
+        try:
+            with open(ws_pkg, encoding="utf-8", errors="replace") as fh:
+                ws_data = _json.load(fh)
+            for key in _JS_DEP_SECTIONS:
+                names.update((ws_data.get(key) or {}).keys())
+            ws_name = ws_data.get("name")
+            if isinstance(ws_name, str) and ws_name:
+                names.add(ws_name)
+        except (OSError, ValueError) as exc:
+            from roam.observability import log_swallowed
+
+            log_swallowed("verify_imports.declared_deps.workspace_package_json", exc)
+    return frozenset(names)
+
+
+def _strip_jsonc(text: str) -> str:
+    """Strip JSONC-isms (``//`` and ``/* */`` comments, trailing commas) so
+    ``json.loads`` can parse tsconfig/jsconfig files. String-aware character
+    scan — comments inside string literals (``"https://x"``) survive."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        out.append(c)
+        i += 1
+    # Trailing commas before a closing brace/bracket.
+    return re.sub(r",\s*([}\]])", r"\1", "".join(out))
+
+
+# Per-process cache keyed on project_root (same rationale as
+# _declared_js_dependency_packages: computed once per scan, not once per file).
+@functools.lru_cache(maxsize=8)
+def _js_path_aliases(project_root: str) -> dict[str, list[str]]:
+    """``compilerOptions.paths`` aliases from tsconfig.json, else jsconfig.json
+    (first file found wins). Returns ``{"@/*": ["./src/*"], ...}``. Best-effort:
+    JSONC comments and trailing commas are stripped before parsing; a broken
+    config logs and yields ``{}``. Treat the returned dict as read-only — it is
+    a shared lru_cache entry."""
+    import json as _json
+
+    for fname in ("tsconfig.json", "jsconfig.json"):
+        cfg = os.path.join(project_root, fname)
+        if not os.path.isfile(cfg):
+            continue
+        try:
+            with open(cfg, encoding="utf-8", errors="replace") as fh:
+                data = _json.loads(_strip_jsonc(fh.read()))
+            paths = (data.get("compilerOptions") or {}).get("paths") or {}
+            aliases: dict[str, list[str]] = {}
+            for key, targets in paths.items():
+                if isinstance(targets, list):
+                    aliases[str(key)] = [t for t in targets if isinstance(t, str)]
+            return aliases
+        except (OSError, ValueError, AttributeError) as exc:
+            from roam.observability import log_swallowed
+
+            log_swallowed("verify_imports.js_path_aliases", exc)
+            return {}
+    return {}
+
+
+def _rewrite_js_alias(specifier: str, aliases: dict[str, list[str]]) -> list[str]:
+    """Rewrite *specifier* through tsconfig-style path aliases.
+
+    ``@/components/Modal.vue`` + ``{"@/*": ["./src/*"]}`` ->
+    ``["./src/components/Modal.vue"]``. Exact (non-``*``) keys must match the
+    whole specifier. Returns every mapped target; empty when no alias key
+    matches."""
+    out: list[str] = []
+    for key, targets in aliases.items():
+        if key.endswith("*"):
+            prefix = key[:-1]
+            if not specifier.startswith(prefix):
+                continue
+            rest = specifier[len(prefix) :]
+            out.extend((t[:-1] + rest) if t.endswith("*") else t for t in targets)
+        elif specifier == key:
+            out.extend(targets)
+    return out
 
 
 def _js_module_is_declared(module_path: str, js_deps: frozenset[str]) -> bool:
@@ -684,11 +829,11 @@ def _scan_file_imports(
 
     language = _get_file_language(conn, file_path, lang_by_path=lang_by_path)
     lang_lower = (language or "").lower()
-    js_deps = (
-        _declared_js_dependency_packages(project_root)
-        if lang_lower in ("javascript", "typescript", "tsx", "jsx", "vue", "svelte")
-        else None
-    )
+    is_js_like = lang_lower in ("javascript", "typescript", "tsx", "jsx", "vue", "svelte")
+    # Both helpers are lru_cached on project_root, so the per-file call sites
+    # cost one dict/frozenset lookup after the first scanned JS file.
+    js_deps = _declared_js_dependency_packages(project_root) if is_js_like else None
+    js_aliases = _js_path_aliases(project_root) if is_js_like else {}
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
 
@@ -745,6 +890,44 @@ def _scan_file_imports(
                             }
                         )
                         continue
+                    # tsconfig/jsconfig path aliases (`@/utils/format` ->
+                    # `./src/utils/format`): rewrite through every mapping and
+                    # treat the result like a relative path — probe the last
+                    # segment, then the directory fallback. First hit resolves.
+                    if js_aliases:
+                        alias_hit = False
+                        for target in _rewrite_js_alias(name, js_aliases):
+                            probe = target.split("/")[-1].rsplit(".", 1)[0] or target
+                            if _check_name_exists(
+                                conn,
+                                probe,
+                                symbol_names=symbol_names,
+                                symbol_qnames=symbol_qnames,
+                                file_index=file_index,
+                            ):
+                                alias_hit = True
+                                break
+                            if (
+                                conn.execute(
+                                    "SELECT 1 FROM files WHERE path LIKE ? LIMIT 1",
+                                    (f"%/{probe}/%",),
+                                ).fetchone()
+                                is not None
+                            ):
+                                alias_hit = True
+                                break
+                        if alias_hit:
+                            results.append(
+                                {
+                                    "file": file_path,
+                                    "line": line_num,
+                                    "name": name,
+                                    "status": "resolved",
+                                    "suggestions": [],
+                                }
+                            )
+                            continue
+
                     if js_deps is not None and "/" in name:
                         # Deep or relative specifier: probe the last segment
                         # (strip a Vue/TS extension) against the file index.

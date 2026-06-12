@@ -186,11 +186,11 @@
       <h2>Your agent's first token already knows the answer</h2>
       <p>
         Roam ships a <strong>task compiler</strong>: it classifies your prompt
-        into one of 24 intent procedures (deterministic — zero model calls),
+        into one of 23 intent procedures (deterministic — zero model calls),
         pre-executes the matching code-graph probes, and hands your agent the
         <em>answers</em> before its first model token. Callers, blame history,
         blast radius, the source around a cited bug line — already in the
-        prompt, in a 1–9&nbsp;KB envelope, compiled in ~90&nbsp;ms locally.
+        prompt, in a compact envelope, compiled in ~90&nbsp;ms locally (warm).
       </p>
       <pre class="terminal" aria-label="One-command Claude Code setup"><span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[mcp]" &amp;&amp; roam init</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam hooks claude --write</span>
@@ -211,11 +211,12 @@
       <p>
         Claude head-to-head vs vanilla, June 2026, 41 cells. Bug-fixing graded
         by a failing-test-transitions-to-passing oracle: 10/10 fixed in both
-        arms at −13% cost. Replayed on 723 real prompts: 53% route at L1 —
-        the envelope already contains the literal answer.
-        <em>Honest caveats attached: trivial prompts gain nothing; pure code
-        generation is neutral — the wins are comprehension, navigation,
-        debugging, and review.</em>
+        arms at −13% cost. Replayed on 723 real prompts: 91% of envelopes
+        ship pre-executed answers — the agent's first token can be the answer.
+        <em>Honest caveats attached: the two cells we once published as losses
+        (trivial prompts, code generation) were attacked in v13.6 and
+        re-measured — now a tie and a −26% win; every number keeps its
+        method and Ns.</em>
       </p>
       <p>
         Prefer a dedicated CLI? The same loop ships as

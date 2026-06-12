@@ -681,3 +681,90 @@ class TestJsFirewallSemantics:
             assert _is_node_builtin(mod), mod
         assert not _is_node_builtin("totally-fake-package")
         assert not _is_node_builtin("./crypto")  # relative path, not a builtin
+
+    def test_workspaces_merge(self, tmp_path):
+        """Monorepo: root workspaces glob pulls in workspace deps AND the
+        workspace package's own name (intra-monorepo `@myorg/utils` imports)."""
+        from roam.commands.cmd_verify_imports import _declared_js_dependency_packages
+
+        root = tmp_path / "mono"
+        (root / "packages" / "x").mkdir(parents=True)
+        (root / "package.json").write_text('{"dependencies": {"vue": "^3"}, "workspaces": ["packages/*"]}')
+        (root / "packages" / "x" / "package.json").write_text(
+            '{"name": "@myorg/utils", "dependencies": {"left-pad": "^1"}}'
+        )
+        deps = _declared_js_dependency_packages(str(root))
+        assert deps == frozenset({"vue", "left-pad", "@myorg/utils"})
+
+    def test_workspaces_yarn_object_form(self, tmp_path):
+        from roam.commands.cmd_verify_imports import _declared_js_dependency_packages
+
+        root = tmp_path / "mono2"
+        (root / "pkgs" / "a").mkdir(parents=True)
+        (root / "package.json").write_text('{"workspaces": {"packages": ["pkgs/*"]}}')
+        (root / "pkgs" / "a" / "package.json").write_text('{"name": "@org/a", "devDependencies": {"vitest": "^1"}}')
+        deps = _declared_js_dependency_packages(str(root))
+        assert deps == frozenset({"@org/a", "vitest"})
+
+    def test_tsconfig_alias_parsing_jsonc(self, tmp_path):
+        """tsconfig allows // comments + trailing commas — both must survive."""
+        from roam.commands.cmd_verify_imports import _js_path_aliases
+
+        root = tmp_path / "tsproj"
+        root.mkdir()
+        (root / "tsconfig.json").write_text(
+            "{\n"
+            "  // Vite default alias\n"
+            "  /* block comment */\n"
+            '  "compilerOptions": {\n'
+            '    "paths": {\n'
+            '      "@/*": ["./src/*"],\n'  # trailing comma below
+            "    },\n"
+            "  },\n"
+            "}\n"
+        )
+        aliases = _js_path_aliases(str(root))
+        assert aliases == {"@/*": ["./src/*"]}
+
+    def test_jsconfig_fallback_when_no_tsconfig(self, tmp_path):
+        from roam.commands.cmd_verify_imports import _js_path_aliases
+
+        root = tmp_path / "jsproj"
+        root.mkdir()
+        (root / "jsconfig.json").write_text('{"compilerOptions": {"paths": {"~/*": ["./app/*"]}}}')
+        assert _js_path_aliases(str(root)) == {"~/*": ["./app/*"]}
+        # No config at all -> empty dict, no crash.
+        empty = tmp_path / "none"
+        empty.mkdir()
+        assert _js_path_aliases(str(empty)) == {}
+
+    def test_alias_rewrite_matching(self):
+        """Unit-level alias-prefixed specifier rewriting (wildcard + exact)."""
+        from roam.commands.cmd_verify_imports import _rewrite_js_alias
+
+        aliases = {"@/*": ["./src/*"], "utils": ["./src/utils/index.ts"]}
+        assert _rewrite_js_alias("@/components/Modal.vue", aliases) == ["./src/components/Modal.vue"]
+        assert _rewrite_js_alias("utils", aliases) == ["./src/utils/index.ts"]
+        assert _rewrite_js_alias("vue", aliases) == []  # bare package: no alias
+        assert _rewrite_js_alias("utils/deep", aliases) == []  # exact key, no prefix match
+
+    def test_lru_cache_keyed_on_root(self, tmp_path):
+        """Two roots give two answers — the per-process cache must not bleed."""
+        from roam.commands.cmd_verify_imports import (
+            _declared_js_dependency_packages,
+            _js_path_aliases,
+        )
+
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        (a / "package.json").write_text('{"dependencies": {"vue": "^3"}}')
+        (b / "package.json").write_text('{"dependencies": {"react": "^18"}}')
+        (a / "tsconfig.json").write_text('{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}')
+        assert _declared_js_dependency_packages(str(a)) == frozenset({"vue"})
+        assert _declared_js_dependency_packages(str(b)) == frozenset({"react"})
+        # Repeat hits the cache and stays correct per-root.
+        assert _declared_js_dependency_packages(str(a)) == frozenset({"vue"})
+        assert _js_path_aliases(str(a)) == {"@/*": ["./src/*"]}
+        assert _js_path_aliases(str(b)) == {}

@@ -197,17 +197,24 @@ def _adjust_cluster_count(
     if len(sorted_groups) == n_agents:
         return [{"nodes": s} for s in sorted_groups]
 
-    # If more clusters than agents: merge smallest
+    # If more clusters than agents: merge smallest. A min-heap keyed on
+    # size replaces the former re-sort-twice-per-iteration loop (flagged by
+    # the algo detector); the tiebreaker counter keeps the sets themselves
+    # out of tuple comparison.
     if len(sorted_groups) > n_agents:
-        while len(sorted_groups) > n_agents:
-            # Merge the two smallest
-            sorted_groups.sort(key=len, reverse=True)
-            smallest = sorted_groups.pop()
-            second_smallest = sorted_groups.pop()
+        import heapq
+        from itertools import count
+
+        tiebreak = count()
+        heap = [(len(g), next(tiebreak), g) for g in sorted_groups]
+        heapq.heapify(heap)
+        while len(heap) > n_agents:
+            _, _, smallest = heapq.heappop(heap)
+            _, _, second_smallest = heapq.heappop(heap)
             merged = smallest | second_smallest
-            sorted_groups.append(merged)
-            sorted_groups.sort(key=len, reverse=True)
-        return [{"nodes": s} for s in sorted_groups]
+            heapq.heappush(heap, (len(merged), next(tiebreak), merged))
+        groups = sorted((g for _, _, g in heap), key=len, reverse=True)
+        return [{"nodes": s} for s in groups]
 
     # If fewer clusters than agents: split largest
     while len(sorted_groups) < n_agents:
