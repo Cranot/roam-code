@@ -433,12 +433,10 @@ def _track_triple_quote_state(line: str, in_string: str | None) -> tuple[str | N
     pos = 0
     while True:
         if in_string is None:
-            m = _TRIPLE_QUOTE_RE.search(line, pos)
-            hash_idx = line.find("#", pos)
-            if m is None or (0 <= hash_idx < m.start()):
-                break  # no opener, or a comment claims the rest of the line
-            in_string = m.group(0)
-            pos = m.end()
+            opener = _next_string_opener(line, pos)
+            if opener is None:
+                break
+            in_string, pos = opener
         else:
             j = line.find(in_string, pos)
             if j < 0:
@@ -446,6 +444,17 @@ def _track_triple_quote_state(line: str, in_string: str | None) -> tuple[str | N
             pos = j + 3
             in_string = None
     return in_string, started_inside
+
+
+def _next_string_opener(line: str, pos: int) -> tuple[str, int] | None:
+    """Next triple-quote opener in *line* at/after *pos* — unless a ``#``
+    comment claims the rest of the line first. Returns ``(delimiter,
+    scan_resume_index)`` or None."""
+    m = _TRIPLE_QUOTE_RE.search(line, pos)
+    hash_idx = line.find("#", pos)
+    if m is None or (0 <= hash_idx < m.start()):
+        return None
+    return m.group(0), m.end()
 
 
 # ---------------------------------------------------------------------------
