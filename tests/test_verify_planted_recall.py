@@ -81,6 +81,16 @@ def planted_repo(tmp_path_factory):
         "def go():\n    return click, os, compute_value_0_0\n",
         encoding="utf-8",
     )
+    # Test-role file whose fixture strings (and a live import) are
+    # unresolvable BY DESIGN — the firewall must skip test-role files.
+    tdir = repo / "tests"
+    tdir.mkdir()
+    (tdir / "test_planted_fixture.py").write_text(
+        'FIXTURE = """\nimport does_not_exist_anywhere_zq\n"""\n\n'
+        "from imaginary_test_helper_zq import helper\n\n"
+        "def test_demo():\n    return FIXTURE and helper\n",
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
@@ -157,3 +167,16 @@ def test_declared_dep_and_internal_imports_stay_quiet(planted_repo):
     env = json.loads(r.stdout)
     violations = [v for v in (env.get("violations") or []) if v.get("category") == "imports"]
     assert not violations, f"clean imports flagged: {violations[:3]}"
+
+
+def test_test_role_files_skip_import_resolution(planted_repo):
+    """FP guard: test fixtures embed unresolvable imports by design (planted
+    repos, import statements inside triple-quoted strings) — the firewall's
+    resolution pass must skip files the index classifies as test-role."""
+    r = _run(
+        ["--json", "verify", "tests/test_planted_fixture.py", "--checks", "imports", "--threshold", "100"],
+        planted_repo,
+    )
+    env = json.loads(r.stdout)
+    violations = [v for v in (env.get("violations") or []) if v.get("category") == "imports"]
+    assert not violations, f"test-role file flagged by the firewall: {violations[:3]}"

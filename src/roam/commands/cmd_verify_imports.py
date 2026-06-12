@@ -199,27 +199,32 @@ _JS_DEP_SECTIONS = ("dependencies", "devDependencies", "peerDependencies", "opti
 _MAX_WORKSPACE_PACKAGE_FILES = 50
 
 
+def _iter_pattern_package_files(project_root: str, pattern: str):
+    """Yield existing ``package.json`` paths under one workspace glob *pattern*."""
+    import glob as _glob
+
+    for hit in sorted(_glob.glob(os.path.join(project_root, pattern))):
+        pkg = os.path.join(hit, "package.json")
+        if os.path.isfile(pkg):
+            yield pkg
+
+
 def _workspace_package_files(project_root: str, workspaces) -> list[str]:
     """Glob workspace patterns (npm/yarn/pnpm-style ``packages/*``) relative to
     *project_root* and return the existing workspace ``package.json`` paths,
     capped at :data:`_MAX_WORKSPACE_PACKAGE_FILES`. Best-effort: a malformed
     ``workspaces`` value yields an empty list."""
-    import glob as _glob
-
     if isinstance(workspaces, dict):  # yarn object form: {"packages": [...]}
         workspaces = workspaces.get("packages")
     if not isinstance(workspaces, list):
         return []
+    patterns = [p for p in workspaces if isinstance(p, str) and p]
     files: list[str] = []
-    for pattern in workspaces:
-        if not isinstance(pattern, str) or not pattern:
-            continue
-        for hit in sorted(_glob.glob(os.path.join(project_root, pattern))):
-            pkg = os.path.join(hit, "package.json")
-            if os.path.isfile(pkg):
-                files.append(pkg)
-                if len(files) >= _MAX_WORKSPACE_PACKAGE_FILES:
-                    return files
+    for pattern in patterns:
+        for pkg in _iter_pattern_package_files(project_root, pattern):
+            files.append(pkg)
+            if len(files) >= _MAX_WORKSPACE_PACKAGE_FILES:
+                return files
     return files
 
 
@@ -239,37 +244,71 @@ def _declared_js_dependency_packages(project_root: str) -> frozenset[str]:
     workspace package.json are merged in, PLUS each workspace package's own
     ``name`` — intra-monorepo imports like ``@myorg/utils`` must resolve even
     though only the consuming app declares them transitively."""
-    import json as _json
-
     pkg = os.path.join(project_root, "package.json")
     if not os.path.isfile(pkg):
         return frozenset()
-    names: set[str] = set()
+    data = _read_package_json(pkg, "verify_imports.declared_deps.package_json")
+    if data is None:
+        return frozenset()
+    names = _dep_section_names(data)
+    for ws_pkg in _workspace_package_files(project_root, data.get("workspaces")):
+        ws_data = _read_package_json(ws_pkg, "verify_imports.declared_deps.workspace_package_json")
+        if ws_data is None:
+            continue
+        names |= _dep_section_names(ws_data)
+        ws_name = ws_data.get("name")
+        if isinstance(ws_name, str) and ws_name:
+            names.add(ws_name)
+    return frozenset(names)
+
+
+def _read_package_json(path: str, swallow_key: str) -> dict | None:
+    """Parse one package.json; a missing/broken file logs under *swallow_key*
+    and returns None (best-effort contract shared by root + workspace reads)."""
+    import json as _json
+
     try:
-        with open(pkg, encoding="utf-8", errors="replace") as fh:
-            data = _json.load(fh)
-        for key in _JS_DEP_SECTIONS:
-            names.update((data.get(key) or {}).keys())
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return _json.load(fh)
     except (OSError, ValueError) as exc:
         from roam.observability import log_swallowed
 
-        log_swallowed("verify_imports.declared_deps.package_json", exc)
-        return frozenset()
+        log_swallowed(swallow_key, exc)
+        return None
 
-    for ws_pkg in _workspace_package_files(project_root, data.get("workspaces")):
-        try:
-            with open(ws_pkg, encoding="utf-8", errors="replace") as fh:
-                ws_data = _json.load(fh)
-            for key in _JS_DEP_SECTIONS:
-                names.update((ws_data.get(key) or {}).keys())
-            ws_name = ws_data.get("name")
-            if isinstance(ws_name, str) and ws_name:
-                names.add(ws_name)
-        except (OSError, ValueError) as exc:
-            from roam.observability import log_swallowed
 
-            log_swallowed("verify_imports.declared_deps.workspace_package_json", exc)
-    return frozenset(names)
+def _dep_section_names(data: dict) -> set[str]:
+    """Package names across the four dependency sections of a package.json."""
+    names: set[str] = set()
+    for key in _JS_DEP_SECTIONS:
+        names.update((data.get(key) or {}).keys())
+    return names
+
+
+def _consume_string_char(text: str, i: int, out: list[str]) -> tuple[int, bool]:
+    """Copy one in-string-literal character (escape pairs stay intact);
+    return ``(next_index, still_inside_string)``."""
+    c = text[i]
+    out.append(c)
+    if c == "\\" and i + 1 < len(text):
+        out.append(text[i + 1])
+        return i + 2, True
+    return i + 1, c != '"'
+
+
+def _comment_end(text: str, i: int) -> int | None:
+    """When a ``//`` or ``/* */`` comment starts at *i*, return the index just
+    past it (unterminated comments run to EOF); otherwise None."""
+    n = len(text)
+    if text[i] != "/" or i + 1 >= n:
+        return None
+    if text[i + 1] == "/":
+        j = text.find("\n", i)
+        return n if j < 0 else j
+    if text[i + 1] == "*":
+        j = text.find("*/", i + 2)
+        return n if j < 0 else j + 2
+    return None
 
 
 def _strip_jsonc(text: str) -> str:
@@ -280,30 +319,16 @@ def _strip_jsonc(text: str) -> str:
     i, n = 0, len(text)
     in_str = False
     while i < n:
-        c = text[i]
         if in_str:
-            out.append(c)
-            if c == "\\" and i + 1 < n:
-                out.append(text[i + 1])
-                i += 2
-                continue
-            if c == '"':
-                in_str = False
-            i += 1
+            i, in_str = _consume_string_char(text, i, out)
             continue
+        comment_end = _comment_end(text, i)
+        if comment_end is not None:
+            i = comment_end
+            continue
+        c = text[i]
         if c == '"':
             in_str = True
-            out.append(c)
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-            continue
         out.append(c)
         i += 1
     # Trailing commas before a closing brace/bracket.
@@ -319,27 +344,34 @@ def _js_path_aliases(project_root: str) -> dict[str, list[str]]:
     JSONC comments and trailing commas are stripped before parsing; a broken
     config logs and yields ``{}``. Treat the returned dict as read-only — it is
     a shared lru_cache entry."""
-    import json as _json
-
     for fname in ("tsconfig.json", "jsconfig.json"):
         cfg = os.path.join(project_root, fname)
-        if not os.path.isfile(cfg):
-            continue
-        try:
-            with open(cfg, encoding="utf-8", errors="replace") as fh:
-                data = _json.loads(_strip_jsonc(fh.read()))
-            paths = (data.get("compilerOptions") or {}).get("paths") or {}
-            aliases: dict[str, list[str]] = {}
-            for key, targets in paths.items():
-                if isinstance(targets, list):
-                    aliases[str(key)] = [t for t in targets if isinstance(t, str)]
-            return aliases
-        except (OSError, ValueError, AttributeError) as exc:
-            from roam.observability import log_swallowed
-
-            log_swallowed("verify_imports.js_path_aliases", exc)
-            return {}
+        if os.path.isfile(cfg):
+            # First file found wins — a broken tsconfig yields {} rather
+            # than falling through to jsconfig (matching tsc's behavior).
+            return _paths_from_config(cfg)
     return {}
+
+
+def _paths_from_config(cfg: str) -> dict[str, list[str]]:
+    """``compilerOptions.paths`` from one tsconfig/jsconfig file; a broken
+    config logs and yields ``{}``."""
+    import json as _json
+
+    try:
+        with open(cfg, encoding="utf-8", errors="replace") as fh:
+            data = _json.loads(_strip_jsonc(fh.read()))
+        paths = (data.get("compilerOptions") or {}).get("paths") or {}
+        return {
+            str(key): [t for t in targets if isinstance(t, str)]
+            for key, targets in paths.items()
+            if isinstance(targets, list)
+        }
+    except (OSError, ValueError, AttributeError) as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify_imports.js_path_aliases", exc)
+        return {}
 
 
 def _rewrite_js_alias(specifier: str, aliases: dict[str, list[str]]) -> list[str]:
@@ -382,6 +414,38 @@ def _is_python_file(language: str | None, file_path: str) -> bool:
     if language and language.lower() in ("python", "py"):
         return True
     return file_path.endswith(".py") or file_path.endswith(".pyi")
+
+
+_TRIPLE_QUOTE_RE = re.compile(r'"""|\'\'\'')
+
+
+def _track_triple_quote_state(line: str, in_string: str | None) -> tuple[str | None, bool]:
+    """Track whether subsequent lines sit inside a Python triple-quoted
+    string; *in_string* is the active delimiter or None. Returns
+    ``(state_after_line, line_started_inside_string)``.
+
+    Import-shaped text inside docstrings and fixture strings is documentation,
+    not imports — without this the scanner flagged its own docstring (a line
+    reading "import statements inside ...") and planted-fixture blobs in test
+    files. Best-effort parity scan, comment-aware when outside a string; the
+    same precision class as the rest of the raw-line scanner."""
+    started_inside = in_string is not None
+    pos = 0
+    while True:
+        if in_string is None:
+            m = _TRIPLE_QUOTE_RE.search(line, pos)
+            hash_idx = line.find("#", pos)
+            if m is None or (0 <= hash_idx < m.start()):
+                break  # no opener, or a comment claims the rest of the line
+            in_string = m.group(0)
+            pos = m.end()
+        else:
+            j = line.find(in_string, pos)
+            if j < 0:
+                break
+            pos = j + 3
+            in_string = None
+    return in_string, started_inside
 
 
 # ---------------------------------------------------------------------------
@@ -837,15 +901,25 @@ def _scan_file_imports(
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
 
+    is_py = _is_python_file(language, file_path)
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
+            in_triple: str | None = None
             for line_num, line in enumerate(f, start=1):
                 stripped = line.strip()
+                if is_py:
+                    # Lines inside triple-quoted strings are string content
+                    # (docstrings, test fixtures), not imports. They do not
+                    # update prev_stripped — a `try:` inside a docstring must
+                    # not arm the optional-import guard below.
+                    in_triple, started_inside = _track_triple_quote_state(line, in_triple)
+                    if started_inside:
+                        continue
                 # Comment lines are documentation, not imports — without this
                 # the scanner matched import shapes inside its OWN regex-doc
                 # comments (dogfooded: `require('X')` in a comment flagged X).
-                if _is_python_file(language, file_path) and stripped.startswith("#"):
+                if is_py and stripped.startswith("#"):
                     prev_stripped = stripped
                     continue
                 # A try-guarded import is a deliberate OPTIONAL dependency

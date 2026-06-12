@@ -740,7 +740,13 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
 def _unresolved_import_violations(conn, file_ids: list[int]) -> list[dict]:
     """Run import RESOLUTION over the changed files; map unresolved imports
     to violations. No-suggestion misses are the canonical hallucination
-    signal (FAIL); near-miss names with fuzzy candidates are WARN."""
+    signal (FAIL); near-miss names with fuzzy candidates are WARN.
+
+    Test-role files are excluded (same default as the algo detectors): test
+    fixtures intentionally embed unresolvable imports — planted-bug repos,
+    import statements inside triple-quoted fixture strings — and the raw-line
+    scanner cannot tell those from live code. The cost is that hallucinated
+    imports inside tests go unflagged here; the test run itself catches those."""
     from roam.commands.cmd_verify_imports import (
         _build_file_path_index,
         _declared_dependency_modules,
@@ -748,8 +754,8 @@ def _unresolved_import_violations(conn, file_ids: list[int]) -> list[dict]:
     )
     from roam.db.connection import batched_in, find_project_root
 
-    rows = batched_in(conn, "SELECT id, path FROM files WHERE id IN ({ph})", file_ids)
-    paths = [r["path"] for r in rows]
+    rows = batched_in(conn, "SELECT id, path, file_role FROM files WHERE id IN ({ph})", file_ids)
+    paths = [r["path"] for r in rows if r["file_role"] != "test"]
     if not paths:
         return []
     project_root = str(find_project_root())

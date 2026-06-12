@@ -326,6 +326,41 @@ class TestPythonPatterns:
         assert len(names) == 0
 
 
+class TestTripleQuoteTracking:
+    """Lines inside triple-quoted strings (docstrings, fixture blobs) are
+    string content, not imports — the FP class found 2026-06-12 when the
+    scanner flagged import-shaped text inside its own docstring."""
+
+    def test_docstring_lines_are_skipped(self):
+        from roam.commands.cmd_verify_imports import _track_triple_quote_state
+
+        state, inside = _track_triple_quote_state('FIXTURE = """', None)
+        assert state == '"""' and not inside
+        state, inside = _track_triple_quote_state("import phantom_module_zq", state)
+        assert state == '"""' and inside
+        state, inside = _track_triple_quote_state('"""', state)
+        assert state is None and inside
+
+    def test_single_line_string_does_not_open_state(self):
+        from roam.commands.cmd_verify_imports import _track_triple_quote_state
+
+        state, inside = _track_triple_quote_state('x = """import os"""', None)
+        assert state is None and not inside
+
+    def test_delimiter_in_comment_is_ignored(self):
+        from roam.commands.cmd_verify_imports import _track_triple_quote_state
+
+        state, inside = _track_triple_quote_state('# prefer """ for docstrings', None)
+        assert state is None and not inside
+
+    def test_mixed_delimiters_do_not_close_each_other(self):
+        from roam.commands.cmd_verify_imports import _track_triple_quote_state
+
+        state, _ = _track_triple_quote_state("BLOB = '''", None)
+        state, inside = _track_triple_quote_state('still inside """ here', state)
+        assert state == "'''" and inside
+
+
 # ===========================================================================
 # 6. JavaScript import pattern tests
 # ===========================================================================
