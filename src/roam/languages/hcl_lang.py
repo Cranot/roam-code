@@ -103,6 +103,22 @@ def _line_number(idx: int) -> int:
 class HclExtractor(LanguageExtractor):
     """Regex-only extractor for HCL / Terraform configuration files."""
 
+    _BLOCK1_METADATA = {
+        "variable": ("variable", "variable", True),
+        "output": ("function", "output", True),
+        "module": ("module", "module", True),
+        "provider": ("module", "provider", False),
+        "job": ("function", "job", True),
+        "task": ("function", "task", True),
+        "group": ("function", "group", True),
+        "build": ("function", "build", True),
+    }
+
+    _BLOCK0_METADATA = {
+        "terraform": ("module", False),
+        "build": ("function", True),
+    }
+
     @property
     def language_name(self) -> str:
         return "hcl"
@@ -177,164 +193,156 @@ class HclExtractor(LanguageExtractor):
             if _RE_COMMENT.match(line):
                 continue
 
-            # Track brace depth to know when we leave a locals block
-            opens = stripped.count("{")
-            closes = stripped.count("}")
-            brace_depth += opens - closes
+            brace_depth = self._update_brace_depth(brace_depth, stripped, ln, file_path)
 
-            # -- locals { key = value } --
-            if in_locals:
-                if brace_depth <= 0:
-                    in_locals = False
-                else:
-                    m = _RE_LOCAL_KEY.match(line)
-                    if m:
-                        key = m.group(1)
-                        symbols.append(
-                            self._make_symbol(
-                                name=key,
-                                kind="variable",
-                                line_start=ln,
-                                line_end=ln,
-                                qualified_name=f"local.{key}",
-                                signature=f"local.{key}",
-                                visibility="private",
-                                is_exported=False,
-                            )
-                        )
-                continue
+            in_locals, sym = self._process_line(line, stripped, ln, brace_depth, in_locals)
+            if sym:
+                symbols.append(sym)
 
-            # Two-label block: resource "type" "name" {
-            m = _RE_BLOCK2.match(stripped)
-            if m:
-                kw, label1, label2 = m.group(1), m.group(2), m.group(3)
-                if kw in ("resource", "source"):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label2,
-                            kind="class",
-                            line_start=ln,
-                            line_end=ln,
-                            qualified_name=f"{label1}.{label2}",
-                            signature=f'{kw} "{label1}" "{label2}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                elif kw == "data":
-                    symbols.append(
-                        self._make_symbol(
-                            name=label2,
-                            kind="class",
-                            line_start=ln,
-                            line_end=ln,
-                            qualified_name=f"data.{label1}.{label2}",
-                            signature=f'data "{label1}" "{label2}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                continue
-
-            # One-label block: variable/output/module/provider/job/task/group
-            m = _RE_BLOCK1.match(stripped)
-            if m:
-                kw, label = m.group(1), m.group(2)
-                if kw in ("variable",):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label,
-                            kind="variable",
-                            line_start=ln,
-                            line_end=ln,
-                            qualified_name=f"var.{label}",
-                            signature=f'variable "{label}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                elif kw in ("output",):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label,
-                            kind="function",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f'output "{label}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                elif kw in ("module",):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label,
-                            kind="module",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f'module "{label}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                elif kw in ("provider",):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label,
-                            kind="module",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f'provider "{label}"',
-                            visibility="public",
-                            is_exported=False,
-                        )
-                    )
-                elif kw in ("job", "task", "group", "build"):
-                    symbols.append(
-                        self._make_symbol(
-                            name=label,
-                            kind="function",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f'{kw} "{label}"',
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                continue
-
-            # No-label block: terraform {, locals {, build {
-            m = _RE_BLOCK0.match(stripped)
-            if m:
-                kw = m.group(1)
-                if kw == "locals":
-                    in_locals = True
-                elif kw == "terraform":
-                    symbols.append(
-                        self._make_symbol(
-                            name="terraform",
-                            kind="module",
-                            line_start=ln,
-                            line_end=ln,
-                            signature="terraform {}",
-                            visibility="public",
-                            is_exported=False,
-                        )
-                    )
-                elif kw == "build":
-                    symbols.append(
-                        self._make_symbol(
-                            name="build",
-                            kind="function",
-                            line_start=ln,
-                            line_end=ln,
-                            signature="build {}",
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-
+        self._validate_brace_closure(brace_depth, file_path)
         return symbols
+
+    def _update_brace_depth(self, depth: int, stripped: str, ln: int, file_path: str) -> int:
+        """Update brace depth with validation guard. Logs error on negative depth (unmatched closing brace)."""
+        new_depth = depth + stripped.count("{") - stripped.count("}")
+        if new_depth < 0:
+            log.error(
+                f"Unmatched closing brace in {file_path}:{ln} "
+                f"(depth={depth}, line='{stripped[:50]}...')"
+            )
+            return 0  # Reset to recover gracefully
+        return new_depth
+
+    def _validate_brace_closure(self, final_depth: int, file_path: str) -> None:
+        """Validate brace balance at EOF. Logs warning if unclosed braces remain."""
+        if final_depth > 0:
+            log.warning(
+                f"Unclosed brace(s) in {file_path}: {final_depth} block(s) left open. "
+                f"Symbol extraction may be incomplete."
+            )
+
+    def _process_line(
+        self, line: str, stripped: str, ln: int, brace_depth: int, in_locals: bool
+    ) -> tuple[bool, dict | None]:
+        """Process a single line, managing locals-block state. Returns (new_in_locals, symbol)."""
+        if in_locals:
+            in_locals, sym = self._process_locals(line, ln, brace_depth)
+            return (in_locals, sym)
+
+        block_type, sym = self._classify_hcl_block(stripped, ln)
+        if block_type == "locals":
+            return (True, None)
+        return (False, sym)
+
+    def _process_locals(self, line: str, ln: int, brace_depth: int) -> tuple[bool, dict | None]:
+        if brace_depth <= 0:
+            return (False, None)
+        return (True, self._local_key_symbol(line, ln))
+
+    def _classify_hcl_block(self, stripped: str, ln: int) -> tuple[str | None, dict | None]:
+        block_type = self._detect_block_type(stripped)
+        if block_type == "block2":
+            return self._classify_block2(stripped, ln)
+        if block_type == "block1":
+            return self._classify_block1(stripped, ln)
+        if block_type == "block0":
+            return self._classify_block0(stripped, ln)
+        return (None, None)
+
+    def _detect_block_type(self, stripped: str) -> str | None:
+        if _RE_BLOCK2.match(stripped):
+            return "block2"
+        if _RE_BLOCK1.match(stripped):
+            return "block1"
+        if _RE_BLOCK0.match(stripped):
+            return "block0"
+        return None
+
+    def _classify_block2(self, stripped: str, ln: int) -> tuple[str, dict | None]:
+        m = _RE_BLOCK2.match(stripped)
+        assert m is not None
+        sym = self._block2_symbol(m.group(1), m.group(2), m.group(3), ln)
+        return ("block2", sym)
+
+    def _classify_block1(self, stripped: str, ln: int) -> tuple[str, dict | None]:
+        m = _RE_BLOCK1.match(stripped)
+        assert m is not None
+        sym = self._block1_symbol(m.group(1), m.group(2), ln)
+        return ("block1", sym)
+
+    def _classify_block0(self, stripped: str, ln: int) -> tuple[str | None, dict | None]:
+        m = _RE_BLOCK0.match(stripped)
+        assert m is not None
+        kw = m.group(1)
+        if kw == "locals":
+            return ("locals", None)
+        sym = self._block0_symbol(kw, ln)
+        return ("block0", sym)
+
+    def _local_key_symbol(self, line: str, ln: int) -> dict | None:
+        m = _RE_LOCAL_KEY.match(line)
+        if not m:
+            return None
+        key = m.group(1)
+        return self._make_symbol(
+            name=key,
+            kind="variable",
+            line_start=ln,
+            line_end=ln,
+            qualified_name=f"local.{key}",
+            signature=f"local.{key}",
+            visibility="private",
+            is_exported=False,
+        )
+
+    def _block2_symbol(self, kw: str, label1: str, label2: str, ln: int) -> dict | None:
+        if kw in ("resource", "source"):
+            qname = f"{label1}.{label2}"
+        elif kw == "data":
+            qname = f"data.{label1}.{label2}"
+        else:
+            log.debug("hcl line %d: 2-label block %r not indexed (unrecognized keyword)", ln, kw)
+            return None
+        return self._make_symbol(
+            name=label2,
+            kind="class",
+            line_start=ln,
+            line_end=ln,
+            qualified_name=qname,
+            signature=f'{kw} "{label1}" "{label2}"',
+            visibility="public",
+            is_exported=True,
+        )
+
+    def _block1_symbol(self, kw: str, label: str, ln: int) -> dict | None:
+        if kw not in self._BLOCK1_METADATA:
+            return None
+        kind, sig_kw, is_exported = self._BLOCK1_METADATA[kw]
+        qname = f"var.{label}" if kw == "variable" else label
+        return self._make_symbol(
+            name=label,
+            kind=kind,
+            line_start=ln,
+            line_end=ln,
+            qualified_name=qname,
+            signature=f'{sig_kw} "{label}"',
+            visibility="public",
+            is_exported=is_exported,
+        )
+
+    def _block0_symbol(self, kw: str, ln: int) -> dict | None:
+        if kw not in self._BLOCK0_METADATA:
+            return None
+        kind, is_exported = self._BLOCK0_METADATA[kw]
+        return self._make_symbol(
+            name=kw,
+            kind=kind,
+            line_start=ln,
+            line_end=ln,
+            signature=f"{kw} {{}}",
+            visibility="public",
+            is_exported=is_exported,
+        )
 
     def _hcl_refs(self, lines: list[str], file_path: str) -> list[dict]:
         refs: list[dict] = []
@@ -348,52 +356,103 @@ class HclExtractor(LanguageExtractor):
             if _RE_COMMENT.match(line):
                 continue
 
-            # Track current block for source_name context
-            m = _RE_BLOCK2.match(stripped)
-            if m:
-                kw, label1, label2 = m.group(1), m.group(2), m.group(3)
-                current_block = f"{label1}.{label2}" if kw != "data" else f"data.{label1}.{label2}"
-            else:
-                mb = _RE_BLOCK1.match(stripped)
-                if mb:
-                    current_block = mb.group(2)
+            current_block = self._update_current_block(stripped, current_block)
 
-            # B023: bind ln + current_block as defaults so the closure
-            # captures THIS iteration's values (loop-variable late-binding fix).
-            def _add(target: str, _ln: int = ln, _cur: str | None = current_block):
-                key = (target, str(_ln))
-                if key not in seen:
-                    seen.add(key)
-                    refs.append(
-                        self._make_reference(
-                            target_name=target,
-                            kind="call",
-                            line=_ln,
-                            source_name=_cur,
-                        )
-                    )
-
-            # var.name
-            for m in _RE_VAR_REF.finditer(line):
-                _add(m.group(1))
-
-            # module.name  or  module.name.output
-            for m in _RE_MODULE_REF.finditer(line):
-                mod = m.group(1)
-                _add(mod)
-
-            # data.type.name
-            for m in _RE_DATA_REF.finditer(line):
-                _add(f"data.{m.group(1)}.{m.group(2)}")
-
-            # local.name
-            for m in _RE_LOCAL_REF.finditer(line):
-                _add(m.group(1))
-
-            # resource_type.resource_name  (e.g. aws_vpc.main)
-            for m in _RE_RESOURCE_REF.finditer(line):
-                ns = m.group(1).split("_")[0]
-                if ns not in _BUILTIN_NAMESPACES:
-                    _add(m.group(2))
+            self._extract_all_refs(line, ln, current_block, refs, seen)
 
         return refs
+
+    def _update_current_block(self, stripped: str, current_block: str | None) -> str | None:
+        """Update current block context when a new block declaration is encountered."""
+        m = _RE_BLOCK2.match(stripped)
+        if m:
+            kw, label1, label2 = m.group(1), m.group(2), m.group(3)
+            return f"{label1}.{label2}" if kw != "data" else f"data.{label1}.{label2}"
+        mb = _RE_BLOCK1.match(stripped)
+        if mb:
+            return mb.group(2)
+        return current_block  # No block change; preserve prior context
+
+    def _extract_all_refs(
+        self,
+        line: str,
+        ln: int,
+        current_block: str | None,
+        refs: list[dict],
+        seen: set[tuple[str, str]],
+    ) -> None:
+        """Extract all reference types from a single line, guarding against None block."""
+        self._add_refs_of_type(
+            _RE_VAR_REF.finditer(line),
+            lambda m: m.group(1),
+            ln,
+            current_block,
+            refs,
+            seen,
+        )
+        self._add_refs_of_type(
+            _RE_MODULE_REF.finditer(line),
+            lambda m: m.group(1),
+            ln,
+            current_block,
+            refs,
+            seen,
+        )
+        self._add_refs_of_type(
+            _RE_DATA_REF.finditer(line),
+            lambda m: f"data.{m.group(1)}.{m.group(2)}",
+            ln,
+            current_block,
+            refs,
+            seen,
+        )
+        self._add_refs_of_type(
+            _RE_LOCAL_REF.finditer(line),
+            lambda m: m.group(1),
+            ln,
+            current_block,
+            refs,
+            seen,
+        )
+        # resource_type.resource_name with namespace guard
+        for m in _RE_RESOURCE_REF.finditer(line):
+            ns = m.group(1).split("_")[0]
+            if ns not in _BUILTIN_NAMESPACES:
+                self._add_ref(
+                    m.group(2), ln, current_block, refs, seen
+                )
+
+    def _add_refs_of_type(
+        self,
+        matches,
+        extract_name,
+        ln: int,
+        current_block: str | None,
+        refs: list[dict],
+        seen: set[tuple[str, str]],
+    ) -> None:
+        """Add refs of a specific type, applying the name-extraction function."""
+        for m in matches:
+            target = extract_name(m)
+            self._add_ref(target, ln, current_block, refs, seen)
+
+    def _add_ref(
+        self,
+        target: str,
+        ln: int,
+        current_block: str | None,
+        refs: list[dict],
+        seen: set[tuple[str, str]],
+    ) -> None:
+        """Register a reference, guarding deduplication and source_name validity."""
+        key = (target, str(ln))
+        if key not in seen:
+            seen.add(key)
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=ln,
+                    source_name=current_block,  # May be None if line precedes any block
+                )
+            )

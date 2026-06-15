@@ -2,7 +2,7 @@
 
 # roam-code
 
-**The local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did.**
+**The local codebase intelligence layer that lets AI coding agents earn the right to change code — with evidence for what was checked.**
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -24,11 +24,11 @@
 
 ## Why Roam is different
 
-Cursor, Cody, Aider, and Windsurf are **human-first IDE surfaces** that log a session. Roam is an **agent-first CLI surface** that gates the change and emits proof. Four properties no competitor combines today:
+[METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/) and [FrontierCode](https://cognition.ai/blog/frontier-code) both point at the same gap: passing tests is not the same as mergeable code. Roam is an **agent-first CLI surface** that gives the agent local graph facts before it edits, gates risky changes, and emits scoped evidence after the run. In the agent/review tools surveyed as of 2026-06-12, the differentiator is this combination:
 
 - **Credential-free.** No account, no API key, no cloud login. `pip install` and run.
 - **100% local by default.** Source code never leaves the machine; air-gapped repos work like cloud repos. The single outbound surface (`roam metrics-push`) is opt-in, summary-only, and prints its exact payload under `--dry-run`.
-- **Tamper-evident `ChangeEvidence` packets.** Each AI-assisted change compiles into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. PR Replay answers 7 of 8 today; the remaining approvals question surfaces as `producer_not_available`, never silently dropped. Cursor logs the run; Roam proves the change.
+- **Tamper-evident `ChangeEvidence` packets.** A Roam-guided change can compile into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. PR Replay maps those eight questions today: structural change/risk/policy axes are in scope, context and verification are partial, and missing identity/authority/approval evidence is disclosed instead of invented. Cursor logs the run; Roam records and verifies the evidence its producers captured.
 - **MCP runtime security at the wrapper boundary.** Every MCP response is scrubbed for secrets on egress, gated against the active mode (`read_only` / `safe_edit` / `migration` / `autonomous_pr`) with a closed-enum `policy_decision`, and each decision receipt is HMAC-linked into the signed run ledger. Inside-server controls; the gateway layer (Interlock / Lasso / Portkey) composes on top — see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
 
 Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git history, runtime traces, smells, clones, security flows, and algorithmic patterns across 28 languages — the same local facts queried before, during, and after a change.
@@ -299,7 +299,7 @@ roam verify --off / --on               # pause / resume the loop repo-wide
 
 | Command | Role in the loop |
 |---|---|
-| `roam verify-imports <file>` | The hallucination firewall, standalone — validates every import resolves |
+| `roam verify-imports --path src/roam/cli.py` | The hallucination firewall, standalone — validates every import resolves |
 | `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK) |
 | `git diff \| roam critique` | Clones-not-edited check + blast radius on the patch (exit 5 on high severity) |
 | `roam verify --report --persist` | Writes findings to the registry so the **compiler** embeds them as `known_findings` in future envelopes — debt gets fixed opportunistically |
@@ -338,7 +338,7 @@ refactors, never lose entries).
 
 - **Canonical unresolved-path envelopes** across `impact` / `preflight` / `trace` / `test-map` / `context` / `safe-delete` / `split` / `why` — one explicit "not found" shape in JSON mode.
 - **Evidence freshness stamped at the producer.** Runs record hashes for `.roam-rules.yml`, `.roam/constitution.yml`, `.roam/control-map.yml`.
-- **PR Replay evidence coverage improved.** Replay path answers 7 of the 8 evidence questions completely; remaining approvals question marked `producer_not_available` instead of silently omitted.
+- **PR Replay evidence coverage improved.** Replay path maps the 8 evidence questions, fully answers structural change/risk/policy axes, and marks identity/authority/approval evidence as partial, out of scope, or `producer_not_available` instead of silently omitted.
 
 ### v13.1 (released 2026-05-15) — Pattern-2 propagation + shared YAML helper + 3 flagship silent-fallback seals
 
@@ -406,7 +406,7 @@ A few representative commands beyond the core five:
 - **Change safety:** `roam impact <symbol>` (blast radius), `roam diff` (uncommitted-change blast radius), `roam pr-risk` (0-100 PR risk), `roam diagnose <symbol>` (root-cause ranking).
 - **Backend quality:** `roam n1` (N+1 queries), `roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam taint` (graph-reach taint, 10 rule packs).
 - **Index-aware search:** `roam search <pattern>`, `roam grep <pattern>` (grep + reachability + PageRank), `roam uses <name>` (graph-precise references, no string-literal false positives).
-- **Multi-agent:** `roam orchestrate --agents N` (conflict-aware partitioning), `roam fleet plan`, `roam lease` (parallel-agent coordination).
+- **Multi-agent:** `roam orchestrate --agents 3` (conflict-aware partitioning), `roam fleet plan`, `roam lease` (parallel-agent coordination).
 
 ## Walkthrough
 
@@ -505,7 +505,7 @@ roam mcp
 **Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
-227 tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
+243 MCP tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
 
 **Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
 
@@ -538,7 +538,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_annotate_symbol` | Add persistent annotation to a symbol/file for future agent sessions. |
 | `roam_api` | List the public API surface — exported public symbols with signatures and docs. |
 | `roam_api_changes` | Detect breaking and non-breaking API changes vs a git ref. |
-| `roam_api_drift` | Detect mismatches between backend models and frontend interfaces. Triggers: 'where do API contracts diverge?', 'find drift between TS types and Django models', 'audit serializer coverage'. Pair with roam_endpoints for full route inventory. |
+| `roam_api_drift` | Detect field drift between Laravel/PHP models and TypeScript interfaces. Triggers: 'where do API contracts diverge?', 'find drift between PHP $fillable fields and TypeScript types', 'audit frontend API types'. Pair with roam_endpoints for full route inventory. |
 | `roam_architecture_drift` | Compute per-week growth rates for symbols / edges / cycles across a sliding window of persisted ``.roam/snapshots/`` and classify overall direction as ``improving`` / ``degrading`` / ``stable``. Different from ``roam_graph_diff`` (point-in-time delta between two commits) and ``roam_trends`` (metric-level time series) -- this is the snapshot-based architectural-trajectory report. |
 | `roam_article_12_check` | Run a 6-item EU AI Act Article 12 readiness checklist over the indexed repo: audit-trail directory, audit-trail records, retention policy doc, technical docs, attestation surface, high-risk classification heuristic. Emits a structured envelope mapping each item to its Article (12, 18, 19) or Annex (III). Different from ``roam_audit_trail_conformance_check`` (per-record chain integrity) -- this is the repo-level governance-readiness assessment. Per the agentic-assurance guardrails: 'maps to' / 'supports evidence for', never 'certifies' / 'makes compliant'. |
 | `roam_ask` | Natural-language codebase question dispatcher. Examples: 'is it safe to delete X?', 'where does login validate?', 'what just broke?', 'who owns module Y?'. Routes intent to one recipe in the graph-aware 29-recipe registry. One call replaces Grep+Read for most questions. Run this FIRST when the user asks a code-comprehension question. |
@@ -881,7 +881,7 @@ roam guard-pr --post-check --gh-repo $REPO --gh-sha $SHA
 
 **Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1), `sarif` (GitHub Code Scanning / GitLab SAST / Defender).
 
-**Pluggable rule packs.** The verification contract (what counts as a required check for a given change) lives in YAML, not code. Default pack ships with the binary; override with `roam guard-pr --rules .roam/guard-rules.yml`:
+**Pluggable rule packs.** The verification contract (what counts as a required check for a given change) lives in YAML, not code. Default pack ships with the binary; override with `roam guard-pr --rules templates/examples/roam-guard-rules.default.yml`:
 
 ```yaml
 name: my-repo
@@ -1000,7 +1000,7 @@ roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC,
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 227 (15 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| MCP tools for agents | 243 (16 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 28 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
