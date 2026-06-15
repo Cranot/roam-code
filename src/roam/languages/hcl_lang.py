@@ -207,8 +207,11 @@ class HclExtractor(LanguageExtractor):
         new_depth = depth + stripped.count("{") - stripped.count("}")
         if new_depth < 0:
             log.error(
-                f"Unmatched closing brace in {file_path}:{ln} "
-                f"(depth={depth}, line='{stripped[:50]}...')"
+                "Unmatched closing brace in %s:%d (depth=%d, line='%s...')",
+                file_path,
+                ln,
+                depth,
+                stripped[:50],
             )
             return 0  # Reset to recover gracefully
         return new_depth
@@ -217,8 +220,9 @@ class HclExtractor(LanguageExtractor):
         """Validate brace balance at EOF. Logs warning if unclosed braces remain."""
         if final_depth > 0:
             log.warning(
-                f"Unclosed brace(s) in {file_path}: {final_depth} block(s) left open. "
-                f"Symbol extraction may be incomplete."
+                "Unclosed brace(s) in %s: %d block(s) left open. Symbol extraction may be incomplete.",
+                file_path,
+                final_depth,
             )
 
     def _process_line(
