@@ -324,6 +324,23 @@ def _next_commands(env: dict) -> list:
     return []
 
 
+def _validate_next_command(nc: Any, known_commands: set[str]) -> tuple[str, dict[str, Any]] | None:
+    """Validate a single next_command string. Returns violation (reason, evidence) or None."""
+    if not isinstance(nc, str) or not nc.strip().startswith("roam "):
+        return (
+            f"next_command {nc!r} is not a runnable 'roam <cmd>' string (CONSTRAINT 12)",
+            {"offending_next_command": nc},
+        )
+    tokens = [t for t in nc.split()[1:] if not t.startswith("-")]
+    sub = tokens[0] if tokens else ""
+    if sub and known_commands and sub not in known_commands:
+        return (
+            f"next_command names 'roam {sub}' which is not a registered command (CONSTRAINT 12)",
+            {"offending_next_command": nc, "unresolved_subcommand": sub},
+        )
+    return None
+
+
 @agent_opt_detector(task_id="missing-next-command", confidence_basis=CONFIDENCE_STRUCTURAL)
 def detect_missing_next_command(
     envelopes: Iterable[tuple[str, dict]],
@@ -358,34 +375,20 @@ def detect_missing_next_command(
                 )
             continue
         for nc in ncs:
-            if not isinstance(nc, str) or not nc.strip().startswith("roam "):
+            violation = _validate_next_command(nc, known)
+            if violation:
+                reason, evidence = violation
+                confidence = "high" if "not a registered command" in reason else "medium"
                 out.append(
                     _finding(
                         task_id="missing-next-command",
                         detected_way="no-next-command",
                         subject=label,
                         subject_kind="command",
-                        confidence="medium",
+                        confidence=confidence,
                         confidence_basis=CONFIDENCE_STRUCTURAL,
-                        reason=f"{label} next_command {nc!r} is not a runnable 'roam <cmd>' string (CONSTRAINT 12)",
-                        evidence={"offending_next_command": nc},
-                    )
-                )
-                continue
-            # First non-flag token after `roam` must resolve to a real command.
-            tokens = [t for t in nc.split()[1:] if not t.startswith("-")]
-            sub = tokens[0] if tokens else ""
-            if sub and known and sub not in known:
-                out.append(
-                    _finding(
-                        task_id="missing-next-command",
-                        detected_way="no-next-command",
-                        subject=label,
-                        subject_kind="command",
-                        confidence="high",
-                        confidence_basis=CONFIDENCE_STRUCTURAL,
-                        reason=f"{label} next_command names 'roam {sub}' which is not a registered command (CONSTRAINT 12)",
-                        evidence={"offending_next_command": nc, "unresolved_subcommand": sub},
+                        reason=f"{label} {reason}",
+                        evidence=evidence,
                     )
                 )
     return out
@@ -394,6 +397,62 @@ def detect_missing_next_command(
 # ---------------------------------------------------------------------------
 # Task 4: silent-degraded-state (Pattern 2 — disclose, never silent SAFE)
 # ---------------------------------------------------------------------------
+def _has_error_fields(summary: dict, env: dict) -> list[str]:
+    """Detect error field indicators."""
+    result = []
+    for key in ("error", "error_code"):
+        if summary.get(key) or env.get(key):
+            result.append(key)
+    return result
+
+
+def _has_failed_counts(summary: dict) -> list[str]:
+    """Detect non-zero failure counters."""
+    result = []
+    for key in ("detectors_failed", "subcommands_failed"):
+        v = summary.get(key)
+        if isinstance(v, int) and v > 0:
+            result.append(key)
+    return result
+
+
+def _has_failed_lists(summary: dict) -> list[str]:
+    """Detect non-empty failure lists."""
+    result = []
+    for key in ("failed_subcommands", "failed_detectors", "failed_subtasks"):
+        v = summary.get(key)
+        if isinstance(v, list) and v:
+            result.append(key)
+    return result
+
+
+def _has_warning_signals(summary: dict, env: dict) -> list[str]:
+    """Detect warning count and warning list indicators."""
+    result = []
+    wc = summary.get("warnings_count")
+    if isinstance(wc, int) and wc > 0:
+        result.append("warnings_count")
+    for key in ("warnings_out", "warnings"):
+        v = env.get(key) if isinstance(env.get(key), list) else summary.get(key)
+        if isinstance(v, list) and v:
+            result.append(key)
+    return result
+
+
+def _collect_failure_signals(env: dict, summary: dict) -> list[str]:
+    """Collect all failure signal indicators from an envelope.
+
+    Delegates to specialized signal detectors to reduce per-function complexity.
+    Returns unique signal keys that indicate degraded state (Pattern 2).
+    """
+    signals = []
+    signals.extend(_has_error_fields(summary, env))
+    signals.extend(_has_failed_counts(summary))
+    signals.extend(_has_failed_lists(summary))
+    signals.extend(_has_warning_signals(summary, env))
+    return signals
+
+
 @agent_opt_detector(task_id="silent-degraded-state", confidence_basis=CONFIDENCE_STRUCTURAL)
 def detect_silent_degraded_state(envelopes: Iterable[tuple[str, dict]]) -> list[dict[str, Any]]:
     """Flag envelopes that carry a failure signal but don't set partial_success.
@@ -409,26 +468,8 @@ def detect_silent_degraded_state(envelopes: Iterable[tuple[str, dict]]) -> list[
             continue
         summary = env.get("summary") or {}
         if summary.get("partial_success") is True:
-            continue  # correctly disclosed — no violation
-        signals: list[str] = []
-        for key in ("error", "error_code"):
-            if summary.get(key) or env.get(key):
-                signals.append(key)
-        for key in ("detectors_failed", "subcommands_failed"):
-            v = summary.get(key)
-            if isinstance(v, int) and v > 0:
-                signals.append(key)
-        for key in ("failed_subcommands", "failed_detectors", "failed_subtasks"):
-            v = summary.get(key)
-            if isinstance(v, list) and v:
-                signals.append(key)
-        wc = summary.get("warnings_count")
-        if isinstance(wc, int) and wc > 0:
-            signals.append("warnings_count")
-        for key in ("warnings_out", "warnings"):
-            v = env.get(key) if isinstance(env.get(key), list) else summary.get(key)
-            if isinstance(v, list) and v:
-                signals.append(key)
+            continue
+        signals = _collect_failure_signals(env, summary)
         if not signals:
             continue
         out.append(
@@ -762,6 +803,25 @@ def _legacy_param_map() -> dict[str, str]:
     return legacy
 
 
+def _extract_tool_name_from_decorator(dec: Any) -> str | None:
+    """Extract tool name from a @_tool or @_tool(name="...") decorator node.
+
+    Returns tool name if found, None if not a _tool decorator.
+    """
+    import ast
+
+    func = dec.func if isinstance(dec, ast.Call) else dec
+    dname = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    if dname != "_tool":
+        return None
+    if not isinstance(dec, ast.Call):
+        return None
+    for kw in dec.keywords:
+        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+            return kw.value.value
+    return None
+
+
 def discover_tool_params() -> list[tuple[str, tuple[str, ...]]]:
     """AST-discover ``(tool_name, declared_param_names)`` for every @_tool wrapper.
 
@@ -785,15 +845,9 @@ def discover_tool_params() -> list[tuple[str, tuple[str, ...]]]:
             continue
         tool_name = None
         for dec in node.decorator_list:
-            func = dec.func if isinstance(dec, ast.Call) else dec
-            dname = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-            if dname != "_tool":
-                continue
-            if isinstance(dec, ast.Call):
-                for kw in dec.keywords:
-                    if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                        tool_name = kw.value.value
-            break
+            tool_name = _extract_tool_name_from_decorator(dec)
+            if tool_name is not None:
+                break
         if tool_name is None:
             continue
         params = tuple(a.arg for a in node.args.args if a.arg not in ("self", "cls"))
