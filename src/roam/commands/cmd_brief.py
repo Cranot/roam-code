@@ -88,7 +88,7 @@ def _safe_repo_root() -> Optional[Path]:
     """Best-effort project-root resolution. Returns ``None`` on failure."""
     try:
         return find_project_root()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort root resolution; any failure means "unknown"
         return None
 
 
@@ -170,20 +170,20 @@ def _section_highlights(
     stack: list[dict[str, Any]] = []
     try:
         stack = section_stack(conn) or []
-    except Exception:
+    except Exception:  # noqa: BLE001 -- highlights are best-effort; a failing section degrades to empty
         stack = []
     stack = stack[:_HIGHLIGHTS_TOP_STACK]
 
     danger: list[dict[str, Any]] = []
     try:
         danger = section_danger_zones(conn, limit=_HIGHLIGHTS_TOP_DANGER) or []
-    except Exception:
+    except Exception:  # noqa: BLE001 -- highlights are best-effort; a failing section degrades to empty
         danger = []
 
     laws: list[dict[str, Any]] = []
     try:
         laws = section_laws(conn, top_n=_HIGHLIGHTS_TOP_LAWS) or []
-    except Exception:
+    except Exception:  # noqa: BLE001 -- highlights are best-effort; a failing section degrades to empty
         laws = []
 
     state = "ok"
@@ -216,7 +216,7 @@ def _section_pr_bundle(repo_root: Optional[Path]) -> dict[str, Any]:
         from roam.commands.cmd_pr_bundle import _bundle_path
 
         path = _bundle_path(repo_root)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- import or path resolution may fail; fall back to detached filename
         # Fall back to the detached-bundle filename.
         path = repo_root / ".roam" / "pr-bundle.json"
 
@@ -320,7 +320,7 @@ def _section_runs(repo_root: Optional[Path], top_n: int) -> dict[str, Any]:
     in_progress: list[dict[str, Any]] = []
     try:
         all_runs = list(list_runs(repo_root))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- run ledger is optional; absent/corrupt ledger degrades to no runs
         all_runs = []
 
     for meta in all_runs:
@@ -363,7 +363,7 @@ def _short_path(p: str, repo_root: Optional[Path]) -> str:
     try:
         rel = Path(p).relative_to(repo_root)
         return str(rel).replace("\\", "/")
-    except Exception:
+    except ValueError:
         return p
 
 
@@ -696,7 +696,7 @@ def brief_cmd(
     try:
         if repo_root is not None and db_exists(repo_root):
             index_present = True
-    except Exception:
+    except Exception:  # noqa: BLE001 -- brief works without a DB; any probe failure means "no index"
         index_present = False
 
     sections_consulted: list[str] = []

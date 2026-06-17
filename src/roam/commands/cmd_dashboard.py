@@ -14,6 +14,7 @@ B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import sqlite3
 import time
 
 import click
@@ -36,7 +37,7 @@ def _overview(conn):
 
     try:
         cluster_count = conn.execute("SELECT COUNT(DISTINCT cluster_id) FROM clusters").fetchone()[0]
-    except Exception:
+    except sqlite3.Error:
         cluster_count = 0
 
     lang_rows = conn.execute(
@@ -56,7 +57,7 @@ def _overview(conn):
             index_age_s = int(time.time() - db_path.stat().st_mtime)
         else:
             index_age_s = None
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort index-age probe; import/stat failures degrade to unknown age
         index_age_s = None
 
     return {
@@ -127,7 +128,7 @@ def _risk_areas(conn):
     # Bus factor 1 files (files with only 1 distinct author)
     try:
         bf1_count = conn.execute("SELECT COUNT(*) FROM file_stats WHERE distinct_authors = 1").fetchone()[0]
-    except Exception:
+    except sqlite3.Error:
         bf1_count = 0
     bf1_pct = round(bf1_count * 100 / total_files, 1)
 
@@ -143,7 +144,7 @@ def _risk_areas(conn):
             if not r["file_path"].replace("\\", "/").split("/")[-1].lower().startswith("test_")
             and not r["file_path"].replace("\\", "/").split("/")[-1].lower().endswith("_test.py")
         )
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- dead-symbol probe spans import + query + row parsing; any failure degrades to 0
         dead_count = 0
 
     total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 1
@@ -157,7 +158,7 @@ def _risk_areas(conn):
         G = build_symbol_graph(conn)
         cycles = find_cycles(G)
         cycle_count = len(cycles)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- graph build + cycle detection may raise networkx/import errors; degrade to 0 cycles
         cycle_count = 0
 
     return {

@@ -743,9 +743,75 @@ def _ensure_plugin_commands_loaded() -> None:
             if cmd_name in _COMMANDS:
                 continue
             _COMMANDS[cmd_name] = target
-    except Exception:
-        # Plugin loading should never break core CLI behavior.
+    except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior
         return
+
+
+def _emit_deprecation_notice_for_args(args: list[str]) -> None:
+    if not args:
+        return
+
+    cmd_name = args[0]
+    record = _deprecation_record(cmd_name)
+    if not record or not record.get("replacement"):
+        return
+
+    msg = _format_deprecation_notice(cmd_name, record)
+    click.echo(msg, err=True)
+    _set_active_deprecation_notice(msg)
+
+
+def _is_unknown_command_error(exc: click.UsageError) -> bool:
+    return "No such command" in str(exc)
+
+
+def _bad_command_token(args: list[str]) -> str:
+    bad = args[0] if args else ""
+    return bad.strip("'\"")
+
+
+def _close_command_matches(bad: str) -> list[str]:
+    import difflib
+
+    _ensure_plugin_commands_loaded()
+    # W1083-followup-2: align to canonical n=2 (5 of 6 sites use n=2; cli.py was the outlier)
+    return difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=2, cutoff=0.6)
+
+
+def _recipe_hint_for_bad_command(bad: str) -> str | None:
+    if len(bad) < 6:
+        return None
+    try:
+        from roam.ask.classifier import classify
+
+        matches = classify(bad)
+    except Exception:  # noqa: BLE001 — command suggestions must never break unknown-command errors
+        return None
+
+    if matches and matches[0][1] >= 0.5:
+        recipe = matches[0][0]
+        return f'`roam ask "{bad}"` (matches recipe: {recipe.name})'
+    return None
+
+
+def _unknown_command_usage_error(args: list[str], exc: click.UsageError) -> click.UsageError | None:
+    if not _is_unknown_command_error(exc):
+        return None
+
+    bad = _bad_command_token(args)
+    if not bad:
+        return None
+
+    close = _close_command_matches(bad)
+    if close:
+        suggestions = ", ".join(f"`roam {name}`" for name in close)
+        return click.UsageError(f"No such command: '{bad}'. Did you mean {suggestions}?")
+
+    recipe_hint = _recipe_hint_for_bad_command(bad)
+    if recipe_hint:
+        return click.UsageError(f"No such command: '{bad}'. Try {recipe_hint}.")
+
+    return None
 
 
 class LazyGroup(click.Group):
@@ -760,6 +826,7 @@ class LazyGroup(click.Group):
         "--detail",
     }
     _GLOBAL_VALUE_OPTIONS = {"--budget"}
+    _AMBIGUOUS_FLAG_VS_VALUE = {"--agent"}
 
     def parse_args(self, ctx, args):
         """Accept known global options before or after the subcommand.
@@ -770,68 +837,96 @@ class LazyGroup(click.Group):
         such option" while keeping command-specific parsing unchanged.
         """
         if args:
-            args = self._normalise_global_option_position(list(args))
+            args = self._normalise_global_option_position(ctx, list(args))
         return super().parse_args(ctx, args)
 
-    def _normalise_global_option_position(self, args: list[str]) -> list[str]:
+    def _normalise_global_option_position(self, ctx, args: list[str]) -> list[str]:
         if not args:
             return args
 
-        cmd_index = None
-        idx = 0
-        while idx < len(args):
-            token = args[idx]
-            if token == "--":
-                return args
-            if token.startswith("-"):
-                if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(args):
-                    idx += 2
-                    continue
-                idx += 1
-                continue
-            cmd_index = idx
-            break
+        cmd_index = self._find_command_index(args)
         if cmd_index is None or cmd_index >= len(args) - 1:
             return args
 
         before = args[:cmd_index]
         command = args[cmd_index]
         after = args[cmd_index + 1 :]
-        moved: list[str] = []
-        kept: list[str] = []
-        idx = 0
-        # Global flags that are ambiguous with subcommand value options.
-        # ``--agent`` is a top-level flag, but ``roam runs start --agent NAME``
-        # uses it as an option-with-value owned by the subcommand. When the
-        # next token is a non-flag value, leave the pair for the subcommand
-        # parser to handle. Top-level usage (``roam health --agent`` /
-        # ``roam --agent health``) is unaffected.
-        _AMBIGUOUS_FLAG_VS_VALUE = {"--agent"}
-        while idx < len(after):
-            token = after[idx]
-            if token in self._GLOBAL_FLAGS:
-                if token in _AMBIGUOUS_FLAG_VS_VALUE and idx + 1 < len(after) and not after[idx + 1].startswith("-"):
-                    # Treat as subcommand-owned ``--agent VALUE`` and leave alone.
-                    kept.append(token)
-                    idx += 1
-                    continue
-                moved.append(token)
-                idx += 1
-                continue
-            if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(after):
-                moved.extend([token, after[idx + 1]])
-                idx += 2
-                continue
-            if any(token.startswith(f"{opt}=") for opt in self._GLOBAL_VALUE_OPTIONS):
-                moved.append(token)
-                idx += 1
-                continue
-            kept.append(token)
-            idx += 1
+        moved, kept = self._split_post_command_options(ctx, command, after)
 
         if not moved:
             return args
         return before + moved + [command] + kept
+
+    def _find_command_index(self, args: list[str]) -> int | None:
+        idx = 0
+        while idx < len(args):
+            token = args[idx]
+            if token == "--":
+                return None
+            if not token.startswith("-"):
+                return idx
+            idx += self._pre_command_option_span(args, idx)
+        return None
+
+    def _pre_command_option_span(self, args: list[str], idx: int) -> int:
+        token = args[idx]
+        if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(args):
+            return 2
+        return 1
+
+    def _split_post_command_options(self, ctx, command: str, tokens: list[str]) -> tuple[list[str], list[str]]:
+        moved: list[str] = []
+        kept: list[str] = []
+        idx = 0
+        while idx < len(tokens):
+            values, destination, consumed = self._classify_post_command_option(ctx, command, tokens, idx)
+            if destination == "move":
+                moved.extend(values)
+            else:
+                kept.extend(values)
+            idx += consumed
+        return moved, kept
+
+    def _classify_post_command_option(
+        self, ctx, command: str, tokens: list[str], idx: int
+    ) -> tuple[list[str], str, int]:
+        token = tokens[idx]
+        if token in self._GLOBAL_FLAGS:
+            destination = "keep" if self._subcommand_keeps_flag(ctx, command, tokens, idx) else "move"
+            return [token], destination, 1
+        if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(tokens):
+            return [token, tokens[idx + 1]], "move", 2
+        if self._is_global_value_assignment(token):
+            return [token], "move", 1
+        return [token], "keep", 1
+
+    def _subcommand_keeps_flag(self, ctx, command: str, tokens: list[str], idx: int) -> bool:
+        token = tokens[idx]
+        return self._command_owns_option(ctx, command, token) or self._looks_like_subcommand_value_flag(tokens, idx)
+
+    def _looks_like_subcommand_value_flag(self, tokens: list[str], idx: int) -> bool:
+        """Return True for ambiguous flags used as subcommand value options."""
+        token = tokens[idx]
+        has_value = idx + 1 < len(tokens) and not tokens[idx + 1].startswith("-")
+        return token in self._AMBIGUOUS_FLAG_VS_VALUE and has_value
+
+    def _is_global_value_assignment(self, token: str) -> bool:
+        return any(token.startswith(f"{opt}=") for opt in self._GLOBAL_VALUE_OPTIONS)
+
+    def _command_owns_option(self, ctx, command: str, option: str) -> bool:
+        """Return True when a subcommand declares *option* itself."""
+        try:
+            cmd = self.get_command(ctx, command)
+        except (AttributeError, ImportError, KeyError, TypeError):
+            return False
+        if cmd is None:
+            return False
+        for param in getattr(cmd, "params", ()):
+            opts = tuple(getattr(param, "opts", ()) or ())
+            secondary = tuple(getattr(param, "secondary_opts", ()) or ())
+            if option in opts or option in secondary:
+                return True
+        return False
 
     def list_commands(self, ctx):
         _ensure_plugin_commands_loaded()
@@ -872,58 +967,13 @@ class LazyGroup(click.Group):
         # Python process (matters for `CliRunner`-driven tests where many
         # commands run inside one interpreter).
         _set_active_deprecation_notice(None)
-        # pre-resolve deprecation hint.
-        if args:
-            cmd_name = args[0]
-            record = _deprecation_record(cmd_name)
-            if record and record.get("replacement"):
-                msg = _format_deprecation_notice(cmd_name, record)
-                click.echo(msg, err=True)
-                # Stash the notice so the JSON envelope builder
-                # (`roam.output.formatter.json_envelope`) can surface it as
-                # `summary.deprecation_warning` for downstream JSON consumers
-                # who never see stderr.
-                _set_active_deprecation_notice(msg)
+        _emit_deprecation_notice_for_args(args)
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:
-            msg = str(exc)
-            if "No such command" not in msg:
-                raise
-            # Click's UsageError exposes the bad token as its first arg
-            # in some versions; fall back to parsing the message.
-            bad = args[0] if args else ""
-            bad = bad.strip("'\"")
-            if not bad:
-                raise
-            import difflib
-
-            _ensure_plugin_commands_loaded()
-            # W1083-followup-2: align to canonical n=2 (5 of 6 sites use n=2; cli.py was the outlier)
-            close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=2, cutoff=0.6)
-            # when no edit-distance match lands but the user
-            # typed a phrase, route them through the ``ask`` classifier
-            # so a natural-language attempt ("trace login flow") still
-            # gets a useful suggestion.
-            recipe_hint = None
-            if not close and len(bad) >= 6:
-                try:
-                    from roam.ask.classifier import classify
-
-                    matches = classify(bad)
-                    # ``classify`` returns ``[(Recipe, score), ...]``; pick the top
-                    # entry only when its score is above a confidence floor so
-                    # one-word typos don't get force-routed into a recipe.
-                    if matches and matches[0][1] >= 0.5:
-                        recipe = matches[0][0]
-                        recipe_hint = f'`roam ask "{bad}"` (matches recipe: {recipe.name})'
-                except Exception:
-                    recipe_hint = None
-            if close:
-                suggestions = ", ".join(f"`roam {c}`" for c in close)
-                raise click.UsageError(f"No such command: '{bad}'. Did you mean {suggestions}?") from exc
-            if recipe_hint:
-                raise click.UsageError(f"No such command: '{bad}'. Try {recipe_hint}.") from exc
+            hinted = _unknown_command_usage_error(args, exc)
+            if hinted is not None:
+                raise hinted from exc
             raise
 
     def invoke(self, ctx):
@@ -1107,99 +1157,83 @@ def _resolve_invoked_command_name(ctx: click.Context) -> str | None:
     return None
 
 
-def _enforce_mode_gate(ctx: click.Context) -> None:
-    """Run the mode-enforcement gate. Aborts dispatch on a blocked command.
+def _mode_enforcement_enabled() -> bool:
+    return os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip() in {"1", "true", "yes", "on"}
 
-    Behaviour matrix:
 
-      * Enforcement off (default) -> noop.
-      * Enforcement on, command in always-allowed set -> noop.
-      * Enforcement on, command not in _COMMANDS -> noop (let Click
-        produce its own unknown-command error).
-      * Enforcement on, command allowed by active mode -> noop.
-      * Enforcement on, command BLOCKED:
-          - if `--override-mode` was passed -> emit stderr warning,
-            opportunistically log the override to the active run, and
-            allow dispatch to proceed.
-          - else -> emit stderr error, exit 5 (gate-failure).
-    """
-    # Opt-in: leave the dispatch path alone unless the user / harness
-    # has explicitly asked for enforcement.
-    if os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip() not in {"1", "true", "yes", "on"}:
-        return
+def _canonical_mode_command(cmd_name: str) -> str:
+    return _deprecation_replacement(cmd_name) or cmd_name
 
-    cmd_name = _resolve_invoked_command_name(ctx)
-    if not cmd_name:
-        return
 
-    # Resolve deprecated aliases to their canonical name so a policy
-    # written for `weather` covers `churn`, etc. We don't strip the
-    # alias from the invocation — Click still dispatches to the alias
-    # entry — we just check the canonical name.
-    canonical = _deprecation_replacement(cmd_name) or cmd_name
-
+def _mode_gate_should_skip(cmd_name: str, canonical: str) -> bool:
     if canonical in _MODE_ALWAYS_ALLOWED or cmd_name in _MODE_ALWAYS_ALLOWED:
-        return
-    if canonical not in _COMMANDS and cmd_name not in _COMMANDS:
-        # Unknown command: Click will produce a UsageError. Don't
-        # double-error from the gate.
-        return
+        return True
+    return canonical not in _COMMANDS and cmd_name not in _COMMANDS
 
-    # Best-effort policy check. ANY error here -> fail-open.
+
+def _mode_gate_dependencies():
     try:
         from roam.db.connection import find_project_root
         from roam.modes import check_command_allowed
-    except Exception:
-        return
+
+        return find_project_root, check_command_allowed
+    except ImportError:
+        return None
+
+
+def _mode_gate_decision(canonical: str):
+    dependencies = _mode_gate_dependencies()
+    if dependencies is None:
+        return None
+
+    find_project_root, check_command_allowed = dependencies
     try:
         repo_root = find_project_root()
-    except Exception:
-        return
-    try:
         allowed, reason = check_command_allowed(repo_root, canonical)
-    except Exception:
-        return
+        return repo_root, allowed, reason
+    except Exception:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
+        return None
 
-    if allowed:
-        return
 
-    # ---- Blocked. Look at the override flag.
-    obj = ctx.ensure_object(dict)
-    override = bool(obj.get("override_mode", False))
-    if override:
-        try:
-            from roam.modes import resolve_mode
+def _active_mode_name(repo_root) -> str:
+    try:
+        from roam.modes import resolve_mode
 
-            active_name = resolve_mode(repo_root).name
-        except Exception:
-            active_name = "<unknown>"
-        click.echo(
-            f"WARNING: Mode enforcement overridden. Active mode: {active_name}. Command: {canonical}.",
-            err=True,
-        )
-        # Opportunistically log the override into the active run so
-        # `roam replay` shows the policy exception. Failure here is a
-        # no-op: we never let logging derail dispatch.
-        try:
-            from roam.runs.helpers import auto_log
+        return resolve_mode(repo_root).name
+    except Exception:  # noqa: BLE001 — override warning should survive mode metadata failures
+        return "<unknown>"
 
-            auto_log(
-                {
-                    "command": canonical,
-                    "summary": {
-                        "verdict": f"override-mode used: active={active_name}",
-                        "partial_success": True,
-                    },
+
+def _log_mode_override(canonical: str, active_name: str, repo_root) -> None:
+    try:
+        from roam.runs.helpers import auto_log
+
+        auto_log(
+            {
+                "command": canonical,
+                "summary": {
+                    "verdict": f"override-mode used: active={active_name}",
+                    "partial_success": True,
                 },
-                action="mode-override",
-                target=canonical,
-                repo_root=repo_root,
-            )
-        except Exception:  # noqa: BLE001 — audit logging must never block the override
-            pass
-        return
+            },
+            action="mode-override",
+            target=canonical,
+            repo_root=repo_root,
+        )
+    except Exception:  # noqa: BLE001 — audit logging must never block the override
+        pass
 
-    # Blocked + no override -> exit 5 with a clear stderr message.
+
+def _allow_mode_override(canonical: str, repo_root) -> None:
+    active_name = _active_mode_name(repo_root)
+    click.echo(
+        f"WARNING: Mode enforcement overridden. Active mode: {active_name}. Command: {canonical}.",
+        err=True,
+    )
+    _log_mode_override(canonical, active_name, repo_root)
+
+
+def _block_mode_command(ctx: click.Context, reason: str) -> None:
     from roam.exit_codes import EXIT_GATE_FAILURE
 
     click.echo(f"BLOCKED: {reason}", err=True)
@@ -1208,6 +1242,35 @@ def _enforce_mode_gate(ctx: click.Context) -> None:
         err=True,
     )
     ctx.exit(EXIT_GATE_FAILURE)
+
+
+def _enforce_mode_gate(ctx: click.Context) -> None:
+    """Run the opt-in mode-enforcement gate before command dispatch."""
+    if not _mode_enforcement_enabled():
+        return
+
+    cmd_name = _resolve_invoked_command_name(ctx)
+    if not cmd_name:
+        return
+
+    canonical = _canonical_mode_command(cmd_name)
+    if _mode_gate_should_skip(cmd_name, canonical):
+        return
+
+    decision = _mode_gate_decision(canonical)
+    if decision is None:
+        return
+    repo_root, allowed, reason = decision
+
+    if allowed:
+        return
+
+    obj = ctx.ensure_object(dict)
+    if bool(obj.get("override_mode", False)):
+        _allow_mode_override(canonical, repo_root)
+        return
+
+    _block_mode_command(ctx, reason)
 
 
 # `_short_help_via_ast` is called 126x by `roam --help`,
@@ -1259,6 +1322,59 @@ def _save_short_help_cache_if_dirty() -> None:
         pass
 
 
+def _short_help_source_path(module_path: str) -> str:
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rel = module_path.replace(".", os.sep) + ".py"
+    return os.path.join(pkg_root, rel)
+
+
+def _source_mtime(src_path: str) -> float:
+    try:
+        return os.path.getmtime(src_path)
+    except OSError:
+        return 0.0
+
+
+def _cached_short_help(cache: dict, cache_key: str, mtime: float) -> str | None:
+    cached = cache.get(cache_key)
+    if cached and cached.get("mtime") == mtime:
+        return cached.get("text") or None
+    return None
+
+
+def _parse_short_help_source(src_path: str):
+    try:
+        import ast as _ast
+
+        with open(src_path, encoding="utf-8") as fh:
+            return _ast.parse(fh.read(), filename=src_path)
+    except (OSError, SyntaxError):
+        return None
+
+
+def _click_short_help_text(doc: str) -> str:
+    first_para = doc.split("\n\n", 1)[0].strip()
+    first_line = " ".join(first_para.split())
+    if len(first_line) > 60:
+        return first_line[:57] + "..."
+    return first_line
+
+
+def _target_function_docstring(tree, attr_name: str) -> str | None:
+    import ast as _ast
+
+    for node in tree.body:
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and node.name == attr_name:
+            return _ast.get_docstring(node) or ""
+    return None
+
+
+def _store_short_help(cache: dict, cache_key: str, mtime: float, text: str) -> None:
+    global _short_help_disk_cache_dirty
+    cache[cache_key] = {"mtime": mtime, "text": text}
+    _short_help_disk_cache_dirty = True
+
+
 def _short_help_via_ast(cmd_name: str) -> str | None:
     """Extract a Click short-help string from cmd_*.py without importing.
 
@@ -1270,53 +1386,82 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
     Returns ``None`` when the cmd file or expected attribute is absent;
     the caller falls back to the live ``self.get_command()`` path.
     """
-    global _short_help_disk_cache_dirty
     target = _COMMANDS.get(cmd_name)
     if not target:
         return None
+
     module_path, attr_name = target
-    # cli.py lives at src/roam/cli.py; cmd modules at src/roam/commands/cmd_*.py.
-    # Build the path from the module dotted path relative to the package root,
-    # not relative to cli.py.
-    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    rel = module_path.replace(".", os.sep) + ".py"
-    src_path = os.path.join(pkg_root, rel)
+    src_path = _short_help_source_path(module_path)
     if not os.path.isfile(src_path):
         return None
 
-    # V6 — cache check (key includes mtime so source edits invalidate).
-    try:
-        mtime = os.path.getmtime(src_path)
-    except OSError:
-        mtime = 0.0
+    mtime = _source_mtime(src_path)
     cache = _load_short_help_cache()
     cache_key = f"{module_path}:{attr_name}"
-    cached = cache.get(cache_key)
-    if cached and cached.get("mtime") == mtime:
-        return cached.get("text") or None
+    cached_text = _cached_short_help(cache, cache_key, mtime)
+    if cached_text is not None:
+        return cached_text
+
+    tree = _parse_short_help_source(src_path)
+    if tree is None:
+        return None
+
+    doc = _target_function_docstring(tree, attr_name)
+    if doc is None:
+        return None
+
+    short_help = _click_short_help_text(doc)
+    _store_short_help(cache, cache_key, mtime, short_help)
+    return short_help
+
+
+def _check_python_version(issues: list[str]) -> None:
+    if sys.version_info < (3, 10):
+        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.10")
+
+
+def _check_importable(module_name: str, label: str, issues: list[str]) -> None:
+    try:
+        __import__(module_name)
+    except ImportError:
+        issues.append(f"{label} not installed")
+
+
+def _check_git_available(issues: list[str]) -> None:
+    import shutil
+
+    if not shutil.which("git"):
+        issues.append("git not found in PATH")
+
+
+def _check_sqlite_available(issues: list[str]) -> None:
+    import sqlite3
 
     try:
-        import ast as _ast
+        conn = sqlite3.connect(":memory:")
+        conn.execute("SELECT 1")
+        conn.close()
+    except sqlite3.Error as exc:  # pragma: no cover
+        issues.append(f"SQLite error: {exc}")
 
-        with open(src_path, encoding="utf-8") as fh:
-            tree = _ast.parse(fh.read(), filename=src_path)
-    except (OSError, SyntaxError):
-        return None
-    for node in tree.body:
-        # Find the function definition matching attr_name. Click commands
-        # are functions decorated with @click.command (or named decorators).
-        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and node.name == attr_name:
-            doc = _ast.get_docstring(node) or ""
-            # Click's behaviour: take the first paragraph (up to blank line),
-            # strip trailing punctuation, cap at 60 chars + "...".
-            first_para = doc.split("\n\n", 1)[0].strip()
-            first_line = " ".join(first_para.split())
-            if len(first_line) > 60:
-                first_line = first_line[:57] + "..."
-            cache[cache_key] = {"mtime": mtime, "text": first_line}
-            _short_help_disk_cache_dirty = True
-            return first_line
-    return None
+
+def _setup_check_issues() -> list[str]:
+    issues: list[str] = []
+    _check_python_version(issues)
+    _check_importable("tree_sitter", "tree-sitter", issues)
+    _check_importable("tree_sitter_language_pack", "tree-sitter-language-pack", issues)
+    _check_git_available(issues)
+    _check_sqlite_available(issues)
+    return issues
+
+
+def _emit_setup_check_result(ctx: click.Context, issues: list[str]) -> None:
+    if issues:
+        click.echo(f"roam-code setup incomplete: {'; '.join(issues)}")
+        ctx.exit(1)
+
+    click.echo("roam-code ready")
+    ctx.exit(0)
 
 
 def _run_check(ctx: click.Context, param: click.Parameter, value: bool) -> None:
@@ -1334,46 +1479,7 @@ def _run_check(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     if not value or ctx.resilient_parsing:
         return
 
-    issues: list[str] = []
-
-    # 1. Python version
-    if sys.version_info < (3, 10):
-        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.10")
-
-    # 2. tree-sitter
-    try:
-        import tree_sitter  # noqa: F401
-    except ImportError:
-        issues.append("tree-sitter not installed")
-
-    # 3. tree-sitter-language-pack
-    try:
-        import tree_sitter_language_pack  # noqa: F401
-    except ImportError:
-        issues.append("tree-sitter-language-pack not installed")
-
-    # 4. git on PATH
-    import shutil
-
-    if not shutil.which("git"):
-        issues.append("git not found in PATH")
-
-    # 5. SQLite in-memory database
-    try:
-        import sqlite3
-
-        _conn = sqlite3.connect(":memory:")
-        _conn.execute("SELECT 1")
-        _conn.close()
-    except Exception as exc:  # pragma: no cover
-        issues.append(f"SQLite error: {exc}")
-
-    if issues:
-        click.echo(f"roam-code setup incomplete: {'; '.join(issues)}")
-        ctx.exit(1)
-    else:
-        click.echo("roam-code ready")
-        ctx.exit(0)
+    _emit_setup_check_result(ctx, _setup_check_issues())
 
 
 def _check_gate(gate_expr: str, data: dict) -> bool:
@@ -1452,6 +1558,117 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     ctx.exit(0)
 
 
+def _apply_agent_mode(agent: bool, json_mode: bool, compact: bool, budget: int) -> tuple[bool, bool, int]:
+    if not agent:
+        return json_mode, compact, budget
+
+    json_mode = True
+    compact = True
+    if budget <= 0:
+        budget = 500
+    return json_mode, compact, budget
+
+
+def _populate_cli_context(
+    ctx: click.Context,
+    *,
+    json_mode: bool,
+    compact: bool,
+    agent: bool,
+    sarif_mode: bool,
+    budget: int,
+    include_excluded: bool,
+    detail: bool,
+    override_mode: bool,
+) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj["json"] = json_mode
+    ctx.obj["compact"] = compact
+    ctx.obj["agent"] = agent
+    ctx.obj["sarif"] = sarif_mode
+    ctx.obj["budget"] = budget
+    ctx.obj["include_excluded"] = include_excluded
+    ctx.obj["detail"] = detail
+    ctx.obj["override_mode"] = bool(override_mode)
+
+
+def _structured_output_requested(json_mode: bool, sarif_mode: bool, agent: bool) -> bool:
+    return json_mode or sarif_mode or agent
+
+
+def _stderr_showwarning(message, category, filename, lineno, file=None, line=None) -> None:
+    import json as _json
+
+    try:
+        line_json = _json.dumps(
+            {
+                "warning": str(message),
+                "category": getattr(category, "__name__", str(category)),
+                "filename": str(filename),
+                "lineno": int(lineno),
+            }
+        )
+        sys.__stderr__.write(line_json + "\n")
+    except Exception:  # noqa: BLE001 — warning serialization must never crash the command
+        try:
+            sys.__stderr__.write(
+                f'{{"warning": {str(message)!r}, "category": {getattr(category, "__name__", str(category))!r}}}\n'
+            )
+        except Exception:  # noqa: BLE001 — a warning handler must never crash the command
+            pass
+
+
+def _install_structured_warning_handler() -> None:
+    import warnings as _warnings
+
+    # W1078: under structured-output modes, keep warnings off stdout and
+    # preserve pytest/user warning hooks by only replacing the stdlib default.
+    default_showwarning = getattr(_warnings, "_showwarning_orig", None) or getattr(_warnings, "_showwarning_impl", None)
+    if default_showwarning is not None and _warnings.showwarning is default_showwarning:
+        _warnings.showwarning = _stderr_showwarning
+
+
+def _ci_mode_enabled(ci_mode: bool) -> bool:
+    if ci_mode:
+        return True
+    env_ci = (os.environ.get("ROAM_CI") or "").strip().lower()
+    return env_ci in {"1", "true", "yes", "on"}
+
+
+def _warn_mode_gate_skipped() -> None:
+    try:
+        click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
+    except Exception:  # noqa: BLE001 — the gate must never block a command via its own bug
+        pass
+
+
+def _run_mode_gate_safely(ctx: click.Context) -> None:
+    try:
+        _enforce_mode_gate(ctx)
+    except click.exceptions.Exit:
+        raise
+    except Exception:  # noqa: BLE001 — the mode gate must never block via its own bug
+        _warn_mode_gate_skipped()
+
+
+def _install_local_telemetry(ctx: click.Context) -> None:
+    import time as _time
+
+    from roam.telemetry import record as _telemetry_record
+
+    start = _time.perf_counter()
+
+    def _on_close():
+        try:
+            cmd_name = ctx.invoked_subcommand or "<root>"
+            duration_ms = int((_time.perf_counter() - start) * 1000)
+            _telemetry_record(cmd_name, duration_ms, exit_code=0)
+        except Exception:  # noqa: BLE001 — telemetry must never break command teardown
+            pass
+
+    ctx.call_on_close(_on_close)
+
+
 @click.group(cls=LazyGroup)
 @click.version_option(package_name="roam-code")
 @click.option(
@@ -1517,134 +1734,20 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     if agent and sarif_mode:
         raise click.UsageError("--agent cannot be combined with --sarif")
 
-    # Agent mode is optimized for CLI-invoked sub-agents:
-    # - forces JSON for machine parsing
-    # - uses compact envelope to reduce token overhead
-    # - defaults to 500-token budget unless user overrides with --budget
-    if agent:
-        json_mode = True
-        compact = True
-        if budget <= 0:
-            budget = 500
-
-    ctx.ensure_object(dict)
-    ctx.obj["json"] = json_mode
-    ctx.obj["compact"] = compact
-    ctx.obj["agent"] = agent
-    ctx.obj["sarif"] = sarif_mode
-    ctx.obj["budget"] = budget
-    ctx.obj["include_excluded"] = include_excluded
-    ctx.obj["detail"] = detail
-    ctx.obj["override_mode"] = bool(override_mode)
-
-    # W1078: under structured-output modes (--json / --sarif / --agent),
-    # make sure `warnings.warn(...)` can never land on stdout. Some
-    # transitive deps (numpy/scipy compatibility shims surfaced via
-    # networkx pagerank/spectral paths) emit warnings that, when stderr
-    # is merged into stdout at the shell layer (`2>&1`, certain CI
-    # pipelines), silently corrupt JSON pipelines like
-    # `roam --json health | jq`.
-    #
-    # Defensive policy: install a stderr-bound showwarning override ONLY
-    # IF the current hook is the stdlib default. This preserves pytest's
-    # warning-capture machinery (`pytest.warns`, the warnings summary,
-    # `recwarn` fixture) and any user-installed handler. The override
-    # writes to `sys.__stderr__` (the original fd) so that even if a
-    # downstream layer replaces `sys.stderr` with a stdout-aliasing
-    # wrapper, warnings still route to the terminal's stderr stream.
-    if json_mode or sarif_mode or agent:
-        import warnings as _warnings
-
-        # The stdlib stores the default handler under several names across
-        # Python versions: `_showwarning_orig` (3.8+) and `_showwarning_impl`
-        # (3.11+). Either one identifies "nobody has installed an override".
-        _default_showwarning = getattr(_warnings, "_showwarning_orig", None) or getattr(
-            _warnings, "_showwarning_impl", None
-        )
-        if _default_showwarning is not None and _warnings.showwarning is _default_showwarning:
-
-            def _stderr_showwarning(message, category, filename, lineno, file=None, line=None):
-                # W1078: emit the warning as a single structured JSON line on
-                # `sys.__stderr__` (NOT stdout). A consumer merging streams
-                # (`2>&1`) then still sees only JSON — free-form
-                # `formatwarning` text would corrupt that combined stream.
-                # Shape matches the CLAUDE.md "MCP runtime security" contract:
-                # `{"warning": ..., "category": ...}` (plus filename/lineno).
-                import json as _json
-
-                try:
-                    line_json = _json.dumps(
-                        {
-                            "warning": str(message),
-                            "category": getattr(category, "__name__", str(category)),
-                            "filename": str(filename),
-                            "lineno": int(lineno),
-                        }
-                    )
-                    sys.__stderr__.write(line_json + "\n")
-                except Exception:
-                    # last-ditch: never let a warning handler crash the command
-                    try:
-                        sys.__stderr__.write(
-                            f'{{"warning": {str(message)!r}, '
-                            f'"category": {getattr(category, "__name__", str(category))!r}}}\n'
-                        )
-                    except Exception:  # noqa: BLE001 — a warning handler must never crash the command
-                        pass
-
-            _warnings.showwarning = _stderr_showwarning
-
-    # W21.6: --ci is the single semantic "I'm running in CI" lever. It's a
-    # composition over the existing per-command flags (over-fetch
-    # --leaks-only, pr-bundle --strict, etc.). Subcommands consult
-    # ctx.obj["ci_mode"] and flip THEIR LOCAL DEFAULTS — explicit user
-    # flags still win (LAW 11: user intent > inference). Also pickable up
-    # via ROAM_CI=1 so workflows that already export it (GitHub Actions,
-    # GitLab) don't have to thread the flag through every roam call.
-    if not ci_mode:
-        env_ci = (os.environ.get("ROAM_CI") or "").strip().lower()
-        if env_ci in {"1", "true", "yes", "on"}:
-            ci_mode = True
-    ctx.obj["ci_mode"] = bool(ci_mode)
-
-    # Mode-enforcement gate (W13.2). Opt-in via ROAM_MODE_ENFORCEMENT=1.
-    # Defensive: ANY exception inside the gate leaves dispatch
-    # untouched — the gate must never prevent commands because of its
-    # own bug. See `_enforce_mode_gate` for the full rule set.
-    # `ctx.exit(...)` inside the gate raises click.exceptions.Exit;
-    # let that propagate so the gate's exit code reaches the shell.
-    try:
-        _enforce_mode_gate(ctx)
-    except click.exceptions.Exit:
-        raise
-    except Exception:
-        try:
-            click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
-        except Exception:  # noqa: BLE001 — the gate must never block a command via its own bug
-            pass
-
-    # `_ACTIVE_DEPRECATION_NOTICE` is set by `resolve_command` *before* the
-    # group callback runs (Click resolves the subcommand first). Don't reset
-    # it here, or the envelope injector will never see the notice. Leave the
-    # slot alone — it's cleared at the start of `resolve_command` itself.
-
-    # opt-in local telemetry. Records (cmd, duration_ms,
-    # exit_code) when ROAM_TELEMETRY_LOCAL=1. Strictly local; no
-    # network. Recording itself is no-op when disabled, so the
-    # uninstrumented hot path stays unaffected.
-    import time as _time
-
-    from roam.telemetry import record as _telemetry_record
-
-    _start = _time.perf_counter()
-
-    def _on_close():
-        try:
-            cmd_name = ctx.invoked_subcommand or "<root>"
-            duration_ms = int((_time.perf_counter() - _start) * 1000)
-            # exit code propagates through SystemExit; default 0 if not raised.
-            _telemetry_record(cmd_name, duration_ms, exit_code=0)
-        except Exception:  # noqa: BLE001 — telemetry must never break command teardown
-            pass
-
-    ctx.call_on_close(_on_close)
+    json_mode, compact, budget = _apply_agent_mode(agent, json_mode, compact, budget)
+    _populate_cli_context(
+        ctx,
+        json_mode=json_mode,
+        compact=compact,
+        agent=agent,
+        sarif_mode=sarif_mode,
+        budget=budget,
+        include_excluded=include_excluded,
+        detail=detail,
+        override_mode=override_mode,
+    )
+    if _structured_output_requested(json_mode, sarif_mode, agent):
+        _install_structured_warning_handler()
+    ctx.obj["ci_mode"] = _ci_mode_enabled(ci_mode)
+    _run_mode_gate_safely(ctx)
+    _install_local_telemetry(ctx)

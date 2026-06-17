@@ -10,6 +10,7 @@ from roam.commands.cmd_verify import (
     _ALL_CHECKS,
     _DEFAULT_CHECKS,
     _compute_composite,
+    _is_import_resolution_source_path,
     auto_select_checks,
     load_verify_config,
     resolve_selected_checks,
@@ -50,6 +51,24 @@ def test_auto_select_test_only_skips_naming(tmp_path):
     sel = auto_select_checks(["tests/test_foo.py"])
     assert "naming" not in sel
     assert "syntax" in sel
+
+
+def test_auto_select_docs_unlocks_command_examples(tmp_path):
+    sel = auto_select_checks(["docs/command-reference.md"])
+    assert "command_examples" in sel
+    assert "claims" in sel
+    assert "command_examples" not in _DEFAULT_CHECKS
+    assert "claims" not in _DEFAULT_CHECKS
+
+
+def test_import_resolution_source_path_filter():
+    assert _is_import_resolution_source_path("src/app.py")
+    assert _is_import_resolution_source_path("frontend/App.tsx")
+    assert _is_import_resolution_source_path("app/Models/User.php")
+
+    assert not _is_import_resolution_source_path("README.md")
+    assert not _is_import_resolution_source_path("action.yml")
+    assert not _is_import_resolution_source_path("pyproject.toml")
 
 
 def test_resolve_precedence(tmp_path):

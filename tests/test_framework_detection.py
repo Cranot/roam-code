@@ -7,7 +7,7 @@ import sys
 from roam.commands.cmd_understand import _matches_import_pattern
 
 
-def roam(*args, cwd=None):
+def run_roam_cli(*args, cwd=None):
     """run a roam CLI command and return (output, returncode)."""
     result = subprocess.run(
         [sys.executable, "-m", "roam"] + list(args),
@@ -115,7 +115,7 @@ namespace MyApp
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -159,7 +159,7 @@ namespace MyApp
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -195,7 +195,7 @@ export default function Home() {
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -229,7 +229,7 @@ export default App;
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -251,7 +251,7 @@ class TestDotNetBuildDetection:
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -267,7 +267,7 @@ class TestDotNetBuildDetection:
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)
@@ -283,7 +283,7 @@ class TestDotNetBuildDetection:
             }
         )
 
-        out, rc = roam("--json", "understand", cwd=proj)
+        out, rc = run_roam_cli("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
 
         data = json.loads(out)

@@ -6929,6 +6929,33 @@ _L1_ALWAYS_ON_PROBES = (
 )
 
 
+def _load_verify_report(cwd: str) -> tuple[dict, float] | None:
+    """Load verify-report.json and its mtime. Returns (report, mtime) or None."""
+    report_path = os.path.join(cwd, ".roam", "verify-report.json")
+    try:
+        mtime = os.path.getmtime(report_path)
+        with open(report_path, encoding="utf-8") as fh:
+            report = json.load(fh)
+        return report, mtime
+    except (OSError, ValueError) as exc:
+        log_swallowed("compile.known_findings.read", exc)
+        return None
+
+
+def _format_finding_top(rows: list[dict]) -> list[dict]:
+    """Format top 5 findings for display."""
+    return [
+        {
+            "category": v.get("category"),
+            "severity": v.get("severity"),
+            "line": v.get("line"),
+            "symbol": v.get("symbol"),
+            "message": (v.get("message") or "")[:160],
+        }
+        for v in rows[:5]
+    ]
+
+
 def _probe_known_findings_for_task(named_paths: list[str], cwd: str | None) -> dict | None:
     """Embed the named file's OPEN verify findings from the persisted
     whole-repo report (``.roam/verify-report.json``, written by
@@ -6941,32 +6968,23 @@ def _probe_known_findings_for_task(named_paths: list[str], cwd: str | None) -> d
     """
     if not named_paths or not cwd:
         return None
-    report_path = os.path.join(cwd, ".roam", "verify-report.json")
-    try:
-        mtime = os.path.getmtime(report_path)
-        with open(report_path, encoding="utf-8") as fh:
-            report = json.load(fh)
-    except (OSError, ValueError) as exc:
-        log_swallowed("compile.known_findings.read", exc)
+
+    loaded = _load_verify_report(cwd)
+    if not loaded:
         return None
+    report, mtime = loaded
+
     targets = set(named_paths[:2])
     rows = [v for v in report.get("violations") or [] if v.get("file") in targets]
     if not rows:
         return None
+
     from collections import Counter
 
     by_category: dict[str, int] = dict(Counter((v.get("category") or "?") for v in rows))
-    top = [
-        {
-            "category": v.get("category"),
-            "severity": v.get("severity"),
-            "line": v.get("line"),
-            "symbol": v.get("symbol"),
-            "message": (v.get("message") or "")[:160],
-        }
-        for v in rows[:5]
-    ]
+    top = _format_finding_top(rows)
     age_h = max(0.0, (time.time() - mtime) / 3600.0)
+
     return {
         "known_findings": {
             "files": sorted(targets & {v.get("file") for v in rows}),
@@ -8096,7 +8114,7 @@ class PlanV0:
             "format": "concise prose with cited files; begin with the answer directly",
         }
 
-    def to_facts_contract_envelope(self) -> dict:
+    def to_facts_contract_envelope(self, cwd: str | None = None) -> dict:
         """v0.7 facts + AnswerContract — R7's predicted Pareto winner,
         R9 confirmed (+24% score/$ vs vanilla on Sonnet 4.6 matched tasks).
 
@@ -8141,6 +8159,13 @@ class PlanV0:
         staleness = _named_path_staleness(named_only, None)
         if staleness:
             plan_obj["index_staleness"] = staleness
+        # Check for files newer than index (post-index edits)
+        newer_files = _check_files_newer_than_index(named_only, cwd)
+        if newer_files:
+            plan_obj["index_stale"] = True
+            if "prefetched_facts" not in plan_obj:
+                plan_obj["prefetched_facts"] = {}
+            plan_obj["prefetched_facts"]["index_stale"] = newer_files
         return {
             "schema": "roam-plan-v0-facts-contract",
             "schema_version": self.plan_version,
@@ -8373,6 +8398,13 @@ class PlanV0:
         staleness = _named_path_staleness(named_only, None)
         if staleness:
             plan["index_staleness"] = staleness
+        # Check for files newer than index (post-index edits)
+        newer_files = _check_files_newer_than_index(named_only, cwd)
+        if newer_files:
+            plan["index_stale"] = True
+            if "prefetched_facts" not in plan:
+                plan["prefetched_facts"] = {}
+            plan["prefetched_facts"]["index_stale"] = newer_files
         return {
             "schema": "roam-plan-v0-facts",
             "schema_version": self.plan_version,
@@ -9561,7 +9593,7 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
         return envelope
 
     if art == "contract":
-        return _emit(_attach_probe_signal(plan.to_facts_contract_envelope()), "contract")
+        return _emit(_attach_probe_signal(plan.to_facts_contract_envelope(cwd=cwd)), "contract")
     if art == "facts":
         return _emit(_attach_probe_signal(plan.to_facts_envelope(cwd=cwd)), "facts")
     if art == "lean":
@@ -9632,7 +9664,7 @@ def route_for_plan(plan: "PlanV0", cwd: str | None = None, profile_name: str | N
             "model": _model(plan.procedure),
             "envelope": "facts_contract",
             "contract_id": "cycle2_3step_fewshot",
-            "envelope_data": plan.to_facts_contract_envelope(),
+            "envelope_data": plan.to_facts_contract_envelope(cwd=cwd),
             "rationale": "freeform_explore — Haiku × 3-step+few-shot (Cycle 2 +110% score/$)",
         }
     # Trace-query → Haiku × FC R9 with trace-specific 3-step
@@ -9641,7 +9673,7 @@ def route_for_plan(plan: "PlanV0", cwd: str | None = None, profile_name: str | N
             "model": _model(plan.procedure),
             "envelope": "facts_contract",
             "contract_id": "trace_3step",
-            "envelope_data": plan.to_facts_contract_envelope(),
+            "envelope_data": plan.to_facts_contract_envelope(cwd=cwd),
             "rationale": "trace_query — Haiku × trace 3-step (validated in all-levers)",
         }
     # synthesis_query and fallback → Sonnet × FC R9 (no Haiku win found)
@@ -9649,7 +9681,7 @@ def route_for_plan(plan: "PlanV0", cwd: str | None = None, profile_name: str | N
         "model": _model(plan.procedure),
         "envelope": "facts_contract",
         "contract_id": "fc_r9_default",
-        "envelope_data": plan.to_facts_contract_envelope(),
+        "envelope_data": plan.to_facts_contract_envelope(cwd=cwd),
         "rationale": f"{plan.procedure} — Sonnet baseline (no Haiku win validated yet)",
     }
 
@@ -9920,6 +9952,55 @@ def _named_path_staleness(named_paths: list[str], cwd: str | None) -> dict | Non
         "index_age_seconds": age_sec,
         "warning": warning,
     }
+
+
+def _check_files_newer_than_index(named_paths: list[str], cwd: str | None) -> dict | None:
+    """Detect files newer than the index.db (post-index edits).
+
+    Returns None if all files are older than index or index doesn't exist.
+    Otherwise returns:
+      {"files_newer_than_index": [...]} — list of named_paths that were edited
+      after the index.db mtime.
+    """
+    import os as _os
+
+    if not named_paths:
+        return None
+
+    base = cwd or _os.getcwd()
+    index_db = _os.path.join(base, ".roam", "index.db")
+
+    # If index doesn't exist, no comparison possible
+    if not _os.path.isfile(index_db):
+        return None
+
+    try:
+        index_mtime = _os.path.getmtime(index_db)
+    except OSError as exc:
+        log_swallowed("compile.files_newer_than_index.index_mtime", exc)
+        return None
+
+    newer_files: list[str] = []
+    seen: set[str] = set()
+    for p in named_paths:
+        if p in seen:
+            continue
+        seen.add(p)
+        full = _os.path.join(base, p)
+        if _os.path.exists(full):
+            try:
+                file_mtime = _os.path.getmtime(full)
+                # Use a small tolerance (5ms) to avoid false positives from
+                # filesystem timestamp granularity
+                if file_mtime > index_mtime + 0.005:
+                    newer_files.append(p)
+            except OSError as exc:
+                log_swallowed("compile.files_newer_than_index.file_mtime", exc)
+
+    if not newer_files:
+        return None
+
+    return {"files_newer_than_index": newer_files}
 
 
 # ---- W57.5 — conservative task canonicalization + symbol-resolution cache ----

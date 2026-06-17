@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Give every AI coding agent a map of your repo</title>
-  <meta name="description" content="Local codebase intelligence for AI coding agents: a structural map of callers, clones, tests, layers, and hot paths — credential-free, zero-egress, tamper-evident.">
+  <title>Roam — Check AI-written changes before they merge</title>
+  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, and tamper-evident evidence — credential-free, zero-egress.">
 
-  <meta property="og:title" content="Roam — Give every AI coding agent a map of your repo">
-  <meta property="og:description" content="Roam gives AI coding agents a local structural map of your repo — callers, clones, tests, layers, hot paths — so they stop guessing before they edit. Maps before agents edit. Gates before they merge. Evidence after every run.">
+  <meta property="og:title" content="Roam — Check AI-written changes before they merge">
+  <meta property="og:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
@@ -15,8 +15,8 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Roam — Local codebase intelligence for AI agents">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — Give every AI coding agent a map of your repo">
-  <meta name="twitter:description" content="Roam gives AI coding agents a local structural map of your repo — callers, clones, tests, layers, hot paths — so they stop guessing before they edit. Maps before agents edit. Gates before they merge. Evidence after every run.">
+  <meta name="twitter:title" content="Roam — Check AI-written changes before they merge">
+  <meta name="twitter:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <link rel="canonical" href="https://roam-code.com/">
@@ -80,7 +80,7 @@
       {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports SARIF 2.1.0 (GitHub Code Scanning, GitLab, most CI read it natively); GitHub Actions templates ship with the package; roam critique exits 5 on any high-severity finding so a CI step can gate on it."}},
       {"@type": "Question", "name": "How long does it take to index a repo?", "acceptedAnswer": {"@type": "Answer", "text": "A 100k-line monorepo indexes in roughly 20–40 seconds on a laptop; incremental rebuilds after a PR's worth of changes are sub-second. Your agents and CI read the same .roam/ artefact."}},
       {"@type": "Question", "name": "What languages does Roam support?", "acceptedAnswer": {"@type": "Answer", "text": "28, via tree-sitter — Python, JS/TS, Go, Rust, Java, Kotlin, C/C++/C#, PHP, Ruby, Swift, SQL and more, plus framework bridges (Django, Salesforce, REST, protobuf, templates)."}},
-      {"@type": "Question", "name": "What audit-trail evidence does Roam produce?", "acceptedAnswer": {"@type": "Answer", "text": "Every analysis writes a tamper-evident log (each entry SHA-256–chained to the previous) plus signed records you can verify with cosign — all locally. Useful as SOC 2 / ISO 42001 change-management evidence; the framework mapping is yours to make."}}
+      {"@type": "Question", "name": "What audit-trail evidence does Roam produce?", "acceptedAnswer": {"@type": "Answer", "text": "When the run ledger and proof-bundle flow is enabled, Roam writes tamper-evident logs and verifiable evidence records locally. Useful as SOC 2 / ISO 42001 change-management evidence support; the framework mapping is yours to make, and Roam does not certify compliance."}}
     ]
   }
   </script>
@@ -140,16 +140,17 @@
     <div class="hero-inner">
       <p class="eyebrow">For teams running Cursor, Claude Code, Codex, Gemini in real repos</p>
       <h1 class="hero-headline">
-        Give every AI coding agent<br>
-        <strong>a map of your repo before it edits.</strong>
+        Give AI coding agents<br>
+        <strong>a local map before they edit.</strong>
       </h1>
       <p class="hero-thesis">
-        <em>Writing code is solved; checking code for hidden system degradation is the new bottleneck.</em>
+        <em>AI agents can write code fast; knowing whether the PR is mergeable is the bottleneck.</em>
       </p>
       <p class="hero-subhead">
-        <strong>Maps before agents edit. Gates before they merge. Evidence after every run.</strong>
-        The local code-graph + MCP server your agent calls — credential-free,
-        zero network egress, your code never leaves your machine.
+        <strong>Passing tests is not enough evidence that an AI-written PR is safe to merge.</strong>
+        Roam gives your agent local code-graph facts before it edits, gates risky
+        diffs before merge, and emits scoped evidence after the run — credential-free,
+        zero network egress by default, your code never leaves your machine.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
@@ -172,7 +173,7 @@
         Semantic reviewers read what the code <em>does</em>.
         <strong>Roam reads what it <em>touches</em>.</strong>
         Callers, clones, layers, tests, hot paths — the structural
-        layer your reviewer doesn't see.
+        layer semantic reviewers can miss.
       </p>
     </div>
   </section>
@@ -251,8 +252,8 @@
         </li>
         <li>
           <span class="flow-num">3</span>
-          <strong>The agent writes better code.</strong>
-          Now it edits like someone who's been on the team for a year — knows what breaks, what's a clone, what needs a test.
+          <strong>The agent edits with explicit risk facts.</strong>
+          Blast radius, clone siblings, and affected tests are known before the edit instead of rediscovered through grep.
         </li>
       </ol>
 
@@ -657,10 +658,11 @@
       <details>
         <summary>What audit-trail evidence does Roam produce?</summary>
         <p>
-          Every analysis writes a tamper-evident log (each entry SHA-256–chained
-          to the previous) plus signed records you can verify with cosign — all
-          locally. Useful as SOC&nbsp;2 / ISO&nbsp;42001 change-management evidence;
-          the framework mapping is yours to make.
+          When the run ledger and proof-bundle flow is enabled, Roam writes
+          tamper-evident logs and verifiable evidence records locally. Useful
+          as SOC&nbsp;2 / ISO&nbsp;42001 change-management evidence support;
+          the framework mapping is yours to make, and Roam does not certify
+          compliance.
         </p>
       </details>
     </div>

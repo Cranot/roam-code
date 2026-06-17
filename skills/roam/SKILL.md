@@ -185,7 +185,7 @@ Auto-generate agent instructions for the project. Detects CLAUDE.md,
 AGENTS.md, .cursor/rules, etc.
 ```bash
 roam agent-export --write
-roam agent-export --agent-prompt    # compact ~500-token prompt
+roam agent-export --brief           # compact top-level summary
 ```
 
 ### `roam minimap --update`

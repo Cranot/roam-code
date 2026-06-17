@@ -150,6 +150,23 @@ def test_stale_packet_preserves_not_applicable():
     assert stale_q["Q5"] == "not_applicable"
 
 
+def test_report_artifact_is_partial_verification_but_attestation_is_complete():
+    """Raw-dict scoring mirrors Q7's artifact-kind distinction."""
+    report_only = {
+        "artifacts": [
+            {"artifact_id": "report:one", "kind": "report"},
+        ],
+    }
+    assert compute_completeness(report_only)["Q7"] == "partial"
+
+    attested = {
+        "artifacts": [
+            {"artifact_id": "attestation:one", "kind": "attestation"},
+        ],
+    }
+    assert compute_completeness(attested)["Q7"] == "complete"
+
+
 # ---------------------------------------------------------------------------
 # (3) Pre-W210 packets (no evidence_stale field) -> no demotion
 # ---------------------------------------------------------------------------

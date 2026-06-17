@@ -22,6 +22,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.command_advice import validate_command_advice
 from roam.commands.changed_files import (
     get_changed_files,
     is_test_file,
@@ -36,7 +37,7 @@ from roam.commands.cmd_conventions import (
     is_python_type_alias_signature,
     is_upper_snake_constant_name,
 )
-from roam.commands.conventions_helper import CONVENTION_NEUTRAL_FILE_ROLES, is_excluded_path
+from roam.commands.conventions_helper import CONVENTION_NEUTRAL_FILE_ROLES, has_excluded_prefix
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
@@ -72,6 +73,8 @@ _CATEGORY_WEIGHTS = {
     # logic at the _compute_verdict call site): averaging away a leaked
     # credential is exactly the silent-fallback pattern this repo bans.
     "secrets": 0.15,
+    # Advisory only: _compute_composite ignores categories not in this dict's
+    # selected weighted set, but the category still surfaces in the envelope.
 }
 
 # Severity levels for violations
@@ -82,6 +85,7 @@ SEVERITY_INFO = "INFO"
 # FAILs first, then WARN, then INFO, then anything unknown. Ranks the flat
 # findings list (Tier-1 blast-radius weighting) without touching verdict/score.
 _SEVERITY_ORDER = {SEVERITY_FAIL: 0, SEVERITY_WARN: 1, SEVERITY_INFO: 2}
+_DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def _blast_radius_by_file(conn, files):
@@ -117,41 +121,90 @@ def _blast_radius_by_file(conn, files):
     return out
 
 
-def _changed_line_ranges(files, root):
-    """Map ``{relpath: set(changed new-line numbers)}`` from ``git diff HEAD
-    -U0``. Files with no tracked diff (untracked / new / no hunks) are omitted,
-    so callers keep all of those files' violations (no baseline to scope
-    against). Used by ``--diff-only`` to report only what the edit touched."""
-    import re as _re
+def _normalize_diff_file_list(files) -> list[str]:
+    return sorted({f for f in (files or []) if f})
+
+
+def _git_diff_zero_context(files: list[str], root: Path) -> str:
     import subprocess
 
-    ranges: dict[str, set] = {}
-    flist = sorted({f for f in (files or []) if f})
-    if not flist:
-        return ranges
     try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "diff", "HEAD", "-U0", "--", *flist],
+        return subprocess.run(
+            ["git", "-C", str(root), "diff", "HEAD", "-U0", "--", *files],
             capture_output=True,
             text=True,
             timeout=8,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return ranges
+        return ""
+
+
+def _diff_new_file_path(line: str) -> str | None:
+    if line.startswith("+++ b/"):
+        return line[6:].strip()
+    return None
+
+
+def _line_numbers_from_hunk(line: str) -> set[int]:
+    match = _DIFF_HUNK_RE.match(line)
+    if not match:
+        return set()
+    start = int(match.group(1))
+    count = int(match.group(2)) if match.group(2) is not None else 1
+    return set(range(start, start + max(count, 1)))
+
+
+def _collect_changed_line_ranges(diff_text: str) -> dict[str, set[int]]:
+    ranges: dict[str, set] = {}
     cur = None
-    hunk_re = _re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-    for line in out.splitlines():
-        if line.startswith("+++ b/"):
-            cur = line[6:].strip()
+    for line in diff_text.splitlines():
+        new_file = _diff_new_file_path(line)
+        if new_file:
+            cur = new_file
             ranges.setdefault(cur, set())
-        elif cur is not None and line.startswith("@@"):
-            m = hunk_re.match(line)
-            if m:
-                start = int(m.group(1))
-                count = int(m.group(2)) if m.group(2) is not None else 1
-                for ln in range(start, start + max(count, 1)):
-                    ranges[cur].add(ln)
+            continue
+        if cur is not None and line.startswith("@@"):
+            ranges[cur].update(_line_numbers_from_hunk(line))
     return {f: s for f, s in ranges.items() if s}
+
+
+def _changed_line_ranges(files, root):
+    """Map ``{relpath: set(changed new-line numbers)}`` from ``git diff HEAD
+    -U0``. Files with no tracked diff (untracked / new / no hunks) are omitted,
+    so callers keep all of those files' violations (no baseline to scope
+    against). Used by ``--diff-only`` to report only what the edit touched."""
+    flist = _normalize_diff_file_list(files)
+    if not flist:
+        return {}
+    return _collect_changed_line_ranges(_git_diff_zero_context(flist, root))
+
+
+def _parse_changed_line_range(raw: str) -> set[int]:
+    if not raw:
+        return set()
+    try:
+        if "-" in raw:
+            start, _, end = raw.partition("-")
+            lo, hi = int(start), int(end)
+        else:
+            lo = hi = int(raw)
+    except ValueError:
+        return set()
+    if lo > hi:
+        lo, hi = hi, lo
+    return set(range(lo, hi + 1))
+
+
+def _parse_changed_line_segment(segment: str) -> tuple[str, set[int]] | None:
+    segment = segment.strip()
+    if ":" not in segment:
+        return None
+    path, _, raw_range = segment.rpartition(":")
+    path = path.strip()
+    lines = _parse_changed_line_range(raw_range.strip())
+    if not path or not lines:
+        return None
+    return path, lines
 
 
 def _parse_changed_lines(spec):
@@ -165,24 +218,11 @@ def _parse_changed_lines(spec):
     if not spec:
         return ranges
     for seg in str(spec).split(","):
-        seg = seg.strip()
-        if ":" not in seg:
+        parsed = _parse_changed_line_segment(seg)
+        if parsed is None:
             continue
-        path, _, rng = seg.rpartition(":")
-        path, rng = path.strip(), rng.strip()
-        if not path or not rng:
-            continue
-        try:
-            if "-" in rng:
-                a, _, b = rng.partition("-")
-                lo, hi = int(a), int(b)
-            else:
-                lo = hi = int(rng)
-        except ValueError:
-            continue
-        if lo > hi:
-            lo, hi = hi, lo
-        ranges.setdefault(path, set()).update(range(lo, hi + 1))
+        path, lines = parsed
+        ranges.setdefault(path, set()).update(lines)
     return {f: s for f, s in ranges.items() if s}
 
 
@@ -326,12 +366,115 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     # public credential / internal-language leak.
     "secrets",
 )
-_ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + ("complexity", "cycles", "tests")
+_ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + ("complexity", "cycles", "tests", "command_examples", "claims")
 _VERIFY_CONFIG_REL = (".roam", "verify.yaml")
+_COMMAND_EXAMPLE_EXTS = frozenset({".md", ".mdx", ".rst", ".txt", ".html", ".htm", ".yaml", ".yml"})
+_COMMAND_EXAMPLE_PATH_HINTS = (
+    "README",
+    "AGENTS.md",
+    "agent-contract",
+    "command-reference",
+    "docs/",
+    "templates/",
+)
+_INLINE_ROAM_COMMAND_RE = re.compile(r"`\s*(roam\s+[^`\n]*)`")
+_SHELL_ROAM_COMMAND_RE = re.compile(r"^(?:(roam\s+.+?)|\s*(?:\$\s+|>\s*)(roam\s+.+?))\s*$")
+_CLAIM_SURFACE_EXTS = frozenset({".md", ".mdx", ".rst", ".html", ".htm"})
+_CLAIM_HINTED_SURFACE_EXTS = frozenset({".txt"})
+_CLAIM_PATH_HINTS = _COMMAND_EXAMPLE_PATH_HINTS + (
+    "audit",
+    "compare",
+    "email/",
+    "legal/",
+    "pricing",
+    "security",
+    "trust",
+)
+_CLAIM_TRIGGER_RE = re.compile(
+    r"("
+    r"\b\d+(?:\.\d+)?\s*(?:%|x|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b"
+    r"|\b\d+(?:\.\d+)?\s*(?:commands?|tools?|languages?|repos?|repositories?|files?|issues?|findings?|tests?|"
+    r"users?|customers?|teams?|cells?|loc)\b"
+    r"|\$\d[\d,]*(?:\.\d+)?"
+    r"|\b100%\s+local\b"
+    r"|\bzero[- ](?:api|network|config|configuration|model|outbound)\b"
+    r"|\b(?:fastest|guaranteed|certified|enterprise-grade|production-ready|market-leading)\b"
+    r"|\bonly\s+(?:tool|outbound|scope|surface|sub-?processors?)\b"
+    r"|\bnever\s+(?:used|sent|stored|persisted|train|fine-tune)\b"
+    r")",
+    re.IGNORECASE,
+)
+_CLAIM_EVIDENCE_RE = re.compile(
+    r"(https?://|\[[^\]]+\]\([^)]+\)|\bas of\b|\bbench(?:mark|marks|marked)?\b|"
+    r"\bmeasured\b|\bsource\b|\bevidence\b|\bvalidated by\b|\btested\b|\bdated\b|"
+    r"\bobserved\b|\bsurveyed\b|\bper\b|\bsee\b|\b20\d{2}[-/]\d{2}[-/]\d{2}\b|"
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+20\d{2}\b|"
+    r"\bn\s*=\s*\d+\b|\brun\s+#?\d+\b)",
+    re.IGNORECASE,
+)
+_CLAIM_OUTLINE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+\d+(?:\.\d+)*\b")
+_CLAIM_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\[([A-Za-z0-9_ ./+:-]{2,})\]")
+_IMPORT_RESOLUTION_SOURCE_EXTS = frozenset(
+    {
+        ".apex",
+        ".c",
+        ".cc",
+        ".cls",
+        ".cpp",
+        ".cs",
+        ".dart",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".mjs",
+        ".php",
+        ".py",
+        ".pyi",
+        ".rb",
+        ".rs",
+        ".scala",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
 
 
 def _verify_config_path(root: Path) -> Path:
     return root.joinpath(*_VERIFY_CONFIG_REL)
+
+
+def _read_verify_config_data(path: Path) -> dict:
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 — bad config must not break the gate
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _known_verify_checks(raw) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    picked = [check for check in raw if check in _ALL_CHECKS]
+    return picked or None
+
+
+def _apply_verify_config_data(cfg: dict, data: dict) -> dict:
+    for key in ("enabled", "auto"):
+        if isinstance(data.get(key), bool):
+            cfg[key] = data[key]
+    if isinstance(data.get("threshold"), int):
+        cfg["threshold"] = data["threshold"]
+    checks = _known_verify_checks(data.get("checks"))
+    if checks is not None:
+        cfg["checks"] = checks
+    return cfg
 
 
 def load_verify_config(root: Path) -> dict:
@@ -342,24 +485,7 @@ def load_verify_config(root: Path) -> dict:
     path = _verify_config_path(root)
     if not path.exists():
         return cfg
-    try:
-        import yaml
-
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 — bad config must not break the gate
-        return cfg
-    if isinstance(data, dict):
-        if isinstance(data.get("enabled"), bool):
-            cfg["enabled"] = data["enabled"]
-        if isinstance(data.get("auto"), bool):
-            cfg["auto"] = data["auto"]
-        if isinstance(data.get("threshold"), int):
-            cfg["threshold"] = data["threshold"]
-        raw = data.get("checks")
-        if isinstance(raw, list):
-            picked = [c for c in raw if c in _ALL_CHECKS]
-            cfg["checks"] = picked or None
-    return cfg
+    return _apply_verify_config_data(cfg, _read_verify_config_data(path))
 
 
 def write_verify_enabled(root: Path, enabled: bool) -> Path:
@@ -387,6 +513,44 @@ def write_verify_enabled(root: Path, enabled: bool) -> Path:
     return path
 
 
+def _is_command_example_surface(path: str) -> bool:
+    norm = path.replace("\\", "/")
+    suffix = Path(norm).suffix.lower()
+    if suffix in _COMMAND_EXAMPLE_EXTS:
+        return True
+    return any(hint in norm for hint in _COMMAND_EXAMPLE_PATH_HINTS)
+
+
+def _is_historical_command_example_surface(path: str) -> bool:
+    name = Path(path.replace("\\", "/")).name.lower()
+    return name.startswith("changelog.") or name in {"changelog", "history.md"}
+
+
+def _is_plugin_example_command_surface(path: str) -> bool:
+    norm = path.replace("\\", "/").lower()
+    return norm.startswith("dev/example-plugin/")
+
+
+def _is_import_resolution_source_path(path: str) -> bool:
+    return Path(path.replace("\\", "/")).suffix.lower() in _IMPORT_RESOLUTION_SOURCE_EXTS
+
+
+def _is_claim_surface(path: str) -> bool:
+    norm = path.replace("\\", "/")
+    suffix = Path(norm).suffix.lower()
+    if suffix in _CLAIM_SURFACE_EXTS:
+        return True
+    if suffix in _CLAIM_HINTED_SURFACE_EXTS:
+        return any(hint in norm for hint in _CLAIM_PATH_HINTS)
+    return not suffix and any(hint in norm for hint in _CLAIM_PATH_HINTS)
+
+
+def _is_non_code_verify_surface(path: str) -> bool:
+    norm = path.replace("\\", "/")
+    suffix = Path(norm).suffix.lower().lstrip(".")
+    return suffix in NON_CODE_CONVENTION_LANGUAGES or _is_command_example_surface(norm) or _is_claim_surface(norm)
+
+
 def auto_select_checks(target_paths: list[str]) -> list[str]:
     """AUTO mode — pick the checks that are RELEVANT to what was touched.
     Python edits unlock the Python-specific checks; any non-test source edit
@@ -407,6 +571,10 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
         # Python edits unlock the Python checks AND the structural ones — a code
         # change is exactly when complexity/cycle regressions sneak in.
         selected |= {"imports", "error_handling", "syntax", "complexity", "cycles"}
+    if any(_is_command_example_surface(p) for p in target_paths):
+        selected.add("command_examples")
+    if any(_is_claim_surface(p) for p in target_paths):
+        selected.add("claims")
     if not selected:
         selected = set(_DEFAULT_CHECKS)
     return [c for c in _ALL_CHECKS if c in selected]
@@ -465,6 +633,124 @@ def _naming_group_or_skip(name: str, kind: str, language, signature) -> str | No
 # of incidental non-primary-language symbols (e.g. 5 JS CI-script functions in a
 # Python repo) are skipped rather than judged against a thin sample.
 _NAMING_MIN_LANG_SAMPLES = 10
+_NAMING_KINDS_SQL = """('function', 'method', 'class', 'interface',
+                         'struct', 'trait', 'enum', 'variable',
+                         'constant', 'property', 'field', 'type_alias')"""
+
+
+def _all_naming_symbols(conn):
+    return conn.execute(f"""
+        SELECT s.name, s.kind, s.signature, f.language AS language, f.path AS path,
+               COALESCE(f.file_role, 'source') AS file_role
+        FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        WHERE s.kind IN {_NAMING_KINDS_SQL}
+    """).fetchall()
+
+
+def _changed_naming_symbols(conn, file_ids: list[int]):
+    return batched_in(
+        conn,
+        f"""SELECT s.name, s.kind, s.line_start, s.signature,
+                  f.path as file_path, f.language AS language,
+                  COALESCE(f.file_role, 'source') AS file_role
+           FROM symbols s
+           JOIN files f ON s.file_id = f.id
+           WHERE s.file_id IN ({{ph}})
+             AND s.kind IN {_NAMING_KINDS_SQL}""",
+        file_ids,
+    )
+
+
+def _naming_model_candidate(sym) -> tuple[str, str, str] | None:
+    if has_excluded_prefix(sym["path"]) or sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
+        return None
+    group = _naming_group_or_skip(sym["name"], sym["kind"], sym["language"], sym["signature"])
+    style = classify_case(sym["name"]) if group is not None else None
+    if not style:
+        return None
+    return group, (sym["language"] or "").lower(), style
+
+
+def _dominant_naming_styles(all_symbols) -> dict[tuple[str, str], tuple[str, float]]:
+    group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    for sym in all_symbols:
+        # Exclude parser test fixtures + codegen templates from MODELING the
+        # convention — they're deliberately written in varied styles (e.g. a
+        # Kotlin fixture's 78%-snake mix), not the project's own conventions.
+        if has_excluded_prefix(sym["path"]):
+            continue
+        # Test files follow the test framework's idiom (`test_*` snake_case
+        # in PHPUnit/pytest); on test-heavy repos they OUTVOTE production
+        # code and invert the convention (dogfood: PSR-12 PHP
+        # repo reported snake_case 62.8% → ~2000 naming FPs). Vendored and
+        # generated files carry third-party style.
+        candidate = _naming_model_candidate(sym)
+        if candidate is not None:
+            group, language, style = candidate
+            group_cases[(group, language)][style] += 1
+
+    # Dominant style per (group, language). Require a minimum sample count so a
+    # handful of symbols in a non-primary language can neither establish nor be
+    # flagged against a "convention" (sparse JS/Kotlin/etc. are simply skipped).
+    dominant: dict[tuple[str, str], tuple[str, float]] = {}
+    for key, counter in group_cases.items():
+        total = sum(counter.values())
+        if total >= _NAMING_MIN_LANG_SAMPLES:
+            best_style, best_count = counter.most_common(1)[0]
+            dominant[key] = (best_style, round(100 * best_count / total, 1))
+    return dominant
+
+
+def _changed_naming_candidate(sym) -> tuple[str, str, str] | None:
+    # Don't flag names INSIDE fixtures/templates (parser test data / codegen).
+    if has_excluded_prefix(sym["file_path"]):
+        return None
+    # Test-framework idiom isn't the project convention; never flag
+    # test/vendored/generated files for naming (mirror of the model
+    # loop's exclusion above — flagging them against the production
+    # convention is the same FP in the other direction).
+    if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
+        return None
+    name = sym["name"]
+    if len(name) < _MIN_NAME_LEN or name in _SKIP_NAMES:
+        return None
+    if name.startswith("__") and name.endswith("__"):
+        return None
+
+    group = _naming_group_or_skip(name, sym["kind"], sym["language"], sym["signature"])
+    style = classify_case(name) if group is not None else None
+    if not style:
+        return None
+    return group, (sym["language"] or "").lower(), style
+
+
+def _naming_violation(sym, group: str, style: str, expected_style: str, pct: float) -> dict:
+    name = sym["name"]
+    message = (
+        f"fn `{name}` uses {style} (codebase: {expected_style} {pct}%)"
+        if group == "functions"
+        else f"{group[:-1]} `{name}` uses {style} (codebase: {expected_style} {pct}%)"
+    )
+    return {
+        "category": "naming",
+        "severity": SEVERITY_WARN if pct < 90 else SEVERITY_FAIL,
+        "file": sym["file_path"],
+        "line": sym["line_start"],
+        "message": message,
+        "symbol": name,
+        "actual_style": style,
+        "expected_style": expected_style,
+        "codebase_pct": pct,
+        "fix": f"Rename `{name}` to match {expected_style} convention",
+    }
+
+
+def _naming_score(checked: int, violations: list[dict]) -> int:
+    if checked == 0:
+        return 100
+    score = round(100 * (checked - len(violations)) / checked)
+    return max(0, min(100, score))
 
 
 def _check_naming(conn, file_ids: list[int]) -> dict:
@@ -476,131 +762,122 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
     if not file_ids:
         return {"score": 100, "violations": []}
 
-    # 1. Get the dominant style per kind-group from ALL symbols
-    all_symbols = conn.execute("""
-        SELECT s.name, s.kind, s.signature, f.language AS language, f.path AS path,
-               COALESCE(f.file_role, 'source') AS file_role
-        FROM symbols s
-        JOIN files f ON s.file_id = f.id
-        WHERE s.kind IN ('function', 'method', 'class', 'interface',
-                         'struct', 'trait', 'enum', 'variable',
-                         'constant', 'property', 'field', 'type_alias')
-    """).fetchall()
-
-    # Convention is computed PER (kind-group, LANGUAGE): naming norms are
-    # language-specific, so a JS `clampComment` or a Kotlin fixture's camelCase
-    # must be compared against THAT language's convention — not the repo's
-    # Python-dominant snake_case. Computing one codebase-wide convention across
-    # languages was the cross-language false-positive source (15 FPs on .js CI
-    # scripts + .kt parser fixtures in a 99.9%-Python repo).
-    group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
-    for sym in all_symbols:
-        # Exclude parser test fixtures + codegen templates from MODELING the
-        # convention — they're deliberately written in varied styles (e.g. a
-        # Kotlin fixture's 78%-snake mix), not the project's own conventions.
-        if is_excluded_path(sym["path"]):
-            continue
-        # Test files follow the test framework's idiom (`test_*` snake_case
-        # in PHPUnit/pytest); on test-heavy repos they OUTVOTE production
-        # code and invert the convention (dogfood: PSR-12 PHP
-        # repo reported snake_case 62.8% → ~2000 naming FPs). Vendored and
-        # generated files carry third-party style.
-        if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
-            continue
-        group = _naming_group_or_skip(sym["name"], sym["kind"], sym["language"], sym["signature"])
-        if group is None:
-            continue
-        style = classify_case(sym["name"])
-        if style:
-            group_cases[(group, (sym["language"] or "").lower())][style] += 1
-
-    # Dominant style per (group, language). Require a minimum sample count so a
-    # handful of symbols in a non-primary language can neither establish nor be
-    # flagged against a "convention" (sparse JS/Kotlin/etc. are simply skipped).
-    dominant: dict[tuple[str, str], tuple[str, float]] = {}
-    for key, counter in group_cases.items():
-        total = sum(counter.values())
-        if total >= _NAMING_MIN_LANG_SAMPLES:
-            best_style, best_count = counter.most_common(1)[0]
-            dominant[key] = (best_style, round(100 * best_count / total, 1))
-
-    # 2. Check symbols in changed files
-    changed_symbols = batched_in(
-        conn,
-        """SELECT s.name, s.kind, s.line_start, s.signature,
-                  f.path as file_path, f.language AS language,
-                  COALESCE(f.file_role, 'source') AS file_role
-           FROM symbols s
-           JOIN files f ON s.file_id = f.id
-           WHERE s.file_id IN ({ph})
-             AND s.kind IN ('function', 'method', 'class', 'interface',
-                            'struct', 'trait', 'enum', 'variable',
-                            'constant', 'property', 'field', 'type_alias')""",
-        file_ids,
-    )
+    # 1. Get the dominant style per kind-group from ALL symbols. Convention is
+    # computed PER (kind-group, LANGUAGE) to avoid cross-language false positives.
+    dominant = _dominant_naming_styles(_all_naming_symbols(conn))
 
     violations = []
     checked = 0
-    for sym in changed_symbols:
-        # Don't flag names INSIDE fixtures/templates (parser test data / codegen).
-        if is_excluded_path(sym["file_path"]):
+    for sym in _changed_naming_symbols(conn, file_ids):
+        candidate = _changed_naming_candidate(sym)
+        if candidate is None:
             continue
-        # Test-framework idiom isn't the project convention; never flag
-        # test/vendored/generated files for naming (mirror of the model
-        # loop's exclusion above — flagging them against the production
-        # convention is the same FP in the other direction).
-        if sym["file_role"] in CONVENTION_NEUTRAL_FILE_ROLES:
-            continue
-        name = sym["name"]
-        if len(name) < _MIN_NAME_LEN or name in _SKIP_NAMES:
-            continue
-        if name.startswith("__") and name.endswith("__"):
-            continue
-
-        group = _naming_group_or_skip(name, sym["kind"], sym["language"], sym["signature"])
-        if group is None:
-            continue
-        style = classify_case(name)
-        if not style:
-            continue
-
+        group, language, style = candidate
         checked += 1
-        key = (group, (sym["language"] or "").lower())
-        if key in dominant:
-            expected_style, pct = dominant[key]
-            if style != expected_style and pct >= 60:
-                violations.append(
-                    {
-                        "category": "naming",
-                        "severity": SEVERITY_WARN if pct < 90 else SEVERITY_FAIL,
-                        "file": sym["file_path"],
-                        "line": sym["line_start"],
-                        "message": (
-                            f"fn `{name}` uses {style} (codebase: {expected_style} {pct}%)"
-                            if group == "functions"
-                            else f"{group[:-1]} `{name}` uses {style} (codebase: {expected_style} {pct}%)"
-                        ),
-                        "symbol": name,
-                        "actual_style": style,
-                        "expected_style": expected_style,
-                        "codebase_pct": pct,
-                        "fix": f"Rename `{name}` to match {expected_style} convention",
-                    }
-                )
+        expected = dominant.get((group, language))
+        if expected is None:
+            continue
+        expected_style, pct = expected
+        if style != expected_style and pct >= 60:
+            violations.append(_naming_violation(sym, group, style, expected_style, pct))
 
     # Score: fraction of checked symbols that are consistent
-    if checked == 0:
-        score = 100
-    else:
-        score = round(100 * (checked - len(violations)) / checked)
-        score = max(0, min(100, score))
-
-    return {"score": score, "violations": violations}
+    return {"score": _naming_score(checked, violations), "violations": violations}
 
 
 # ---------------------------------------------------------------------------
 # Import pattern consistency check
 # ---------------------------------------------------------------------------
+
+
+def _import_resolution_score(resolution: list[dict]) -> int:
+    fails = sum(1 for violation in resolution if violation.get("severity") == SEVERITY_FAIL)
+    warns = len(resolution) - fails
+    return max(0, 100 - 25 * fails - 10 * warns)
+
+
+def _merge_import_results(style_score: int, style_violations: list[dict], resolution: list[dict]) -> dict:
+    return {
+        "score": min(style_score, _import_resolution_score(resolution)),
+        "violations": style_violations + resolution,
+    }
+
+
+def _all_import_edges(conn):
+    return conn.execute("""
+        SELECT fe.source_file_id, sf.path as source_path, tf.path as target_path
+        FROM file_edges fe
+        JOIN files sf ON fe.source_file_id = sf.id
+        JOIN files tf ON fe.target_file_id = tf.id
+        WHERE fe.kind = 'imports'
+    """).fetchall()
+
+
+def _changed_import_edges(conn, file_ids: list[int]):
+    return batched_in(
+        conn,
+        """SELECT fe.source_file_id, sf.path as source_path, tf.path as target_path
+           FROM file_edges fe
+           JOIN files sf ON fe.source_file_id = sf.id
+           JOIN files tf ON fe.target_file_id = tf.id
+           WHERE fe.kind = 'imports' AND fe.source_file_id IN ({ph})""",
+        file_ids,
+    )
+
+
+def _path_dir(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    return normalized.rsplit("/", 1)[0] if "/" in normalized else ""
+
+
+def _edge_is_same_dir_style(edge) -> bool:
+    src_dir = _path_dir(edge["source_path"])
+    tgt_dir = _path_dir(edge["target_path"])
+    return bool(
+        src_dir
+        and tgt_dir
+        and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
+    )
+
+
+def _import_style_counts(edges) -> tuple[int, int]:
+    relative_count = sum(1 for edge in edges if _edge_is_same_dir_style(edge))
+    return len(edges) - relative_count, relative_count
+
+
+def _dominant_import_style(absolute_count: int, relative_count: int) -> tuple[str, float]:
+    total_imports = absolute_count + relative_count
+    abs_pct = round(100 * absolute_count / total_imports, 1)
+    if abs_pct >= 60:
+        return "absolute", abs_pct
+    if abs_pct <= 40:
+        return "relative", round(100 - abs_pct, 1)
+    return "mixed", 50.0
+
+
+def _import_style_violation(edge, dominant_style: str, dominant_pct: float) -> dict | None:
+    is_same_dir = _edge_is_same_dir_style(edge)
+    if dominant_style == "relative" and not is_same_dir:
+        return {
+            "category": "imports",
+            "severity": SEVERITY_WARN,
+            "file": edge["source_path"],
+            "line": None,
+            "message": (
+                f"cross-directory import from `{edge['source_path']}` "
+                f"to `{edge['target_path']}` "
+                f"(codebase prefers same-directory imports {dominant_pct}%)"
+            ),
+            "fix": "Consider restructuring to keep imports within the same package",
+        }
+    return None
+
+
+def _import_style_score(checked: int, violations: list[dict]) -> int:
+    if checked == 0:
+        return 100
+    score = round(100 * (checked - len(violations)) / checked)
+    return max(0, min(100, score))
 
 
 def _check_imports(conn, file_ids: list[int]) -> dict:
@@ -620,121 +897,36 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     # no imports / mixed style) must still surface resolution failures.
     resolution = _unresolved_import_violations(conn, file_ids)
 
-    def _with_resolution(style_score: int, style_violations: list) -> dict:
-        fails = sum(1 for v in resolution if v.get("severity") == SEVERITY_FAIL)
-        warns = len(resolution) - fails
-        res_score = max(0, 100 - 25 * fails - 10 * warns)
-        return {
-            "score": min(style_score, res_score),
-            "violations": style_violations + resolution,
-        }
-
     # 1. Determine the codebase import style from ALL file_edges
-    all_edges = conn.execute("""
-        SELECT fe.source_file_id, sf.path as source_path, tf.path as target_path
-        FROM file_edges fe
-        JOIN files sf ON fe.source_file_id = sf.id
-        JOIN files tf ON fe.target_file_id = tf.id
-        WHERE fe.kind = 'imports'
-    """).fetchall()
+    all_edges = _all_import_edges(conn)
 
     if not all_edges:
-        return _with_resolution(100, [])
+        return _merge_import_results(100, [], resolution)
 
     # Classify each import edge
-    absolute_count = 0
-    relative_count = 0
-    for edge in all_edges:
-        src_dir = (
-            edge["source_path"].replace("\\", "/").rsplit("/", 1)[0]
-            if "/" in edge["source_path"].replace("\\", "/")
-            else ""
-        )
-        tgt_dir = (
-            edge["target_path"].replace("\\", "/").rsplit("/", 1)[0]
-            if "/" in edge["target_path"].replace("\\", "/")
-            else ""
-        )
-        if (
-            src_dir
-            and tgt_dir
-            and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
-        ):
-            relative_count += 1
-        else:
-            absolute_count += 1
+    absolute_count, relative_count = _import_style_counts(all_edges)
 
     total_imports = absolute_count + relative_count
     if total_imports == 0:
-        return _with_resolution(100, [])
+        return _merge_import_results(100, [], resolution)
 
-    abs_pct = round(100 * absolute_count / total_imports, 1)
-    dominant_style = "absolute" if abs_pct >= 60 else "relative" if abs_pct <= 40 else "mixed"
-    dominant_pct = (
-        abs_pct if dominant_style == "absolute" else round(100 - abs_pct, 1) if dominant_style == "relative" else 50.0
-    )
+    dominant_style, dominant_pct = _dominant_import_style(absolute_count, relative_count)
 
     if dominant_style == "mixed":
-        return _with_resolution(100, [])
+        return _merge_import_results(100, [], resolution)
 
     # 2. Check changed files' import edges
-    changed_edges = batched_in(
-        conn,
-        """SELECT fe.source_file_id, sf.path as source_path, tf.path as target_path
-           FROM file_edges fe
-           JOIN files sf ON fe.source_file_id = sf.id
-           JOIN files tf ON fe.target_file_id = tf.id
-           WHERE fe.kind = 'imports' AND fe.source_file_id IN ({ph})""",
-        file_ids,
-    )
+    changed_edges = _changed_import_edges(conn, file_ids)
 
     violations = []
     checked = 0
     for edge in changed_edges:
         checked += 1
-        src_dir = (
-            edge["source_path"].replace("\\", "/").rsplit("/", 1)[0]
-            if "/" in edge["source_path"].replace("\\", "/")
-            else ""
-        )
-        tgt_dir = (
-            edge["target_path"].replace("\\", "/").rsplit("/", 1)[0]
-            if "/" in edge["target_path"].replace("\\", "/")
-            else ""
-        )
+        violation = _import_style_violation(edge, dominant_style, dominant_pct)
+        if violation:
+            violations.append(violation)
 
-        is_same_dir = (
-            src_dir
-            and tgt_dir
-            and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
-        )
-
-        # If dominant is absolute but this is same-directory (relative-style)
-        if dominant_style == "absolute" and is_same_dir:
-            pass  # same-dir imports are fine even in absolute codebases
-        elif dominant_style == "relative" and not is_same_dir:
-            violations.append(
-                {
-                    "category": "imports",
-                    "severity": SEVERITY_WARN,
-                    "file": edge["source_path"],
-                    "line": None,
-                    "message": (
-                        f"cross-directory import from `{edge['source_path']}` "
-                        f"to `{edge['target_path']}` "
-                        f"(codebase prefers same-directory imports {dominant_pct}%)"
-                    ),
-                    "fix": "Consider restructuring to keep imports within the same package",
-                }
-            )
-
-    if checked == 0:
-        score = 100
-    else:
-        score = round(100 * (checked - len(violations)) / checked)
-        score = max(0, min(100, score))
-
-    return _with_resolution(score, violations)
+    return _merge_import_results(_import_style_score(checked, violations), violations, resolution)
 
 
 def _unresolved_import_violations(conn, file_ids: list[int]) -> list[dict]:
@@ -755,7 +947,7 @@ def _unresolved_import_violations(conn, file_ids: list[int]) -> list[dict]:
     from roam.db.connection import batched_in, find_project_root
 
     rows = batched_in(conn, "SELECT id, path, file_role FROM files WHERE id IN ({ph})", file_ids)
-    paths = [r["path"] for r in rows if r["file_role"] != "test"]
+    paths = [r["path"] for r in rows if r["file_role"] != "test" and _is_import_resolution_source_path(r["path"])]
     if not paths:
         return []
     project_root = str(find_project_root())
@@ -895,6 +1087,131 @@ def _mask_py_strings_comments(content: str) -> str:
     return _blank_token_spans(content, toks, mask_types)
 
 
+def _custom_error_count(conn) -> int:
+    rows = conn.execute("""
+        SELECT s.name, s.kind
+        FROM symbols s
+        WHERE (s.name LIKE '%Error%'
+            OR s.name LIKE '%Exception%'
+            OR s.name LIKE '%Failure%')
+          AND s.kind IN ('class', 'struct', 'interface')
+    """).fetchall()
+    return sum(1 for row in rows if _ERROR_NAME_RE.search(row["name"]))
+
+
+def _python_source_files(conn, file_ids: list[int], root: Path) -> list[tuple[str, str]]:
+    rows = batched_in(conn, "SELECT id, path FROM files WHERE id IN ({ph})", file_ids)
+    files: list[tuple[str, str]] = []
+    for row in rows:
+        rel_path = row["path"]
+        if not rel_path.endswith(".py"):
+            continue
+        path = root / rel_path
+        if not path.exists():
+            continue
+        try:
+            files.append((rel_path, path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return files
+
+
+def _line_number_for_match(scan: str, match) -> int:
+    return scan[: match.start()].count("\n") + 1
+
+
+def _noqa_on_line(source_lines: list[str], line_num: int, codes: tuple[str, ...]) -> bool:
+    line_text = source_lines[line_num - 1] if 1 <= line_num <= len(source_lines) else ""
+    return _has_noqa(line_text, codes)
+
+
+def _bare_except_violation(path: str, line_num: int, custom_error_count: int) -> dict:
+    if custom_error_count:
+        suffix = f"(codebase has {custom_error_count} custom exception classes)"
+    else:
+        suffix = "(use specific exceptions)"
+    return {
+        "category": "error_handling",
+        "severity": SEVERITY_FAIL,
+        "file": path,
+        "line": line_num,
+        "message": f"bare `except:` {suffix}",
+        "fix": "Replace bare `except:` with a specific exception type",
+    }
+
+
+def _broad_except_violation(path: str, line_num: int, custom_error_count: int) -> dict:
+    if custom_error_count:
+        suffix = f"(codebase has {custom_error_count} specific exception classes)"
+    else:
+        suffix = "(consider catching specific exceptions)"
+    return {
+        "category": "error_handling",
+        "severity": SEVERITY_WARN,
+        "file": path,
+        "line": line_num,
+        "message": f"broad `except Exception:` {suffix}",
+        "fix": "Narrow the exception type to catch only expected errors",
+    }
+
+
+def _silent_except_violation(path: str, line_num: int, _custom_error_count: int) -> dict:
+    return {
+        "category": "error_handling",
+        "severity": SEVERITY_WARN,
+        "file": path,
+        "line": line_num,
+        "message": "broad silent exception swallow (no logging/re-raise)",
+        "fix": "Add logging or re-raise the exception instead of silently swallowing",
+    }
+
+
+def _error_regex_violations(
+    scan: str,
+    source_lines: list[str],
+    path: str,
+    custom_error_count: int,
+    regex,
+    noqa_codes: tuple[str, ...],
+    build_violation,
+) -> list[dict]:
+    violations: list[dict] = []
+    for match in regex.finditer(scan):
+        line_num = _line_number_for_match(scan, match)
+        if _noqa_on_line(source_lines, line_num, noqa_codes):
+            continue
+        violations.append(build_violation(path, line_num, custom_error_count))
+    return violations
+
+
+def _error_handling_violations_for_file(path: str, content: str, custom_error_count: int) -> list[dict]:
+    source_lines = content.split("\n")
+    scan = _mask_py_strings_comments(content)
+    return (
+        _error_regex_violations(
+            scan, source_lines, path, custom_error_count, _BARE_EXCEPT_RE, ("E722",), _bare_except_violation
+        )
+        + _error_regex_violations(
+            scan, source_lines, path, custom_error_count, _BROAD_EXCEPT_RE, ("BLE001",), _broad_except_violation
+        )
+        + _error_regex_violations(
+            scan,
+            source_lines,
+            path,
+            custom_error_count,
+            _SILENT_EXCEPT_RE,
+            ("BLE001", "E722"),
+            _silent_except_violation,
+        )
+    )
+
+
+def _error_handling_score(files_checked: int, issues_found: int) -> int:
+    if files_checked == 0 or issues_found == 0:
+        return 100
+    return max(0, 100 - min(issues_found * 15, 100))
+
+
 def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
     """Check error handling patterns in changed files.
 
@@ -909,132 +1226,15 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
         return {"score": 100, "violations": []}
 
     # 1. Detect codebase error patterns: how many specific exception classes exist?
-    error_candidates = conn.execute("""
-        SELECT s.name, s.kind
-        FROM symbols s
-        WHERE (s.name LIKE '%Error%'
-            OR s.name LIKE '%Exception%'
-            OR s.name LIKE '%Failure%')
-          AND s.kind IN ('class', 'struct', 'interface')
-    """).fetchall()
-
-    custom_error_count = sum(1 for r in error_candidates if _ERROR_NAME_RE.search(r["name"]))
-    has_custom_errors = custom_error_count > 0
+    custom_error_count = _custom_error_count(conn)
 
     # 2. Read changed files and check for bad patterns
-    changed_files = batched_in(
-        conn,
-        "SELECT id, path FROM files WHERE id IN ({ph})",
-        file_ids,
-    )
-
     violations = []
-    files_checked = 0
-    issues_found = 0
+    python_files = _python_source_files(conn, file_ids, root)
+    for path, content in python_files:
+        violations.extend(_error_handling_violations_for_file(path, content, custom_error_count))
 
-    for frow in changed_files:
-        fpath = root / frow["path"]
-        if not fpath.exists():
-            continue
-        # Only check Python files for error handling (other languages have
-        # different patterns)
-        if not frow["path"].endswith(".py"):
-            continue
-
-        try:
-            content = fpath.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
-        files_checked += 1
-        _src_lines = content.split("\n")
-        # Run the except-clause regexes on a copy with string/comment spans
-        # blanked, so `except Exception:` text inside a docstring/fixture string
-        # is not flagged; noqa detection still reads the ORIGINAL line.
-        scan = _mask_py_strings_comments(content)
-
-        def _noqa_at(line_num: int, codes: tuple[str, ...]) -> bool:
-            return _has_noqa(
-                _src_lines[line_num - 1] if 1 <= line_num <= len(_src_lines) else "",
-                codes,
-            )
-
-        # Bare except
-        for m in _BARE_EXCEPT_RE.finditer(scan):
-            line_num = scan[: m.start()].count("\n") + 1
-            if _noqa_at(line_num, ("E722",)):
-                continue  # author marked it intended (# noqa: E722 / bare # noqa)
-            issues_found += 1
-            violations.append(
-                {
-                    "category": "error_handling",
-                    "severity": SEVERITY_FAIL,
-                    "file": frow["path"],
-                    "line": line_num,
-                    "message": (
-                        "bare `except:` "
-                        + (
-                            f"(codebase has {custom_error_count} custom exception classes)"
-                            if has_custom_errors
-                            else "(use specific exceptions)"
-                        )
-                    ),
-                    "fix": "Replace bare `except:` with a specific exception type",
-                }
-            )
-
-        # Broad Exception catch
-        for m in _BROAD_EXCEPT_RE.finditer(scan):
-            line_num = scan[: m.start()].count("\n") + 1
-            if _noqa_at(line_num, ("BLE001",)):
-                continue  # deliberate broad-except resilience (# noqa: BLE001)
-            issues_found += 1
-            violations.append(
-                {
-                    "category": "error_handling",
-                    "severity": SEVERITY_WARN,
-                    "file": frow["path"],
-                    "line": line_num,
-                    "message": (
-                        "broad `except Exception:` "
-                        + (
-                            f"(codebase has {custom_error_count} specific exception classes)"
-                            if has_custom_errors
-                            else "(consider catching specific exceptions)"
-                        )
-                    ),
-                    "fix": "Narrow the exception type to catch only expected errors",
-                }
-            )
-
-        # Silent exception swallowing (broad/bare only -- see _SILENT_EXCEPT_RE).
-        for m in _SILENT_EXCEPT_RE.finditer(scan):
-            line_num = scan[: m.start()].count("\n") + 1
-            if _noqa_at(line_num, ("BLE001", "E722")):
-                continue  # deliberately-acknowledged broad swallow
-            issues_found += 1
-            violations.append(
-                {
-                    "category": "error_handling",
-                    "severity": SEVERITY_WARN,
-                    "file": frow["path"],
-                    "line": line_num,
-                    "message": "broad silent exception swallow (no logging/re-raise)",
-                    "fix": "Add logging or re-raise the exception instead of silently swallowing",
-                }
-            )
-
-    # Score: based on ratio of issues to files checked
-    if files_checked == 0:
-        score = 100
-    elif issues_found == 0:
-        score = 100
-    else:
-        # Each issue deducts points; more issues = lower score
-        penalty = min(issues_found * 15, 100)
-        score = max(0, 100 - penalty)
-
-    return {"score": score, "violations": violations}
+    return {"score": _error_handling_score(len(python_files), len(violations)), "violations": violations}
 
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1250,179 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
 # contract lives in many -- so a >=3-file threshold keeps real-duplication
 # detection while dropping the override explosion.
 _INTERFACE_CONTRACT_MIN_FILES = 3
+_SIMILARITY_PASS_CAP = 150
+
+
+def _new_duplicate_symbols(conn, file_ids: list[int]):
+    return batched_in(
+        conn,
+        """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
+                  f.path as file_path, f.file_role AS file_role
+           FROM symbols s
+           JOIN files f ON s.file_id = f.id
+           WHERE s.file_id IN ({ph})
+             AND s.kind IN ('function', 'method')""",
+        file_ids,
+    )
+
+
+def _existing_duplicate_symbols(conn):
+    return conn.execute("""
+        SELECT s.id, s.name, s.kind, s.signature, s.line_start,
+               f.path as file_path, f.file_role AS file_role
+        FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        WHERE s.kind IN ('function', 'method')
+    """).fetchall()
+
+
+def _duplicate_symbol_eligible(symbol) -> bool:
+    name = symbol["name"]
+    return len(name) >= 4 and not name.startswith("_")
+
+
+def _duplicate_indexes(existing_symbols) -> tuple[dict[str, list], dict[tuple[str, str], set]]:
+    # Build lookup by name for fast filtering + a per-(role,name) distinct-file
+    # count so a name shared across many files (an interface/ABC contract) is
+    # not mistaken for duplication. Keyed by role so the contract count only
+    # aggregates comparable code (we only ever compare within a role below).
+    existing_by_name: dict[str, list] = defaultdict(list)
+    name_files: dict[tuple[str, str], set] = defaultdict(set)
+    for sym in existing_symbols:
+        existing_by_name[sym["name"].lower()].append(sym)
+        name_files[(sym["file_role"] or "", sym["name"].lower())].add(sym["file_path"])
+    return existing_by_name, name_files
+
+
+def _is_interface_contract(name_files: dict[tuple[str, str], set], role: str, lower_name: str) -> bool:
+    return len(name_files.get((role, lower_name), ())) >= _INTERFACE_CONTRACT_MIN_FILES
+
+
+def _same_role_external_symbol(existing, new_sym, new_ids: set[int], role: str) -> bool:
+    return (
+        existing["id"] not in new_ids
+        and existing["file_path"] != new_sym["file_path"]
+        and (existing["file_role"] or "") == role
+    )
+
+
+def _exact_duplicate_violation(new_sym, existing) -> dict:
+    name = new_sym["name"]
+    return {
+        "category": "duplicates",
+        "severity": SEVERITY_WARN,
+        "file": new_sym["file_path"],
+        "line": new_sym["line_start"],
+        "message": f"fn `{name}` has same name as `{existing['name']}` at {loc(existing['file_path'], existing['line_start'])}",
+        "fix": f"Consider reusing `{existing['name']}` from {existing['file_path']}",
+    }
+
+
+def _exact_duplicate_for_symbol(
+    new_sym, existing_by_name: dict[str, list], new_ids: set[int], role: str
+) -> dict | None:
+    for existing in existing_by_name.get(new_sym["name"].lower(), []):
+        # Cross-role matches (src fn vs its test/script/ci namesake) are
+        # expected mirroring, not duplication -- compare within a role only.
+        if _same_role_external_symbol(existing, new_sym, new_ids, role):
+            return _exact_duplicate_violation(new_sym, existing)
+    return None
+
+
+def _similar_name_candidate(existing_name: str, name_lower: str, matcher: SequenceMatcher) -> float | None:
+    if abs(len(existing_name) - len(name_lower)) > 5:
+        return None
+    # A name that contains (or is contained by) the other is a deliberate
+    # variant -- `run_agent` ⊂ `run_agent_opt`, `name` ⊂ `_names`,
+    # `source_extensions` vs `source_to_test...` -- not a duplicate.
+    if name_lower in existing_name or existing_name in name_lower:
+        return None
+    matcher.set_seq1(existing_name)
+    if matcher.real_quick_ratio() < 0.8 or matcher.quick_ratio() < 0.8:
+        return None
+    ratio = matcher.ratio()
+    return ratio if 0.8 <= ratio < 1.0 else None
+
+
+def _similar_duplicate_candidates(new_sym, existing_by_name: dict[str, list], new_ids: set[int], role: str) -> list:
+    candidates = []
+    name_lower = new_sym["name"].lower()
+    matcher = SequenceMatcher()
+    matcher.set_seq2(name_lower)
+    for existing_name, existing_list in existing_by_name.items():
+        ratio = _similar_name_candidate(existing_name, name_lower, matcher)
+        if ratio is None:
+            continue
+        for existing in existing_list:
+            if _same_role_external_symbol(existing, new_sym, new_ids, role):
+                candidates.append((existing, ratio))
+                break
+    return candidates
+
+
+def _similar_duplicate_violation(new_sym, existing, ratio: float) -> dict:
+    name = new_sym["name"]
+    return {
+        "category": "duplicates",
+        "severity": SEVERITY_INFO,
+        "file": new_sym["file_path"],
+        "line": new_sym["line_start"],
+        "message": (
+            f"fn `{name}` is similar to "
+            f"`{existing['name']}` at "
+            f"{loc(existing['file_path'], existing['line_start'])} "
+            f"({round(ratio * 100)}% match)"
+        ),
+        "fix": f"Check if `{existing['name']}` in {existing['file_path']} provides the same functionality",
+    }
+
+
+def _similar_duplicate_for_symbol(
+    new_sym, existing_by_name: dict[str, list], new_ids: set[int], role: str
+) -> dict | None:
+    candidates = _similar_duplicate_candidates(new_sym, existing_by_name, new_ids, role)
+    if not candidates:
+        return None
+    existing, ratio = max(candidates, key=lambda item: item[1])
+    return _similar_duplicate_violation(new_sym, existing, ratio)
+
+
+def _duplicate_score(checked: int, violations: list[dict]) -> int:
+    if checked == 0:
+        return 100
+    fail_count = sum(1 for violation in violations if violation["severity"] == SEVERITY_FAIL)
+    warn_count = sum(1 for violation in violations if violation["severity"] == SEVERITY_WARN)
+    info_count = sum(1 for violation in violations if violation["severity"] == SEVERITY_INFO)
+    penalty = fail_count * 20 + warn_count * 10 + info_count * 5
+    return max(0, 100 - penalty)
+
+
+def _duplicate_violations_for_symbols(
+    eligible,
+    existing_by_name: dict[str, list],
+    name_files: dict[tuple[str, str], set],
+    new_ids: set[int],
+    similarity_enabled: bool,
+) -> list[dict]:
+    violations = []
+    for new_sym in eligible:
+        lower_name = new_sym["name"].lower()
+        role = new_sym["file_role"] or ""
+        # Shared interface/ABC contract (defined in many same-role files) ->
+        # not a duplicate; skip both the exact-name and similar-name checks.
+        if _is_interface_contract(name_files, role, lower_name):
+            continue
+        exact = _exact_duplicate_for_symbol(new_sym, existing_by_name, new_ids, role)
+        if exact is not None:
+            violations.append(exact)
+        # Check for similar names (ratio > 0.8) in existing symbols. The
+        # difflib fast path sets seq2 once per changed symbol and uses the two
+        # upper bounds before the expensive ratio() call.
+        if similarity_enabled:
+            similar = _similar_duplicate_for_symbol(new_sym, existing_by_name, new_ids, role)
+            if similar is not None:
+                violations.append(similar)
+    return violations
 
 
 def _check_duplicates(conn, file_ids: list[int]) -> dict:
@@ -1062,159 +1435,18 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
         return {"score": 100, "violations": []}
 
     # 1. Get symbols from changed files
-    new_symbols = batched_in(
-        conn,
-        """SELECT s.id, s.name, s.kind, s.signature, s.line_start,
-                  f.path as file_path, f.file_role AS file_role
-           FROM symbols s
-           JOIN files f ON s.file_id = f.id
-           WHERE s.file_id IN ({ph})
-             AND s.kind IN ('function', 'method')""",
-        file_ids,
-    )
-
+    new_symbols = _new_duplicate_symbols(conn, file_ids)
     if not new_symbols:
         return {"score": 100, "violations": []}
 
     # 2. Get all other functions/methods NOT in changed files
-    existing_symbols = conn.execute("""
-        SELECT s.id, s.name, s.kind, s.signature, s.line_start,
-               f.path as file_path, f.file_role AS file_role
-        FROM symbols s
-        JOIN files f ON s.file_id = f.id
-        WHERE s.kind IN ('function', 'method')
-    """).fetchall()
-
-    # Build lookup by name for fast filtering + a per-(role,name) distinct-file
-    # count so a name shared across many files (an interface/ABC contract) is
-    # not mistaken for duplication. Keyed by role so the contract count only
-    # aggregates comparable code (we only ever compare within a role below).
-    existing_by_name: dict[str, list] = defaultdict(list)
-    _name_files: dict[tuple[str, str], set] = defaultdict(set)
-    for sym in existing_symbols:
-        existing_by_name[sym["name"].lower()].append(sym)
-        _name_files[(sym["file_role"] or "", sym["name"].lower())].add(sym["file_path"])
-
-    violations = []
-    checked = 0
-
-    new_ids = {s["id"] for s in new_symbols}
-
-    # The similar-name pass costs ~(public changed symbols × distinct repo
-    # names) Python iterations. On a hook-typical diff (1-3 files, a handful
-    # of new symbols) that's negligible; on a sweeping refactor diff it
-    # dominated the whole gate. Past the cap, keep the exact-name pass
-    # (cheap, dict lookup) and skip similarity — disclosed in the result.
-    _SIMILARITY_PASS_CAP = 150
-    eligible = [s for s in new_symbols if len(s["name"]) >= 4 and not s["name"].startswith("_")]
+    existing_by_name, name_files = _duplicate_indexes(_existing_duplicate_symbols(conn))
+    new_ids = {symbol["id"] for symbol in new_symbols}
+    eligible = [symbol for symbol in new_symbols if _duplicate_symbol_eligible(symbol)]
     similarity_enabled = len(eligible) <= _SIMILARITY_PASS_CAP
+    violations = _duplicate_violations_for_symbols(eligible, existing_by_name, name_files, new_ids, similarity_enabled)
 
-    for new_sym in new_symbols:
-        name = new_sym["name"]
-        if len(name) < 4:
-            continue
-        if name.startswith("_"):
-            continue
-        checked += 1
-
-        # Check for exact name matches in different files
-        lower_name = name.lower()
-        _role = new_sym["file_role"] or ""
-        # Shared interface/ABC contract (defined in many same-role files) ->
-        # not a duplicate; skip both the exact-name and similar-name checks.
-        if len(_name_files.get((_role, lower_name), ())) >= _INTERFACE_CONTRACT_MIN_FILES:
-            continue
-        for existing in existing_by_name.get(lower_name, []):
-            if existing["id"] in new_ids:
-                continue
-            if existing["file_path"] == new_sym["file_path"]:
-                continue
-            # Cross-role matches (src fn vs its test/script/ci namesake) are
-            # expected mirroring, not duplication -- compare within a role only.
-            if (existing["file_role"] or "") != _role:
-                continue
-            violations.append(
-                {
-                    "category": "duplicates",
-                    "severity": SEVERITY_WARN,
-                    "file": new_sym["file_path"],
-                    "line": new_sym["line_start"],
-                    "message": (
-                        f"fn `{name}` has same name as "
-                        f"`{existing['name']}` at {loc(existing['file_path'], existing['line_start'])}"
-                    ),
-                    "fix": f"Consider reusing `{existing['name']}` from {existing['file_path']}",
-                }
-            )
-            break  # one match per new symbol is enough
-
-        # Check for similar names (ratio > 0.8) in existing symbols
-        if similarity_enabled and not any(v["symbol"] == name if "symbol" in v else False for v in violations):
-            name_lower = name.lower()
-            # The full ratio() against EVERY distinct repo name was the
-            # whole-gate hot spot: a diff touching one large module ran tens
-            # of millions of O(n*m) ratio() calls (~200s measured). The
-            # documented difflib fast path fixes it: seq2 is set ONCE per
-            # changed symbol (its preprocessing is cached), and the two
-            # cheap upper bounds (real_quick_ratio = length math,
-            # quick_ratio = char-multiset match) gate the expensive ratio()
-            # — both are guaranteed >= ratio(), so no candidate is lost.
-            candidates = []
-            _sm = SequenceMatcher()
-            _sm.set_seq2(name_lower)
-            for existing_name, existing_list in existing_by_name.items():
-                if abs(len(existing_name) - len(name_lower)) > 5:
-                    continue
-                # A name that contains (or is contained by) the other is a
-                # deliberate variant -- `run_agent` ⊂ `run_agent_opt`, `name` ⊂
-                # `_names`, `source_extensions` vs `source_to_test...` -- not a
-                # duplicate. Substring relation = intentional naming family.
-                if name_lower in existing_name or existing_name in name_lower:
-                    continue
-                _sm.set_seq1(existing_name)
-                if _sm.real_quick_ratio() < 0.8 or _sm.quick_ratio() < 0.8:
-                    continue
-                ratio = _sm.ratio()
-                if ratio >= 0.8 and ratio < 1.0:
-                    for ex in existing_list:
-                        if (
-                            ex["id"] not in new_ids
-                            and ex["file_path"] != new_sym["file_path"]
-                            and (ex["file_role"] or "") == _role
-                        ):
-                            candidates.append((ex, ratio))
-                            break
-
-            if candidates:
-                best = max(candidates, key=lambda x: x[1])
-                existing, ratio = best
-                violations.append(
-                    {
-                        "category": "duplicates",
-                        "severity": SEVERITY_INFO,
-                        "file": new_sym["file_path"],
-                        "line": new_sym["line_start"],
-                        "message": (
-                            f"fn `{name}` is similar to "
-                            f"`{existing['name']}` at "
-                            f"{loc(existing['file_path'], existing['line_start'])} "
-                            f"({round(ratio * 100)}% match)"
-                        ),
-                        "fix": f"Check if `{existing['name']}` in {existing['file_path']} provides the same functionality",
-                    }
-                )
-
-    if checked == 0:
-        score = 100
-    else:
-        # Each duplicate deducts points
-        fail_count = sum(1 for v in violations if v["severity"] == SEVERITY_FAIL)
-        warn_count = sum(1 for v in violations if v["severity"] == SEVERITY_WARN)
-        info_count = sum(1 for v in violations if v["severity"] == SEVERITY_INFO)
-        penalty = fail_count * 20 + warn_count * 10 + info_count * 5
-        score = max(0, 100 - penalty)
-
-    result: dict = {"score": score, "violations": violations}
+    result: dict = {"score": _duplicate_score(len(eligible), violations), "violations": violations}
     if not similarity_enabled:
         # W-Pattern2: part of the check did not run — disclose, never imply
         # a full-fidelity pass.
@@ -1263,6 +1495,140 @@ _SYNTAX_SKIP_LANGS: frozenset[str] = frozenset(
 )
 
 
+def _syntax_unavailable() -> dict:
+    return {
+        "score": 100,
+        "violations": [],
+        "available": False,
+        "unavailable_reason": "tree-sitter parser unavailable -- syntax check did not run",
+    }
+
+
+def _syntax_file_rows(conn, file_ids: list[int]):
+    return batched_in(conn, "SELECT id, path, language FROM files WHERE id IN ({ph})", file_ids)
+
+
+def _syntax_parse_failure(path: str) -> dict:
+    return {
+        "category": "syntax",
+        "severity": SEVERITY_INFO,
+        "file": path,
+        "line": None,
+        "message": f"could not parse `{path}` -- syntax not verified",
+        "fix": "Verify the file parses; this file was NOT syntax-checked",
+    }
+
+
+def _syntax_read_failure(path: str) -> dict:
+    return {
+        "category": "syntax",
+        "severity": SEVERITY_INFO,
+        "file": path,
+        "line": None,
+        "message": f"could not read `{path}` -- syntax not verified",
+        "fix": "Verify the file can be read; this file was NOT syntax-checked",
+    }
+
+
+def _python_syntax_error(path: str, exc: SyntaxError) -> dict:
+    line_num = exc.lineno or 1
+    return {
+        "category": "syntax",
+        "severity": SEVERITY_FAIL,
+        "file": path,
+        "line": line_num,
+        "message": f"python syntax error at line {line_num}: {exc.msg}",
+        "fix": "Fix the Python syntax error indicated by ast.parse",
+    }
+
+
+def _syntax_result(
+    files_checked: int = 0,
+    files_with_errors: int = 0,
+    parse_failures: int = 0,
+    violations: list[dict] | None = None,
+) -> dict:
+    return {
+        "files_checked": files_checked,
+        "files_with_errors": files_with_errors,
+        "parse_failures": parse_failures,
+        "violations": violations or [],
+    }
+
+
+def _python_ast_syntax_gate(path: str, fpath: Path) -> dict | None:
+    try:
+        import ast
+
+        ast.parse(fpath.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        return _syntax_result(files_checked=1, files_with_errors=1, violations=[_python_syntax_error(path, exc)])
+    except OSError:
+        return _syntax_result(parse_failures=1, violations=[_syntax_read_failure(path)])
+    return None
+
+
+def _tree_sitter_error_violations(path: str, tree) -> list[dict]:
+    violations = []
+    for node in _find_error_nodes(tree.root_node)[:5]:
+        line_num = node.start_point[0] + 1
+        violations.append(
+            {
+                "category": "syntax",
+                "severity": SEVERITY_FAIL,
+                "file": path,
+                "line": line_num,
+                "message": f"syntax error at line {line_num}",
+                "fix": "Fix the syntax error indicated by the parser",
+            }
+        )
+    return violations
+
+
+def _tree_sitter_syntax_gate(path: str, fpath: Path, lang: str, parse_file) -> dict:
+    try:
+        result = parse_file(fpath, lang)
+    except Exception:  # noqa: BLE001 — any parse crash = unverified file (W-Pattern2)
+        return _syntax_result(parse_failures=1, violations=[_syntax_parse_failure(path)])
+
+    if result is None or result[0] is None:
+        return _syntax_result(parse_failures=1, violations=[_syntax_parse_failure(path)])
+
+    violations = _tree_sitter_error_violations(path, result[0])
+    return _syntax_result(files_checked=1, files_with_errors=1 if violations else 0, violations=violations)
+
+
+def _syntax_result_for_file(row, root: Path, parse_file) -> dict | None:
+    path = row["path"]
+    fpath = root / path
+    if not fpath.exists():
+        return None
+
+    lang = row["language"]
+    if not lang or lang in _SYNTAX_SKIP_LANGS:
+        return None
+
+    if lang == "python":
+        py_result = _python_ast_syntax_gate(path, fpath)
+        if py_result is not None:
+            return py_result
+    return _tree_sitter_syntax_gate(path, fpath, lang, parse_file)
+
+
+def _merge_syntax_totals(totals: dict, result: dict) -> None:
+    totals["files_checked"] += result["files_checked"]
+    totals["files_with_errors"] += result["files_with_errors"]
+    totals["parse_failures"] += result["parse_failures"]
+    totals["violations"].extend(result["violations"])
+
+
+def _syntax_score(files_checked: int, files_with_errors: int) -> int:
+    if files_checked == 0 or files_with_errors == 0:
+        return 100
+    score = round(100 * (files_checked - files_with_errors) / files_checked)
+    return max(0, min(100, score))
+
+
 def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     """Check for syntax errors via tree-sitter ERROR nodes.
 
@@ -1278,17 +1644,6 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     if not file_ids:
         return {"score": 100, "violations": []}
 
-    changed_files = batched_in(
-        conn,
-        "SELECT id, path, language FROM files WHERE id IN ({ph})",
-        file_ids,
-    )
-
-    violations = []
-    files_checked = 0
-    files_with_errors = 0
-    parse_failures = 0
-
     try:
         from roam.index.parser import parse_file
     except ImportError:
@@ -1296,125 +1651,21 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
         # W-Pattern2: do NOT silently score 100 (a fabricated perfect
         # verdict); mark the category unavailable so the composite scorer
         # treats it as a non-credit dimension rather than a passed gate.
-        return {
-            "score": 100,
-            "violations": [],
-            "available": False,
-            "unavailable_reason": "tree-sitter parser unavailable -- syntax check did not run",
-        }
+        return _syntax_unavailable()
 
-    for frow in changed_files:
-        fpath = root / frow["path"]
-        if not fpath.exists():
-            continue
+    totals = _syntax_result()
+    for row in _syntax_file_rows(conn, file_ids):
+        result = _syntax_result_for_file(row, root, parse_file)
+        if result is not None:
+            _merge_syntax_totals(totals, result)
 
-        lang = frow["language"]
-        if not lang or lang in _SYNTAX_SKIP_LANGS:
-            continue
-
-        if lang == "python":
-            try:
-                import ast
-
-                ast.parse(fpath.read_text(encoding="utf-8"))
-            except SyntaxError as exc:
-                files_checked += 1
-                files_with_errors += 1
-                line_num = exc.lineno or 1
-                violations.append(
-                    {
-                        "category": "syntax",
-                        "severity": SEVERITY_FAIL,
-                        "file": frow["path"],
-                        "line": line_num,
-                        "message": f"python syntax error at line {line_num}: {exc.msg}",
-                        "fix": "Fix the Python syntax error indicated by ast.parse",
-                    }
-                )
-                continue
-            except OSError:
-                parse_failures += 1
-                violations.append(
-                    {
-                        "category": "syntax",
-                        "severity": SEVERITY_INFO,
-                        "file": frow["path"],
-                        "line": None,
-                        "message": f"could not read `{frow['path']}` -- syntax not verified",
-                        "fix": "Verify the file can be read; this file was NOT syntax-checked",
-                    }
-                )
-                continue
-
-        try:
-            result = parse_file(fpath, lang)
-        except Exception:  # noqa: BLE001 — any parse crash = unverified file (W-Pattern2)
-            # W-Pattern2: a crashed parse is NOT a clean file. Count it as
-            # a parse failure and surface it -- never credit it as checked.
-            parse_failures += 1
-            violations.append(
-                {
-                    "category": "syntax",
-                    "severity": SEVERITY_INFO,
-                    "file": frow["path"],
-                    "line": None,
-                    "message": f"could not parse `{frow['path']}` -- syntax not verified",
-                    "fix": "Verify the file parses; this file was NOT syntax-checked",
-                }
-            )
-            continue
-
-        # parse_file returns (tree, source_bytes, language) or (None, None,
-        # None). For a CODE language (data/markup already skipped above via
-        # _SYNTAX_SKIP_LANGS), tree-sitter is error-TOLERANT -- a broken file
-        # still yields a tree with ERROR nodes. So None here means the file was
-        # genuinely not verified (W-Pattern2): disclose it, never credit it as
-        # clean.
-        if result is None or result[0] is None:
-            parse_failures += 1
-            violations.append(
-                {
-                    "category": "syntax",
-                    "severity": SEVERITY_INFO,
-                    "file": frow["path"],
-                    "line": None,
-                    "message": f"could not parse `{frow['path']}` -- syntax not verified",
-                    "fix": "Verify the file parses; this file was NOT syntax-checked",
-                }
-            )
-            continue
-
-        files_checked += 1
-        tree = result[0]
-
-        error_nodes = _find_error_nodes(tree.root_node)
-        if error_nodes:
-            files_with_errors += 1
-            for node in error_nodes[:5]:  # Cap per-file error reports
-                line_num = node.start_point[0] + 1
-                violations.append(
-                    {
-                        "category": "syntax",
-                        "severity": SEVERITY_FAIL,
-                        "file": frow["path"],
-                        "line": line_num,
-                        "message": f"syntax error at line {line_num}",
-                        "fix": "Fix the syntax error indicated by the parser",
-                    }
-                )
-
-    if files_checked == 0:
-        score = 100
-    elif files_with_errors == 0:
-        score = 100
-    else:
-        score = round(100 * (files_checked - files_with_errors) / files_checked)
-        score = max(0, min(100, score))
-
-    result_dict: dict = {"score": score, "violations": violations}
-    if parse_failures > 0:
+    result_dict: dict = {
+        "score": _syntax_score(totals["files_checked"], totals["files_with_errors"]),
+        "violations": totals["violations"],
+    }
+    if totals["parse_failures"] > 0:
         # W-Pattern2: disclose that some files were not actually verified.
-        result_dict["parse_failures"] = parse_failures
+        result_dict["parse_failures"] = totals["parse_failures"]
     return result_dict
 
 
@@ -1474,6 +1725,50 @@ _COMPOSABLE_CONTAINER_RE = re.compile(r"^use[A-Z]\w*$")
 _COMPOSABLE_LANGS = frozenset({"javascript", "typescript", "tsx", "jsx", "vue"})
 
 
+def _is_composable_container(row) -> bool:
+    language = (row["language"] or "").lower()
+    return language in _COMPOSABLE_LANGS and bool(_COMPOSABLE_CONTAINER_RE.match(row["name"] or ""))
+
+
+def _composable_complexity_violation(row, cc: float) -> dict:
+    rounded = round(cc)
+    name = row["name"]
+    return {
+        "category": "complexity",
+        "severity": SEVERITY_INFO,
+        "file": row["file_path"],
+        "line": row["line_start"],
+        "message": (
+            f"composable `{name}` container complexity {rounded} — sum over its "
+            f"inner closures, advisory only (container idiom, not per-function load)"
+        ),
+        "symbol": name,
+        "cognitive_complexity": rounded,
+        "fix": f"Review the inner closures of `{name}` individually; extract only closures that don't share refs",
+    }
+
+
+def _standard_complexity_violation(row, cc: float, threshold: int) -> dict:
+    rounded = round(cc)
+    name = row["name"]
+    return {
+        "category": "complexity",
+        "severity": SEVERITY_FAIL if cc >= _COMPLEXITY_FAIL else SEVERITY_WARN,
+        "file": row["file_path"],
+        "line": row["line_start"],
+        "message": f"fn `{name}` cognitive complexity {rounded} (threshold {threshold})",
+        "symbol": name,
+        "cognitive_complexity": rounded,
+        "fix": f"Decompose `{name}` — extract helpers / flatten nesting to lower cognitive load",
+    }
+
+
+def _complexity_violation_for_row(row, cc: float, threshold: int) -> dict:
+    if _is_composable_container(row):
+        return _composable_complexity_violation(row, cc)
+    return _standard_complexity_violation(row, cc, threshold)
+
+
 def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WARN) -> dict:
     """Flag changed functions/methods whose cognitive complexity is too high."""
     if not file_ids:
@@ -1496,41 +1791,7 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
         checked += 1
         cc = float(r["cc"] or 0)
         if cc >= threshold:
-            is_composable_container = (
-                r["language"] or ""
-            ).lower() in _COMPOSABLE_LANGS and _COMPOSABLE_CONTAINER_RE.match(r["name"] or "")
-            if is_composable_container:
-                violations.append(
-                    {
-                        "category": "complexity",
-                        "severity": SEVERITY_INFO,
-                        "file": r["file_path"],
-                        "line": r["line_start"],
-                        "message": (
-                            f"composable `{r['name']}` container complexity {round(cc)} — sum over its "
-                            f"inner closures, advisory only (container idiom, not per-function load)"
-                        ),
-                        "symbol": r["name"],
-                        "cognitive_complexity": round(cc),
-                        "fix": (
-                            f"Review the inner closures of `{r['name']}` individually; extract only "
-                            f"closures that don't share refs"
-                        ),
-                    }
-                )
-                continue
-            violations.append(
-                {
-                    "category": "complexity",
-                    "severity": SEVERITY_FAIL if cc >= _COMPLEXITY_FAIL else SEVERITY_WARN,
-                    "file": r["file_path"],
-                    "line": r["line_start"],
-                    "message": (f"fn `{r['name']}` cognitive complexity {round(cc)} (threshold {threshold})"),
-                    "symbol": r["name"],
-                    "cognitive_complexity": round(cc),
-                    "fix": (f"Decompose `{r['name']}` — extract helpers / flatten nesting to lower cognitive load"),
-                }
-            )
+            violations.append(_complexity_violation_for_row(r, cc, threshold))
     if checked == 0:
         score = 100
     else:
@@ -1611,6 +1872,27 @@ def _check_import_side_effects(conn, file_ids: list[int], root: Path) -> dict:
 _MAX_ACTIONABLE_CYCLE = 8
 
 
+def _is_actionable_cycle(scc: set[str]) -> bool:
+    return 2 <= len(scc) <= _MAX_ACTIONABLE_CYCLE
+
+
+def _unseen_changed_cycle_files(scc: set[str], changed_set: set[str], seen: set[str]) -> list[str]:
+    return [path for path in sorted(changed_set & scc) if path not in seen]
+
+
+def _cycle_violation(path: str, scc: set[str]) -> dict:
+    others = sorted(scc - {path})
+    tail = "..." if len(others) > 3 else ""
+    return {
+        "category": "cycles",
+        "severity": SEVERITY_WARN,
+        "file": path,
+        "line": None,
+        "message": f"`{path}` is in an import cycle of {len(scc)} files (with {', '.join(others[:3])}{tail})",
+        "fix": "Break the cycle — invert one dependency or extract the shared piece into a new module",
+    }
+
+
 def _collect_cycle_violations(graph, changed_set: set[str]) -> list[dict]:
     """One WARN per changed file that sits in a SMALL import cycle (2..8 files)."""
     import networkx as nx
@@ -1618,26 +1900,11 @@ def _collect_cycle_violations(graph, changed_set: set[str]) -> list[dict]:
     violations: list[dict] = []
     seen: set[str] = set()
     for scc in nx.strongly_connected_components(graph):
-        if not (2 <= len(scc) <= _MAX_ACTIONABLE_CYCLE):
+        if not _is_actionable_cycle(scc):
             continue
-        for f in sorted(changed_set & scc):
-            if f in seen:
-                continue
-            seen.add(f)
-            others = sorted(scc - {f})
-            tail = "..." if len(others) > 3 else ""
-            violations.append(
-                {
-                    "category": "cycles",
-                    "severity": SEVERITY_WARN,
-                    "file": f,
-                    "line": None,
-                    "message": (
-                        f"`{f}` is in an import cycle of {len(scc)} files (with {', '.join(others[:3])}{tail})"
-                    ),
-                    "fix": ("Break the cycle — invert one dependency or extract the shared piece into a new module"),
-                }
-            )
+        for path in _unseen_changed_cycle_files(scc, changed_set, seen):
+            seen.add(path)
+            violations.append(_cycle_violation(path, scc))
     return violations
 
 
@@ -1707,6 +1974,110 @@ def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | Non
         return [], None, f"{_LEAK_PATTERNS_FILENAME}: {exc}"
 
 
+def _secret_scan_targets(changed_paths: list[str], root: Path) -> list[tuple[str, Path]]:
+    targets = []
+    for rel in changed_paths:
+        norm = rel.replace("\\", "/")
+        if norm.endswith(_SECRETS_SCAN_EXTENSIONS) and (root / rel).is_file():
+            targets.append((norm, root / rel))
+    return targets
+
+
+def _read_secret_scan_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _repo_patterns_enabled(norm: str, repo_patterns: list, repo_should_scan) -> bool:
+    return bool(repo_patterns) and (repo_should_scan is None or repo_should_scan(norm))
+
+
+def _builtin_secret_hit(line: str, norm: str, secret_patterns, pattern_id_fn) -> tuple[str, str, str] | None:
+    for pattern in secret_patterns:
+        if pattern.search(line):
+            return (
+                SEVERITY_FAIL,
+                f"credential-shaped string ({pattern_id_fn(pattern)}) in `{norm}`",
+                "Remove the credential and rotate it; load secrets from the environment instead",
+            )
+    return None
+
+
+def _repo_secret_hit(line: str, norm: str, repo_patterns: list) -> tuple[str, str, str] | None:
+    for name, pattern in repo_patterns:
+        if pattern.search(line):
+            return (
+                SEVERITY_WARN,
+                f"repo-forbidden pattern [{name}] in `{norm}`",
+                f"Reword the line — [{name}] is on this repo's never-publish list ({_LEAK_PATTERNS_FILENAME})",
+            )
+    return None
+
+
+def _secret_hit_for_line(
+    line: str,
+    norm: str,
+    secret_patterns,
+    pattern_id_fn,
+    repo_patterns: list,
+    scan_repo_patterns: bool,
+) -> tuple[str, str, str] | None:
+    hit = _builtin_secret_hit(line, norm, secret_patterns, pattern_id_fn)
+    if hit is not None:
+        return hit
+    return _repo_secret_hit(line, norm, repo_patterns) if scan_repo_patterns else None
+
+
+def _secret_violation(norm: str, line_no: int, hit: tuple[str, str, str]) -> dict:
+    severity, message, fix = hit
+    return {
+        "category": "secrets",
+        "severity": severity,
+        "file": norm,
+        "line": line_no,
+        "message": message,
+        "fix": fix,
+    }
+
+
+def _secret_violations_for_file(
+    norm: str,
+    text: str,
+    secret_patterns,
+    pattern_id_fn,
+    repo_patterns: list,
+    scan_repo_patterns: bool,
+) -> list[dict]:
+    violations: list[dict] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if len(violations) >= _SECRETS_MAX_PER_FILE:
+            break
+        hit = _secret_hit_for_line(line, norm, secret_patterns, pattern_id_fn, repo_patterns, scan_repo_patterns)
+        if hit is not None:
+            violations.append(_secret_violation(norm, line_no, hit))
+    return violations
+
+
+def _secrets_score(checked: int, violations: list[dict]) -> int:
+    if checked == 0 or not violations:
+        return 100
+    penalty = sum(25 if violation["severity"] == SEVERITY_FAIL else 8 for violation in violations)
+    return max(0, 100 - penalty)
+
+
+def _secrets_result(score: int, violations: list[dict], repo_error: str | None, repo_patterns: list) -> dict:
+    result: dict = {"score": score, "violations": violations}
+    if repo_error:
+        # Pattern 2 — the repo catalogue did NOT run; disclose, never
+        # silently pass as if it had.
+        result["repo_patterns_error"] = repo_error
+    if repo_patterns:
+        result["repo_pattern_count"] = len(repo_patterns)
+    return result
+
+
 def _check_secrets(changed_paths: list[str], root: Path) -> dict:
     """Flag leaked credentials and repo-forbidden language in changed files.
 
@@ -1731,69 +2102,258 @@ def _check_secrets(changed_paths: list[str], root: Path) -> dict:
 
     violations: list[dict] = []
     checked = 0
-    for rel in changed_paths:
-        norm = rel.replace("\\", "/")
-        if not norm.endswith(_SECRETS_SCAN_EXTENSIONS):
-            continue
-        fpath = root / rel
-        if not fpath.is_file():
-            continue
-        try:
-            text = fpath.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+    for norm, path in _secret_scan_targets(changed_paths, root):
+        text = _read_secret_scan_text(path)
+        if text is None:
             continue
         checked += 1
-        per_file = 0
-        scan_repo_patterns = bool(repo_patterns) and (repo_should_scan is None or repo_should_scan(norm))
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            if per_file >= _SECRETS_MAX_PER_FILE:
-                break
-            hit = None
-            for pat in SECRET_PATTERNS:
-                if pat.search(line):
-                    hit = (
-                        SEVERITY_FAIL,
-                        f"credential-shaped string ({pattern_id(pat)}) in `{norm}`",
-                        "Remove the credential and rotate it; load secrets from the environment instead",
-                    )
-                    break
-            if hit is None and scan_repo_patterns:
-                for name, pat in repo_patterns:
-                    if pat.search(line):
-                        hit = (
-                            SEVERITY_WARN,
-                            f"repo-forbidden pattern [{name}] in `{norm}`",
-                            f"Reword the line — [{name}] is on this repo's never-publish list "
-                            f"({_LEAK_PATTERNS_FILENAME})",
-                        )
-                        break
-            if hit is not None:
-                severity, message, fix = hit
-                violations.append(
-                    {
-                        "category": "secrets",
-                        "severity": severity,
-                        "file": norm,
-                        "line": line_no,
-                        "message": message,
-                        "fix": fix,
-                    }
-                )
-                per_file += 1
+        violations.extend(
+            _secret_violations_for_file(
+                norm,
+                text,
+                SECRET_PATTERNS,
+                pattern_id,
+                repo_patterns,
+                _repo_patterns_enabled(norm, repo_patterns, repo_should_scan),
+            )
+        )
 
-    if checked == 0 or not violations:
-        score = 100
+    return _secrets_result(_secrets_score(checked, violations), violations, repo_error, repo_patterns)
+
+
+def _clean_command_example(command: str) -> str:
+    cleaned = command.strip()
+    if " #" in cleaned:
+        cleaned = cleaned.partition(" #")[0].rstrip()
+    if cleaned.endswith("\\"):
+        cleaned = cleaned[:-1].rstrip()
+    return cleaned
+
+
+def _append_command_example(examples: list[dict], seen_on_line: set[str], line_no: int, command: str) -> None:
+    cleaned = _clean_command_example(command)
+    if cleaned and cleaned not in seen_on_line:
+        examples.append({"line": line_no, "command": cleaned})
+        seen_on_line.add(cleaned)
+
+
+def _is_bare_inline_command_reference(command: str) -> bool:
+    try:
+        import shlex
+
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return len(tokens) == 2 and tokens[0] == "roam" and not tokens[1].startswith("-")
+
+
+def _is_fence_boundary(line: str) -> bool:
+    return line.strip().startswith(("```", "~~~"))
+
+
+def _append_inline_command_examples(examples: list[dict], seen_on_line: set[str], line_no: int, line: str) -> None:
+    for match in _INLINE_ROAM_COMMAND_RE.finditer(line):
+        command = _clean_command_example(match.group(1))
+        if not _is_bare_inline_command_reference(command):
+            _append_command_example(examples, seen_on_line, line_no, command)
+
+
+def _append_shell_command_example(
+    examples: list[dict], seen_on_line: set[str], line_no: int, line: str, in_fence: bool
+) -> None:
+    shell_match = _SHELL_ROAM_COMMAND_RE.match(line)
+    if shell_match and (in_fence or line.lstrip().startswith(("$", ">"))):
+        _append_command_example(examples, seen_on_line, line_no, shell_match.group(1) or shell_match.group(2))
+
+
+def _extract_roam_command_examples(text: str) -> list[dict]:
+    examples: list[dict] = []
+    in_fence = False
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if _is_fence_boundary(line):
+            in_fence = not in_fence
+            continue
+        seen_on_line: set[str] = set()
+        _append_inline_command_examples(examples, seen_on_line, line_no, line)
+        _append_shell_command_example(examples, seen_on_line, line_no, line, in_fence)
+    return examples
+
+
+def _command_example_violation(path: str, line_no: int, check: dict) -> dict | None:
+    status = check.get("executable_status")
+    if status == "checked":
+        return None
+    if check.get("target_status") == "placeholder":
+        severity = SEVERITY_INFO
+        message = f"command example `{check.get('command_text')}` needs placeholder substitution"
+        fix = "Replace placeholders before treating this as a copy-paste command"
+    elif status == "failed":
+        severity = SEVERITY_FAIL
+        message = f"command example `{check.get('command_text')}` is not executable: {check.get('reason')}"
+        fix = "Use a registered roam subcommand with valid flags"
     else:
-        penalty = sum(25 if v["severity"] == SEVERITY_FAIL else 8 for v in violations)
-        score = max(0, 100 - penalty)
-    result: dict = {"score": score, "violations": violations}
-    if repo_error:
-        # Pattern 2 — the repo catalogue did NOT run; disclose, never
-        # silently pass as if it had.
-        result["repo_patterns_error"] = repo_error
-    if repo_patterns:
-        result["repo_pattern_count"] = len(repo_patterns)
-    return result
+        severity = SEVERITY_WARN
+        message = f"command example `{check.get('command_text')}` was not checked: {check.get('reason')}"
+        fix = "Rewrite as a literal `roam <subcommand>` example or mark it as prose"
+    return {
+        "category": "command_examples",
+        "severity": severity,
+        "file": path,
+        "line": line_no,
+        "message": message,
+        "symbol": check.get("subcommand") or "",
+        "command_check": check,
+        "fix": fix,
+    }
+
+
+def _read_command_example_text(root: Path, rel: str) -> str | None:
+    if not _is_command_example_surface(rel):
+        return None
+    if _is_historical_command_example_surface(rel) or _is_plugin_example_command_surface(rel):
+        return None
+    path = root / rel
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _command_example_violations_for_file(root: Path, rel: str) -> tuple[int, list[dict]]:
+    text = _read_command_example_text(root, rel)
+    if text is None:
+        return 0, []
+    violations: list[dict] = []
+    examples = _extract_roam_command_examples(text)
+    for example in examples:
+        check = validate_command_advice(f"{rel}:{example['line']}", example["command"])
+        violation = _command_example_violation(rel, example["line"], check)
+        if violation:
+            violations.append(violation)
+    return len(examples), violations
+
+
+def _check_command_examples(changed_paths: list[str], root: Path) -> dict:
+    violations: list[dict] = []
+    examples_checked = 0
+    for rel in changed_paths:
+        count, file_violations = _command_example_violations_for_file(root, rel)
+        examples_checked += count
+        violations.extend(file_violations)
+    hard_count = sum(1 for v in violations if v.get("severity") != SEVERITY_INFO)
+    score = 100 if hard_count == 0 else max(0, 100 - hard_count * 10)
+    return {"score": score, "violations": violations, "advisory": True, "examples_checked": examples_checked}
+
+
+def _read_claim_text(root: Path, rel: str) -> str | None:
+    if not _is_claim_surface(rel):
+        return None
+    if _is_historical_command_example_surface(rel):
+        return None
+    path = root / rel
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _line_has_claim_evidence(line: str) -> bool:
+    return bool(_CLAIM_EVIDENCE_RE.search(line))
+
+
+def _is_claim_template_placeholder_line(line: str) -> bool:
+    if "](" in line:
+        return False
+    for match in _CLAIM_TEMPLATE_PLACEHOLDER_RE.finditer(line):
+        content = match.group(1)
+        if any(ch.isalpha() for ch in content) and any(ch.isdigit() for ch in content):
+            return True
+    return False
+
+
+def _is_non_assertive_claim_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if _CLAIM_OUTLINE_HEADING_RE.match(stripped):
+        return True
+    if _is_claim_template_placeholder_line(stripped):
+        return True
+    return 'href="mailto:' in stripped or "href='mailto:" in stripped
+
+
+def _claim_evidence_window(line: str) -> int:
+    return 8 if line.lstrip().startswith("|") else 1
+
+
+def _claim_has_nearby_evidence(lines: list[str], idx: int) -> bool:
+    if _line_has_claim_evidence(lines[idx]):
+        return True
+    window = _claim_evidence_window(lines[idx])
+    for neighbor in range(max(0, idx - window), min(len(lines), idx + window + 1)):
+        if neighbor != idx and _line_has_claim_evidence(lines[neighbor]):
+            return True
+    return False
+
+
+def _claim_excerpt(line: str, limit: int = 140) -> str:
+    excerpt = " ".join(line.strip().split())
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 1].rstrip() + "..."
+
+
+def _claim_violation(path: str, line_no: int, line: str) -> dict:
+    excerpt = _claim_excerpt(line)
+    return {
+        "category": "claims",
+        "severity": SEVERITY_WARN,
+        "file": path,
+        "line": line_no,
+        "message": f"high-specificity claim needs evidence/date: `{excerpt}`",
+        "symbol": "",
+        "fix": "Add a source, measurement date, benchmark note, or narrow the claim",
+    }
+
+
+def _claim_violations_for_text(path: str, text: str) -> tuple[int, list[dict]]:
+    claims_checked = 0
+    violations: list[dict] = []
+    in_fence = False
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        line_no = idx + 1
+        if _is_fence_boundary(line):
+            in_fence = not in_fence
+            continue
+        if in_fence or _is_non_assertive_claim_line(line) or not _CLAIM_TRIGGER_RE.search(line):
+            continue
+        claims_checked += 1
+        if not _claim_has_nearby_evidence(lines, idx):
+            violations.append(_claim_violation(path, line_no, line))
+    return claims_checked, violations
+
+
+def _claim_violations_for_file(root: Path, rel: str) -> tuple[int, list[dict]]:
+    text = _read_claim_text(root, rel)
+    if text is None:
+        return 0, []
+    return _claim_violations_for_text(rel, text)
+
+
+def _check_claims(changed_paths: list[str], root: Path) -> dict:
+    violations: list[dict] = []
+    claims_checked = 0
+    for rel in changed_paths:
+        count, file_violations = _claim_violations_for_file(root, rel)
+        claims_checked += count
+        violations.extend(file_violations)
+    score = 100 if not violations else max(0, 100 - len(violations) * 5)
+    return {"score": score, "violations": violations, "advisory": True, "claims_checked": claims_checked}
 
 
 def _check_cycles(conn, file_ids: list[int], changed_paths: list[str]) -> dict:
@@ -1840,6 +2400,48 @@ _MAX_TEST_FILES = 25
 _PYTEST_FAIL_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 
 
+def _tests_unavailable(reason: str) -> dict:
+    return {
+        "score": 100,
+        "violations": [],
+        "available": False,
+        "unavailable_reason": reason,
+    }
+
+
+def _load_affected_tests_helper():
+    try:
+        from roam.commands.cmd_affected_tests import _gather_affected_tests
+    except Exception:  # noqa: BLE001
+        return None
+    return _gather_affected_tests
+
+
+def _rank_affected_test_entries(entries) -> list[tuple[int, int, str]]:
+    ranked: list[tuple[int, int, str]] = []
+    for entry in entries:
+        path = entry.get("file")
+        if not (path and path.endswith(".py")):
+            continue
+        priority = {"DIRECT": 1, "COLOCATED": 2}.get(entry.get("kind"), 3)
+        ranked.append((priority, int(entry.get("hops") or 9), path.replace("\\", "/")))
+    return ranked
+
+
+def _rank_changed_test_paths(changed_paths: list[str]) -> list[tuple[int, int, str]]:
+    return [(0, 0, path.replace("\\", "/")) for path in changed_paths if is_test_file(path) and path.endswith(".py")]
+
+
+def _existing_ranked_paths(ranked: list[tuple[int, int, str]], root: Path) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for _priority, _hops, path in sorted(ranked):
+        if path not in seen and (root / path).exists():
+            seen.add(path)
+            ordered.append(path)
+    return ordered
+
+
 def _gather_and_rank_tests(conn, sym_ids, src_paths, changed_paths, root):
     """Rank impacted test files by relevance and return ``(ordered, unavailable)``.
 
@@ -1848,44 +2450,17 @@ def _gather_and_rank_tests(conn, sym_ids, src_paths, changed_paths, root):
     ``unavailable`` is None on success, else the ready-to-return result dict
     describing why test discovery could not run.
     """
-    try:
-        from roam.commands.cmd_affected_tests import _gather_affected_tests
-    except Exception:  # noqa: BLE001
-        return [], {
-            "score": 100,
-            "violations": [],
-            "available": False,
-            "unavailable_reason": "affected-tests helper unavailable",
-        }
+    gather_affected_tests = _load_affected_tests_helper()
+    if gather_affected_tests is None:
+        return [], _tests_unavailable("affected-tests helper unavailable")
 
-    ranked: list[tuple[int, int, str]] = []
     try:
-        for e in _gather_affected_tests(conn, sym_ids, src_paths):
-            f = e.get("file")
-            if not (f and f.endswith(".py")):
-                continue
-            pri = {"DIRECT": 1, "COLOCATED": 2}.get(e.get("kind"), 3)
-            ranked.append((pri, int(e.get("hops") or 9), f.replace("\\", "/")))
+        ranked = _rank_affected_test_entries(gather_affected_tests(conn, sym_ids, src_paths))
     except Exception as exc:  # noqa: BLE001 — never let test-discovery break the gate
-        return [], {
-            "score": 100,
-            "violations": [],
-            "available": False,
-            "unavailable_reason": f"affected-tests discovery failed: {exc!r}",
-        }
+        return [], _tests_unavailable(f"affected-tests discovery failed: {exc!r}")
 
-    for p in changed_paths:  # a changed test file is always most relevant
-        if is_test_file(p) and p.endswith(".py"):
-            ranked.append((0, 0, p.replace("\\", "/")))
-    ranked.sort()
-
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for _pri, _hops, f in ranked:
-        if f not in seen and (root / f).exists():
-            seen.add(f)
-            ordered.append(f)
-    return ordered, None
+    ranked.extend(_rank_changed_test_paths(changed_paths))
+    return _existing_ranked_paths(ranked, root), None
 
 
 def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
@@ -2115,6 +2690,771 @@ def _compute_composite(categories: dict[str, dict], selected: list[str] | tuple[
     return round(total / weight_sum)
 
 
+def _handle_verify_toggle(set_on: bool, set_off: bool, root: Path, json_mode: bool) -> bool:
+    if not (set_on or set_off):
+        return False
+    enabled = bool(set_on) and not set_off
+    cfg_path = write_verify_enabled(root, enabled)
+    state = "ON (verify will run)" if enabled else "OFF (verify disabled)"
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope("verify", summary={"verdict": "CONFIG", "enabled": enabled, "config_path": str(cfg_path)})
+            )
+        )
+    else:
+        click.echo(f"VERDICT: verify {state} -- wrote {cfg_path}")
+    return True
+
+
+def _verify_enabled_from_env(cfg: dict) -> bool:
+    raw = (os.environ.get("ROAM_COMPILE_VERIFY") or "").strip().lower()
+    if raw in ("1", "true", "on", "yes"):
+        return True
+    if raw in ("0", "false", "off", "no"):
+        return False
+    return bool(cfg.get("enabled", True))
+
+
+def _emit_verify_disabled(json_mode: bool) -> None:
+    msg = "verify disabled in .roam/verify.yaml (enabled: false) -- run `roam verify --on` to resume"
+    if json_mode:
+        click.echo(to_json(json_envelope("verify", summary={"verdict": "SKIPPED", "enabled": False, "reason": msg})))
+    else:
+        click.echo(f"VERDICT: SKIPPED -- {msg}")
+
+
+def _resolve_verify_threshold(threshold: int | None, cfg: dict) -> int:
+    if threshold is not None:
+        return threshold
+    return cfg.get("threshold") if cfg.get("threshold") is not None else 70
+
+
+def _resolve_verify_targets(files, root: Path) -> list[str]:
+    if files:
+        return _expand_dir_targets([path.replace("\\", "/") for path in files], root)
+    return get_changed_files(root)
+
+
+def _auto_deep_enabled(auto: bool, deep: bool) -> bool:
+    if not auto or deep:
+        return deep
+    return os.environ.get("ROAM_VERIFY_NO_DEEP") not in ("1", "true", "yes")
+
+
+def _apply_report_mode(
+    report: bool,
+    files,
+    checks_opt: str | None,
+    selected: list[str],
+    target_paths: list[str],
+    root: Path,
+) -> tuple[list[str], list[str], bool]:
+    if not report:
+        return selected, target_paths, False
+    report_selected = selected if checks_opt else [check for check in _ALL_CHECKS if check != "tests"]
+    report_targets = target_paths if files else _all_report_paths(root, report_selected)
+    return report_selected, report_targets, True
+
+
+def _empty_verify_envelope(threshold: int) -> dict:
+    return json_envelope(
+        "verify",
+        summary={
+            "verdict": "PASS",
+            "score": 100,
+            "threshold": threshold,
+            "files_checked": 0,
+            "violation_count": 0,
+        },
+        categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
+        violations=[],
+    )
+
+
+def _emit_empty_verify(json_mode: bool, threshold: int) -> None:
+    envelope = _empty_verify_envelope(threshold)
+    auto_log(envelope, action="verify", target="")
+    if json_mode:
+        click.echo(to_json(envelope))
+        return
+    click.echo("VERDICT: PASS (score 100/100) -- no changed files")
+
+
+def _refresh_stale_verify_targets(root: Path, target_paths: list[str]) -> None:
+    try:
+        # Aliased: `changed_files.get_changed_files` is already imported at module
+        # top and used for target discovery. Re-importing the same name in verify()
+        # made it function-local and caused an UnboundLocalError.
+        from roam.index.incremental import get_changed_files as _incremental_changed_files
+
+        with open_db(readonly=True) as idx_conn:
+            on_disk = [path for path in target_paths if (root / path).exists()]
+            added, modified, _ = _incremental_changed_files(idx_conn, on_disk, root)
+        if added or modified:
+            from roam.index.indexer import Indexer
+
+            Indexer().run(quiet=True, progress_bar=False, light=True)
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break verify
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.index_stale_targets", exc)
+
+
+def _maybe_run_verify_check(selected: list[str], name: str, fn):
+    if name in selected:
+        return fn()
+    return {"score": 100, "violations": [], "skipped": True}
+
+
+def _run_verify_categories(conn, selected: list[str], file_ids: list[int], target_paths: list[str], root: Path) -> dict:
+    return {
+        "naming": _maybe_run_verify_check(selected, "naming", lambda: _check_naming(conn, file_ids)),
+        "imports": _maybe_run_verify_check(selected, "imports", lambda: _check_imports(conn, file_ids)),
+        "error_handling": _maybe_run_verify_check(
+            selected, "error_handling", lambda: _check_error_handling(conn, file_ids, root)
+        ),
+        "duplicates": _maybe_run_verify_check(selected, "duplicates", lambda: _check_duplicates(conn, file_ids)),
+        "syntax": _maybe_run_verify_check(selected, "syntax", lambda: _check_syntax(conn, file_ids, root)),
+        "complexity": _maybe_run_verify_check(selected, "complexity", lambda: _check_complexity(conn, file_ids)),
+        "cycles": _maybe_run_verify_check(selected, "cycles", lambda: _check_cycles(conn, file_ids, target_paths)),
+        "tests": _maybe_run_verify_check(selected, "tests", lambda: _check_tests(conn, file_ids, target_paths, root)),
+        "import_side_effects": _maybe_run_verify_check(
+            selected, "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
+        ),
+        "secrets": _maybe_run_verify_check(selected, "secrets", lambda: _check_secrets(target_paths, root)),
+        "command_examples": _maybe_run_verify_check(
+            selected, "command_examples", lambda: _check_command_examples(target_paths, root)
+        ),
+        "claims": _maybe_run_verify_check(selected, "claims", lambda: _check_claims(target_paths, root)),
+    }
+
+
+def _apply_verify_deep(categories: dict, deep: bool, conn, file_ids: list[int]) -> None:
+    if deep:
+        categories["patterns"] = _run_deep_patterns(conn, file_ids)
+
+
+def _apply_secrets_verdict_floor(score: int, verdict: str, categories: dict) -> tuple[int, str]:
+    secrets_fails = sum(
+        1
+        for violation in (categories.get("secrets", {}).get("violations") or [])
+        if violation.get("severity") == SEVERITY_FAIL
+    )
+    if verdict == "PASS" and secrets_fails:
+        return min(score, 79), "WARN"
+    return score, verdict
+
+
+def _syntax_degraded_qualifiers(categories: dict) -> list[str]:
+    qualifiers: list[str] = []
+    parse_failures = categories.get("syntax", {}).get("parse_failures", 0)
+    syntax_unavailable = categories.get("syntax", {}).get("available", True) is False
+    if parse_failures > 0:
+        qualifiers.append(
+            f"{parse_failures} file{'s' if parse_failures != 1 else ''} not syntax-checked (parse failed)"
+        )
+    if syntax_unavailable:
+        qualifiers.append("syntax check unavailable (tree-sitter parser missing)")
+    return qualifiers
+
+
+def _apply_syntax_degraded_verdict(verdict: str, categories: dict) -> tuple[str, bool]:
+    qualifiers = _syntax_degraded_qualifiers(categories)
+    if not qualifiers:
+        return verdict, False
+    return f"{verdict} -- {'; '.join(qualifiers)}", True
+
+
+def _flatten_category_violations(categories: dict) -> list[dict]:
+    violations: list[dict] = []
+    for cat_result in categories.values():
+        violations.extend(cat_result.get("violations", []))
+    return violations
+
+
+def _advisory_categories(categories: dict) -> set[str]:
+    return {name for name, result in categories.items() if result.get("advisory")}
+
+
+def _gating_violations(violations: list[dict], advisory_categories: set[str]) -> list[dict]:
+    return [violation for violation in violations if violation.get("category") not in advisory_categories]
+
+
+def _filter_category_violations(categories: dict, keep_fn) -> None:
+    for cat_result in categories.values():
+        violations = cat_result.get("violations")
+        if violations:
+            cat_result["violations"] = [violation for violation in violations if keep_fn(violation)]
+
+
+def _apply_verify_suppressions(root: Path, categories: dict, violations: list[dict]) -> tuple[list[dict], int]:
+    try:
+        from roam.commands.suppression import is_suppressed, load_suppressions
+
+        suppressions = load_suppressions(root)
+        if not suppressions:
+            return violations, 0
+
+        def is_suppressed_violation(violation):
+            return is_suppressed(
+                suppressions,
+                violation.get("category", ""),
+                violation.get("file", ""),
+                violation.get("line"),
+                symbol=violation.get("symbol"),
+            )
+
+        suppressed_count = sum(1 for violation in violations if is_suppressed_violation(violation))
+        if suppressed_count:
+            violations = [violation for violation in violations if not is_suppressed_violation(violation)]
+            _filter_category_violations(categories, lambda violation: not is_suppressed_violation(violation))
+        return violations, suppressed_count
+    except Exception as exc:  # noqa: BLE001 — suppression must never break the gate
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.suppressions", exc)
+        return violations, 0
+
+
+def _emit_verify_baseline_written(violations: list[dict], root: Path, json_mode: bool) -> None:
+    written = _write_verify_baseline(violations, root)
+    envelope = json_envelope(
+        "verify",
+        summary={
+            "verdict": "BASELINE_WRITTEN",
+            "baseline_written": written,
+            "baseline_path": str(_verify_baseline_path(root)),
+        },
+        violations=[],
+    )
+    if json_mode:
+        click.echo(to_json(envelope))
+        return
+    click.echo(
+        f"VERDICT: BASELINE_WRITTEN -- {written} finding"
+        f"{'s' if written != 1 else ''} accepted "
+        f"({_verify_baseline_path(root)})"
+    )
+
+
+def _filter_baselined_violations(root: Path, categories: dict, violations: list[dict]) -> tuple[list[dict], int, str]:
+    baseline = _load_verify_baseline(root)
+    if baseline is None:
+        return violations, 0, "absent"
+
+    remaining = dict(baseline)
+    line_cache: dict = {}
+    kept_ids = set()
+    baselined_count = 0
+    for violation in violations:
+        fingerprint = _finding_fingerprint(violation, line_cache, root)
+        if remaining.get(fingerprint, 0) > 0:
+            remaining[fingerprint] -= 1
+            baselined_count += 1
+        else:
+            kept_ids.add(id(violation))
+    if baselined_count:
+        violations = [violation for violation in violations if id(violation) in kept_ids]
+        _filter_category_violations(categories, lambda violation: id(violation) in kept_ids)
+    return violations, baselined_count, "applied"
+
+
+def _changed_line_predicate(changed: dict[str, set[int]]):
+    def on_changed_line(violation):
+        path = violation.get("file")
+        if path not in changed:
+            return True
+        line = violation.get("line")
+        return line is not None and line in changed[path]
+
+    return on_changed_line
+
+
+def _filtered_verdict_score(gating_violations: list[dict]) -> tuple[int, str]:
+    if not gating_violations:
+        return 100, "PASS"
+    broke_syntax = any(violation.get("category") == "syntax" for violation in gating_violations)
+    return max(0, 100 - len(gating_violations) * 5), "FAIL" if broke_syntax else "WARN"
+
+
+def _apply_diff_scope(
+    root: Path,
+    categories: dict,
+    violations: list[dict],
+    changed_lines: str | None,
+    diff_only: bool,
+    advisory_categories: set[str],
+) -> tuple[list[dict], bool, int | None, str | None]:
+    explicit_changed = _parse_changed_lines(changed_lines) if changed_lines else None
+    if not ((diff_only or explicit_changed) and violations):
+        return violations, False, None, None
+    files = {violation.get("file") for violation in violations if violation.get("file")}
+    changed = explicit_changed if explicit_changed is not None else _changed_line_ranges(files, root)
+    if not changed:
+        return violations, False, None, None
+    keep_fn = _changed_line_predicate(changed)
+    violations = [violation for violation in violations if keep_fn(violation)]
+    _filter_category_violations(categories, keep_fn)
+    score, verdict = _filtered_verdict_score(_gating_violations(violations, advisory_categories))
+    return violations, True, score, verdict
+
+
+def _recompute_filtered_verdict_if_needed(
+    score: int,
+    verdict: str,
+    violations: list[dict],
+    suppressed_count: int,
+    baselined_count: int,
+    diff_scoped: bool,
+    advisory_categories: set[str],
+) -> tuple[int, str]:
+    if not ((suppressed_count or baselined_count) and not diff_scoped):
+        return score, verdict
+    return _filtered_verdict_score(_gating_violations(violations, advisory_categories))
+
+
+def _annotate_sort_filter_violations(conn, violations: list[dict], severity: str | None) -> tuple[list[dict], int, int]:
+    blast = _blast_radius_by_file(conn, {violation.get("file") for violation in violations if violation.get("file")})
+    max_blast_radius = 0
+    for violation in violations:
+        blast_radius = blast.get(violation.get("file"), 0)
+        violation["blast_radius"] = blast_radius
+        max_blast_radius = max(max_blast_radius, blast_radius)
+    violations.sort(
+        key=lambda violation: (
+            _SEVERITY_ORDER.get(violation.get("severity"), 9),
+            -int(violation.get("blast_radius") or 0),
+            violation.get("file") or "",
+            violation.get("line") or 0,
+        )
+    )
+    full_count = len(violations)
+    if severity:
+        severity_rank = {"fail": 0, "warn": 1, "info": 2}[severity.lower()]
+        violations = [
+            violation for violation in violations if _SEVERITY_ORDER.get(violation.get("severity"), 9) <= severity_rank
+        ]
+    return violations, max_blast_radius, full_count
+
+
+def _verify_scope_summary(target_paths: list[str], file_map: dict) -> dict | None:
+    non_code_count = sum(1 for path in target_paths if _is_non_code_verify_surface(path))
+    unresolved_count = max(0, len(target_paths) - len(file_map))
+    if not (non_code_count or unresolved_count):
+        return None
+    summary = {
+        "target_file_count": len(target_paths),
+        "indexed_file_count": len(file_map),
+        "non_code_file_count": non_code_count,
+    }
+    if unresolved_count:
+        summary["unresolved_file_count"] = unresolved_count
+    if non_code_count:
+        summary["non_code_scope_definition"] = (
+            "Docs/product-copy surfaces are included for advisory checks such as "
+            "command_examples and claims; code-gating checks use indexed source files."
+        )
+    return summary
+
+
+def _category_summary(categories: dict) -> dict:
+    summary = {}
+    for cat_name, cat_result in categories.items():
+        entry = {
+            "score": cat_result["score"],
+            "violation_count": len(cat_result.get("violations", [])),
+            "violations": cat_result.get("violations", []),
+        }
+        if cat_result.get("parse_failures", 0) > 0:
+            entry["parse_failures"] = cat_result["parse_failures"]
+        if cat_result.get("available", True) is False:
+            entry["available"] = False
+            if cat_result.get("unavailable_reason"):
+                entry["unavailable_reason"] = cat_result["unavailable_reason"]
+        summary[cat_name] = entry
+    return summary
+
+
+def _build_verify_summary(
+    verdict: str,
+    score: int,
+    threshold: int,
+    files_checked: int,
+    violation_count: int,
+    selected: list[str],
+    degraded: bool,
+    severity: str | None,
+    shown_count: int,
+    total_count: int,
+    suppressed_count: int,
+    diff_scoped: bool,
+    baseline_state: str | None,
+    baselined_count: int,
+    max_blast_radius: int,
+    scope_summary: dict | None,
+) -> dict:
+    summary = {
+        "verdict": verdict,
+        "score": score,
+        "threshold": threshold,
+        "files_checked": files_checked,
+        "violation_count": violation_count,
+        "checks_run": selected,
+    }
+    if degraded:
+        summary["partial_success"] = True
+    if severity:
+        summary["severity_filter"] = severity.lower()
+        summary["shown_count"] = shown_count
+        summary["total_count"] = total_count
+    if suppressed_count:
+        summary["suppressed"] = suppressed_count
+    if diff_scoped:
+        summary["diff_scoped"] = True
+    if baseline_state:
+        summary["baseline"] = baseline_state
+        if baselined_count:
+            summary["baselined"] = baselined_count
+    if max_blast_radius:
+        summary["max_blast_radius"] = max_blast_radius
+        summary["blast_radius_definition"] = (
+            "MAX caller count (graph_metrics.in_degree) among symbols in a "
+            "finding's file; findings sorted by severity then blast_radius"
+        )
+    if scope_summary:
+        summary["scope"] = scope_summary
+    return summary
+
+
+def _emit_verify_result(
+    ctx,
+    verify_envelope: dict,
+    all_violations: list[dict],
+    report: bool,
+    persist: bool,
+    out: str | None,
+    root: Path,
+    json_mode: bool,
+    score: int,
+    threshold: int,
+    fix_suggestions: bool,
+    categories: dict,
+    selected: list[str],
+) -> None:
+    if report:
+        if persist:
+            _persist_verify_report(verify_envelope, all_violations, out, root, json_mode)
+        else:
+            _render_verify_report(verify_envelope, all_violations, json_mode)
+        return
+    if json_mode:
+        click.echo(to_json(verify_envelope))
+        if score < threshold:
+            ctx.exit(EXIT_GATE_FAILURE)
+        return
+    summary = verify_envelope["summary"]
+    _emit_verify_text(
+        score,
+        threshold,
+        summary["verdict"],
+        summary["violation_count"],
+        summary["files_checked"],
+        selected,
+        categories,
+        fix_suggestions,
+    )
+    if score < threshold:
+        ctx.exit(EXIT_GATE_FAILURE)
+
+
+def _emit_verify_text(
+    score: int,
+    threshold: int,
+    verdict: str,
+    violation_count: int,
+    files_checked: int,
+    selected: list[str],
+    categories: dict,
+    fix_suggestions: bool,
+) -> None:
+    click.echo(
+        f"VERDICT: {verdict} (score {score}/100) "
+        f"-- {violation_count} issue{'s' if violation_count != 1 else ''} "
+        f"in {files_checked} changed file{'s' if files_checked != 1 else ''}"
+    )
+    if len(selected) != len(_ALL_CHECKS):
+        skipped = ", ".join(check for check in _ALL_CHECKS if check not in selected)
+        click.echo(f"checks: {', '.join(selected)} (skipped: {skipped})")
+    click.echo("")
+    for label, key in (
+        ("NAMING", "naming"),
+        ("IMPORTS", "imports"),
+        ("ERROR HANDLING", "error_handling"),
+        ("DUPLICATES", "duplicates"),
+        ("SYNTAX", "syntax"),
+        ("COMPLEXITY", "complexity"),
+        ("CYCLES", "cycles"),
+        ("TESTS", "tests"),
+        ("COMMAND EXAMPLES", "command_examples"),
+        ("CLAIMS", "claims"),
+    ):
+        _print_category(label, categories[key], fix_suggestions)
+    gate_result = "PASS" if score >= threshold else "FAIL"
+    click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
+
+
+def _build_verify_run(
+    root: Path,
+    target_paths: list[str],
+    selected: list[str],
+    deep: bool,
+    baseline_write: bool,
+    new_only: bool,
+    changed_lines: str | None,
+    diff_only: bool,
+    severity: str | None,
+    threshold: int,
+    token_budget: int,
+    json_mode: bool,
+) -> dict | None:
+    with open_db(readonly=True) as conn:
+        file_map = resolve_changed_to_db(conn, target_paths)
+        file_ids = list(file_map.values())
+        categories = _run_verify_categories(conn, selected, file_ids, target_paths, root)
+        _apply_verify_deep(categories, deep, conn, file_ids)
+
+        score = _compute_composite(categories, selected)
+        verdict = _compute_verdict(score)
+        score, verdict = _apply_secrets_verdict_floor(score, verdict, categories)
+        verdict, degraded = _apply_syntax_degraded_verdict(verdict, categories)
+
+        all_violations = _flatten_category_violations(categories)
+        advisory_cats = _advisory_categories(categories)
+        all_violations, suppressed_count = _apply_verify_suppressions(root, categories, all_violations)
+
+        if baseline_write:
+            _emit_verify_baseline_written(all_violations, root, json_mode)
+            return None
+
+        baselined_count = 0
+        baseline_state = None
+        if new_only:
+            all_violations, baselined_count, baseline_state = _filter_baselined_violations(
+                root, categories, all_violations
+            )
+
+        all_violations, diff_scoped, scoped_score, scoped_verdict = _apply_diff_scope(
+            root, categories, all_violations, changed_lines, diff_only, advisory_cats
+        )
+        if scoped_score is not None and scoped_verdict is not None:
+            score, verdict = scoped_score, scoped_verdict
+
+        score, verdict = _recompute_filtered_verdict_if_needed(
+            score, verdict, all_violations, suppressed_count, baselined_count, diff_scoped, advisory_cats
+        )
+
+        violation_count = len(all_violations)
+        files_checked = len(file_map)
+        scope_summary = _verify_scope_summary(target_paths, file_map)
+        all_violations, max_blast_radius, severity_full_count = _annotate_sort_filter_violations(
+            conn, all_violations, severity
+        )
+        verify_summary = _build_verify_summary(
+            verdict,
+            score,
+            threshold,
+            files_checked,
+            violation_count,
+            selected,
+            degraded,
+            severity,
+            len(all_violations),
+            severity_full_count,
+            suppressed_count,
+            diff_scoped,
+            baseline_state,
+            baselined_count,
+            max_blast_radius,
+            scope_summary,
+        )
+        verify_envelope = json_envelope(
+            "verify",
+            summary=verify_summary,
+            categories=_category_summary(categories),
+            violations=all_violations,
+            budget=token_budget,
+        )
+        auto_log(verify_envelope, action="verify", target=((target_paths[0] if target_paths else "") or ""))
+        return {
+            "envelope": verify_envelope,
+            "violations": all_violations,
+            "score": score,
+            "categories": categories,
+        }
+
+
+def _verify_runtime_context(ctx) -> tuple[bool, int, Path]:
+    obj = ctx.obj or {}
+    return bool(obj.get("json")), int(obj.get("budget", 0) or 0), find_project_root()
+
+
+def _active_verify_config_or_emit(set_on: bool, set_off: bool, root: Path, json_mode: bool) -> dict | None:
+    if _handle_verify_toggle(set_on, set_off, root, json_mode):
+        return None
+    cfg = load_verify_config(root)
+    if not _verify_enabled_from_env(cfg):
+        _emit_verify_disabled(json_mode)
+        return None
+    return cfg
+
+
+def _resolve_verify_request(
+    cfg: dict,
+    root: Path,
+    files,
+    threshold: int | None,
+    checks_opt: str | None,
+    auto: bool,
+    deep: bool,
+    report: bool,
+    diff_only: bool,
+) -> dict:
+    resolved_threshold = _resolve_verify_threshold(threshold, cfg)
+    target_paths = _resolve_verify_targets(files, root)
+    selected = resolve_selected_checks(checks_opt, auto, cfg, target_paths)
+    selected, target_paths, report_forced_full_files = _resolve_report_scope(
+        report, files, checks_opt, selected, target_paths, root
+    )
+    return {
+        "threshold": resolved_threshold,
+        "target_paths": target_paths,
+        "selected": selected,
+        "deep": _auto_deep_enabled(auto, deep),
+        "diff_only": diff_only and not report_forced_full_files,
+    }
+
+
+def _resolve_report_scope(
+    report: bool,
+    files,
+    checks_opt: str | None,
+    selected: list[str],
+    target_paths: list[str],
+    root: Path,
+) -> tuple[list[str], list[str], bool]:
+    if not report:
+        return selected, target_paths, False
+    return _apply_report_mode(report, files, checks_opt, selected, target_paths, root)
+
+
+def _emit_empty_verify_if_needed(target_paths: list[str], json_mode: bool, threshold: int) -> bool:
+    if target_paths:
+        return False
+    _emit_empty_verify(json_mode, threshold)
+    return True
+
+
+def _emit_verify_run_result(
+    ctx,
+    request: dict,
+    root: Path,
+    baseline_write: bool,
+    new_only: bool,
+    changed_lines: str | None,
+    severity: str | None,
+    token_budget: int,
+    json_mode: bool,
+    report: bool,
+    persist: bool,
+    out: str | None,
+    fix_suggestions: bool,
+) -> None:
+    run = _build_verify_run(
+        root,
+        request["target_paths"],
+        request["selected"],
+        request["deep"],
+        baseline_write,
+        new_only,
+        changed_lines,
+        request["diff_only"],
+        severity,
+        request["threshold"],
+        token_budget,
+        json_mode,
+    )
+    if run is None:
+        return
+
+    _emit_verify_result(
+        ctx,
+        run["envelope"],
+        run["violations"],
+        report,
+        persist,
+        out,
+        root,
+        json_mode,
+        run["score"],
+        request["threshold"],
+        fix_suggestions,
+        run["categories"],
+        request["selected"],
+    )
+
+
+def _dispatch_verify_command(
+    ctx,
+    root: Path,
+    json_mode: bool,
+    token_budget: int,
+    set_on: bool,
+    set_off: bool,
+    files,
+    threshold: int | None,
+    checks_opt: str | None,
+    auto: bool,
+    deep: bool,
+    report: bool,
+    diff_only: bool,
+    baseline_write: bool,
+    new_only: bool,
+    changed_lines: str | None,
+    severity: str | None,
+    persist: bool,
+    out: str | None,
+    fix_suggestions: bool,
+) -> None:
+    cfg = _active_verify_config_or_emit(set_on, set_off, root, json_mode)
+    if cfg is None:
+        return
+
+    ensure_index()
+    request = _resolve_verify_request(cfg, root, files, threshold, checks_opt, auto, deep, report, diff_only)
+    if _emit_empty_verify_if_needed(request["target_paths"], json_mode, request["threshold"]):
+        return
+
+    # Verify reads symbols from the DB; refresh newly edited targets before
+    # resolving file IDs so fresh symbols are not invisible to the gate.
+    _refresh_stale_verify_targets(root, request["target_paths"])
+    _emit_verify_run_result(
+        ctx,
+        request,
+        root,
+        baseline_write,
+        new_only,
+        changed_lines,
+        severity,
+        token_budget,
+        json_mode,
+        report,
+        persist,
+        out,
+        fix_suggestions,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main command
 # ---------------------------------------------------------------------------
@@ -2146,7 +3486,10 @@ def _compute_composite(categories: dict[str, dict], selected: list[str] | tuple[
     "--checks",
     "checks_opt",
     default=None,
-    help="Comma-list to run: naming,imports,error_handling,duplicates,syntax. Default: all (or .roam/verify.yaml).",
+    help=(
+        "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
+        "command_examples,claims. Default: all (or .roam/verify.yaml)."
+    ),
 )
 @click.option(
     "--auto",
@@ -2288,521 +3631,29 @@ def verify(
     command runs pre-commit checks on changed files: naming, imports, error
     handling, duplicates, and syntax.
     """
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
-    root = find_project_root()
-
-    # --on/--off — persist the stop/start toggle and exit. No index needed.
-    if set_on or set_off:
-        enabled = bool(set_on) and not set_off
-        cfg_path = write_verify_enabled(root, enabled)
-        state = "ON (verify will run)" if enabled else "OFF (verify disabled)"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "verify", summary={"verdict": "CONFIG", "enabled": enabled, "config_path": str(cfg_path)}
-                    )
-                )
-            )
-        else:
-            click.echo(f"VERDICT: verify {state} -- wrote {cfg_path}")
-        return
-
-    cfg = load_verify_config(root)
-    # Resolution: the ROAM_COMPILE_VERIFY env (a host-platform Verify toggle /
-    # per-invocation control) OVERRIDES .roam/verify.yaml. '1/true/on/yes' →
-    # force run; '0/false/off/no' → force skip; unset → honor the file's
-    # `enabled`. Lets the server auto-run verify on toggle without flipping the
-    # repo's persistent config (mirrors cmd_compile._resolve_verify_enabled).
-    import os as _os
-
-    _vraw = (_os.environ.get("ROAM_COMPILE_VERIFY") or "").strip().lower()
-    if _vraw in ("1", "true", "on", "yes"):
-        _verify_enabled = True
-    elif _vraw in ("0", "false", "off", "no"):
-        _verify_enabled = False
-    else:
-        _verify_enabled = bool(cfg.get("enabled", True))
-    # NOT forced: a user can disable verify entirely (`roam verify --off`).
-    if not _verify_enabled:
-        msg = "verify disabled in .roam/verify.yaml (enabled: false) -- run `roam verify --on` to resume"
-        if json_mode:
-            click.echo(
-                to_json(json_envelope("verify", summary={"verdict": "SKIPPED", "enabled": False, "reason": msg}))
-            )
-        else:
-            click.echo(f"VERDICT: SKIPPED -- {msg}")
-        return
-
-    ensure_index()
-
-    # Threshold: CLI flag > config > default 70.
-    if threshold is None:
-        threshold = cfg.get("threshold") if cfg.get("threshold") is not None else 70
-
-    # Resolve target files
-    if files:
-        target_paths = [f.replace("\\", "/") for f in files]
-        target_paths = _expand_dir_targets(target_paths, root)
-    else:
-        # Default behavior: use git diff changed files
-        target_paths = get_changed_files(root)
-
-    # Select WHICH checks run (freedom): --checks > --auto/config.auto > config > all.
-    selected = resolve_selected_checks(checks_opt, auto, cfg, target_paths)
-
-    # --auto implies the DEEP advisory sweep: the algorithm/idiom detectors
-    # scoped to the touched files (~1-2s, content-driven, never gates).
-    # The catalog's Current/Better/Fix findings are exactly the post-edit
-    # signal the hook loop exists to surface. ROAM_VERIFY_NO_DEEP=1 opts out
-    # (e.g. minimal CI environments).
-    if auto and not deep and os.environ.get("ROAM_VERIFY_NO_DEEP") not in ("1", "true", "yes"):
-        deep = True
-
-    if report:
-        # REPORT mode: whole-repo scan (unless a path was given), all static
-        # checks, NON-gating. Skip the executable `tests` check (too heavy for a
-        # scan) and force diff scoping off so findings span whole files.
-        if not files:
-            target_paths = _all_source_paths(root)
-        if not checks_opt:
-            selected = [c for c in _ALL_CHECKS if c != "tests"]
-        diff_only = False
-
-    if not target_paths:
-        # No changed files
-        score = 100
-        verdict = "PASS"
-        _verify_empty_envelope = json_envelope(
-            "verify",
-            summary={
-                "verdict": verdict,
-                "score": score,
-                "threshold": threshold,
-                "files_checked": 0,
-                "violation_count": 0,
-            },
-            categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
-            violations=[],
-        )
-        auto_log(_verify_empty_envelope, action="verify", target="")
-        if json_mode:
-            click.echo(to_json(_verify_empty_envelope))
-            return
-        click.echo(f"VERDICT: {verdict} (score {score}/100) -- no changed files")
-        return
-
-    # New OR just-edited targets may not be reflected in the index — `ensure_index()`
-    # above is a no-op when the DB already exists, and verify reads symbols FROM the
-    # DB, so it would check STALE symbols: a freshly-written file resolves to nothing
-    # (files_checked=0 → false-green PASS), and a newly-added symbol inside an
-    # already-indexed file is invisible (the most common agent edit — the file is in
-    # the DB so an absence check passes, but its new symbols aren't). Re-index when
-    # any target is added or content-modified vs the DB. `get_changed_files` is the
-    # indexer's own detector (mtime fast-path + sha256 fallback) and only hashes the
-    # targets whose mtime moved, so this is cheap; the incremental run then re-parses
-    # only genuinely-changed files (~0.5s for a handful).
-    try:
-        # Aliased: `changed_files.get_changed_files` is already imported at module
-        # top and called above (line ~1203). A bare `from ... import
-        # get_changed_files` here would make the name function-local for the WHOLE
-        # `verify` scope → the earlier call hits UnboundLocalError (bare
-        # `roam verify` crashed before this alias). Different function, same name.
-        from roam.index.incremental import get_changed_files as _incremental_changed_files
-
-        with open_db(readonly=True) as _idx_conn:
-            _on_disk = [p for p in target_paths if (root / p).exists()]
-            _added, _modified, _ = _incremental_changed_files(_idx_conn, _on_disk, root)
-        if _added or _modified:
-            from roam.index.indexer import Indexer
-
-            # light=True: refresh the changed files' symbols + edges only, skipping
-            # the O(repo) metric phases (effects/taint ~113s, graph metrics, git,
-            # health, search) that verify's checks never read. ~150s → ~2-3s on a
-            # large working tree; the structural data verify needs is fully fresh.
-            Indexer().run(quiet=True, progress_bar=False, light=True)
-    except Exception as exc:  # noqa: BLE001 — best-effort; never break verify
-        from roam.observability import log_swallowed
-
-        log_swallowed("verify.index_stale_targets", exc)
-
-    with open_db(readonly=True) as conn:
-        # Map paths to file IDs
-        file_map = resolve_changed_to_db(conn, target_paths)
-        file_ids = list(file_map.values())
-
-        # Run only the SELECTED checks; unselected ones are marked skipped
-        # (score 100, excluded from the renormalized composite).
-        def _run_check(name: str, fn):
-            if name in selected:
-                return fn()
-            return {"score": 100, "violations": [], "skipped": True}
-
-        naming_result = _run_check("naming", lambda: _check_naming(conn, file_ids))
-        imports_result = _run_check("imports", lambda: _check_imports(conn, file_ids))
-        error_result = _run_check("error_handling", lambda: _check_error_handling(conn, file_ids, root))
-        duplicates_result = _run_check("duplicates", lambda: _check_duplicates(conn, file_ids))
-        syntax_result = _run_check("syntax", lambda: _check_syntax(conn, file_ids, root))
-        complexity_result = _run_check("complexity", lambda: _check_complexity(conn, file_ids))
-        cycles_result = _run_check("cycles", lambda: _check_cycles(conn, file_ids, target_paths))
-        tests_result = _run_check("tests", lambda: _check_tests(conn, file_ids, target_paths, root))
-        import_side_effects_result = _run_check(
-            "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
-        )
-        secrets_result = _run_check("secrets", lambda: _check_secrets(target_paths, root))
-
-        categories = {
-            "naming": naming_result,
-            "imports": imports_result,
-            "error_handling": error_result,
-            "duplicates": duplicates_result,
-            "syntax": syntax_result,
-            "complexity": complexity_result,
-            "cycles": cycles_result,
-            "tests": tests_result,
-            "import_side_effects": import_side_effects_result,
-            "secrets": secrets_result,
-        }
-
-        # --deep: advisory algorithm/idiom anti-patterns scoped to the target
-        # files. Added to `categories` (so it flows through suppression / baseline
-        # / diff scoping and surfaces to the agent) but deliberately NOT added to
-        # `selected`, so it never moves the PASS/FAIL composite verdict.
-        if deep:
-            categories["patterns"] = _run_deep_patterns(conn, file_ids)
-
-        # Composite score over the selected checks only.
-        score = _compute_composite(categories, selected)
-        verdict = _compute_verdict(score)
-        # Verdict floor: a FAIL-severity secrets finding (credential-shaped
-        # string in a tracked file) can never be averaged into a PASS — the
-        # quiet-on-pass hook loop would swallow it. WARN keeps the gate
-        # advisory (fail-open philosophy) while guaranteeing it SURFACES.
-        secrets_fails = sum(
-            1 for v in (categories.get("secrets", {}).get("violations") or []) if v.get("severity") == SEVERITY_FAIL
-        )
-        if verdict == "PASS" and secrets_fails:
-            verdict = "WARN"
-            score = min(score, 79)
-
-        # W-Pattern2: detect degraded sub-checks -- a crashed parse or an
-        # unavailable syntax category means part of the gate did NOT run.
-        # The composite verdict must disclose that rather than reporting a
-        # clean PASS indistinguishable from a fully-verified one.
-        syntax_parse_failures = categories.get("syntax", {}).get("parse_failures", 0)
-        syntax_unavailable = categories.get("syntax", {}).get("available", True) is False
-        degraded = syntax_parse_failures > 0 or syntax_unavailable
-        if degraded:
-            qualifiers = []
-            if syntax_parse_failures > 0:
-                qualifiers.append(
-                    f"{syntax_parse_failures} file{'s' if syntax_parse_failures != 1 else ''} "
-                    "not syntax-checked (parse failed)"
-                )
-            if syntax_unavailable:
-                qualifiers.append("syntax check unavailable (tree-sitter parser missing)")
-            verdict = f"{verdict} -- {'; '.join(qualifiers)}"
-
-        # Flatten all violations
-        all_violations = []
-        for cat_result in categories.values():
-            all_violations.extend(cat_result.get("violations", []))
-
-        # Advisory categories (the `--deep` `patterns` sweep) SURFACE findings but
-        # must never gate the verdict — mirrors _compute_composite, which omits
-        # them from the weighted score. The diff-only / suppression recompute
-        # paths below re-derive verdict+score from the surviving violation set, so
-        # they must score from the GATING subset (advisory findings excluded)
-        # while the full set still flows to the output. Without this, a single
-        # INFO `patterns` finding on a changed line flipped PASS/100 → WARN/95.
-        _advisory_cats = {name for name, res in categories.items() if res.get("advisory")}
-
-        def _gating(viols):
-            """Violations that may move the verdict (advisory categories excluded)."""
-            return [v for v in viols if v.get("category") not in _advisory_cats]
-
-        # Honor `.roam-suppressions.yml` (rule=category, file, optional line):
-        # INTENDED findings (e.g. a deliberate broad-except resilience pattern)
-        # can be ACKNOWLEDGED so they stop re-surfacing, keeping the signal sharp
-        # on genuinely-NEW debt. Transparent (Pattern 2) — the count is reported,
-        # never silently hidden. `roam suppress`/`.roam-suppressions.yml` is the
-        # acknowledge sink the auto-correct dogfood loop needs.
-        suppressed_count = 0
-        try:
-            from roam.commands.suppression import is_suppressed, load_suppressions
-
-            _sups = load_suppressions(root)
-            if _sups:
-
-                def _is_sup(v):
-                    return is_suppressed(
-                        _sups,
-                        v.get("category", ""),
-                        v.get("file", ""),
-                        v.get("line"),
-                        symbol=v.get("symbol"),
-                    )
-
-                suppressed_count = sum(1 for v in all_violations if _is_sup(v))
-                if suppressed_count:
-                    all_violations = [v for v in all_violations if not _is_sup(v)]
-                    for _cat in categories.values():
-                        _vs = _cat.get("violations")
-                        if _vs:
-                            _cat["violations"] = [v for v in _vs if not _is_sup(v)]
-        except Exception as exc:  # noqa: BLE001 — suppression must never break the gate
-            from roam.observability import log_swallowed
-
-            log_swallowed("verify.suppressions", exc)
-
-        # --baseline-write: snapshot the current (post-suppression) findings as
-        # accepted debt and exit. Captures everything currently flagged so a
-        # later `--new-only` run shows only genuinely-new findings.
-        if baseline_write:
-            _written = _write_verify_baseline(all_violations, root)
-            _bl_env = json_envelope(
-                "verify",
-                summary={
-                    "verdict": "BASELINE_WRITTEN",
-                    "baseline_written": _written,
-                    "baseline_path": str(_verify_baseline_path(root)),
-                },
-                violations=[],
-            )
-            if json_mode:
-                click.echo(to_json(_bl_env))
-                return
-            click.echo(
-                f"VERDICT: BASELINE_WRITTEN -- {_written} finding"
-                f"{'s' if _written != 1 else ''} accepted "
-                f"({_verify_baseline_path(root)})"
-            )
-            return
-
-        # --new-only: filter against the accepted-debt baseline by IDENTITY
-        # (line-shift tolerant fingerprint), leaving only findings the baseline
-        # did not record. Composes with --diff-only below (position scoping).
-        baselined_count = 0
-        baseline_state = None
-        if new_only:
-            _base = _load_verify_baseline(root)
-            if _base is None:
-                baseline_state = "absent"  # no baseline → everything is new
-            else:
-                baseline_state = "applied"
-                _remaining = dict(_base)
-                _line_cache: dict = {}
-                _kept_ids = set()
-                for v in all_violations:
-                    fp = _finding_fingerprint(v, _line_cache, root)
-                    if _remaining.get(fp, 0) > 0:
-                        _remaining[fp] -= 1
-                        baselined_count += 1
-                    else:
-                        _kept_ids.add(id(v))
-                if baselined_count:
-                    all_violations = [v for v in all_violations if id(v) in _kept_ids]
-                    for _cat in categories.values():
-                        _vs = _cat.get("violations")
-                        if _vs:
-                            _cat["violations"] = [v for v in _vs if id(v) in _kept_ids]
-
-        # --diff-only: scope to lines changed vs HEAD so the verdict reflects
-        # the EDIT, not the file's accumulated debt. Files with no tracked diff
-        # keep all their violations (no baseline). Overrides verdict + score.
-        diff_scoped = False
-        _explicit_changed = _parse_changed_lines(changed_lines) if changed_lines else None
-        if (diff_only or _explicit_changed) and all_violations:
-            _vfiles = {v.get("file") for v in all_violations if v.get("file")}
-            # Explicit ranges (caller knows exactly what it changed) override the
-            # git-diff-vs-HEAD baseline, which is noisy on a big uncommitted tree.
-            _changed = _explicit_changed if _explicit_changed is not None else _changed_line_ranges(_vfiles, root)
-            if _changed:
-
-                def _on_changed_line(v):
-                    f = v.get("file")
-                    if f not in _changed:
-                        return True  # no baseline for this file → keep
-                    ln = v.get("line")
-                    return ln is not None and ln in _changed[f]
-
-                all_violations = [v for v in all_violations if _on_changed_line(v)]
-                for _cat in categories.values():
-                    if _cat.get("violations"):
-                        _cat["violations"] = [v for v in _cat["violations"] if _on_changed_line(v)]
-                diff_scoped = True
-                _gv = _gating(all_violations)
-                if not _gv:
-                    verdict, score = "PASS", 100
-                else:
-                    # FAIL only when the edit broke parsing (syntax); other
-                    # categories are quality WARNs, not blockers.
-                    _broke = any(v.get("category") == "syntax" for v in _gv)
-                    verdict = "FAIL" if _broke else "WARN"
-                    score = max(0, 100 - len(_gv) * 5)
-
-        # If suppression or the baseline reduced the surfaced set but position
-        # scoping (--diff-only, which recomputes inline above) did NOT run, the
-        # verdict/score were computed from the RAW pre-filter categories and now
-        # overstate the problem -- a fully-baselined or fully-suppressed file is
-        # a PASS, not the raw file's FAIL. Recompute from what REMAINS, using the
-        # same rule --diff-only uses (FAIL only when the surviving set broke
-        # parsing; other categories are quality WARNs).
-        if (suppressed_count or baselined_count) and not diff_scoped:
-            _gv = _gating(all_violations)
-            if not _gv:
-                verdict, score = "PASS", 100
-            else:
-                _broke = any(v.get("category") == "syntax" for v in _gv)
-                verdict = "FAIL" if _broke else "WARN"
-                score = max(0, 100 - len(_gv) * 5)
-
-        violation_count = len(all_violations)
-        files_checked = len(file_map)
-
-        # Tier-1 blast-radius weighting: annotate each finding with its file's
-        # caller count and surface the widely-depended-on ones first. Pure
-        # ranking + annotation — the verdict/score/exit code were finalized
-        # above (_gating); this never changes them.
-        _blast = _blast_radius_by_file(conn, {v.get("file") for v in all_violations if v.get("file")})
-        max_blast_radius = 0
-        for v in all_violations:
-            _br = _blast.get(v.get("file"), 0)
-            v["blast_radius"] = _br
-            if _br > max_blast_radius:
-                max_blast_radius = _br
-        all_violations.sort(
-            key=lambda v: (
-                _SEVERITY_ORDER.get(v.get("severity"), 9),
-                -int(v.get("blast_radius") or 0),
-                v.get("file") or "",
-                v.get("line") or 0,
-            )
-        )
-
-        # --severity: DISPLAY filter only. Verdict/score/violation_count are
-        # already computed above from the FULL set; this just narrows the
-        # findings list shown/returned (cuts the report's noise floor).
-        _severity_full_count = len(all_violations)
-        if severity:
-            _sev_rank = {"fail": 0, "warn": 1, "info": 2}[severity.lower()]
-            all_violations = [v for v in all_violations if _SEVERITY_ORDER.get(v.get("severity"), 9) <= _sev_rank]
-
-        # Build category summary (used by JSON output + auto-log).
-        cat_summary = {}
-        for cat_name, cat_result in categories.items():
-            entry = {
-                "score": cat_result["score"],
-                "violation_count": len(cat_result.get("violations", [])),
-                "violations": cat_result.get("violations", []),
-            }
-            # W-Pattern2: surface degraded-path disclosure on the affected
-            # category only -- keeps the healthy-path envelope unchanged.
-            if cat_result.get("parse_failures", 0) > 0:
-                entry["parse_failures"] = cat_result["parse_failures"]
-            if cat_result.get("available", True) is False:
-                entry["available"] = False
-                if cat_result.get("unavailable_reason"):
-                    entry["unavailable_reason"] = cat_result["unavailable_reason"]
-            cat_summary[cat_name] = entry
-
-        verify_summary = {
-            "verdict": verdict,
-            "score": score,
-            "threshold": threshold,
-            "files_checked": files_checked,
-            "violation_count": violation_count,
-            "checks_run": selected,
-        }
-        if degraded:
-            verify_summary["partial_success"] = True
-        if severity:
-            verify_summary["severity_filter"] = severity.lower()
-            verify_summary["shown_count"] = len(all_violations)
-            verify_summary["total_count"] = _severity_full_count
-        if suppressed_count:
-            verify_summary["suppressed"] = suppressed_count
-        if diff_scoped:
-            verify_summary["diff_scoped"] = True
-        if baseline_state:
-            verify_summary["baseline"] = baseline_state
-            if baselined_count:
-                verify_summary["baselined"] = baselined_count
-        if max_blast_radius:
-            verify_summary["max_blast_radius"] = max_blast_radius
-            verify_summary["blast_radius_definition"] = (
-                "MAX caller count (graph_metrics.in_degree) among symbols in a "
-                "finding's file; findings sorted by severity then blast_radius"
-            )
-
-        verify_envelope = json_envelope(
-            "verify",
-            summary=verify_summary,
-            categories=cat_summary,
-            violations=all_violations,
-            budget=token_budget,
-        )
-        # Auto-log into the active run; target is the first file path or
-        # empty when the gate ran on the staged set.
-        _verify_target = (target_paths[0] if target_paths else "") or ""
-        auto_log(verify_envelope, action="verify", target=_verify_target)
-
-        # REPORT mode is non-gating: render the ranked punch-list and exit 0,
-        # skipping the PASS/FAIL gate below.
-        if report:
-            if persist:
-                _persist_verify_report(verify_envelope, all_violations, out, root, json_mode)
-            else:
-                _render_verify_report(verify_envelope, all_violations, json_mode)
-            return
-
-        # JSON output
-        if json_mode:
-            click.echo(to_json(verify_envelope))
-
-            if score < threshold:
-                ctx.exit(EXIT_GATE_FAILURE)
-            return
-
-        # Text output
-        click.echo(
-            f"VERDICT: {verdict} (score {score}/100) "
-            f"-- {violation_count} issue{'s' if violation_count != 1 else ''} "
-            f"in {files_checked} changed file{'s' if files_checked != 1 else ''}"
-        )
-        if len(selected) != len(_ALL_CHECKS):
-            click.echo(
-                f"checks: {', '.join(selected)} (skipped: {', '.join(c for c in _ALL_CHECKS if c not in selected)})"
-            )
-        click.echo("")
-
-        # Naming
-        _print_category("NAMING", naming_result, fix_suggestions)
-
-        # Imports
-        _print_category("IMPORTS", imports_result, fix_suggestions)
-
-        # Error handling
-        _print_category("ERROR HANDLING", error_result, fix_suggestions)
-
-        # Duplicates
-        _print_category("DUPLICATES", duplicates_result, fix_suggestions)
-
-        # Syntax
-        _print_category("SYNTAX", syntax_result, fix_suggestions)
-
-        # Complexity (KISS) + import cycles (architecture) + the executable signal
-        _print_category("COMPLEXITY", complexity_result, fix_suggestions)
-        _print_category("CYCLES", cycles_result, fix_suggestions)
-        _print_category("TESTS", tests_result, fix_suggestions)
-
-        # Summary line
-        gate_result = "PASS" if score >= threshold else "FAIL"
-        click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
-
-        if score < threshold:
-            ctx.exit(EXIT_GATE_FAILURE)
+    json_mode, token_budget, root = _verify_runtime_context(ctx)
+    _dispatch_verify_command(
+        ctx,
+        root,
+        json_mode,
+        token_budget,
+        set_on,
+        set_off,
+        files,
+        threshold,
+        checks_opt,
+        auto,
+        deep,
+        report,
+        diff_only,
+        baseline_write,
+        new_only,
+        changed_lines,
+        severity,
+        persist,
+        out,
+        fix_suggestions,
+    )
 
 
 def _print_category(label: str, result: dict, fix_suggestions: bool):
@@ -2841,6 +3692,26 @@ def _all_source_paths(root: Path) -> list[str]:
         if lang and lang not in _MODULE_INIT_SKIP_LANGS:
             out.append(r["path"].replace("\\", "/"))
     return out
+
+
+def _all_advisory_surface_paths(root: Path, selected: list[str]) -> list[str]:
+    try:
+        with open_db(readonly=True) as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+    except Exception:  # noqa: BLE001 - report mode stays best-effort
+        return []
+    include_commands = "command_examples" in selected
+    include_claims = "claims" in selected
+    return [
+        row["path"].replace("\\", "/")
+        for row in rows
+        if (include_commands and _is_command_example_surface(row["path"]))
+        or (include_claims and _is_claim_surface(row["path"]))
+    ]
+
+
+def _all_report_paths(root: Path, selected: list[str]) -> list[str]:
+    return sorted(set(_all_source_paths(root)) | set(_all_advisory_surface_paths(root, selected)))
 
 
 def _render_verify_report(envelope: dict, violations: list, json_mode: bool, cap: int = 200) -> None:

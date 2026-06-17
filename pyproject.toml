@@ -127,6 +127,9 @@ dev = [
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
+    # README/demo asset generation: dev/generate_terminal_demo_gif.py imports
+    # PIL directly. Keep it in the dev extra rather than the runtime package.
+    "pillow>=10.0",
 ]
 
 [tool.setuptools.packages.find]

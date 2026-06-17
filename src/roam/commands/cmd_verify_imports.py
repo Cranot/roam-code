@@ -76,6 +76,24 @@ def _import_name_for_requirement(req: str) -> str | None:
     return _DIST_TO_IMPORT_ALIASES.get(dist, dist.replace("-", "_"))
 
 
+def _load_toml(path: str) -> dict:
+    """Load a TOML file via tomllib (3.11+) or the tomli backport (3.10)."""
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10 — tomli backport (a dependency)
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def _extract_pyproject_deps(proj: dict) -> list[str]:
+    """Return all requirement strings from a pyproject [project] section."""
+    reqs = list(proj.get("dependencies") or [])
+    for group in (proj.get("optional-dependencies") or {}).values():
+        reqs.extend(group or [])
+    return [str(r) for r in reqs]
+
+
 def _pyproject_requirements(project_root: str) -> list[str]:
     """Every requirement string from pyproject [project] dependencies +
     all optional-dependency groups. Empty list when absent/broken."""
@@ -83,22 +101,24 @@ def _pyproject_requirements(project_root: str) -> list[str]:
     if not os.path.isfile(pyproject):
         return []
     try:
-        try:
-            import tomllib
-        except ImportError:  # Python 3.10 — tomli backport (a dependency)
-            import tomli as tomllib
-        with open(pyproject, "rb") as fh:
-            data = tomllib.load(fh)
-        proj = data.get("project") or {}
-        reqs = [str(r) for r in proj.get("dependencies") or []]
-        for group in (proj.get("optional-dependencies") or {}).values():
-            reqs.extend(str(r) for r in group or [])
-        return reqs
+        data = _load_toml(pyproject)
+        return _extract_pyproject_deps(data.get("project") or {})
     except Exception as exc:  # noqa: BLE001 — a broken pyproject must not kill the scan
         from roam.observability import log_swallowed
 
         log_swallowed("verify_imports.declared_deps.pyproject", exc)
         return []
+
+
+def _parse_req_file(path: str) -> list[str]:
+    """Return non-comment, non-flag lines from one requirements*.txt."""
+    reqs: list[str] = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith(("#", "-")):
+                reqs.append(line)
+    return reqs
 
 
 def _requirements_txt_requirements(project_root: str) -> list[str]:
@@ -108,11 +128,7 @@ def _requirements_txt_requirements(project_root: str) -> list[str]:
         import glob as _glob
 
         for req_file in _glob.glob(os.path.join(project_root, "requirements*.txt")):
-            with open(req_file, encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if line and not line.startswith(("#", "-")):
-                        reqs.append(line)
+            reqs.extend(_parse_req_file(req_file))
     except OSError as exc:
         from roam.observability import log_swallowed
 
@@ -121,7 +137,7 @@ def _requirements_txt_requirements(project_root: str) -> list[str]:
 
 
 def _declared_dependency_modules(project_root: str) -> frozenset[str]:
-    """Top-level import names declared as dependencies of this project.
+    """Lowercased top-level import names declared as dependencies of this project.
 
     Sources: pyproject ``[project] dependencies`` + every optional-dependency
     group, plus any ``requirements*.txt`` at the root. A declared dependency
@@ -131,7 +147,7 @@ def _declared_dependency_modules(project_root: str) -> frozenset[str]:
     as unresolved in every file that imports it.
     """
     reqs = _pyproject_requirements(project_root) + _requirements_txt_requirements(project_root)
-    return frozenset(name for req in reqs if (name := _import_name_for_requirement(req)))
+    return frozenset(name.lower() for req in reqs if (name := _import_name_for_requirement(req)))
 
 
 # Node.js built-in modules — the JS analog of _PYTHON_STDLIB. 41 entries
@@ -626,11 +642,22 @@ class _FilePathIndex:
         basenames: set[str] = set()
         # path = {name} : exact, case-SENSITIVE equality (no LIKE, no wildcard).
         exact: set[str] = set()
+        # Package modules from ``pkg/__init__.py``. The file-stem probes catch
+        # ``pkg.mod`` via the final ``mod`` segment, but package imports such as
+        # ``from roam.runtime import hotspots`` validate the package itself
+        # (``roam.runtime``). Treat every suffix of the package path as
+        # importable so src-layout paths like ``src/roam/runtime/__init__.py``
+        # resolve as both ``roam.runtime`` and ``runtime``.
+        package_modules: set[str] = set()
         for p in paths:
             exact.add(p)
             pl = p.lower()
             sl = pl.rfind("/")
             basenames.add(pl[sl + 1 :] if sl >= 0 else pl)
+            if pl.endswith("/__init__.py") or pl == "__init__.py":
+                parts = pl[: -len("/__init__.py")].split("/") if pl != "__init__.py" else []
+                for start in range(len(parts)):
+                    package_modules.add(".".join(parts[start:]))
             # whole-path stem (pattern '{name}.%')
             dot = pl.find(".")
             if dot > 0:
@@ -655,6 +682,7 @@ class _FilePathIndex:
         self._basenames_by_len: dict[int, list[str]] = defaultdict(list)
         for b in basenames:
             self._basenames_by_len[len(b)].append(b)
+        self._package_modules = package_modules
 
     @staticmethod
     def _like_set_match(name_lower: str, exact_set: set[str], by_len: dict[int, list[str]]) -> bool:
@@ -679,6 +707,10 @@ class _FilePathIndex:
             return True
         # path = ? is exact case-sensitive equality.
         return name in self._exact
+
+    def package_module_match(self, name: str) -> bool:
+        """Return True when *name* maps to a package ``__init__.py`` path."""
+        return name.lower() in self._package_modules
 
 
 def _build_file_path_index(conn: sqlite3.Connection) -> _FilePathIndex:
@@ -718,6 +750,18 @@ def _check_name_exists(
         row = conn.execute(
             "SELECT 1 FROM symbols WHERE name = ? OR qualified_name = ? LIMIT 1",
             (name, name),
+        ).fetchone()
+        if row:
+            return True
+
+    if file_index is not None:
+        if file_index.package_module_match(name):
+            return True
+    else:
+        module_path = name.replace(".", "/")
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE path LIKE ? OR path = ? LIMIT 1",
+            (f"%/{module_path}/__init__.py", f"{module_path}/__init__.py"),
         ).fetchone()
         if row:
             return True
@@ -915,8 +959,10 @@ def _scan_file_imports(
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
             in_triple: str | None = None
+            optional_import_indent: int | None = None
             for line_num, line in enumerate(f, start=1):
                 stripped = line.strip()
+                indent = len(line) - len(line.lstrip(" "))
                 if is_py:
                     # Lines inside triple-quoted strings are string content
                     # (docstrings, test fixtures), not imports. They do not
@@ -933,8 +979,14 @@ def _scan_file_imports(
                     continue
                 # A try-guarded import is a deliberate OPTIONAL dependency
                 # (`try: import orjson` + clean fallback) — by definition not
-                # a hallucination. Skip the line directly under `try:`.
-                if stripped.startswith(("import ", "from ")) and prev_stripped == "try:":
+                # a hallucination. Skip the import block directly under
+                # ``try:`` (not just its first line), so multi-import optional
+                # adapters like reportlab/watchdog don't leave a residue row.
+                is_import_line = stripped.startswith(("import ", "from "))
+                if optional_import_indent is not None and (indent < optional_import_indent or not is_import_line):
+                    optional_import_indent = None
+                if is_import_line and (prev_stripped == "try:" or optional_import_indent == indent):
+                    optional_import_indent = indent
                     prev_stripped = stripped
                     continue
                 if stripped:

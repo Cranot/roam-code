@@ -1014,6 +1014,30 @@ def test_evidence_completeness_8q_table() -> None:
     # Sum of Q-states equals 8 (sanity check on the totals)
     assert (table_p["complete"] + table_p["partial"] + table_p["missing"] + table_p["not_applicable"]) == 8
 
+    # Report artifacts alone are evidence context, not verification.
+    report_artifact = EvidenceArtifact(
+        artifact_id="report:only",
+        kind="report",
+        content_inline="rendered report",
+    )
+    report_only = ChangeEvidence(
+        evidence_id="ev_w210_report_artifact_only",
+        artifacts=(report_artifact,),
+    )
+    assert report_only.evidence_completeness()["Q7"] == "partial"
+
+    # Verification-shaped artifacts still satisfy Q7.
+    attestation = EvidenceArtifact(
+        artifact_id="attestation:one",
+        kind="attestation",
+        content_inline="signed attestation",
+    )
+    attested = ChangeEvidence(
+        evidence_id="ev_w210_attestation_artifact",
+        artifacts=(attestation,),
+    )
+    assert attested.evidence_completeness()["Q7"] == "complete"
+
     # Fully populated: all 8 questions complete.
     subj = EvidenceSubject(kind="symbol", qualified_name="src/x.py::f")
     art = EvidenceArtifact(

@@ -21,6 +21,7 @@ detail.
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import os
 import sqlite3
@@ -47,14 +48,14 @@ def _roam_version() -> str:
         import importlib.metadata as _md
 
         return _md.version("roam-code")
-    except Exception:
+    except importlib.metadata.PackageNotFoundError:
         # Fall back to the package's __version__ string (which itself
         # falls back to "dev" when the distribution isn't installed).
         try:
             from roam import __version__
 
             return __version__
-        except Exception:
+        except ImportError:
             return "unknown"
 
 
@@ -64,7 +65,7 @@ def _pkg_version(pkg_name: str) -> str | None:
         import importlib.metadata as _md
 
         return _md.version(pkg_name)
-    except Exception:
+    except importlib.metadata.PackageNotFoundError:
         return None
 
 
@@ -99,7 +100,7 @@ def _enabled_extras() -> list[str]:
         try:
             importlib.import_module(name)
             found.append(name)
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 -- optional extra may raise any error on import; absence is the signal
             continue
     return found
 
@@ -134,7 +135,7 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 name = bridge.name
                 version = getattr(type(bridge), "VERSION", LanguageBridge.VERSION)
                 out["bridges"][str(name)] = str(version)
-            except Exception:
+            except Exception as _exc:  # noqa: BLE001 -- per-bridge probe; any failure drops one bridge from the partial map, never blocks the rest
                 # Per-bridge probe failure — one bridge's VERSION is absent;
                 # the documented "partial map" behaviour keeps the rest. The
                 # section-level catch below surfaces a wholesale loss.
@@ -188,7 +189,7 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 ext = get_extractor(lang)
                 version = getattr(type(ext), "VERSION", LanguageExtractor.VERSION)
                 out["extractors"][str(lang)] = str(version)
-            except Exception:
+            except Exception as _exc:  # noqa: BLE001 -- per-extractor probe; any failure drops one language from the partial map, never blocks the rest
                 # Per-language probe failure — one extractor's VERSION is
                 # absent; the documented "partial map" behaviour keeps the
                 # rest. The section-level catch below surfaces a wholesale loss.
@@ -601,7 +602,7 @@ def record_indexer_run(
         return write_manifest(conn, manifest)
     except sqlite3.DatabaseError:
         return None
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- manifest is best-effort; never let a bad probe crash an index run (ROAM_DEBUG re-raises)
         # Manifest is best-effort — never let a bad probe crash an index run.
         if os.environ.get("ROAM_DEBUG"):
             raise

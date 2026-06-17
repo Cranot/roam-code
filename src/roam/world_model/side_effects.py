@@ -175,6 +175,7 @@ KNOWN_SIDE_EFFECTING_PREFIXES: tuple[tuple[str, str], ...] = (
     (".commit", "io_write"),
     (".execute", "io_write"),
     (".executemany", "io_write"),
+    (".executescript", "io_write"),
     (".insert", "io_write"),
     (".save", "io_write"),
     # -- process --------------------------------------------------------
@@ -226,10 +227,17 @@ _SOURCE_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"\.fetchone\(|\.fetchall\(|\.fetchmany\("), "io_read", "db.fetch"),
     (re.compile(r"\.commit\("), "io_write", "db.commit"),
     (
-        re.compile(r"\.execute(many)?\(\s*['\"](?:INSERT|UPDATE|DELETE|REPLACE)", re.IGNORECASE),
+        re.compile(
+            r"\.execute(many)?\(\s*['\"](?:INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|TRUNCATE)",
+            re.IGNORECASE,
+        ),
         "io_write",
         "db.execute(write)",
     ),
+    # executescript runs an arbitrary multi-statement SQL script (schema / DDL
+    # migrations such as ensure_schema) -- always a write. Previously missed, so
+    # DDL entry points classified as `none` -> idempotency reported "pure (high)".
+    (re.compile(r"\.executescript\("), "io_write", "db.executescript"),
     (re.compile(r"\.execute(many)?\(\s*['\"](?:SELECT|PRAGMA)", re.IGNORECASE), "io_read", "db.execute(read)"),
     (re.compile(r"\.write_text\(|\.write_bytes\(|\.writelines\("), "io_write", "path.write_*"),
     (re.compile(r"\.read_text\(|\.read_bytes\("), "io_read", "path.read_*"),

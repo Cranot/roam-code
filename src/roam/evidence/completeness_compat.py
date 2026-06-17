@@ -42,6 +42,17 @@ from typing import Any, Mapping
 # ``ChangeEvidence.evidence_completeness``.
 _Q_KEYS: tuple[str, ...] = ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8")
 
+_VERIFICATION_ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {
+        "sarif",
+        "attestation",
+        "cga_predicate",
+        "bundle",
+        "trace",
+        "log_excerpt",
+    }
+)
+
 
 def _truthy_list(v: Any) -> bool:
     return isinstance(v, list) and len(v) > 0
@@ -49,6 +60,78 @@ def _truthy_list(v: Any) -> bool:
 
 def _truthy_str(v: Any) -> bool:
     return isinstance(v, str) and bool(v)
+
+
+def _artifact_kind(v: Any) -> str | None:
+    if isinstance(v, Mapping):
+        raw = v.get("kind") or v.get("artifact_kind")
+        return raw if isinstance(raw, str) else None
+    raw = getattr(v, "kind", None)
+    return raw if isinstance(raw, str) else None
+
+
+def _has_verification_artifact(v: Any) -> bool:
+    if not isinstance(v, list):
+        return False
+    return any(_artifact_kind(item) in _VERIFICATION_ARTIFACT_KINDS for item in v)
+
+
+def _complete_partial_missing(complete: bool, partial: bool) -> str:
+    if complete:
+        return "complete"
+    if partial:
+        return "partial"
+    return "missing"
+
+
+def _actor_completeness(packet: Mapping[str, Any]) -> str:
+    return _complete_partial_missing(
+        _truthy_list(packet.get("actor_refs") or []),
+        _truthy_str(packet.get("agent_id")) or _truthy_str(packet.get("human_actor")),
+    )
+
+
+def _authority_completeness(packet: Mapping[str, Any]) -> str:
+    return _complete_partial_missing(
+        _truthy_list(packet.get("authority_refs") or []),
+        _truthy_str(packet.get("mode")),
+    )
+
+
+def _risk_completeness(packet: Mapping[str, Any]) -> str:
+    if _truthy_str(packet.get("risk_level")):
+        return "complete"
+    if packet.get("verdict") in ("SAFE", "PASS", "safe", "pass") and not _truthy_list(packet.get("findings") or []):
+        return "not_applicable"
+    return "missing"
+
+
+def _policy_completeness(packet: Mapping[str, Any]) -> str:
+    return _complete_partial_missing(
+        _truthy_list(packet.get("policy_decisions") or []),
+        _truthy_list(packet.get("authority_refs") or []),
+    )
+
+
+def _verification_completeness(packet: Mapping[str, Any]) -> str:
+    artifacts = packet.get("artifacts") or []
+    return _complete_partial_missing(
+        _truthy_list(packet.get("tests_run") or []) or _has_verification_artifact(artifacts),
+        _truthy_list(packet.get("tests_required") or []) or _truthy_list(artifacts),
+    )
+
+
+def _acceptance_completeness(packet: Mapping[str, Any]) -> str:
+    return _complete_partial_missing(
+        _truthy_list(packet.get("approvals") or []) or _truthy_list(packet.get("accepted_risks") or []),
+        _truthy_list(packet.get("redactions") or []),
+    )
+
+
+def _demote_stale_completeness(result: dict[str, str], raw_stale: Any) -> dict[str, str]:
+    if not (isinstance(raw_stale, bool) and raw_stale):
+        return result
+    return {q_key: ("partial" if result[q_key] == "complete" else result[q_key]) for q_key in _Q_KEYS}
 
 
 def compute_completeness(packet: Mapping[str, Any]) -> dict[str, str]:
@@ -73,80 +156,18 @@ def compute_completeness(packet: Mapping[str, Any]) -> dict[str, str]:
     (``complete + partial + missing + not_applicable == 8``) is
     preserved.
     """
-    actor_refs = packet.get("actor_refs") or []
-    authority_refs = packet.get("authority_refs") or []
-    context_refs = packet.get("context_refs") or []
-    changed_subjects = packet.get("changed_subjects") or []
-    findings = packet.get("findings") or []
-    policy_decisions = packet.get("policy_decisions") or []
-    tests_required = packet.get("tests_required") or []
-    tests_run = packet.get("tests_run") or []
-    artifacts = packet.get("artifacts") or []
-    approvals = packet.get("approvals") or []
-    accepted_risks = packet.get("accepted_risks") or []
-    redactions = packet.get("redactions") or []
-
-    agent_id = packet.get("agent_id")
-    human_actor = packet.get("human_actor")
-    mode = packet.get("mode")
-    risk_level = packet.get("risk_level")
-    verdict = packet.get("verdict")
-
-    result: dict[str, str] = {}
-
-    # Q1 actor
-    if _truthy_list(actor_refs):
-        result["Q1"] = "complete"
-    elif _truthy_str(agent_id) or _truthy_str(human_actor):
-        result["Q1"] = "partial"
-    else:
-        result["Q1"] = "missing"
-
-    # Q2 authority
-    if _truthy_list(authority_refs):
-        result["Q2"] = "complete"
-    elif _truthy_str(mode):
-        result["Q2"] = "partial"
-    else:
-        result["Q2"] = "missing"
-
-    # Q3 context
-    result["Q3"] = "complete" if _truthy_list(context_refs) else "missing"
-
-    # Q4 changes
-    result["Q4"] = "complete" if _truthy_list(changed_subjects) else "missing"
-
-    # Q5 risk
-    if _truthy_str(risk_level):
-        result["Q5"] = "complete"
-    elif verdict in ("SAFE", "PASS", "safe", "pass") and not _truthy_list(findings):
-        result["Q5"] = "not_applicable"
-    else:
-        result["Q5"] = "missing"
-
-    # Q6 policy
-    if _truthy_list(policy_decisions):
-        result["Q6"] = "complete"
-    elif _truthy_list(authority_refs):
-        result["Q6"] = "partial"
-    else:
-        result["Q6"] = "missing"
-
-    # Q7 verify
-    if _truthy_list(tests_run) or _truthy_list(artifacts):
-        result["Q7"] = "complete"
-    elif _truthy_list(tests_required):
-        result["Q7"] = "partial"
-    else:
-        result["Q7"] = "missing"
-
-    # Q8 accept
-    if _truthy_list(approvals) or _truthy_list(accepted_risks):
-        result["Q8"] = "complete"
-    elif _truthy_list(redactions):
-        result["Q8"] = "partial"
-    else:
-        result["Q8"] = "missing"
+    result = {
+        "Q1": _actor_completeness(packet),
+        "Q2": _authority_completeness(packet),
+        "Q3": "complete" if _truthy_list(packet.get("context_refs") or []) else "missing",
+        "Q4": "complete" if _truthy_list(packet.get("changed_subjects") or []) else "missing",
+        "Q5": _risk_completeness(packet),
+        "Q6": _policy_completeness(packet),
+        # Q7 verify. Generic report/manifest artifacts are partial context,
+        # not proof that a change was verified.
+        "Q7": _verification_completeness(packet),
+        "Q8": _acceptance_completeness(packet),
+    }
 
     # W1254 - staleness demotion. When the packet is stale, every
     # ``complete`` Q is demoted to ``partial``. The structured data is
@@ -156,13 +177,7 @@ def compute_completeness(packet: Mapping[str, Any]) -> dict[str, str]:
     # inapplicable regardless of how stale the rest of the packet is.
     # Mirrors the same algorithm in
     # ``ChangeEvidence.evidence_completeness``.
-    raw_stale = packet.get("evidence_stale")
-    if isinstance(raw_stale, bool) and raw_stale:
-        for q_key in _Q_KEYS:
-            if result[q_key] == "complete":
-                result[q_key] = "partial"
-
-    return result
+    return _demote_stale_completeness(result, packet.get("evidence_stale"))
 
 
 def classify_completeness(

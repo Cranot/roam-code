@@ -210,7 +210,7 @@ def _semantic_activation_advice(conn, project_root: Path) -> str | None:
 
         zeta = float(get_retrieve_config(project_root).get("zeta", 0.0) or 0.0)
         coverage = semantic_coverage(conn)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- advisory hint only; any failure suppresses the hint
         return None
     if zeta <= 0 or coverage["ready"] or int(coverage["symbols"]) <= 0:
         return None
@@ -808,7 +808,7 @@ class Indexer:
                 width=36,
             )
             return bar_ctx, bar_ctx.__enter__()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- progress bar is cosmetic; fall back to no bar on any failure
             return None, None
 
     def _advance_processing_progress(self, conn, bar_obj, index: int, total: int) -> None:
@@ -1398,7 +1398,7 @@ class Indexer:
         """Return True if the graph_metrics table has at least one row."""
         try:
             return conn.execute("SELECT 1 FROM graph_metrics LIMIT 1").fetchone() is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 -- missing/locked table means "no existing metrics"
             return False
 
     def _compute_graph_metrics(self, conn, force: bool = False):
@@ -1705,7 +1705,7 @@ class Indexer:
             degs.sort(key=lambda p: (-p[1], p[0]))
             top_ids = sorted(int(p[0]) for p in degs[:top_n])
             return {"n": int(n), "m": int(m), "top": top_ids}
-        except Exception:
+        except Exception:  # noqa: BLE001 -- signature is a best-effort cache key; any failure skips it
             return None
 
     @staticmethod
@@ -1721,7 +1721,7 @@ class Indexer:
             from roam.index.manifest import latest_manifest
 
             prev = latest_manifest(conn)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- tolerant of missing table / no rows / import failure
             return None
         if not prev:
             return None
@@ -1732,7 +1732,7 @@ class Indexer:
             import json as _json
 
             notes = _json.loads(notes_raw)
-        except Exception:
+        except (ValueError, TypeError):
             return None
         sig = notes.get("cluster_signature") if isinstance(notes, dict) else None
         if not isinstance(sig, dict):
@@ -1745,7 +1745,7 @@ class Indexer:
         try:
             row = conn.execute("SELECT 1 FROM clusters LIMIT 1").fetchone()
             return row is not None
-        except Exception:
+        except Exception:  # noqa: BLE001 -- missing/locked table means "no existing clusters"
             return False
 
     def _run_clustering(
@@ -1988,7 +1988,7 @@ class Indexer:
         """
         try:
             from roam.index.manifest import record_indexer_run
-        except Exception:
+        except ImportError:
             return
         # Mix the CLI flags that affect indexing into the config hash so a
         # flag flip invalidates the manifest comparison even when the

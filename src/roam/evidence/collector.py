@@ -126,6 +126,8 @@ _PR_BUNDLE_KNOWN_PAYLOAD: frozenset[str] = frozenset(
         "mode",
         "verdict",
         "risk_level",
+        "risk_level_canonical",
+        "risk_rank",
         "commit_sha",
         "git_range",
         "diff_hash",
@@ -2039,10 +2041,9 @@ def _read_git_user_email() -> str | None:
     """
     try:
         from roam.commands.git_helpers import git_actor
-
-        value = git_actor()
-    except Exception:
+    except ImportError:
         return None
+    value = git_actor()
     if not isinstance(value, str):
         return None
     value = value.strip()
@@ -2061,13 +2062,13 @@ def _read_run_ledger_actor(repo_root: Path | None = None) -> str | None:
     if repo_root is None:
         try:
             repo_root = Path.cwd()
-        except Exception:
+        except OSError:
             return None
     try:
         from roam.runs.ledger import latest_in_progress_run
 
         meta = latest_in_progress_run(repo_root)
-    except Exception:
+    except (ImportError, OSError, ValueError, json.JSONDecodeError):
         return None
     if meta is None:
         return None
@@ -2333,7 +2334,7 @@ def _collect_corroborated_ids(
     if repo_root is None:
         try:
             repo_root = Path.cwd()
-        except Exception:
+        except OSError:
             return frozenset(), frozenset()
 
     run_tools, run_actors = _collect_corroborated_ids_from_runs(repo_root, warnings)
@@ -3799,7 +3800,7 @@ def collect_change_evidence(
     # (W285-style discipline).
     try:
         _authority_repo_root = Path.cwd()
-    except Exception:
+    except OSError:
         _authority_repo_root = None
     if _authority_repo_root is not None:
         corroborated_authorities = _collect_corroborated_authorities_from_runs(_authority_repo_root, warnings)

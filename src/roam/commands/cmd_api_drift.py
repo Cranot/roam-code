@@ -508,6 +508,415 @@ def _is_ts_type_path(path: str) -> bool:
     )
 
 
+def _emit_skipped_api_drift(
+    *,
+    json_mode: bool,
+    msg: str,
+    state: str,
+    backend_models: dict[str, dict] | None = None,
+    frontend_interfaces: dict[str, dict] | None = None,
+) -> None:
+    """Emit the canonical skipped/no-op envelope for missing API sides."""
+    verdict = f"api-drift skipped — {msg}"
+    backend_names = sorted(backend_models or {})
+    frontend_names = sorted(frontend_interfaces or {})
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "api-drift",
+                    summary={
+                        "verdict": verdict,
+                        "state": state,
+                        "error": msg,
+                        "findings": 0,
+                        "models_total_backend": len(backend_names),
+                        "interfaces_total_frontend": len(frontend_names),
+                        "partial_success": False,
+                    },
+                    matches=[],
+                    findings=[],
+                    unmatched={
+                        "backend_only": backend_names,
+                        "frontend_only": frontend_names,
+                    },
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {verdict}")
+
+
+def _append_inferred_contract_path(php_model_paths: list[str], ts_type_paths: list[str], path: str) -> None:
+    if _is_php_model_path(path):
+        php_model_paths.append(path)
+    elif _is_ts_type_path(path):
+        ts_type_paths.append(path)
+
+
+def _collect_contract_paths(rows) -> tuple[list[str], list[str]]:
+    php_model_paths: list[str] = []
+    ts_type_paths: list[str] = []
+
+    for row in rows:
+        path = row["path"]
+        lang = (row["language"] or "").lower()
+        if lang == "php" and _is_php_model_path(path):
+            php_model_paths.append(path)
+        elif lang in ("typescript", "tsx", "ts") and _is_ts_type_path(path):
+            ts_type_paths.append(path)
+        else:
+            _append_inferred_contract_path(php_model_paths, ts_type_paths, path)
+
+    return php_model_paths, ts_type_paths
+
+
+def _read_source(project_root: Path, rel_path: str) -> str | None:
+    try:
+        return (project_root / rel_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _backend_model_matches_filter(model_name: str, model_filter: str | None) -> bool:
+    return not model_filter or model_name.lower() == model_filter.lower()
+
+
+def _prefer_backend_model(existing: dict | None, parsed: dict) -> bool:
+    return existing is None or len(parsed["fillable"]) > len(existing["fillable"])
+
+
+def _backend_model_record(rel_path: str, parsed: dict) -> dict:
+    return {
+        "file": rel_path,
+        "fillable": parsed["fillable"],
+        "hidden": parsed["hidden"],
+        "appends": parsed["appends"],
+    }
+
+
+def _collect_backend_models(
+    project_root: Path, php_model_paths: list[str], model_filter: str | None
+) -> dict[str, dict]:
+    backend_models: dict[str, dict] = {}
+
+    for rel_path in php_model_paths:
+        source = _read_source(project_root, rel_path)
+        if source is None:
+            continue
+
+        parsed = _parse_php_model(source)
+        if parsed is None:
+            continue
+
+        model_name = _infer_model_name(rel_path)
+        if not _backend_model_matches_filter(model_name, model_filter):
+            continue
+        if not _prefer_backend_model(backend_models.get(model_name), parsed):
+            continue
+        backend_models[model_name] = _backend_model_record(rel_path, parsed)
+
+    return backend_models
+
+
+def _frontend_interface_matches_filter(model_filter: str | None, iface_name: str) -> bool:
+    return not model_filter or _name_similarity(model_filter, iface_name) >= 0.5
+
+
+def _prefer_frontend_interface(existing: dict | None, fields: set[str]) -> bool:
+    return existing is None or len(fields) > len(existing["fields"])
+
+
+def _maybe_store_frontend_interface(
+    frontend_interfaces: dict[str, dict],
+    rel_path: str,
+    iface_name: str,
+    fields: set[str],
+    model_filter: str | None,
+) -> None:
+    if not _frontend_interface_matches_filter(model_filter, iface_name):
+        return
+    if _prefer_frontend_interface(frontend_interfaces.get(iface_name), fields):
+        frontend_interfaces[iface_name] = {"file": rel_path, "fields": fields}
+
+
+def _store_frontend_interfaces_from_source(
+    frontend_interfaces: dict[str, dict],
+    rel_path: str,
+    source: str,
+    model_filter: str | None,
+) -> None:
+    for iface_name, fields in _parse_ts_interfaces(source).items():
+        _maybe_store_frontend_interface(frontend_interfaces, rel_path, iface_name, fields, model_filter)
+
+
+def _collect_frontend_interfaces(
+    project_root: Path, ts_type_paths: list[str], model_filter: str | None
+) -> dict[str, dict]:
+    frontend_interfaces: dict[str, dict] = {}
+
+    for rel_path in ts_type_paths:
+        source = _read_source(project_root, rel_path)
+        if source is None:
+            continue
+        _store_frontend_interfaces_from_source(frontend_interfaces, rel_path, source, model_filter)
+
+    return frontend_interfaces
+
+
+def _emit_missing_api_side(
+    json_mode: bool, backend_models: dict[str, dict], frontend_interfaces: dict[str, dict]
+) -> bool:
+    has_backend = bool(backend_models)
+    has_frontend = bool(frontend_interfaces)
+
+    if not has_backend and not has_frontend:
+        _emit_skipped_api_drift(
+            json_mode=json_mode,
+            msg=(
+                "No backend/frontend pair found. Ensure the project contains "
+                "PHP model files (in app/Models/) and TypeScript type files "
+                "(in src/types/ or similar)."
+            ),
+            state="no_backend_frontend_pair",
+        )
+        return True
+
+    if not has_backend:
+        _emit_skipped_api_drift(
+            json_mode=json_mode,
+            msg=(
+                "No PHP model files found (looking for app/Models/*.php with $fillable). "
+                "Cross-repo drift detection is planned for 'roam ws api-drift'."
+            ),
+            state="no_backend_models",
+            frontend_interfaces=frontend_interfaces,
+        )
+        return True
+
+    if not has_frontend:
+        _emit_skipped_api_drift(
+            json_mode=json_mode,
+            msg=(
+                "No TypeScript type files found (looking for *.ts in types/models/interfaces/ "
+                "directories). Cross-repo drift detection is planned for 'roam ws api-drift'."
+            ),
+            state="no_frontend_interfaces",
+            backend_models=backend_models,
+        )
+        return True
+
+    return False
+
+
+def _filter_pair_findings(pair_findings: list[dict], confidence: str) -> list[dict]:
+    if confidence.lower() == _CONFIDENCE_BYPASS_SENTINEL:
+        return pair_findings
+    projected = _project_confidence_input(confidence)
+    return [finding for finding in pair_findings if finding["confidence"] == projected]
+
+
+def _collect_findings_by_pair(
+    matches: list[dict],
+    backend_models: dict[str, dict],
+    frontend_interfaces: dict[str, dict],
+    confidence: str,
+) -> tuple[list[tuple[dict, list[dict]]], list[dict]]:
+    findings_by_pair: list[tuple[dict, list[dict]]] = []
+    all_findings: list[dict] = []
+
+    for match in matches:
+        pair_findings = _compare_fields(
+            match["php_model"],
+            backend_models[match["php_model"]],
+            match["ts_interface"],
+            frontend_interfaces[match["ts_interface"]],
+        )
+        pair_findings = _filter_pair_findings(pair_findings, confidence)
+        findings_by_pair.append((match, pair_findings))
+        all_findings.extend(pair_findings)
+
+    return findings_by_pair, all_findings
+
+
+def _confidence_counts(findings: list[dict]) -> tuple[int, int, int]:
+    high = sum(1 for finding in findings if finding["confidence"] == "high")
+    medium = sum(1 for finding in findings if finding["confidence"] == "medium")
+    low = sum(1 for finding in findings if finding["confidence"] == "low")
+    return high, medium, low
+
+
+def _unmatched_names(
+    matches: list[dict], backend_models: dict[str, dict], frontend_interfaces: dict[str, dict]
+) -> tuple[list[str], list[str]]:
+    matched_php_names = {match["php_model"] for match in matches}
+    matched_ts_names = {match["ts_interface"] for match in matches}
+    unmatched_backend = sorted(name for name in backend_models if name not in matched_php_names)
+    unmatched_frontend = sorted(name for name in frontend_interfaces if name not in matched_ts_names)
+    return unmatched_backend, unmatched_frontend
+
+
+def _json_match(match: dict, pair_findings: list[dict]) -> dict:
+    return {
+        "php_model": match["php_model"],
+        "php_file": match["php_file"],
+        "ts_interface": match["ts_interface"],
+        "ts_file": match["ts_file"],
+        "similarity": round(match["similarity"], 2),
+        "findings": pair_findings,
+    }
+
+
+def _api_drift_summary(
+    n_total: int,
+    n_high: int,
+    n_medium: int,
+    n_low: int,
+    matches: list[dict],
+    backend_models: dict[str, dict],
+    frontend_interfaces: dict[str, dict],
+) -> dict:
+    return {
+        "verdict": f"{n_total} API drift findings ({n_high} high, {n_medium} medium, {n_low} low) across {len(matches)} matched models",
+        "state": "ok",
+        "findings": n_total,
+        "high": n_high,
+        "medium": n_medium,
+        "low": n_low,
+        "models_matched": len(matches),
+        "models_total_backend": len(backend_models),
+        "interfaces_total_frontend": len(frontend_interfaces),
+    }
+
+
+def _emit_api_drift_json(
+    findings_by_pair: list[tuple[dict, list[dict]]],
+    unmatched_backend: list[str],
+    unmatched_frontend: list[str],
+    summary: dict,
+) -> None:
+    click.echo(
+        to_json(
+            json_envelope(
+                "api-drift",
+                summary=summary,
+                matches=[_json_match(match, pair_findings) for match, pair_findings in findings_by_pair],
+                unmatched={
+                    "backend_only": unmatched_backend,
+                    "frontend_only": unmatched_frontend,
+                },
+            )
+        )
+    )
+
+
+def _text_verdict_suffix(n_high: int, n_medium: int, n_low: int) -> str:
+    parts = []
+    if n_high:
+        parts.append(f"{n_high} high")
+    if n_medium:
+        parts.append(f"{n_medium} medium")
+    if n_low:
+        parts.append(f"{n_low} low")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+_CONF_LABEL = {
+    "high": "[high]  ",
+    "medium": "[medium]",
+    "low": "[low]   ",
+}
+
+
+def _emit_text_header(
+    n_total: int, n_high: int, n_medium: int, n_low: int, matches: list[dict], backend_models: dict[str, dict]
+) -> None:
+    verdict_suffix = _text_verdict_suffix(n_high, n_medium, n_low)
+    plural = "s" if n_total != 1 else ""
+    click.echo(f"VERDICT: {n_total} API drift issue{plural} found{verdict_suffix}")
+    click.echo(f"Models matched: {len(matches)} of {len(backend_models)}")
+
+
+def _emit_finding_locations(finding: dict) -> None:
+    if finding["ts_field"] and finding["ts_file"]:
+        click.echo(f"           TS: {finding['ts_file']}")
+    if finding["php_field"] and finding["php_file"]:
+        click.echo(f"           PHP: {finding['php_file']} (in $fillable)")
+    if finding.get("kind") == "missing_in_backend" and not finding["php_field"]:
+        click.echo(f"           PHP: {finding['php_file']} (not in $fillable or $appends)")
+
+
+def _emit_pair_findings(
+    match: dict, pair_findings: list[dict], shown: int, limit: int, n_total: int
+) -> tuple[int, bool]:
+    click.echo(f"{match['php_model']} (PHP) <-> {match['ts_interface']} (TS):")
+
+    for finding in pair_findings:
+        if shown >= limit:
+            click.echo(f"\n  (+{n_total - shown} more findings — use -n to increase limit)")
+            return shown, True
+
+        label = _CONF_LABEL.get(finding["confidence"], "[?]     ")
+        click.echo(f"  {label}  {finding['message']}")
+        _emit_finding_locations(finding)
+        shown += 1
+
+    click.echo()
+    return shown, shown >= limit
+
+
+def _emit_all_findings(findings_by_pair: list[tuple[dict, list[dict]]], n_total: int, limit: int) -> None:
+    shown = 0
+    for match, pair_findings in findings_by_pair:
+        if not pair_findings:
+            continue
+        shown, limit_reached = _emit_pair_findings(match, pair_findings, shown, limit, n_total)
+        if limit_reached:
+            break
+
+
+def _limited_names(names: list[str]) -> str:
+    listed = ", ".join(names[:20])
+    more = f" (+{len(names) - 20} more)" if len(names) > 20 else ""
+    return f"{listed}{more}"
+
+
+def _emit_unmatched_models(unmatched_backend: list[str], unmatched_frontend: list[str]) -> None:
+    if not unmatched_backend and not unmatched_frontend:
+        return
+
+    click.echo("Unmatched models:")
+    if unmatched_backend:
+        click.echo(f"  Backend only:  {_limited_names(unmatched_backend)}")
+    if unmatched_frontend:
+        click.echo(f"  Frontend only: {_limited_names(unmatched_frontend)}")
+
+
+def _emit_api_drift_text(
+    *,
+    findings_by_pair: list[tuple[dict, list[dict]]],
+    all_findings: list[dict],
+    limit: int,
+    matches: list[dict],
+    backend_models: dict[str, dict],
+    unmatched_backend: list[str],
+    unmatched_frontend: list[str],
+    n_high: int,
+    n_medium: int,
+    n_low: int,
+) -> None:
+    n_total = len(all_findings)
+    _emit_text_header(n_total, n_high, n_medium, n_low, matches, backend_models)
+
+    if not all_findings:
+        click.echo("\nNo drift detected in matched model/interface pairs.")
+    else:
+        click.echo()
+        _emit_all_findings(findings_by_pair, n_total, limit)
+
+    _emit_unmatched_models(unmatched_backend, unmatched_frontend)
+
+
 # ---------------------------------------------------------------------------
 # Main command
 # ---------------------------------------------------------------------------
@@ -596,323 +1005,47 @@ def api_drift_cmd(ctx, limit, confidence, model):
     project_root = find_project_root()
 
     with open_db(readonly=True) as conn:
-        # ----------------------------------------------------------------
-        # Step 1: Collect all indexed file paths by language/path pattern
-        # ----------------------------------------------------------------
         all_files = conn.execute("SELECT path, language FROM files").fetchall()
+        php_model_paths, ts_type_paths = _collect_contract_paths(all_files)
+        backend_models = _collect_backend_models(project_root, php_model_paths, model)
+        frontend_interfaces = _collect_frontend_interfaces(project_root, ts_type_paths, model)
 
-        php_model_paths: list[str] = []
-        ts_type_paths: list[str] = []
-
-        for row in all_files:
-            path = row["path"]
-            lang = (row["language"] or "").lower()
-
-            if lang == "php" and _is_php_model_path(path):
-                php_model_paths.append(path)
-            elif lang in ("typescript", "tsx", "ts") and _is_ts_type_path(path):
-                ts_type_paths.append(path)
-            else:
-                # Fallback: infer from extension/path when language tag is missing
-                if _is_php_model_path(path):
-                    php_model_paths.append(path)
-                elif _is_ts_type_path(path):
-                    ts_type_paths.append(path)
-
-        # ----------------------------------------------------------------
-        # Step 2: Parse backend model files
-        # ----------------------------------------------------------------
-        # backend_models: model_name → {file, fillable, hidden, appends}
-        backend_models: dict[str, dict] = {}
-
-        for rel_path in php_model_paths:
-            full_path = project_root / rel_path
-            try:
-                source = full_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-
-            parsed = _parse_php_model(source)
-            if parsed is None:
-                continue
-
-            model_name = _infer_model_name(rel_path)
-
-            # If --model filter is active, skip non-matching models
-            if model and model_name.lower() != model.lower():
-                continue
-
-            # Deduplicate: if same model appears twice (trait/abstract), prefer
-            # the one with more fillable fields
-            if model_name in backend_models:
-                existing = backend_models[model_name]
-                if len(parsed["fillable"]) <= len(existing["fillable"]):
-                    continue
-
-            backend_models[model_name] = {
-                "file": rel_path,
-                "fillable": parsed["fillable"],
-                "hidden": parsed["hidden"],
-                "appends": parsed["appends"],
-            }
-
-        # ----------------------------------------------------------------
-        # Step 3: Parse frontend TypeScript type files
-        # ----------------------------------------------------------------
-        # frontend_interfaces: interface_name → {file, fields}
-        frontend_interfaces: dict[str, dict] = {}
-
-        for rel_path in ts_type_paths:
-            full_path = project_root / rel_path
-            try:
-                source = full_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-
-            ifaces = _parse_ts_interfaces(source)
-            for iface_name, fields in ifaces.items():
-                # If --model filter is active, only include matching interfaces
-                if model:
-                    sim = _name_similarity(model, iface_name)
-                    if sim < 0.5:
-                        continue
-
-                if iface_name not in frontend_interfaces:
-                    frontend_interfaces[iface_name] = {
-                        "file": rel_path,
-                        "fields": fields,
-                    }
-                else:
-                    # Prefer the interface with more fields
-                    if len(fields) > len(frontend_interfaces[iface_name]["fields"]):
-                        frontend_interfaces[iface_name] = {
-                            "file": rel_path,
-                            "fields": fields,
-                        }
-
-        # ----------------------------------------------------------------
-        # Graceful no-op when one side is empty
-        # ----------------------------------------------------------------
-        has_backend = bool(backend_models)
-        has_frontend = bool(frontend_interfaces)
-
-        if not has_backend and not has_frontend:
-            msg = (
-                "No backend/frontend pair found. Ensure the project contains "
-                "PHP model files (in app/Models/) and TypeScript type files "
-                "(in src/types/ or similar)."
-            )
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "api-drift",
-                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
-                            matches=[],
-                            findings=[],
-                        )
-                    )
-                )
-            else:
-                click.echo(f"VERDICT: api-drift skipped — {msg}")
+        if _emit_missing_api_side(json_mode, backend_models, frontend_interfaces):
             return
 
-        if not has_backend:
-            msg = (
-                "No PHP model files found (looking for app/Models/*.php with $fillable). "
-                "Cross-repo drift detection is planned for 'roam ws api-drift'."
-            )
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "api-drift",
-                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
-                            matches=[],
-                            findings=[],
-                        )
-                    )
-                )
-            else:
-                click.echo(f"VERDICT: api-drift skipped — {msg}")
-            return
-
-        if not has_frontend:
-            msg = (
-                "No TypeScript type files found (looking for *.ts in types/models/interfaces/ "
-                "directories). Cross-repo drift detection is planned for 'roam ws api-drift'."
-            )
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "api-drift",
-                            summary={"verdict": f"api-drift skipped — {msg}", "error": msg, "findings": 0},
-                            matches=[],
-                            findings=[],
-                        )
-                    )
-                )
-            else:
-                click.echo(f"VERDICT: api-drift skipped — {msg}")
-            return
-
-        # ----------------------------------------------------------------
-        # Step 4: Match models to interfaces
-        # ----------------------------------------------------------------
         matches = _match_models_to_interfaces(backend_models, frontend_interfaces)
-
-        matched_php_names = {m["php_model"] for m in matches}
-        matched_ts_names = {m["ts_interface"] for m in matches}
-
-        unmatched_backend = sorted(n for n in backend_models if n not in matched_php_names)
-        unmatched_frontend = sorted(n for n in frontend_interfaces if n not in matched_ts_names)
-
-        # ----------------------------------------------------------------
-        # Step 5: Compare fields for each matched pair
-        # ----------------------------------------------------------------
-        # findings_by_pair: [(match_dict, [finding_dict, ...])]
-        findings_by_pair: list[tuple[dict, list[dict]]] = []
-        all_findings: list[dict] = []
-
-        for match in matches:
-            php_info = backend_models[match["php_model"]]
-            ts_info = frontend_interfaces[match["ts_interface"]]
-
-            pair_findings = _compare_fields(
-                match["php_model"],
-                php_info,
-                match["ts_interface"],
-                ts_info,
-            )
-
-            # Apply confidence filter.
-            #
-            # W1005-followup-H: ``confidence`` may be a canonical W547
-            # token (critical/error/warning/info/note) supplied by an
-            # agent fluent in the cross-command vocabulary. Project it
-            # onto the api-drift emit vocab (high/medium/low) BEFORE the
-            # equality comparison; EMIT vocab unchanged. ``all`` is the
-            # bypass sentinel that short-circuits the filter entirely.
-            if confidence.lower() != _CONFIDENCE_BYPASS_SENTINEL:
-                projected = _project_confidence_input(confidence)
-                pair_findings = [f for f in pair_findings if f["confidence"] == projected]
-
-            findings_by_pair.append((match, pair_findings))
-            all_findings.extend(pair_findings)
-
-        # Count by confidence
-        n_high = sum(1 for f in all_findings if f["confidence"] == "high")
-        n_medium = sum(1 for f in all_findings if f["confidence"] == "medium")
-        n_low = sum(1 for f in all_findings if f["confidence"] == "low")
+        unmatched_backend, unmatched_frontend = _unmatched_names(matches, backend_models, frontend_interfaces)
+        findings_by_pair, all_findings = _collect_findings_by_pair(
+            matches,
+            backend_models,
+            frontend_interfaces,
+            confidence,
+        )
+        n_high, n_medium, n_low = _confidence_counts(all_findings)
         n_total = len(all_findings)
 
-        # ----------------------------------------------------------------
-        # JSON output
-        # ----------------------------------------------------------------
         if json_mode:
-            json_matches = []
-            for match, pair_findings in findings_by_pair:
-                json_matches.append(
-                    {
-                        "php_model": match["php_model"],
-                        "php_file": match["php_file"],
-                        "ts_interface": match["ts_interface"],
-                        "ts_file": match["ts_file"],
-                        "similarity": round(match["similarity"], 2),
-                        "findings": pair_findings,
-                    }
-                )
-
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "api-drift",
-                        summary={
-                            "verdict": f"{n_total} API drift findings ({n_high} high, {n_medium} medium, {n_low} low) across {len(matches)} matched models",
-                            "findings": n_total,
-                            "high": n_high,
-                            "medium": n_medium,
-                            "low": n_low,
-                            "models_matched": len(matches),
-                            "models_total_backend": len(backend_models),
-                            "interfaces_total_frontend": len(frontend_interfaces),
-                        },
-                        matches=json_matches,
-                        unmatched={
-                            "backend_only": unmatched_backend,
-                            "frontend_only": unmatched_frontend,
-                        },
-                    )
-                )
+            summary = _api_drift_summary(
+                n_total,
+                n_high,
+                n_medium,
+                n_low,
+                matches,
+                backend_models,
+                frontend_interfaces,
             )
+            _emit_api_drift_json(findings_by_pair, unmatched_backend, unmatched_frontend, summary)
             return
 
-        # ----------------------------------------------------------------
-        # Text output
-        # ----------------------------------------------------------------
-        verdict_parts = []
-        if n_high:
-            verdict_parts.append(f"{n_high} high")
-        if n_medium:
-            verdict_parts.append(f"{n_medium} medium")
-        if n_low:
-            verdict_parts.append(f"{n_low} low")
-        verdict_suffix = f" ({', '.join(verdict_parts)})" if verdict_parts else ""
-
-        click.echo(f"VERDICT: {n_total} API drift issue{'s' if n_total != 1 else ''} found{verdict_suffix}")
-        click.echo(f"Models matched: {len(matches)} of {len(backend_models)}")
-
-        if not all_findings:
-            click.echo("\nNo drift detected in matched model/interface pairs.")
-        else:
-            click.echo()
-
-        # Confidence label formatting
-        _CONF_LABEL = {
-            "high": "[high]  ",
-            "medium": "[medium]",
-            "low": "[low]   ",
-        }
-
-        shown = 0
-        for match, pair_findings in findings_by_pair:
-            if not pair_findings:
-                continue
-
-            click.echo(f"{match['php_model']} (PHP) <-> {match['ts_interface']} (TS):")
-
-            for finding in pair_findings:
-                if shown >= limit:
-                    remaining = n_total - shown
-                    click.echo(f"\n  (+{remaining} more findings — use -n to increase limit)")
-                    break
-
-                label = _CONF_LABEL.get(finding["confidence"], "[?]     ")
-                click.echo(f"  {label}  {finding['message']}")
-
-                if finding["ts_field"] and finding["ts_file"]:
-                    click.echo(f"           TS: {finding['ts_file']}")
-                if finding["php_field"] and finding["php_file"]:
-                    click.echo(f"           PHP: {finding['php_file']} (in $fillable)")
-                if finding.get("kind") == "missing_in_backend" and not finding["php_field"]:
-                    click.echo(f"           PHP: {finding['php_file']} (not in $fillable or $appends)")
-
-                shown += 1
-
-            click.echo()
-
-            if shown >= limit:
-                break
-
-        # Unmatched models summary
-        if unmatched_backend or unmatched_frontend:
-            click.echo("Unmatched models:")
-            if unmatched_backend:
-                names = ", ".join(unmatched_backend[:20])
-                more = f" (+{len(unmatched_backend) - 20} more)" if len(unmatched_backend) > 20 else ""
-                click.echo(f"  Backend only:  {names}{more}")
-            if unmatched_frontend:
-                names = ", ".join(unmatched_frontend[:20])
-                more = f" (+{len(unmatched_frontend) - 20} more)" if len(unmatched_frontend) > 20 else ""
-                click.echo(f"  Frontend only: {names}{more}")
+        _emit_api_drift_text(
+            findings_by_pair=findings_by_pair,
+            all_findings=all_findings,
+            limit=limit,
+            matches=matches,
+            backend_models=backend_models,
+            unmatched_backend=unmatched_backend,
+            unmatched_frontend=unmatched_frontend,
+            n_high=n_high,
+            n_medium=n_medium,
+            n_low=n_low,
+        )

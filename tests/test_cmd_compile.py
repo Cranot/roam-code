@@ -130,6 +130,27 @@ def test_compile_verify_hint_can_be_forced_off(runner, monkeypatch):
     assert "roam verify --auto" not in envelope["agent_contract"]["next_commands"]
 
 
+def test_compile_agent_contract_includes_command_executability_checks(runner, monkeypatch):
+    """Compiler advice carries an F3 executability sidecar without changing commands."""
+    monkeypatch.setenv("ROAM_COMPILE_VERIFY", "1")
+    result = runner.invoke(
+        cli,
+        ["--json", "compile", "Find files coupled to src/roam/cli.py"],
+    )
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    checks = envelope["agent_contract"]["command_checks"]
+    by_source = {check["source"]: check for check in checks}
+
+    assert by_source["artifact.plan.recommended_first_command"]["failure_class"] == "F3_executability"
+    assert by_source["agent_contract.next_commands[0]"]["target_status"] == "placeholder"
+    assert by_source["agent_contract.next_commands[1]"]["target_status"] == "placeholder"
+    assert by_source["agent_contract.next_commands[2]"]["command_text"] == "roam verify --auto"
+    assert by_source["agent_contract.next_commands[2]"]["registry_status"] == "known"
+    assert by_source["agent_contract.next_commands[2]"]["parse_status"] == "parsed"
+    assert by_source["agent_contract.next_commands[2]"]["executable_status"] == "checked"
+
+
 def test_compile_no_model_calls(runner):
     """compile_plan is zero-model — model_calls_avoided must list reductions."""
     result = runner.invoke(

@@ -150,4 +150,4 @@ makes the report reproducible byte-for-byte across machines.
 *This page (and the rest of `templates/demos/`) is a fixture for
 illustrative use. The repo, the actors, the SDK, the CVE id, and
 the finding counts are synthetic. The data shape is real — it is
-what `roam pr-replay --evidence` emits today for any real PR.*
+what `roam pr-replay --evidence evidence.json` emits today for any real PR.*

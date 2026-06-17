@@ -208,7 +208,7 @@ class TestCoverageGapsJSON:
         data = parse_json_output(result, "coverage-gaps")
         assert_json_envelope(data, "coverage-gaps")
 
-    def test_json_summary_has_required_fields(self, cli_runner, gated_project):
+    def test_json_summary_has_coverage_count_fields(self, cli_runner, gated_project):
         """JSON summary contains the expected count fields."""
         result = invoke_coverage_gaps(
             cli_runner,
@@ -306,7 +306,7 @@ class TestCoverageGapsJSON:
         assert 0 <= pct <= 100, f"coverage_pct out of range: {pct}"
 
     def test_json_nonexistent_gate_envelope(self, cli_runner, gated_project):
-        """No-gate-found path returns a valid JSON response (not necessarily an envelope)."""
+        """No-gate-found path returns a strict Pattern-2 JSON envelope."""
         result = invoke_coverage_gaps(
             cli_runner,
             ["--gate-pattern", "no_such_gate_xyz_99"],
@@ -314,16 +314,13 @@ class TestCoverageGapsJSON:
             json_mode=True,
         )
         assert result.exit_code == 0
-        # Output may be empty or a JSON envelope with an error key — just confirm it's not a crash
-        output = result.output.strip()
-        if output:
-            import json
-
-            try:
-                data = json.loads(output)
-                assert isinstance(data, dict)
-            except json.JSONDecodeError:
-                pass  # Non-JSON output is also acceptable for the no-gate-found path
+        data = parse_json_output(result, "coverage-gaps")
+        assert_json_envelope(data, "coverage-gaps")
+        summary = data["summary"]
+        assert summary["state"] == "no_gates"
+        assert summary["partial_success"] is True
+        assert summary["error"] == "No gate symbols found"
+        assert "no gate symbols matched" in summary["verdict"]
 
 
 # ---------------------------------------------------------------------------

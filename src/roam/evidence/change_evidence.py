@@ -51,6 +51,25 @@ from roam.evidence.policy import PolicyDecision
 from roam.evidence.refs import ActorRef, AuthorityRef, EnvironmentRef
 from roam.evidence.subject import EvidenceSubject
 
+# Artifact kinds that can answer Q7 ("what verified it?") without a
+# populated tests_run row. Reports/manifests are evidence artifacts, but
+# they are not themselves verification.
+_VERIFICATION_ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {
+        "sarif",
+        "attestation",
+        "cga_predicate",
+        "bundle",
+        "trace",
+        "log_excerpt",
+    }
+)
+
+
+def _has_verification_artifact(artifacts: tuple[EvidenceArtifact, ...]) -> bool:
+    return any(getattr(artifact, "kind", None) in _VERIFICATION_ARTIFACT_KINDS for artifact in artifacts)
+
+
 # Schema version stamped on every packet. Bump on any field-shape
 # change; consumers compare against this string and may refuse to
 # parse newer versions.
@@ -923,12 +942,14 @@ class ChangeEvidence:
         else:
             result["Q6"] = "missing"
 
-        # Q7 verify: complete if tests_run OR artifacts; partial if
-        # tests_required only (declared but not yet run); missing
-        # otherwise.
-        if self.tests_run or self.artifacts:
+        # Q7 verify: complete if tests_run OR a verification-shaped
+        # artifact exists; partial if tests_required OR only report /
+        # manifest / other artifacts exist; missing otherwise.
+        # This prevents a generated report artifact from making a replay
+        # look fully verified when no tests or attestations ran.
+        if self.tests_run or _has_verification_artifact(self.artifacts):
             result["Q7"] = "complete"
-        elif self.tests_required:
+        elif self.tests_required or self.artifacts:
             result["Q7"] = "partial"
         else:
             result["Q7"] = "missing"
@@ -1003,11 +1024,12 @@ def resolve_roam_version() -> str:
 
     * Returns ``roam.__version__`` when ``importlib.metadata`` resolves
       the package (the normal install path; ``roam-code`` is on PyPI).
-    * Returns ``"unknown"`` on ANY exception. The fallback string is a
-      sentinel a downstream consumer can detect (versus an empty
-      string, which could be ambiguous with "field unset"); deliberately
-      uses NO punctuation so it stays valid in places that constrain
-      string content (e.g. SARIF tool-version fields).
+    * Returns ``"unknown"`` when the package version import cannot
+      resolve. The fallback string is a sentinel a downstream consumer
+      can detect (versus an empty string, which could be ambiguous with
+      "field unset"); deliberately uses NO punctuation so it stays valid
+      in places that constrain string content (e.g. SARIF tool-version
+      fields).
 
     Backward-compat: this helper is NOT wired into the dataclass field
     default. The default stays ``None`` (omit-when-default rule), so
@@ -1033,7 +1055,7 @@ def resolve_roam_version() -> str:
         if isinstance(_rv, str) and _rv:
             return _rv
         return "unknown"
-    except Exception:
+    except ImportError:
         return "unknown"
 
 

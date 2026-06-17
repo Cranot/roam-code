@@ -28,7 +28,7 @@ report Roam renders for the reviewer.
 
 > **Synthetic fixture.** The buyer name, SHAs, symbols, advisory id,
 > and finding counts are illustrative — the shape is what
-> `roam pr-replay --evidence-bundle` emits on any real repo.
+> `roam pr-replay --evidence-bundle evidence/` emits on any real repo.
 
 ---
 
@@ -185,9 +185,9 @@ rules:
 
 ```bash
 # Block PRs where a clone-class divergence is reachable
-roam critique --ci --fail-on clones-not-edited:high
+git diff | roam critique
 # Gate PRs with new taint edges through the payment path
-roam critique --ci --fail-on taint:high
+git diff | roam critique
 ```
 
 ### What Review would have blocked
@@ -289,7 +289,7 @@ evidence.
 - **Run this on your own repo.** `pip install roam-code && roam pr-replay --tier sample` produces a watermarked 5-PR DIY report on your last merged window. No code leaves your machine; no account needed. The full 5-minute walkthrough lives at <https://roam-code.com/docs/canonical-demo>.
 - **See the engagement shape.** The paid Team / Deep tiers ship a polished report with founder review across 30 / 90 PRs. The canonical post-fill artefact is [`sample-pr-replay-team.md`](../audit-report/sample-pr-replay-team.md) — same packet shape, real-engagement narrative, recommended CI gates ranked by leverage.
 - **Commission a paid replay.** Tier-pickers, SOW, DPA, and Stripe checkout live at <https://roam-code.com/audit>. 50% of the engagement fee credits toward a Roam Review subscription within 60 days.
-- **Wire the gate yourself.** Skip the report entirely: `roam critique --ci --fail-on clones-not-edited:high,taint:high` is the single-line CI gate that this report's "Suggested CI gates" section recommends.
+- **Wire the gate yourself.** Skip the report entirely: `git diff | roam critique` is the single-line CI gate that this report's "Suggested CI gates" section recommends.
 
 ---
 

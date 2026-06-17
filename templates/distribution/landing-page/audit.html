@@ -40,8 +40,8 @@
     "description": "Roam replays the current detector set against a buyer's last 5, 30, or 90 merged PRs and ships a written structural-review report covering findings the detectors would have flagged pre-merge, an aggregated by-detector breakdown, and recommended CI gates.",
     "offers": [
       {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "5-PR self-serve sample, watermarked, no founder review."},
-      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "30-PR report, 30-min founder walk-through. 50% of fee credits toward a Roam Review subscription within 60 days."},
-      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee credits toward a Roam Review subscription within 60 days."}
+      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "30-PR report, 30-min founder walk-through. 50% of fee credits toward a Roam Review subscription within 60 days."},
+      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee credits toward a Roam Review subscription within 60 days."}
     ]
   }
   </script>
@@ -112,15 +112,15 @@
         5 / 30 / 90 merged PRs and ship a written report plus a portable
         evidence packet — what the detectors would have flagged
         pre-merge, the patterns worth wiring into CI, and a signed
-        <code>ChangeEvidence</code> bundle answering the eight questions
-        a reviewer needs after an AI-assisted change.
+        coverage table mapping the eight questions a reviewer needs after
+        an AI-assisted change.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See the sample report</a>
         <a class="btn-secondary" href="#tiers">See the tiers</a>
       </div>
       <p class="hero-trust-strip">
-        Same engine as the free CLI · Apache 2.0 · Signed pr-bundle + HMAC run ledger · No code uploaded for the DIY sample · 50% credits toward Roam Review
+        Same engine as the free CLI · Apache 2.0 · Honest evidence coverage table · No code uploaded for the DIY sample · 50% credits toward Roam Review
       </p>
     </div>
   </header>
@@ -130,53 +130,52 @@
        ────────────────────────────────────────────────────────── -->
   <section class="whats-in" id="evidence">
     <div class="whats-in-inner">
-      <h2>Eight questions every PR Replay packet answers</h2>
+      <h2>Eight questions every PR Replay packet maps</h2>
       <p class="lede">
-        Every report ships a <code>ChangeEvidence</code> JSON packet next
-        to the Markdown. The packet maps to the eight questions a
-        procurement reviewer, auditor, or post-incident analyst needs
-        after an AI-assisted change.
+        Every paid report includes an evidence-coverage table. PR Replay is
+        a merged-history replay, so it answers structural axes and marks
+        identity, authority, and approval axes out of scope instead of
+        inventing them.
       </p>
       <div class="verbs-grid verbs-grid--3">
         <div class="verb-cell">
           <code>Who acted?</code>
-          <span>Human author, agent id, MCP client, tool id — captured per run.</span>
+          <span><strong>Out of scope.</strong> Git authors stay in your git log; replay does not re-derive identity.</span>
         </div>
         <div class="verb-cell">
           <code>What authority existed?</code>
-          <span>Mode, permits, leases, policy decision — recorded at edit time.</span>
+          <span><strong>Out of scope.</strong> Continuous Review records modes, permits, leases, and policy decisions.</span>
         </div>
         <div class="verb-cell">
           <code>What context was read?</code>
-          <span>Files, symbols, commands, content hashes the agent consumed pre-edit.</span>
+          <span><strong>Partial.</strong> Commit range, changed files, graph context, and detector set are disclosed.</span>
         </div>
         <div class="verb-cell">
           <code>What changed?</code>
-          <span>Diff hash, changed files, changed subjects — bound to the run.</span>
+          <span><strong>In scope.</strong> Per-PR files, changed subjects, and structural findings are reported.</span>
         </div>
         <div class="verb-cell">
           <code>What could break?</code>
-          <span>Blast radius, callers, tests, vulnerable paths — from the local graph.</span>
+          <span><strong>In scope.</strong> Blast radius, callers, tests, vulnerable paths, and detector hits are replayed.</span>
         </div>
         <div class="verb-cell">
           <code>What policy applied?</code>
-          <span>Rules, laws, controls, exceptions — with rule-config hash.</span>
+          <span><strong>In scope.</strong> Default detector policy or your provided rule file is named in the report.</span>
         </div>
         <div class="verb-cell">
           <code>What verified it?</code>
-          <span>Tests run, gates passed, attestations — pr-bundle proof.</span>
+          <span><strong>Partial.</strong> Replay command, detector versions, and report artifacts are captured; tests are not rerun.</span>
         </div>
         <div class="verb-cell">
           <code>Who accepted risk?</code>
-          <span>Approval, accepted risk, reviewer, timestamp — when present.</span>
+          <span><strong>Out of scope.</strong> Approval remains <code>producer_not_available</code> unless your source system supplies it.</span>
         </div>
       </div>
       <p class="how-it-works-foot" style="margin-top: 24px;">
-        Each packet is reproducible from the
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/">audit-report template</a>,
-        signed via a <code>pr-bundle</code>, and chained into the
-        <code>roam runs</code> HMAC ledger so any post-hoc edit is
-        detectable offline. For the framework mapping see
+        The coverage table is reproducible from the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/">audit-report template</a>.
+        PR Replay does not create live edit-time authority or approval
+        records; continuous Roam Review does. For the framework mapping see
         <a href="/governance#controls">governance</a>; for current
         certification posture and target dates see <a href="/trust">trust</a>.
       </p>
@@ -197,8 +196,7 @@
         <li>
           <span class="flow-num">1</span>
           <strong>Kickoff (day 1).</strong>
-          You send the repo URL and the time window (or you've pre-filled
-          them at Stripe checkout). We countersign a
+          You send the repo URL and the time window by email. We countersign a
           <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">one-page SOW</a>
           and our <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>.
           You approve the read-only access scope. No code leaves your
@@ -276,9 +274,9 @@
                founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Buy Team — $2,500
+            Request Team — $2,500 <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
           </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
+          <p class="replay-checkout-note">Self-serve checkout launches soon; email requests go through today. Payment follows signed SOW + invoice confirmation.</p>
         </article>
 
         <article class="replay-tier replay-tier--deep">
@@ -300,9 +298,9 @@
                founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Buy Deep — $6,000
+            Request Deep — $6,000 <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
           </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
+          <p class="replay-checkout-note">Self-serve checkout launches soon; email requests go through today. Payment follows signed SOW + invoice confirmation.</p>
         </article>
 
       </div>
@@ -568,9 +566,9 @@
           attaches to providers of high-risk AI systems listed in
           Annex III; code-generation tooling is not in Annex III. If
           your <em>own product</em> is a high-risk AI system, the
-          report's tamper-evident audit-trail entries are useful as
-          Article 14 human-oversight evidence. The classification call
-          is for you and your DPO.
+          report's structural-review evidence can support Article 14
+          human-oversight review. The classification call is for you
+          and your DPO.
         </p>
       </details>
     </div>

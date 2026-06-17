@@ -41,9 +41,10 @@ When an email references compliance, audit, or governance framing, use
 this canonical clause verbatim:
 
 > PR Replay produces a structural-review report that **maps to** and
-> **supports evidence for** SOC 2, ISO 42001, and EU AI Act Article 14
-> (human-oversight) controls. It does **not certify** compliance with
-> any framework; the classification call stays with you and your DPO.
+> **supports evidence for** SOC 2 / ISO 42001 change-management controls
+> and, where your own system is high-risk, EU AI Act Article 14
+> human-oversight controls. It does **not certify** compliance with any
+> framework; the classification call stays with you and your DPO.
 
 This mirrors SOW §12.1 (warranty disclaimer) and the report's
 honest-banner clause (`templates/audit-report/sample-pr-replay-team.md`).
@@ -140,8 +141,10 @@ SOW package).
 > + sample report shape: [roam-code.com/audit](https://roam-code.com/audit).
 >
 > **What it does NOT do**: certify compliance with any framework. The
-> report **maps to** and **supports evidence for** SOC 2, ISO 42001, and
-> EU AI Act Article 14 controls — useful as evidence, not a certification.
+> report **maps to** and **supports evidence for** SOC 2 / ISO 42001
+> change-management controls and, where your own system is high-risk, EU
+> AI Act Article 14 human-oversight controls — useful as evidence, not a
+> certification.
 >
 > **Timeline**: kickoff [date], delivery [date].
 >
@@ -218,9 +221,10 @@ This template covers the **post-call** email that ships the final deliverable.
 > - **Recommended CI gates**: the few checks worth wiring into CI now.
 >
 > Reminder on framing: the report **maps to** and **supports evidence
-> for** SOC 2 / ISO 42001 / EU AI Act Article 14 controls; it does **not
-> certify** compliance with any framework. Useful as evidence for your
-> auditor, not a substitute for certification.
+> for** SOC 2 / ISO 42001 change-management controls and, where your own
+> system is high-risk, EU AI Act Article 14 human-oversight controls; it
+> does **not certify** compliance with any framework. Useful as evidence
+> for your auditor, not a substitute for certification.
 >
 > Walkthrough: [link / calendar invite already sent].
 >

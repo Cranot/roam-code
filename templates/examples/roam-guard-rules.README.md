@@ -86,7 +86,7 @@ roam guard-rules show --rules .roam/guard-rules.yml
 `roam guard-doctor` will validate your rule pack as part of its health check:
 
 ```bash
-roam guard-doctor --rules .roam/guard-rules.yml
+roam guard-doctor --rules templates/examples/roam-guard-rules.default.yml
 # ✓ rule_pack — rule pack `my-repo` loaded with 8 pattern(s)
 ```
 

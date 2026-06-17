@@ -12,8 +12,9 @@ from click.testing import CliRunner
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, by_name
-from roam.ask.runner import extract_symbol, fill_args, fill_followups
+from roam.ask.runner import extract_recipe_symbol, fill_args, fill_followups, run_recipe
 from roam.cli import cli
+from roam.commands.cmd_ask import _compact_step_result
 from tests.conftest import make_src_project as _make_project
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,13 @@ class TestRecipes:
             for cmd_name, _args in r.commands:
                 assert cmd_name in valid, f"recipe '{r.name}' references unknown command '{cmd_name}'"
 
+    def test_verify_patch_followups_are_executable(self):
+        recipe = by_name("verify-patch")
+        assert recipe is not None
+        assert "roam rules --changed" not in recipe.followups
+        assert "roam rules --ci" in recipe.followups
+        assert "roam stale-refs --fix preview" in recipe.followups
+
     def test_by_name(self):
         assert by_name("safe-delete-check").name == "safe-delete-check"
         assert by_name("nope") is None
@@ -122,7 +130,7 @@ class TestRecipes:
 
 
 class TestClassifier:
-    def test_empty_query_returns_empty(self):
+    def test_empty_ask_query_returns_empty(self):
         assert classify("") == []
         assert classify("   ") == []
 
@@ -219,23 +227,23 @@ class TestClassifier:
 # ---------------------------------------------------------------------------
 
 
-class TestExtractSymbol:
+class TestExtractRecipeSymbol:
     def test_pascal_case(self):
-        assert extract_symbol("delete UserSession safely") == "UserSession"
+        assert extract_recipe_symbol("delete UserSession safely") == "UserSession"
 
     def test_snake_case_with_underscore(self):
-        assert extract_symbol("call handle_login first") == "handle_login"
+        assert extract_recipe_symbol("call handle_login first") == "handle_login"
 
     def test_two_identifiers_returns_none(self):
         # Ambiguous — let the command resolve.
-        assert extract_symbol("UserSession and handle_login") is None
+        assert extract_recipe_symbol("UserSession and handle_login") is None
 
     def test_no_identifier_returns_none(self):
-        assert extract_symbol("the login flow") is None
+        assert extract_recipe_symbol("the login flow") is None
 
     def test_single_lowercase_word_returns_none(self):
         # Bare lowercase words have a high false-positive rate.
-        assert extract_symbol("session please") is None
+        assert extract_recipe_symbol("session please") is None
 
 
 class TestFillArgs:
@@ -263,6 +271,62 @@ class TestFillArgs:
             "UserSession",
         )
         assert out == ["roam safe-delete UserSession", "roam retrieve delete UserSession safely"]
+
+
+class TestRunRecipe:
+    def test_verify_patch_feeds_current_diff_to_critique(self, monkeypatch, tmp_path):
+        diff_text = "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+        critique_inputs: list[str | None] = []
+
+        class Proc:
+            def __init__(self, stdout: str, returncode: int = 0, stderr: str = ""):
+                self.stdout = stdout
+                self.returncode = returncode
+                self.stderr = stderr
+
+        def fake_run(args, **kwargs):
+            if args[:2] == ["git", "diff"]:
+                return Proc(diff_text)
+            command_name = args[4]
+            if command_name == "diff":
+                assert kwargs.get("input") is None
+                return Proc('{"command":"diff","summary":{"verdict":"ok"}}')
+            if command_name == "critique":
+                critique_inputs.append(kwargs.get("input"))
+                return Proc('{"command":"critique","summary":{"verdict":"ok"}}')
+            raise AssertionError(f"unexpected command: {args!r}")
+
+        monkeypatch.setattr("roam.ask.runner.subprocess.run", fake_run)
+
+        recipe = by_name("verify-patch")
+        assert recipe is not None
+        results = run_recipe(recipe, "audit my pending diff", cwd=str(tmp_path))
+
+        assert [item["command"] for item in results] == ["diff", "critique"]
+        assert critique_inputs == [diff_text]
+
+
+class TestAskOutput:
+    def test_compact_step_result_omits_high_volume_payloads(self):
+        step = {
+            "command": "critique",
+            "summary": {"verdict": "8 findings"},
+            "_meta": {"response_tokens": 9999},
+            "changed_symbols": [{"name": f"sym_{i}"} for i in range(20)],
+            "findings": [{"title": f"finding {i}"} for i in range(8)],
+            "top_finding": {"title": "finding 0"},
+            "risk_rank": 3,
+        }
+
+        compact = _compact_step_result(step)
+
+        assert compact["command"] == "critique"
+        assert compact["source_response_tokens"] == 9999
+        assert compact["finding_count"] == 8
+        assert len(compact["findings"]) == 5
+        assert compact["findings_truncated_count"] == 3
+        assert "changed_symbols" not in compact
+        assert "changed_symbols" in compact["omitted_fields"]
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +391,32 @@ class TestAskCLI:
         assert data["perspectives"] == list(by_name("onboard").perspectives)
         assert data["followups"] == list(by_name("onboard").followups)
         assert data["gates"] == list(by_name("onboard").gates)
+
+    def test_recipe_json_result_compacts_step_payloads(self, ask_project, monkeypatch):
+        from roam.commands import cmd_ask as cmd_ask_module
+
+        def fake_run_recipe(*_args, **_kwargs):
+            return [
+                {
+                    "command": "diff",
+                    "summary": {"verdict": "big diff"},
+                    "blast_radius": [f"src/file_{i}.py" for i in range(100)],
+                    "per_file": [{"path": f"src/file_{i}.py"} for i in range(100)],
+                }
+            ]
+
+        monkeypatch.setattr(cmd_ask_module, "run_recipe", fake_run_recipe)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "ask", "--recipe", "verify-patch", "audit diff"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        step = data["steps"][0]
+        assert step["command"] == "diff"
+        assert "blast_radius" not in step
+        assert "per_file" not in step
+        assert step["full_result_omitted"] is True
+        assert data["step_detail_policy"].startswith("compact")
 
     def test_report_list_json_includes_recipe_workflows(self, ask_project):
         runner = CliRunner()

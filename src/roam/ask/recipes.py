@@ -288,7 +288,7 @@ RECIPES: list[Recipe] = [
         ),
         phase="review",
         perspectives=("blast-radius", "clone-consistency", "intent-alignment"),
-        followups=("roam rules --changed", "roam test-impact", "roam stale-refs (after rename-heavy diffs)"),
+        followups=("roam rules --ci", "roam test-impact", "roam stale-refs --fix preview"),
         gates=("Stop on high-severity critique findings", "Add or run impacted tests before merge"),
     ),
     Recipe(

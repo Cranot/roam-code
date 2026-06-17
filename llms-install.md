@@ -219,12 +219,12 @@ vocabulary edit propagates without a schema re-roll.
 
 ## World-model classifiers (per-symbol semantic facts)
 
-```
-roam side-effects     io_read / io_write / mutation / process / none, per symbol
-roam idempotency      idempotent / non_idempotent / unknown
-roam causal-graph     param -> sink dependency edges per symbol
-roam tx-boundaries    begin/commit/rollback regions; flags unsafe_mutation outside tx
-```
+| Command | Reports |
+|---------|---------|
+| `roam side-effects ensure_index` | `io_read`, `io_write`, `mutation`, `process`, or `none` |
+| `roam idempotency ensure_index` | `idempotent`, `non_idempotent`, or `unknown` |
+| `roam causal-graph ensure_index` | Param-to-sink dependency edges |
+| `roam tx-boundaries` | Begin/commit/rollback regions and unsafe mutations outside transactions |
 
 ## Key commands for AI assistants
 

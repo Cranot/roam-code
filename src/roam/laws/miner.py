@@ -48,6 +48,7 @@ defines its own minimal-shape rule:
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
@@ -207,12 +208,12 @@ def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """
     try:
         from roam.commands.conventions_helper import compute_conventions
-    except Exception:
+    except ImportError:
         return []
 
     try:
         result = compute_conventions(conn, min_majority_pct=min_pct)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- conventions helper runs DB queries + classification; mining is best-effort, a probe failure yields no laws
         return []
 
     laws: list[Law] = []
@@ -264,11 +265,11 @@ def _naming_examples(conn, kind: str, style: str, *, limit: int = 3) -> list[str
             "SELECT name FROM symbols WHERE kind = ? ORDER BY id LIMIT 50",
             (kind,),
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     try:
         from roam.commands.cmd_conventions import classify_case
-    except Exception:
+    except ImportError:
         return [r["name"] for r in rows[:limit]]
     examples: list[str] = []
     for r in rows:
@@ -313,7 +314,7 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
             WHERE fe.kind = 'imports'
             """
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     # source_bucket -> target_bucket -> count
@@ -409,7 +410,7 @@ def _import_examples(conn, src_bucket: str, tgt_bucket: str, *, limit: int = 3) 
             """,
             (like_src, like_src.replace("/", "\\"), like_tgt, like_tgt.replace("/", "\\"), limit * 4),
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     examples: list[str] = []
     for r in rows:
@@ -440,7 +441,7 @@ def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """
     try:
         from roam.commands.changed_files import is_test_file
-    except Exception:
+    except ImportError:
         return []
 
     laws: list[Law] = []
@@ -452,7 +453,7 @@ def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
             for r in conn.execute("SELECT path FROM files").fetchall()
             if is_test_file(r["path"])
         }
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- DB query + per-path is_test_file classification; mining is best-effort, a probe failure yields no laws
         return []
     if not test_files:
         # No tests -> nothing to mine.
@@ -472,7 +473,7 @@ def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
                 """,
                 (kind,),
             ).fetchall()
-        except Exception:
+        except sqlite3.Error:
             continue
 
         # Only count source-side symbols (skip those that are themselves

@@ -16,14 +16,14 @@ from __future__ import annotations
 import click
 
 from roam.ask.recipes import RECIPES, Recipe, by_name
-from roam.ask.runner import extract_symbol, fill_args
+from roam.ask.runner import extract_recipe_symbol, fill_args
 from roam.ask.workflow import recipe_workflow_metadata
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
 def _recipe_payload(recipe: Recipe, query: str = "") -> dict:
-    symbol = extract_symbol(query)
+    symbol = extract_recipe_symbol(query)
     return {
         **recipe_workflow_metadata(recipe, query=query, render_followups=bool(query)),
         "examples": list(recipe.examples),
@@ -146,6 +146,73 @@ _NEXT_HINTS: dict[str, list[str]] = {
 }
 
 
+def _emit_next_after(next_after: str, json_mode: bool) -> None:
+    suggestions = _NEXT_HINTS.get(next_after.lower(), [])
+    verdict = (
+        f"{len(suggestions)} suggestion(s) after `roam {next_after}`"
+        if suggestions
+        else f"no canned next-command for `roam {next_after}`"
+    )
+    if json_mode:
+        next_commands = list(suggestions) if suggestions else ["roam workflow --list"]
+        click.echo(
+            to_json(
+                json_envelope(
+                    "workflow",
+                    summary={"verdict": verdict, "after": next_after},
+                    suggestions=suggestions,
+                    agent_contract={
+                        "facts": [verdict],
+                        "next_commands": next_commands,
+                    },
+                )
+            )
+        )
+        return
+    click.echo(f"VERDICT: {verdict}")
+    for suggestion in suggestions:
+        click.echo(f"  {suggestion}")
+
+
+def _unknown_recipe_error(recipe_name: str, json_mode: bool) -> click.ClickException:
+    from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
+    from roam.output.structured_unknowns import (
+        structured_unknown_filter,
+        to_summary_payload,
+    )
+
+    known_names = sorted(r.name for r in RECIPES)
+    frag = structured_unknown_filter(
+        requested=recipe_name,
+        known=known_names,
+        state="unknown_recipe",
+        requested_field="requested_recipe",
+        known_field="known_recipes",
+        fact_anchor="recipes",
+    )
+    assert frag is not None
+    base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.{frag['verdict_suffix']}"
+    if json_mode:
+        verdict_unknown = f"unknown workflow recipe {recipe_name!r}"
+        click.echo(
+            to_json(
+                json_envelope(
+                    "workflow",
+                    summary={
+                        "verdict": verdict_unknown + frag["verdict_suffix"],
+                        **to_summary_payload(frag),
+                        "error_code": UNKNOWN_RECIPE,
+                    },
+                    agent_contract={
+                        "facts": frag["facts"],
+                        "next_commands": ["roam workflow --list"],
+                    },
+                )
+            )
+        )
+    return structured_usage_error(UNKNOWN_RECIPE, base_msg)
+
+
 @roam_capability(
     name="workflow",
     category="getting-started",
@@ -181,39 +248,7 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     if next_after:
-        # suggest what to run next given the prior command.
-        from roam.output.formatter import json_envelope, to_json
-
-        suggestions = _NEXT_HINTS.get(next_after.lower(), [])
-        verdict = (
-            f"{len(suggestions)} suggestion(s) after `roam {next_after}`"
-            if suggestions
-            else f"no canned next-command for `roam {next_after}`"
-        )
-        if json_mode:
-            # CONSTRAINT 12: surface the suggestions in
-            # ``agent_contract.next_commands`` so agents reading the
-            # canonical follow-up field get a copy-paste-executable list.
-            # When no canned hint exists, point them at the recipe list
-            # instead of leaving the field empty.
-            next_commands = list(suggestions) if suggestions else ["roam workflow --list"]
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "workflow",
-                        summary={"verdict": verdict, "after": next_after},
-                        suggestions=suggestions,
-                        agent_contract={
-                            "facts": [verdict],
-                            "next_commands": next_commands,
-                        },
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {verdict}")
-        for s in suggestions:
-            click.echo(f"  {s}")
+        _emit_next_after(next_after, json_mode)
         return
 
     if list_recipes or not recipe_name:
@@ -222,60 +257,6 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
 
     recipe = by_name(recipe_name)
     if recipe is None:
-        # W1083-followup: delegate the difflib closest-match + suffix-build
-        # to the shared ``structured_unknown_filter`` helper. Canonical
-        # knobs (cutoff=0.6, n=2) were already in use here per W1074. In
-        # json_mode the helper also closes the Pattern-1C gap (pre-W1083-
-        # followup the path raised UsageError unconditionally — no
-        # structured stdout). Text-mode UsageError prefix + phrasing stay
-        # byte-identical so the W1074 tests continue to pin the contract.
-        from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
-
-        # Local re-import: an earlier branch (``next_after``) has its own
-        # ``from roam.output.formatter import ...`` line, which makes
-        # ``json_envelope`` / ``to_json`` function-locals for the whole
-        # function. When that branch returned early they stay unbound at
-        # this point — re-importing here keeps the binding clean.
-        from roam.output.formatter import json_envelope as _json_envelope
-        from roam.output.formatter import to_json as _to_json
-        from roam.output.structured_unknowns import (
-            structured_unknown_filter,
-            to_summary_payload,
-        )
-
-        known_names = sorted(r.name for r in RECIPES)
-        frag = structured_unknown_filter(
-            requested=recipe_name,
-            known=known_names,
-            state="unknown_recipe",
-            requested_field="requested_recipe",
-            known_field="known_recipes",
-            fact_anchor="recipes",
-        )
-        # ``frag`` is always non-None here (we already know ``by_name``
-        # returned None, so ``recipe_name`` is not in the closed set).
-        assert frag is not None
-        base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.{frag['verdict_suffix']}"
-        if json_mode:
-            verdict_unknown = f"unknown workflow recipe {recipe_name!r}"
-            click.echo(
-                _to_json(
-                    _json_envelope(
-                        "workflow",
-                        summary={
-                            "verdict": verdict_unknown + frag["verdict_suffix"],
-                            **to_summary_payload(frag),
-                            "error_code": UNKNOWN_RECIPE,
-                        },
-                        agent_contract={
-                            "facts": frag["facts"],
-                            "next_commands": ["roam workflow --list"],
-                        },
-                    )
-                )
-            )
-            # Still raise so exit code remains non-zero — agents read the
-            # structured stdout envelope, the prefix lands on stderr.
-        raise structured_usage_error(UNKNOWN_RECIPE, base_msg)
+        raise _unknown_recipe_error(recipe_name, json_mode)
 
     _emit_recipe_detail(recipe, query, json_mode)

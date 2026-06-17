@@ -55,6 +55,38 @@ def no_drift_project(tmp_path):
     return proj
 
 
+@pytest.fixture
+def frontend_only_project(tmp_path):
+    proj = tmp_path / "frontend_only"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    types = proj / "frontend" / "types"
+    types.mkdir(parents=True)
+    (types / "user.ts").write_text("export interface User {\n  id: number;\n  name: string;\n}\n")
+    git_init(proj)
+    index_in_process(proj)
+    return proj
+
+
+@pytest.fixture
+def backend_only_project(tmp_path):
+    proj = tmp_path / "backend_only"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    models = proj / "app" / "Models"
+    models.mkdir(parents=True)
+    (models / "User.php").write_text(
+        "<?php\nnamespace App\\Models;\n\n"
+        "use Illuminate\\Database\\Eloquent\\Model;\n\n"
+        "class User extends Model {\n"
+        "    protected $fillable = ['name', 'email'];\n"
+        "}\n"
+    )
+    git_init(proj)
+    index_in_process(proj)
+    return proj
+
+
 class TestApiDriftSmoke:
     def test_exits_zero(self, cli_runner, drift_project, monkeypatch):
         monkeypatch.chdir(drift_project)
@@ -79,6 +111,38 @@ class TestApiDriftJSON:
         result = invoke_cli(cli_runner, ["api-drift"], cwd=drift_project, json_mode=True)
         data = parse_json_output(result, "api-drift")
         assert "findings" in data["summary"]
+
+    def test_json_no_backend_frontend_pair_has_closed_state(self, cli_runner, no_drift_project, monkeypatch):
+        monkeypatch.chdir(no_drift_project)
+        result = invoke_cli(cli_runner, ["api-drift"], cwd=no_drift_project, json_mode=True)
+        data = parse_json_output(result, "api-drift")
+
+        assert_json_envelope(data, "api-drift")
+        assert data["summary"]["state"] == "no_backend_frontend_pair"
+        assert data["summary"]["partial_success"] is False
+        assert data["unmatched"] == {"backend_only": [], "frontend_only": []}
+
+    def test_json_no_backend_models_has_closed_state(self, cli_runner, frontend_only_project, monkeypatch):
+        monkeypatch.chdir(frontend_only_project)
+        result = invoke_cli(cli_runner, ["api-drift"], cwd=frontend_only_project, json_mode=True)
+        data = parse_json_output(result, "api-drift")
+
+        assert_json_envelope(data, "api-drift")
+        assert data["summary"]["state"] == "no_backend_models"
+        assert data["summary"]["partial_success"] is False
+        assert data["unmatched"]["backend_only"] == []
+        assert data["unmatched"]["frontend_only"] == ["User"]
+
+    def test_json_no_frontend_interfaces_has_closed_state(self, cli_runner, backend_only_project, monkeypatch):
+        monkeypatch.chdir(backend_only_project)
+        result = invoke_cli(cli_runner, ["api-drift"], cwd=backend_only_project, json_mode=True)
+        data = parse_json_output(result, "api-drift")
+
+        assert_json_envelope(data, "api-drift")
+        assert data["summary"]["state"] == "no_frontend_interfaces"
+        assert data["summary"]["partial_success"] is False
+        assert data["unmatched"]["backend_only"] == ["User"]
+        assert data["unmatched"]["frontend_only"] == []
 
 
 class TestApiDriftText:

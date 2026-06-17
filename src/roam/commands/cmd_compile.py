@@ -28,6 +28,7 @@ import os
 import click
 
 from roam.capability import roam_capability
+from roam.command_advice import validate_command_advice_many
 from roam.output.formatter import json_envelope, to_json
 from roam.plan.calibration import get_profile
 from roam.plan.compiler import (
@@ -106,6 +107,256 @@ def _resolve_verify_enabled(cwd: str | None) -> bool:
     except Exception:  # noqa: BLE001 — never let config break compile
         return False
     return False
+
+
+def _emit_explain(task: str, json_mode: bool) -> None:
+    from roam.plan.compiler import _explain_classifier
+
+    diag = _explain_classifier(task)
+    if json_mode:
+        click.echo(to_json({"schema": "roam-compile-explain-v1", **diag}))
+        return
+
+    click.echo(f"VERDICT: classifier → {diag['winner']}")
+    click.echo(f"task: {task[:200]}")
+    click.echo("")
+    click.echo("regex matches:")
+    if not diag["regex_matches"]:
+        click.echo("  (none — fell through to freeform_explore)")
+    for name, hits in diag["regex_matches"].items():
+        marker = "← winner" if name == diag["winner"] else ""
+        click.echo(f"  {name:25s} {hits} {marker}")
+    click.echo("")
+    click.echo("rejected:")
+    for row in diag["rejected"] or ["(none)"]:
+        click.echo(f"  - {row}")
+    if diag["named_paths_extracted"]:
+        click.echo("")
+        click.echo(f"named_paths_extracted: {diag['named_paths_extracted']}")
+    click.echo("")
+    click.echo("tiebreak rules (apply in order):")
+    for row in diag["tiebreak_rules"]:
+        click.echo(f"  {row}")
+
+
+def _short_task_message(task: str) -> str:
+    stripped = task.strip()
+    return (
+        f"task too short or unstructured ({len(stripped)} chars). "
+        f"Pass a freeform sentence like 'find files coupled to "
+        f"src/X.py' or 'write a pytest for handleY'."
+    )
+
+
+def _task_is_too_short(task: str) -> bool:
+    stripped = task.strip()
+    return len(stripped) < 10 or not any(c.isalpha() for c in stripped)
+
+
+def _emit_short_task(task: str, json_mode: bool) -> None:
+    msg = _short_task_message(task)
+    if json_mode:
+        click.echo(
+            to_json(
+                {
+                    "schema": "roam-compile-error-v1",
+                    "summary": {"verdict": "task_too_short", "partial_success": True, "error": msg},
+                }
+            )
+        )
+        return
+    click.echo(f"VERDICT: task_too_short\n  {msg}", err=True)
+
+
+def _emit_brief(task: str, json_mode: bool) -> None:
+    from roam.plan.compiler import (
+        _RECOMMENDED_FIRST_COMMAND,
+        _classifier_confidence,
+        _classify,
+    )
+
+    proc, _ = _classify(task)
+    conf = _classifier_confidence(task, proc)
+    rec = _RECOMMENDED_FIRST_COMMAND.get(proc, "")
+    if json_mode:
+        click.echo(
+            to_json(
+                {
+                    "schema": "roam-compile-brief-v1",
+                    "procedure": proc,
+                    "classifier_confidence": conf,
+                    "recommended_first": rec,
+                }
+            )
+        )
+        return
+    click.echo(f"{proc} ({conf:.2f}): {rec}")
+
+
+def _emit_route(task: str, plan, cwd: str, profile: str | None, json_mode: bool) -> None:
+    routing = route_for_plan(plan, cwd=cwd, profile_name=profile)
+    prof = get_profile(profile)
+    if json_mode:
+        click.echo(
+            to_json(
+                {
+                    "schema": "roam-compile-route-v1",
+                    "task": task[:240],
+                    "procedure": plan.procedure,
+                    "classifier_confidence": plan.classifier_confidence,
+                    "routing": routing,
+                    "calibration": {
+                        "profile_name": prof.name,
+                        "family": prof.family,
+                        "measured_at": prof.measured_at,
+                        "score_per_dollar_lift_vs_vanilla": prof.score_per_dollar_lift_vs_vanilla,
+                        "notes": list(prof.notes),
+                    },
+                }
+            )
+        )
+        return
+
+    click.echo(f"VERDICT: route → {routing['model']} × {routing['envelope']} × {routing['contract_id']}")
+    click.echo(f"task:               {task[:200]}")
+    click.echo(f"procedure:          {plan.procedure}")
+    click.echo(f"classifier_conf:    {plan.classifier_confidence}")
+    click.echo(f"model:              {routing['model']}")
+    click.echo(f"envelope:           {routing['envelope']}")
+    click.echo(f"contract_id:        {routing['contract_id']}")
+    click.echo(f"rationale:          {routing['rationale']}")
+    click.echo(f"profile:            {prof.name} (validated {prof.measured_at})")
+    click.echo(f"validated_lift:     +{prof.score_per_dollar_lift_vs_vanilla * 100:.0f}% score/$ vs vanilla")
+
+
+def _artifact_for_request(plan, artifact: str, cwd: str) -> tuple[dict, str]:
+    if artifact == "auto":
+        return compile_for_artifact(plan, cwd=cwd)
+    if artifact == "facts":
+        return plan.to_facts_envelope(), "facts"
+    if artifact == "lean":
+        return plan.to_lean_envelope(), "lean"
+    if artifact == "contract":
+        return plan.to_facts_contract_envelope(), "contract"
+    return plan.to_envelope(), "full"
+
+
+def _compile_verify_hint(cwd: str) -> str | None:
+    if not _resolve_verify_enabled(cwd):
+        return None
+    return "After editing, run `roam verify --auto` to check the change before finalizing."
+
+
+def _next_commands_for_compile(verify_hint: str | None) -> list[str]:
+    commands = [
+        "roam compile <task> --artifact facts",
+        "roam preflight <symbol>",
+    ]
+    if verify_hint:
+        commands.append("roam verify --auto")
+    return commands
+
+
+def _command_checks_for_compile(plan, env: dict, next_commands: list[str]) -> list[dict]:
+    command_advice_items = [("artifact.plan.recommended_first_command", plan.recommended_first_command)]
+    roam_starter = (env.get("plan") or {}).get("roam_starter")
+    if isinstance(roam_starter, str) and roam_starter.strip():
+        command_advice_items.append(("artifact.plan.roam_starter", roam_starter))
+    command_advice_items.extend(
+        (f"agent_contract.next_commands[{idx}]", command) for idx, command in enumerate(next_commands)
+    )
+    return validate_command_advice_many(command_advice_items)
+
+
+def _build_compile_json_envelope(task: str, plan, env: dict, art_label: str, verify_hint: str | None) -> dict:
+    next_commands = _next_commands_for_compile(verify_hint)
+    return json_envelope(
+        "compile",
+        summary={
+            "verdict": f"{art_label}_envelope for {plan.procedure}",
+            "task": task[:120],
+            "procedure": plan.procedure,
+            "artifact_type": art_label,
+            "named_paths_count": len(plan.likely_files),
+            "plan_quality": plan.plan_quality,
+            "classifier_confidence": plan.classifier_confidence,
+            "model_calls_avoided": plan.model_calls_avoided,
+            "injection_advice": injection_advice(plan.procedure, task),
+            "partial_success": False,
+        },
+        agent_contract={
+            "facts": [
+                f"Procedure classified as {plan.procedure}",
+                f"Artifact selected: {art_label} envelope",
+                f"{len(plan.likely_files)} likely files identified",
+                f"{len(plan.forbidden_paths)} forbidden paths declared",
+                f"Plan quality {plan.plan_quality} (heuristic 0-1)",
+            ],
+            "next_commands": next_commands,
+            "command_checks": _command_checks_for_compile(plan, env, next_commands),
+            "risks": [],
+            "confidence": plan.plan_quality,
+        },
+        artifact=env,
+    )
+
+
+def _emit_prefetched_list(key: str, values: list) -> None:
+    click.echo(f"  {key}: ({len(values)} items)")
+    for item in values[:8]:
+        click.echo(f"    - {item}")
+    if len(values) > 8:
+        click.echo(f"    ... and {len(values) - 8} more")
+
+
+def _emit_prefetched_dict(key: str, values: dict) -> None:
+    click.echo(f"  {key}:")
+    for child_key, child_value in list(values.items())[:8]:
+        click.echo(f"    {child_key}: {child_value}")
+
+
+def _emit_prefetched_value(key: str, value) -> None:
+    if isinstance(value, (str, int)):
+        click.echo(f"  {key}: {value}")
+    elif isinstance(value, list):
+        _emit_prefetched_list(key, value)
+    elif isinstance(value, dict):
+        _emit_prefetched_dict(key, value)
+
+
+def _emit_prefetched_answers(prefetched: dict) -> None:
+    click.echo("")
+    click.echo("PREFETCHED ANSWERS (do not re-run the tools that produced these):")
+    for key, value in prefetched.items():
+        _emit_prefetched_value(key, value)
+
+
+def _emit_text_compile(task: str, plan, env: dict, art_label: str, verify_hint: str | None) -> None:
+    click.echo(f"VERDICT: {art_label}_envelope for {plan.procedure}")
+    click.echo(f"task:              {task[:200]}")
+    click.echo(f"procedure:         {plan.procedure}")
+    click.echo(f"artifact_type:     {art_label}")
+    advice = injection_advice(plan.procedure, task)
+    if advice != "inject":
+        click.echo(f"injection_advice:  {advice}")
+    click.echo(f"plan_quality:      {plan.plan_quality}")
+    click.echo(f"classifier_conf:   {plan.classifier_confidence}")
+    click.echo(f"named_paths:       {plan.likely_files}")
+    if plan.procedure == "synthesis_query":
+        click.echo(
+            f"forbidden_paths:   {len(plan.forbidden_paths)} declared "
+            f"(DO NOT edit files matching these patterns: lockfiles, env, "
+            f"migrations, vendored, .git, .roam, internal)"
+        )
+
+    prefetched = (env.get("plan") or {}).get("prefetched_facts") if isinstance(env, dict) else None
+    if art_label == "l1_probe" and prefetched:
+        _emit_prefetched_answers(prefetched)
+    else:
+        click.echo(f"recommended_first: {plan.recommended_first_command}")
+    if verify_hint:
+        click.echo(f"post_edit_verify:  {verify_hint}")
+    click.echo(f"model_calls_avoided: {plan.model_calls_avoided}")
 
 
 @click.command()
@@ -204,56 +455,15 @@ def compile_(
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     if explain:
-        from roam.plan.compiler import _explain_classifier
-
-        diag = _explain_classifier(task)
-        if json_mode:
-            click.echo(to_json({"schema": "roam-compile-explain-v1", **diag}))
-        else:
-            click.echo(f"VERDICT: classifier → {diag['winner']}")
-            click.echo(f"task: {task[:200]}")
-            click.echo("")
-            click.echo("regex matches:")
-            if not diag["regex_matches"]:
-                click.echo("  (none — fell through to freeform_explore)")
-            for name, hits in diag["regex_matches"].items():
-                marker = "← winner" if name == diag["winner"] else ""
-                click.echo(f"  {name:25s} {hits} {marker}")
-            click.echo("")
-            click.echo("rejected:")
-            for r in diag["rejected"] or ["(none)"]:
-                click.echo(f"  - {r}")
-            if diag["named_paths_extracted"]:
-                click.echo("")
-                click.echo(f"named_paths_extracted: {diag['named_paths_extracted']}")
-            click.echo("")
-            click.echo("tiebreak rules (apply in order):")
-            for r in diag["tiebreak_rules"]:
-                click.echo(f"  {r}")
+        _emit_explain(task, bool(json_mode))
         return
 
     # W34b (E5): reject obviously-empty/garbage task strings up front so
     # downstream paths don't silently produce a low-quality envelope. The
     # threshold is permissive — single-line tasks under 10 chars OR with no
     # letters at all (e.g. "???" / "...") look like accidents.
-    stripped = task.strip()
-    if len(stripped) < 10 or not any(c.isalpha() for c in stripped):
-        msg = (
-            f"task too short or unstructured ({len(stripped)} chars). "
-            f"Pass a freeform sentence like 'find files coupled to "
-            f"src/X.py' or 'write a pytest for handleY'."
-        )
-        if json_mode:
-            click.echo(
-                to_json(
-                    {
-                        "schema": "roam-compile-error-v1",
-                        "summary": {"verdict": "task_too_short", "partial_success": True, "error": msg},
-                    }
-                )
-            )
-        else:
-            click.echo(f"VERDICT: task_too_short\n  {msg}", err=True)
+    if _task_is_too_short(task):
+        _emit_short_task(task, bool(json_mode))
         # W23 regression fix (2026-06-02): exit-0 with partial_success envelope
         # so adversarial robustness holds (W82 baseline: "12/12 routed sensibly,
         # zero crashes"). Callers detect short-task degradation via the
@@ -266,28 +476,7 @@ def compile_(
     # compile_plan). Compute classifier + recommended_first directly so brief
     # is ~5-10ms instead of ~200-500ms when search-semantic would otherwise fire.
     if brief:
-        from roam.plan.compiler import (
-            _RECOMMENDED_FIRST_COMMAND,
-            _classifier_confidence,
-            _classify,
-        )
-
-        proc, _ = _classify(task)
-        conf = _classifier_confidence(task, proc)
-        rec = _RECOMMENDED_FIRST_COMMAND.get(proc, "")
-        if json_mode:
-            click.echo(
-                to_json(
-                    {
-                        "schema": "roam-compile-brief-v1",
-                        "procedure": proc,
-                        "classifier_confidence": conf,
-                        "recommended_first": rec,
-                    }
-                )
-            )
-        else:
-            click.echo(f"{proc} ({conf:.2f}): {rec}")
+        _emit_brief(task, bool(json_mode))
         return
 
     # W57.5 — pass the working dir explicitly so the W56 envelope cache and
@@ -301,97 +490,20 @@ def compile_(
     # --route emits the full ALL-LEVERS routing decision (model + envelope +
     # contract). This is the production-grade output.
     if route:
-        routing = route_for_plan(plan, cwd=_cwd, profile_name=profile)
-        prof = get_profile(profile)
-        if json_mode:
-            click.echo(
-                to_json(
-                    {
-                        "schema": "roam-compile-route-v1",
-                        "task": task[:240],
-                        "procedure": plan.procedure,
-                        "classifier_confidence": plan.classifier_confidence,
-                        "routing": routing,
-                        "calibration": {
-                            "profile_name": prof.name,
-                            "family": prof.family,
-                            "measured_at": prof.measured_at,
-                            "score_per_dollar_lift_vs_vanilla": prof.score_per_dollar_lift_vs_vanilla,
-                            "notes": list(prof.notes),
-                        },
-                    }
-                )
-            )
-        else:
-            click.echo(f"VERDICT: route → {routing['model']} × {routing['envelope']} × {routing['contract_id']}")
-            click.echo(f"task:               {task[:200]}")
-            click.echo(f"procedure:          {plan.procedure}")
-            click.echo(f"classifier_conf:    {plan.classifier_confidence}")
-            click.echo(f"model:              {routing['model']}")
-            click.echo(f"envelope:           {routing['envelope']}")
-            click.echo(f"contract_id:        {routing['contract_id']}")
-            click.echo(f"rationale:          {routing['rationale']}")
-            click.echo(f"profile:            {prof.name} (validated {prof.measured_at})")
-            click.echo(f"validated_lift:     +{prof.score_per_dollar_lift_vs_vanilla * 100:.0f}% score/$ vs vanilla")
+        _emit_route(task, plan, _cwd, profile, bool(json_mode))
         return
 
-    if artifact == "auto":
-        env, art_label = compile_for_artifact(plan, cwd=_cwd)
-    elif artifact == "facts":
-        env = plan.to_facts_envelope()
-        art_label = "facts"
-    elif artifact == "lean":
-        env = plan.to_lean_envelope()
-        art_label = "lean"
-    elif artifact == "contract":
-        env = plan.to_facts_contract_envelope()
-        art_label = "contract"
-    else:
-        env = plan.to_envelope()
-        art_label = "full"
+    env, art_label = _artifact_for_request(plan, artifact, _cwd)
 
     # OUTPUT-side wiring (opt-in, NOT forced): Verify is the compiler's
     # post-generation acceptance phase for every procedure family. The user or
     # host can still switch it off, or tone it down via the host's verify scope/depth
     # knobs, but when enabled the envelope should always carry the follow-up.
-    verify_hint = None
-    if _resolve_verify_enabled(_cwd):
-        verify_hint = "After editing, run `roam verify --auto` to check the change before finalizing."
+    verify_hint = _compile_verify_hint(_cwd)
 
     # Build a roam-envelope-v1 envelope wrapping the artifact
     if json_mode:
-        envelope = json_envelope(
-            "compile",
-            summary={
-                "verdict": f"{art_label}_envelope for {plan.procedure}",
-                "task": task[:120],
-                "procedure": plan.procedure,
-                "artifact_type": art_label,
-                "named_paths_count": len(plan.likely_files),
-                "plan_quality": plan.plan_quality,
-                "classifier_confidence": plan.classifier_confidence,
-                "model_calls_avoided": plan.model_calls_avoided,
-                "injection_advice": injection_advice(plan.procedure, task),
-                "partial_success": False,
-            },
-            agent_contract={
-                "facts": [
-                    f"Procedure classified as {plan.procedure}",
-                    f"Artifact selected: {art_label} envelope",
-                    f"{len(plan.likely_files)} likely files identified",
-                    f"{len(plan.forbidden_paths)} forbidden paths declared",
-                    f"Plan quality {plan.plan_quality} (heuristic 0-1)",
-                ],
-                "next_commands": [
-                    "roam compile <task> --artifact facts",
-                    "roam preflight <symbol>",
-                ]
-                + (["roam verify --auto"] if verify_hint else []),
-                "risks": [],
-                "confidence": plan.plan_quality,
-            },
-            artifact=env,
-        )
+        envelope = _build_compile_json_envelope(task, plan, env, art_label, verify_hint)
         # W117 — --probes mode short-circuits: emit just the
         # prefetched_facts dict. Useful for CI scripts.
         if probes_only:
@@ -405,53 +517,4 @@ def compile_(
         return
 
     # Text mode
-    click.echo(f"VERDICT: {art_label}_envelope for {plan.procedure}")
-    click.echo(f"task:              {task[:200]}")
-    click.echo(f"procedure:         {plan.procedure}")
-    click.echo(f"artifact_type:     {art_label}")
-    _advice = injection_advice(plan.procedure, task)
-    if _advice != "inject":
-        # Injection channels (host-platform prepend, Claude Code UPS hook)
-        # parse this line and inject NOTHING — generation-shaped tasks are
-        # measured net-negative under injection. Only printed on skip so
-        # existing envelopes stay byte-identical.
-        click.echo(f"injection_advice:  {_advice}")
-    click.echo(f"plan_quality:      {plan.plan_quality}")
-    click.echo(f"classifier_conf:   {plan.classifier_confidence}")
-    click.echo(f"named_paths:       {plan.likely_files}")
-    # W34b (E7): only show forbidden_paths for synthesis (where it matters).
-    if plan.procedure == "synthesis_query":
-        click.echo(
-            f"forbidden_paths:   {len(plan.forbidden_paths)} declared "
-            f"(DO NOT edit files matching these patterns: lockfiles, env, "
-            f"migrations, vendored, .git, .roam, internal)"
-        )
-
-    # W33a (C2 fix): when the L1 envelope carries actual prefetched answers,
-    # show THEM and SUPPRESS the now-redundant recipe. The agent should act
-    # on the data, not re-run the tools that produced it. When L1 didn't
-    # fire (or no probe data), fall through to the recipe.
-    prefetched = (env.get("plan") or {}).get("prefetched_facts") if isinstance(env, dict) else None
-    if art_label == "l1_probe" and prefetched:
-        click.echo("")
-        click.echo("PREFETCHED ANSWERS (do not re-run the tools that produced these):")
-        # Render in a stable, scannable shape. Keys are procedure-specific.
-        for key, value in prefetched.items():
-            if isinstance(value, (str, int)):
-                click.echo(f"  {key}: {value}")
-            elif isinstance(value, list):
-                click.echo(f"  {key}: ({len(value)} items)")
-                for item in value[:8]:
-                    click.echo(f"    - {item}")
-                if len(value) > 8:
-                    click.echo(f"    ... and {len(value) - 8} more")
-            elif isinstance(value, dict):
-                click.echo(f"  {key}:")
-                for k2, v2 in list(value.items())[:8]:
-                    click.echo(f"    {k2}: {v2}")
-    else:
-        click.echo(f"recommended_first: {plan.recommended_first_command}")
-    if verify_hint:
-        click.echo(f"post_edit_verify:  {verify_hint}")
-
-    click.echo(f"model_calls_avoided: {plan.model_calls_avoided}")
+    _emit_text_compile(task, plan, env, art_label, verify_hint)

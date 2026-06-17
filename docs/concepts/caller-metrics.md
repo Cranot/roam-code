@@ -37,7 +37,7 @@ Granularity (finest to coarsest): `raw_edge_rows` > `distinct_caller_tuples` > `
 |---|---|---|
 | `roam uses` | `summary.production_consumers` / `summary.total_consumers` | `raw_edge_rows` |
 | `roam context <name>` (single + batch) | `summary.callers` / per-symbol caller array | `raw_edge_rows` |
-| `roam context --for-file` | `summary.caller_files` | `raw_edge_rows` (file granularity) |
+| `roam context --for-file src/roam/cli.py` | `summary.caller_files` | `raw_edge_rows` (file granularity) |
 | `roam diagnose` | `summary.upstream_count` | `transitive_upstream_bfs` |
 | `roam understand` | `architecture.key_abstractions[*].fan_in` | `direct_in_degree (architecture.key_abstractions[*].fan_in)` |
 | `roam oracle is-test-only` | call-site classification | `distinct_caller_tuples` |

@@ -90,6 +90,20 @@ def index_in_process(project_path, *extra_args):
 # ===========================================================================
 
 
+def _references_dogfood(src, cache: dict) -> bool:
+    """Return True if *src* contains an internal/dogfood reference (cached)."""
+    import pathlib
+
+    path = pathlib.Path(src)
+    if path not in cache:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            cache[path] = ("internal/dogfood" in text) or ("internal\\dogfood" in text)
+        except OSError:
+            cache[path] = False
+    return cache[path]
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip tests whose source file references ``internal/dogfood`` when
     that directory is absent on disk.
@@ -102,26 +116,16 @@ def pytest_collection_modifyitems(config, items):
     """
     import pathlib
 
-    repo_root = pathlib.Path(__file__).resolve().parent.parent
-    dogfood_dir = repo_root / "internal" / "dogfood"
+    dogfood_dir = pathlib.Path(__file__).resolve().parent.parent / "internal" / "dogfood"
     if dogfood_dir.is_dir():
-        # Local dev has the corpus — let tests run normally.
         return
 
     skip_marker = pytest.mark.skip(
         reason="internal/dogfood/ is gitignored — not available on CI / public clones",
     )
-    _cache: dict[pathlib.Path, bool] = {}
+    cache: dict = {}
     for item in items:
-        src = pathlib.Path(item.fspath)
-        if src not in _cache:
-            try:
-                text = src.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                _cache[src] = False
-                continue
-            _cache[src] = ("internal/dogfood" in text) or ("internal\\dogfood" in text)
-        if _cache[src]:
+        if _references_dogfood(item.fspath, cache):
             item.add_marker(skip_marker)
 
 
@@ -137,14 +141,14 @@ def _clear_graph_cache_between_tests():
         from roam.graph.builder import clear_graph_cache
 
         clear_graph_cache()
-    except Exception:
+    except ImportError:
         pass
     yield
     try:
         from roam.graph.builder import clear_graph_cache
 
         clear_graph_cache()
-    except Exception:
+    except ImportError:
         pass
 
 

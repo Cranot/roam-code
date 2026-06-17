@@ -14,6 +14,7 @@ import pytest
 from roam.commands.cmd_watch import (
     DebounceAccumulator,
     WebhookBridge,
+    _PollDeps,
     detect_changes,
     load_tracked_files,
     poll_loop,
@@ -217,7 +218,7 @@ class TestWebhookBridge:
             assert payload["ok"] is True
             assert payload["path"] == "/roam/reindex"
         finally:
-            bridge.stop()
+            bridge.shutdown()
 
     def test_reindex_post_enqueues_event(self):
         bridge = WebhookBridge(host="127.0.0.1", port=0, path="/hook")
@@ -231,7 +232,7 @@ class TestWebhookBridge:
             assert events[0]["event"] == "push"
             assert events[0]["force"] is True
         finally:
-            bridge.stop()
+            bridge.shutdown()
 
     def test_secret_required(self):
         bridge = WebhookBridge(host="127.0.0.1", port=0, secret="s3cr3t")
@@ -248,7 +249,7 @@ class TestWebhookBridge:
             assert len(events) == 1
             assert events[0]["event"] == "push"
         finally:
-            bridge.stop()
+            bridge.shutdown()
 
 
 class TestWatchCommand:
@@ -316,8 +317,9 @@ class TestWatchCommand:
         assert kwargs["webhook_force"] is False
         assert kwargs["guardian"] is False
         assert kwargs["guardian_report"] == ""
-        assert kwargs["guardian_health_gate"] == 70.0
-        assert kwargs["guardian_drift_threshold"] == 0.5
+        # guardian_health_gate / guardian_drift_threshold are now consumed by
+        # _PollDeps.for_project() inside watch() rather than forwarded to poll_loop
+        assert isinstance(kwargs["deps"], _PollDeps)
 
     def test_short_i_flag(self):
         mock = self._invoke_watch_with_flags(["-i", "10"])
@@ -368,8 +370,8 @@ class TestWatchCommand:
         _, kwargs = mock.call_args
         assert kwargs["guardian"] is True
         assert kwargs["guardian_report"] == ".roam/guardian.jsonl"
-        assert kwargs["guardian_health_gate"] == 75.0
-        assert kwargs["guardian_drift_threshold"] == 0.4
+        # guardian_health_gate / guardian_drift_threshold are absorbed into deps
+        assert isinstance(kwargs["deps"], _PollDeps)
 
     def test_webhook_bridge_constructed_when_port_set(self):
         from click.testing import CliRunner
@@ -460,9 +462,7 @@ class TestPollLoopWebhook:
                 debounce=0.0,
                 quiet=True,
                 webhook_only=True,
-                _sleep=_sleep,
-                _external_events=_external_events,
-                _reindex=_reindex,
+                deps=_PollDeps(sleep=_sleep, external_events=_external_events, reindex=_reindex),
             )
         assert calls == [False]
 
@@ -493,9 +493,7 @@ class TestPollLoopWebhook:
                 quiet=True,
                 webhook_only=True,
                 webhook_force=True,
-                _sleep=_sleep,
-                _external_events=_external_events,
-                _reindex=_reindex,
+                deps=_PollDeps(sleep=_sleep, external_events=_external_events, reindex=_reindex),
             )
         assert calls == [True]
 
@@ -542,11 +540,13 @@ class TestPollLoopWebhook:
                 webhook_only=True,
                 guardian=True,
                 guardian_report=".roam/guardian.jsonl",
-                _sleep=_sleep,
-                _external_events=_external_events,
-                _reindex=_reindex,
-                _guardian_collect=_guardian_collect,
-                _guardian_write=_guardian_write,
+                deps=_PollDeps(
+                    sleep=_sleep,
+                    external_events=_external_events,
+                    reindex=_reindex,
+                    guardian_collect=_guardian_collect,
+                    guardian_write=_guardian_write,
+                ),
             )
 
         assert reindex_calls == [False]

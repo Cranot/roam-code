@@ -2,7 +2,7 @@
 PR Replay deliverable template (Roam Code v13.4+).
 
 This file is the **prose-stable reference** for the Markdown report that
-`roam pr-replay --markdown` emits per engagement. The renderer at
+`roam pr-replay --markdown report.md` emits per engagement. The renderer at
 `src/roam/commands/cmd_pr_replay.py::_render_evidence_markdown` mirrors
 this file heading-by-heading; the drift test at
 `tests/test_evidence_pr_replay.py::test_pr_replay_emits_markdown`

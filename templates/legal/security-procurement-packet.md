@@ -24,7 +24,9 @@
 This packet covers:
 
 - **Roam Code CLI** (live; Apache 2.0; 100% local — `pip install
-  roam-code`; 241 commands / 227 MCP tools / 28 finding detectors).
+  roam-code`; 267 commands / 243 MCP tools, 16 in the default `core`
+  preset / 28 languages; evidence: `roam surface --json` generated on
+  2026-06-13).
 - **PR Replay** (live; one-shot structural-review engagement priced
   per [SOW §1](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#1-engagement)
   — Team / Deep tiers).
@@ -647,20 +649,19 @@ artefact passes this lint.
 |---|---|
 | **Penetration testing** | Annual third-party penetration test scheduled from Roam Review GA. Executive summary available to Business+ customers under NDA; Scale-tier customers may request the raw report under mutual NDA ([`nda-mutual.md`](https://github.com/Cranot/roam-code/blob/main/templates/legal/nda-mutual.md)). |
 | **Vulnerability disclosure policy** | Public VDP at [`roam-code.com/security`](https://roam-code.com/security); PGP key at [`/.well-known/security.txt`](https://roam-code.com/.well-known/security.txt). Acknowledgement within **one business day**; substantive triage within **two business days**; default 90-day public-disclosure window (extendable on reporter request). Safe-harbour commitment for good-faith research. |
-| **Bug bounty** | `[TBD: bug-bounty policy and reward tiers — pending live-payment setup]`. Until then, public acknowledgement in the [hall of thanks](https://roam-code.com/security#hall-of-thanks). Same placeholder is cited from the public [trust](https://roam-code.com/trust#artifacts) and [security](https://roam-code.com/security#hall-of-thanks) pages. |
+| **Bug bounty** | No monetary bug-bounty program yet. Until a paid program is announced, responsible reports receive public acknowledgement in the [hall of thanks](https://roam-code.com/security#hall-of-thanks) plus, on request, a written reference confirming the report and remediation outcome. Same stance is cited from the public [trust](https://roam-code.com/trust#artifacts) and [security](https://roam-code.com/security#hall-of-thanks) pages. |
 | **SBOM (software bill of materials)** | Published per release in CycloneDX format, cosign-signed. Linked from the PyPI release page. CI pipeline emits in-toto v1 attestations for the build. PyPI releases use OIDC Trusted Publishing (no long-lived API tokens) — see [`roam-code.com/security#supply-chain`](https://roam-code.com/security#supply-chain). |
 | **Dependency hygiene** | Dependabot enabled on the public repo; daily security-advisory scan; high-severity advisories patched within 7 days of public disclosure. |
 | **MFA enforcement** | All employee access to production systems (cloud provider, source-control, observability, customer data) requires hardware-key (WebAuthn / FIDO2) MFA. Password-only access is disabled. |
-| **Background checks** | All engineering staff with production-data access undergo a third-party background check (`[TBD: BACKGROUND_CHECK_VENDOR]`) before access is granted. Annual re-attestation. |
+| **Background checks** | Current PR Replay operations are founder-only. No third-party staff have production-data access. Before any employee or contractor receives production customer-data access, Roam will require a third-party background check or a buyer-approved equivalent control, plus annual access re-attestation. |
 | **Backups + RPO / RTO** | For PR Replay: no production database; engagement ledger is a local append-only file backed up to encrypted offline storage. For planned Roam Review: Postgres daily backups, AES-256 encrypted at rest, retained 30 days; object storage versioned + immutable for 7 days; RPO 24h / RTO 4h on Business; RPO 1h / RTO 1h on Scale. |
 | **Code review of Roam itself** | The `roam-code` CLI is dogfooded against itself in CI (`.github/workflows/dogfood.yml`); structural-risk verdicts on Roam's own PRs are public artefacts at [`github.com/Cranot/roam-code/pulls`](https://github.com/Cranot/roam-code/pulls). |
 | **Incident drills** | Quarterly tabletop exercises against the failure modes in §2; outcome summaries available to planned Business+ Roam Review customers on request. |
 
-`[TBD: BACKGROUND_CHECK_VENDOR]` placeholder above is replaced with
-the concrete background-check provider in evaluation packets shared
-after a mutual NDA
-([`nda-mutual.md`](https://github.com/Cranot/roam-code/blob/main/templates/legal/nda-mutual.md))
-is in place.
+If a buyer requires the background-check provider name before granting
+repository access, treat that as a procurement blocker and resolve it
+under mutual NDA
+([`nda-mutual.md`](https://github.com/Cranot/roam-code/blob/main/templates/legal/nda-mutual.md)).
 
 ---
 

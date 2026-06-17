@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Roam vs AI Coding Tools — Local-CLI Agent Assurance">
-  <meta property="og:description" content="Credential-free, zero-egress local intelligence with a portable tamper-evident ChangeEvidence packet — no direct substitute among the products surveyed as of 2026-05-18.">
+  <meta property="og:description" content="Credential-free, zero-egress local intelligence with a portable tamper-evident ChangeEvidence packet — no direct substitute among the products surveyed as of 2026-06-12.">
   <meta property="og:url" content="https://roam-code.com/compare">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -72,10 +72,10 @@
         are human-first surfaces that <em>log a session</em>. Cloud semantic
         reviewers (CodeRabbit, Greptile, Qodo) read the diff as text on a vendor
         server. Roam is an agent-first CLI + MCP server that <em>gates the change
-        and emits proof</em> — credential-free, zero network egress by default (opt-in <code>metrics-push</code> is the only outbound surface), and a
+        and emits scoped evidence</em> — credential-free, zero network egress by default (opt-in <code>metrics-push</code> is the only outbound surface), and a
         portable tamper-evident <code>ChangeEvidence</code> packet (optionally
         cosign-signed) answering eight evidence questions per AI-assisted change.
-        Among the products surveyed as of <time datetime="2026-05-18">2026-05-18</time>,
+        Among the products surveyed as of <time datetime="2026-06-12">2026-06-12</time>,
         we did not find a direct substitute for this trio. Vendor pages cited
         under <a href="#methodology">methodology</a>.
       </p>
@@ -101,15 +101,17 @@
           <code>Cloud-IDE agent</code>
           <span><strong>"Help me write code."</strong>
           Cursor, Sourcegraph Cody Enterprise, Windsurf, Continue, Sweep,
-          Claude Code. Human-first IDE or CLI surface. Vendor account +
-          cloud LLM endpoint required. Audit logs answer <em>who ran what</em>.</span>
+          Claude Code. Human-first IDE or CLI surface. Usually paired with a
+          vendor account or LLM endpoint; some can be self-hosted or local.
+          Audit logs answer <em>who ran what</em>.</span>
         </div>
         <div class="verb-cell">
           <code>Cloud semantic reviewer</code>
           <span><strong>"Does this PR make sense?"</strong>
           CodeRabbit, Greptile, Qodo, SonarQube Cloud. Reads the diff as
           text on a vendor server. Catches logic bugs, naming drift,
-          intent mismatches. Source uploaded; self-host is enterprise-tier.</span>
+          intent mismatches. Source is usually uploaded; private/self-hosted
+          deployment is usually an enterprise conversation.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>Local-CLI agent-assurance</code>
@@ -138,7 +140,7 @@
 
   <section class="whats-in section-intro-tight" id="three-layers">
     <div class="whats-in-inner whats-in-inner--wide">
-      <h2>Inside review: four sub-layers, Roam owns two</h2>
+      <h2>Inside review: four sub-layers, Roam covers two</h2>
       <p class="lede">
         Within the review half of the picture, four sub-layers answer
         different questions. A healthy setup runs all four; Roam covers
@@ -424,7 +426,7 @@
         <sup>4</sup>Certification rows reflect each vendor's own public
         claims as of the verification date below — Roam has not
         independently audited any third-party certificate.
-        Sources verified <time datetime="2026-05-18">2026-05-18</time>
+        Sources verified <time datetime="2026-06-12">2026-06-12</time>
         — see <a href="#methodology">methodology</a> below for full
         citations.
       </p>
@@ -447,7 +449,7 @@
 
   <section class="whats-in whats-in--flush-top">
     <div class="whats-in-inner whats-in-inner--prose">
-      <h3 class="text-center">Sources verified <time datetime="2026-05-18">2026-05-18</time></h3>
+      <h3 class="text-center">Sources verified <time datetime="2026-06-12">2026-06-12</time></h3>
       <ul class="prose-list">
         <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/user/mo annual; Free tier includes PR summarization and IDE/CLI reviews; Enterprise lists self-hosting, RBAC, SSO, and audit logging.</li>
         <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Pro tier: $30/seat/mo with 50 reviews included per seat and $1 additional reviews; Enterprise lists self-hosting.</li>

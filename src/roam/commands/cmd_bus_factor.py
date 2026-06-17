@@ -13,7 +13,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.conventions_helper import (
     DEFAULT_EXCLUDE_PREFIXES,
-    is_excluded_path,
+    has_excluded_prefix,
 )
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
@@ -173,7 +173,7 @@ def _analyse_bus_factor(
     filtered_rows = []
     for r in rows:
         path = r["path"] or ""
-        if exclude_prefixes and is_excluded_path(path, exclude_prefixes):
+        if exclude_prefixes and has_excluded_prefix(path, exclude_prefixes):
             excluded_paths.add(path)
             continue
         filtered_rows.append(r)

@@ -184,6 +184,105 @@ def _is_cloud_synced(path: Path) -> bool:
     return any(m in resolved for m in markers)
 
 
+def _open_sqlite_connection(
+    db_path: Path,
+    readonly: bool,
+    warnings_out: WarningsOut,
+) -> sqlite3.Connection:
+    """Open the raw SQLite connection, enforcing readonly at the URI level when possible.
+
+    UNC network paths (e.g. \\\\server\\share\\...) cannot be expressed as
+    valid SQLite file:// URIs — SQLite rejects authority-based URIs.
+    Mapped drive letters (M:\\...) work fine.  We try the URI form first
+    (which enforces read-only at the driver level) and fall back to a
+    plain connection when the path cannot be expressed as a URI.
+
+    W603: ``roam_readonly_uri_fallback`` is appended to ``warnings_out`` when
+    the URI form fails and the caller loses the driver-level read-only rail.
+    """
+    if not readonly:
+        return sqlite3.connect(str(db_path), timeout=30)
+    try:
+        uri = db_path.as_uri() + "?mode=ro"
+        return sqlite3.connect(uri, uri=True, timeout=30)
+    except (sqlite3.OperationalError, ValueError) as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"roam_readonly_uri_fallback:{db_path}:{type(exc).__name__}:{exc}")
+        return sqlite3.connect(str(db_path), timeout=30)
+
+
+def _apply_journal_and_checkpoint(conn: sqlite3.Connection, db_path: Path, readonly: bool) -> None:
+    """Set journal mode and WAL checkpoint tuning based on write mode and path type.
+
+    Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM auxiliary
+    files and even the main DB during sync, causing writes to stall.
+    Mitigations on cloud paths:
+      1. DELETE journal — avoids WAL/SHM auxiliary files entirely
+      2. EXCLUSIVE locking — holds the file lock for the session
+    WAL auto-checkpoint is raised to 10 000 pages (10× default) on non-cloud
+    paths to reduce write amplification on heavy index loads.
+    """
+    if readonly:
+        return
+    cloud = _is_cloud_synced(db_path)
+    if cloud:
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+    else:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA wal_autocheckpoint=10000")
+
+
+def _apply_base_pragmas(conn: sqlite3.Connection) -> None:
+    """Apply performance and correctness PRAGMAs that are unconditional.
+
+    Notes:
+    - busy_timeout is set via PRAGMA (not only sqlite3.connect(timeout=)) so
+      raw consumers (MCP test fixtures, direct sqlite3.connect) see the same
+      retry budget as open_db.  (R9 perf recheck #5)
+    - mmap_size=1GB: conservative bump from 256MB per audit B6; OS pager caps
+      effective use at available RAM so the declared value is a ceiling, not a
+      guarantee. On 32-bit builds SQLite silently maps less.
+    """
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-64000")  # 64 MB
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA mmap_size=1073741824")  # 1 GB
+
+
+def _install_query_timeout(
+    conn: sqlite3.Connection,
+    timeout_str: str,
+    warnings_out: WarningsOut,
+) -> None:
+    """Optionally install a progress-handler query timeout from ROAM_QUERY_TIMEOUT_S.
+
+    W603: ``roam_query_timeout_parse_failed`` is appended to ``warnings_out``
+    when the env var is set but unparseable so callers can detect the
+    silent no-op.  Skipped entirely when ``timeout_str`` is empty.
+    """
+    if not timeout_str:
+        return
+    try:
+        timeout_s = float(timeout_str)
+    except ValueError:
+        timeout_s = 0.0
+        if warnings_out is not None:
+            warnings_out.append(f"roam_query_timeout_parse_failed:{timeout_str}")
+    if timeout_s > 0:
+        import time as _time
+
+        deadline = _time.monotonic() + timeout_s
+
+        def _interrupter() -> int:
+            # Returning non-zero from the progress handler aborts the query.
+            return 1 if _time.monotonic() > deadline else 0
+
+        conn.set_progress_handler(_interrupter, 1000)  # check every 1 000 vops
+
+
 def get_connection(
     db_path: Path | None = None,
     readonly: bool = False,
@@ -213,94 +312,11 @@ def get_connection(
     """
     if db_path is None:
         db_path = get_db_path()
-
-    if readonly:
-        # UNC network paths (e.g. \\server\share\...) cannot be expressed as
-        # valid SQLite file:// URIs — SQLite rejects authority-based URIs.
-        # Mapped drive letters (M:\...) work fine.  We try the URI form first
-        # (which enforces read-only at the driver level) and fall back to a
-        # plain connection when the path cannot be expressed as a URI.
-        try:
-            uri = db_path.as_uri() + "?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=30)
-        except (sqlite3.OperationalError, ValueError) as exc:
-            if warnings_out is not None:
-                warnings_out.append(f"roam_readonly_uri_fallback:{db_path}:{type(exc).__name__}:{exc}")
-            conn = sqlite3.connect(str(db_path), timeout=30)
-    else:
-        conn = sqlite3.connect(str(db_path), timeout=30)
-
+    conn = _open_sqlite_connection(db_path, readonly, warnings_out)
     conn.row_factory = sqlite3.Row
-    cloud = _is_cloud_synced(db_path)
-    if not readonly:
-        if cloud:
-            # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM
-            # auxiliary files and even the main DB during sync, causing
-            # writes to stall.  Mitigations:
-            #   1. DELETE journal — avoids WAL/SHM auxiliary files entirely
-            #   2. EXCLUSIVE locking — holds the file lock for the session,
-            #      preventing the sync agent from grabbing it mid-write
-            conn.execute("PRAGMA journal_mode=DELETE")
-            conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-        else:
-            conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA temp_store=MEMORY")
-    # R9 perf recheck #5: pin busy_timeout via PRAGMA so consumers
-    # that connect to the DB directly (raw sqlite3.connect, MCP test
-    # fixtures) see the same retry budget as ``open_db``. Python's
-    # ``sqlite3.connect(timeout=30)`` only sets the *driver-level*
-    # timeout; PRAGMA busy_timeout is what the engine itself respects
-    # under contention.
-    conn.execute("PRAGMA busy_timeout=30000")
-    # mmap_size tuned per audit B6: 256MB → 1GB. phiresky's reference
-    # config (HN-cited) puts it at 30GB on 64-bit; 1GB is a conservative
-    # bump that captures more of a 5M-LOC repo's working set without
-    # over-claiming address space on smaller systems. The OS pager caps
-    # effective use at the available memory anyway.
-    # Practical cap is ``min(declared, addressable)`` — on 32-bit Python /
-    # 32-bit OS builds the kernel rejects the full 1GB mapping silently
-    # (SQLite falls back to a smaller window), so the declared value is
-    # the *ceiling*, not the guaranteed working set.
-    conn.execute("PRAGMA mmap_size=1073741824")  # 1GB memory-mapped I/O
-    # WAL auto-checkpoint default is 1000 pages; 10000 reduces write
-    # amplification 10x on heavy index loads. No-op on the cloud-sync
-    # DELETE-journal path.
-    if not cloud:
-        conn.execute("PRAGMA wal_autocheckpoint=10000")
-
-    # opt-in query timeout. ``ROAM_QUERY_TIMEOUT_S=N``
-    # installs a progress handler that interrupts queries running
-    # past N seconds. SQLite raises ``OperationalError: interrupted``
-    # so callers can either retry with a tighter scope or surface a
-    # structured error. Skipped when the env var is absent so the
-    # default behaviour is unchanged.
-    timeout_str = os.environ.get("ROAM_QUERY_TIMEOUT_S", "").strip()
-    if timeout_str:
-        try:
-            timeout_s = float(timeout_str)
-        except ValueError:
-            timeout_s = 0.0
-            # W603: operator set ROAM_QUERY_TIMEOUT_S expecting a
-            # per-query timeout; the parse failed and the env var
-            # silently coerces to 0 (no progress handler installed).
-            # Disclose the silent drop so the operator sees their
-            # opt-in safety mechanism didn't take effect.
-            if warnings_out is not None:
-                warnings_out.append(f"roam_query_timeout_parse_failed:{timeout_str}")
-        if timeout_s > 0:
-            import time as _time
-
-            deadline = _time.monotonic() + timeout_s
-
-            def _interrupter():
-                # Returning non-zero from progress handler aborts the query.
-                return 1 if _time.monotonic() > deadline else 0
-
-            # 1000 vops between callbacks — cheap and bounded.
-            conn.set_progress_handler(_interrupter, 1000)
+    _apply_journal_and_checkpoint(conn, db_path, readonly)
+    _apply_base_pragmas(conn)
+    _install_query_timeout(conn, os.environ.get("ROAM_QUERY_TIMEOUT_S", "").strip(), warnings_out)
     return conn
 
 
@@ -626,8 +642,45 @@ def _ensure_tfidf_cascade(conn: sqlite3.Connection):
 _FTS5_SCHEMA_COLUMNS = ("name", "qualified_name", "signature", "docstring", "kind", "file_path")
 
 
+def _fts5_table_is_current(conn: sqlite3.Connection) -> bool:
+    """Return True if symbol_fts exists and already has the docstring column."""
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
+    if not row:
+        return False
+    existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(symbol_fts)").fetchall()}
+    return "docstring" in existing_cols
+
+
+def _fts5_table_exists(conn: sqlite3.Connection) -> bool:
+    """Return True if symbol_fts exists (regardless of schema version)."""
+    return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone())
+
+
+def _drop_fts5_table(conn: sqlite3.Connection, warnings_out: WarningsOut) -> bool:
+    """Drop symbol_fts. Returns False and appends a warning when the drop fails."""
+    try:
+        conn.execute("DROP TABLE symbol_fts")
+        return True
+    except sqlite3.OperationalError as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"roam_fts_drop_failed:{type(exc).__name__}:{exc}")
+        return False
+
+
+def _create_fts5_table(conn: sqlite3.Connection, warnings_out: WarningsOut) -> None:
+    """Create symbol_fts with the current schema. Appends a warning when FTS5 is unavailable."""
+    try:
+        cols = ", ".join(_FTS5_SCHEMA_COLUMNS)
+        conn.execute(f"CREATE VIRTUAL TABLE symbol_fts USING fts5({cols}, tokenize='porter unicode61')")
+    except sqlite3.OperationalError as exc:
+        # Covers "no such module: fts5" (missing build) AND locked-DB / corrupt-schema
+        # variants — operators need to know why FTS search is degraded.
+        if warnings_out is not None:
+            warnings_out.append(f"roam_fts_create_failed:{type(exc).__name__}:{exc}")
+
+
 def _ensure_fts5_table(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None):
-    """Create the FTS5 full-text search virtual table if not present.
+    """Create or upgrade the FTS5 full-text search virtual table.
 
     FTS5 pushes tokenization, indexing, and BM25 ranking entirely into
     SQLite's C engine — 1000x faster than the Python-side TF-IDF approach.
@@ -635,55 +688,20 @@ def _ensure_fts5_table(conn: sqlite3.Connection, *, warnings_out: WarningsOut = 
 
     Schema migration (audit B8): the table now includes a ``docstring``
     column so ``roam retrieve`` and ``roam search-semantic`` can match
-    against natural-language docstrings — previously the FTS5 BM25 path
-    only saw symbol names + signatures, missing the text agents
-    typically search for. Existing tables get re-created (cheap, the
-    rows are repopulated by ``build_fts_index`` on the next index run).
+    against natural-language docstrings. Existing tables lacking the column
+    are dropped and re-created (rows are repopulated by ``build_fts_index``
+    on the next index run).
 
-    W603 Pattern-2 disclosure: TWO silent-pass paths change observed
-    search behaviour without disclosure:
-
-    1. The ``DROP TABLE symbol_fts`` silent-skip on
-       ``sqlite3.OperationalError``: when the docstring-upgrade DROP
-       fails (locked DB, hot reader, etc.), the function early-returns
-       and the table is left WITHOUT the docstring column. ``roam
-       retrieve`` then silently misses natural-language matches.
-    2. The ``CREATE VIRTUAL TABLE ... USING fts5`` silent-skip on
-       ``sqlite3.OperationalError``: the comment says "FTS5 not
-       available in this SQLite build," but the same except clause
-       also catches every OTHER OperationalError (locked DB, corrupt
-       schema). All those failures silently leave FTS5 absent.
-
-    When ``warnings_out`` is threaded in, both paths emit a closed-enum
-    marker (``roam_fts_drop_failed:`` / ``roam_fts_create_failed:``) so
-    operators see WHY their FTS5 search lookups are returning empty.
-    ``warnings_out=None`` preserves the legacy silent fallback.
+    W603 Pattern-2 disclosure: both silent-pass paths emit a closed-enum
+    marker (``roam_fts_drop_failed:`` / ``roam_fts_create_failed:``) when
+    ``warnings_out`` is provided so operators see WHY FTS search is degraded.
+    ``warnings_out=None`` (default) preserves the legacy silent fallback.
     """
-    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
-    if row:
-        # Pre-migration tables lack the docstring column. Detect by
-        # checking the actual column list — `PRAGMA table_info` works
-        # on FTS5 virtual tables to enumerate columns.
-        existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(symbol_fts)").fetchall()}
-        if "docstring" in existing_cols:
-            return
-        # Drop and re-create with the new schema.
-        try:
-            conn.execute("DROP TABLE symbol_fts")
-        except sqlite3.OperationalError as exc:
-            if warnings_out is not None:
-                warnings_out.append(f"roam_fts_drop_failed:{type(exc).__name__}:{exc}")
-            return
-    try:
-        cols = ", ".join(_FTS5_SCHEMA_COLUMNS)
-        conn.execute(f"CREATE VIRTUAL TABLE symbol_fts USING fts5({cols}, tokenize='porter unicode61')")
-    except sqlite3.OperationalError as exc:
-        # FTS5 absent is a real signal even when it's the legit
-        # "no such module: fts5" case — operators with that build
-        # need to know their semantic search is degraded. Locked-DB
-        # / corrupt-schema variants also flow through the marker.
-        if warnings_out is not None:
-            warnings_out.append(f"roam_fts_create_failed:{type(exc).__name__}:{exc}")
+    if _fts5_table_is_current(conn):
+        return
+    if _fts5_table_exists(conn) and not _drop_fts5_table(conn, warnings_out):
+        return
+    _create_fts5_table(conn, warnings_out)
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):
@@ -802,6 +820,54 @@ def db_exists(project_root: Path | None = None) -> bool:
     return path.exists() and path.stat().st_size > 0
 
 
+def _open_validated_connection(
+    db_path: Path,
+    readonly: bool,
+    warnings_out: WarningsOut,
+) -> sqlite3.Connection:
+    """Open the raw connection and convert DatabaseError → ClickException."""
+    import click
+
+    try:
+        return get_connection(db_path, readonly=readonly, warnings_out=warnings_out)
+    except sqlite3.DatabaseError as exc:
+        raise click.ClickException(
+            f"Database error: {exc}\n"
+            "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
+            "  from scratch, or delete .roam/index.db and run `roam init`.\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
+        ) from exc
+
+
+def _setup_schema_or_raise(conn: sqlite3.Connection, warnings_out: WarningsOut) -> None:
+    """Run ensure_schema and convert DatabaseError → ClickException, closing conn first."""
+    import click
+
+    try:
+        ensure_schema(conn, warnings_out=warnings_out)
+    except sqlite3.DatabaseError as exc:
+        conn.close()
+        raise click.ClickException(
+            f"Database schema error: {exc}\n"
+            "  The roam index may be corrupted or from an incompatible version.\n"
+            "  Run `roam init --force` to rebuild it, or delete .roam/index.db\n"
+            "  and run `roam init`.\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
+        ) from exc
+
+
+def _commit_and_optimize(conn: sqlite3.Connection) -> None:
+    """Commit pending writes and run PRAGMA optimize (silently skipped on error)."""
+    conn.commit()
+    # PRAGMA optimize keeps the query planner's stats fresh after writes
+    # (added in SQLite 3.18). Cheap on each commit; no-op when stats
+    # haven't drifted. Not load-bearing — never refuse to close on this.
+    try:
+        conn.execute("PRAGMA optimize")
+    except sqlite3.DatabaseError:
+        pass
+
+
 @contextmanager
 def open_db(
     readonly: bool = False,
@@ -830,41 +896,13 @@ def open_db(
     ``warnings_out=None`` (default) preserves the legacy silent-pass
     behaviour for every existing caller (~200+ commands import open_db).
     """
-    import click
-
     db_path = get_db_path(project_root)
-    try:
-        conn = get_connection(db_path, readonly=readonly, warnings_out=warnings_out)
-    except sqlite3.DatabaseError as exc:
-        raise click.ClickException(
-            f"Database error: {exc}\n"
-            "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
-            "  from scratch, or delete .roam/index.db and run `roam init`.\n"
-            "  If this looks unexpected, run `roam doctor` to diagnose your install."
-        ) from exc
+    conn = _open_validated_connection(db_path, readonly, warnings_out)
     try:
         if not readonly:
-            try:
-                ensure_schema(conn, warnings_out=warnings_out)
-            except sqlite3.DatabaseError as exc:
-                conn.close()
-                raise click.ClickException(
-                    f"Database schema error: {exc}\n"
-                    "  The roam index may be corrupted or from an incompatible version.\n"
-                    "  Run `roam init --force` to rebuild it, or delete .roam/index.db\n"
-                    "  and run `roam init`.\n"
-                    "  If this looks unexpected, run `roam doctor` to diagnose your install."
-                ) from exc
+            _setup_schema_or_raise(conn, warnings_out)
         yield conn
         if not readonly:
-            conn.commit()
-            # PRAGMA optimize keeps the query planner's stats fresh
-            # after writes (added in SQLite 3.18). Cheap on each commit;
-            # no-op when stats haven't drifted. Improves query latency
-            # for the next reader without an explicit ANALYZE pass.
-            try:
-                conn.execute("PRAGMA optimize")
-            except sqlite3.DatabaseError:
-                pass  # not load-bearing; never refuse to close on this
+            _commit_and_optimize(conn)
     finally:
         conn.close()

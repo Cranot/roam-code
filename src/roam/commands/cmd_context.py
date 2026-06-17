@@ -210,49 +210,52 @@ def _gather_single(conn, sym, task, session_hint, recent_symbols, use_propagatio
     except (KeyError, IndexError):
         docstring = None
 
+    # Each metric helper is best-effort: a failure (schema drift, missing
+    # optional table, graph-build edge case) must degrade to a neutral default,
+    # never abort the context render. Broad catch is the deliberate fail-open.
     try:
         complexity = get_symbol_metrics(conn, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to None
         complexity = None
 
     try:
         graph_centrality = get_graph_metrics(conn, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to None
         graph_centrality = None
 
     try:
         git_churn = get_file_churn(conn, file_path)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to None
         git_churn = None
 
     try:
         coupling = get_coupling(conn, file_path, limit=10)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to []
         coupling = []
 
     try:
         affected_tests = get_affected_tests_bfs(conn, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to []
         affected_tests = []
 
     try:
         blast_radius = get_blast_radius(conn, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to None
         blast_radius = None
 
     try:
         cluster = get_cluster_info(conn, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to None
         cluster = None
 
     try:
         similar_symbols = get_similar_symbols(conn, sym, limit=10)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to []
         similar_symbols = []
 
     try:
         entry_points_reaching = get_entry_points_reaching(conn, sym_id, limit=5)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to []
         entry_points_reaching = []
 
     try:
@@ -262,7 +265,7 @@ def _gather_single(conn, sym, task, session_hint, recent_symbols, use_propagatio
 
     try:
         file_context_syms = get_file_context(conn, fid, sym_id)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort metric; degrade to []
         file_context_syms = []
 
     next_steps = suggest_next_steps(
@@ -472,7 +475,7 @@ def _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propag
             recent_symbols=recent_symbols,
             use_propagation=use_propagation,
         )
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- fail open to unscored file list
         shared_callers, shared_callees, scored_files = [], [], []
         for c in contexts:
             for f in c["files_to_read"]:
@@ -503,20 +506,20 @@ def _render_idiom_badge(sym, sym_kind: str, decorators_str: str, row_keys) -> No
     """surface model-class / fixture / param-test badges."""
     try:
         from roam.catalog.python_idioms import fixture_kind, is_model_class
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- optional idiom module; skip badge
         return
     if sym_kind == "class":
         sig_text = sym["signature"] if "signature" in row_keys else ""
         try:
             is_model, kind_label = is_model_class(sig_text, decorators_str)
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 -- best-effort badge; skip on error
             return
         if is_model and kind_label:
             click.echo(f"  [{kind_label} model]")
     elif sym_kind in ("function", "method"):
         try:
             fkind = fixture_kind(decorators_str)
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 -- best-effort badge; skip on error
             return
         if fkind:
             click.echo(f"  [{fkind}]")
@@ -732,7 +735,7 @@ def _render_model_fields_block(sym, sym_kind, decorators_str, _row_keys):
 
         sig_for_model = sym["signature"] if "signature" in _row_keys else ""
         is_model, _label = is_model_class(sig_for_model, decorators_str)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- optional idiom check; treat as non-model
         is_model = False
     if not is_model:
         return
@@ -744,7 +747,7 @@ def _render_model_fields_block(sym, sym_kind, decorators_str, _row_keys):
                 "SELECT name, default_value FROM symbols WHERE parent_id = ? AND kind = 'property' ORDER BY line_start",
                 (sym["id"],),
             ).fetchall()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort field query; degrade to []
         field_rows = []
     if not field_rows:
         return
@@ -1336,9 +1339,10 @@ def _wrap_render_json_with_warnings(data, budget, warnings_bucket):
     # Inject warnings_out into both summary and top-level
     try:
         envelope = _json.loads(rendered)
-    except Exception:
-        # If JSON parse fails, return the raw render — the W607-BF
-        # marker will surface via the outer dispatcher.
+    except ValueError:
+        # If JSON parse fails (JSONDecodeError subclasses ValueError), return
+        # the raw render — the W607-BF marker will surface via the outer
+        # dispatcher.
         return rendered
     combined = list(warnings_bucket)
     envelope.setdefault("summary", {})

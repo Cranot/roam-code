@@ -50,3 +50,57 @@ suppressions:
     file: tests/test_w_mcp_security_pipeline_e2e.py
     reason: synthetic sk-test fixture for MCP egress-redaction assertions
     status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 93
+    reason: false positive; src/roam/mcp_extras is a real package and completions.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 94
+    reason: false positive; src/roam/mcp_extras is a real package and preflight.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 95
+    reason: false positive; src/roam/mcp_extras is a real package and progress.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 96
+    reason: false positive; src/roam/mcp_extras is a real package and sampling.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 97
+    reason: false positive; src/roam/mcp_extras is a real package and session.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 98
+    reason: false positive; src/roam/mcp_extras is a real package and watcher.py exists
+    status: safe
+  - rule: imports
+    file: src/roam/mcp_server.py
+    line: 16623
+    reason: false positive; src/roam/mcp_extras is a real package and adversarial_compress.py exists
+    status: safe
+  - rule: duplicates
+    file: src/roam/evidence/change_evidence.py
+    line: 633
+    reason: public ChangeEvidence method intentionally mirrors McpDecisionReceipt.compute_content_hash while using packet-specific canonicalization
+    status: safe
+  - rule: duplicates
+    file: src/roam/mcp_server.py
+    reason: MCP wrapper function names intentionally mirror CLI command callbacks for command/tool parity
+    status: safe
+  - rule: duplicates
+    file: tests/test_api_drift.py
+    line: 16
+    reason: test fixture name intentionally mirrors architecture-drift fixture domain
+    status: safe
+  - rule: duplicates
+    file: tests/test_mcp_server.py
+    line: 120
+    reason: test name intentionally mirrors framework-detection case-insensitive coverage
+    status: safe

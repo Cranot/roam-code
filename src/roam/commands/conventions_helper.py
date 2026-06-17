@@ -27,7 +27,7 @@ Public API
 * ``DEFAULT_EXCLUDE_PREFIXES`` — paths excluded by default
   (``.github/``, ``.claude/``, ``docs/``, ``dist/``, ``build/``,
   ``node_modules/``, ``vendor/``, ``__pycache__/``).
-* ``is_excluded_path(path, prefixes)`` — boolean helper.
+* ``has_excluded_prefix(path, prefixes)`` — boolean helper.
 
 The result dict is intentionally a superset of what each caller needs so
 the same call serves describe's compact summary, conventions' outlier
@@ -42,9 +42,11 @@ from typing import Any
 # Re-export the case-style primitives so callers only need to import from
 # this module. ``classify_case``, ``_group_for_kind``, ``_MIN_NAME_LEN``,
 # ``_SKIP_NAMES``, and the language-family / language-kind-default tables
-# all live in ``cmd_conventions`` for historic reasons; this module is the
-# only place that should aggregate them.
-from roam.commands.cmd_conventions import (
+# live in the leaf module ``conventions_primitives``. Importing them from
+# there (rather than from ``cmd_conventions``) keeps this aggregator off
+# the command module, breaking the historic top-level import cycle
+# ``conventions_helper -> cmd_conventions -> conventions_helper``.
+from roam.commands.conventions_primitives import (
     _LANGUAGE_KIND_DEFAULTS,
     _MIN_NAME_LEN,
     _SKIP_NAMES,
@@ -90,7 +92,7 @@ DEFAULT_EXCLUDE_PREFIXES: tuple[str, ...] = (
     # roam-code (27/41 findings, 100% noise) per the W149 audit. The
     # ``fixtures/`` prefix catches both ``tests/fixtures/`` and any
     # nested ``<lang>/tests/fixtures/`` layout because
-    # ``is_excluded_path`` matches the prefix as a path component, not
+    # ``has_excluded_prefix`` matches the prefix as a path component, not
     # just at the string head.
     "tests/fixtures/",
     "fixtures/",
@@ -113,7 +115,7 @@ DEFAULT_EXCLUDE_PREFIXES: tuple[str, ...] = (
 CONVENTION_NEUTRAL_FILE_ROLES: frozenset[str] = frozenset({"test", "vendored", "generated"})
 
 
-def is_excluded_path(path: str, exclude_prefixes: tuple[str, ...] | None = None) -> bool:
+def has_excluded_prefix(path: str, exclude_prefixes: tuple[str, ...] | None = None) -> bool:
     """Return True if *path* starts with (or contains) any excluded prefix.
 
     Matches both top-level and nested locations — e.g. a deeply nested
@@ -257,7 +259,7 @@ def compute_conventions(
 
     for sym in all_symbols:
         path = sym["file_path"] or ""
-        if is_excluded_path(path, exclude):
+        if has_excluded_prefix(path, exclude):
             excluded_count += 1
             continue
         # Test files follow the test framework's naming idiom (PHPUnit

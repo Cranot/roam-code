@@ -279,6 +279,16 @@ def append_snapshot(conn, tag=None, source="snapshot"):
     metrics = collect_metrics(conn)
     branch, commit = _git_info(root)
 
+    # Dedup by commit: re-indexing the same commit (e.g. a no-op / comment-only
+    # reindex) must replace the data point, not append a duplicate row. Without this,
+    # all snapshot rows share one commit and the trend commands (forecast / bisect /
+    # alerts-trend) run Theil-Sen / Mann-Kendall over identical values = confidently
+    # vacuous output. Keep one row per (git_commit, source); distinct commits accrue.
+    if commit:
+        conn.execute(
+            "DELETE FROM snapshots WHERE git_commit = ? AND source = ?",
+            (commit, source),
+        )
     conn.execute(
         """INSERT INTO snapshots
            (timestamp, tag, source, git_branch, git_commit,

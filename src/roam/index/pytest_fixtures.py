@@ -174,18 +174,9 @@ def _conftest_chain(file_path: str) -> list[str]:
     return paths
 
 
-def resolve_pytest_fixtures(conn) -> int:
-    """Insert ``pytest_fixture_dep`` edges from fixtures and tests to the
-    fixtures they parameterise on.
-
-    Returns the number of edges inserted. Idempotent: existing
-    ``pytest_fixture_dep`` edges are removed and re-derived each run.
-    """
-    # Load Python function/method symbols from test/conftest files only.
-    # Fixtures and test functions exclusively live in those, so we don't
-    # need to scan production code. On a large project this avoids a
-    # full-table scan of symbols.
-    rows = conn.execute(
+def _load_pytest_symbols(conn) -> list:
+    """Load Python fixture/test candidates from test and conftest files."""
+    return conn.execute(
         """
         SELECT s.id, s.name, s.signature, s.decorators, s.kind, f.path AS file_path
         FROM symbols s
@@ -199,78 +190,93 @@ def resolve_pytest_fixtures(conn) -> int:
           )
         """
     ).fetchall()
-    if not rows:
-        return 0
 
-    # Fixtures keyed by name. Multiple fixtures can share a name across
-    # conftest scopes — disambiguated by file path at resolution time.
+
+def _fixture_entry(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "file_path": (row["file_path"] or "").replace("\\", "/"),
+    }
+
+
+def _consumer_entry(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "signature": row["signature"] or "",
+        "file_path": (row["file_path"] or "").replace("\\", "/"),
+    }
+
+
+def _collect_fixture_indexes(rows: list) -> tuple[dict[str, list[dict]], list[dict]]:
     fixtures_by_name: dict[str, list[dict]] = {}
     consumers: list[dict] = []
-
-    for r in rows:
-        name = r["name"]
-        decorators = r["decorators"] or ""
-        signature = r["signature"] or ""
-        file_path = (r["file_path"] or "").replace("\\", "/")
-
+    for row in rows:
+        decorators = row["decorators"] or ""
         if _is_fixture(decorators):
-            entry = {"id": r["id"], "name": name, "file_path": file_path}
-            fixtures_by_name.setdefault(name, []).append(entry)
-            consumers.append({"id": r["id"], "name": name, "signature": signature, "file_path": file_path})
-        elif _is_test_function(name):
-            consumers.append({"id": r["id"], "name": name, "signature": signature, "file_path": file_path})
+            entry = _fixture_entry(row)
+            fixtures_by_name.setdefault(entry["name"], []).append(entry)
+            consumers.append(_consumer_entry(row))
+        elif _is_test_function(row["name"]):
+            consumers.append(_consumer_entry(row))
+    return fixtures_by_name, consumers
 
-    if not fixtures_by_name:
-        return 0
 
-    def _resolve(consumer_file: str, fixture_name: str) -> int | None:
-        """Pick the best fixture symbol id for ``fixture_name`` from the
-        perspective of ``consumer_file``."""
-        candidates = fixtures_by_name.get(fixture_name)
-        if not candidates:
-            return None
-        consumer_file = consumer_file.replace("\\", "/")
-        # Same file
-        for c in candidates:
-            if c["file_path"] == consumer_file:
-                return c["id"]
-        # conftest chain (closest first)
-        chain = _conftest_chain(consumer_file)
-        chain_index = {p: i for i, p in enumerate(chain)}
-        chain_hits = [(chain_index[c["file_path"]], c["id"]) for c in candidates if c["file_path"] in chain_index]
-        if chain_hits:
-            chain_hits.sort()
-            return chain_hits[0][1]
-        # Fallback — any one (deterministic by id for stable output)
-        if len(candidates) == 1:
-            return candidates[0]["id"]
-        return sorted(candidates, key=lambda c: c["id"])[0]["id"]
+def _resolve_fixture_id(fixtures_by_name: dict[str, list[dict]], consumer_file: str, fixture_name: str) -> int | None:
+    """Pick the best fixture symbol id for ``fixture_name`` from ``consumer_file``."""
+    candidates = fixtures_by_name.get(fixture_name)
+    if not candidates:
+        return None
+    consumer_file = consumer_file.replace("\\", "/")
+    for candidate in candidates:
+        if candidate["file_path"] == consumer_file:
+            return candidate["id"]
+    chain_index = {path: idx for idx, path in enumerate(_conftest_chain(consumer_file))}
+    chain_hits = [
+        (chain_index[candidate["file_path"]], candidate["id"])
+        for candidate in candidates
+        if candidate["file_path"] in chain_index
+    ]
+    if chain_hits:
+        return min(chain_hits)[1]
+    if len(candidates) == 1:
+        return candidates[0]["id"]
+    return min(candidates, key=lambda candidate: candidate["id"])["id"]
 
-    # Compute edges
+
+def _is_resolvable_fixture_param(param_name: str) -> bool:
+    return param_name not in _BUILTIN_FIXTURES and param_name not in _NON_FIXTURE_PARAMS
+
+
+def _fixture_edge_for_param(
+    consumer: dict,
+    param_name: str,
+    fixtures_by_name: dict[str, list[dict]],
+) -> tuple[int, int] | None:
+    if not _is_resolvable_fixture_param(param_name):
+        return None
+    target_id = _resolve_fixture_id(fixtures_by_name, consumer["file_path"], param_name)
+    if target_id is None or target_id == consumer["id"]:
+        return None
+    return consumer["id"], target_id
+
+
+def _build_fixture_edges(consumers: list[dict], fixtures_by_name: dict[str, list[dict]]) -> list[tuple[int, int]]:
     edges: list[tuple[int, int]] = []
     seen: set[tuple[int, int]] = set()
-    for c in consumers:
-        param_names = _parse_param_names(c["signature"])
-        if not param_names:
-            continue
-        for p in param_names:
-            if p in _BUILTIN_FIXTURES or p in _NON_FIXTURE_PARAMS:
+    for consumer in consumers:
+        for param_name in _parse_param_names(consumer["signature"]):
+            key = _fixture_edge_for_param(consumer, param_name, fixtures_by_name)
+            if key is None:
                 continue
-            target_id = _resolve(c["file_path"], p)
-            if target_id is None:
-                continue
-            if target_id == c["id"]:
-                # A fixture cannot depend on itself — skip the
-                # degenerate self-loop the parser would otherwise produce
-                # for a fixture whose param shadows its own name.
-                continue
-            key = (c["id"], target_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            edges.append(key)
+            if key not in seen:
+                seen.add(key)
+                edges.append(key)
+    return edges
 
-    # Drop any prior pytest_fixture_dep edges so reindex is consistent.
+
+def _replace_fixture_edges(conn, edges: list[tuple[int, int]]) -> None:
     with conn:
         conn.execute("DELETE FROM edges WHERE kind = 'pytest_fixture_dep'")
         if edges:
@@ -278,4 +284,31 @@ def resolve_pytest_fixtures(conn) -> int:
                 "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'pytest_fixture_dep')",
                 edges,
             )
+
+
+def resolve_pytest_fixtures(conn) -> int:
+    """Insert ``pytest_fixture_dep`` edges from fixtures and tests to the
+    fixtures they parameterise on.
+
+    Returns the number of edges inserted. Idempotent: existing
+    ``pytest_fixture_dep`` edges are removed and re-derived each run.
+    """
+    # Load Python function/method symbols from test/conftest files only.
+    # Fixtures and test functions exclusively live in those, so we don't
+    # need to scan production code. On a large project this avoids a
+    # full-table scan of symbols.
+    rows = _load_pytest_symbols(conn)
+    if not rows:
+        return 0
+
+    # Fixtures keyed by name. Multiple fixtures can share a name across
+    # conftest scopes — disambiguated by file path at resolution time.
+    fixtures_by_name, consumers = _collect_fixture_indexes(rows)
+    if not fixtures_by_name:
+        return 0
+
+    edges = _build_fixture_edges(consumers, fixtures_by_name)
+
+    # Drop any prior pytest_fixture_dep edges so reindex is consistent.
+    _replace_fixture_edges(conn, edges)
     return len(edges)

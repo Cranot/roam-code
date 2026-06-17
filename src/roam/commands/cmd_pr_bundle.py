@@ -201,11 +201,11 @@ def _mode_blocks_emit(repo_root: Path) -> tuple[bool, str, str | None]:
     """
     try:
         from roam.modes.policy import resolve_mode
-    except Exception:
+    except ImportError:
         return (False, "", None)
     try:
         active = resolve_mode(Path(repo_root))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- fail-open: a broken constitution must never derail emit
         return (False, "", None)
     if active.name == "read_only":
         # safe_edit is the lowest mode that allows pr-bundle; surface
@@ -328,7 +328,7 @@ def _git_fingerprint(root: Path | None = None) -> dict:
     if root is None:
         try:
             root = find_project_root()
-        except Exception:  # pragma: no cover — defensive (non-roam tree)
+        except Exception:  # noqa: BLE001 -- pragma: no cover; defensive on a non-roam tree
             root = None
     sha = _git_commit_sha(root) if root is not None else None
     if sha:
@@ -554,7 +554,7 @@ def _auto_collect(bundle: dict, root: Path) -> dict:
     # response-envelope auto-collect pass above. Best-effort.
     try:
         totals["world_model_classified"] = _classify_legacy_affected_symbols(bundle)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort classification; a failure must not zero out the bundle
         totals["world_model_classified"] = 0
     return totals
 
@@ -616,21 +616,21 @@ def _resolve_symbol_in_index(symbol_name: str) -> tuple[dict | None, str]:
         return None, "not_found"
     try:
         from roam.db.connection import db_exists
-    except Exception:
+    except ImportError:
         return None, "lookup_failed"
     try:
         if not db_exists():
             return None, "no_db"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- fail-open: any db-probe failure degrades to lookup_failed
         return None, "lookup_failed"
     try:
         from roam.commands.resolve import find_symbol
-    except Exception:
+    except ImportError:
         return None, "lookup_failed"
     try:
         with open_db(readonly=True) as conn:
             row = find_symbol(conn, symbol_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- fail-open: any resolve/db failure degrades to lookup_failed
         return None, "lookup_failed"
     if row is None:
         return None, "not_found"
@@ -650,7 +650,7 @@ def _resolve_symbol_in_index(symbol_name: str) -> tuple[dict | None, str]:
         if tier == "fuzzy":
             return dict(row), "fuzzy_resolution"
         return dict(row), "ok"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- fail-open: any row-shape surprise degrades to lookup_failed
         return None, "lookup_failed"
 
 
@@ -690,7 +690,7 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
     try:
         from roam.world_model.idempotency import classify_idempotency
         from roam.world_model.side_effects import classify_side_effects
-    except Exception:
+    except ImportError:
         return fallback
     try:
         with open_db(readonly=True) as conn:
@@ -699,7 +699,7 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
                 return fallback
             # classify_idempotency reuses the side-effects pass.
             idem_list = classify_idempotency(conn, symbol_name=symbol_name, side_effects=se_list)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort world-model classification; degrade to fallback
         return fallback
     se = se_list[0]
     kinds = list(se.kinds or [])
@@ -827,7 +827,7 @@ def _classify_and_annotate_affected(bundle: dict, symbol_name: str) -> None:
         return
     try:
         wm = _classify_world_model_for_symbol(symbol_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort world-model; failure becomes an "unknown" record
         wm = {
             "side_effect_kinds": [],
             "idempotency_kind": "unknown",
@@ -842,7 +842,7 @@ def _classify_and_annotate_affected(bundle: dict, symbol_name: str) -> None:
     # state="snapshot_failed" / state="no_index" rather than a crash.
     try:
         causal_snapshot = _snapshot_causal_graph_for_symbol(symbol_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort snapshot; failure becomes state="snapshot_failed"
         causal_snapshot = {
             "edges": [],
             "snapshot_at": _utc_now(),
@@ -905,7 +905,7 @@ def _classify_legacy_affected_symbols(bundle: dict) -> int:
             continue
         try:
             _classify_and_annotate_affected(bundle, name)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- best-effort per-symbol annotation; skip on failure, keep going
             continue
         n += 1
     return n
@@ -1145,12 +1145,12 @@ def _snapshot_causal_graph_for_symbol(symbol_name: str) -> dict:
         return {"edges": [], "snapshot_at": snapshot_at, "state": "no_index"}
     try:
         from roam.world_model.causal_graph import classify_causal_graph
-    except Exception:
+    except ImportError:
         return {"edges": [], "snapshot_at": snapshot_at, "state": "snapshot_failed"}
     try:
         with open_db(readonly=True) as conn:
             graphs = classify_causal_graph(conn, symbol_name=symbol_name)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort snapshot; any classifier/db failure -> snapshot_failed
         return {"edges": [], "snapshot_at": snapshot_at, "state": "snapshot_failed"}
     if not graphs:
         return {"edges": [], "snapshot_at": snapshot_at, "state": "no_index"}
@@ -1607,7 +1607,7 @@ def _load_leases_from_disk(
         return []
     try:
         from roam.leases import list_leases
-    except Exception:
+    except ImportError:
         return []
     try:
         leases = list_leases(
@@ -1616,7 +1616,7 @@ def _load_leases_from_disk(
             include_released=True,
             warnings_out=warnings_out,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort lease load; malformed lease state degrades to []
         return []
     return [lease.to_dict() for lease in leases]
 
@@ -1814,7 +1814,7 @@ def _build_envelope(
     if actor is None:
         try:
             repo_root = find_project_root()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- defensive: a non-roam tree leaves repo_root unset
             repo_root = None
         actor = _resolve_actor_block(
             agent_id_override=None,
@@ -1918,7 +1918,7 @@ def _build_envelope(
             commit_sha_top = persisted_commit_sha
     try:
         ws_root = find_project_root()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- defensive: a non-roam tree leaves ws_root unset
         ws_root = None
     try:
         from roam.evidence.env_refs import build_environment_refs
@@ -1928,8 +1928,7 @@ def _build_envelope(
             workspace_root=str(ws_root) if ws_root else None,
         )
         environment_refs_out: list[dict] = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in env_refs_tuple]
-    except Exception:
-        # Best-effort - never block emit on env-ref construction.
+    except Exception:  # noqa: BLE001 -- best-effort: never block emit on env-ref construction
         environment_refs_out = []
 
     # W268 - materialise authority producers (permits + leases) on the
@@ -1952,7 +1951,7 @@ def _build_envelope(
             ws_root,
             warnings_out=bundle_warnings,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort permit load; malformed permit state degrades to []
         permits_out = []
     try:
         # W425: thread the bundle_warnings bucket so malformed /
@@ -1962,7 +1961,7 @@ def _build_envelope(
             ws_root,
             warnings_out=bundle_warnings,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- best-effort lease load; malformed lease state degrades to []
         leases_out = []
 
     return json_envelope(

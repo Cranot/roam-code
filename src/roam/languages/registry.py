@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import TYPE_CHECKING
+
+log = logging.getLogger(__name__)
 
 from roam.index.parser import EXTENSION_MAP, GRAMMAR_ALIASES, REGEX_ONLY_LANGUAGES
 
@@ -112,7 +115,10 @@ def _plugin_language_extractors():
         from roam.plugins import get_plugin_language_extractors
 
         return get_plugin_language_extractors()
+    except ImportError:
+        return {}
     except Exception:
+        log.debug("plugin language extractor discovery failed", exc_info=True)
         return {}
 
 
@@ -121,7 +127,10 @@ def _plugin_language_extensions():
         from roam.plugins import get_plugin_language_extensions
 
         return get_plugin_language_extensions()
+    except ImportError:
+        return {}
     except Exception:
+        log.debug("plugin language extension discovery failed", exc_info=True)
         return {}
 
 
@@ -130,7 +139,10 @@ def _plugin_language_grammar_aliases():
         from roam.plugins import get_plugin_language_grammar_aliases
 
         return get_plugin_language_grammar_aliases()
+    except ImportError:
+        return {}
     except Exception:
+        log.debug("plugin grammar alias discovery failed", exc_info=True)
         return {}
 
 

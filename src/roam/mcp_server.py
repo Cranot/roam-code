@@ -12815,35 +12815,35 @@ def roam_migration_safety(limit: int = 50, include_archive: bool = False, root: 
 @_tool(
     name="roam_api_drift",
     description=(
-        "Detect mismatches between backend models and frontend interfaces. "
+        "Detect field drift between Laravel/PHP models and TypeScript interfaces. "
         "Triggers: 'where do API contracts diverge?', 'find drift between "
-        "TS types and Django models', 'audit serializer coverage'. Pair "
-        "with roam_endpoints for full route inventory."
+        "PHP $fillable fields and TypeScript types', 'audit frontend API types'. "
+        "Pair with roam_endpoints for full route inventory."
     ),
 )
-def roam_api_drift(model: str = "", confidence: str = "medium", root: str = ".") -> dict:
-    """Detect mismatches between backend models and frontend interfaces.
+def roam_api_drift(model: str = "", confidence: str = "all", root: str = ".") -> dict:
+    """Detect field drift between backend models and frontend interfaces.
 
     WHEN TO USE: to find drift between PHP $fillable/$appends and
     TypeScript interface properties. Detects missing fields, extra fields,
-    type mismatches. Auto-converts snake_case/camelCase.
+    and likely naming mismatches. Auto-converts snake_case/camelCase.
 
     Parameters
     ----------
     model:
         Only check this model. Empty = check all.
     confidence:
-        Filter: "low", "medium", "high" (default medium).
+        Filter: "all", "low", "medium", "high" (default all).
     root:
         Working directory (project root).
 
     Returns: findings with model, interface, drift type, field,
-    backend/frontend types, severity, suggested fix.
+    confidence, and suggested fix context.
     """
     args = ["api-drift"]
     if model:
         args.extend(["--model", model])
-    if confidence != "medium":
+    if confidence != "all":
         args.extend(["--confidence", confidence])
     return _run_roam(args, root)
 

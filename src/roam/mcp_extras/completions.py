@@ -86,12 +86,10 @@ def _open_index(root: str | None = None):
         from roam.db.connection import open_db
 
         return open_db(db_path=str(db_path), readonly=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- resilience: any open_db failure falls back to a raw read-only sqlite connection
         try:
-            import sqlite3
-
             return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except Exception:
+        except sqlite3.Error:
             return None
 
 
@@ -183,7 +181,7 @@ def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None =
                 (like, limit),
             )
             return [row[0] for row in cur.fetchall() if row and row[0]]
-        except Exception:
+        except sqlite3.Error:
             return []
     finally:
         try:
@@ -196,7 +194,7 @@ def complete_commands(prefix: str, *, limit: int = _MAX_RESULTS) -> list[str]:
     """Return roam CLI command names matching ``prefix``."""
     try:
         from roam.cli import _COMMANDS
-    except Exception:
+    except ImportError:
         return []
     p = (prefix or "").lower()
     out = sorted(name for name in _COMMANDS.keys() if name.lower().startswith(p))
@@ -257,7 +255,7 @@ def install_completion_handler(fastmcp_server: Any) -> bool:
             PromptReference,
             ResourceTemplateReference,
         )
-    except Exception:
+    except ImportError:
         return False
 
     @completion_decorator()  # type: ignore[misc]

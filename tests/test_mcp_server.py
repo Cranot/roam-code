@@ -12,6 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 from types import SimpleNamespace
@@ -19,6 +20,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+
+_MCP_WRAPPER_TRUTH_RULES = {
+    "roam_api_drift": {
+        "required_terms": ("laravel", "php", "typescript"),
+        "forbidden_terms": (
+            "django",
+            "serializer",
+            "type mismatch",
+            "type mismatches",
+            "backend/frontend types",
+        ),
+        "default_params": {"confidence": "all"},
+    }
+}
 
 # ---------------------------------------------------------------------------
 # _classify_error tests
@@ -917,6 +932,15 @@ class TestToolWrappers:
 
         self._check_args(roam_api_drift, {}, ["api-drift"])
 
+    def test_roam_api_drift_explicit_medium_confidence(self):
+        from roam.mcp_server import roam_api_drift
+
+        self._check_args(
+            roam_api_drift,
+            {"confidence": "medium"},
+            ["api-drift", "--confidence", "medium"],
+        )
+
     def test_roam_api_drift_with_model(self):
         from roam.mcp_server import roam_api_drift
 
@@ -925,6 +949,43 @@ class TestToolWrappers:
             {"model": "User", "confidence": "high"},
             ["api-drift", "--model", "User", "--confidence", "high"],
         )
+
+    def test_roam_api_drift_default_confidence_matches_cli_all(self):
+        from roam.mcp_server import roam_api_drift
+
+        sig = inspect.signature(roam_api_drift)
+        assert sig.parameters["confidence"].default == "all"
+
+    def test_roam_api_drift_description_matches_php_ts_scope(self):
+        from roam.mcp_server import _TOOL_METADATA, roam_api_drift
+
+        desc = _TOOL_METADATA["roam_api_drift"]["description"].lower()
+        doc = (roam_api_drift.__doc__ or "").lower()
+
+        assert "php" in desc or "laravel" in desc
+        assert "typescript" in desc
+        assert "django" not in desc
+        assert "serializer" not in desc
+        assert "type mismatch" not in doc
+        assert "backend/frontend types" not in doc
+
+    @pytest.mark.parametrize("tool_name,rule", _MCP_WRAPPER_TRUTH_RULES.items())
+    def test_mcp_wrapper_truth_rules(self, tool_name, rule):
+        import roam.mcp_server as mcp_server
+
+        fn = getattr(mcp_server, tool_name)
+        desc = mcp_server._TOOL_METADATA[tool_name].get("description", "").lower()
+        doc = (fn.__doc__ or "").lower()
+        combined = f"{desc}\n{doc}"
+
+        for term in rule["required_terms"]:
+            assert term in combined, f"{tool_name} missing truthful scope term {term!r}"
+        for term in rule["forbidden_terms"]:
+            assert term not in combined, f"{tool_name} still advertises stale term {term!r}"
+
+        sig = inspect.signature(fn)
+        for param_name, expected in rule["default_params"].items():
+            assert sig.parameters[param_name].default == expected
 
     def test_roam_init_default_args(self):
         from roam.mcp_server import roam_init

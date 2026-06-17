@@ -315,7 +315,7 @@ def _envelope_has_findings(env: dict) -> bool:
     return False
 
 
-def _next_commands(env: dict) -> list:
+def _next_commands(env: dict[str, Any]) -> list[Any]:
     ac = env.get("agent_contract")
     if isinstance(ac, dict) and isinstance(ac.get("next_commands"), list):
         return ac["next_commands"]
@@ -341,56 +341,63 @@ def _validate_next_command(nc: Any, known_commands: set[str]) -> tuple[str, dict
     return None
 
 
+def _check_envelope_next_commands(label: str, env: dict, known: set[str]) -> list[dict[str, Any]]:
+    """Return findings for a single envelope's next_commands (absence + malformed).
+
+    Two violation shapes handled here so the outer loop stays flat:
+    - findings present but ``next_commands`` empty (no direction);
+    - a ``next_commands`` entry that isn't a runnable ``roam <subcommand>``
+      resolving to a real command (``known``).
+    """
+    ncs = _next_commands(env)
+    if not ncs:
+        if not _envelope_has_findings(env):
+            return []
+        return [
+            _finding(
+                task_id="missing-next-command",
+                detected_way="no-next-command",
+                subject=label,
+                subject_kind="command",
+                confidence="medium",
+                confidence_basis=CONFIDENCE_STRUCTURAL,
+                reason=f"{label} reports findings but offers no next_commands — agent has diagnosis without direction (CONSTRAINT 12)",
+                evidence={"next_commands": []},
+            )
+        ]
+    findings: list[dict[str, Any]] = []
+    for nc in ncs:
+        violation = _validate_next_command(nc, known)
+        if not violation:
+            continue
+        reason, evidence = violation
+        confidence = "high" if "not a registered command" in reason else "medium"
+        findings.append(
+            _finding(
+                task_id="missing-next-command",
+                detected_way="no-next-command",
+                subject=label,
+                subject_kind="command",
+                confidence=confidence,
+                confidence_basis=CONFIDENCE_STRUCTURAL,
+                reason=f"{label} {reason}",
+                evidence=evidence,
+            )
+        )
+    return findings
+
+
 @agent_opt_detector(task_id="missing-next-command", confidence_basis=CONFIDENCE_STRUCTURAL)
 def detect_missing_next_command(
     envelopes: Iterable[tuple[str, dict]],
     known_commands: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Flag envelopes whose follow-ups aren't copy-paste ``roam <cmd>`` (CONSTRAINT 12).
-
-    Two violation shapes:
-    - findings present but ``next_commands`` empty (no direction);
-    - a ``next_commands`` entry that isn't a runnable ``roam <subcommand>``
-      resolving to a real command (``known_commands``).
-    """
+    """Flag envelopes whose follow-ups aren't copy-paste ``roam <cmd>`` (CONSTRAINT 12)."""
     known = known_commands if known_commands is not None else known_command_names()
     out: list[dict[str, Any]] = []
     for label, env in envelopes:
-        if not isinstance(env, dict):
-            continue
-        ncs = _next_commands(env)
-        if not ncs:
-            if _envelope_has_findings(env):
-                out.append(
-                    _finding(
-                        task_id="missing-next-command",
-                        detected_way="no-next-command",
-                        subject=label,
-                        subject_kind="command",
-                        confidence="medium",
-                        confidence_basis=CONFIDENCE_STRUCTURAL,
-                        reason=f"{label} reports findings but offers no next_commands — agent has diagnosis without direction (CONSTRAINT 12)",
-                        evidence={"next_commands": []},
-                    )
-                )
-            continue
-        for nc in ncs:
-            violation = _validate_next_command(nc, known)
-            if violation:
-                reason, evidence = violation
-                confidence = "high" if "not a registered command" in reason else "medium"
-                out.append(
-                    _finding(
-                        task_id="missing-next-command",
-                        detected_way="no-next-command",
-                        subject=label,
-                        subject_kind="command",
-                        confidence=confidence,
-                        confidence_basis=CONFIDENCE_STRUCTURAL,
-                        reason=f"{label} {reason}",
-                        evidence=evidence,
-                    )
-                )
+        if isinstance(env, dict):
+            out.extend(_check_envelope_next_commands(label, env, known))
     return out
 
 
@@ -495,34 +502,61 @@ _LARGE_ENVELOPE_BYTE_THRESHOLD = 80_000
 _HANDLE_KEYS = ("handle_id", "_handle", "handle", "details_handle", "output_file", "output_path")
 
 
+def _check_large_envelope(label: str, env: dict) -> dict[str, Any] | None:
+    """Return a finding if env is a large inline payload with no handle, else None."""
+    try:
+        size = len(json.dumps(env, default=str))
+    except TypeError as e:
+        # Envelope contains non-JSON-serializable object (not covered by default=str).
+        # This is a real problem — surface it as a finding.
+        return _finding(
+            task_id="large-envelope-no-handle",
+            detected_way="non-serializable-envelope",
+            subject=label,
+            subject_kind="command",
+            confidence="medium",
+            confidence_basis=CONFIDENCE_STRUCTURAL,
+            reason=f"{label} envelope contains a non-JSON-serializable value — cannot assess size (TypeError: {e})",
+            evidence={"error": str(e)},
+        )
+    except ValueError as e:
+        # JSON encoding error (circular reference, etc.)
+        return _finding(
+            task_id="large-envelope-no-handle",
+            detected_way="non-serializable-envelope",
+            subject=label,
+            subject_kind="command",
+            confidence="medium",
+            confidence_basis=CONFIDENCE_STRUCTURAL,
+            reason=f"{label} envelope cannot be JSON-encoded — cannot assess size (ValueError: {e})",
+            evidence={"error": str(e)},
+        )
+    if size <= _LARGE_ENVELOPE_BYTE_THRESHOLD:
+        return None
+    summary = env.get("summary") or {}
+    if any(k in env for k in _HANDLE_KEYS) or any(k in summary for k in _HANDLE_KEYS):
+        return None
+    return _finding(
+        task_id="large-envelope-no-handle",
+        detected_way="inline-large-payload",
+        subject=label,
+        subject_kind="command",
+        confidence="medium",
+        confidence_basis=CONFIDENCE_STRUCTURAL,
+        reason=f"{label} envelope is {size} bytes (~{size // 4} tokens) with no handle_id/output_file — exceeds the ~20K-token inline cap (Pattern 6)",
+        evidence={"bytes": size, "approx_tokens": size // 4},
+    )
+
+
 @agent_opt_detector(task_id="large-envelope-no-handle", confidence_basis=CONFIDENCE_STRUCTURAL)
 def detect_large_envelope_no_handle(envelopes: Iterable[tuple[str, dict]]) -> list[dict[str, Any]]:
     """Flag envelopes that inline a >~20K-token payload with no handle/output_file."""
     out: list[dict[str, Any]] = []
     for label, env in envelopes:
-        if not isinstance(env, dict):
-            continue
-        try:
-            size = len(json.dumps(env, default=str))
-        except (TypeError, ValueError):
-            continue
-        if size <= _LARGE_ENVELOPE_BYTE_THRESHOLD:
-            continue
-        summary = env.get("summary") or {}
-        if any(k in env for k in _HANDLE_KEYS) or any(k in summary for k in _HANDLE_KEYS):
-            continue
-        out.append(
-            _finding(
-                task_id="large-envelope-no-handle",
-                detected_way="inline-large-payload",
-                subject=label,
-                subject_kind="command",
-                confidence="medium",
-                confidence_basis=CONFIDENCE_STRUCTURAL,
-                reason=f"{label} envelope is {size} bytes (~{size // 4} tokens) with no handle_id/output_file — exceeds the ~20K-token inline cap (Pattern 6)",
-                evidence={"bytes": size, "approx_tokens": size // 4},
-            )
-        )
+        if isinstance(env, dict):
+            f = _check_large_envelope(label, env)
+            if f is not None:
+                out.append(f)
     return out
 
 
@@ -718,43 +752,62 @@ def _is_floatable(token: str) -> bool:
     return True
 
 
+def _has_analytical_verb(lower: str) -> bool:
+    """Strategy 1: sentence contains an analytical verb (e.g. 'identified', 'found')."""
+    return any(re.search(rf"\b{re.escape(v)}\b", lower) for v in _ANALYTICAL_VERBS)
+
+
+def _has_terminal_anchor(tokens: list[str]) -> bool:
+    """Strategy 2: last word (punctuation-stripped) is a concrete-noun anchor."""
+    terminal = tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
+    return terminal in _CONCRETE_NOUN_ANCHORS
+
+
+def _has_parenthetical_anchor(stripped: str) -> bool:
+    """Strategy 3: anchor sits before a trailing parenthetical — strip and recheck."""
+    stripped_paren = re.sub(r"\s*\([^)]*\)\s*$", "", stripped).strip()
+    if stripped_paren == stripped:
+        return False
+    tail_tokens = stripped_paren.split()
+    if not tail_tokens:
+        return False
+    tail_terminal = tail_tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
+    return tail_terminal in _CONCRETE_NOUN_ANCHORS
+
+
+def _has_measurement_form(tokens: list[str]) -> bool:
+    """Strategy 4: '<label> <suffix> <numeric>' — e.g. 'health score 75'."""
+    if len(tokens) < 2 or not _is_floatable(tokens[-1]):
+        return False
+    penultimate = tokens[-2].lower().rstrip(",.;:!?)")
+    return penultimate in _MEASUREMENT_SUFFIXES
+
+
+def _is_long_verdict_sentence(tokens: list[str]) -> bool:
+    """Strategy 5: long sentence with non-numeric lead self-anchors as a verdict."""
+    first = tokens[0]
+    return len(tokens) > 4 and not first[:1].isdigit() and first != "{X}"
+
+
 def _fact_is_concrete_anchored(fact: Any) -> bool:
     """Faithful mirror of ``test_law4_lint._is_concrete_anchored`` (LAW 4)."""
     if not isinstance(fact, str):
         return False
     stripped = fact.strip()
-    if not stripped:
+    if not stripped or stripped.lower() in _KNOWN_ABSTRACT_FACTS:
         return False
-    if stripped.lower() in _KNOWN_ABSTRACT_FACTS:
-        return False
-    lower = stripped.lower()
-    for verb in _ANALYTICAL_VERBS:
-        if re.search(rf"\b{re.escape(verb)}\b", lower):
-            return True
     tokens = stripped.split()
     if not tokens:
         return False
-    terminal = tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
-    if terminal in _CONCRETE_NOUN_ANCHORS:
-        return True
-    # Anchor can sit before a trailing parenthetical — strip and recheck.
-    stripped_paren = re.sub(r"\s*\([^)]*\)\s*$", "", stripped).strip()
-    if stripped_paren != stripped:
-        tail_tokens = stripped_paren.split()
-        if tail_tokens:
-            tail_terminal = tail_tokens[-1].lower().rstrip(",.;:!?)").lstrip("(")
-            if tail_terminal in _CONCRETE_NOUN_ANCHORS:
-                return True
-    # Measurement form: "<label> <suffix> <numeric>" — e.g. "health score 75".
-    if len(tokens) >= 2 and _is_floatable(tokens[-1]):
-        penultimate = tokens[-2].lower().rstrip(",.;:!?)")
-        if penultimate in _MEASUREMENT_SUFFIXES:
-            return True
-    # Long sentence with non-numeric lead — likely a verdict (self-anchors).
-    first = tokens[0]
-    if len(tokens) > 4 and not first[:1].isdigit() and first != "{X}":
-        return True
-    return False
+    return any(
+        [
+            _has_analytical_verb(stripped.lower()),
+            _has_terminal_anchor(tokens),
+            _has_parenthetical_anchor(stripped),
+            _has_measurement_form(tokens),
+            _is_long_verdict_sentence(tokens),
+        ]
+    )
 
 
 def _fact_is_abstract(fact: Any) -> bool:
@@ -822,6 +875,15 @@ def _extract_tool_name_from_decorator(dec: Any) -> str | None:
     return None
 
 
+def _find_tool_name_in_decorators(decorator_list: list[Any]) -> str | None:
+    """Search decorators for @_tool and return tool name, else None."""
+    for dec in decorator_list:
+        name = _extract_tool_name_from_decorator(dec)
+        if name is not None:
+            return name
+    return None
+
+
 def discover_tool_params() -> list[tuple[str, tuple[str, ...]]]:
     """AST-discover ``(tool_name, declared_param_names)`` for every @_tool wrapper.
 
@@ -843,11 +905,7 @@ def discover_tool_params() -> list[tuple[str, tuple[str, ...]]]:
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        tool_name = None
-        for dec in node.decorator_list:
-            tool_name = _extract_tool_name_from_decorator(dec)
-            if tool_name is not None:
-                break
+        tool_name = _find_tool_name_in_decorators(node.decorator_list)
         if tool_name is None:
             continue
         params = tuple(a.arg for a in node.args.args if a.arg not in ("self", "cls"))
@@ -942,8 +1000,14 @@ DEFAULT_RUNTIME_COMMANDS: list[tuple[str, list[str]]] = [
 ]
 
 
-def _invoke_json(args: list[str]) -> dict | None:
-    """Run ``roam --json <args>`` in-process and return the parsed envelope.
+def _invoke_json(args: list[str]) -> tuple[dict | None, str | None]:
+    """Run ``roam --json <args>`` in-process and return ``(envelope, error_reason)``.
+
+    Returns (dict, None) on success. On failure, returns (None, reason) where reason
+    is one of:
+    - "command failed with exit code X"
+    - "no JSON found in output"
+    - "JSON decode failed at offset Y: <error>"
 
     Copied shape from ``tests/test_law4_lint.py::_invoke_json`` — output may be
     prefixed by status/progress lines, so locate the first ``{`` that parses.
@@ -954,37 +1018,38 @@ def _invoke_json(args: list[str]) -> dict | None:
 
     result = CliRunner().invoke(cli, ["--json"] + args)
     if result.exit_code != 0:
-        return None
+        return None, f"command failed with exit code {result.exit_code}"
     text = result.output or ""
     for start in range(len(text)):
         if text[start] != "{":
             continue
         try:
-            return json.loads(text[start:])
-        except json.JSONDecodeError:
-            continue
-    return None
+            return json.loads(text[start:]), None
+        except json.JSONDecodeError as e:
+            return None, f"JSON decode failed at offset {start}: {e}"
+    return None, "no JSON found in output"
 
 
 def harvest_command_envelopes(
     commands: list[tuple[str, list[str]]] | None = None,
-) -> tuple[list[tuple[str, dict]], list[str]]:
+) -> tuple[list[tuple[str, dict]], list[tuple[str, str]]]:
     """Harvest ``(label, envelope)`` pairs from a no-arg command corpus.
 
-    Returns ``(envelopes, unavailable)`` where ``unavailable`` lists labels
-    whose command did not return a parseable envelope (skipped, not failed —
-    a command may simply not exist on this checkout).
+    Returns ``(envelopes, failures)`` where ``failures`` is a list of
+    ``(label, error_reason)`` tuples for commands that did not return a
+    parseable envelope. The error_reason indicates why (command exit code,
+    JSON parsing failure, etc.) to aid debugging.
     """
     corpus = commands if commands is not None else DEFAULT_RUNTIME_COMMANDS
     envelopes: list[tuple[str, dict]] = []
-    unavailable: list[str] = []
+    failures: list[tuple[str, str]] = []
     for label, args in corpus:
-        env = _invoke_json(args)
-        if env is None:
-            unavailable.append(label)
+        env, error = _invoke_json(args)
+        if error is not None:
+            failures.append((label, error))
             continue
         envelopes.append((label, env))
-    return envelopes, unavailable
+    return envelopes, failures
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1070,102 @@ _ENVELOPE_TASKS = frozenset(
 )
 # Task whose source is the MCP wrapper parameter surface (AST-discovered).
 _PARAM_TASKS = frozenset({"parameter-name-drift"})
+
+
+def _run_description_tier(
+    active: set[str],
+    scope: str,
+    tool_descriptions: dict[str, str] | None,
+    findings: list[dict[str, Any]],
+    failed: list[dict[str, str]],
+    sources: dict[str, Any],
+) -> tuple[int, bool]:
+    """Run the description-tier detector; return (executed, partial)."""
+    if "tool-description-declarative" not in active:
+        return 0, False
+    try:
+        descs = tool_descriptions if tool_descriptions is not None else iter_tool_descriptions(scope)
+        sources["tool_descriptions_scanned"] = len(descs)
+        findings.extend(detect_declarative_tool_description(descs))
+        return 1, False
+    except Exception as exc:  # noqa: BLE001 — record + degrade, never silent
+        failed.append({"detector": "detect_declarative_tool_description", "error": f"{type(exc).__name__}: {exc}"})
+        return 0, True
+
+
+def _run_envelope_detectors(
+    env_tasks: set[str],
+    harvested: list[tuple[str, dict]],
+    findings: list[dict[str, Any]],
+    failed: list[dict[str, str]],
+) -> tuple[int, bool]:
+    """Run envelope-tier detectors; return (executed, partial)."""
+    _ENV_DETECTORS: list[tuple[str, Any]] = [
+        ("weak-verdict", lambda h: detect_weak_verdict(h)),
+        ("missing-next-command", lambda h: detect_missing_next_command(h, known_command_names())),
+        ("silent-degraded-state", lambda h: detect_silent_degraded_state(h)),
+        ("large-envelope-no-handle", lambda h: detect_large_envelope_no_handle(h)),
+        ("abstract-fact", lambda h: detect_abstract_fact(h)),
+    ]
+    executed = 0
+    partial = False
+    for task_id, detector_fn in _ENV_DETECTORS:
+        if task_id not in env_tasks:
+            continue
+        detector_name = _DETECTOR_FN_BY_TASK[task_id]
+        try:
+            findings.extend(detector_fn(harvested))
+            executed += 1
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"detector": detector_name, "error": f"{type(exc).__name__}: {exc}"})
+            partial = True
+    return executed, partial
+
+
+def _run_envelope_tier(
+    active: set[str],
+    commands: list[tuple[str, list[str]]] | None,
+    envelopes: list[tuple[str, dict]] | None,
+    findings: list[dict[str, Any]],
+    failed: list[dict[str, str]],
+    sources: dict[str, Any],
+) -> tuple[int, bool]:
+    """Run all envelope-tier detectors; return (executed, partial)."""
+    env_tasks = active & _ENVELOPE_TASKS
+    if not env_tasks:
+        return 0, False
+
+    if envelopes is None:
+        harvested, failures = harvest_command_envelopes(commands)
+    else:
+        harvested, failures = envelopes, []
+    sources["envelopes_scanned"] = len(harvested)
+    if failures:
+        sources["command_failures"] = [{"command": label, "reason": reason} for label, reason in failures]
+    partial = bool(failures) or not harvested
+
+    exec_count, detector_partial = _run_envelope_detectors(env_tasks, harvested, findings, failed)
+    return exec_count, partial or detector_partial
+
+
+def _run_param_tier(
+    active: set[str],
+    tool_params: list[tuple[str, tuple[str, ...]]] | None,
+    findings: list[dict[str, Any]],
+    failed: list[dict[str, str]],
+    sources: dict[str, Any],
+) -> tuple[int, bool]:
+    """Run the param-tier detector; return (executed, partial)."""
+    if not (active & _PARAM_TASKS):
+        return 0, False
+    try:
+        tps = tool_params if tool_params is not None else discover_tool_params()
+        sources["tool_params_scanned"] = len(tps)
+        findings.extend(detect_parameter_name_drift(tps))
+        return 1, False
+    except Exception as exc:  # noqa: BLE001
+        failed.append({"detector": "detect_parameter_name_drift", "error": f"{type(exc).__name__}: {exc}"})
+        return 0, True
 
 
 def run_agent_opt(
@@ -1039,85 +1200,15 @@ def run_agent_opt(
 
     findings: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
-    executed = 0
     sources: dict[str, Any] = {}
-    partial = False
 
-    # --- description-tier ---
-    if "tool-description-declarative" in active:
-        try:
-            descs = tool_descriptions if tool_descriptions is not None else iter_tool_descriptions(scope)
-            sources["tool_descriptions_scanned"] = len(descs)
-            findings.extend(detect_declarative_tool_description(descs))
-            executed += 1
-        except Exception as exc:  # noqa: BLE001 — record + degrade, never silent
-            failed.append({"detector": "detect_declarative_tool_description", "error": f"{type(exc).__name__}: {exc}"})
-            partial = True
+    n1, p1 = _run_description_tier(active, scope, tool_descriptions, findings, failed, sources)
+    n2, p2 = _run_envelope_tier(active, commands, envelopes, findings, failed, sources)
+    n3, p3 = _run_param_tier(active, tool_params, findings, failed, sources)
 
-    # --- envelope-tier (harvest once, shared by both tasks) ---
-    env_tasks = active & _ENVELOPE_TASKS
-    if env_tasks:
-        if envelopes is None:
-            harvested, unavailable = harvest_command_envelopes(commands)
-        else:
-            harvested, unavailable = envelopes, []
-        sources["envelopes_scanned"] = len(harvested)
-        sources["commands_unavailable"] = unavailable
-        if not harvested:
-            # No signal source for an active task -> disclose, don't fake SAFE.
-            partial = True
-        if "weak-verdict" in env_tasks:
-            try:
-                findings.extend(detect_weak_verdict(harvested))
-                executed += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"detector": "detect_weak_verdict", "error": f"{type(exc).__name__}: {exc}"})
-                partial = True
-        if "missing-next-command" in env_tasks:
-            try:
-                findings.extend(detect_missing_next_command(harvested, known_command_names()))
-                executed += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"detector": "detect_missing_next_command", "error": f"{type(exc).__name__}: {exc}"})
-                partial = True
-        if "silent-degraded-state" in env_tasks:
-            try:
-                findings.extend(detect_silent_degraded_state(harvested))
-                executed += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"detector": "detect_silent_degraded_state", "error": f"{type(exc).__name__}: {exc}"})
-                partial = True
-        if "large-envelope-no-handle" in env_tasks:
-            try:
-                findings.extend(detect_large_envelope_no_handle(harvested))
-                executed += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"detector": "detect_large_envelope_no_handle", "error": f"{type(exc).__name__}: {exc}"})
-                partial = True
-        if "abstract-fact" in env_tasks:
-            try:
-                findings.extend(detect_abstract_fact(harvested))
-                executed += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"detector": "detect_abstract_fact", "error": f"{type(exc).__name__}: {exc}"})
-                partial = True
-
-    # --- param-tier (MCP wrapper parameter surface, AST-discovered) ---
-    if active & _PARAM_TASKS:
-        try:
-            tps = tool_params if tool_params is not None else discover_tool_params()
-            sources["tool_params_scanned"] = len(tps)
-            findings.extend(detect_parameter_name_drift(tps))
-            executed += 1
-        except Exception as exc:  # noqa: BLE001
-            failed.append({"detector": "detect_parameter_name_drift", "error": f"{type(exc).__name__}: {exc}"})
-            partial = True
-
-    if failed:
-        partial = True
-
+    partial = p1 or p2 or p3 or bool(failed)
     meta: dict[str, Any] = {
-        "detectors_executed": executed,
+        "detectors_executed": n1 + n2 + n3,
         "detectors_failed": len(failed),
         "failed_detectors": failed,
         "active_tasks": sorted(active),

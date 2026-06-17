@@ -163,7 +163,7 @@ def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
 
             mod = importlib.import_module(module_name)
             return getattr(mod, "__version__", "unknown")
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001 -- importing arbitrary module runs its top-level code; any failure means version is unknown
             return "unknown"
     return "unknown"
 
@@ -230,7 +230,7 @@ def _check_git() -> dict:
         version_line = result.stdout.strip() if result.returncode == 0 else ""
         # "git version 2.43.0" -> "2.43.0"
         version = version_line.replace("git version", "").strip() or "unknown"
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         version = "unknown"
     return {
         "name": "git executable",
@@ -455,14 +455,14 @@ def _check_mcp_registry() -> dict:
         from roam.surface_counts import mcp_surface_counts
 
         full_count = int(mcp_surface_counts().get("registered_tools") or 0)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- surface_counts import or coercion may fail in minimal envs; fall back to AST scan
         # Fallback: count @_tool decorators in the module source. The
         # surface_counts helper isn't importable in some minimal envs.
         try:
             module_path = Path(getattr(mcp_server, "__file__", ""))
             text = module_path.read_text(encoding="utf-8") if module_path.is_file() else ""
             full_count = len(_re.findall(r"^@_tool\(\s*name=", text, _re.MULTILINE))
-        except Exception:
+        except OSError:
             full_count = 0
     # W420 dual-source: report runtime-active AND AST-shipped counts
     # side-by-side so the operator can see plugin-loading / preset state
@@ -2389,10 +2389,10 @@ def _get_roam_version() -> str:
         import importlib.metadata as _md
 
         return _md.version("roam-code")
-    except Exception:
+    except _md.PackageNotFoundError:
         try:
             from roam import __version__
 
             return __version__
-        except Exception:
+        except ImportError:
             return "unknown"

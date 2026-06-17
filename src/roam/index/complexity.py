@@ -694,7 +694,7 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             body_node = None
             try:
                 body_node = node.child_by_field_name("body")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
                 body_node = None
             if body_node is None:
                 # Fallback for grammars that don't expose ``body`` as a
@@ -926,7 +926,7 @@ def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
             name_node = None
             try:
                 name_node = child.child_by_field_name("name")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to child scan
                 name_node = None
             if name_node is None:
                 for sub in child.children:
@@ -1107,7 +1107,7 @@ def _if_condition_node(if_node):
     let_condition."""
     try:
         cond = if_node.child_by_field_name("condition")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to named-child scan
         cond = None
     if cond is None:
         # Fallback: first named child that's not an "if" keyword.
@@ -1132,12 +1132,12 @@ def _if_consequence_nodes(if_node):
     """Return the then-branch body node(s) of an ``if`` statement."""
     try:
         body = if_node.child_by_field_name("consequence")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
         body = None
     if body is None:
         try:
             body = if_node.child_by_field_name("body")
-        except Exception:
+        except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
             body = None
     if body is not None:
         return [body]

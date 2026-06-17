@@ -88,6 +88,39 @@ from roam.evidence import (
 
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "evidence"
+_SCALAR_FIELDS = (
+    "evidence_id",
+    "schema_version",
+    "repo_id",
+    "git_range",
+    "commit_sha",
+    "diff_hash",
+    "agent_id",
+    "human_actor",
+    "mode",
+    "started_at",
+    "completed_at",
+    "verdict",
+    "risk_level",
+    "content_hash",
+    "signature_ref",
+    # W210 time-aware + version-link scalars
+    "context_read_at",
+    "edits_started_at",
+    "edits_completed_at",
+    "roam_version",
+    "rules_config_hash",
+    "constitution_hash",
+    "control_map_hash",
+)
+_TUPLE_STRING_FIELDS = ("run_ids", "tests_required", "redactions", "stale_reasons")
+_TUPLE_MAPPING_FIELDS = (
+    "findings",
+    "policy_decisions",
+    "tests_run",
+    "approvals",
+    "accepted_risks",
+)
 
 
 def _read_fixture_bytes(name: str) -> str:
@@ -158,6 +191,44 @@ def _mk_env(d: dict[str, Any]) -> EnvironmentRef:
     )
 
 
+_NESTED_FIELD_FACTORIES = {
+    "context_refs": _mk_artifact,
+    "artifacts": _mk_artifact,
+    "changed_subjects": _mk_subject,
+    "actor_refs": _mk_actor,
+    "authority_refs": _mk_auth,
+    "environment_refs": _mk_env,
+}
+
+
+def _copy_present_fields(parsed: dict[str, Any], fields: tuple[str, ...], kwargs: dict[str, Any]) -> None:
+    for field in fields:
+        if field in parsed:
+            kwargs[field] = parsed[field]
+
+
+def _copy_tuple_fields(parsed: dict[str, Any], fields: tuple[str, ...], kwargs: dict[str, Any]) -> None:
+    for field in fields:
+        if field in parsed:
+            kwargs[field] = tuple(parsed[field])
+
+
+def _copy_nested_fields(parsed: dict[str, Any], kwargs: dict[str, Any]) -> None:
+    for field, factory in _NESTED_FIELD_FACTORIES.items():
+        if field in parsed:
+            kwargs[field] = tuple(factory(item) for item in parsed[field])
+
+
+def _packet_kwargs(parsed: dict[str, Any]) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    _copy_present_fields(parsed, _SCALAR_FIELDS, kwargs)
+    _copy_present_fields(parsed, ("evidence_stale",), kwargs)
+    _copy_tuple_fields(parsed, _TUPLE_STRING_FIELDS, kwargs)
+    _copy_tuple_fields(parsed, _TUPLE_MAPPING_FIELDS, kwargs)
+    _copy_nested_fields(parsed, kwargs)
+    return kwargs
+
+
 def _load_packet(name: str) -> tuple[str, ChangeEvidence]:
     """Load fixture ``name`` and reconstruct the ``ChangeEvidence`` packet.
 
@@ -166,74 +237,7 @@ def _load_packet(name: str) -> tuple[str, ChangeEvidence]:
     """
     body = _read_fixture_bytes(name)
     parsed: dict[str, Any] = json.loads(body)
-
-    kwargs: dict[str, Any] = {}
-
-    # Scalar string / None fields (the v0 / W182 / W210 supersets).
-    _scalar_fields = (
-        "evidence_id",
-        "schema_version",
-        "repo_id",
-        "git_range",
-        "commit_sha",
-        "diff_hash",
-        "agent_id",
-        "human_actor",
-        "mode",
-        "started_at",
-        "completed_at",
-        "verdict",
-        "risk_level",
-        "content_hash",
-        "signature_ref",
-        # W210 time-aware + version-link scalars
-        "context_read_at",
-        "edits_started_at",
-        "edits_completed_at",
-        "roam_version",
-        "rules_config_hash",
-        "constitution_hash",
-        "control_map_hash",
-    )
-    for k in _scalar_fields:
-        if k in parsed:
-            kwargs[k] = parsed[k]
-
-    # W210 boolean (omitted when False).
-    if "evidence_stale" in parsed:
-        kwargs["evidence_stale"] = parsed["evidence_stale"]
-
-    # Tuple-of-string fields.
-    for k in ("run_ids", "tests_required", "redactions", "stale_reasons"):
-        if k in parsed:
-            kwargs[k] = tuple(parsed[k])
-
-    # Tuple-of-Mapping fields (preserved as-is for Phase 1).
-    for k in (
-        "findings",
-        "policy_decisions",
-        "tests_run",
-        "approvals",
-        "accepted_risks",
-    ):
-        if k in parsed:
-            kwargs[k] = tuple(parsed[k])
-
-    # Tuple-of-dataclass fields - rebuild nested instances.
-    if "context_refs" in parsed:
-        kwargs["context_refs"] = tuple(_mk_artifact(d) for d in parsed["context_refs"])
-    if "artifacts" in parsed:
-        kwargs["artifacts"] = tuple(_mk_artifact(d) for d in parsed["artifacts"])
-    if "changed_subjects" in parsed:
-        kwargs["changed_subjects"] = tuple(_mk_subject(d) for d in parsed["changed_subjects"])
-    if "actor_refs" in parsed:
-        kwargs["actor_refs"] = tuple(_mk_actor(d) for d in parsed["actor_refs"])
-    if "authority_refs" in parsed:
-        kwargs["authority_refs"] = tuple(_mk_auth(d) for d in parsed["authority_refs"])
-    if "environment_refs" in parsed:
-        kwargs["environment_refs"] = tuple(_mk_env(d) for d in parsed["environment_refs"])
-
-    return body, ChangeEvidence(**kwargs)
+    return body, ChangeEvidence(**_packet_kwargs(parsed))
 
 
 # The full set of fixture names parameterised over by the per-fixture

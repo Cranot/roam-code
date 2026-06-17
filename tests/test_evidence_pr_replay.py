@@ -135,6 +135,18 @@ def test_pr_replay_evidence_bundle_creates_both(tmp_path):
     assert payload.get("schema_version")
 
 
+def test_pr_replay_bare_bundle_does_not_claim_strong_coverage(tmp_path):
+    """A bare merged-history replay must not advertise strong evidence coverage."""
+    bundle = tmp_path / "bundle"
+    code, _ = _invoke("--tier", "sample", "--evidence-bundle", str(bundle))
+    assert code == 0
+
+    body = (bundle / "report.md").read_text(encoding="utf-8")
+    assert "Evidence coverage:" in body
+    assert "Strong evidence coverage" not in body
+    assert "producer_not_available" in body
+
+
 def test_pr_replay_evidence_flag_wins_over_bundle(tmp_path):
     """When ``--evidence`` and ``--evidence-bundle`` are both set, ``--evidence`` wins.
 

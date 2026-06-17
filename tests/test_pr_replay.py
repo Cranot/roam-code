@@ -22,6 +22,8 @@ and the suite already runs from a real git checkout.
 from __future__ import annotations
 
 import json as _json
+import os
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -38,6 +40,13 @@ def _invoke(*args: str, json_mode: bool = False) -> tuple[int, str]:
     cli_args = (["--json"] if json_mode else []) + ["pr-replay", *args]
     result = runner.invoke(cli, cli_args, catch_exceptions=False)
     return result.exit_code, result.output
+
+
+def _write_run_meta(root: Path, run_id: str, status: str, mtime: float) -> None:
+    run_dir = root / ".roam" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "meta.json").write_text(_json.dumps({"status": status}), encoding="utf-8")
+    os.utime(run_dir, (mtime, mtime))
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +76,12 @@ def test_team_tier_runs_without_watermark():
     assert code == 0
     assert "Team — 30 PRs" in out
     assert "Sample report." not in out
+    assert "## Evidence coverage" in out
+    assert "**supports evidence for**" in out
+    assert "**maps to**" in out
+    assert "does not certify compliance" in out
+    assert "Who accepted risk?" in out
+    assert "Out of scope unless GitHub approval data is attached explicitly." in out
 
 
 def test_deep_tier_runs_without_watermark():
@@ -138,6 +153,37 @@ def test_json_envelope_is_well_formed():
     assert envelope["report_markdown"].startswith("# PR Replay Report")
 
 
+def test_active_run_id_env_wins(tmp_path, monkeypatch):
+    from roam.commands.cmd_pr_replay import _active_run_id_for_replay
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ROAM_RUN_ID", "run_env")
+
+    assert _active_run_id_for_replay() == "run_env"
+
+
+def test_active_run_id_prefers_in_progress_over_newer_completed(tmp_path, monkeypatch):
+    from roam.commands.cmd_pr_replay import _active_run_id_for_replay
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROAM_RUN_ID", raising=False)
+    _write_run_meta(tmp_path, "run_completed_newer", "completed", 200.0)
+    _write_run_meta(tmp_path, "run_active_older", "in_progress", 100.0)
+
+    assert _active_run_id_for_replay() == "run_active_older"
+
+
+def test_active_run_id_falls_back_to_newest_completed(tmp_path, monkeypatch):
+    from roam.commands.cmd_pr_replay import _active_run_id_for_replay
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROAM_RUN_ID", raising=False)
+    _write_run_meta(tmp_path, "run_completed_old", "completed", 100.0)
+    _write_run_meta(tmp_path, "run_completed_new", "completed", 200.0)
+
+    assert _active_run_id_for_replay() == "run_completed_new"
+
+
 def test_json_summary_top_detector_is_string_or_none():
     """``top_detector`` is either a string or null — never something else."""
     code, out = _invoke("--tier", "sample", json_mode=True)
@@ -178,6 +224,93 @@ def test_output_in_json_mode_writes_file_AND_emits_envelope(tmp_path):
     # File exists and contains the markdown
     assert target.exists()
     assert target.read_text(encoding="utf-8").startswith("# PR Replay Report")
+
+
+def test_rehearsal_writes_private_report_bundle_and_skips_ledger(tmp_path, monkeypatch):
+    """``--rehearsal`` writes a full dry-run packet without logging a paid engagement."""
+    from roam.commands import cmd_pr_replay as mod
+
+    def _postmortem(_commit_range, *, limit):
+        return {
+            "summary": {
+                "verdict": "clean rehearsal window",
+                "commits_scanned": 1,
+                "commits_with_findings": 0,
+                "total_high": 0,
+                "total_medium": 0,
+            },
+            "commits": [
+                {
+                    "sha": "abc1234",
+                    "short_sha": "abc1234",
+                    "date": "2026-06-12",
+                    "subject": "Rehearsal fixture",
+                    "high": 0,
+                    "medium": 0,
+                    "kinds": [],
+                }
+            ],
+        }
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mod, "ensure_index", lambda: None)
+    monkeypatch.setattr(mod, "_run_postmortem", _postmortem)
+
+    code, out = _invoke("--tier", "team", "--client", "Demo Buyer", "--rehearsal")
+    assert code == 0, out
+
+    root = tmp_path / "internal" / "engagements" / "rehearsals"
+    runs = sorted(p for p in root.iterdir() if p.is_dir())
+    assert len(runs) == 1
+    run_dir = runs[0]
+    assert run_dir.name.endswith("-demo-buyer-team")
+    assert (run_dir / "report.md").exists()
+    assert (run_dir / "evidence-bundle" / "evidence.json").exists()
+    assert (run_dir / "evidence-bundle" / "report.md").exists()
+    assert "Rehearsal artifacts root:" in out
+    assert not (tmp_path / ".roam" / "engagements.jsonl").exists()
+
+
+def test_rehearsal_json_summary_exposes_defaults(tmp_path, monkeypatch):
+    """JSON mode surfaces the rehearsal path defaults for automation."""
+    from roam.commands import cmd_pr_replay as mod
+
+    def _postmortem(_commit_range, *, limit):
+        return {
+            "summary": {
+                "verdict": "clean rehearsal window",
+                "commits_scanned": 1,
+                "commits_with_findings": 0,
+                "total_high": 0,
+                "total_medium": 0,
+            },
+            "commits": [
+                {
+                    "sha": "abc1234",
+                    "short_sha": "abc1234",
+                    "date": "2026-06-12",
+                    "subject": "Rehearsal fixture",
+                    "high": 0,
+                    "medium": 0,
+                    "kinds": [],
+                }
+            ],
+        }
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mod, "ensure_index", lambda: None)
+    monkeypatch.setattr(mod, "_run_postmortem", _postmortem)
+
+    code, out = _invoke("--tier", "team", "--client", "Demo Buyer", "--rehearsal", json_mode=True)
+    assert code == 0, out
+    envelope, _ = _json.JSONDecoder().raw_decode(out[out.find("{") :])
+    summary = envelope["summary"]
+    assert summary["rehearsal"] is True
+    assert summary["rehearsal_dir"].startswith("internal/engagements/rehearsals/")
+    assert summary["output_path"].endswith("/report.md")
+    assert summary["evidence_path"].endswith("/evidence-bundle/evidence.json")
+    assert summary["markdown_path"].endswith("/evidence-bundle/report.md")
+    assert summary["engagement_logged_to"] is None
 
 
 # ---------------------------------------------------------------------------

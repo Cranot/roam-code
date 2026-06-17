@@ -189,18 +189,18 @@ Structure: rules/ (2492), src/ (346), tests/ (250), benchmarks/ (26), docs/ (21)
 Based on the findings above, the following gates would have caught most of
 this quarter's structural regressions before merge:
 
-1. **`roam pr-risk --gate 8`** — Block PRs that touch more than 8 files or
-   cross more than 3 architecture layers. Pick the threshold at the current
-   p90 of merged PRs so existing velocity isn't disrupted; tighten as the
-   codebase quality improves.
+1. **`roam pr-risk --staged`** — Score staged PRs that touch broad file sets or
+   cross architecture layers. Pick review thresholds at the current p90 of
+   merged PRs so existing velocity isn't disrupted; tighten as the codebase
+   quality improves.
 
-2. **`roam health --gate health_score:85`** — Fail CI if a PR drops the
-   composite health score below 85. The current 88 gives a 3-point buffer;
-   tighten to 90 once the 30-day cleanup (Section 9 phase 1) completes.
+2. **`roam health --baseline auto --gate`** — Fail CI if a PR regresses the
+   composite health baseline. The current 88 gives a 3-point buffer; tighten
+   once the 30-day cleanup (Section 9 phase 1) completes.
 
-3. **`roam dead --strict --threshold safe:80`** — Fail CI if SAFE-bucket dead
-   exports exceed 80 (current: 78). Forces incremental cleanup as new dead
-   code appears rather than letting it accumulate quarter over quarter.
+3. **`roam dead --summary`** — Track dead-export pressure as a required review
+   signal. Forces incremental cleanup as new dead code appears rather than
+   letting it accumulate quarter over quarter.
 
 4. **`roam clones --persist`** as a nightly job — Surfaces clone-class drift
    (not currently measured). Pair with `roam critique` on PR diff to catch

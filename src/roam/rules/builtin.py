@@ -127,7 +127,7 @@ def _check_max_file_complexity(conn, G, threshold):
             """,
             (limit,),
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     return [
         make_violation(
@@ -146,7 +146,7 @@ def _check_max_file_length(conn, G, threshold):
             "SELECT path, loc FROM files WHERE loc IS NOT NULL AND loc > ? ORDER BY loc DESC",
             (limit,),
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     return [make_violation(file=row[0], reason="{} lines exceeds limit {}".format(row[1], limit)) for row in rows]
 
@@ -163,7 +163,7 @@ def _check_test_file_exists(conn, G, threshold):
     """Find source files that have no corresponding test file."""
     try:
         file_rows = conn.execute("SELECT id, path FROM files ORDER BY path").fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
 
     all_paths = [(r[0], r[1]) for r in file_rows]
@@ -240,7 +240,7 @@ def _check_no_god_classes(conn, G, threshold):
             "GROUP BY s.id HAVING method_count > ? ORDER BY method_count DESC".format(_m, _c),
             (limit,),
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     violations = []
     for row in rows:
@@ -272,7 +272,7 @@ def _check_no_deep_inheritance(conn, G, threshold):
         edge_rows = conn.execute(
             f"SELECT e.source_id, e.target_id FROM edges e WHERE {inheritance_in_clause('e.kind')}"
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return []
     if not edge_rows:
         return []
@@ -307,7 +307,7 @@ def _check_no_deep_inheritance(conn, G, threshold):
                     (node,),
                 ).fetchone()
                 sym_name, fpath, line = (row[0], row[1], row[2]) if row else (str(node), "", None)
-            except Exception:
+            except sqlite3.Error:
                 sym_name, fpath, line = str(node), "", None
             violations.append(
                 make_violation(

@@ -74,8 +74,8 @@
       <h2>What Roam is for</h2>
       <p>
         Roam is the <strong>local codebase intelligence layer for
-        developers and coding agents</strong>. It gives every AI coding
-        agent a <strong>map of your repo</strong> — callers, clones,
+        developers and coding agents</strong>. It gives AI coding
+        agents a <strong>map of your repo</strong> — callers, clones,
         tests, layers, hot paths, dependencies, git history, smells,
         security flows, and algorithmic patterns — compiled locally
         into a SQLite graph. AI agents write code; Roam gives them
@@ -86,9 +86,10 @@
         evidence for AI-assisted software change</strong>: who acted,
         what authority existed, what context was read, what changed,
         what could break, what policy applied, what verified it, who
-        accepted risk. Every analysis writes a tamper-evident
-        audit-trail entry plus signed in-toto v1 records, so a reviewer
-        can replay the work after the fact. Roam <em>maps to</em> and
+        accepted risk. When the run ledger and proof-bundle flow is
+        enabled, Roam writes tamper-evident audit-trail entries and
+        verifiable evidence records, so a reviewer can replay the work
+        after the fact. Roam <em>maps to</em> and
         <em>supports evidence for</em> SOC 2 CC8.1, ISO 42001, and
         internal AI-governance controls — it does not certify
         compliance with any framework.
@@ -121,12 +122,13 @@
         being the only people writing PRs; agents started shipping
         them too. The tooling kept up on the
         <em>generate</em> side and not on the <em>verify</em> side.
-        We saw the bills come in:
+        Public reports show why teams are asking for stronger code-change
+        gates:
       </p>
       <ul>
-        <li>PocketOS — production database plus three months of backups deleted in nine seconds by an over-confident agent (<a href="https://news.ycombinator.com/item?id=44627536">incident discussion, Hacker News</a>).</li>
-        <li>Amazon — outages including one linked to an internal AI coding tool; SVP Dave Treadwell ordered a 90-day reset on internal code controls (<a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Business Insider, March 2026</a>).</li>
-        <li>Faros AI 2026 telemetry — bugs per developer up 54%, incidents per PR up 242.7% on AI-adopting teams (<a href="https://www.faros.ai/blog/ai-coding-tools-telemetry-2026">Faros AI engineering benchmarks, 2026</a>).</li>
+        <li>PocketOS — the founder reported that an AI coding agent deleted a production database and attached backups in seconds; the lesson is authorization and recovery controls, not "better prompts" (<a href="https://zenity.io/blog/current-events/ai-agent-database-deletion-pocketos">Zenity incident analysis, 2026</a>).</li>
+        <li>Amazon — Business Insider reported a 90-day reset of code-change controls after major outages; Amazon said only one reviewed incident was AI-related and not caused directly by generated code, which makes this a code-control example rather than an AI-causality claim (<a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Business Insider, March 2026</a>).</li>
+        <li>Faros AI 2026 telemetry — a vendor report correlates high AI adoption with higher downstream review and quality pressure, including bugs per developer and incidents per PR; treat it as telemetry signal, not causal proof (<a href="https://www.faros.ai/research/ai-acceleration-whiplash">Faros AI engineering report, 2026</a>).</li>
       </ul>
       <p>
         Roam's assurance layer is built on top of that local intelligence

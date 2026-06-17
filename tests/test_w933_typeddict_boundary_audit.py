@@ -74,6 +74,10 @@ APPROVED_TIGHT_DICT_RETURNS: dict[str, str] = {
         "populated only by register_framework_profile(profile) which receives a fully-typed FrameworkProfile dataclass"
     ),
     "plugins/registry.py:get_framework_profiles": ("same registry as get_plugin_framework_profiles (delegated)"),
+    "commands/cmd_pr_replay.py:_default_rehearsal_paths": (
+        "internal str->Path map of rehearsal artifact locations under internal/; not an "
+        "external/parsed boundary — paths are constructed locally, never deserialized"
+    ),
 }
 
 

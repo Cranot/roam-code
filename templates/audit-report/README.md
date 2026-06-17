@@ -54,13 +54,67 @@ evidence questions (Q1-Q8) each engagement answers, and
   sample** (illustrative). The shape `roam pr-replay --tier team`
   produces today. Read this before quoting a paid PR Replay engagement.
 - [`pr-replay-template.md`](pr-replay-template.md) — Markdown skeleton
-  the `roam pr-replay --markdown` renderer mirrors. Drift between this
+  the `roam pr-replay --markdown report.md` renderer mirrors. Drift between this
   template and the rendered output is asserted in
   `tests/test_evidence_pr_replay.py` (`test_pr_replay_emits_markdown`).
 - [`control-mapping-README.md`](control-mapping-README.md) — v1 schema
   reference for the YAML that drives the "Compliance evidence mapping"
   section. Defines the closed `wording_guard` enumeration enforced by
   `tests/test_doc_consistency.py`.
+
+## PR Replay rehearsal workflow
+
+Before publishing live payment links or accepting the first paid PR
+Replay engagement, run one complete dry run on a public repository:
+
+```bash
+roam pr-replay --tier team \
+    --client "Demo Buyer" \
+    --range HEAD~30..HEAD \
+    --rehearsal
+```
+
+`--rehearsal` writes a private packet under
+`internal/engagements/rehearsals/<timestamp>-<client>-<tier>/`:
+
+- `report.md` — buyer-facing Markdown report.
+- `evidence-bundle/evidence.json` — canonical `ChangeEvidence` packet.
+- `evidence-bundle/report.md` — evidence companion report with the
+  coverage banner and limitations section.
+
+Rehearsal mode deliberately skips `.roam/engagements.jsonl` so a dry run
+does not look like a paid buyer engagement.
+
+### Markdown and PDF delivery
+
+Markdown is the source of record. PDF is a delivery convenience:
+
+```bash
+roam pr-replay --tier team \
+    --client "Acme Inc" \
+    --output acme-pr-replay.md \
+    --pdf acme-pr-replay.pdf \
+    --evidence-bundle acme-pr-replay-evidence
+```
+
+The command prefers `pandoc` for PDF rendering and falls back to
+`reportlab` when installed. If neither backend is present, the command
+still writes the Markdown report and evidence bundle; render the PDF on
+a machine with one backend installed, then deliver both Markdown and PDF.
+
+Operator pre-flight:
+
+```bash
+command -v pandoc || python -c "import reportlab"
+roam pr-replay --tier sample \
+    --range HEAD~1..HEAD \
+    --pdf /tmp/pr-replay-smoke.pdf
+file /tmp/pr-replay-smoke.pdf
+```
+
+The smoke PDF should identify as a PDF document. A temporary virtualenv can be
+used for a rehearsal, but paid delivery should use a stable operator
+environment where `pandoc` or `reportlab` is always available to `roam`.
 
 ## How to generate a real Governance report
 

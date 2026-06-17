@@ -159,7 +159,7 @@ test-hardening here yields disproportionate ROI.
 ## 5 · Security & Supply Chain
 
 ### 5.1 Taint findings
-> _from `roam taint --score`_
+> _from `roam taint`_
 
 - Risk score: `{taint_risk_score}` / 100
 - Findings: `{taint_count}` (`{taint_errors}` error / `{taint_warnings}` warning / `{taint_sanitized}` sanitized)

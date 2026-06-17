@@ -279,7 +279,12 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
         max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
         eigen = {v: UG.degree(v) / max_deg for v in UG.nodes}
 
-    clustering = nx.clustering(UG) if len(UG) > 0 else {}
+    # Clustering coefficient is O(n*d^2); guard by size like the sibling centralities
+    # above (betweenness/closeness/eigenvector all size-cap) so a high-degree
+    # 100k-symbol monorepo's `roam index` does not wall-clock in this one call.
+    # clustering_coefficient is a soft signal, so {} (-> 0) is an acceptable
+    # large-graph fallback.
+    clustering = nx.clustering(UG) if 0 < n <= 5000 else {}
 
     def _norm(metric: dict[int, float]) -> dict[int, float]:
         if not metric:
@@ -319,6 +324,21 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     return result
 
 
+_METRICS_EXCLUDED_EDGE_KINDS = frozenset({"pytest_fixture_dep"})
+
+
+def _graph_without_kinds(G: nx.DiGraph, kinds: frozenset[str]) -> nx.DiGraph:
+    """Return a copy of ``G`` with edges of the given kinds removed (nodes kept)."""
+    if not kinds:
+        return G
+    drop = [(u, v) for u, v, k in G.edges(data="kind") if k in kinds]
+    if not drop:
+        return G
+    H = G.copy()
+    H.remove_edges_from(drop)
+    return H
+
+
 def store_metrics(conn: sqlite3.Connection, G: nx.DiGraph) -> int:
     """Compute and persist all graph metrics into the ``graph_metrics`` table.
 
@@ -327,8 +347,16 @@ def store_metrics(conn: sqlite3.Connection, G: nx.DiGraph) -> int:
     if len(G) == 0:
         return 0
 
-    pr = compute_pagerank(G)
-    centrality = compute_centrality(G)
+    # Exclude pytest fixture-dependency edges from importance/centrality: they are
+    # ~20% of all edges and inflate test fixtures into the structural top PageRank
+    # decile, mis-ranking every importance-ordered command (understand/tour/alerts/
+    # rerank). Filter ONLY the metrics input here -- traversal commands (deps/impact/
+    # trace) use build_symbol_graph directly and keep the full graph. All nodes are
+    # preserved, so every symbol still gets a metrics row.
+    G_metrics = _graph_without_kinds(G, _METRICS_EXCLUDED_EDGE_KINDS)
+
+    pr = compute_pagerank(G_metrics)
+    centrality = compute_centrality(G_metrics)
 
     rows = []
     for node in G.nodes:

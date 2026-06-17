@@ -43,7 +43,10 @@ def _resolve_scope_file_ids(conn, scope_paths) -> tuple[set[int], list[str]]:
 def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tuple[list[dict], int]:
     """Apply a first-page per-task cap, then backfill to preserve limit."""
     if limit <= 0:
-        return [], 0
+        # limit <= 0 means "no cap" (0 = all), matching the convention the sibling
+        # list commands honor -- NOT "return nothing". Returning [] here was a silent
+        # false-negative footgun (`roam algo --limit 0` showed zero findings).
+        return list(findings), 0
     if max_per_task <= 0:
         return findings[:limit], 0
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable, Iterator
 
 from .base import LanguageExtractor
 
@@ -244,44 +245,22 @@ class HclExtractor(LanguageExtractor):
         return (True, self._local_key_symbol(line, ln))
 
     def _classify_hcl_block(self, stripped: str, ln: int) -> tuple[str | None, dict | None]:
-        block_type = self._detect_block_type(stripped)
-        if block_type == "block2":
-            return self._classify_block2(stripped, ln)
-        if block_type == "block1":
-            return self._classify_block1(stripped, ln)
-        if block_type == "block0":
-            return self._classify_block0(stripped, ln)
+        m2 = _RE_BLOCK2.match(stripped)
+        if m2:
+            sym = self._block2_symbol(m2.group(1), m2.group(2), m2.group(3), ln)
+            return ("block2", sym)
+        m1 = _RE_BLOCK1.match(stripped)
+        if m1:
+            sym = self._block1_symbol(m1.group(1), m1.group(2), ln)
+            return ("block1", sym)
+        m0 = _RE_BLOCK0.match(stripped)
+        if m0:
+            kw = m0.group(1)
+            if kw == "locals":
+                return ("locals", None)
+            sym = self._block0_symbol(kw, ln)
+            return ("block0", sym)
         return (None, None)
-
-    def _detect_block_type(self, stripped: str) -> str | None:
-        if _RE_BLOCK2.match(stripped):
-            return "block2"
-        if _RE_BLOCK1.match(stripped):
-            return "block1"
-        if _RE_BLOCK0.match(stripped):
-            return "block0"
-        return None
-
-    def _classify_block2(self, stripped: str, ln: int) -> tuple[str, dict | None]:
-        m = _RE_BLOCK2.match(stripped)
-        assert m is not None
-        sym = self._block2_symbol(m.group(1), m.group(2), m.group(3), ln)
-        return ("block2", sym)
-
-    def _classify_block1(self, stripped: str, ln: int) -> tuple[str, dict | None]:
-        m = _RE_BLOCK1.match(stripped)
-        assert m is not None
-        sym = self._block1_symbol(m.group(1), m.group(2), ln)
-        return ("block1", sym)
-
-    def _classify_block0(self, stripped: str, ln: int) -> tuple[str | None, dict | None]:
-        m = _RE_BLOCK0.match(stripped)
-        assert m is not None
-        kw = m.group(1)
-        if kw == "locals":
-            return ("locals", None)
-        sym = self._block0_symbol(kw, ln)
-        return ("block0", sym)
 
     def _local_key_symbol(self, line: str, ln: int) -> dict | None:
         m = _RE_LOCAL_KEY.match(line)
@@ -422,14 +401,12 @@ class HclExtractor(LanguageExtractor):
         for m in _RE_RESOURCE_REF.finditer(line):
             ns = m.group(1).split("_")[0]
             if ns not in _BUILTIN_NAMESPACES:
-                self._add_ref(
-                    m.group(2), ln, current_block, refs, seen
-                )
+                self._add_ref(m.group(2), ln, current_block, refs, seen)
 
     def _add_refs_of_type(
         self,
-        matches,
-        extract_name,
+        matches: Iterator[re.Match[str]],
+        extract_name: Callable[[re.Match[str]], str],
         ln: int,
         current_block: str | None,
         refs: list[dict],

@@ -304,6 +304,84 @@ def _sort_by_importance(items: list) -> tuple[list, bool]:
         return items, False
 
 
+def _copy_envelope_mutable(data: dict) -> dict:
+    """Shallow-copy envelope; nested dicts and lists get a one-level mutable copy."""
+    result: dict = {}
+    for k, v in data.items():
+        if isinstance(v, dict):
+            result[k] = dict(v)
+        elif isinstance(v, list):
+            result[k] = list(v)
+        else:
+            result[k] = v
+    return result
+
+
+def _presort_list_fields(result: dict, preserved: set) -> bool:
+    """Sort non-preserved list fields by importance in-place. Returns True if any field was sorted."""
+    any_sorted = False
+    for key, value in list(result.items()):
+        if key in preserved:
+            continue
+        if isinstance(value, list):
+            sorted_val, was_sorted = _sort_by_importance(value)
+            if was_sorted:
+                result[key] = sorted_val
+                any_sorted = True
+    return any_sorted
+
+
+def _cap_lists_to_budget(result: dict, preserved: set, char_limit: int) -> None:
+    """Progressively shrink non-preserved list fields (10→5→3→1) until result fits."""
+    for cap in (10, 5, 3, 1):
+        for key, value in list(result.items()):
+            if key in preserved:
+                continue
+            if isinstance(value, list) and len(value) > cap:
+                result[key] = value[:cap]
+        if len(_json.dumps(result, default=str, sort_keys=True)) <= char_limit:
+            return
+
+
+def _drop_fields_to_budget(result: dict, preserved: set, char_limit: int) -> None:
+    """Drop non-preserved keys one-by-one until result fits within char_limit."""
+    if len(_json.dumps(result, default=str, sort_keys=True)) <= char_limit:
+        return
+    for k in [k for k in result if k not in preserved]:
+        del result[k]
+        if len(_json.dumps(result, default=str, sort_keys=True)) <= char_limit:
+            break
+
+
+def _count_omitted(data: dict, result: dict, preserved: set) -> int:
+    """Count total list items omitted from non-preserved fields."""
+    total = 0
+    for key in data:
+        if key in preserved:
+            continue
+        orig = data.get(key)
+        kept = result.get(key)
+        if isinstance(orig, list):
+            total += len(orig) - (len(kept) if isinstance(kept, list) else 0)
+    return total
+
+
+def _annotate_truncation(
+    result: dict, budget: int, full_json: str, total_omitted: int, importance_sorted: bool
+) -> None:
+    """Stamp truncation metadata onto result[\"summary\"]."""
+    if "summary" not in result or not isinstance(result["summary"], dict):
+        return
+    s = result["summary"]
+    s["truncated"] = True
+    s["budget_tokens"] = budget
+    s["full_output_tokens"] = estimate_tokens(full_json)
+    if total_omitted > 0:
+        s["omitted_low_importance_nodes"] = total_omitted
+    if importance_sorted:
+        s["kept_highest_importance"] = True
+
+
 def budget_truncate_json(data: dict, budget: int) -> dict:
     """Truncate a JSON envelope intelligently within a token budget.
 
@@ -336,17 +414,6 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     if len(full_json) <= char_limit:
         return data
 
-    # Deep copy to avoid mutating the original
-    result: dict = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            result[k] = dict(v)
-        elif isinstance(v, list):
-            result[k] = list(v)
-        else:
-            result[k] = v
-
-    # Fields that must never be truncated
     preserved = {
         "command",
         "summary",
@@ -357,63 +424,12 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
         "_meta",
     }
 
-    # Sort list fields by importance before truncation so the most
-    # important items survive progressive shrinking.
-    any_importance_sorted = False
-    for key, value in list(result.items()):
-        if key in preserved:
-            continue
-        if isinstance(value, list):
-            sorted_val, was_sorted = _sort_by_importance(value)
-            if was_sorted:
-                result[key] = sorted_val
-                any_importance_sorted = True
-
-    # Track how many items we omit across all list fields
-    total_omitted = 0
-
-    # Progressively shrink list fields until we fit
-    # Start by keeping 10, then 5, then 3, then 1 item(s)
-    for cap in (10, 5, 3, 1):
-        for key, value in list(result.items()):
-            if key in preserved:
-                continue
-            if isinstance(value, list) and len(value) > cap:
-                result[key] = value[:cap]
-
-        test_json = _json.dumps(result, default=str, sort_keys=True)
-        if len(test_json) <= char_limit:
-            break
-
-    # If still too large, drop non-preserved keys entirely
-    test_json = _json.dumps(result, default=str, sort_keys=True)
-    if len(test_json) > char_limit:
-        drop_keys = [k for k in list(result.keys()) if k not in preserved]
-        for k in drop_keys:
-            del result[k]
-            test_json = _json.dumps(result, default=str, sort_keys=True)
-            if len(test_json) <= char_limit:
-                break
-
-    # Count total omitted items across all truncated list fields
-    for key in data:
-        if key in preserved:
-            continue
-        orig = data.get(key)
-        kept = result.get(key)
-        if isinstance(orig, list):
-            kept_len = len(kept) if isinstance(kept, list) else 0
-            total_omitted += len(orig) - kept_len
-
-    # Annotate summary with truncation metadata
-    if "summary" in result and isinstance(result["summary"], dict):
-        result["summary"]["truncated"] = True
-        result["summary"]["budget_tokens"] = budget
-        result["summary"]["full_output_tokens"] = estimate_tokens(full_json)
-        if total_omitted > 0:
-            result["summary"]["omitted_low_importance_nodes"] = total_omitted
-        if any_importance_sorted:
-            result["summary"]["kept_highest_importance"] = True
+    result = _copy_envelope_mutable(data)
+    importance_sorted = _presort_list_fields(result, preserved)
+    _cap_lists_to_budget(result, preserved, char_limit)
+    _drop_fields_to_budget(result, preserved, char_limit)
+    total_omitted = _count_omitted(data, result, preserved)
+    _annotate_truncation(result, budget, full_json, total_omitted, importance_sorted)
 
     return result
 
@@ -820,6 +836,97 @@ def _truncate_fact(fact: str, limit: int = _AGENT_CONTRACT_STR_TRUNCATE) -> str:
     return head.rstrip() + "..."
 
 
+def _is_fact_eligible_key(key: str, value: object) -> bool:
+    """Return True iff this summary key/value pair should emit a concrete-noun fact.
+
+    LAW 4 (CLAUDE.md): only numeric values anchored on non-metadata keys
+    become facts. Leading-underscore, skip-list, bool, and sidecar
+    definition/distribution keys are all excluded.
+    """
+    if key in _AGENT_CONTRACT_FACT_SKIP_KEYS:
+        return False
+    # Leading-underscore keys are private metadata: ``_meta``, ``_trace``,
+    # any future internal annotation.
+    if key.startswith("_"):
+        return False
+    if isinstance(value, bool):
+        return False
+    if key.endswith("_definition") or key.endswith("_distribution"):
+        return False
+    return isinstance(value, (int, float))
+
+
+def _extract_facts_from_summary(summary: dict) -> list[str]:
+    """Extract verdict + numeric-count facts from *summary* for ``agent_contract.facts``.
+
+    LAW 4 (CLAUDE.md): humanize ``critical: 5`` → ``"5 critical findings"``.
+    State / metadata keys stay in ``summary`` but never pollute ``facts``
+    (abstract state-machine annotations, not concrete-noun analytical claims).
+    Dict/list values are skipped — they aren't auto-summarizable.
+    """
+    facts: list[str] = []
+    verdict = summary.get("verdict")
+    if isinstance(verdict, str) and verdict:
+        facts.append(_truncate_fact(verdict))
+    for key, value in summary.items():
+        if _is_fact_eligible_key(key, value):
+            facts.append(_truncate_fact(_humanize_summary_fact(key, value)))
+            if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
+                break
+    return facts
+
+
+def _collect_risk_strings(items: list, max_count: int) -> list[str]:
+    """Collect up to *max_count* risk strings from *items*, skipping all-clear entries.
+
+    CONSTRAINT 7 (CLAUDE.md): risks[] names SURVIVING risks only — findings
+    whose severity says all-clear (ok/info/pass/none) are filtered out so an
+    all-clear integrity sweep yields an empty risks[], not three "(ok)" lines.
+    """
+    risks: list[str] = []
+    for item in items:
+        if _is_non_risk_item(item):
+            continue
+        risks.append(_truncate_fact(_stringify_risk_item(item)))
+        if len(risks) >= max_count:
+            break
+    return risks
+
+
+def _extract_risks_from_envelope(out: dict) -> list[str]:
+    """Extract surviving risks from *out* for ``agent_contract.risks``.
+
+    First non-empty list among the conventional risk keys wins.
+    """
+    for key in _RISK_KEYS:
+        items = out.get(key)
+        if isinstance(items, list) and items:
+            return _collect_risk_strings(items, _AGENT_CONTRACT_MAX_RISKS)
+    return []
+
+
+def _extract_next_commands(out: dict, summary: dict) -> list[str]:
+    """Extract next commands from *out*/*summary* for ``agent_contract.next_commands``.
+
+    Tries the structured ``next_steps`` payload first, then falls back to
+    ``summary.next_commands`` as a less-formal alternative.
+    """
+    next_commands: list[str] = []
+    next_source = out.get("next_steps")
+    if not isinstance(next_source, list):
+        next_source = summary.get("next_commands")
+    if not isinstance(next_source, list):
+        return next_commands
+    for step in next_source[:_AGENT_CONTRACT_MAX_NEXT]:
+        if isinstance(step, dict):
+            cmd = step.get("command") or step.get("cmd") or step.get("action") or ""
+        else:
+            cmd = str(step)
+        if cmd:
+            next_commands.append(_truncate_fact(cmd))
+    return next_commands
+
+
 def _derive_agent_contract(out: dict, summary: dict) -> dict:
     """Build the bounded ``agent_contract`` derived block.
 
@@ -828,76 +935,14 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
     requiring per-command opt-in. Agents on tight context budgets can
     read just this dict; full-payload consumers ignore it.
     """
-    facts: list[str] = []
-    risks: list[str] = []
-    next_commands: list[str] = []
-    confidence: float | None = None
-
-    verdict = summary.get("verdict")
-    if isinstance(verdict, str) and verdict:
-        facts.append(_truncate_fact(verdict))
-
-    # Numeric counts / scores from summary become concrete-noun facts.
-    # LAW 4 (CLAUDE.md): humanize ``critical: 5`` → ``"5 critical
-    # findings"``. State / metadata keys (state, partial_success, etc.)
-    # stay in ``summary`` but do NOT pollute ``facts``. Dict/list values
-    # are skipped — they aren't auto-summarizable.
-    for key, value in summary.items():
-        if key in _AGENT_CONTRACT_FACT_SKIP_KEYS:
-            continue
-        # Convention: leading-underscore keys are private metadata; never
-        # surface them as user-facing facts. Covers ``_meta``, ``_trace``,
-        # and any future internal annotation.
-        if key.startswith("_"):
-            continue
-        if isinstance(value, bool):
-            continue
-        if key.endswith("_definition") or key.endswith("_distribution"):
-            continue
-        if isinstance(value, (int, float)):
-            facts.append(_truncate_fact(_humanize_summary_fact(key, value)))
-            if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
-                break
-
-    # Risks — first non-empty list among the conventional risk keys.
-    # ``risks[]`` names SURVIVING risks (CLAUDE.md CONSTRAINT 7), so a
-    # finding whose severity says "nothing wrong" (``ok`` / ``info`` /
-    # ``pass`` / ``none``) is filtered out — an all-clear integrity
-    # sweep should yield an empty ``risks[]``, not three "(ok)" lines.
-    for key in _RISK_KEYS:
-        items = out.get(key)
-        if isinstance(items, list) and items:
-            for item in items:
-                if _is_non_risk_item(item):
-                    continue
-                risks.append(_truncate_fact(_stringify_risk_item(item)))
-                if len(risks) >= _AGENT_CONTRACT_MAX_RISKS:
-                    break
-            break
-
-    # Confidence — pull from summary; either 0..1 float or a 0..100 int.
     raw_conf = summary.get("confidence")
-    if isinstance(raw_conf, (int, float)) and not isinstance(raw_conf, bool):
-        confidence = float(raw_conf)
-
-    # Next steps — try the structured ``next_steps`` payload first,
-    # then ``summary.next_commands`` as a less-formal fallback.
-    next_source = out.get("next_steps")
-    if not isinstance(next_source, list):
-        next_source = summary.get("next_commands")
-    if isinstance(next_source, list):
-        for step in next_source[:_AGENT_CONTRACT_MAX_NEXT]:
-            if isinstance(step, dict):
-                cmd = step.get("command") or step.get("cmd") or step.get("action") or ""
-            else:
-                cmd = str(step)
-            if cmd:
-                next_commands.append(_truncate_fact(cmd))
-
+    confidence: float | None = (
+        float(raw_conf) if isinstance(raw_conf, (int, float)) and not isinstance(raw_conf, bool) else None
+    )
     return {
-        "facts": facts,
-        "risks": risks,
-        "next_commands": next_commands,
+        "facts": _extract_facts_from_summary(summary),
+        "risks": _extract_risks_from_envelope(out),
+        "next_commands": _extract_next_commands(out, summary),
         "confidence": confidence,
     }
 
@@ -1154,8 +1199,32 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
 
     if budget > 0:
         out = budget_truncate_json(out, budget)
+    else:
+        # Pattern-6 default bounding (E1/N3): budget 0 ("no cap") historically let
+        # high-fanout commands (uses/clones/path-coverage) emit 56K-224KB JSON --
+        # over roam's own 20K-token mandate and worse than `grep -rl`. Cap ONLY
+        # genuinely-oversized envelopes so normal (<cap) output stays byte-identical
+        # and prompt-cache-stable. Override via ROAM_DEFAULT_JSON_BUDGET (0 disables).
+        _cap = _default_json_budget()
+        if _cap and out.get("_meta", {}).get("response_tokens", 0) > _cap:
+            out = budget_truncate_json(out, _cap)
 
     return out
+
+
+def _default_json_budget() -> int:
+    """Default token cap for oversized JSON envelopes when no explicit ``--budget``
+    is given. Returns 0 to disable. High enough that normal command output is
+    untouched (byte-identical); it only bounds the Pattern-6 blowouts
+    (``uses``/``clones``/``path-coverage``). Tunable via ``ROAM_DEFAULT_JSON_BUDGET``."""
+    # Validate without a silent except (loud-fallback discipline,
+    # test_loud_fallback_no_new_silent_except): only an all-digit value
+    # (optionally signed) is a valid override; anything else falls through to
+    # the default rather than being swallowed.
+    raw = (os.environ.get("ROAM_DEFAULT_JSON_BUDGET") or "").strip()
+    if raw.lstrip("-").isdigit():
+        return max(0, int(raw))
+    return 20000
 
 
 def _get_version() -> str:

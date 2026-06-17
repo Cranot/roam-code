@@ -172,6 +172,84 @@ def _pattern_signal(commits: list[dict]) -> tuple[float, int, int]:
 # ---------------------------------------------------------------------------
 
 
+_COMMENT_MARKERS = ("#", "//", "/*", "*", "<!--", "--", ";", "%")
+_COMMENT_SAMPLE_LIMIT = 200
+
+
+def _comment_density_rows(conn, file_ids: list[int] | None = None):
+    if not file_ids:
+        return conn.execute("SELECT id, path, line_count FROM files WHERE line_count > 0").fetchall()
+
+    sample_ids = file_ids[:_COMMENT_SAMPLE_LIMIT]
+    placeholders = ",".join("?" for _ in sample_ids)
+    return conn.execute(
+        f"SELECT id, path, line_count FROM files WHERE line_count > 0 AND id IN ({placeholders})",
+        tuple(sample_ids),
+    ).fetchall()
+
+
+def _code_comment_counts(text: str) -> tuple[int, int]:
+    comment_count = 0
+    code_lines = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        code_lines += 1
+        if any(stripped.startswith(marker) for marker in _COMMENT_MARKERS):
+            comment_count += 1
+    return code_lines, comment_count
+
+
+def _file_comment_density(project_root, row) -> tuple[int, float] | None:
+    total_lines = row["line_count"] or 0
+    if total_lines < 5:
+        return None
+
+    try:
+        text = (project_root / row["path"]).read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    code_lines, comment_count = _code_comment_counts(text)
+    if code_lines < 5:
+        return None
+    return row["id"], comment_count / code_lines
+
+
+def _sample_comment_densities(conn, file_ids: list[int] | None = None) -> list[float]:
+    project_root = find_project_root()
+    densities: list[float] = []
+    for row in _comment_density_rows(conn, file_ids)[:_COMMENT_SAMPLE_LIMIT]:
+        sample = _file_comment_density(project_root, row)
+        if sample is not None:
+            _file_id, density = sample
+            densities.append(density)
+    return densities
+
+
+def _median(values: list[float]) -> float:
+    sorted_values = sorted(values)
+    return sorted_values[len(sorted_values) // 2]
+
+
+def _median_absolute_deviation(values: list[float], median: float) -> float:
+    mad = sorted(abs(value - median) for value in values)[len(values) // 2]
+    return max(mad, 0.001)
+
+
+def _anomalous_density_count(densities: list[float], median: float, mad: float) -> int:
+    return sum(1 for density in densities if abs(0.6745 * (density - median) / mad) > 3.5)
+
+
+def _density_anomaly_score(anomalous_ratio: float) -> float:
+    if anomalous_ratio < 0.03:
+        return 0.0
+    if anomalous_ratio > 0.25:
+        return 1.0
+    return (anomalous_ratio - 0.03) / (0.25 - 0.03)
+
+
 def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[float, int]:
     """Score [0, 1] from comment density anomaly across files.
 
@@ -181,80 +259,15 @@ def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[fl
 
     Returns (score, anomalous_file_count).
     """
-    # Get line counts from files table
-    rows = conn.execute("SELECT id, path, line_count FROM files WHERE line_count > 0").fetchall()
-    if not rows:
-        return 0.0, 0
-
-    # We measure comment density from the file_stats or by simple heuristic:
-    # use the lines stored in DB.  Since we lack a dedicated comment_ratio
-    # column, we read files and compute ratios on-the-fly (limited sample).
-    # For efficiency, use cognitive_load or complexity as proxy.
-    # Actually, let's use the file on disk if available.
-    project_root = find_project_root()
-    densities: list[float] = []
-    file_density_map: dict[int, float] = {}
-
-    _COMMENT_MARKERS = ("#", "//", "/*", "*", "<!--", "--", ";", "%")
-    sample_limit = 200  # limit disk reads for large codebases
-
-    for i, row in enumerate(rows):
-        if i >= sample_limit:
-            break
-        fid = row["id"]
-        path = row["path"]
-        total_lines = row["line_count"] or 0
-        if total_lines < 5:
-            continue
-        full_path = project_root / path
-        try:
-            text = full_path.read_text(encoding="utf-8", errors="replace")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        comment_count = 0
-        code_lines = 0
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            code_lines += 1
-            if any(stripped.startswith(m) for m in _COMMENT_MARKERS):
-                comment_count += 1
-
-        if code_lines < 5:
-            continue
-        density = comment_count / code_lines
-        densities.append(density)
-        file_density_map[fid] = density
-
+    densities = _sample_comment_densities(conn, file_ids)
     if len(densities) < 5:
         return 0.0, 0
 
-    # Compute median and MAD (Median Absolute Deviation)
-    sorted_d = sorted(densities)
-    n = len(sorted_d)
-    median = sorted_d[n // 2]
-    mad = sorted(abs(d - median) for d in sorted_d)[n // 2]
-    if mad < 0.001:
-        mad = 0.001  # avoid division by zero
-
-    # Files with modified z-score > 3.5 are anomalous
-    anomalous = 0
-    for d in densities:
-        z = 0.6745 * (d - median) / mad
-        if abs(z) > 3.5:
-            anomalous += 1
-
+    median = _median(densities)
+    mad = _median_absolute_deviation(densities, median)
+    anomalous = _anomalous_density_count(densities, median, mad)
     anomalous_ratio = anomalous / len(densities)
-    # Map: 0-3% anomalous is normal, 3-20% is suspicious
-    if anomalous_ratio < 0.03:
-        score = 0.0
-    elif anomalous_ratio > 0.25:
-        score = 1.0
-    else:
-        score = (anomalous_ratio - 0.03) / (0.25 - 0.03)
-    return score, anomalous
+    return _density_anomaly_score(anomalous_ratio), anomalous
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +277,47 @@ def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[fl
 _BURST_WINDOW_SECONDS = 600  # 10-minute window for burst detection
 _MIN_BURST_COMMITS = 3  # at least 3 commits in window to qualify
 _REGULARITY_THRESHOLD = 0.15  # coefficient of variation threshold for bot-like
+
+
+def _commit_timestamps(commits: list[dict]) -> list[int]:
+    return [commit.get("timestamp", 0) for commit in sorted(commits, key=lambda c: c.get("timestamp", 0))]
+
+
+def _burst_session_count(timestamps: list[int]) -> int:
+    burst_sessions = 0
+    i = 0
+    while i < len(timestamps):
+        window_end = timestamps[i] + _BURST_WINDOW_SECONDS
+        j = i + 1
+        while j < len(timestamps) and timestamps[j] <= window_end:
+            j += 1
+        if j - i >= _MIN_BURST_COMMITS:
+            burst_sessions += 1
+            i = j
+        else:
+            i += 1
+    return burst_sessions
+
+
+def _positive_intervals(timestamps: list[int]) -> list[float]:
+    return [
+        float(timestamps[i] - timestamps[i - 1])
+        for i in range(1, len(timestamps))
+        if timestamps[i] - timestamps[i - 1] > 0
+    ]
+
+
+def _regularity_score(intervals: list[float]) -> float:
+    if len(intervals) < 5:
+        return 0.0
+    mean_iv = sum(intervals) / len(intervals)
+    if mean_iv <= 0:
+        return 0.0
+    std_iv = math.sqrt(sum((x - mean_iv) ** 2 for x in intervals) / len(intervals))
+    cv = std_iv / mean_iv
+    if cv >= _REGULARITY_THRESHOLD:
+        return 0.0
+    return 1.0 - (cv / _REGULARITY_THRESHOLD)
 
 
 def _temporal_signal(commits: list[dict]) -> tuple[float, int]:
@@ -278,54 +332,74 @@ def _temporal_signal(commits: list[dict]) -> tuple[float, int]:
     if len(commits) < 3:
         return 0.0, 0
 
-    # Sort by timestamp
-    sorted_commits = sorted(commits, key=lambda c: c.get("timestamp", 0))
-    timestamps = [c.get("timestamp", 0) for c in sorted_commits]
-
-    # Detect burst sessions (clusters of commits within _BURST_WINDOW_SECONDS)
-    burst_sessions = 0
-    i = 0
-    while i < len(timestamps):
-        window_end = timestamps[i] + _BURST_WINDOW_SECONDS
-        j = i + 1
-        while j < len(timestamps) and timestamps[j] <= window_end:
-            j += 1
-        cluster_size = j - i
-        if cluster_size >= _MIN_BURST_COMMITS:
-            burst_sessions += 1
-            i = j  # skip past the cluster
-        else:
-            i += 1
-
-    # Detect regularity: compute coefficient of variation of inter-commit intervals
-    intervals = []
-    for i in range(1, len(timestamps)):
-        dt = timestamps[i] - timestamps[i - 1]
-        if dt > 0:  # ignore zero-interval duplicates
-            intervals.append(float(dt))
-
-    regularity_score = 0.0
-    if len(intervals) >= 5:
-        mean_iv = sum(intervals) / len(intervals)
-        if mean_iv > 0:
-            std_iv = math.sqrt(sum((x - mean_iv) ** 2 for x in intervals) / len(intervals))
-            cv = std_iv / mean_iv
-            # Very low CV (<0.15) suggests bot-like regularity
-            if cv < _REGULARITY_THRESHOLD:
-                regularity_score = 1.0 - (cv / _REGULARITY_THRESHOLD)
-
-    # Burst ratio: fraction of commits that are in burst sessions
+    timestamps = _commit_timestamps(commits)
+    burst_sessions = _burst_session_count(timestamps)
+    regularity = _regularity_score(_positive_intervals(timestamps))
     burst_ratio = burst_sessions / max(1, len(timestamps) // _MIN_BURST_COMMITS)
     burst_ratio = min(burst_ratio, 1.0)
 
-    # Combine: max of burst and regularity signals
-    score = max(burst_ratio * 0.7, regularity_score * 0.3)
+    score = max(burst_ratio * 0.7, regularity * 0.3)
     return min(score, 1.0), burst_sessions
 
 
 # ---------------------------------------------------------------------------
 # Per-file AI probability
 # ---------------------------------------------------------------------------
+
+
+def _empty_file_score() -> dict:
+    return {"scores": [], "reasons": set()}
+
+
+def _score_file_change(
+    commit_message: str, file_change: dict, is_co_authored: bool, is_burst: bool
+) -> tuple[float, set[str]]:
+    score = 0.0
+    reasons: set[str] = set()
+    if is_co_authored:
+        score += 0.5
+        reasons.add("co-author tag")
+    if is_burst and file_change["lines_added"] > 50:
+        score += 0.3
+        reasons.add("burst add")
+    if _has_ai_message_pattern(commit_message):
+        score += 0.1
+        reasons.add("AI-style message")
+    return min(score, 1.0), reasons
+
+
+def _record_file_score(file_scores: dict[str, dict], path: str, score: float, reasons: set[str]) -> None:
+    entry = file_scores.setdefault(path, _empty_file_score())
+    entry["scores"].append(score)
+    entry["reasons"].update(reasons)
+
+
+def _accumulate_file_scores(commits: list[dict]) -> dict[str, dict]:
+    file_scores: dict[str, dict] = {}
+    for commit in commits:
+        message = commit.get("message", "")
+        is_co_authored = _has_co_author_tag(message)
+        is_burst = _is_burst_add(commit)
+        for file_change in commit["files"]:
+            score, reasons = _score_file_change(message, file_change, is_co_authored, is_burst)
+            _record_file_score(file_scores, file_change["path"], score, reasons)
+    return file_scores
+
+
+def _file_probability_result(path: str, data: dict) -> dict | None:
+    if not data["scores"]:
+        return None
+
+    avg = sum(data["scores"]) / len(data["scores"])
+    peak = max(data["scores"])
+    probability = 0.6 * peak + 0.4 * avg
+    if probability <= 0.05:
+        return None
+    return {
+        "path": path,
+        "probability": round(probability, 2),
+        "reasons": sorted(data["reasons"]),
+    }
 
 
 def _per_file_probability(
@@ -337,51 +411,9 @@ def _per_file_probability(
     Returns a list of dicts sorted by probability descending:
         [{"path": str, "probability": float, "reasons": [str]}, ...]
     """
-    file_scores: dict[str, dict] = {}  # path -> {"scores": [], "reasons": set}
-
-    for c in commits:
-        msg = c.get("message", "")
-        is_co_authored = _has_co_author_tag(msg)
-        is_burst = _is_burst_add(c)
-
-        for f in c["files"]:
-            path = f["path"]
-            if path not in file_scores:
-                file_scores[path] = {"scores": [], "reasons": set()}
-
-            entry = file_scores[path]
-            score = 0.0
-            if is_co_authored:
-                score += 0.5
-                entry["reasons"].add("co-author tag")
-            if is_burst:
-                added = f["lines_added"]
-                if added > 50:
-                    score += 0.3
-                    entry["reasons"].add("burst add")
-            if _has_ai_message_pattern(msg):
-                score += 0.1
-                entry["reasons"].add("AI-style message")
-            entry["scores"].append(min(score, 1.0))
-
-    results = []
-    for path, data in file_scores.items():
-        if not data["scores"]:
-            continue
-        # Use max score across commits (any strong signal counts)
-        avg = sum(data["scores"]) / len(data["scores"])
-        peak = max(data["scores"])
-        # Weighted: 60% peak + 40% average
-        prob = 0.6 * peak + 0.4 * avg
-        if prob > 0.05:  # only include files with non-trivial probability
-            results.append(
-                {
-                    "path": path,
-                    "probability": round(prob, 2),
-                    "reasons": sorted(data["reasons"]),
-                }
-            )
-
+    file_scores = _accumulate_file_scores(commits)
+    results = [_file_probability_result(path, data) for path, data in file_scores.items()]
+    results = [result for result in results if result is not None]
     results.sort(key=lambda r: r["probability"], reverse=True)
     return results
 
@@ -389,6 +421,44 @@ def _per_file_probability(
 # ---------------------------------------------------------------------------
 # Trend calculation
 # ---------------------------------------------------------------------------
+
+
+def _trend_segments(commits: list[dict]) -> list[list[dict]]:
+    sorted_commits = sorted(commits, key=lambda c: c.get("timestamp", 0))
+    third = len(sorted_commits) // 3
+    return [
+        sorted_commits[:third],
+        sorted_commits[third : 2 * third],
+        sorted_commits[2 * third :],
+    ]
+
+
+def _segment_ai_count(segment: list[dict]) -> int:
+    return sum(1 for commit in segment if _has_co_author_tag(commit.get("message", "")) or _is_burst_add(commit))
+
+
+def _trend_data_point(segment: list[dict], now: int) -> dict:
+    ai_count = _segment_ai_count(segment)
+    ratio = ai_count / len(segment)
+    ts = segment[len(segment) // 2].get("timestamp", 0)
+    days_ago = (now - ts) // 86400 if now > ts else 0
+    return {
+        "days_ago": days_ago,
+        "ai_ratio": round(ratio, 2),
+        "commits": len(segment),
+    }
+
+
+def _trend_direction(data_points: list[dict]) -> str:
+    if len(data_points) < 2:
+        return "insufficient-data"
+
+    delta = data_points[-1]["ai_ratio"] - data_points[0]["ai_ratio"]
+    if delta > 0.05:
+        return "increasing"
+    if delta < -0.05:
+        return "decreasing"
+    return "stable"
 
 
 def _compute_trend(commits: list[dict], now: int) -> dict:
@@ -400,46 +470,8 @@ def _compute_trend(commits: list[dict], now: int) -> dict:
     if len(commits) < 6:
         return {"direction": "insufficient-data", "data_points": []}
 
-    sorted_c = sorted(commits, key=lambda c: c.get("timestamp", 0))
-    third = len(sorted_c) // 3
-    segments = [
-        sorted_c[:third],
-        sorted_c[third : 2 * third],
-        sorted_c[2 * third :],
-    ]
-
-    data_points = []
-    for seg in segments:
-        if not seg:
-            continue
-        # Simple AI ratio per segment based on co-author + burst signals
-        ai_count = sum(1 for c in seg if _has_co_author_tag(c.get("message", "")) or _is_burst_add(c))
-        ratio = ai_count / len(seg) if seg else 0.0
-        ts = seg[len(seg) // 2].get("timestamp", 0)
-        days_ago = (now - ts) // 86400 if now > ts else 0
-        data_points.append(
-            {
-                "days_ago": days_ago,
-                "ai_ratio": round(ratio, 2),
-                "commits": len(seg),
-            }
-        )
-
-    # Determine direction
-    if len(data_points) >= 2:
-        first_ratio = data_points[0]["ai_ratio"]
-        last_ratio = data_points[-1]["ai_ratio"]
-        delta = last_ratio - first_ratio
-        if delta > 0.05:
-            direction = "increasing"
-        elif delta < -0.05:
-            direction = "decreasing"
-        else:
-            direction = "stable"
-    else:
-        direction = "insufficient-data"
-
-    return {"direction": direction, "data_points": data_points}
+    data_points = [_trend_data_point(segment, now) for segment in _trend_segments(commits) if segment]
+    return {"direction": _trend_direction(data_points), "data_points": data_points}
 
 
 # ---------------------------------------------------------------------------
@@ -447,15 +479,7 @@ def _compute_trend(commits: list[dict], now: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_full_messages(hashes: list[str], project_root) -> dict[str, str]:
-    """Fetch full commit messages (subject + body) from git.
-
-    The DB only stores subject lines (%s), but co-author tags live in the
-    body.  This function runs ``git log --format=%H%n%B`` to retrieve full
-    messages and returns a ``{hash: full_message}`` mapping.
-    """
-    if not hashes:
-        return {}
+def _run_full_message_log(hashes: list[str], project_root):
     try:
         result = subprocess.run(
             ["git", "log", "--format=COMMIT:%H%n%B", "--no-walk", "--stdin"],
@@ -467,28 +491,45 @@ def _fetch_full_messages(hashes: list[str], project_root) -> dict[str, str]:
             encoding="utf-8",
             errors="replace",
         )
-        if result.returncode != 0:
-            return {}
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return {}
+        return None
+    return result if result.returncode == 0 else None
 
+
+def _store_commit_message(messages: dict[str, str], commit_hash: str | None, lines: list[str]) -> None:
+    if commit_hash is not None:
+        messages[commit_hash] = "\n".join(lines)
+
+
+def _parse_full_messages(stdout: str) -> dict[str, str]:
     messages: dict[str, str] = {}
     current_hash: str | None = None
     current_lines: list[str] = []
 
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.startswith("COMMIT:"):
-            if current_hash is not None:
-                messages[current_hash] = "\n".join(current_lines)
+            _store_commit_message(messages, current_hash, current_lines)
             current_hash = line[7:].strip()
             current_lines = []
-        else:
-            current_lines.append(line)
+            continue
+        current_lines.append(line)
 
-    if current_hash is not None:
-        messages[current_hash] = "\n".join(current_lines)
-
+    _store_commit_message(messages, current_hash, current_lines)
     return messages
+
+
+def _fetch_full_messages(hashes: list[str], project_root) -> dict[str, str]:
+    """Fetch full commit messages (subject + body) from git.
+
+    The DB only stores subject lines (%s), but co-author tags live in the
+    body.  This function runs ``git log --format=%H%n%B`` to retrieve full
+    messages and returns a ``{hash: full_message}`` mapping.
+    """
+    if not hashes:
+        return {}
+
+    result = _run_full_message_log(hashes, project_root)
+    return _parse_full_messages(result.stdout) if result is not None else {}
 
 
 def _get_commits_from_db(conn, since_days: int) -> list[dict]:
@@ -646,6 +687,131 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
     }
 
 
+def _ai_ratio_verdict(result: dict) -> str:
+    ai_pct = round(result["ai_ratio"] * 100)
+    confidence = result["confidence"]
+    return f"~{ai_pct}% estimated AI-generated code (confidence: {confidence})"
+
+
+def _ai_ratio_json_payload(result: dict, verdict: str, since: int) -> dict:
+    confidence = result["confidence"]
+    return json_envelope(
+        "ai-ratio",
+        summary={
+            "verdict": verdict,
+            "ai_ratio": result["ai_ratio"],
+            "confidence": confidence,
+            "commits_analyzed": result["commits_analyzed"],
+        },
+        ai_ratio=result["ai_ratio"],
+        confidence=confidence,
+        commits_analyzed=result["commits_analyzed"],
+        since_days=since,
+        signals=result["signals"],
+        top_ai_files=result["top_ai_files"][:20],
+        trend=result["trend"],
+    )
+
+
+def _emit_gini_signal(signals: dict) -> None:
+    gini = signals["gini"]
+    click.echo(f"  Change concentration (Gini): {gini['raw_value']:.2f} -> suggests {round(gini['score'] * 100)}% AI")
+
+
+def _emit_burst_signal(signals: dict) -> None:
+    burst = signals["burst_additions"]
+    total_commits = max(burst["total_commits"], 1)
+    burst_pct = round(burst["burst_commits"] / total_commits * 100)
+    click.echo(
+        f"  Burst additions: {burst['burst_commits']}/{burst['total_commits']} commits "
+        f"({burst_pct}%) are burst-adds -> suggests {round(burst['score'] * 100)}% AI"
+    )
+
+
+def _emit_pattern_signal(signals: dict) -> None:
+    patterns = signals["commit_patterns"]
+    click.echo(f"  Commit patterns: {patterns['co_author_count']} commits with AI co-author tags")
+    if patterns["ai_pattern_count"]:
+        click.echo(f"    {patterns['ai_pattern_count']} with AI-style message patterns")
+
+
+def _emit_comment_density_signal(signals: dict) -> None:
+    density = signals["comment_density"]
+    click.echo(f"  Comment density: {density['anomalous_files']} files with anomalous density")
+
+
+def _emit_temporal_signal(signals: dict) -> None:
+    temporal = signals["temporal"]
+    click.echo(f"  Temporal patterns: {temporal['burst_sessions']} burst sessions detected")
+
+
+def _emit_signal_lines(signals: dict) -> None:
+    click.echo("SIGNALS:")
+    _emit_gini_signal(signals)
+    _emit_burst_signal(signals)
+    _emit_pattern_signal(signals)
+    _emit_comment_density_signal(signals)
+    _emit_temporal_signal(signals)
+
+
+def _top_file_limit(detail: bool) -> int:
+    return 20 if detail else 10
+
+
+def _format_top_file_line(file_info: dict) -> str:
+    reasons = ", ".join(file_info["reasons"]) if file_info["reasons"] else "heuristic"
+    probability = round(file_info["probability"] * 100)
+    return f"  {file_info['path']:<60s} ({probability}% AI probability -- {reasons})"
+
+
+def _emit_more_top_files_hint(top_files: list[dict], limit: int) -> None:
+    remaining = len(top_files) - limit
+    if remaining > 0:
+        click.echo(f"  (+{remaining} more, use --detail to see all)")
+
+
+def _emit_top_ai_files(top_files: list[dict], detail: bool) -> None:
+    if not top_files:
+        return
+
+    click.echo()
+    limit = _top_file_limit(detail)
+    click.echo("TOP AI-LIKELY FILES:")
+    for file_info in top_files[:limit]:
+        click.echo(_format_top_file_line(file_info))
+    _emit_more_top_files_hint(top_files, limit)
+
+
+def _trend_is_renderable(trend: dict) -> bool:
+    return trend["direction"] != "insufficient-data" and bool(trend["data_points"])
+
+
+def _format_trend_point(point: dict) -> str:
+    return f"{round(point['ai_ratio'] * 100)}% ({point['days_ago']}d ago)"
+
+
+def _emit_ai_ratio_trend(trend: dict) -> None:
+    if not _trend_is_renderable(trend):
+        return
+
+    click.echo()
+    parts = [_format_trend_point(point) for point in trend["data_points"]]
+    click.echo(f"TREND: AI ratio {trend['direction']} -- " + " -> ".join(parts))
+
+
+def _emit_ai_ratio_text(result: dict, verdict: str, detail: bool) -> None:
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
+
+    if result["commits_analyzed"] == 0:
+        click.echo("No commits found in the specified time range.")
+        return
+
+    _emit_signal_lines(result["signals"])
+    _emit_top_ai_files(result["top_ai_files"], detail)
+    _emit_ai_ratio_trend(result["trend"])
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -679,90 +845,15 @@ def ai_ratio(ctx, since, detail):
     patterns.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    detail = bool(detail or (ctx.obj.get("detail", False) if ctx.obj else False))
     ensure_index()
 
     with open_db(readonly=True) as conn:
         result = analyse_ai_ratio(conn, since_days=since)
-
-        ai_pct = round(result["ai_ratio"] * 100)
-        confidence = result["confidence"]
-        verdict = f"~{ai_pct}% estimated AI-generated code (confidence: {confidence})"
+        verdict = _ai_ratio_verdict(result)
 
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "ai-ratio",
-                        summary={
-                            "verdict": verdict,
-                            "ai_ratio": result["ai_ratio"],
-                            "confidence": confidence,
-                            "commits_analyzed": result["commits_analyzed"],
-                        },
-                        ai_ratio=result["ai_ratio"],
-                        confidence=confidence,
-                        commits_analyzed=result["commits_analyzed"],
-                        since_days=since,
-                        signals=result["signals"],
-                        top_ai_files=result["top_ai_files"][:20],
-                        trend=result["trend"],
-                    )
-                )
-            )
+            click.echo(to_json(_ai_ratio_json_payload(result, verdict, since)))
             return
 
-        # --- Text output ---
-        click.echo(f"VERDICT: {verdict}")
-        click.echo()
-
-        if result["commits_analyzed"] == 0:
-            click.echo("No commits found in the specified time range.")
-            return
-
-        # Signals section
-        click.echo("SIGNALS:")
-        sig = result["signals"]
-
-        g = sig["gini"]
-        click.echo(f"  Change concentration (Gini): {g['raw_value']:.2f} -> suggests {round(g['score'] * 100)}% AI")
-
-        b = sig["burst_additions"]
-        click.echo(
-            f"  Burst additions: {b['burst_commits']}/{b['total_commits']} commits "
-            f"({round(b['burst_commits'] / max(b['total_commits'], 1) * 100)}%) "
-            f"are burst-adds -> suggests {round(b['score'] * 100)}% AI"
-        )
-
-        p = sig["commit_patterns"]
-        click.echo(f"  Commit patterns: {p['co_author_count']} commits with AI co-author tags")
-        if p["ai_pattern_count"]:
-            click.echo(f"    {p['ai_pattern_count']} with AI-style message patterns")
-
-        cd = sig["comment_density"]
-        click.echo(f"  Comment density: {cd['anomalous_files']} files with anomalous density")
-
-        t = sig["temporal"]
-        click.echo(f"  Temporal patterns: {t['burst_sessions']} burst sessions detected")
-
-        # Top AI-likely files
-        top_files = result["top_ai_files"]
-        if top_files:
-            click.echo()
-            limit = 20 if detail else 10
-            shown = top_files[:limit]
-            click.echo("TOP AI-LIKELY FILES:")
-            for f in shown:
-                reasons = ", ".join(f["reasons"]) if f["reasons"] else "heuristic"
-                click.echo(f"  {f['path']:<60s} ({round(f['probability'] * 100)}% AI probability -- {reasons})")
-            if len(top_files) > limit:
-                click.echo(f"  (+{len(top_files) - limit} more, use --detail to see all)")
-
-        # Trend
-        trend = result["trend"]
-        if trend["direction"] != "insufficient-data" and trend["data_points"]:
-            click.echo()
-            pts = trend["data_points"]
-            parts = []
-            for pt in pts:
-                parts.append(f"{round(pt['ai_ratio'] * 100)}% ({pt['days_ago']}d ago)")
-            click.echo(f"TREND: AI ratio {trend['direction']} -- " + " -> ".join(parts))
+        _emit_ai_ratio_text(result, verdict, detail)

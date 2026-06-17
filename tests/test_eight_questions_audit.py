@@ -74,7 +74,7 @@ EIGHT_QUESTIONS: tuple[tuple[str, str], ...] = (
     ("Q4", "changes: changed_subjects"),
     ("Q5", "risk: risk_level (complete) | SAFE+no findings (not_applicable)"),
     ("Q6", "policy: policy_decisions (complete) | authority_refs (partial)"),
-    ("Q7", "verify: tests_run or artifacts (complete) | tests_required (partial)"),
+    ("Q7", "verify: tests_run or verification artifacts (complete) | tests_required or report artifacts (partial)"),
     ("Q8", "accept: approvals or accepted_risks (complete) | redactions (partial)"),
 )
 
@@ -283,26 +283,43 @@ def test_score_values_are_closed_enumeration(
 # ``EvidenceArtifact`` rows on ``context_refs``, flipping Q3 from
 # ``missing`` to ``complete`` and lifting the aggregate to 6/8.
 #
-# W258 (audit threshold ratchet) closes the reconstruction-only gap on Q7. The live
-# on-disk packet already carries 11 ``artifacts`` (1 audit-trail
-# manifest + 10 ``cga_predicate`` entries from ``.roam/attestations/``)
-# but ``_packet_from_pr_replay_json`` previously discarded them with
-# a hardcoded ``artifacts=()`` line. That synthetic-fixture gap (NOT
-# a producer gap) suppressed Q7 to ``partial``. This wave mirrors the
-# W246 ``context_refs`` reconstruction block for ``artifacts``, so the
-# audit now scores Q7 ``complete`` against the same artifacts the
-# on-disk packet carries — lifting the aggregate to 7/8.
+# W258 mirrors the W246 ``context_refs`` reconstruction block for
+# ``artifacts`` so the audit scores Q7 against the same artifacts the
+# on-disk packet carries (previously a hardcoded ``artifacts=()`` line
+# discarded them). NOTE (W263, 2026-06-17): reconstructing the artifacts
+# no longer lifts Q7 to ``complete`` on its own — Q7 was retightened to
+# require a verification-shaped artifact (or a real ``tests_run`` row),
+# and a clean checkout's pr-replay packet carries only report / manifest /
+# raw_envelope artifacts. See the ``EXPECTED_COMPLETE_COUNT_TODAY`` note
+# below for the full rationale; the reconstruction is still correct (Q7
+# WOULD score ``complete`` here if the producer stamped an attestation /
+# cga_predicate in this environment).
 #
 # W261 lifts Q8 (accept) from ``missing`` to ``partial`` by stamping the
 # ``producer_not_available`` redaction reason on every pr-replay packet.
 # That keeps the report honest about the producer-side gap (PR Replay has
 # no acceptance harvester today) without falsely implying acceptance was
-# checked. ``partial`` does NOT count toward ``complete``, so the audit
-# threshold stays at 7 — but a separate :data:`EXPECTED_PARTIAL_COUNT_TODAY`
-# below pins the current partial count so a regression in the W261 marker
-# is loud. Do NOT ratchet beyond 7 until a future wave wires a REAL
-# acceptance producer (approvals / accepted_risks) into the pr-replay
-# path; that future lift would move Q8 from ``partial`` to ``complete``.
+# checked. ``partial`` does NOT count toward ``complete``.
+#
+# W263 (Q7 definition tightened, 2026-06-17) drops the complete count from
+# 7 to 6. ``ChangeEvidence.evidence_completeness`` no longer scores Q7
+# ``complete`` for ANY artifact — it now requires a real ``tests_run`` row
+# OR a verification-shaped artifact (sarif / attestation / cga_predicate /
+# bundle / trace / log_excerpt; see ``_VERIFICATION_ARTIFACT_KINDS``).
+# Generic report / manifest / raw_envelope / mcp_receipt artifacts are
+# partial context, not proof a change was verified. This repo's own
+# pr-replay --tier sample packet carries NO verification-shaped artifacts
+# in a clean checkout (its test-impact envelope emits ``tests_required``
+# only, never ``tests_run``, and the audit-trail row is a ``manifest``),
+# so Q7 honestly scores ``partial`` here. The OLD count of 7 was an
+# over-generous score under the pre-W263 "any artifact = verified" rule
+# — exactly the false positive the tightening removes. The fixture-level
+# contract (``populated_packet``, which sets a real ``tests_run`` row)
+# still earns Q7 ``complete``; only the live-producer audit moves.
+# Ratchet back UP to 7 only when a future wave either wires a real
+# pytest-run harvester into the pr-replay path (Q7 -> complete via
+# tests_run) OR makes the producer stamp attestations as a verification
+# artifact in a clean checkout.
 #
 # The assertion is asymmetric (``>=``) so:
 #
@@ -315,18 +332,24 @@ def test_score_values_are_closed_enumeration(
 # The literal lives next to the integration test (not at module top)
 # so it's obvious that it's tied to the integration assertion and not
 # a global config knob.
-EXPECTED_COMPLETE_COUNT_TODAY: int = 7
+EXPECTED_COMPLETE_COUNT_TODAY: int = 6
 
-# W261 — minimum partial count on the current pr-replay output. Today
-# Q8 (accept) is the sole ``partial`` because the W261 marker declares
-# the producer gap (``producer_not_available``) on a packet that has no
-# real approvals data. If a future wave wires an acceptance harvester
-# and Q8 moves from ``partial`` to ``complete``, the partial count drops
-# (and the complete count grows). The assertion is asymmetric (``>=``)
-# for the same reason ``EXPECTED_COMPLETE_COUNT_TODAY`` is: an UPWARD
-# move in partial is fine; a DOWNWARD move means a wave stripped the
-# W261 marker (or another partial signal) and the audit fails loudly.
-EXPECTED_PARTIAL_COUNT_TODAY: int = 1
+# W261/W263 — minimum partial count on the current pr-replay output. Two
+# Qs are ``partial`` today:
+#   * Q8 (accept): the W261 marker declares the producer gap
+#     (``producer_not_available``) on a packet that has no real approvals
+#     data, lifting Q8 from ``missing`` to ``partial``.
+#   * Q7 (verify): W263 tightened the Q7 definition (see the long note on
+#     ``EXPECTED_COMPLETE_COUNT_TODAY`` above). The packet has report /
+#     manifest / raw_envelope artifacts but no verification-shaped artifact
+#     and no ``tests_run`` row, so Q7 sits at ``partial``.
+# If a future wave wires an acceptance harvester (Q8 -> complete) or a real
+# test-run harvester (Q7 -> complete), the partial count drops and the
+# complete count grows. The assertion is asymmetric (``>=``) for the same
+# reason ``EXPECTED_COMPLETE_COUNT_TODAY`` is: an UPWARD move in partial is
+# fine; a DOWNWARD move means a wave stripped the W261 marker (or another
+# partial signal) and the audit fails loudly.
+EXPECTED_PARTIAL_COUNT_TODAY: int = 2
 
 
 def _packet_from_pr_replay_json(payload: dict) -> ChangeEvidence:

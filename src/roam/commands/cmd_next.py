@@ -149,7 +149,10 @@ def _check_index_staleness(root: Path) -> tuple[bool, str | None]:
     """
     try:
         db_path = get_db_path(root)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through to next branch
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:get_db_path", _exc)
         return (False, None)
     try:
         db_mtime = db_path.stat().st_mtime
@@ -298,11 +301,17 @@ def _read_recent_mode_block(root: Path) -> tuple[str | None, str | None, str | N
     try:
         from roam.runs.helpers import get_active_run_id
         from roam.runs.ledger import read_run_events
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- optional runs module; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:intent_block_import", _exc)
         return (None, None, None)
     try:
         run_id = get_active_run_id(root)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:intent_block_run_id", _exc)
         return (None, None, None)
     if not run_id:
         return (None, None, None)
@@ -311,7 +320,10 @@ def _read_recent_mode_block(root: Path) -> tuple[str | None, str | None, str | N
     # order, so we materialise and reverse.
     try:
         events = list(read_run_events(root, run_id))
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:intent_block_events", _exc)
         return (None, None, None)
     for ev in reversed(events):
         if not isinstance(ev, dict):
@@ -372,7 +384,10 @@ def _read_pending_before_pr_check(root: Path) -> tuple[str | None, str | None, s
         from roam.constitution.loader import load_constitution
 
         constitution = load_constitution(root)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- optional constitution; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:load_constitution", _exc)
         return (None, None, None)
     if constitution is None:
         return (None, None, None)
@@ -385,7 +400,10 @@ def _read_pending_before_pr_check(root: Path) -> tuple[str | None, str | None, s
         from roam.runs.helpers import get_active_run_id
 
         run_id = get_active_run_id(root)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:before_pr_run_id", _exc)
         return (None, None, None)
     if not run_id:
         return (None, None, None)
@@ -405,7 +423,10 @@ def _read_pending_before_pr_check(root: Path) -> tuple[str | None, str | None, s
                 seen.add(_bare_command_name(action))
             if isinstance(env_cmd, str) and env_cmd:
                 seen.add(_bare_command_name(env_cmd))
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:before_pr_events", _exc)
         return (None, None, None)
 
     for template in before_pr:
@@ -437,13 +458,19 @@ def _collect_state() -> RepoState:
 
     try:
         root = find_project_root()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- no project root; return empty state
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:find_project_root", _exc)
         return state
 
     state.project_root = str(root)
     try:
         state.has_index = db_exists(root)
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort probe; degrade to False
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:db_exists", _exc)
         state.has_index = False
 
     if state.has_index:
@@ -488,7 +515,10 @@ def _collect_state() -> RepoState:
     try:
         constitution_yml = root / ".roam" / "constitution.yml"
         state.has_constitution = constitution_yml.exists()
-    except Exception:
+    except Exception as _exc:  # noqa: BLE001 -- best-effort probe; degrade to False
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_next:has_constitution", _exc)
         state.has_constitution = False
     if state.has_constitution:
         try:

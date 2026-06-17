@@ -36,19 +36,20 @@ findings on a 30-minute call.
 
 ## The eight evidence questions
 
-This report answers structural-review questions only. Identity,
-authority, approval, and verification axes are out of scope for PR
-Replay; the engagement reads only merged git history.
+This report maps the eight evidence questions for a merged-history replay.
+Structural change, breakage, and policy axes are in scope; context and
+verification are partial; identity, authority, and approval axes are out
+of scope for PR Replay.
 
 | Question | Coverage on this report |
 |---|---|
 | **Who acted?** | Out of scope. Git author per commit is in `git log`, not re-derived here. |
 | **What authority existed?** | Out of scope. Roam Review (continuous) records `mode` + `permits` + `leases`; PR Replay does not. |
-| **What context was read?** | The 30 commits in `HEAD~30..HEAD`, the current repo's symbol/call graph, and the active detector set. |
+| **What context was read?** | Partial. The 30 commits in `HEAD~30..HEAD`, the current repo's symbol/call graph, and the active detector set. |
 | **What changed?** | Per-PR table below: date, SHA, subject, top-hit detectors. |
 | **What could break?** | Detector breakdown table: `clones-not-edited`, `blast-radius`, `layer-violation`, `intent-mismatch`. |
 | **What policy applied?** | Default Roam detector set. No per-repo `.roam-rules.yml` was provided for this run. |
-| **What verified it?** | Replay only — no test execution. Detector versions stamped in run ledger. |
+| **What verified it?** | Partial. Replay only — no test execution. Detector versions are stamped in the report metadata. |
 | **Who accepted risk?** | Out of scope (`producer_not_available` — PR Replay does not collect approvals). For continuous approval evidence, run Roam Review. |
 
 ## What Roam would have flagged

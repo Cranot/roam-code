@@ -610,7 +610,13 @@ def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     ``row.get("_resolution_tier", "symbol")``; the default keeps backwards
     compatibility for callers that build row-like dicts independently.
     """
-    best, _ = find_symbol_with_alternatives(conn, name)
+    best, alternatives = find_symbol_with_alternatives(conn, name)
+    if alternatives and isinstance(best, dict):
+        # T4: disclose that the name was ambiguous instead of silently picking one.
+        # Callers/envelopes can read ``_ambiguous`` + ``_alternatives_count`` without a
+        # signature change; the single-row contract for the 23 callers is preserved.
+        best.setdefault("_ambiguous", True)
+        best.setdefault("_alternatives_count", len(alternatives))
     return best
 
 

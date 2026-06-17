@@ -112,15 +112,16 @@ the table in `sample-audit-report.md` without first updating the YAML.
 
 ## Sections to extract for `sample-pr-replay-team.md`
 
-PR Replay reads merged git history only — no run ledger, no bundles,
-no mode / permit / lease evidence. The pack answers Q4 (changed) and
-Q5 (could break) with full coverage; Q1-Q3 / Q6-Q8 are explicitly out
-of scope (the sample marks them under "What this report does *not*
-cover" and the eight-question table).
+PR Replay reads merged git history only — no continuous run ledger,
+no proof bundles, no mode / permit / lease evidence. The pack answers
+Q4 (changed), Q5 (could break), and Q6 (policy applied) with structural
+coverage; Q3 (context) and Q7 (verification) are partial; Q1 (who acted),
+Q2 (authority), and Q8 (accepted risk) are explicitly out of scope or
+`producer_not_available` in the eight-question table.
 
 | Artifact | Command | Notes |
 |---|---|---|
-| Per-PR diff replay | `roam postmortem --range <HEAD~30..HEAD>` | Walks the range commit-by-commit. |
+| Per-PR diff replay | `roam postmortem HEAD~30..HEAD` | Walks the range commit-by-commit. |
 | Detector findings per diff | `roam --json critique` (per range) | Returns exit 5 on any high-severity finding. |
 | Cross-PR clone classes | `roam clones --persist` then `roam --json critique` | Persisting clone pairs lets `critique` flag clone-not-edited cases on every diff. |
 | Detector breakdown table | Aggregate `findings[].kind` across the replay | One row per detector class. |

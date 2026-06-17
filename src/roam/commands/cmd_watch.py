@@ -16,6 +16,8 @@ import queue
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -315,7 +317,7 @@ class WebhookBridge:
                 break
         return out
 
-    def stats(self) -> dict:
+    def bridge_stats(self) -> dict:
         with self._lock:
             accepted = self._accepted
         return {
@@ -347,7 +349,7 @@ class WebhookBridge:
             def do_GET(self):  # noqa: N802
                 parsed = urllib.parse.urlparse(self.path)
                 if parsed.path == "/health":
-                    payload = {"ok": True, **bridge.stats()}
+                    payload = {"ok": True, **bridge.bridge_stats()}
                     self._json(200, payload)
                     return
                 self._json(404, {"ok": False, "error": "not found"})
@@ -414,7 +416,7 @@ class WebhookBridge:
         )
         self._thread.start()
 
-    def stop(self) -> None:
+    def shutdown(self) -> None:
         """Stop the background webhook server."""
         if self._server is None:
             return
@@ -534,6 +536,68 @@ def _run_guardian_step(_guardian_collect, _guardian_write, guardian_report: str,
             click.echo(f"Guardian update failed: {exc}")
 
 
+@dataclass
+class _PollDeps:
+    """Injectable callables for poll_loop.
+
+    Build with for_project() for production; pass stubs directly in tests.
+    """
+
+    sleep: Callable = time.sleep
+    discover: Callable = lambda: []
+    reindex: Callable = lambda force=False: None
+    external_events: Callable = lambda: []
+    guardian_collect: Callable = lambda: {}
+    guardian_write: Callable = lambda payload: None
+
+    @classmethod
+    def for_project(
+        cls,
+        project_root: Path,
+        guardian_health_gate: float,
+        guardian_drift_threshold: float,
+        guardian_report: str,
+        *,
+        external_events: Callable | None = None,
+    ) -> _PollDeps:
+        return cls(
+            sleep=time.sleep,
+            discover=lambda: discover_current_files(project_root),
+            reindex=lambda force=False: run_incremental_index(project_root, quiet=True, force=force),
+            external_events=external_events or (lambda: []),
+            guardian_collect=lambda: collect_guardian_snapshot(
+                project_root=project_root,
+                health_gate=guardian_health_gate,
+                drift_threshold=guardian_drift_threshold,
+            ),
+            guardian_write=lambda payload: (
+                append_guardian_report(Path(guardian_report), payload) if guardian_report else None
+            ),
+        )
+
+
+def _on_debounce_fire(
+    acc: DebounceAccumulator,
+    pending_force: bool,
+    quiet: bool,
+    guardian: bool,
+    guardian_report: str,
+    project_root: Path,
+    file_count: int,
+    deps: _PollDeps,
+) -> tuple[dict[str, float], int, bool]:
+    """Execute a debounced re-index + optional guardian snapshot. Returns (tracked, file_count, pending_force=False)."""
+    batch = acc.flush()
+    if not quiet:
+        mode_label = "force re-indexing" if pending_force else "re-indexing"
+        click.echo(f"Changed: {len(batch)} event(s) -- {mode_label}...")
+    deps.reindex(force=pending_force)
+    tracked, file_count = _refresh_tracked_after_reindex(project_root, file_count, quiet)
+    if guardian or guardian_report:
+        _run_guardian_step(deps.guardian_collect, deps.guardian_write, guardian_report, quiet)
+    return tracked, file_count, False
+
+
 def poll_loop(
     project_root: Path,
     interval: float,
@@ -543,58 +607,26 @@ def poll_loop(
     webhook_force: bool = False,
     guardian: bool = False,
     guardian_report: str = "",
-    guardian_health_gate: float = 70.0,
-    guardian_drift_threshold: float = 0.5,
     *,
-    _sleep=time.sleep,
-    _discover=None,
-    _reindex=None,
-    _external_events=None,
-    _guardian_collect=None,
-    _guardian_write=None,
+    deps: _PollDeps | None = None,
 ) -> None:
     """Run the watch loop until interrupted.
 
     Args:
-        project_root: Root directory to watch.
-        interval:     Poll interval in seconds.
-        debounce:     Quiet-period window in seconds before triggering re-index.
-        quiet:        Suppress per-file change messages when True.
-        webhook_only: When True, skip file polling and only process webhook triggers.
+        project_root:  Root directory to watch.
+        interval:      Poll interval in seconds.
+        debounce:      Quiet-period window in seconds before triggering re-index.
+        quiet:         Suppress per-file change messages when True.
+        webhook_only:  When True, skip file polling and only process webhook triggers.
         webhook_force: Force full rebuild for webhook-triggered refreshes.
-        guardian:     Enable continuous architecture guardian snapshots.
+        guardian:      Enable continuous architecture guardian snapshots.
         guardian_report:
-                      Optional JSONL path for compliance-ready guardian artifacts.
-        guardian_health_gate:
-                      Health-score gate threshold tracked in guardian payload.
-        guardian_drift_threshold:
-                      Drift threshold used in guardian ownership summary.
-        _sleep:       Injectable sleep function (for testing).
-        _discover:    Injectable file-discovery callable (for testing).
-        _reindex:     Injectable re-index callable (for testing).
-        _external_events:
-                      Injectable callable returning queued webhook events.
-        _guardian_collect:
-                      Injectable guardian collector callable (for testing).
-        _guardian_write:
-                      Injectable guardian writer callable (for testing).
+                       Optional JSONL path for compliance-ready guardian artifacts.
+        deps:          Injectable callables; build with _PollDeps.for_project() for
+                       production, or pass _PollDeps with stubs in tests.
     """
-    if _discover is None:
-        _discover = lambda: discover_current_files(project_root)
-    if _reindex is None:
-        _reindex = lambda force=False: run_incremental_index(project_root, quiet=True, force=force)
-    if _external_events is None:
-        _external_events = lambda: []
-    if _guardian_collect is None:
-        _guardian_collect = lambda: collect_guardian_snapshot(
-            project_root=project_root,
-            health_gate=guardian_health_gate,
-            drift_threshold=guardian_drift_threshold,
-        )
-    if _guardian_write is None:
-        _guardian_write = lambda payload: (
-            append_guardian_report(Path(guardian_report), payload) if guardian_report else None
-        )
+    if deps is None:
+        deps = _PollDeps.for_project(project_root, 70.0, 0.5, guardian_report)
 
     acc = DebounceAccumulator(window=debounce)
 
@@ -608,14 +640,14 @@ def poll_loop(
     pending_force = False
 
     while True:
-        _sleep(interval)
+        deps.sleep(interval)
 
-        webhook_events = _external_events() or []
+        webhook_events = deps.external_events() or []
         pending_force = pending_force or _need_force(webhook_events, webhook_force)
 
         changed: list[str] = []
         if not webhook_only:
-            tracked, disk_changes = _scan_disk_changes(_discover, project_root, tracked, quiet)
+            tracked, disk_changes = _scan_disk_changes(deps.discover, project_root, tracked, quiet)
             changed.extend(disk_changes)
         changed.extend(_label_webhook_events(webhook_events, quiet))
 
@@ -623,15 +655,16 @@ def poll_loop(
             acc.add(changed)
 
         if acc.should_fire(time.monotonic()):
-            batch = acc.flush()
-            if not quiet:
-                mode_label = "force re-indexing" if pending_force else "re-indexing"
-                click.echo(f"Changed: {len(batch)} event(s) -- {mode_label}...")
-            _reindex(force=pending_force)
-            pending_force = False
-            tracked, file_count = _refresh_tracked_after_reindex(project_root, file_count, quiet)
-            if guardian or guardian_report:
-                _run_guardian_step(_guardian_collect, _guardian_write, guardian_report, quiet)
+            tracked, file_count, pending_force = _on_debounce_fire(
+                acc,
+                pending_force,
+                quiet,
+                guardian,
+                guardian_report,
+                project_root,
+                file_count,
+                deps,
+            )
 
 
 @roam_capability(
@@ -807,12 +840,16 @@ def watch(
             webhook_force=webhook_force,
             guardian=guardian,
             guardian_report=guardian_report,
-            guardian_health_gate=guardian_health_gate,
-            guardian_drift_threshold=guardian_drift_threshold,
-            _external_events=(bridge.drain_events if bridge else None),
+            deps=_PollDeps.for_project(
+                project_root,
+                guardian_health_gate,
+                guardian_drift_threshold,
+                guardian_report,
+                external_events=(bridge.drain_events if bridge else None),
+            ),
         )
     except KeyboardInterrupt:
         click.echo("\nWatch stopped.")
     finally:
         if bridge is not None:
-            bridge.stop()
+            bridge.shutdown()

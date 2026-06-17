@@ -1,7 +1,7 @@
 # Roam Guard — DEFAULT rule pack (built-in).
 #
-# Copy this file, edit `file_patterns`, and pass `--rules my-pack.yml` to
-# `roam guard-pr` (or `roam verification-contract --rules my-pack.yml`).
+# Copy this file, edit `file_patterns`, and pass `--rules templates/examples/roam-guard-rules.default.yml` to
+# `roam guard-pr` (or `roam verification-contract --rules templates/examples/roam-guard-rules.default.yml`).
 #
 # Each `file_patterns` entry:
 #   id:               verdict reason code emitted when the pattern matches.
@@ -34,4 +34,3 @@ file_patterns:
   regex: (?:^|/)(?:tests?|spec|__tests__)(?:/|$)|_test\.|\.test\.|\.spec\.
   applies_to_kinds:
   - test
-

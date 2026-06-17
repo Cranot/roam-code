@@ -60,6 +60,41 @@ def test_os_replace_classified_as_io_write(project_factory, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# SL-11: SQL DDL / executescript — schema-migration entry points
+# ---------------------------------------------------------------------------
+
+
+def test_executescript_and_ddl_classified_as_io_write(project_factory, monkeypatch):
+    """``conn.executescript(...)`` and ``cursor.execute("CREATE TABLE ...")`` run
+    writes and must classify as ``io_write``, not ``none``. Before the DDL-pattern
+    fix the write regex matched only DML (INSERT/UPDATE/DELETE/REPLACE), so schema
+    entry points like ``ensure_schema`` classified as ``none`` -> idempotency
+    reported "pure (no side effects), high" for a function that mutates the DB."""
+    proj = project_factory(
+        {
+            "src/db.py": (
+                "_SCHEMA = 'CREATE TABLE t (id INTEGER)'\n\n"
+                "def ensure_schema(conn):\n"
+                "    conn.executescript(_SCHEMA)\n\n"
+                "def make_table(conn):\n"
+                "    conn.execute('CREATE TABLE u (id INTEGER)')\n"
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True) as conn:
+        es = {r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "ensure_schema")}
+        mt = {r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "make_table")}
+
+    assert "io_write" in es["ensure_schema"].kinds, (
+        f"executescript(DDL) must be io_write, got {es['ensure_schema'].kinds}"
+    )
+    assert "io_write" in mt["make_table"].kinds, f"execute(CREATE TABLE) must be io_write, got {mt['make_table'].kinds}"
+
+
+# ---------------------------------------------------------------------------
 # os.remove / os.unlink / os.rename
 # ---------------------------------------------------------------------------
 

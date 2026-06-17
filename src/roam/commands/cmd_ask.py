@@ -22,7 +22,7 @@ import click
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, Recipe, by_name
-from roam.ask.runner import extract_file, extract_symbol, fill_followups, run_recipe
+from roam.ask.runner import extract_recipe_file, extract_recipe_symbol, fill_followups, run_recipe
 from roam.capability import roam_capability
 from roam.output.confidence import DEFAULT_CONFIDENCE_THRESHOLD, is_low_confidence
 from roam.output.formatter import json_envelope, to_json
@@ -31,6 +31,56 @@ from roam.output.formatter import json_envelope, to_json
 # ranked-output commands. Imported from output.confidence so cmd_ask
 # and any future ranker stay in lockstep.
 _CONFIDENCE_THRESHOLD = DEFAULT_CONFIDENCE_THRESHOLD
+_MAX_INLINE_FINDINGS = 5
+_COMPACT_STEP_DICT_KEYS = {
+    "summary",
+    "agent_contract",
+    "check_status",
+    "severity_breakdown",
+    "top_finding",
+}
+
+
+def _is_scalar_step_value(value: object) -> bool:
+    return isinstance(value, (str, int, float, bool)) or value is None
+
+
+def _copy_step_meta(compact: dict, value: object) -> None:
+    if isinstance(value, dict) and "response_tokens" in value:
+        compact["source_response_tokens"] = value["response_tokens"]
+
+
+def _copy_step_findings(compact: dict, value: list) -> None:
+    compact["finding_count"] = len(value)
+    compact["findings"] = value[:_MAX_INLINE_FINDINGS]
+    if len(value) > _MAX_INLINE_FINDINGS:
+        compact["findings_truncated_count"] = len(value) - _MAX_INLINE_FINDINGS
+
+
+def _copy_compact_step_field(key: str, value: object, compact: dict, omitted: list[str]) -> None:
+    if key == "_meta":
+        _copy_step_meta(compact, value)
+        omitted.append(key)
+        return
+    if key == "findings" and isinstance(value, list):
+        _copy_step_findings(compact, value)
+        return
+    if _is_scalar_step_value(value) or key in _COMPACT_STEP_DICT_KEYS:
+        compact[key] = value
+        return
+    omitted.append(key)
+
+
+def _compact_step_result(env: dict) -> dict:
+    """Keep recipe step output actionable without embedding whole subcommand payloads."""
+    compact: dict = {}
+    omitted: list[str] = []
+    for key, value in env.items():
+        _copy_compact_step_field(key, value, compact, omitted)
+    if omitted:
+        compact["full_result_omitted"] = True
+        compact["omitted_fields"] = omitted
+    return compact
 
 
 def _recipe_listing_payload(recipe: Recipe) -> dict:
@@ -194,7 +244,8 @@ def _emit_json_result(
                 gates=list(recipe.gates),
                 followups=rendered_followups,
                 summary_hint=recipe.summary,
-                steps=results,
+                step_detail_policy="compact; rerun the listed subcommands for full envelopes",
+                steps=[_compact_step_result(result) for result in results],
             )
         )
     )
@@ -308,7 +359,7 @@ def ask(ctx, query, list_recipes, explain, recipe_override):
 
     results = run_recipe(chosen, query_text)
     rendered_followups = fill_followups(
-        chosen.followups, query_text, extract_symbol(query_text), extract_file(query_text)
+        chosen.followups, query_text, extract_recipe_symbol(query_text), extract_recipe_file(query_text)
     )
 
     if json_mode:
