@@ -149,6 +149,33 @@ class TestHeadUnchangedHelper:
         finally:
             conn.close()
 
+    def test_manifest_sqlite_failure_returns_false(self, tmp_path, git_project, monkeypatch):
+        """Expected manifest read failures disable the skip optimization."""
+        conn = _fresh_db(tmp_path)
+
+        def _boom(_conn):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr("roam.index.manifest.latest_manifest", _boom)
+        try:
+            assert _head_unchanged_since_last_run(conn, git_project) is False
+        finally:
+            conn.close()
+
+    def test_manifest_unexpected_failure_propagates(self, tmp_path, git_project, monkeypatch):
+        """Programmer errors in manifest handling must not be swallowed."""
+        conn = _fresh_db(tmp_path)
+
+        def _boom(_conn):
+            raise RuntimeError("manifest invariant violated")
+
+        monkeypatch.setattr("roam.index.manifest.latest_manifest", _boom)
+        try:
+            with pytest.raises(RuntimeError, match="manifest invariant violated"):
+                _head_unchanged_since_last_run(conn, git_project)
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # End-to-end: collect_git_stats skips the heavy pass

@@ -214,20 +214,21 @@ def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path)
 
     Returns False (forces a re-run) when:
       * the manifest table is missing or empty (first run)
-      * the manifest read fails for any reason (defensive: don't skip
-        on uncertainty — re-running is at most a few seconds wasted,
-        but missing a real change would silently stale the data)
+      * the manifest helper cannot be imported or the manifest read hits
+        a SQLite failure (defensive: don't skip on uncertainty —
+        re-running is at most a few seconds wasted, but missing a real
+        change would silently stale the data)
       * the live HEAD can't be resolved (non-git or detached)
       * the recorded HEAD differs from the live HEAD
     """
     try:
         from roam.index.manifest import latest_manifest
-    except Exception:
+    except ImportError:
         return False
 
     try:
         prev = latest_manifest(conn)
-    except Exception:
+    except sqlite3.DatabaseError:
         return False
     if not prev:
         return False
