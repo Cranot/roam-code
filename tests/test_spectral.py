@@ -584,6 +584,43 @@ class TestInternalHelpers:
         G.add_edge(2, 3)
         assert _fiedler_split(G) is None
 
+    def test_fiedler_split_falls_back_on_expected_solver_error(self, monkeypatch):
+        from roam.graph import spectral as spectral_module
+        from roam.graph.spectral import _fiedler_split
+
+        calls = []
+
+        def fake_fiedler_vector(_graph, method):
+            calls.append(method)
+            if method == "tracemin_pcg":
+                raise nx.NetworkXError("primary solver unavailable")
+            return [-1.0, -1.0, 1.0, 1.0, 1.0]
+
+        monkeypatch.setattr(
+            spectral_module.nx.linalg.algebraicconnectivity,
+            "fiedler_vector",
+            fake_fiedler_vector,
+        )
+        assert _fiedler_split(nx.path_graph(5)) == ([0, 1], [2, 3, 4])
+        assert calls == ["tracemin_pcg", "lobpcg"]
+
+    def test_fiedler_split_propagates_unexpected_solver_error(self, monkeypatch):
+        from roam.graph import spectral as spectral_module
+        from roam.graph.spectral import _fiedler_split
+
+        def fake_fiedler_vector(_graph, method):
+            if method == "tracemin_pcg":
+                raise nx.NetworkXError("primary solver unavailable")
+            raise AssertionError("unexpected solver bug")
+
+        monkeypatch.setattr(
+            spectral_module.nx.linalg.algebraicconnectivity,
+            "fiedler_vector",
+            fake_fiedler_vector,
+        )
+        with pytest.raises(AssertionError, match="unexpected solver bug"):
+            _fiedler_split(nx.path_graph(5))
+
     def test_louvain_fallback_returns_all_nodes(self):
         from roam.graph.spectral import _louvain_fallback
 

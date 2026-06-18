@@ -23,6 +23,30 @@ _HIGH_GAP = 0.5
 _MED_GAP = 0.1
 
 
+def _fiedler_solver_exceptions() -> tuple[type[BaseException], ...]:
+    """Expected failures from optional numeric deps and eigensolvers."""
+    exceptions: list[type[BaseException]] = [
+        ImportError,
+        ValueError,
+        ArithmeticError,
+        nx.NetworkXError,
+        nx.NetworkXNotImplemented,
+    ]
+    try:
+        import numpy as np
+    except ImportError:
+        pass
+    else:
+        exceptions.append(np.linalg.LinAlgError)
+    try:
+        from scipy.sparse.linalg import ArpackError
+    except ImportError:
+        pass
+    else:
+        exceptions.append(ArpackError)
+    return tuple(exceptions)
+
+
 def _fiedler_split(G: nx.Graph):
     """Split G into two groups using the Fiedler vector.
 
@@ -35,10 +59,10 @@ def _fiedler_split(G: nx.Graph):
         return None
     try:
         fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method="tracemin_pcg")
-    except Exception:
+    except _fiedler_solver_exceptions():
         try:
             fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method="lobpcg")
-        except Exception:
+        except _fiedler_solver_exceptions():
             return None
     node_arr = list(G.nodes())
     neg = [node_arr[i] for i, v in enumerate(fv) if v < 0]
