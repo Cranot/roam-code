@@ -9,21 +9,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Direction classification
-# ---------------------------------------------------------------------------
-
-_HIGHER_IS_BETTER = {
-    "health_score": True,
-    "cycles": False,
-    "god_components": False,
-    "bottlenecks": False,
-    "dead_exports": False,
-    "layer_violations": False,
-    "tangle_ratio": False,
-    "avg_complexity": False,
-    "brain_methods": False,
-}
+from roam.graph.simulate import metric_delta as metric_delta
 
 
 # ---------------------------------------------------------------------------
@@ -138,49 +124,6 @@ def find_before_snapshot(conn, root: Path, base_ref: str | None = None) -> dict 
     if row:
         return {k: row[k] for k in row.keys()}
     return None
-
-
-# ---------------------------------------------------------------------------
-# Metric delta computation
-# ---------------------------------------------------------------------------
-
-
-def metric_delta(before: dict, after: dict) -> dict:
-    """Compute per-metric deltas between *before* and *after* dicts.
-
-    Returns {metric: {before, after, delta, pct_change, direction}}.
-    """
-    result = {}
-    for metric, higher_better in _HIGHER_IS_BETTER.items():
-        b = before.get(metric)
-        a = after.get(metric)
-        if b is None or a is None:
-            continue
-
-        b_val = float(b)
-        a_val = float(a)
-        delta = a_val - b_val
-
-        if b_val != 0:
-            pct_change = round((delta / abs(b_val)) * 100, 1)
-        else:
-            pct_change = 0.0 if delta == 0 else 100.0
-
-        if delta == 0:
-            direction = "unchanged"
-        elif higher_better:
-            direction = "improved" if delta > 0 else "degraded"
-        else:
-            direction = "degraded" if delta > 0 else "improved"
-
-        result[metric] = {
-            "before": b_val if isinstance(b_val, float) and b_val != int(b_val) else int(b_val),
-            "after": a_val if isinstance(a_val, float) and a_val != int(a_val) else int(a_val),
-            "delta": delta if isinstance(delta, float) and delta != int(delta) else int(delta),
-            "pct_change": pct_change,
-            "direction": direction,
-        }
-    return result
 
 
 # ---------------------------------------------------------------------------

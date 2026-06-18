@@ -16,12 +16,16 @@ _HIGHER_IS_BETTER = {
     "edges": True,
     "modularity": True,
     "fiedler": True,
+    "spectral_gap": True,
     "cycles": False,
     "tangle_ratio": False,
     "layer_violations": False,
     "propagation_cost": False,
     "god_components": False,
     "bottlenecks": False,
+    "dead_exports": False,
+    "avg_complexity": False,
+    "brain_methods": False,
 }
 
 
@@ -191,7 +195,12 @@ def metric_delta(before: dict, after: dict) -> dict:
             continue
         b = before[key]
         a = after[key]
-        delta = a - b
+        if b is None or a is None:
+            continue
+        try:
+            delta = a - b
+        except TypeError:
+            continue
         if b != 0:
             pct = round(100 * delta / abs(b), 1)
         else:
