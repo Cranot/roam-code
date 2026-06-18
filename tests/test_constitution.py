@@ -30,6 +30,7 @@ from conftest import (  # noqa: E402
 
 from roam.constitution.loader import (  # noqa: E402
     Constitution,
+    _project_name,
     apply_constitution,
     check_constitution,
     constitution_path,
@@ -102,6 +103,21 @@ def test_init_creates_constitution_yml(empty_repo):
     # Default modes present.
     assert "read_only" in constitution.modes
     assert "safe_edit" in constitution.modes
+
+
+def test_project_name_only_swallows_expected_resolve_errors(empty_repo, monkeypatch):
+    def raise_os_error(self):
+        raise OSError("resolve failed")
+
+    monkeypatch.setattr(Path, "resolve", raise_os_error)
+    assert _project_name(empty_repo) == "unknown"
+
+    def raise_value_error(self):
+        raise ValueError("unexpected bug")
+
+    monkeypatch.setattr(Path, "resolve", raise_value_error)
+    with pytest.raises(ValueError):
+        _project_name(empty_repo)
 
 
 # ---------------------------------------------------------------------------

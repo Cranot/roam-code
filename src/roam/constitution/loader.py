@@ -418,7 +418,7 @@ def _project_name(repo_root: Path) -> str:
     """Best-effort project name from the repo dir."""
     try:
         return Path(repo_root).resolve().name
-    except Exception:
+    except (OSError, RuntimeError):
         return "unknown"
 
 
