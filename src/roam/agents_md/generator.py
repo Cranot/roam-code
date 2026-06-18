@@ -34,7 +34,7 @@ would break the brief silently):
 * :func:`section_danger_zones`
 * :func:`section_laws`
 * :func:`generate_agents_md`
-* :func:`render_markdown`
+* :func:`render_agents_markdown`
 * :class:`AgentsMd`
 
 The remaining ``_section_*`` helpers stay module-private because no
@@ -801,7 +801,7 @@ def generate_agents_md(
     Returns
     -------
     AgentsMd
-        Structured view; pass to :func:`render_markdown` to get a string.
+        Structured view; pass to :func:`render_agents_markdown` to get a string.
     """
     am = AgentsMd()
     am.generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -1126,7 +1126,7 @@ def _render_where_next(am: AgentsMd) -> list[str]:
     return lines
 
 
-def render_markdown(am: AgentsMd) -> str:
+def render_agents_markdown(am: AgentsMd) -> str:
     """Render an :class:`AgentsMd` to GitHub-flavored Markdown."""
     lines: list[str] = []
     lines.append(f"# {am.title}")
@@ -1159,3 +1159,8 @@ def render_markdown(am: AgentsMd) -> str:
     lines.extend(_render_capability(am.capability_summary))
     lines.extend(_render_where_next(am))
     return "\n".join(lines).rstrip() + "\n"
+
+
+# Compatibility alias for callers that imported the original generic name
+# before this renderer got an AGENTS.md-specific public name.
+render_markdown = render_agents_markdown

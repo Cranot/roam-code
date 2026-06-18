@@ -28,7 +28,7 @@ from pathlib import Path
 
 import click
 
-from roam.agents_md.generator import generate_agents_md, render_markdown
+from roam.agents_md.generator import generate_agents_md, render_agents_markdown
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -155,7 +155,7 @@ def agents_md_cmd(
             top_n_laws=top_laws,
         )
 
-    markdown = render_markdown(am)
+    markdown = render_agents_markdown(am)
 
     wrote_to: str | None = None
     if out_path:
