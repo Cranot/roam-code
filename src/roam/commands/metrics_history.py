@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sqlite3
 import time
 
 # W886: delegate to the canonical commands-layer helper (W873 audit).
@@ -68,7 +69,7 @@ def _compute_health_score(
     try:
         avg_fh = conn.execute("SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL").fetchone()[0]
         factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
-    except Exception:
+    except sqlite3.Error:
         factors.append((1.0, 0.20))
 
     log_score = sum(w * math.log(max(h, 1e-9)) for h, w in factors)
