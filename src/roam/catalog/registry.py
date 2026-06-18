@@ -95,7 +95,7 @@ def _check_tier(tier: str, *, context: str) -> None:
         raise ValueError(f"{context}: unknown confidence tier {tier!r}; must be one of {sorted(_CANONICAL_TIERS)}")
 
 
-def detector(
+def smell_detector(
     smell_id: str,
     *,
     confidence: str,
@@ -159,6 +159,12 @@ def detector(
         return fn
 
     return wrapper
+
+
+# Public compatibility alias for the historical ``@detector(...)`` smell
+# registry API. The implementation name stays smell-specific so it does not
+# collide with the algorithm-catalog ``detector`` decorator.
+detector = smell_detector
 
 
 def register_rollup_kind(
