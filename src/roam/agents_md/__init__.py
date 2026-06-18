@@ -24,8 +24,8 @@ Public API
 ----------
 * :func:`generate_agents_md` -- build an :class:`AgentsMd` from a
   repo root + open SQLite connection.
-* :func:`render_markdown` -- render an :class:`AgentsMd` to GitHub-
-  flavored Markdown.
+* :func:`render_agents_markdown` -- render an :class:`AgentsMd` to
+  GitHub-flavored Markdown.
 * :class:`AgentsMd` -- structured-data view of the rendered output;
   matches the JSON envelope shape returned by ``roam agents-md --json``.
 """
@@ -35,6 +35,7 @@ from __future__ import annotations
 from roam.agents_md.generator import (
     AgentsMd,
     generate_agents_md,
+    render_agents_markdown,
     render_markdown,
     section_danger_zones,
     section_laws,
@@ -44,6 +45,7 @@ from roam.agents_md.generator import (
 __all__ = [
     "AgentsMd",
     "generate_agents_md",
+    "render_agents_markdown",
     "render_markdown",
     # W15.2 followup — public-API helpers promoted out of the
     # ``_section_*`` namespace because ``cmd_brief`` reuses them.

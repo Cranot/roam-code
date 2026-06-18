@@ -60,7 +60,7 @@ def test_agents_md_includes_current_mode_section(indexed_repo):
     rendered markdown contains a "## Current mode" header and a
     verbatim mention of the active mode.
     """
-    from roam.agents_md.generator import generate_agents_md, render_markdown
+    from roam.agents_md.generator import generate_agents_md, render_agents_markdown
     from roam.db.connection import open_db
 
     # Persist a specific mode so resolution is deterministic.
@@ -86,7 +86,7 @@ def test_agents_md_includes_current_mode_section(indexed_repo):
         assert cm_idx < sections.index("Test conventions"), sections
 
     # Rendered markdown
-    md = render_markdown(am)
+    md = render_agents_markdown(am)
     assert "## Current mode" in md, md
     assert "safe_edit" in md, md
     # The "switch with" hint enumerates valid modes.
@@ -108,7 +108,7 @@ def test_agents_md_mode_section_lists_blocked_command_examples(indexed_repo):
     vocabulary -- name what works at the upgrade tier, not what's
     forbidden today).
     """
-    from roam.agents_md.generator import generate_agents_md, render_markdown
+    from roam.agents_md.generator import generate_agents_md, render_agents_markdown
     from roam.db.connection import open_db
 
     set_active_mode(indexed_repo, "safe_edit")
@@ -121,7 +121,7 @@ def test_agents_md_mode_section_lists_blocked_command_examples(indexed_repo):
     assert blocked, "expected at least one blocked-example command for safe_edit"
     assert isinstance(blocked, list)
 
-    md = render_markdown(am)
+    md = render_agents_markdown(am)
     # The blocked section calls out the upgrade target by name.
     assert "roam mode migration" in md, md
     # And at least one of the example commands lands in the rendered

@@ -124,13 +124,14 @@ def test_generator_handles_missing_laws_gracefully(small_project):
 
 def test_render_markdown_returns_well_formed_markdown(small_project):
     """Rendered output uses GFM headings + tables and never emits emojis."""
-    from roam.agents_md.generator import generate_agents_md, render_markdown
+    from roam.agents_md.generator import generate_agents_md, render_agents_markdown, render_markdown
     from roam.db.connection import open_db
 
     with open_db(readonly=True, project_root=small_project) as conn:
         am = generate_agents_md(small_project, conn)
 
-    md = render_markdown(am)
+    assert render_markdown is render_agents_markdown
+    md = render_agents_markdown(am)
     assert md.startswith("# AGENTS.md")
     assert "## Quick read" in md
     assert "## Stack" in md
