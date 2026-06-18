@@ -23,7 +23,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.suppression import (
     VALID_STATUSES,
-    is_suppressed,
+    find_suppression,
     load_suppressions,
     save_suppression,
     suppression_stats,
@@ -316,7 +316,8 @@ def triage_check(ctx, rule, file_path, line_num):
     root = find_project_root()
     suppressions = load_suppressions(root)
 
-    suppressed = is_suppressed(suppressions, rule, file_path, line=line_num)
+    matching = find_suppression(suppressions, rule, file_path, line=line_num)
+    suppressed = matching is not None
 
     loc = file_path
     if line_num is not None:
@@ -324,21 +325,8 @@ def triage_check(ctx, rule, file_path, line_num):
 
     if suppressed:
         verdict = f"suppressed: {rule} at {loc}"
-        # Find the matching suppression for detail output
-        matching = None
-        norm_file = file_path.replace("\\", "/")
-        for sup in suppressions:
-            sup_file = sup.get("file", "").replace("\\", "/")
-            if sup.get("rule") == rule and sup_file == norm_file:
-                sup_line = sup.get("line")
-                if sup_line is not None and line_num is not None:
-                    if int(sup_line) != int(line_num):
-                        continue
-                matching = sup
-                break
     else:
         verdict = f"not suppressed: {rule} at {loc}"
-        matching = None
 
     # --- JSON output ---
     if json_mode:

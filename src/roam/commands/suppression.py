@@ -26,6 +26,7 @@ from roam.policy.suppression_v2 import (
 # Re-exported for code that imports VALID_STATUSES from this module.
 __all__ = [
     "VALID_STATUSES",
+    "find_suppression",
     "is_suppressed",
     "load_suppressions",
     "load_suppressions_typed",
@@ -355,14 +356,14 @@ def load_suppressions_typed(
 LINE_MATCH_TOLERANCE = 3
 
 
-def is_suppressed(
+def find_suppression(
     suppressions: list[dict],
     rule: str,
     file: str,
     line: int | None = None,
     symbol: str | None = None,
-) -> bool:
-    """Check if a finding is suppressed.
+) -> dict | None:
+    """Return the matching suppression entry if a finding is suppressed.
 
     Matching logic:
     - ``rule`` and ``file`` must match exactly.
@@ -384,6 +385,9 @@ def is_suppressed(
         Optional line number of the finding.
     symbol:
         Optional symbol name (function/class) the finding is attached to.
+    Returns ``None`` when no entry matches. This mirrors
+    :func:`roam.commands.smells_suppress.is_suppressed`, whose callers need
+    the matched entry for audit output instead of only a boolean.
     """
     # Normalise path separators for comparison
     norm_file = file.replace("\\", "/")
@@ -401,7 +405,7 @@ def is_suppressed(
         sup_symbol = sup.get("symbol")
         if sup_symbol is not None:
             if symbol is not None and str(sup_symbol) == symbol:
-                return True
+                return sup
             continue
 
         # Line-keyed: match within tolerance so edits above the symbol
@@ -415,9 +419,25 @@ def is_suppressed(
                 except (TypeError, ValueError):
                     continue
 
-        return True
+        return sup
 
-    return False
+    return None
+
+
+def _rule_file_entry_applies(
+    suppressions: list[dict],
+    rule: str,
+    file: str,
+    line: int | None = None,
+    symbol: str | None = None,
+) -> bool:
+    """Check if a rule/file finding is suppressed."""
+    return find_suppression(suppressions, rule, file, line=line, symbol=symbol) is not None
+
+
+# Back-compat alias for existing callers. Keep the function definition under a
+# rule/file-specific name so it does not collide with smells_suppress.is_suppressed.
+is_suppressed = _rule_file_entry_applies
 
 
 def save_suppression(
