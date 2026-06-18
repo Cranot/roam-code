@@ -96,17 +96,18 @@ def index_is_built(repo_root: Path | str = ".") -> bool:
     ``<root>/.roam/index.db``) is identical to what every other roam
     command sees. A pure function -- no side effects.
 
-    Falls back to ``False`` on any resolution error (e.g. a stale
-    ``db_dir`` pointing at a deleted external drive) so the cold-start
-    envelope fires instead of the agent seeing an opaque OSError.
+    Falls back to ``False`` on expected filesystem / DB-dir resolution
+    errors (e.g. a stale ``db_dir`` pointing at a deleted external drive)
+    so the cold-start envelope fires instead of the agent seeing an opaque
+    OSError. Programmer-class exceptions propagate.
     """
     try:
-        from roam.db.connection import db_exists, find_project_root
+        from roam.db.connection import StaleDbDirError, db_exists, find_project_root
 
         root = Path(repo_root) if not isinstance(repo_root, Path) else repo_root
         project_root = find_project_root(str(root))
         return db_exists(project_root)
-    except Exception:
+    except (OSError, StaleDbDirError):
         return False
 
 
