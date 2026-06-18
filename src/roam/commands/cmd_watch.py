@@ -368,7 +368,7 @@ class WebhookBridge:
                 length = 0
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                except Exception:
+                except (TypeError, ValueError):
                     length = 0
                 raw = self.rfile.read(max(0, min(length, 1_000_000))) if length > 0 else b""
 
