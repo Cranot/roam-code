@@ -381,7 +381,7 @@ def _checks_to_sarif(
     ),
 )
 @click.pass_context
-def audit_trail_conformance_check(
+def audit_trail_conformance_check_cmd(
     ctx,
     input_path: str | None,
     retention_days: int,

@@ -285,7 +285,7 @@ _COMMANDS = {
     "audit-trail-export": ("roam.commands.cmd_audit_trail_export", "audit_trail_export"),
     "audit-trail-conformance-check": (
         "roam.commands.cmd_audit_trail_conformance",
-        "audit_trail_conformance_check",
+        "audit_trail_conformance_check_cmd",
     ),
     "rules-validate": ("roam.commands.cmd_rules_validate", "rules_validate"),
     "dogfood": ("roam.commands.cmd_dogfood", "dogfood"),
