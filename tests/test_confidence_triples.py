@@ -87,11 +87,11 @@ class TestHelpers:
         assert "score 90" in triples[0]["reason"]
         assert "score 10" in triples[2]["reason"]
 
-    def test_wrap_findings_classifier_exception_falls_back(self):
+    def test_wrap_findings_classifier_contract_error_falls_back(self):
         findings = [{"a": 1}, {"a": 2}]
 
         def bad(f):
-            raise RuntimeError("boom")
+            return None
 
         triples = wrap_findings(
             findings,
@@ -101,6 +101,15 @@ class TestHelpers:
         )
         assert all(t["confidence"] == "low" for t in triples)
         assert all(t["reason"] == "classifier failed" for t in triples)
+
+    def test_wrap_findings_unexpected_classifier_exception_propagates(self):
+        findings = [{"a": 1}]
+
+        def bad(f):
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            wrap_findings(findings, classifier=bad)
 
     def test_wrap_findings_empty_list(self):
         assert wrap_findings([]) == []
