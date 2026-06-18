@@ -17,6 +17,7 @@ from roam.commands.cmd_watch import (
     WebhookBridge,
     _PollDeps,
     detect_changes,
+    discover_current_files,
     load_tracked_files,
     poll_loop,
     scan_disk_mtimes,
@@ -458,6 +459,18 @@ class TestLoadTrackedFiles:
             with patch("roam.commands.cmd_watch.open_db", side_effect=Exception("db error")):
                 result = load_tracked_files(tmp_path)
         assert result == {}
+
+
+class TestDiscoverCurrentFiles:
+    def test_returns_empty_on_filesystem_error(self, tmp_path):
+        with patch("roam.index.discovery.discover_files", side_effect=OSError("not ready")):
+            result = discover_current_files(tmp_path)
+        assert result == []
+
+    def test_unexpected_errors_are_not_swallowed(self, tmp_path):
+        with patch("roam.index.discovery.discover_files", side_effect=RuntimeError("bug")):
+            with pytest.raises(RuntimeError, match="bug"):
+                discover_current_files(tmp_path)
 
 
 class TestPollLoopWebhook:
