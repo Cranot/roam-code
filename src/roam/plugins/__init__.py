@@ -305,4 +305,15 @@ def _reset_plugin_state_for_tests() -> None:
     global _discovered
     _discovered = False
     _ENTRY_POINT_CACHE.clear()
-    _registry_state().reset()
+    state = _registry_state()
+    try:
+        from roam.bridges import registry as bridge_registry
+    except ImportError:
+        bridge_registry = None  # type: ignore[assignment]
+    if bridge_registry is not None:
+        for bridge in state.bridges:
+            try:
+                bridge_registry._BRIDGES.remove(bridge)
+            except ValueError:
+                pass
+    state.reset()

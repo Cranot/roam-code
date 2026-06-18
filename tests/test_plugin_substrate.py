@@ -339,10 +339,12 @@ def test_register_bridge_records_bridge(monkeypatch, tmp_path):
     monkeypatch.setenv("ROAM_PLUGIN_MODULES", module_name)
 
     _reset_plugin_runtime()
+    from roam.bridges.registry import get_bridges
     from roam.plugins import get_plugin_bridges
 
     bridges = get_plugin_bridges()
     assert any(getattr(b, "name", None) == "fakebridge" for b in bridges)
+    assert any(getattr(b, "name", None) == "fakebridge" for b in get_bridges())
 
 
 def test_bridge_missing_required_attribute_raises_inside_plugin(monkeypatch, tmp_path):
