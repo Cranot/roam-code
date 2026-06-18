@@ -264,10 +264,8 @@ def _walk_ts_numbers(
     while stack:
         node = stack.pop()
         if node.type in kinds:
-            try:
-                text = source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
-            except Exception:
-                text = ""
+            literal_bytes = source_bytes[node.start_byte : node.end_byte]
+            text = literal_bytes.decode("utf-8", errors="replace")
             value = _parse_number_text(text)
             if value is not None and not isinstance(value, bool):
                 # tree-sitter start_point is (row, col), 0-indexed row.
