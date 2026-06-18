@@ -493,7 +493,7 @@ class _ServerState:
         with self.lock:
             try:
                 files = discover_files(self.project_root)
-            except Exception:
+            except OSError:
                 files = []
             self.tracked_set = set(files)
             self.dir_set = set()
@@ -523,7 +523,7 @@ def _server_version() -> str:
         from roam import __version__
 
         return str(__version__)
-    except Exception:
+    except ImportError:
         return "unknown"
 
 
