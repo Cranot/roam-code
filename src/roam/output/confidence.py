@@ -308,12 +308,12 @@ def wrap_findings(
         provided, each finding is fed through it to derive its
         confidence label and reason string. When omitted, every
         finding gets ``default_confidence`` / ``default_reason``.
-        Classifiers that raise are caught and the finding falls back
-        to ``(default_confidence, default_reason)`` — better degraded
-        output than a 500.
+        Classifier contract errors fall back to
+        ``(default_confidence, default_reason)`` — better degraded
+        output than a 500. Unexpected classifier exceptions propagate.
     default_confidence:
-        Used when *classifier* is None or raises. Must be one of
-        :data:`CONFIDENCE_LEVELS`.
+        Used when *classifier* is None or hits a classifier contract
+        error. Must be one of :data:`CONFIDENCE_LEVELS`.
     default_reason:
         Reason text paired with the default confidence fallback.
 
@@ -330,7 +330,7 @@ def wrap_findings(
             continue
         try:
             conf, reason = classifier(f)
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             conf, reason = default_confidence, default_reason
         out.append(triple(f, conf, reason))
     return out
