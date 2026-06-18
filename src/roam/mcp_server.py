@@ -8633,7 +8633,7 @@ def sbom(
         "edge-bundle digest. Optional cosign keyless or offline signing."
     ),
 )
-def cga_emit(
+def _mcp_cga_emit(
     include_taint: bool = False,
     aibom: bool = False,
     sign: bool = False,
