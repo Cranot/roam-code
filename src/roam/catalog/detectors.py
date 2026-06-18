@@ -38,14 +38,15 @@ from roam.languages import JS_FAMILY_LANGUAGES
 from roam.output._severity import severity_rank
 
 # W1037: public surface declaration. New detector functions added below
-# follow the ``detect_*`` naming convention and should be appended to
-# the alphabetical list below at the same time as their @detector
+# follow the ``detect_*`` naming convention and should be appended to the
+# alphabetical list below at the same time as their ``@algorithm_detector``
 # decoration. Constants and helpers prefixed with a leading underscore
-# (``_DETECTOR_REGISTRY``, ``_DETECTOR_METADATA``, ``_finding``, ...)
-# are intentionally OMITTED — tests that need them import by explicit
-# name (``__all__`` only affects ``from foo import *``).
+# (``_DETECTOR_REGISTRY``, ``_DETECTOR_METADATA``, ``_finding``, ...) are
+# intentionally OMITTED — tests that need them import by explicit name
+# (``__all__`` only affects ``from foo import *``).
 __all__ = [
     # Registry + decorator (public API).
+    "algorithm_detector",
     "detector",
     "list_detector_names",
     "list_detector_surface",
@@ -108,11 +109,12 @@ _JS_FAMILY_SQL_TUPLE = "(" + ", ".join(f"'{lang}'" for lang in JS_FAMILY_LANGUAG
 
 
 # ---------------------------------------------------------------------------
-# A3 — Detector registry + @detector decorator
+# A3 — Detector registry + @algorithm_detector decorator
 # ---------------------------------------------------------------------------
 #
 # Replaces the implicit-by-tuple registration in ``_MATH_DETECTORS`` with an
-# opt-in metadata registry. Decorating a detector with ``@detector(...)``
+# opt-in metadata registry. Decorating a detector with
+# ``@algorithm_detector(...)``
 # records its declared task, language coverage, confidence basis, and query
 # cost so ``roam math --list-detectors / --only / --exclude`` can act on
 # the metadata without re-deriving it elsewhere.
@@ -127,7 +129,7 @@ _JS_FAMILY_SQL_TUPLE = "(" + ", ".join(f"'{lang}'" for lang in JS_FAMILY_LANGUAG
 # W911: the confidence-tier values are imported from ``roam.db.findings``
 # (the canonical source of truth) rather than re-defined here. The
 # frozenset is just a derived view that adds membership-test semantics
-# for the ``@detector`` decorator. A drift-guard test in
+# for the ``@algorithm_detector`` decorator. A drift-guard test in
 # ``tests/test_w911_confidence_tier_parity.py`` asserts the set has not
 # diverged from the four canonical constants.
 _CONFIDENCE_BASES = frozenset(
@@ -152,7 +154,7 @@ _QUERY_COSTS = frozenset({QUERY_COST_LOW, QUERY_COST_MEDIUM, QUERY_COST_HIGH})
 _DETECTOR_REGISTRY: dict[str, dict[str, Any]] = {}
 
 
-def detector(
+def algorithm_detector(
     *,
     task_id: str,
     languages: tuple[str, ...] = (),
@@ -160,7 +162,7 @@ def detector(
     query_cost: str = QUERY_COST_LOW,
     version: str = "1.0.0",
 ) -> Callable[[Callable[..., list[dict]]], Callable[..., list[dict]]]:
-    """Register a detector with metadata.
+    """Register an algorithm-catalog detector with metadata.
 
     Parameters
     ----------
@@ -196,6 +198,12 @@ def detector(
     return wrap
 
 
+# Backward-compatible alias for external imports. The implementation uses the
+# domain-specific name above so this module no longer defines a ``detector``
+# function that collides with ``roam.catalog.registry.detector``.
+detector = algorithm_detector
+
+
 def list_registered_detectors() -> list[dict[str, Any]]:
     """Return registry entries (excluding the callable) for inspection."""
     return [{k: v for k, v in entry.items() if k != "function"} for entry in _DETECTOR_REGISTRY.values()]
@@ -205,7 +213,8 @@ def list_detector_surface() -> list[dict[str, Any]]:
     """Return every built-in detector visible through ``roam algo``.
 
     ``list_registered_detectors()`` is intentionally narrow: it reports
-    detectors declared with the ``@detector`` decorator in this module.
+    detectors declared with the ``@algorithm_detector`` decorator in this
+    module.
     The runtime surface is wider because ``run_detectors()`` also loads
     Python-specific idiom detectors from ``python_idioms.py``. This helper
     mirrors the runtime surface so CLI discovery and ``--only``/``--exclude``
@@ -798,7 +807,7 @@ def _guard_hints_from_source(language: str | None, snippet: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-@detector(
+@algorithm_detector(
     task_id="sorting",
     languages=(),
     confidence_basis="structural",
@@ -841,7 +850,7 @@ def detect_manual_sort(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="search-sorted",
     languages=(),
     confidence_basis="heuristic",
@@ -899,7 +908,7 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="membership",
     languages=(),
     confidence_basis="structural",
@@ -950,7 +959,7 @@ def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="string-concat",
     languages=(),
     confidence_basis="structural",
@@ -1014,7 +1023,7 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="unique",
     languages=(),
     confidence_basis="structural",
@@ -1057,7 +1066,7 @@ def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="max-min",
     languages=(),
     confidence_basis="heuristic",
@@ -1106,7 +1115,7 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="accumulation",
     languages=(),
     confidence_basis="heuristic",
@@ -1150,7 +1159,7 @@ def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="manual-power",
     languages=(),
     confidence_basis="structural",
@@ -1209,7 +1218,7 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="manual-gcd",
     languages=(),
     confidence_basis="structural",
@@ -1266,7 +1275,7 @@ def detect_manual_gcd(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="string-reverse",
     languages=(),
     confidence_basis="heuristic",
@@ -1318,7 +1327,7 @@ def detect_string_reverse(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="matrix-mult",
     languages=(),
     confidence_basis="structural",
@@ -1381,7 +1390,7 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="fibonacci",
     languages=(),
     confidence_basis="heuristic",
@@ -1431,7 +1440,7 @@ def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="nested-lookup",
     languages=("python", "javascript", "typescript", "php", "ruby", "go", "java"),
     confidence_basis="structural",
@@ -1565,7 +1574,7 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="groupby",
     languages=(),
     confidence_basis="heuristic",
@@ -1612,7 +1621,7 @@ def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="busy-wait",
     languages=(),
     confidence_basis="structural",
@@ -1721,7 +1730,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-@detector(
+@algorithm_detector(
     task_id="regex-in-loop",
     languages=("python", "javascript", "typescript", "ruby"),
     confidence_basis="structural",
@@ -2581,7 +2590,7 @@ def _io_emit_finding(
     return finding
 
 
-@detector(
+@algorithm_detector(
     task_id="io-in-loop",
     languages=("python", "javascript", "typescript", "php", "ruby", "go", "java", "csharp"),
     confidence_basis="structural",
@@ -2722,7 +2731,7 @@ def _demote_dev_gated_level(level: str, dev_gated: bool) -> str:
     return level
 
 
-@detector(
+@algorithm_detector(
     task_id="list-prepend",
     languages=(),
     confidence_basis="structural",
@@ -2793,7 +2802,7 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="sort-to-select",
     languages=(),
     confidence_basis="structural",
@@ -2899,7 +2908,7 @@ _RE_FOR_OF = re.compile(
 _RE_AWAIT_IN_BODY = re.compile(r"\bawait\s+[\w$.]+\s*\(")
 
 
-@detector(
+@algorithm_detector(
     task_id="serial-await-loop",
     languages=("javascript", "typescript"),
     confidence_basis="structural",
@@ -2967,7 +2976,7 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
 # blocks the event loop. The async cousin is `asyncio.sleep` (or trio.sleep).
 # This is one of the most common asyncio bugs and dramatically degrades
 # request throughput in async web servers (FastAPI, aiohttp, Sanic).
-@detector(
+@algorithm_detector(
     task_id="async-blocking-sleep",
     languages=("python", "javascript", "typescript"),
     confidence_basis="structural",
@@ -3070,7 +3079,7 @@ _RE_STORED_TASK = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="async-fire-and-forget-task",
     languages=("python",),
     confidence_basis="structural",
@@ -3140,7 +3149,7 @@ _RE_NESTED_ASYNCIO_RUN = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="async-nested-run",
     languages=("python",),
     confidence_basis="structural",
@@ -3209,7 +3218,7 @@ _RE_BROAD_EXCEPT = re.compile(
 _RE_RERAISE = re.compile(r"^\s*raise(?:\s|$)", re.MULTILINE)
 
 
-@detector(
+@algorithm_detector(
     task_id="broad-except-swallow",
     languages=("python",),
     confidence_basis="structural",
@@ -3307,7 +3316,7 @@ _RE_REDUCE_SPREAD_OBJ = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="spread-accumulator",
     languages=JS_FAMILY_LANGUAGES,
     confidence_basis="structural",
@@ -3380,7 +3389,7 @@ _RE_DEFER_IN_LOOP_BODY = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="defer-in-loop",
     languages=("go",),
     confidence_basis="structural",
@@ -3447,7 +3456,7 @@ _RE_MAP_FIND = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="chained-collection-walk",
     languages=JS_FAMILY_LANGUAGES,
     confidence_basis="structural",
@@ -3520,7 +3529,7 @@ _RE_USEEFFECT_WITH_DEPS = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="useeffect-missing-deps",
     languages=("javascript", "typescript"),
     confidence_basis="structural",
@@ -3592,7 +3601,7 @@ _RE_EVAL_DECL_LINE = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|def
 _RE_SHELL_EXEC_RECEIVER = re.compile(r"(?:child_process|cp)\s*\.\s*exec", re.IGNORECASE)
 
 
-@detector(
+@algorithm_detector(
     task_id="dangerous-eval",
     languages=("python", "javascript", "typescript", "php", "ruby"),
     confidence_basis="static_analysis",
@@ -3678,7 +3687,7 @@ _RE_LIFECYCLE = re.compile(
 )
 
 
-@detector(
+@algorithm_detector(
     task_id="unremoved-event-listener",
     languages=JS_FAMILY_LANGUAGES,
     confidence_basis="structural",
@@ -3738,7 +3747,7 @@ def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="loop-lookup",
     languages=(),
     confidence_basis="structural",
@@ -3820,7 +3829,7 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-@detector(
+@algorithm_detector(
     task_id="branching-recursion",
     languages=(),
     confidence_basis="structural",
@@ -3989,7 +3998,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="quadratic-string",
     languages=(),
     confidence_basis="structural",
@@ -4028,7 +4037,7 @@ def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-@detector(
+@algorithm_detector(
     task_id="loop-invariant-call",
     languages=(),
     confidence_basis="structural",
