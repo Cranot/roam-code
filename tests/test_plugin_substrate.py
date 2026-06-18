@@ -182,6 +182,20 @@ def test_register_extractor_routes_to_correct_language(monkeypatch, tmp_path):
     assert extractor.language_name == "demo-toml"
 
 
+def test_language_extension_helper_propagates_registry_bugs(monkeypatch):
+    """Unexpected plugin registry failures should not look like no extensions."""
+    import roam.languages.registry as registry
+    import roam.plugins as plugins
+
+    def broken_language_extensions():
+        raise RuntimeError("registry bug")
+
+    monkeypatch.setattr(plugins, "get_plugin_language_extensions", broken_language_extensions)
+
+    with pytest.raises(RuntimeError, match="registry bug"):
+        registry._plugin_language_extensions()
+
+
 # ---------------------------------------------------------------------------
 # 4. Bad plugin fails gracefully
 # ---------------------------------------------------------------------------

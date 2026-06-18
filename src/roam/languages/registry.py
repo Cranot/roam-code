@@ -129,9 +129,6 @@ def _plugin_language_extensions():
         return get_plugin_language_extensions()
     except ImportError:
         return {}
-    except Exception:
-        log.debug("plugin language extension discovery failed", exc_info=True)
-        return {}
 
 
 def _plugin_language_grammar_aliases():
