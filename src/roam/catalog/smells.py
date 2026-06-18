@@ -40,7 +40,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from roam.catalog._shared import find_workspace_root as _find_workspace_root
+from roam.catalog._shared import find_indexed_source_root as _find_indexed_source_root
 from roam.catalog._shared import is_test_path as _is_test_path
 from roam.catalog._shared import loc as _loc
 from roam.catalog._shared import make_smell_finding as _finding
@@ -1169,7 +1169,7 @@ def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         file_id = f["id"]
@@ -1438,7 +1438,7 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
     if not inherits:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
     # Cache source reads per file: a single child class typically has many
     # methods checked; we don't want to re-read the file for each one.
     source_cache: dict[int, str | None] = {}
@@ -2120,7 +2120,7 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         file_id = f["id"]
@@ -2351,7 +2351,7 @@ def detect_magic_numbers(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         rel_path = f["path"]
@@ -2452,7 +2452,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         file_id = f["id"]
@@ -2629,7 +2629,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         file_id = f["id"]
@@ -3166,7 +3166,7 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.OperationalError:
         return []
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
 
     for f in files:
         lang = f["language"]

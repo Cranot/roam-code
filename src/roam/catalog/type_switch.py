@@ -62,7 +62,7 @@ import logging
 import sqlite3
 
 from roam.catalog._shared import enclosing_symbol as _enclosing_symbol
-from roam.catalog._shared import find_workspace_root as _find_workspace_root
+from roam.catalog._shared import find_indexed_source_root as _find_indexed_source_root
 from roam.catalog._shared import is_test_path as _file_is_test
 from roam.catalog._shared import loc as _loc
 from roam.catalog._shared import make_smell_finding as _finding
@@ -436,7 +436,7 @@ def detect_type_switch(
     # byte-identical to this detector's former inline parse.
     from roam.catalog.smells import _read_and_parse
 
-    workspace = _find_workspace_root()
+    workspace = _find_indexed_source_root()
     results: list[dict] = []
 
     for f in files:
