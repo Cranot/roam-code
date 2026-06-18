@@ -190,16 +190,16 @@ def _recorded_head_for_log(conn: sqlite3.Connection) -> str:
 
     W985-followup helper for the "HEAD unchanged" skip log. Returns the
     truncated SHA when the manifest is readable AND has a recorded HEAD;
-    returns ``"unknown"`` otherwise. Defensive: any failure path collapses
+    returns ``"unknown"`` otherwise. Defensive: SQLite read failures collapse
     to ``"unknown"`` rather than raising — this is a diagnostic log call,
     not a control-flow check, and the caller has already confirmed the
     skip is legitimate via ``_head_unchanged_since_last_run``.
     """
-    try:
-        from roam.index.manifest import latest_manifest
+    from roam.index.manifest import latest_manifest
 
+    try:
         prev = latest_manifest(conn)
-    except Exception:
+    except sqlite3.Error:
         return "unknown"
     if not prev:
         return "unknown"
