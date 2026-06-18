@@ -68,12 +68,12 @@ def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
         from tree_sitter_language_pack import get_parser
 
         parser = get_parser(grammar)
-    except Exception:
+    except LookupError:
         return []
 
     try:
         tree = parser.parse(source)
-    except Exception:
+    except TypeError:
         return []
 
     return extract_symbols(tree, source, file_path, extractor)
