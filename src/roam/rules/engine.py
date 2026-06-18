@@ -604,7 +604,7 @@ def _table_columns(conn, table_name: str) -> set[str]:
     """Return the set of columns for a table, or empty set if unavailable."""
     try:
         rows = conn.execute("PRAGMA table_info({})".format(table_name)).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return set()
 
     cols: set[str] = set()
