@@ -314,7 +314,7 @@ def parse_file(path: Path, language: str | None = None):
 
     try:
         parser = get_parser(grammar)
-    except Exception:
+    except LookupError:
         parse_errors["no_grammar"] += 1
         return None, None, None  # Grammar not available, expected skip
 
