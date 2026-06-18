@@ -9183,7 +9183,7 @@ def audit_trail_export(
 @_tool(
     name="roam_metrics_push", description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**"
 )  # W459
-def metrics_push(
+def metrics_push_tool(
     token: str = "",
     repo: str = "",
     endpoint: str = "",
