@@ -589,22 +589,23 @@ def test_outer_guard_marker_shape(search_project, monkeypatch):
 
 
 def test_caller_unmodified():
-    """AST-check ``cmd_search.search``'s public interface.
+    """AST-check ``cmd_search.search_cmd``'s public interface.
 
     W607-E threads warnings_out PURELY internally (the bucket is a
     local accumulator; no new Click option exposes it to callers). The
-    Click decorator surface, function name, and parameter list must
-    therefore remain byte-identical to pre-W607-E.
+    Click decorator surface and parameter list must therefore remain
+    byte-identical to pre-W607-E. ``search`` remains the exported Click
+    command alias for LazyGroup loading.
     """
     path = repo_root() / "src" / "roam" / "commands" / "cmd_search.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
 
-    # Find the search function.
+    # Find the search command implementation function.
     fn = next(
-        (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "search"),
+        (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "search_cmd"),
         None,
     )
-    assert fn is not None, "search function not found in cmd_search.py"
+    assert fn is not None, "search_cmd function not found in cmd_search.py"
 
     # Parameter list must be the canonical pre-W607-E shape.
     arg_names = [a.arg for a in fn.args.args]
@@ -619,19 +620,38 @@ def test_caller_unmodified():
         "explain",
         "mode",
         "recent_days",
-    ], f"search parameter list drifted from pre-W607-E: {arg_names!r}"
+    ], f"search_cmd parameter list drifted from pre-W607-E: {arg_names!r}"
 
     # Click decorators present: @roam_capability + @click.command + 9x option +
     # @click.pass_context. We pin the count to catch accidental option
     # additions or removals.
     decorator_count = len(fn.decorator_list)
     assert decorator_count >= 5, (
-        f"expected ≥5 decorators on search (roam_capability + "
+        f"expected ≥5 decorators on search_cmd (roam_capability + "
         f"click.command + options + click.pass_context); got "
         f"{decorator_count}"
     )
 
+    click_decorator = next(
+        (d for d in fn.decorator_list if isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "command"),
+        None,
+    )
+    assert click_decorator is not None, "search_cmd missing @click.command decorator"
+    assert click_decorator.args and isinstance(click_decorator.args[0], ast.Constant)
+    assert click_decorator.args[0].value == "search"
+
+    alias = next(
+        (
+            n
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "search" for t in n.targets)
+        ),
+        None,
+    )
+    assert alias is not None and isinstance(alias.value, ast.Name) and alias.value.id == "search_cmd"
+
     # No return annotation drift (W607-E doesn't change return semantics).
     assert fn.returns is None, (
-        f"search gained a return annotation; W607-E is interface-stable. Got: {ast.dump(fn.returns)!r}"
+        f"search_cmd gained a return annotation; W607-E is interface-stable. Got: {ast.dump(fn.returns)!r}"
     )
