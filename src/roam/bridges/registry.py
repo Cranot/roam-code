@@ -9,10 +9,15 @@ from roam.bridges.base import LanguageBridge
 log = logging.getLogger(__name__)
 
 _BRIDGES: list[LanguageBridge] = []
+_DISCOVERED = False
+_REQUIRED_BRIDGE_ATTRS = ("name", "detect", "resolve")
 
 
 def register_bridge(bridge: LanguageBridge) -> None:
     """Register a bridge instance."""
+    for attr in _REQUIRED_BRIDGE_ATTRS:
+        if not hasattr(bridge, attr):
+            raise TypeError(f"bridge missing required attribute: {attr}")
     _BRIDGES.append(bridge)
 
 
@@ -29,8 +34,10 @@ def detect_bridges(file_paths: list[str]) -> list[LanguageBridge]:
 
 def _auto_discover():
     """Auto-discover built-in + plugin-contributed bridges on first call."""
-    if _BRIDGES:
+    global _DISCOVERED
+    if _DISCOVERED:
         return
+    _DISCOVERED = True
 
     # Import built-in bridges -- each registers itself on import.
     # W907/Pattern-2 discipline: built-in bridges ship inside this package,
@@ -76,4 +83,4 @@ def _auto_discover():
     if get_plugin_bridges is not None:
         for bridge in get_plugin_bridges():
             if bridge not in _BRIDGES:
-                _BRIDGES.append(bridge)
+                register_bridge(bridge)

@@ -417,14 +417,10 @@ class RoamPluginContext:
         client fetch). The instance must implement
         ``roam.bridges.base.LanguageBridge``.
         """
+        from roam.bridges.registry import register_bridge
+
+        register_bridge(bridge)
         state = _registry_state()
-        # Duck-type rather than isinstance() — the abstract base lives
-        # in ``roam.bridges.base`` and importing it eagerly here would
-        # pull the bridge module on every plugin load.
-        required = ("name", "detect", "resolve")
-        for attr in required:
-            if not hasattr(bridge, attr):
-                raise TypeError(f"bridge missing required attribute: {attr}")
         state.bridges.append(bridge)
         self._note_capability("bridge")
 
