@@ -287,7 +287,7 @@ _COMMANDS = {
         "roam.commands.cmd_audit_trail_conformance",
         "audit_trail_conformance_check_cmd",
     ),
-    "rules-validate": ("roam.commands.cmd_rules_validate", "rules_validate"),
+    "rules-validate": ("roam.commands.cmd_rules_validate", "rules_validate_cmd"),
     "dogfood": ("roam.commands.cmd_dogfood", "dogfood"),
     "dogfood-aggregate": ("roam.commands.cmd_dogfood_aggregate", "dogfood_aggregate"),
     "suppress": ("roam.commands.cmd_suppress", "suppress"),
