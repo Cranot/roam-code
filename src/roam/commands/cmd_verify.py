@@ -87,6 +87,13 @@ SEVERITY_INFO = "INFO"
 _SEVERITY_ORDER = {SEVERITY_FAIL: 0, SEVERITY_WARN: 1, SEVERITY_INFO: 2}
 _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
+# Public module entrypoints that legitimately repeat across independent
+# domains. Exact-name matching alone is not useful signal for these API shapes:
+# ``load_rules`` exists in architecture-rule and taint-rule engines with
+# different schemas/return types, and ``verify`` exists as both a CLI command
+# entrypoint and an MCP wrapper.
+_DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules", "verify"})
+
 
 def _blast_radius_by_file(conn, files):
     """File-level blast radius = the MAX caller count
@@ -1276,9 +1283,12 @@ def _existing_duplicate_symbols(conn):
     """).fetchall()
 
 
+def _duplicate_name_eligible(name: str) -> bool:
+    return len(name) >= 4 and not name.startswith("_") and name not in _DUPLICATE_ENTRYPOINT_SKIP_NAMES
+
+
 def _duplicate_symbol_eligible(symbol) -> bool:
-    name = symbol["name"]
-    return len(name) >= 4 and not name.startswith("_")
+    return _duplicate_name_eligible(symbol["name"])
 
 
 def _duplicate_indexes(existing_symbols) -> tuple[dict[str, list], dict[tuple[str, str], set]]:
@@ -1289,8 +1299,11 @@ def _duplicate_indexes(existing_symbols) -> tuple[dict[str, list], dict[tuple[st
     existing_by_name: dict[str, list] = defaultdict(list)
     name_files: dict[tuple[str, str], set] = defaultdict(set)
     for sym in existing_symbols:
-        existing_by_name[sym["name"].lower()].append(sym)
-        name_files[(sym["file_role"] or "", sym["name"].lower())].add(sym["file_path"])
+        if not _duplicate_symbol_eligible(sym):
+            continue
+        lower_name = sym["name"].lower()
+        existing_by_name[lower_name].append(sym)
+        name_files[(sym["file_role"] or "", lower_name)].add(sym["file_path"])
     return existing_by_name, name_files
 
 

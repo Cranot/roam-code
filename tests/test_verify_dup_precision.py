@@ -86,6 +86,59 @@ def test_two_file_copy_still_flagged(tmp_path):
     assert any("parse_widget_config" in m for m in msgs), msgs
 
 
+def test_load_rules_module_entrypoints_not_flagged(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "src" / "roam" / "rules").mkdir(parents=True)
+    (proj / "src" / "roam" / "security").mkdir(parents=True)
+    (proj / ".git").mkdir(exist_ok=True)  # isolate index root from any stray /tmp/.git
+    hdr = "from __future__ import annotations\n\n\n"
+    (proj / "src" / "roam" / "rules" / "engine.py").write_text(
+        hdr + "def load_rules(path):\n    return []\n",
+        encoding="utf-8",
+    )
+    (proj / "src" / "roam" / "security" / "taint_engine.py").write_text(
+        hdr + "def load_rules(path):\n    return []\n",
+        encoding="utf-8",
+    )
+    _index(proj)
+    env = _verify_json(proj, "src/roam/rules/engine.py", "--checks", "duplicates")
+    msgs = [v["message"] for v in env["categories"]["duplicates"]["violations"]]
+    assert not any("load_rules" in m for m in msgs), msgs
+
+
+def test_verify_module_entrypoints_not_flagged(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "src" / "roam" / "commands").mkdir(parents=True)
+    (proj / "src" / "roam").mkdir(parents=True, exist_ok=True)
+    (proj / ".git").mkdir(exist_ok=True)  # isolate index root from any stray /tmp/.git
+    hdr = "from __future__ import annotations\n\n\n"
+    (proj / "src" / "roam" / "commands" / "cmd_verify.py").write_text(
+        hdr + "def verify():\n    return None\n",
+        encoding="utf-8",
+    )
+    (proj / "src" / "roam" / "mcp_server.py").write_text(
+        hdr + "def verify():\n    return None\n",
+        encoding="utf-8",
+    )
+    _index(proj)
+    env = _verify_json(proj, "src/roam/commands/cmd_verify.py", "--checks", "duplicates")
+    msgs = [v["message"] for v in env["categories"]["duplicates"]["violations"]]
+    assert not any("`verify`" in m for m in msgs), msgs
+
+
+def test_public_name_not_compared_to_private_helper(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".git").mkdir(exist_ok=True)  # isolate index root from any stray /tmp/.git
+    hdr = "from __future__ import annotations\n\n\n"
+    (proj / "user_config.py").write_text(hdr + "def _load_user_config():\n    return {}\n", encoding="utf-8")
+    (proj / "verify_config.py").write_text(hdr + "def load_verify_config():\n    return {}\n", encoding="utf-8")
+    _index(proj)
+    env = _verify_json(proj, "verify_config.py", "--checks", "duplicates")
+    msgs = [v["message"] for v in env["categories"]["duplicates"]["violations"]]
+    assert not any("load_verify_config" in m for m in msgs), msgs
+
+
 def test_cross_role_mirror_not_flagged(tmp_path):
     proj = tmp_path / "proj"
     (proj / "src").mkdir(parents=True)

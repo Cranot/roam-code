@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from roam.commands._yaml_loader import load_yaml_with_warnings
 from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.output._severity import validate_severity
 
@@ -110,17 +111,18 @@ class TaintFinding:
 
 
 # ---------------------------------------------------------------------------
-# Rule loading (zero-dep YAML subset — same shape as gate_presets)
+# Rule loading (zero-dep YAML subset via shared YAML loader)
 # ---------------------------------------------------------------------------
 
 
 def load_rules(rules_dir: Path | str) -> list[TaintRule]:
     """Load every ``*.yaml`` file under *rules_dir* as a TaintRule.
 
-    Falls back to the in-tree YAML subset parser when ``yaml`` isn't
-    installed (we still ship zero-dep). Files that fail to parse are
-    skipped with a warning attached to the rule list rather than
-    crashing the whole load — one bad rule shouldn't take out the rest.
+    Uses the shared YAML file loader for I/O + malformed-file handling,
+    with the taint-specific subset parser as the sole parser so invalid
+    taint keys still get rejected consistently. Files that fail to parse
+    are skipped rather than crashing the whole load — one bad rule
+    shouldn't take out the rest.
     """
     rules_path = Path(rules_dir)
     if not rules_path.is_dir():
@@ -128,21 +130,14 @@ def load_rules(rules_dir: Path | str) -> list[TaintRule]:
 
     out: list[TaintRule] = []
     for yaml_file in sorted(rules_path.glob("*.yaml")):
-        text = yaml_file.read_text(encoding="utf-8")
-        # W678: narrowed from ``except Exception`` per the W662 allowlist
-        # plan ("re-audit to narrow to (ValueError, yaml.YAMLError) once
-        # we standardise the parser"). The in-tree
-        # ``_parse_yaml_subset`` is the only parser path today (zero-dep,
-        # see docstring) and raises ``ValueError`` exclusively — malformed
-        # key lines, list-item-without-key, and invalid-key all funnel
-        # through ``raise ValueError`` (see lines 229/234/238). If a
-        # future code path swaps in PyYAML, extend this tuple to
-        # ``(ValueError, yaml.YAMLError)``; non-parse bugs (AttributeError,
-        # RecursionError, etc.) should crash so they get noticed rather
-        # than silently dropping a rule.
-        try:
-            doc = _parse_yaml_subset(text)
-        except ValueError:
+        doc, status = load_yaml_with_warnings(
+            yaml_file,
+            tiny_parser=_parse_yaml_subset,
+            config_label="taint-rules",
+            force_tiny_parser=True,
+            return_status=True,
+        )
+        if status in {"parse_error", "read_error", "wrong_root_type", "schema_invalid"}:
             continue
         if not isinstance(doc, dict):
             continue
