@@ -63,19 +63,25 @@ def parse_codeowners(project_root):
 _HALF_LIFE_DAYS = 365  # weight halves every year
 
 
-def _decay_weight(epoch: int, now: int) -> float:
+def _decay_weight(epoch: int, now: int, half_life_days: float = _HALF_LIFE_DAYS) -> float:
     """Exponential time-decay weight for a commit timestamp."""
     if not epoch:
         return 0.0
     age_days = max(0, (now - epoch)) / 86400
-    return math.pow(0.5, age_days / _HALF_LIFE_DAYS)
+    return math.pow(0.5, age_days / half_life_days)
 
 
-def compute_file_ownership(conn, file_ids: list[int], now: int | None = None):
+def compute_file_ownership(
+    conn,
+    file_ids: list[int],
+    now: int | None = None,
+    half_life_days: float = _HALF_LIFE_DAYS,
+):
     """Compute per-file developer ownership with time-decayed blame.
 
     Returns ``{file_id: {author: ownership_share}}`` where shares sum to ~1.0
-    per file.  Uses churn (lines_added + lines_removed) weighted by recency.
+    per file. Uses churn (lines_added + lines_removed) weighted by recency.
+    ``half_life_days`` controls how quickly old contributions decay.
     """
     if now is None:
         now = int(time.time())
@@ -102,7 +108,7 @@ def compute_file_ownership(conn, file_ids: list[int], now: int | None = None):
         fid = r["file_id"]
         author = r["author"]
         churn = r["churn"] or 0
-        w = _decay_weight(r["timestamp"] or 0, now)
+        w = _decay_weight(r["timestamp"] or 0, now, half_life_days)
         file_author_weight[fid][author] += churn * w
 
     # Normalise to shares
