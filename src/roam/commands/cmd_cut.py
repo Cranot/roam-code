@@ -367,7 +367,10 @@ def cut(ctx, between, leak_edges, top_n):
                 else:
                     _k = min(_ug_n, max(200, int(_ug_n**0.5 * 5)))
                     ebc = nx.edge_betweenness_centrality(UG, k=_k, seed=1)
-            except Exception:
+            except (nx.NetworkXError, ValueError):
+                # Degrade to empty so the envelope still composes (W607-EI). nx
+                # raises NetworkXError on graph issues; ValueError covers a bad
+                # k/sample arg. Narrowed from a bare except so a real bug surfaces.
                 ebc = {}
 
             for (u, v), bc in sorted(ebc.items(), key=lambda x: -x[1]):
