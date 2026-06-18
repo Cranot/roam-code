@@ -14,7 +14,7 @@ from collections import defaultdict
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.builder import build_symbol_graph
@@ -253,23 +253,55 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
     if mermaid is not None:
         extra["mermaid"] = mermaid
 
-    # Build verdict
+    # Build verdict + a machine-readable state (W805-BB Pattern-2). A bare
+    # "no clusters detected" conflated three distinct zero-cluster cases; an
+    # agent could not tell whether to re-index, lower --min-size, or accept
+    # that there is no modular structure. Disclose which case fired:
+    #   clusters_detected  — real decomposition surfaced (Newman Q > 0)
+    #   trivial_clustering — clusters exist but modularity Q<=0 (no real structure)
+    #   empty_corpus       — 0 symbols indexed (no graph to cluster)
+    #   no_clusters        — symbols exist but Louvain found no structure
+    #   below_min_size     — clusters exist but all smaller than --min-size
     n_visible = len(visible)
     largest = max(visible, key=lambda r: r["size"]) if visible else None
-    if largest:
-        verdict = f"{n_visible} clusters, largest: {largest['cluster_label']}({largest['size']} syms)"
+    mod_q = quality["modularity"]
+    summary = {
+        "clusters": n_visible,
+        "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
+        "modularity_q": mod_q,
+        "mean_conductance": quality["mean_conductance"],
+    }
+    if largest and mod_q > 0.0:
+        summary["verdict"] = f"{n_visible} clusters, largest: {largest['cluster_label']}({largest['size']} syms)"
+        summary["state"] = "clusters_detected"
+    elif largest:
+        # Visible clusters exist but Newman modularity Q<=0 means there is no real
+        # community structure (Q>0.3 is meaningful; Newman 2004). Disclose so an
+        # agent does not read "N clusters" as a genuine architectural
+        # decomposition and proceed to refactor a phantom cluster. (Now that
+        # modularity is computed against a repaired partition, Q<=0 is an honest
+        # signal — a well-modularized repo reports Q~0.8, not 0.)
+        summary["verdict"] = f"{n_visible} trivial cluster(s), modularity Q={mod_q} — no community structure detected"
+        summary["state"] = "trivial_clustering"
+        summary["partial_success"] = True
     else:
-        verdict = "no clusters detected"
+        _empty = empty_corpus_state(conn)
+        if _empty is not None:
+            # Keep "no clusters" in the verdict (sealed contract) while
+            # disclosing the empty corpus via the canonical state + flag.
+            summary["verdict"] = "no clusters — no symbols indexed in corpus (run `roam index --force`)"
+            summary.update(_empty)  # state="empty_corpus", partial_success=True
+        elif not rows:
+            summary["verdict"] = "no clusters detected — no community structure found in the symbol graph"
+            summary["state"] = "no_clusters"
+            summary["partial_success"] = True
+        else:
+            summary["verdict"] = f"no clusters >= min-size {min_size} ({len(rows)} below threshold)"
+            summary["state"] = "below_min_size"
 
     envelope = json_envelope(
         "clusters",
-        summary={
-            "verdict": verdict,
-            "clusters": n_visible,
-            "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
-            "modularity_q": quality["modularity"],
-            "mean_conductance": quality["mean_conductance"],
-        },
+        summary=summary,
         budget=token_budget,
         clusters=[
             {

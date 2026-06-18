@@ -212,6 +212,43 @@ def require_index() -> None:
         raise IndexMissingError()
 
 
+def empty_corpus_state(conn: sqlite3.Connection) -> dict | None:
+    """Return the canonical Pattern-2 empty-corpus disclosure when the index
+    holds zero symbols, else ``None``.
+
+    Analysis commands (``cycles`` / ``dashboard`` / ``verify`` / ``debt`` / …)
+    run their graph/metric logic over the symbol table; on a 0-symbol corpus
+    that logic produces a vacuously "clean" / "PASS" / "HEALTHY" verdict —
+    a Pattern-2 silent SAFE (absent state read as a clean result). Calling this
+    early in the JSON branch lets a command emit an explicit
+    ``state: "empty_corpus"`` + ``partial_success: True`` instead. Mirrors the
+    guard already shipped in ``cmd_health`` so the state vocabulary is identical
+    across commands (Pattern-3 cross-command consistency).
+
+    Returns a dict to spread into ``summary`` (``state`` + ``partial_success``);
+    the caller supplies its own ``verdict`` so the LAW-4 fact terminal stays
+    command-appropriate.
+
+    Canonical signal: ``state == "empty_corpus"`` is consistent across EVERY
+    adopter — agents should branch on it. ``partial_success`` is intentionally
+    NOT uniform: most commands treat an empty corpus as a degraded input
+    (``True``), but a few (e.g. ``dead``) treat "scanned everything, found
+    nothing to flag" as a fully-resolved result and override it to ``False``
+    (see ``test_w802_dead_empty_corpus`` for that command's reasoning). Callers
+    may therefore overwrite ``partial_success`` after spreading this dict; the
+    ``state`` field is the cross-command-stable disclosure.
+    """
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()
+    except sqlite3.OperationalError:
+        # symbols table absent (index never built / partial) — let the caller's
+        # normal not_initialized handling speak; do not assert empty_corpus.
+        return None
+    if row is not None and row[0] == 0:
+        return {"state": "empty_corpus", "partial_success": True}
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Remediation hint helpers — produce actionable error messages for agents
 # ---------------------------------------------------------------------------

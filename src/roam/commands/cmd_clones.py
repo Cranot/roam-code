@@ -19,7 +19,7 @@ from collections import Counter
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import open_db
 from roam.index.file_roles import is_test as _is_test
 from roam.output.confidence import (
@@ -803,6 +803,20 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 default={"state": "DEGRADED", "scanned": 0},
             )
 
+            # W808 — Pattern-2 empty-corpus disclosure. When there are no
+            # clusters AND the index holds zero symbols, the "No structural
+            # clones detected" verdict would be a silent SAFE on an empty
+            # corpus (vacuously clean — nothing was scanned). Distinguish
+            # that 0-symbol case from the populated-but-no-clones case (and
+            # from the below-threshold / pre-filter gate-collapse cases,
+            # which are a DIFFERENT axis owned by W805-CCCC) via the
+            # canonical ``empty_corpus_state`` helper. Only the 0-symbol
+            # corpus yields ``state="empty_corpus"``; if symbols exist but
+            # no clones surfaced, the verdict stays the populated SAFE line.
+            _empty = empty_corpus_state(conn) if not clusters else None
+            if _empty is not None:
+                verdict_with_conf = "no structural clones — no symbols indexed in corpus (run `roam index --force`)"
+
             summary_payload = {
                 "verdict": verdict_with_conf,
                 "clusters": len(clusters),
@@ -824,6 +838,13 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 "run_state": _score_dict["state"],
                 **_cap_summary,
             }
+            # W808 — stamp the canonical empty-corpus disclosure
+            # (``state="empty_corpus"`` + ``partial_success=True``) onto
+            # the summary so consumers never read the empty-corpus SAFE as
+            # a clean result. Applied AFTER ``_cap_summary`` so the state
+            # field is not clobbered.
+            if _empty is not None:
+                summary_payload.update(_empty)
             # W607-BQ + DC: union the cap-hit disclosure list with the
             # substrate-CALL marker list AND the aggregation-phase
             # marker list. All three bins flush into the same

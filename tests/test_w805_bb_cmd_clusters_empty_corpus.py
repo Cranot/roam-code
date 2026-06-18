@@ -337,23 +337,8 @@ class TestClustersEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-BB REAL BUG (HIGH): cmd_clusters.py L260-294 (_clusters_json) "
-        "builds the summary dict without setting partial_success, so the "
-        "json_envelope auto-derive defaults it to False. On the empty "
-        "corpus (0 symbols, 0 edges), detect_clusters returns {} at "
-        "graph/clusters.py L66 -- no exception was raised, so "
-        "partial_success stays False. Same cascading silent fallback as "
-        "W805-Y #1 (partition), W805-U #2 (orchestrate). All three commands "
-        "consume the same graph/clusters.py engine. Fix template: when "
-        "len(visible)==0 AND len(rows)==0, _clusters_json should "
-        "disclose its empty state via the envelope (set "
-        "partial_success=True + state='no_data_in_corpus'). "
-        "Separate fix wave."
-    ),
-)
+# GRADUATED 2026-06-18: _clusters_json now sets partial_success=True (via the
+# shared resolve.empty_corpus_state helper) when 0 symbols are indexed.
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """Pin: when no clusters were detected, partial_success=True."""
     result = _invoke_clusters(cli_runner, empty_corpus, json_mode=True)
@@ -371,32 +356,17 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-BB REAL BUG (HIGH): cmd_clusters.py L262-268 builds "
-        "summary={verdict, clusters, mismatches, modularity_q, "
-        "mean_conductance} -- NO state field. Peer multi-signal commands "
-        "(cmd_adversarial, cmd_preflight, cmd_diagnose) carry a closed-enum "
-        "'state' field whose purpose is exactly this: disclose post-run "
-        "conditions like 'no_data_in_corpus' / 'trivial_clustering' / "
-        "'below_min_size'. cmd_clusters has NO state field at all -- "
-        "agents have no machine-readable way to distinguish 'real cluster "
-        "decomposition with 0 clusters because corpus was non-trivial' "
-        "from 'no clusters because graph was empty' from 'clusters were "
-        "below --min-size threshold'. Same gap as W805-Y #2, W805-U #3. "
-        "Fix template: add summary.state with closed enum "
-        "{clusters_detected, no_data_in_corpus, below_min_size, "
-        "trivial_clustering} and emit the appropriate enum value. "
-        "Separate fix wave."
-    ),
-)
+# GRADUATED 2026-06-18: _clusters_json now emits a closed-enum summary.state
+# ({clusters_detected, empty_corpus, no_clusters, below_min_size}). The empty
+# corpus surfaces the canonical "empty_corpus" value (matches cmd_health + the
+# shared resolve.empty_corpus_state helper).
 def test_empty_corpus_state_explicit(cli_runner, empty_corpus):
     """Pin: summary.state must distinguish 'real decomposition' from 'empty'."""
     result = _invoke_clusters(cli_runner, empty_corpus, json_mode=True)
     envelope = _parse_envelope(result)
     state = envelope["summary"].get("state")
     assert state in {
+        "empty_corpus",
         "no_data_in_corpus",
         "insufficient_signal_data",
         "empty_input",
@@ -418,33 +388,14 @@ def test_empty_corpus_state_explicit(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-BB REAL BUG (CRITICAL): cmd_clusters.py L254-258 + L370 emit "
-        "'1 clusters, largest: isolated_fn(1 syms)' when the indexed corpus "
-        "has 1 symbol and 0 edges. The cascade: build_symbol_graph "
-        "returns a 1-node graph -> detect_clusters runs Louvain (does "
-        "NOT short-circuit since len(G)==1, not 0) -> Louvain returns 1 "
-        "trivial community -> cluster_quality returns modularity_q=0.0 "
-        "(no actual community structure on 1 node, Newman 2004 says "
-        "Q>0.3 indicates real community structure) -> verdict-builder "
-        "reads visible[0] and emits '1 clusters, largest: ...' "
-        "indistinguishable from a real cluster decomposition. Agents "
-        "reading agent_contract.facts[0]='1 clusters, largest: ...' "
-        "and proceeding to architectural-refactoring decisions are "
-        "operating on a phantom cluster. DIFFERENT engine path than "
-        "W805-U (which used _empty_result cascade) and W805-Y (which "
-        "used _adjust_cluster_count stub-padding), SAME Pattern-2 "
-        "disclosure failure shape -- the verdict-builder reads "
-        "len(visible) without filtering trivial clusters by modularity. "
-        "Fix template: when modularity_q <= 0.0 AND visible cluster "
-        "count >= 1, surface the no-structure signal in the verdict "
-        "(e.g. '1 trivial cluster, modularity Q=0.00 -- no community "
-        "structure detected') + set partial_success=True + "
-        "state='trivial_clustering'. Separate fix wave."
-    ),
-)
+# GRADUATED 2026-06-18: _clusters_json now branches on modularity Q — when
+# visible clusters exist but Q<=0.0 it emits state="trivial_clustering" +
+# partial_success=True + a "no community structure detected" verdict. This was
+# only safe AFTER fixing the modularity computation itself: it previously floored
+# to 0.0 for ALL repos (a swallowed NotAPartition over an incomplete partition),
+# so a Q<=0 guard would have misfired on well-modularized codebases. Modularity
+# now builds a repaired partition (singletons for uncovered nodes); real repos
+# report Q~0.8, the 1-symbol/0-edge corpus genuinely reports Q=0.0.
 def test_no_silent_well_modularized_on_empty(cli_runner, isolated_symbol_corpus):
     """Pin: 1-symbol corpus must NOT silently claim a real cluster when modularity_q=0.0.
 
@@ -518,25 +469,10 @@ def test_no_silent_well_modularized_on_empty(cli_runner, isolated_symbol_corpus)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-BB REAL BUG (HIGH): cmd_clusters.py L258 emits "
-        "verdict='no clusters detected' when detect_clusters returned {} "
-        "because the graph was empty (0 symbols, 0 edges). An identical "
-        "verdict would be emitted if the graph had real symbols but "
-        "Louvain rejected every community as below quality threshold. "
-        "The verdict + envelope cannot distinguish these two cases. "
-        "agent_contract.facts[0]='no clusters detected' is a Pattern-2 "
-        "silent fallback: the agent cannot tell whether to (a) re-run "
-        "indexing, (b) lower --min-size, or (c) accept that there is no "
-        "modular structure. Mirrors W805-U critical and W805-Y critical "
-        "shape. Fix template: when len(rows)==0 AND the symbol corpus is "
-        "also empty (n_symbols==0), the verdict should say 'no data in "
-        "corpus -- no symbols to cluster' to disambiguate from 'symbols "
-        "exist but Louvain found no community structure'. Separate fix wave."
-    ),
-)
+# GRADUATED 2026-06-18: the empty-corpus path now disambiguates from the
+# "symbols exist but no community structure" path — empty_corpus emits
+# state="empty_corpus" + partial_success=True + a verdict naming the empty
+# corpus; the no-structure path emits state="no_clusters".
 def test_no_silent_zero_clusters_on_empty(cli_runner, empty_corpus):
     """Pin: empty corpus must distinguish 'no data' from 'no structure found'.
 

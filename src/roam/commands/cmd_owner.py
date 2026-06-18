@@ -20,7 +20,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.git_stats import get_blame_for_file
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -176,18 +176,8 @@ def owner(ctx, path):
                 )
             else:
                 file_ids = [f["id"] for f in dir_files]
-                ph = ",".join("?" for _ in file_ids)
-                rows = conn.execute(
-                    f"""SELECT gc.author, COUNT(DISTINCT gfc.commit_id) as commits,
-                               SUM(gfc.lines_added + gfc.lines_removed) as churn,
-                               MAX(gc.timestamp) as last_active,
-                               COUNT(DISTINCT gfc.file_id) as files_touched
-                        FROM git_file_changes gfc
-                        JOIN git_commits gc ON gfc.commit_id = gc.id
-                        WHERE gfc.file_id IN ({ph})
-                        GROUP BY gc.author ORDER BY churn DESC""",
-                    file_ids,
-                ).fetchall()
+                # Batched per-author churn (safe on >999-file directories).
+                rows = _dir_author_churn(conn, file_ids)
                 top_owner_dir = rows[0]["author"] if rows else "?"
                 dir_verdict = f"top owner: {top_owner_dir}, {len(rows)} contributor{'s' if len(rows) != 1 else ''}, {len(dir_files)} files"
                 click.echo(
@@ -284,25 +274,80 @@ def _show_file_owner(conn, project_root, file_row):
             click.echo(f"  {date}  {r['author']}  {msg}")
 
 
+def _dir_author_churn(conn, file_ids):
+    """Per-author git churn across a directory's files, batched to avoid
+    SQLITE_MAX_VARIABLE_NUMBER (default 999) on large directories.
+
+    Returns a list of dicts sorted by churn DESC, each with the same columns the
+    legacy GROUP BY query produced: ``author`` / ``commits`` / ``churn`` /
+    ``last_active`` / ``files_touched``. Distinct-commit counting uses a set
+    because one commit can touch files in more than one batch; ``churn`` and the
+    file-id set are disjoint per batch so they aggregate exactly.
+
+    caller_metric_definition: commits=distinct git_commits.id, churn=sum of
+    lines_added+lines_removed, files_touched=distinct git_file_changes.file_id.
+    """
+    raw = batched_in(
+        conn,
+        """SELECT gc.author AS author, gfc.commit_id AS commit_id,
+                  gfc.file_id AS file_id,
+                  (gfc.lines_added + gfc.lines_removed) AS churn,
+                  gc.timestamp AS timestamp
+           FROM git_file_changes gfc
+           JOIN git_commits gc ON gfc.commit_id = gc.id
+           WHERE gfc.file_id IN ({ph})""",
+        file_ids,
+    )
+    agg: dict = {}
+    for r in raw:
+        a = r["author"]
+        e = agg.get(a)
+        if e is None:
+            e = {"commits": set(), "files": set(), "churn": 0, "last_active": None}
+            agg[a] = e
+        e["commits"].add(r["commit_id"])
+        e["files"].add(r["file_id"])
+        e["churn"] += r["churn"] or 0
+        ts = r["timestamp"]
+        if ts is not None and (e["last_active"] is None or ts > e["last_active"]):
+            e["last_active"] = ts
+    rows = [
+        {
+            "author": a,
+            "commits": len(e["commits"]),
+            "files_touched": len(e["files"]),
+            "churn": e["churn"],
+            "last_active": e["last_active"],
+        }
+        for a, e in agg.items()
+    ]
+    rows.sort(key=lambda r: r["churn"], reverse=True)
+    return rows
+
+
+def _dir_top_churned_files(conn, file_ids, limit=10):
+    """Top-churned files in a directory, batched. ``file_stats`` has one row per
+    file_id and the file-id set is disjoint per batch, so per-batch rows merge by
+    plain concatenation; ORDER BY total_churn DESC + LIMIT are re-applied here."""
+    rows = batched_in(
+        conn,
+        """SELECT f.path AS path, fs.commit_count AS commit_count,
+                  fs.total_churn AS total_churn, fs.distinct_authors AS distinct_authors
+           FROM file_stats fs
+           JOIN files f ON fs.file_id = f.id
+           WHERE fs.file_id IN ({ph})""",
+        file_ids,
+    )
+    rows.sort(key=lambda r: r["total_churn"] or 0, reverse=True)
+    return rows[:limit]
+
+
 def _show_dir_owner(conn, project_root, path, dir_files):
     """Show ownership for a directory using stored git data (fast)."""
     file_ids = [f["id"] for f in dir_files]
 
-    # Use stored git data for fast aggregation
-    placeholders = ",".join("?" for _ in file_ids)
-    rows = conn.execute(
-        f"""SELECT gc.author,
-                   COUNT(DISTINCT gfc.commit_id) as commits,
-                   SUM(gfc.lines_added + gfc.lines_removed) as churn,
-                   MAX(gc.timestamp) as last_active,
-                   COUNT(DISTINCT gfc.file_id) as files_touched
-            FROM git_file_changes gfc
-            JOIN git_commits gc ON gfc.commit_id = gc.id
-            WHERE gfc.file_id IN ({placeholders})
-            GROUP BY gc.author
-            ORDER BY churn DESC""",
-        file_ids,
-    ).fetchall()
+    # Batched per-author churn aggregation (safe on >999-file directories).
+    rows = _dir_author_churn(conn, file_ids)
 
     if not rows:
         click.echo("VERDICT: no git data available\n")
@@ -356,15 +401,8 @@ def _show_dir_owner(conn, project_root, path, dir_files):
         )
     )
 
-    # Top churned files in this directory
-    churn_rows = conn.execute(
-        f"""SELECT f.path, fs.commit_count, fs.total_churn, fs.distinct_authors
-            FROM file_stats fs
-            JOIN files f ON fs.file_id = f.id
-            WHERE fs.file_id IN ({placeholders})
-            ORDER BY fs.total_churn DESC LIMIT 10""",
-        file_ids,
-    ).fetchall()
+    # Top churned files in this directory (batched; top-10 re-applied in Python)
+    churn_rows = _dir_top_churned_files(conn, file_ids, limit=10)
 
     if churn_rows:
         click.echo("\nTop churned files:")

@@ -270,23 +270,8 @@ class TestStateFieldOnFailure:
     Variant-D requires the no-changes path to be distinguishable.
     Pinned strict; graduates when a closed-enum disclosure is added."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEEE REAL BUG #1 (silent-SAFE family member, "
-            "9th structural consumer): "
-            "src/roam/commands/cmd_verify.py:708-729 emits ``verdict: "
-            "'PASS', score: 100`` with no closed-enum state / git_error / "
-            "resolution field on the empty-paths branch. The summary is "
-            "indistinguishable between (a) clean working tree and (b) "
-            "shared-helper silent-empty-list on git failure. Pattern-1-"
-            "Variant-D requires the no-changes path to disclose the "
-            "resolution state. Pinned strict; graduates when "
-            "``summary.state`` (e.g. ``no_changes`` / ``git_unavailable`` / "
-            "``empty_diff``) or ``summary.resolution`` is added on the "
-            "empty-paths branch."
-        ),
-    )
+    # GRADUATED 2026-06-18: _empty_verify_envelope now emits summary.state="no_changes"
+    # on the empty-paths branch, disclosing the no-changed-files resolution path.
     def test_empty_diff_emits_state_or_resolution(self, cli_runner, clean_indexed_project, monkeypatch):
         """Empty-diff envelope must emit ``summary.state`` or
         ``summary.resolution`` to disambiguate the clean-tree path from
@@ -335,20 +320,8 @@ class TestBogusRefDistinctFromEmptyDiff:
     is a source-level invariant on the EMPTY-PATHS branch sharing its
     envelope shape with the (currently-unreachable) bogus-ref branch."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEEE REAL BUG #1 ECHO (forward-looking): "
-            "cmd_verify's empty-paths branch (lines 708-729) emits the "
-            "same envelope shape that a future ``--base`` / "
-            "``--commit-range`` extension would exercise on a bogus-ref. "
-            "Today the surface only exposes the default-working-tree "
-            "branch, but the silent-SAFE shape is shared. Once a state / "
-            "resolution field is added (graduating REAL BUG #1), the "
-            "same field disambiguates bogus-ref future-extensions. Pinned "
-            "as a strict invariant on the empty-paths envelope shape."
-        ),
-    )
+    # GRADUATED 2026-06-18: the empty-paths envelope now carries summary.state,
+    # the disambiguation field a future --base/--commit-range extension reuses.
     def test_empty_diff_distinguishable_from_hypothetical_bogus_ref(
         self, cli_runner, clean_indexed_project, monkeypatch
     ):

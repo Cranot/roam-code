@@ -617,7 +617,10 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 # W1298: use "functions" (LAW-4 concrete-noun anchor) over
                 # "total" so the auto-derived fact terminal is in the
                 # accepted set (test_w806_complexity_empty_corpus pin).
-                summary_norows: dict = {"verdict": verdict, "functions": 0}
+                # C3 (Pattern-2): explicit not_found state, matching the
+                # world-model siblings (side-effects/idempotency/causal-graph)
+                # so consumers switch on a field rather than parsing the verdict.
+                summary_norows: dict = {"verdict": verdict, "functions": 0, "state": "not_found"}
                 if _all_w:
                     summary_norows["partial_success"] = True
                 click.echo(

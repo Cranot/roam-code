@@ -15,7 +15,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import find_cycles, format_cycles, mark_actionable_cycles
@@ -58,6 +58,32 @@ def cycles(ctx, min_size, limit, actionable_only):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
+        # B3 (Pattern-2): a 0-symbol corpus must NOT report "clean dependency
+        # graph" — there is no graph to analyze. Disclose empty_corpus instead
+        # of a vacuous clean verdict.
+        _empty = empty_corpus_state(conn)
+        if _empty is not None:
+            empty_verdict = "no symbols indexed — no dependency graph to analyze (run `roam index --force`)"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "cycles",
+                            summary={
+                                "verdict": empty_verdict,
+                                "cycle_count": 0,
+                                "actionable_count": 0,
+                                **_empty,
+                            },
+                            cycles=[],
+                            budget=token_budget,
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {empty_verdict}")
+            return
+
         graph = build_symbol_graph(conn)
         raw = find_cycles(graph, min_size=min_size)
         formatted = format_cycles(raw, conn) if raw else []

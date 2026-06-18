@@ -202,7 +202,16 @@ def _parse_status(tokens: list[str]) -> tuple[str, str | None]:
         return "not_checked", load_reason
     if command is None:
         return "failed", f"unknown roam subcommand: {tokens[idx]}"
-    return _make_context_status(command, tokens[idx], _strip_global_flags(tokens[idx + 1 :]))
+    sub_args = tokens[idx + 1 :]
+    # `--help` / `-h` is an EAGER flag: Click short-circuits and exits 0 before
+    # any positional/argument validation, so `roam <cmd> --help` is ALWAYS
+    # executable regardless of required positionals. Because `--help` lives in
+    # _GLOBAL_FLAGS_NO_VALUE it would otherwise be stripped, degrading
+    # `roam search --help` to `roam search` and raising a spurious "Missing
+    # parameter: pattern" — a false FAIL on a 100%-valid copy-paste command.
+    if "--help" in sub_args or "-h" in sub_args:
+        return "parsed", None
+    return _make_context_status(command, tokens[idx], _strip_global_flags(sub_args))
 
 
 def _is_root_level_invocation(tokens: list[str]) -> bool:

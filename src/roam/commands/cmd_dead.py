@@ -28,7 +28,7 @@ from roam.capability import roam_capability
 # ``roam.index.test_conventions`` — no back-edge into ``cmd_dead``.
 from roam.commands.changed_files import is_test_file as _is_test_path
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.confidence import (
@@ -2295,6 +2295,23 @@ def dead(
                 if _combined_warnings_empty:
                     summary["warnings_out"] = list(_combined_warnings_empty)
                     summary["partial_success"] = True
+                # W802 Pattern-2: distinguish a genuinely empty corpus
+                # (0 symbols indexed) from a populated corpus that simply
+                # has no dead exports. On a 0-symbol corpus "no dead
+                # exports" is a vacuous SAFE — disclose the empty state
+                # explicitly via the canonical ``empty_corpus_state``
+                # helper so machine consumers read it without parsing the
+                # verdict. An empty corpus is a fully-resolved "nothing to
+                # flag" state, NOT a partial failure, so partial_success
+                # stays the literal boolean ``False`` (the helper's
+                # ``partial_success: True`` is intended for analysis
+                # commands whose graph logic degrades on empty input;
+                # ``dead`` produces a complete, correct answer here).
+                _empty_corpus = empty_corpus_state(conn)
+                if _empty_corpus is not None:
+                    summary["state"] = _empty_corpus["state"]
+                    summary["verdict"] = "no dead exports — no symbols indexed in corpus (run `roam index --force`)"
+                    summary.setdefault("partial_success", False)
                 envelope_kwargs: dict = {
                     "summary": summary,
                     "high_confidence": [],

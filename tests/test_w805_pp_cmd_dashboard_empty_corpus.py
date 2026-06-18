@@ -333,27 +333,9 @@ class TestDashboardCleanCorpusBaseline:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-PP REAL BUG (Pattern-2 silent SAFE): cmd_dashboard.py:394-399 "
-        "constructs the verdict purely from the numeric health-score band "
-        "via _health_label(hs) at line 232-241 with NO guard for "
-        "overview['symbols'] == 0. On empty corpus (1 file, 0 symbols, "
-        "0 edges), collect_metrics returns health_score=100 (no cycles "
-        "to detect, no god components possible, no bottlenecks possible) "
-        "and the dashboard silently emits verdict='Codebase is HEALTHY "
-        "(health 100/100, AI rot 0/100)' indistinguishable from a real "
-        "well-built healthy corpus. Same bug class as W805-833 (cmd_health). "
-        "Fix template (matches W805-K + W833): guard the verdict-band lookup "
-        "with an empty-corpus check at cmd_dashboard.py:394 -- if "
-        "overview['symbols'] == 0, emit state='empty_corpus' + verdict "
-        "'Codebase has 0 symbols indexed (empty corpus)' + "
-        "partial_success=True. Bundled fix wave with W805-833 resolves both "
-        "since the silent-HEALTHY-on-empty shape is identical. Separate fix "
-        "wave per W978 + accumulate-only constraint."
-    ),
-)
+# GRADUATED 2026-06-18: cmd_dashboard now guards overview['symbols']==0 at the
+# _summary_block construction — emits an empty-corpus verdict + state="empty_corpus"
+# + partial_success=True instead of the silent numeric HEALTHY band.
 def test_no_silent_dashboard_clean_on_empty(empty_corpus):
     """Pin (Pattern-2 silent-SAFE axis): verdict MUST NOT read 'HEALTHY'
     when ``summary.symbols == 0``.
@@ -380,17 +362,7 @@ def test_no_silent_dashboard_clean_on_empty(empty_corpus):
     assert not is_silent_healthy, f"dashboard emits silent HEALTHY on empty corpus (0 symbols): verdict={verdict!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-PP partial_success axis: cmd_dashboard.py:422-429 emits "
-        "summary block with NO partial_success disclosure on empty corpus. "
-        "summary.partial_success is False (or missing — picked up as False "
-        "downstream by the formatter's agent_contract derivation) even "
-        "though the corpus has 0 symbols indexed. Fix bundled with the "
-        "silent-HEALTHY-on-empty pin above."
-    ),
-)
+# GRADUATED 2026-06-18: empty-corpus path now sets partial_success=True.
 def test_empty_corpus_partial_success_set(empty_corpus):
     """Pin (Pattern-2 partial_success axis): empty corpus → partial_success=True.
 
@@ -408,19 +380,7 @@ def test_empty_corpus_partial_success_set(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-PP state-disclosure axis: cmd_dashboard.py:422-429 builds "
-        "summary_block with no 'state' key. The empty-corpus axis is "
-        "indistinguishable from a real HEALTHY corpus in the envelope. "
-        "Pattern-2 disclosure template (per CLAUDE.md): emit "
-        "state='empty_corpus' (or 'not_initialized' / 'no_symbols') so "
-        "downstream consumers can branch on the explicit axis rather "
-        "than inferring from numeric counts. Fix bundled with the "
-        "silent-HEALTHY-on-empty pin above."
-    ),
-)
+# GRADUATED 2026-06-18: empty-corpus path now emits summary.state="empty_corpus".
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin (Pattern-2 state-axis): empty corpus → summary.state names the
     empty-corpus axis explicitly.

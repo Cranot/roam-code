@@ -98,12 +98,20 @@ def _modularity_only(G: nx.DiGraph, clusters: dict[int, int]) -> float:
     from collections import defaultdict
 
     undirected = G.to_undirected()
-    groups: dict[int, set] = defaultdict(set)
+    node_set = set(undirected.nodes())
+    # Repair the partition (singleton per uncovered in-graph node) so
+    # nx.community.modularity does not raise NotAPartition and silently floor Q
+    # to 0.0 — mirrors cluster_quality / _fast_cluster_quality.
+    partition_groups: dict[int, set] = defaultdict(set)
     for node_id, cid in clusters.items():
-        groups[cid].add(node_id)
-    communities = list(groups.values())
+        if node_id in node_set:
+            partition_groups[cid].add(node_id)
+    covered_nodes: set = set()
+    for members in partition_groups.values():
+        covered_nodes |= members
+    communities = list(partition_groups.values()) + [{n} for n in node_set - covered_nodes]
     try:
-        q = nx.community.modularity(undirected, communities)
+        q = nx.community.modularity(undirected, communities) if communities else 0.0
     except Exception:
         q = 0.0
     return round(q, 4)

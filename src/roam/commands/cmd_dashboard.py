@@ -587,6 +587,20 @@ def dashboard(ctx):
                 if ai_rot_definition_top is not None:
                     _summary_block["ai_rot_definition"] = ai_rot_definition_top
 
+                # W805-PP (Pattern-2): a 0-symbol corpus must NOT read as a clean
+                # HEALTHY bill — there is nothing indexed to be healthy about
+                # (uncoded / not yet written / index broken / wrong cwd). The
+                # numeric health-band verdict ("Codebase is HEALTHY 100/100") is
+                # a silent SAFE here. Disclose the empty corpus explicitly via
+                # the canonical state + partial_success + an empty-naming verdict,
+                # matching cmd_health's guard and the shared empty_corpus_state.
+                if overview["symbols"] == 0:
+                    _summary_block["verdict"] = (
+                        "Codebase has 0 symbols indexed (empty corpus — run `roam index --force`)"
+                    )
+                    _summary_block["state"] = "empty_corpus"
+                    _summary_block["partial_success"] = True
+
                 _envelope_kwargs: dict = {
                     "overview": overview,
                     "health": {

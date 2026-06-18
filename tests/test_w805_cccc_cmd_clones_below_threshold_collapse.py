@@ -675,18 +675,10 @@ class TestBelowThresholdPattern1VD:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-CCCC: today the empty-corpus path emits the SAME "
-        "'No structural clones detected' verdict that gate-collapse "
-        "paths emit. The FAMILY invariant requires the empty path "
-        "to land a distinct verdict (e.g. 'no functions to scan' or "
-        "'corpus has 0 functions/methods'). Mirror of W805-ZZZ "
-        "duplicates fix that distinguishes 'empty_corpus' from "
-        "'no_candidates'. Pinned xfail-strict so the fix flips it."
-    ),
-)
+# GRADUATED 2026-06-18: cmd_clones now emits a DISTINCT empty-corpus verdict
+# ("no structural clones — no symbols indexed in corpus ...") + state="empty_corpus"
+# + partial_success=True, distinct from the gate-collapse SAFE string. The 7
+# below-threshold / gate-collapse pins in this file remain xfail (different axis).
 def test_empty_corpus_verdict_distinct_from_default_safe(empty_corpus_project, cli_runner):
     """Empty-corpus verdict MUST become distinct from the default SAFE string."""
     result = _invoke(cli_runner, empty_corpus_project, json_mode=True)

@@ -245,18 +245,8 @@ class TestEmptyCorpusUnresolved:
     switching on machine-readable fields can tell unresolved apart from
     resolved-with-zero-consumers."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-T REAL BUG: src/roam/commands/cmd_uses.py:124-148 (the "
-            "``not targets`` branch) emits an envelope with no ``state`` "
-            'field. cmd_impact\'s analogous branch sets ``state: "not_found"`` '
-            "(W1272 / W1277). cmd_uses missed the W1272 canonical hardening. "
-            "Pinned strict so a future cleanup that adds ``state: "
-            '"not_found"`` graduates this to PASS; until then, agents '
-            "reading ``summary.state`` get None on the unresolved path."
-        ),
-    )
+    # GRADUATED 2026-06-17: cmd_uses not_found branch now emits
+    # ``state: "not_found"`` (matches cmd_impact W1272 / W1277).
     def test_empty_corpus_explicit_state(self, cli_runner, empty_corpus, monkeypatch):
         """Empty-corpus / unresolved path discloses ``state`` explicitly."""
         monkeypatch.chdir(empty_corpus)
@@ -274,19 +264,8 @@ class TestEmptyCorpusUnresolved:
             f"got {summary.get('state')!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-T REAL BUG: src/roam/commands/cmd_uses.py:124-148 sets "
-            "``partial_success: false`` on the not_found path. The W1272 / "
-            "W1277 contract (cmd_impact) sets ``partial_success: True`` on "
-            "any degraded outcome including unresolved targets. cmd_uses "
-            "currently silent-SAFEs: an agent reading partial_success would "
-            "conclude no degradation occurred. Pinned strict so the fix "
-            "graduates to PASS; until then, this is the canonical Pattern-2 "
-            "silent SAFE on the cmd_uses not_found branch."
-        ),
-    )
+    # GRADUATED 2026-06-17: cmd_uses not_found branch now sets
+    # ``partial_success: True`` via resolution_disclosure("unresolved").
     def test_empty_corpus_partial_success_set(self, cli_runner, empty_corpus, monkeypatch):
         """Pattern-2 guard: unresolved degraded outcome sets partial_success=True."""
         monkeypatch.chdir(empty_corpus)
@@ -303,17 +282,8 @@ class TestEmptyCorpusUnresolved:
             f"partial_success=True; got {summary.get('partial_success')!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-T REAL BUG: src/roam/commands/cmd_uses.py:124-148 does NOT "
-            "stamp the ``resolution`` field on the not_found envelope. The "
-            "W1242 resolution-disclosure pattern (used by cmd_impact and "
-            "the symbol-resolver-shared commands) calls for "
-            '``resolution: "unresolved"`` on unresolved paths. Pinned '
-            "strict so a future cleanup graduates to PASS."
-        ),
-    )
+    # GRADUATED 2026-06-17: cmd_uses not_found branch now stamps
+    # ``resolution: "unresolved"`` via resolution_disclosure (W1242).
     def test_unresolved_target_explicit_resolution(self, cli_runner, empty_corpus, monkeypatch):
         """Pattern-1 Variant D: ``resolution`` disclosure stamped on the envelope."""
         monkeypatch.chdir(empty_corpus)
@@ -359,19 +329,8 @@ class TestLeafNoConsumersShape:
         # caller_metric_definition is stamped (Pattern-3a metric clarity).
         assert summary.get("caller_metric_definition") == "raw_edge_rows"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-T shape parity: src/roam/commands/cmd_uses.py:193-216 "
-            "(the ``not rows`` branch) does not emit summary.state. The "
-            "verdict is loud (``no consumers of '<name>' found``) so this "
-            "is NOT a true silent SAFE; pinned strict because cross-command "
-            "consumers (preflight, critique) prefer switching on a "
-            "machine-readable state field rather than regex-grepping the "
-            "verdict prose. Adding state='no_consumers' graduates this to "
-            "PASS."
-        ),
-    )
+    # GRADUATED 2026-06-17: the no-consumers (``not rows``) branch now emits
+    # ``state: "no_consumers"`` for machine-readable shape parity.
     def test_no_silent_zero_uses_on_empty(self, cli_runner, leaf_corpus, monkeypatch):
         """Pattern-2 mild: the no-consumers envelope should expose summary.state."""
         monkeypatch.chdir(leaf_corpus)

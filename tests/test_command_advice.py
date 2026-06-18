@@ -145,3 +145,38 @@ def test_validate_roam_command_advice_ignores_shell_redirection():
     assert check["registry_status"] == "not_applicable"
     assert check["parse_status"] == "parsed"
     assert check["executable_status"] == "checked"
+
+
+def test_validate_help_example_with_required_positional_is_executable():
+    """`roam <cmd> --help` is ALWAYS executable: `--help` is an eager flag that
+    short-circuits Click before positional validation. Regression for the
+    false-FAIL where `roam search --help` (search has a REQUIRED positional)
+    was stripped to `roam search` and reported "Missing parameter: pattern".
+    """
+    for example in ("roam search --help", "roam impact --help", "roam owner --help"):
+        check = validate_command_advice("docs", example)
+        assert check["command_kind"] == "roam_cli", example
+        assert check["registry_status"] == "known", example
+        assert check["parse_status"] == "parsed", example
+        assert check["executable_status"] == "checked", (
+            f"{example!r} should be executable (--help is eager), got {check['executable_status']!r}"
+        )
+
+
+def test_validate_help_short_flag_is_executable():
+    check = validate_command_advice("docs", "roam search -h")
+    assert check["executable_status"] == "checked"
+
+
+def test_validate_missing_required_positional_still_fails_without_help():
+    """The --help short-circuit must NOT mask a genuinely non-executable
+    example: `roam search` with no positional and no --help still fails."""
+    check = validate_command_advice("docs", "roam search")
+    assert check["executable_status"] == "failed"
+
+
+def test_validate_unknown_subcommand_with_help_still_fails():
+    """`--help` does not rescue an unknown subcommand — that resolves to
+    failed before the eager-flag short-circuit is reached."""
+    check = validate_command_advice("docs", "roam notacommand --help")
+    assert check["executable_status"] == "failed"

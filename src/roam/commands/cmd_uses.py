@@ -31,9 +31,16 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.languages import JS_FAMILY_LANGUAGES
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 # Loop5 (2026-06-02): call-line reader. Canonical implementation now lives in
@@ -244,17 +251,29 @@ def uses(ctx, name, full):
             # downstream parsers (recipe runner, MCP tool wrappers,
             # `roam ask`) crashed on the non-JSON output.
             if json_mode:
+                # A2 (Pattern-2): emit the canonical closed-enum resolution
+                # disclosure so a consumer branching on `resolution` sees an
+                # explicit `"unresolved"` instead of a silent missing key.
+                # `uses` was the lone resolver command omitting it
+                # (impact/preflight/diagnose/context all emit it).
+                unresolved_disclosure = resolution_disclosure("unresolved", target=name or "")
                 _nf_summary: dict = {
                     "verdict": f"symbol not found: '{name}'",
                     "total_consumers": 0,
                     "total_files": 0,
                     "error": "symbol_not_found",
+                    # Match cmd_impact's W1272 not-found contract: an explicit
+                    # closed-enum state so agents distinguish unresolved from
+                    # resolved-with-zero-consumers without parsing prose.
+                    "state": "not_found",
+                    **unresolved_disclosure,
                 }
                 _nf_kwargs: dict = {
                     "summary": _nf_summary,
                     "symbol": name,
                     "consumers": {},
                     "hint": symbol_not_found_hint(name),
+                    **unresolved_disclosure,
                 }
                 # W607-U -- surface substrate-CALL markers on the not-found
                 # path. Flip partial_success when any marker landed so
@@ -289,24 +308,27 @@ def uses(ctx, name, full):
             raise SystemExit(1)
 
         target_ids = [t["id"] for t in targets]
-        placeholders = ",".join("?" for _ in target_ids)
 
-        # Find ALL edges pointing TO these targets
+        # Find ALL edges pointing TO these targets. Batched to stay under
+        # SQLITE_MAX_VARIABLE_NUMBER (default 999) — a very common bare name can
+        # resolve to >999 target symbols, which used to crash a raw IN clause
+        # with "too many SQL variables". Edges have a single target_id so the
+        # per-batch row sets are disjoint; the ORDER BY is re-applied in Python.
         def _fetch_consumers():
-            return list(
-                conn.execute(
-                    f"""SELECT s.name, s.qualified_name, s.kind, s.line_start,
-                           f.path, e.kind as edge_kind, e.line as edge_line,
-                           t.name as target_name
-                    FROM edges e
-                    JOIN symbols s ON e.source_id = s.id
-                    JOIN symbols t ON e.target_id = t.id
-                    JOIN files f ON s.file_id = f.id
-                    WHERE e.target_id IN ({placeholders})
-                    ORDER BY e.kind, f.path, s.line_start""",
-                    target_ids,
-                ).fetchall()
+            rows = batched_in(
+                conn,
+                """SELECT s.name, s.qualified_name, s.kind, s.line_start,
+                       f.path, e.kind as edge_kind, e.line as edge_line,
+                       t.name as target_name
+                FROM edges e
+                JOIN symbols s ON e.source_id = s.id
+                JOIN symbols t ON e.target_id = t.id
+                JOIN files f ON s.file_id = f.id
+                WHERE e.target_id IN ({ph})""",
+                target_ids,
             )
+            rows.sort(key=lambda r: (r["edge_kind"] or "", r["path"] or "", r["line_start"] or 0))
+            return rows
 
         rows = _run_check("fetch_consumers", _fetch_consumers, default=[]) or []
 
@@ -319,12 +341,14 @@ def uses(ctx, name, full):
         # answer the edges table already had). Skipping it on
         # languages that don't need it brings ``roam uses`` from
         # ~700ms warm to ~120ms.
+        # Batched: a bare name can resolve to >999 targets. Per-batch DISTINCT
+        # is fine — the caller re-dedups into a set at the use site below.
         def _fetch_target_langs():
-            return conn.execute(
-                f"SELECT DISTINCT f.language FROM symbols s JOIN files f ON s.file_id = f.id "
-                f"WHERE s.id IN ({placeholders})",
+            return batched_in(
+                conn,
+                "SELECT DISTINCT f.language FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
                 target_ids,
-            ).fetchall()
+            )
 
         target_files = _run_check("fetch_target_langs", _fetch_target_langs, default=[]) or []
         target_langs = {(r["language"] or "").lower() for r in target_files}
@@ -352,6 +376,11 @@ def uses(ctx, name, full):
                     "tested": False,
                     "total_files": 0,
                     "caller_metric_definition": CALLER_METRIC_RAW,
+                    # Shape parity: a machine-readable state so cross-command
+                    # consumers (preflight/critique) switch on a field rather
+                    # than regex-grepping the verdict. This is the RESOLVED
+                    # symbol with zero callers — distinct from "not_found".
+                    "state": "no_consumers",
                 }
                 _nr_kwargs: dict = {
                     "summary": _nr_summary,

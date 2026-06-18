@@ -1027,10 +1027,18 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
             return
         responses_dir = repo_root / ".roam" / "responses"
         responses_dir.mkdir(parents=True, exist_ok=True)
-        # Content-hash the envelope so re-running the same command with the
-        # same inputs dedupes naturally (the bundle's auto-collect should not
-        # see N copies of the same `roam health` run).
-        h = hashlib.sha256(_json.dumps(envelope, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
+        # Content-hash the LOGICAL envelope so re-running the same command with
+        # the same inputs dedupes naturally (the bundle's auto-collect should not
+        # see N copies of the same `roam health` run). Exclude the whole `_meta`
+        # block from the dedup KEY: it carries non-deterministic fields
+        # (timestamp, latency_ms, index_age_s, response_tokens, and the staleness
+        # index_status/dirty_files) that vary call-to-call — e.g. a cold lazy-import
+        # or git probe on the FIRST call inflates latency_ms relative to the second,
+        # which would defeat dedup. The written file keeps full `_meta`; only the
+        # dedup key drops it. This makes dedup robust to timing instead of relying
+        # on `_meta` happening to serialise byte-identically across calls.
+        _hash_src = {k: v for k, v in envelope.items() if k != "_meta"}
+        h = hashlib.sha256(_json.dumps(_hash_src, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
         # Sanitise command for filename use (slashes / spaces would be odd
         # but we have e.g. "pr-bundle-emit" already — slugify defensively).
         safe_cmd = "".join(c if (c.isalnum() or c in "-_") else "_" for c in command)
@@ -1172,6 +1180,21 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
         "roam_version": version,
     }
 
+    # Wave-1 staleness disclosure (Root-1a): for stale-sensitive commands, surface
+    # index_status WHEN the index is actually stale, so an agent reading the envelope
+    # cannot act on data computed against code that no longer matches. Placed in _meta
+    # (alongside index_age_s), NOT top-level: top-level placement broke content-hash
+    # dedup + envelope-consistency/diff contracts (a dirty real-repo tree fires it
+    # globally during tests). _meta is the non-deterministic bucket dedup/consistency
+    # already exclude. We do NOT flip summary.partial_success here — that field reflects
+    # the CHECK outcome, not index freshness (conflating them broke clean-path tests).
+    # Gated on `fresh is False`; lazy imports avoid an output<-commands cycle; failures
+    # never break envelope generation.
+    if "index_status" not in out["_meta"] and _command_is_stale_sensitive(command):
+        _stale = _envelope_index_status()
+        if isinstance(_stale, dict) and _stale.get("fresh") is False:
+            out["_meta"]["index_status"] = _stale
+
     # Response metadata for MCP agents (#119)
     full_json = _json.dumps(out, default=str, sort_keys=True)
     out["_meta"]["response_tokens"] = estimate_tokens(full_json)
@@ -1210,6 +1233,30 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
             out = budget_truncate_json(out, _cap)
 
     return out
+
+
+def _command_is_stale_sensitive(command: str) -> bool:
+    """True if the command's capability declares ``stale_sensitive`` (default True).
+    Lazy import: ``capability`` imports ``formatter``, so a top-level import would cycle."""
+    try:
+        from roam.capability import _CAPABILITIES
+
+        cap = _CAPABILITIES.get(command)
+        return bool(cap.stale_sensitive) if cap is not None else True
+    except (ImportError, AttributeError):
+        return False
+
+
+def _envelope_index_status():
+    """Lazily fetch ``index_status()`` for envelope staleness disclosure (dict or None).
+    NOT cached: the MCP server is long-running and the index can be rebuilt mid-process,
+    so a per-process cache would serve a stale freshness verdict."""
+    try:
+        from roam.commands.resolve import index_status
+
+        return index_status()
+    except (ImportError, OSError, ValueError):
+        return None
 
 
 def _default_json_budget() -> int:

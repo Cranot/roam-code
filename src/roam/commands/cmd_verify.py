@@ -2766,6 +2766,12 @@ def _empty_verify_envelope(threshold: int) -> dict:
             "threshold": threshold,
             "files_checked": 0,
             "violation_count": 0,
+            # W805-EEEEE (Pattern-1-Variant-D): disclose the resolution path so
+            # an agent can tell this PASS apart from a real verification run.
+            # The empty-paths branch fires when the changed-files helper returns
+            # an empty list — i.e. no changed files to verify. Naming the state
+            # keeps the clean-tree PASS distinguishable from a populated run.
+            "state": "no_changes",
         },
         categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
         violations=[],

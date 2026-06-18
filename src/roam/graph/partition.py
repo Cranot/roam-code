@@ -228,7 +228,17 @@ def _adjust_cluster_count(
         # Split by betweenness centrality cut
         sub = G.subgraph(largest)
         try:
-            bc = nx.betweenness_centrality(sub)
+            # Speed guard (mirrors graph/pagerank.py): exact betweenness is
+            # O(V*E). k-sample the pivots on large subgraphs — the cut-node pick
+            # is a heuristic, so approximate centrality is fine, and the
+            # try/except already falls back to bisection. seed keeps the sampled
+            # pick reproducible across invocations.
+            _m = sub.number_of_nodes()
+            if _m <= 1000:
+                bc = nx.betweenness_centrality(sub)
+            else:
+                _k = min(_m, max(200, int(_m**0.5 * 5)))
+                bc = nx.betweenness_centrality(sub, k=_k, seed=1)
             # Remove the highest-betweenness node to split
             cut_node = max(bc, key=bc.get)
             remaining = largest - {cut_node}

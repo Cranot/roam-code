@@ -24,7 +24,7 @@ from collections import defaultdict
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import format_table, json_envelope, loc, to_json
 
@@ -619,6 +619,34 @@ def debt(ctx, limit, by_kind, threshold, roi):
             return default
 
     with open_db(readonly=True) as conn:
+        # B4 (Pattern-2): on a 0-symbol corpus, debt is computed from file_stats
+        # over non-code files (e.g. README.md) and reports a misleading "low debt
+        # — top hotspot: README.md". There is no CODE to carry debt. Disclose the
+        # empty corpus explicitly rather than analyzing docs as if they were code.
+        # (Distinct from the `not all_items` branch below, which fires when no
+        # file_stats exist at all.)
+        _empty = empty_corpus_state(conn)
+        if _empty is not None:
+            empty_verdict = "no code indexed — 0 symbols in corpus (run `roam index --force`)"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "debt",
+                            summary={
+                                "verdict": empty_verdict,
+                                "total_files": 0,
+                                "total_debt": 0,
+                                **_empty,
+                            },
+                            items=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {empty_verdict}")
+            return
+
         all_items = _run_check_bg(
             "compute_file_debt",
             _compute_file_debt,

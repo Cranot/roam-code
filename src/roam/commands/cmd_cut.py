@@ -240,6 +240,25 @@ def cut(ctx, between, leak_edges, top_n):
         # composes against zero-counted cut analysis.
         def _compute_min_cuts():
             boundaries_local: list[dict] = []
+            # Pre-bucket cross-cluster edges in ONE pass over G.edges() (was an
+            # O(clusters^2 * |E|) rescan — the inner `for u,v in G.edges()` ran
+            # once per cluster pair). node_cluster maps node -> cluster id;
+            # pair_edges keys on the unordered cluster pair and preserves
+            # G.edges() order so the src/tgt seed pick below is unchanged.
+            from collections import defaultdict
+
+            node_cluster: dict = {}
+            for _cid, _nodes in cluster_nodes.items():
+                for _n in _nodes:
+                    node_cluster[_n] = _cid
+            pair_edges: dict[tuple, list[tuple]] = defaultdict(list)
+            for u, v in G.edges():
+                cu = node_cluster.get(u)
+                cv = node_cluster.get(v)
+                if cu is None or cv is None or cu == cv:
+                    continue
+                pair_edges[(cu, cv) if cu < cv else (cv, cu)].append((u, v))
+
             for i, c1 in enumerate(cluster_ids):
                 for c2 in cluster_ids[i + 1 :]:
                     if between:
@@ -252,13 +271,10 @@ def cut(ctx, between, leak_edges, top_n):
                         ):
                             continue
 
-                    # Count cross-edges
-                    cross_edges: list[tuple] = []
+                    # Cross-edges from the pre-built bucket (no per-pair rescan).
                     nodes_c1 = cluster_nodes.get(c1, set())
                     nodes_c2 = cluster_nodes.get(c2, set())
-                    for u, v in G.edges():
-                        if (u in nodes_c1 and v in nodes_c2) or (u in nodes_c2 and v in nodes_c1):
-                            cross_edges.append((u, v))
+                    cross_edges: list[tuple] = pair_edges.get((c1, c2) if c1 < c2 else (c2, c1), [])
 
                     if not cross_edges:
                         continue
@@ -277,10 +293,19 @@ def cut(ctx, between, leak_edges, top_n):
                     if src_node is None:
                         continue
 
-                    try:
-                        min_cut_edges = nx.minimum_edge_cut(UG, src_node, tgt_node)
-                        min_cut_size = len(min_cut_edges)
-                    except (nx.NetworkXError, nx.NetworkXUnbounded, nx.exception.NetworkXError):
+                    # Gate exact max-flow min-cut behind a subgraph-size cap —
+                    # nx.minimum_edge_cut is ~O(V*E^2). Above the cap, fall back
+                    # to the cross-edge-count heuristic (the same value the
+                    # except branch already uses) so huge cluster pairs do not
+                    # stall the command.
+                    if len(nodes_c1) + len(nodes_c2) <= 2000:
+                        try:
+                            min_cut_edges = nx.minimum_edge_cut(UG, src_node, tgt_node)
+                            min_cut_size = len(min_cut_edges)
+                        except (nx.NetworkXError, nx.NetworkXUnbounded, nx.exception.NetworkXError):
+                            min_cut_edges = set()
+                            min_cut_size = len(cross_edges)
+                    else:
                         min_cut_edges = set()
                         min_cut_size = len(cross_edges)
 
@@ -333,7 +358,15 @@ def cut(ctx, between, leak_edges, top_n):
             if not (leak_edges or not between):
                 return leak_edge_list_local
             try:
-                ebc = nx.edge_betweenness_centrality(UG)
+                # Speed guard (mirrors graph/cycles.py's size gate): exact edge
+                # betweenness is O(V*E). k-sample pivots above a node-count cap;
+                # seed keeps the sampled leak-edge ranking reproducible.
+                _ug_n = UG.number_of_nodes()
+                if _ug_n <= 2000:
+                    ebc = nx.edge_betweenness_centrality(UG)
+                else:
+                    _k = min(_ug_n, max(200, int(_ug_n**0.5 * 5)))
+                    ebc = nx.edge_betweenness_centrality(UG, k=_k, seed=1)
             except Exception:
                 ebc = {}
 

@@ -17,7 +17,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.metrics_history import collect_metrics, get_snapshots
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output._severity import severity_rank
 from roam.output.formatter import WarningsOut, json_envelope, to_json
@@ -1350,6 +1350,35 @@ def alerts(ctx):
             return default
 
     with open_db(readonly=True) as conn:
+        # B8 (Pattern-2): on a 0-symbol corpus, "no alerts — all metrics within
+        # normal ranges" is a silent SAFE — nothing was analyzed. Live metrics
+        # are all vacuously healthy because there is no code. Disclose the empty
+        # corpus explicitly (canonical state + partial_success + a verdict that
+        # names it) instead of an all-clear that an agent reads as "repo is fine".
+        _empty = empty_corpus_state(conn)
+        if _empty is not None:
+            empty_verdict = "no alerts — no code indexed in corpus (0 symbols; run `roam index --force`)"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "alerts",
+                            summary={
+                                "verdict": empty_verdict,
+                                "total": 0,
+                                "critical": 0,
+                                "warning": 0,
+                                "info": 0,
+                                "snapshots_analyzed": 0,
+                                **_empty,
+                            },
+                            alerts=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {empty_verdict}")
+            return
         # W607-CX: ``get_snapshots`` substrate -- DB-row ingest.
         snaps_raw = _run_check_cx("get_snapshots", get_snapshots, conn, _trend_snapshot_limit(), default=[])
         if snaps_raw is None:
