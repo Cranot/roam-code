@@ -117,9 +117,6 @@ def _plugin_language_extractors():
         return get_plugin_language_extractors()
     except ImportError:
         return {}
-    except Exception:
-        log.debug("plugin language extractor discovery failed", exc_info=True)
-        return {}
 
 
 def _plugin_language_extensions():
