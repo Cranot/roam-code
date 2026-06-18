@@ -606,8 +606,8 @@ def resolve_profile(profile_name: str) -> list[dict]:
     return list(merged_rules.values())
 
 
-def list_profiles() -> list[dict]:
-    """Return a list of available profile summaries.
+def rule_profile_summaries() -> list[dict]:
+    """Return a list of available rule-profile summaries.
 
     Each dict has keys: name, description, extends, rule_count.
     """
@@ -622,3 +622,7 @@ def list_profiles() -> list[dict]:
             }
         )
     return result
+
+
+# Backward-compatible export for callers that imported the older generic name.
+list_profiles = rule_profile_summaries
