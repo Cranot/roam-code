@@ -28,10 +28,8 @@ import click
 from roam.capability import roam_capability
 from roam.commands.codeowners_helpers import (
     find_codeowners,
+    parse_codeowners,
     resolve_owners,
-)
-from roam.commands.codeowners_helpers import (
-    parse_codeowners as _parse_codeowners_file,
 )
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
@@ -40,21 +38,6 @@ from roam.output.formatter import (
     json_envelope,
     to_json,
 )
-
-# ---------------------------------------------------------------------------
-# Backward-compatible CODEOWNERS wrapper
-# ---------------------------------------------------------------------------
-
-
-def parse_codeowners(project_root):
-    """Find and parse a CODEOWNERS file under *project_root*.
-
-    Thin wrapper around the shared helpers for backward compatibility --
-    earlier versions of this module combined finding and parsing in one call.
-    """
-    co_path = find_codeowners(project_root)
-    return _parse_codeowners_file(co_path) if co_path else []
-
 
 # ---------------------------------------------------------------------------
 # Time-decayed ownership computation
@@ -212,7 +195,8 @@ def _analyse_departure(conn, project_root, developers: list[str]):
     ownership = compute_file_ownership(conn, file_ids, now=now)
 
     # 3. CODEOWNERS integration
-    codeowners_rules = parse_codeowners(project_root)
+    codeowners_path = find_codeowners(project_root)
+    codeowners_rules = parse_codeowners(codeowners_path) if codeowners_path else []
 
     # 4. Find files where departing devs have significant ownership
     critical_files = []  # sole CODEOWNER + >50%
