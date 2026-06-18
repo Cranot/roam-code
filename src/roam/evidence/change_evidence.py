@@ -206,6 +206,11 @@ PACKET_BUDGET_STATES: tuple[str, ...] = (
 )
 
 
+def compute_canonical_json_hash(canonical_json: str) -> str:
+    """Return the sha256 hex digest for canonical JSON bytes."""
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
 @dataclasses.dataclass(frozen=True)
 class ChangeEvidence:
     """One evidence packet for one code-change scope.
@@ -639,7 +644,7 @@ class ChangeEvidence:
         """
         stripped = dataclasses.replace(self, content_hash=None)
         canonical = stripped.to_canonical_json()
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return compute_canonical_json_hash(canonical)
 
     def with_content_hash(self) -> ChangeEvidence:
         """Return a copy of self with ``content_hash`` populated.
@@ -1672,6 +1677,7 @@ __all__ = [
     "EVIDENCE_SCHEMA_VERSION",
     "PACKET_SIZE_BUDGET_BYTES",
     "PACKET_BUDGET_STATES",
+    "compute_canonical_json_hash",
     "resolve_roam_version",
     "classify_packet_budget",
     "packet_size_bytes",
