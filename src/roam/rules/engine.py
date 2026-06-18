@@ -7,6 +7,7 @@ Roam evaluates them against the indexed graph and reports violations.
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 
 from roam._glob_match import matches_glob as _matches_glob
@@ -594,7 +595,7 @@ def _table_exists(conn, table_name: str) -> bool:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
             (table_name,),
         ).fetchone()
-    except Exception:
+    except sqlite3.Error:
         return False
     return row is not None
 
