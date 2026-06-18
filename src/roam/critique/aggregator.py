@@ -4,30 +4,17 @@ Severity ranking is fixed: ``high`` > ``medium`` > ``low`` > ``info``.
 Within a severity, findings preserve check-emission order, which is
 deterministic per-DB.
 
-W564: severity ORDER now sources from
+W564: severity ORDER sources from
 :func:`roam.output._severity.severity_rank` (single source of truth
-across all roam commands). The aggregator is one of 13+ pre-W564 sites
-that owned its own table; the local ``severity_rank`` is kept as a
-thin alias to preserve public-API compatibility (callers in
-``roam.critique.checks`` and friends import it directly).
+across all roam commands). Critique sorts by the negated canonical rank
+because the canonical helper uses higher = worse.
 """
 
 from __future__ import annotations
 
 from roam.critique.checks import Finding
 from roam.output._severity import severity_breakdown
-from roam.output._severity import severity_rank as _canonical_severity_rank
-
-
-def severity_rank(severity: str) -> int:
-    """Return a sortable rank for a severity label (lower = more urgent).
-
-    Polarity is inverted from the canonical
-    :func:`roam.output._severity.severity_rank` (where higher = worse)
-    so legacy ``sorted(..., key=severity_rank)`` call sites in
-    :mod:`roam.critique` keep emitting findings in the same order.
-    """
-    return -_canonical_severity_rank(severity)
+from roam.output._severity import severity_rank as _severity_rank
 
 
 def aggregate(
@@ -56,7 +43,7 @@ def aggregate(
     omitted, the legacy ``"No concerns"`` verdict is preserved for
     callers that don't yet pass the dict (LAW 11: explicit > inferred).
     """
-    sorted_findings = sorted(findings, key=lambda f: severity_rank(f.severity))
+    sorted_findings = sorted(findings, key=lambda f: -_severity_rank(f.severity))
 
     # W566 — bucketing delegates to the canonical helper. The critique
     # vocabulary is the 4-tier ``high/medium/low/info`` (no CVSS

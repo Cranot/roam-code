@@ -203,9 +203,9 @@ def test_cmd_critique_no_inline_severity_rank_dict() -> None:
 def test_critique_aggregator_no_inline_severity_rank_dict() -> None:
     """critique.aggregator must not carry a private severity->int rank dict.
 
-    The aggregator's public ``severity_rank(severity)`` is a thin alias
-    of the canonical helper with inverted polarity (W564). No inline
-    table — drift-guard ensures it stays that way.
+    The aggregator imports the canonical ``severity_rank(severity)``
+    helper under a private alias (W564). No inline table — drift-guard
+    ensures it stays that way.
     """
     hits = _has_inline_severity_rank_dict(_parse(CRITIQUE_AGGREGATOR))
     assert not hits, (
