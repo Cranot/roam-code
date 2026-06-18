@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.atomic_io import atomic_write_json
+from roam.leases.store import _is_wall_clock_expired_at
 from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
@@ -171,13 +172,7 @@ class PermitRecord:
         treated as not-expired so a bug in writers doesn't accidentally
         invalidate every permit on the next read.
         """
-        try:
-            exp = _parse_iso(self.expires_at)
-        except ValueError:
-            return False
-        if now is None:
-            now = datetime.now(timezone.utc)
-        return now >= exp
+        return _is_wall_clock_expired_at(self.expires_at, now)
 
 
 # ---------------------------------------------------------------------------
