@@ -42,12 +42,12 @@ NON-GOALS:
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any
 
 from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
+from roam.evidence.change_evidence import compute_canonical_json_hash
 
 #: Closed enumeration of policy-layer decisions on an MCP tool call.
 #:
@@ -193,7 +193,7 @@ class McpDecisionReceipt:
 
     def compute_content_hash(self) -> str:
         """sha256 of the canonical-JSON. Used as the receipt's stable id."""
-        return hashlib.sha256(self.to_canonical_json().encode("utf-8")).hexdigest()
+        return compute_canonical_json_hash(self.to_canonical_json())
 
 
 def hash_input_args(args: Mapping[str, Any]) -> str:
@@ -204,7 +204,7 @@ def hash_input_args(args: Mapping[str, Any]) -> str:
     insertion order.
     """
     canonical = json.dumps(dict(args), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return compute_canonical_json_hash(canonical)
 
 
 __all__ = ["McpDecisionReceipt", "hash_input_args"]
