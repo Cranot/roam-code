@@ -341,7 +341,7 @@ _COMMANDS = {
     "vibe-check": ("roam.commands.cmd_vibe_check", "vibe_check"),
     "llm-smells": ("roam.commands.cmd_llm_smells", "llm_smells"),
     "ai-readiness": ("roam.commands.cmd_ai_readiness", "ai_readiness"),
-    "check-rules": ("roam.commands.cmd_check_rules", "check_rules"),
+    "check-rules": ("roam.commands.cmd_check_rules", "check_rules_command"),
     "codeowners": ("roam.commands.cmd_codeowners", "codeowners"),
     "dashboard": ("roam.commands.cmd_dashboard", "dashboard"),
     "drift": ("roam.commands.cmd_drift", "drift"),
