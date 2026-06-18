@@ -188,17 +188,17 @@ class TestResolveProfile:
 
 class TestListProfiles:
     def test_list_profiles_returns_all(self):
-        from roam.rules.builtin import BUILTIN_PROFILES, list_profiles
+        from roam.rules.builtin import BUILTIN_PROFILES, rule_profile_summaries
 
-        profiles = list_profiles()
+        profiles = rule_profile_summaries()
         assert len(profiles) == len(BUILTIN_PROFILES)
         names = {p["name"] for p in profiles}
         assert names == set(BUILTIN_PROFILES.keys())
 
     def test_list_profiles_structure(self):
-        from roam.rules.builtin import list_profiles
+        from roam.rules.builtin import rule_profile_summaries
 
-        for p in list_profiles():
+        for p in rule_profile_summaries():
             assert "name" in p
             assert "description" in p
             assert "extends" in p

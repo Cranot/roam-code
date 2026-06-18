@@ -696,11 +696,11 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    from roam.rules.builtin import BUILTIN_RULES, list_profiles
+    from roam.rules.builtin import BUILTIN_RULES, rule_profile_summaries
 
     # --list-profiles: print available profiles and exit
     if do_list_profiles:
-        profiles = list_profiles()
+        profiles = rule_profile_summaries()
         if json_mode:
             click.echo(
                 to_json(
