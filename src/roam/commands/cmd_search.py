@@ -472,7 +472,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     destructive=False,
     stale_sensitive=True,
 )
-@click.command()
+@click.command("search")
 @click.argument("pattern")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.option(
@@ -525,7 +525,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     help="boost results in files modified within <N> days (0 = no boost).",
 )
 @click.pass_context
-def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
+def search_cmd(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
     """Find symbols matching a name substring (case-insensitive).
 
     Unlike ``grep`` (which searches file contents) and ``search-semantic``
@@ -1014,3 +1014,8 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
                         click.echo(line)
                 else:
                     click.echo("  (no FTS5 explanation available -- index may use TF-IDF fallback)")
+
+
+# Keep the LazyGroup import target stable while avoiding a top-level function
+# name collision with roam.search.tfidf.search.
+search = search_cmd
