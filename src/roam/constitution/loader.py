@@ -709,7 +709,7 @@ def _source_status(repo_root: Path, name: str, raw_path: str) -> SourceStatus:
             elif rel.startswith(".\\"):
                 rel = rel[2:]
             matches = list(Path(repo_root).glob(rel))
-        except Exception:
+        except (OSError, ValueError, NotImplementedError):
             matches = []
         if matches:
             return SourceStatus(
