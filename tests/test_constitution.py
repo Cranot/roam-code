@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import builtins
 import sys
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from roam.constitution.loader import (  # noqa: E402
     constitution_path,
     init_constitution,
     load_constitution,
+    _deprecated_commands,
+    _known_commands,
 )
 
 # ---------------------------------------------------------------------------
@@ -217,6 +220,30 @@ def test_check_unknown_command_in_required_checks_fails(empty_repo):
     bad = [c for c in report.commands if c.state == "unknown_command"]
     assert bad, "expected 'totally-not-a-command' to be flagged as unknown"
     assert bad[0].name == "totally-not-a-command"
+
+
+def test_command_registry_probe_only_swallows_import_errors(monkeypatch):
+    real_import = builtins.__import__
+
+    def raise_import_error(name, *args, **kwargs):
+        if name == "roam.cli":
+            raise ImportError("cli unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", raise_import_error)
+    assert _known_commands() == set()
+    assert _deprecated_commands() == set()
+
+    def raise_runtime_error(name, *args, **kwargs):
+        if name == "roam.cli":
+            raise RuntimeError("cli import bug")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", raise_runtime_error)
+    with pytest.raises(RuntimeError, match="cli import bug"):
+        _known_commands()
+    with pytest.raises(RuntimeError, match="cli import bug"):
+        _deprecated_commands()
 
 
 # ---------------------------------------------------------------------------
