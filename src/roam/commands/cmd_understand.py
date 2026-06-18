@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import sqlite3
 
 import click
 
@@ -568,7 +569,7 @@ def _complexity_overview(conn):
             "high": high,
             "worst": [{"name": w["name"], "cc": round(w["cognitive_complexity"]), "file": w["path"]} for w in worst],
         }
-    except Exception:
+    except sqlite3.OperationalError:
         return None
 
 
