@@ -10,16 +10,16 @@ envelope contract as new commands land, and it dogfoods the laws it enforces.
 
 Why a SEPARATE registry from ``catalog/detectors.py``
 -----------------------------------------------------
-The math ``@detector`` / ``_DETECTOR_REGISTRY`` surface assumes the signature
-``(conn) -> list[dict]`` and the hard contract "empty DB -> [] findings"
-(pinned by ``tests/test_w639_detector_smoke.py``, which parametrises over every
-registry entry and asserts ``fn(empty_db) == []``). agent-opt detectors read
-MCP descriptions and harvested CLI envelopes — NOT the DB — so they return
-non-empty findings on an empty corpus and would break that contract. They
-therefore live in their own ``_AGENT_OPT_DETECTORS`` registry, but they reuse
-the *canonical* closed-enum vocabularies (``confidence_basis``/``query_cost``)
-so the "extend the enum before adding a tier" discipline still flows through
-one place.
+The math ``@algorithm_detector`` / ``_DETECTOR_REGISTRY`` surface assumes the
+signature ``(conn) -> list[dict]`` and the hard contract "empty DB -> []
+findings" (pinned by ``tests/test_w639_detector_smoke.py``, which parametrises
+over every registry entry and asserts ``fn(empty_db) == []``). agent-opt
+detectors read MCP descriptions and harvested CLI envelopes — NOT the DB — so
+they return non-empty findings on an empty corpus and would break that contract.
+They therefore live in their own ``_AGENT_OPT_DETECTORS`` registry, but they
+reuse the *canonical* closed-enum vocabularies
+(``confidence_basis``/``query_cost``) so the "extend the enum before adding a
+tier" discipline still flows through one place.
 
 The TASK catalog, by contrast, IS shared: the three tasks live in
 ``src/roam/catalog/tasks.py`` tagged ``family="agent-opt"`` (single catalog,
@@ -94,8 +94,9 @@ def agent_opt_detector(
 
     Validates ``confidence_basis`` / ``query_cost`` against the CANONICAL
     closed-enum sets (raises ``ValueError`` at import time on a typo), mirroring
-    ``roam.catalog.detectors.detector`` — the difference is only the registry
-    these land in (``_AGENT_OPT_DETECTORS``, not ``_DETECTOR_REGISTRY``).
+    ``roam.catalog.detectors.algorithm_detector`` — the difference is only
+    the registry these land in (``_AGENT_OPT_DETECTORS``, not
+    ``_DETECTOR_REGISTRY``).
     """
     if confidence_basis not in _VALID_BASES:
         raise ValueError(f"confidence_basis must be one of {sorted(_VALID_BASES)}, got {confidence_basis!r}")
@@ -184,7 +185,7 @@ def _finding(
         "subject": subject,
         "subject_kind": subject_kind,
         "confidence": confidence,  # CVSS-style high/medium/low (matches `roam math`)
-        "confidence_basis": confidence_basis,  # heuristic/structural/... (the @detector axis)
+        "confidence_basis": confidence_basis,  # heuristic/structural/... (the algorithm_detector axis)
         "reason": reason,
         "evidence": evidence,
         "suggestion": best_tip,
