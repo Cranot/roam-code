@@ -872,7 +872,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
                     if matched:
                         per_file_hits.append((path, matched))
             parallel_ok = True
-        except Exception:
+        except (ImportError, OSError, RuntimeError):
             per_file_hits = []
 
     if not parallel_ok:
