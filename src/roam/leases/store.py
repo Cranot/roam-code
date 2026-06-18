@@ -125,15 +125,7 @@ class Lease:
         """
         if self.state in {"released", "expired"}:
             return True
-        try:
-            exp = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
-        except ValueError:
-            # A corrupt ``expires_at`` field is treated as still-active so a
-            # bug in writers doesn't accidentally free everyone's leases.
-            return False
-        if now is None:
-            now = datetime.now(timezone.utc)
-        return now >= exp
+        return _is_wall_clock_expired_at(self.expires_at, now)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +154,25 @@ def _utc_now() -> datetime:
 def _utc_now_iso() -> str:
     """ISO-8601 UTC timestamp at microsecond precision (suffix ``Z``)."""
     return _utc_now().isoformat().replace("+00:00", "Z")
+
+
+def _is_wall_clock_expired_at(expires_at: str, now: Optional[datetime] = None) -> bool:
+    """Return True if an ISO-8601 expiry timestamp has elapsed.
+
+    Corrupt timestamps are treated as not-expired so a writer bug does not
+    accidentally free leases or invalidate permits on the next read.
+    """
+    try:
+        exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now >= exp
 
 
 def _make_lease_id(acquired_at: str, agent: str, subject: list[str]) -> str:

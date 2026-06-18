@@ -37,7 +37,7 @@ from conftest import git_init, invoke_cli  # noqa: E402
 
 from roam.commands.cmd_pr_bundle import _load_permits_from_disk  # noqa: E402
 from roam.evidence.collector import _build_authority_refs  # noqa: E402
-from roam.permits.store import permits_root  # noqa: E402
+from roam.permits.store import PermitRecord, permits_root  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -247,6 +247,26 @@ def test_wrong_type_expires_at_dropped_by_reader_with_warning(permit_project):
 # ===========================================================================
 # 3. Expired permit
 # ===========================================================================
+
+
+def test_permit_record_is_expired_at_reuses_lease_wall_clock_semantics() -> None:
+    """``PermitRecord.is_expired_at`` keeps permit timestamp semantics.
+
+    Permits accept naive ISO timestamps and treat them as UTC during
+    construction. The shared lease expiry helper must preserve that behavior
+    while still reporting elapsed permits as expired.
+    """
+    record = PermitRecord(
+        permit_id="permit_20260514_e10000",
+        scope="redteam-baseline",
+        expires_at="2026-05-14T10:00:00",
+        issued_to="agent:redteam",
+        issued_at="2026-05-14T09:00:00Z",
+        issued_by="human:redteam-operator",
+    )
+
+    assert record.is_expired_at(datetime(2026, 5, 14, 10, 0, 1, tzinfo=timezone.utc)) is True
+    assert record.is_expired_at(datetime(2026, 5, 14, 9, 59, 59, tzinfo=timezone.utc)) is False
 
 
 def test_expired_permit_loaded_into_envelope_and_authority_ref(permit_project):
