@@ -5853,110 +5853,28 @@ def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = "."
 # Batch operations — 10x fewer MCP round trips for agents
 # ===================================================================
 
-_MAX_BATCH_QUERIES = 10
+from roam.commands.batch_search_core import (
+    BATCH_FTS_SQL as _BATCH_FTS_SQL,
+    BATCH_LIKE_SQL as _BATCH_LIKE_SQL,
+    BATCH_LIKE_WITH_PATHS_SQL as _BATCH_LIKE_WITH_PATHS_SQL,
+    MAX_BATCH_QUERIES as _MAX_BATCH_QUERIES,
+    batch_search_one as _shared_batch_search_one,
+    fts_query_for as _fts_query_for,
+)
+
 _MAX_BATCH_SYMBOLS = 50
-
-# FTS5 search SQL used by batch_search — same as resolve.fts_suggestions
-_BATCH_FTS_SQL = (
-    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
-    "FROM symbol_fts sf "
-    "JOIN symbols s ON sf.rowid = s.id "
-    "JOIN files f ON s.file_id = f.id "
-    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE symbol_fts MATCH ? "
-    "ORDER BY rank "
-    "LIMIT ?"
-)
-
-# Fallback LIKE SQL when FTS5 is unavailable or returns nothing.
-# Default (symbol-only) matches the CLI ``batch-search`` contract — name
-# OR qualified_name only, never file path. Path-substring matches caused
-# false positives like ``useAccountBalance`` returning ``setup`` from
-# ``tests/.../useAccountBalance.test.ts`` (W3.1 bug fix).
-_BATCH_LIKE_SQL = (
-    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
-    "FROM symbols s "
-    "JOIN files f ON s.file_id = f.id "
-    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE (s.name LIKE ? COLLATE NOCASE "
-    "    OR s.qualified_name LIKE ? COLLATE NOCASE) "
-    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
-    "LIMIT ?"
-)
-
-# Opt-in wider match — includes file path. Restores the legacy behaviour
-# for users who deliberately want to find fixtures by directory name.
-_BATCH_LIKE_WITH_PATHS_SQL = (
-    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
-    "FROM symbols s "
-    "JOIN files f ON s.file_id = f.id "
-    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE (s.name LIKE ? COLLATE NOCASE "
-    "    OR s.qualified_name LIKE ? COLLATE NOCASE "
-    "    OR f.path LIKE ? COLLATE NOCASE) "
-    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
-    "LIMIT ?"
-)
-
-
-def _fts_query_for(q: str) -> str:
-    """Build an FTS5 MATCH expression for a raw search query string."""
-    tokens = q.replace("_", " ").replace(".", " ").split()
-    if tokens:
-        return " OR ".join(f'"{t}"*' for t in tokens)
-    return f'"{q}"*'
 
 
 def _batch_search_one(conn, q: str, limit: int, include_paths: bool = False) -> tuple[list, str | None]:
-    """Search for one query in an open DB connection.
-
-    Returns (rows, error_or_None).  Rows are plain dicts.
-
-    Match mode parity with ``roam batch-search`` CLI:
-    - default (include_paths=False): matches symbol name / qualified_name only
-    - include_paths=True: legacy wide match (name OR qualified_name OR file path)
-
-    FTS5 is tried first only when ``include_paths`` is True (the FTS5 index
-    over symbol_fts already implicitly indexes the symbol name, but its
-    camelCase tokenizer would over-match for the symbol-only path — for
-    that path we go directly to the strict LIKE query).
-    """
-    rows: list = []
-    like = f"%{q}%"
-
-    if include_paths:
-        # Wide LIKE-only — matches the CLI ``--include-paths`` contract
-        # exactly (name OR qualified_name OR file path). FTS5 is
-        # deliberately NOT used here: its symbol_fts index doesn't
-        # index file paths, so combining it with the path-aware LIKE
-        # would yield non-deterministic ordering and miss path-only
-        # matches when FTS5 returns ANY symbol row.
-        try:
-            rows = conn.execute(_BATCH_LIKE_WITH_PATHS_SQL, (like, like, like, limit)).fetchall()
-        except Exception as exc:
-            return [], str(exc)
-    else:
-        # Strict symbol-only LIKE. No FTS5 — its camelCase tokenizer
-        # would expand ``MyUseFoo`` -> ``My Use Foo`` and over-match.
-        try:
-            rows = conn.execute(_BATCH_LIKE_SQL, (like, like, limit)).fetchall()
-        except Exception as exc:
-            return [], str(exc)
-
-    return [
-        {
-            "name": r["name"],
-            "qualified_name": r["qualified_name"] or "",
-            "kind": r["kind"],
-            "file_path": r["file_path"],
-            "line_start": r["line_start"],
-            "pagerank": round(float(r["pagerank"] or 0), 4),
-        }
-        for r in rows
-    ], None
+    """Compatibility shim for tests/imports; implementation lives in commands."""
+    return _shared_batch_search_one(
+        conn,
+        q,
+        limit,
+        include_paths=include_paths,
+        like_sql=_BATCH_LIKE_SQL,
+        like_with_paths_sql=_BATCH_LIKE_WITH_PATHS_SQL,
+    )
 
 
 def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
