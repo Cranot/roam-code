@@ -676,7 +676,7 @@ def _evaluate_custom_rules(
     help="List all available rule profiles and exit.",
 )
 @click.pass_context
-def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do_list, do_list_profiles):
+def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_name, do_list, do_list_profiles):
     """Run structural governance rules against the indexed codebase.
 
     Built-in rules cover: circular imports, fan-out/fan-in, file complexity,
