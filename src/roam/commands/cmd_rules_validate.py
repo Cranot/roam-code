@@ -309,7 +309,7 @@ def _print_explain_block() -> None:
     help="Auto-coerce safe schema mistakes (severity casing, trim whitespace) and write back. Skips real typos.",
 )
 @click.pass_context
-def rules_validate(
+def rules_validate_cmd(
     ctx,
     rules_path: str,
     diff_path: str | None,
