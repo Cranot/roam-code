@@ -202,6 +202,43 @@ class TestPropagation:
         assert WRITES_DB in result.get(1, set())
         assert NETWORK in result.get(1, set())
 
+    def test_propagate_falls_back_on_networkx_error(self, monkeypatch):
+        """Expected NetworkX failures still use iterative propagation."""
+        import networkx as nx
+
+        from roam.analysis.effects import WRITES_DB, propagate_effects
+
+        G = nx.DiGraph()
+        G.add_edges_from([(1, 2), (2, 3)])
+
+        def raise_networkx_error(_graph):
+            raise nx.NetworkXException("condensation failed")
+
+        monkeypatch.setattr(nx, "condensation", raise_networkx_error)
+
+        result = propagate_effects(G, {3: {WRITES_DB}})
+
+        assert WRITES_DB in result.get(3, set())
+        assert WRITES_DB in result.get(2, set())
+        assert WRITES_DB in result.get(1, set())
+
+    def test_propagate_reraises_unexpected_errors(self, monkeypatch):
+        """Unexpected programming errors should not be hidden by fallback."""
+        import networkx as nx
+
+        from roam.analysis.effects import WRITES_DB, propagate_effects
+
+        G = nx.DiGraph()
+        G.add_edges_from([(1, 2)])
+
+        def raise_unexpected_error(_graph):
+            raise TypeError("bad condensation state")
+
+        monkeypatch.setattr(nx, "condensation", raise_unexpected_error)
+
+        with pytest.raises(TypeError, match="bad condensation state"):
+            propagate_effects(G, {2: {WRITES_DB}})
+
 
 # ---------------------------------------------------------------------------
 # Schema tests
