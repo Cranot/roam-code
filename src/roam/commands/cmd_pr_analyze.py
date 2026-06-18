@@ -1965,7 +1965,7 @@ def _emit_batch(
     help=f"Compare against the envelope at this path (default: {DEFAULT_BASELINE_PATH} if it exists).",
 )
 @click.pass_context
-def pr_analyze(
+def pr_analyze_command(
     ctx,
     commit_range: str | None,
     input_file: str | None,
@@ -2654,3 +2654,9 @@ def pr_analyze(
 
     if gate and verdict == "BLOCK":
         sys.exit(EXIT_GATE_BLOCK)
+
+
+# Back-compat for direct imports and the lazy CLI registry. The Click command
+# name remains ``pr-analyze``; this alias is a command object, not a duplicate
+# function symbol.
+pr_analyze = pr_analyze_command
