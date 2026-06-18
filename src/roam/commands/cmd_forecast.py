@@ -13,6 +13,7 @@ envelope directly. See action.yml _SUPPORTED_SARIF allowlist
 from __future__ import annotations
 
 import os
+import sqlite3
 
 import click
 
@@ -240,7 +241,7 @@ def _spectral_gap_series(conn):
         rows = conn.execute(
             "SELECT spectral_gap FROM snapshots WHERE spectral_gap IS NOT NULL ORDER BY timestamp ASC"
         ).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return []
     return [float(r[0]) for r in rows]
 
