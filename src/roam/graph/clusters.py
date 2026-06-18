@@ -33,12 +33,18 @@ def _try_leiden_communities(undirected: nx.Graph, out: list[set[int]]) -> bool:
         import leidenalg  # type: ignore
     except ImportError:
         return False
+    # Build an igraph from the undirected NetworkX graph. Map node ids
+    # so we can translate back. Edge weights default to 1.0.
+    node_list = list(undirected.nodes())
+    index_for: dict[int, int] = {n: i for i, n in enumerate(node_list)}
+    edges = [(index_for[u], index_for[v]) for u, v in undirected.edges() if u in index_for and v in index_for]
+
+    leiden_runtime_errors: tuple[type[BaseException], ...] = (MemoryError, RuntimeError, ValueError)
+    igraph_internal_error = getattr(ig, "InternalError", None)
+    if isinstance(igraph_internal_error, type) and issubclass(igraph_internal_error, BaseException):
+        leiden_runtime_errors = (*leiden_runtime_errors, igraph_internal_error)
+
     try:
-        # Build an igraph from the undirected NetworkX graph. Map node ids
-        # so we can translate back. Edge weights default to 1.0.
-        node_list = list(undirected.nodes())
-        index_for: dict[int, int] = {n: i for i, n in enumerate(node_list)}
-        edges = [(index_for[u], index_for[v]) for u, v in undirected.edges() if u in index_for and v in index_for]
         ig_graph = ig.Graph(n=len(node_list), edges=edges, directed=False)
         partition = leidenalg.find_partition(
             ig_graph,
@@ -48,7 +54,7 @@ def _try_leiden_communities(undirected: nx.Graph, out: list[set[int]]) -> bool:
         for community in partition:
             out.append({node_list[idx] for idx in community})
         return True
-    except Exception:
+    except leiden_runtime_errors:
         # leidenalg / igraph ABI mismatch or memory pressure — fall back.
         out.clear()
         return False

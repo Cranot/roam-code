@@ -16,6 +16,8 @@ lib happened to be installed in the test env).
 
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import patch
 
 import networkx as nx
@@ -228,3 +230,42 @@ class TestClustersLeidenFallback:
         assert set(result.keys()) == set(G.nodes)
         for n, cid in result.items():
             assert isinstance(cid, int), f"cluster id for {n} not int: {cid!r}"
+
+    def test_leiden_backend_runtime_error_falls_back(self, monkeypatch):
+        """Expected optional-backend runtime failures return False."""
+        from roam.graph.clusters import _try_leiden_communities
+
+        def _raise_runtime_error(*_args, **_kwargs):
+            raise RuntimeError("backend failed")
+
+        fake_igraph = types.SimpleNamespace(Graph=lambda **_kwargs: object(), InternalError=RuntimeError)
+        fake_leidenalg = types.SimpleNamespace(
+            ModularityVertexPartition=object(),
+            find_partition=_raise_runtime_error,
+        )
+        monkeypatch.delenv("ROAM_LEIDEN", raising=False)
+        monkeypatch.setitem(sys.modules, "igraph", fake_igraph)
+        monkeypatch.setitem(sys.modules, "leidenalg", fake_leidenalg)
+
+        out = [{99}]
+        assert _try_leiden_communities(nx.Graph([(1, 2)]), out) is False
+        assert out == []
+
+    def test_leiden_backend_unexpected_exception_propagates(self, monkeypatch):
+        """Unexpected non-backend exceptions are not swallowed."""
+        from roam.graph.clusters import _try_leiden_communities
+
+        def _raise_key_error(*_args, **_kwargs):
+            raise KeyError("logic bug")
+
+        fake_igraph = types.SimpleNamespace(Graph=lambda **_kwargs: object(), InternalError=RuntimeError)
+        fake_leidenalg = types.SimpleNamespace(
+            ModularityVertexPartition=object(),
+            find_partition=_raise_key_error,
+        )
+        monkeypatch.delenv("ROAM_LEIDEN", raising=False)
+        monkeypatch.setitem(sys.modules, "igraph", fake_igraph)
+        monkeypatch.setitem(sys.modules, "leidenalg", fake_leidenalg)
+
+        with pytest.raises(KeyError, match="logic bug"):
+            _try_leiden_communities(nx.Graph([(1, 2)]), [])
