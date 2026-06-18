@@ -151,6 +151,36 @@ class TestPreflightHelpers:
         assert index_is_built(warm_project) is True
         assert index_is_built() is True
 
+    def test_index_is_built_false_on_expected_resolution_errors(self, monkeypatch, tmp_path):
+        import roam.db.connection as connection
+        from roam.db.connection import StaleDbDirError
+        from roam.mcp_extras.preflight import index_is_built
+
+        def raise_os_error(_start):
+            raise OSError("synthetic path resolution failure")
+
+        monkeypatch.setattr(connection, "find_project_root", raise_os_error)
+        assert index_is_built(".") is False
+
+        monkeypatch.setattr(connection, "find_project_root", lambda _start: tmp_path)
+
+        def raise_stale_db_dir(_root):
+            raise StaleDbDirError("/missing/.roam", ".roam/config.json db_dir", PermissionError("denied"))
+
+        monkeypatch.setattr(connection, "db_exists", raise_stale_db_dir)
+        assert index_is_built(".") is False
+
+    def test_index_is_built_propagates_programmer_errors(self, monkeypatch):
+        import roam.db.connection as connection
+        from roam.mcp_extras.preflight import index_is_built
+
+        def raise_bug(_start):
+            raise RuntimeError("synthetic programmer bug")
+
+        monkeypatch.setattr(connection, "find_project_root", raise_bug)
+        with pytest.raises(RuntimeError, match="synthetic programmer bug"):
+            index_is_built(".")
+
     def test_cold_start_envelope_shape(self):
         from roam.mcp_extras.preflight import cold_start_envelope
 
