@@ -69,6 +69,12 @@ def test_rule_file_suppression_backslash_normalisation():
     assert sup.file == "src/foo/bar.py"
 
 
+def test_rule_file_suppression_explicit_constructor_matches_legacy_alias():
+    """Schema-specific constructor remains identical to ``from_dict`` alias."""
+    entry = {"rule": "x", "file": "src/foo.py", "line": "7"}
+    assert RuleFileSuppression.from_rule_file_dict(entry) == RuleFileSuppression.from_dict(entry)
+
+
 # ---------------------------------------------------------------------------
 # KindSymbolSuppression — ``.roam/smells.suppress.yml`` shape
 # ---------------------------------------------------------------------------
