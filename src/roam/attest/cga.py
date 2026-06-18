@@ -465,10 +465,10 @@ def verify_cga_statement(
 
 def _detect_tool_version() -> str:
     try:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
 
         return version("roam-code")
-    except Exception:
+    except PackageNotFoundError:
         return "unknown"
 
 
