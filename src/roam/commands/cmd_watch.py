@@ -378,7 +378,7 @@ class WebhookBridge:
                         decoded = json.loads(raw.decode("utf-8"))
                         if isinstance(decoded, dict):
                             payload = decoded
-                    except Exception:
+                    except (UnicodeDecodeError, json.JSONDecodeError):
                         payload = {}
 
                 event = (
