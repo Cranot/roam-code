@@ -11386,7 +11386,7 @@ def doc_intent(
     name="roam_fingerprint",
     description="Topology fingerprint for cross-repo comparison or structural drift tracking.",
 )
-def fingerprint(compact: bool = False, export_path: str = "", compare_path: str = "", root: str = ".") -> dict:
+def mcp_fingerprint(compact: bool = False, export_path: str = "", compare_path: str = "", root: str = ".") -> dict:
     """Extract a topology fingerprint for cross-repo comparison.
 
     WHEN TO USE: Call this to get the structural signature of a codebase
