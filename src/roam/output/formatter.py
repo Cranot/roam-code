@@ -1049,6 +1049,173 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         return
 
 
+def _prepare_envelope_summary(summary: dict | None) -> dict:
+    summary = dict(summary) if summary else {}
+    # W817: Pattern 2 always-emit discipline. Detector commands (dead /
+    # complexity / clones / orphan-imports / bus-factor / auth-gaps and
+    # likely others — see W805 sweep) historically omitted
+    # `summary.partial_success` on their no-findings branches, leaving
+    # agents unable to distinguish "scanned, clean" from "didn't run".
+    # Default to ``False`` (clean) when missing — callers that genuinely
+    # had a partial run still set it to ``True`` explicitly, which wins.
+    if summary and "partial_success" not in summary:
+        summary["partial_success"] = False
+    _inject_deprecation_warning(summary)
+    return summary
+
+
+def _inject_deprecation_warning(summary: dict) -> None:
+    # If a deprecated alias was used to invoke roam, surface the notice in
+    # `summary.deprecation_warning` so JSON consumers (who never see stderr)
+    # can detect it. The slot is set by `roam.cli.resolve_command` and
+    # cleared at the start of each new invocation. Defensive try/except: this
+    # injection must never break envelope generation for non-CLI callers.
+    try:
+        from roam.cli import _get_active_deprecation_notice
+
+        _depr_notice = _get_active_deprecation_notice()
+        if _depr_notice and "deprecation_warning" not in summary:
+            summary["deprecation_warning"] = _depr_notice
+    except (ImportError, AttributeError):
+        # W677: narrowed from `except Exception` — ImportError covers
+        # non-CLI callers where `roam.cli` isn't importable; AttributeError
+        # covers the case where the deprecation-notice slot helper hasn't
+        # been wired up yet. Programmer-class errors (NameError /
+        # TypeError) propagate per W531 fail-loud.
+        pass
+
+
+def _compact_json_envelope_or_none(command: str, summary: dict, budget: int, payload: dict) -> dict | None:
+    if not _compact_mode_enabled():
+        return None
+
+    compact = compact_json_envelope(command, summary=summary, **payload)
+    if budget > 0:
+        return budget_truncate_json(compact, budget)
+    return compact
+
+
+def _base_json_envelope(command: str, version: str, summary: dict) -> dict:
+    return {
+        "schema": ENVELOPE_SCHEMA_NAME,
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
+        "command": command,
+        "version": version,
+        "project": _project_name(),
+        "summary": summary,
+    }
+
+
+def _agent_contract_enabled() -> bool:
+    return os.environ.get("ROAM_AGENT_CONTRACT_BLOCK", "1").lower() not in ("0", "false", "no")
+
+
+def _merge_agent_contract(auto_contract: dict, explicit_contract: dict) -> dict:
+    # Merge: explicit fields win, auto-derived fills gaps. Always keep
+    # auto-derived ``next_commands`` when caller did not supply its own —
+    # agents rely on the auto-derived list when ``summary.next_commands`` is set.
+    merged = dict(auto_contract)
+    for k, v in explicit_contract.items():
+        if v is not None:
+            merged[k] = v
+    if "next_commands" not in explicit_contract and auto_contract.get("next_commands"):
+        merged["next_commands"] = auto_contract["next_commands"]
+    return merged
+
+
+def _add_agent_contract(out: dict, summary: dict, explicit_contract: Any) -> None:
+    # Derived ``agent_contract`` block — bounded ~200 tokens. Agents on
+    # tight context budgets can read just this and skip the full payload;
+    # full-payload consumers ignore it. Opt-out via env
+    # ``ROAM_AGENT_CONTRACT_BLOCK=0``.
+    if not _agent_contract_enabled():
+        return
+
+    auto_contract = _derive_agent_contract(out, summary or {})
+    if isinstance(explicit_contract, dict) and explicit_contract:
+        out["agent_contract"] = _merge_agent_contract(auto_contract, explicit_contract)
+        return
+    out["agent_contract"] = auto_contract
+
+
+def _stamp_core_meta(out: dict, command: str, version: str) -> None:
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    # Non-deterministic metadata in _meta — kept separate so content
+    # keys produce identical JSON across invocations (LLM cache-friendly).
+    #
+    # W210 evidence axis: stamp ``roam_version`` here so every envelope
+    # carries the producer-version provenance ``ChangeEvidence.roam_version``
+    # expects. The field lives in ``_meta`` rather than at top level for
+    # two reasons:
+    #   (a) ``out["version"]`` already exists at top level for backward-
+    #       compat consumers; ``_meta.roam_version`` is the W210-canonical
+    #       location and matches the ChangeEvidence field name verbatim.
+    #   (b) ``_meta`` is already non-deterministic (timestamp), so adding
+    #       a stable field here cannot regress prompt-cache hit rates that
+    #       were already locked in by the timestamp's variability.
+    # The evidence packet content-hash (test_evidence_schema_migration)
+    # hashes ``ChangeEvidence`` dataclass output, NOT envelope JSON — so
+    # this addition does not affect those golden hashes.
+    out["_meta"] = {
+        "timestamp": ts,
+        "index_age_s": _index_age_seconds(),
+        "roam_version": version,
+    }
+    _add_staleness_meta(out["_meta"], command)
+
+
+def _add_staleness_meta(meta: dict, command: str) -> None:
+    # Wave-1 staleness disclosure (Root-1a): for stale-sensitive commands, surface
+    # index_status WHEN the index is actually stale, so an agent reading the envelope
+    # cannot act on data computed against code that no longer matches. Placed in _meta
+    # (alongside index_age_s), NOT top-level: top-level placement broke content-hash
+    # dedup + envelope-consistency/diff contracts (a dirty real-repo tree fires it
+    # globally during tests). _meta is the non-deterministic bucket dedup/consistency
+    # already exclude. We do NOT flip summary.partial_success here — that field reflects
+    # the CHECK outcome, not index freshness (conflating them broke clean-path tests).
+    # Gated on `fresh is False`; lazy imports avoid an output<-commands cycle; failures
+    # never break envelope generation.
+    if "index_status" in meta or not _command_is_stale_sensitive(command):
+        return
+
+    _stale = _envelope_index_status()
+    if isinstance(_stale, dict) and _stale.get("fresh") is False:
+        meta["index_status"] = _stale
+
+
+def _cache_policy(command: str) -> tuple[bool, int]:
+    if command in _NON_CACHEABLE_COMMANDS:
+        return False, 0
+    if command in _VOLATILE_COMMANDS:
+        return True, 60
+    return True, 300
+
+
+def _stamp_response_meta(out: dict, command: str) -> None:
+    # Response metadata for MCP agents (#119)
+    full_json = _json.dumps(out, default=str, sort_keys=True)
+    out["_meta"]["response_tokens"] = estimate_tokens(full_json)
+    out["_meta"]["latency_ms"] = None  # filled by caller if needed
+    cacheable, cache_ttl_s = _cache_policy(command)
+    out["_meta"]["cacheable"] = cacheable
+    out["_meta"]["cache_ttl_s"] = cache_ttl_s
+
+
+def _apply_envelope_budget(out: dict, budget: int) -> dict:
+    if budget > 0:
+        return budget_truncate_json(out, budget)
+
+    # Pattern-6 default bounding (E1/N3): budget 0 ("no cap") historically let
+    # high-fanout commands (uses/clones/path-coverage) emit 56K-224KB JSON --
+    # over roam's own 20K-token mandate and worse than `grep -rl`. Cap ONLY
+    # genuinely-oversized envelopes so normal (<cap) output stays byte-identical
+    # and prompt-cache-stable. Override via ROAM_DEFAULT_JSON_BUDGET (0 disables).
+    _cap = _default_json_budget()
+    if _cap and out.get("_meta", {}).get("response_tokens", 0) > _cap:
+        return budget_truncate_json(out, _cap)
+    return out
+
+
 # W975: loose-but-honest per W966 — ``**payload`` and ``summary`` are
 # arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
 # this return without an at-boundary validator. See W933 _resolved_thresholds
@@ -1083,131 +1250,23 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
             ...payload
         }
     """
-    # If a deprecated alias was used to invoke roam, surface the notice in
-    # `summary.deprecation_warning` so JSON consumers (who never see stderr)
-    # can detect it. The slot is set by `roam.cli.resolve_command` and
-    # cleared at the start of each new invocation. Defensive try/except: this
-    # injection must never break envelope generation for non-CLI callers.
-    summary = dict(summary) if summary else {}
-    # W817: Pattern 2 always-emit discipline. Detector commands (dead /
-    # complexity / clones / orphan-imports / bus-factor / auth-gaps and
-    # likely others — see W805 sweep) historically omitted
-    # `summary.partial_success` on their no-findings branches, leaving
-    # agents unable to distinguish "scanned, clean" from "didn't run".
-    # Default to ``False`` (clean) when missing — callers that genuinely
-    # had a partial run still set it to ``True`` explicitly, which wins.
-    if summary and "partial_success" not in summary:
-        summary["partial_success"] = False
-    try:
-        from roam.cli import _get_active_deprecation_notice
+    summary = _prepare_envelope_summary(summary)
 
-        _depr_notice = _get_active_deprecation_notice()
-        if _depr_notice and "deprecation_warning" not in summary:
-            summary["deprecation_warning"] = _depr_notice
-    except (ImportError, AttributeError):
-        # W677: narrowed from `except Exception` — ImportError covers
-        # non-CLI callers where `roam.cli` isn't importable; AttributeError
-        # covers the case where the deprecation-notice slot helper hasn't
-        # been wired up yet. Programmer-class errors (NameError /
-        # TypeError) propagate per W531 fail-loud.
-        pass
-
-    if _compact_mode_enabled():
-        compact = compact_json_envelope(command, summary=summary, **payload)
-        if budget > 0:
-            compact = budget_truncate_json(compact, budget)
+    compact = _compact_json_envelope_or_none(command, summary, budget, payload)
+    if compact is not None:
         return compact
 
     # Version — read once and cache
     version = _get_version()
 
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
     # Pull explicit agent_contract kwarg BEFORE updating payload, so the
     # auto-derive block can merge it instead of clobbering it.
     explicit_contract = payload.pop("agent_contract", None)
-
-    out: dict = {
-        "schema": ENVELOPE_SCHEMA_NAME,
-        "schema_version": ENVELOPE_SCHEMA_VERSION,
-        "command": command,
-        "version": version,
-        "project": _project_name(),
-        "summary": summary,
-    }
+    out = _base_json_envelope(command, version, summary)
     out.update(payload)
-
-    # Derived ``agent_contract`` block — bounded ~200 tokens. Agents on
-    # tight context budgets can read just this and skip the full payload;
-    # full-payload consumers ignore it. Opt-out via env
-    # ``ROAM_AGENT_CONTRACT_BLOCK=0``.
-    if os.environ.get("ROAM_AGENT_CONTRACT_BLOCK", "1").lower() not in ("0", "false", "no"):
-        auto_contract = _derive_agent_contract(out, summary or {})
-        if isinstance(explicit_contract, dict) and explicit_contract:
-            # Merge: explicit fields win, auto-derived fills gaps. Always
-            # keep auto-derived ``next_commands`` when caller did not
-            # supply its own — agents rely on the auto-derived list when
-            # ``summary.next_commands`` is set.
-            merged = dict(auto_contract)
-            for k, v in explicit_contract.items():
-                if v is not None:
-                    merged[k] = v
-            if "next_commands" not in explicit_contract and auto_contract.get("next_commands"):
-                merged["next_commands"] = auto_contract["next_commands"]
-            out["agent_contract"] = merged
-        else:
-            out["agent_contract"] = auto_contract
-
-    # Non-deterministic metadata in _meta — kept separate so content
-    # keys produce identical JSON across invocations (LLM cache-friendly).
-    #
-    # W210 evidence axis: stamp ``roam_version`` here so every envelope
-    # carries the producer-version provenance ``ChangeEvidence.roam_version``
-    # expects. The field lives in ``_meta`` rather than at top level for
-    # two reasons:
-    #   (a) ``out["version"]`` already exists at top level for backward-
-    #       compat consumers; ``_meta.roam_version`` is the W210-canonical
-    #       location and matches the ChangeEvidence field name verbatim.
-    #   (b) ``_meta`` is already non-deterministic (timestamp), so adding
-    #       a stable field here cannot regress prompt-cache hit rates that
-    #       were already locked in by the timestamp's variability.
-    # The evidence packet content-hash (test_evidence_schema_migration)
-    # hashes ``ChangeEvidence`` dataclass output, NOT envelope JSON — so
-    # this addition does not affect those golden hashes.
-    out["_meta"] = {
-        "timestamp": ts,
-        "index_age_s": _index_age_seconds(),
-        "roam_version": version,
-    }
-
-    # Wave-1 staleness disclosure (Root-1a): for stale-sensitive commands, surface
-    # index_status WHEN the index is actually stale, so an agent reading the envelope
-    # cannot act on data computed against code that no longer matches. Placed in _meta
-    # (alongside index_age_s), NOT top-level: top-level placement broke content-hash
-    # dedup + envelope-consistency/diff contracts (a dirty real-repo tree fires it
-    # globally during tests). _meta is the non-deterministic bucket dedup/consistency
-    # already exclude. We do NOT flip summary.partial_success here — that field reflects
-    # the CHECK outcome, not index freshness (conflating them broke clean-path tests).
-    # Gated on `fresh is False`; lazy imports avoid an output<-commands cycle; failures
-    # never break envelope generation.
-    if "index_status" not in out["_meta"] and _command_is_stale_sensitive(command):
-        _stale = _envelope_index_status()
-        if isinstance(_stale, dict) and _stale.get("fresh") is False:
-            out["_meta"]["index_status"] = _stale
-
-    # Response metadata for MCP agents (#119)
-    full_json = _json.dumps(out, default=str, sort_keys=True)
-    out["_meta"]["response_tokens"] = estimate_tokens(full_json)
-    out["_meta"]["latency_ms"] = None  # filled by caller if needed
-    if command in _NON_CACHEABLE_COMMANDS:
-        out["_meta"]["cacheable"] = False
-        out["_meta"]["cache_ttl_s"] = 0
-    elif command in _VOLATILE_COMMANDS:
-        out["_meta"]["cacheable"] = True
-        out["_meta"]["cache_ttl_s"] = 60
-    else:
-        out["_meta"]["cacheable"] = True
-        out["_meta"]["cache_ttl_s"] = 300
+    _add_agent_contract(out, summary, explicit_contract)
+    _stamp_core_meta(out, command, version)
+    _stamp_response_meta(out, command)
 
     # Best-effort side-car write to `.roam/responses/` so `pr-bundle
     # --auto-collect` can fold this envelope into the bundle later. Fires
@@ -1219,20 +1278,7 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # sees complete fields. Wrapped in try/except inside the helper — must
     # NEVER break envelope generation.
     _write_response_to_responses_dir(out)
-
-    if budget > 0:
-        out = budget_truncate_json(out, budget)
-    else:
-        # Pattern-6 default bounding (E1/N3): budget 0 ("no cap") historically let
-        # high-fanout commands (uses/clones/path-coverage) emit 56K-224KB JSON --
-        # over roam's own 20K-token mandate and worse than `grep -rl`. Cap ONLY
-        # genuinely-oversized envelopes so normal (<cap) output stays byte-identical
-        # and prompt-cache-stable. Override via ROAM_DEFAULT_JSON_BUDGET (0 disables).
-        _cap = _default_json_budget()
-        if _cap and out.get("_meta", {}).get("response_tokens", 0) > _cap:
-            out = budget_truncate_json(out, _cap)
-
-    return out
+    return _apply_envelope_budget(out, budget)
 
 
 def _command_is_stale_sensitive(command: str) -> bool:
