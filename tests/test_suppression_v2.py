@@ -177,6 +177,15 @@ def test_finding_id_suppression_hash_only_entry():
     assert "location" not in out
 
 
+def test_finding_id_suppression_specific_constructor_matches_from_dict():
+    """The named constructor backs the legacy ``from_dict`` alias."""
+    entry = {"reason": "by hash only", "added_at": "2026-05-14"}
+
+    assert FindingIdSuppression.from_suppressions_json_entry("deadbeef", entry) == (
+        FindingIdSuppression.from_dict("deadbeef", entry)
+    )
+
+
 # ---------------------------------------------------------------------------
 # commands.suppression typed-loader wiring
 # ---------------------------------------------------------------------------

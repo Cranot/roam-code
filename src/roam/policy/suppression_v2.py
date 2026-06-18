@@ -350,7 +350,7 @@ class FindingIdSuppression(_SuppressionBase):
     symbol_name: Optional[str] = None
 
     @classmethod
-    def from_dict(
+    def from_suppressions_json_entry(
         cls,
         finding_id_key: str,
         entry: Mapping[str, Any],
@@ -385,6 +385,13 @@ class FindingIdSuppression(_SuppressionBase):
             policy_status=policy_st,
             source="suppressions-json",
         )
+
+    # Back-compat: public callers historically used ``from_dict``. The
+    # implementation name stays suppression-specific so it is not conflated
+    # with ``roam.evidence.policy.PolicyDecision.from_dict``; that parser
+    # owns a different ``decision`` vocabulary than suppression
+    # ``policy_status``.
+    from_dict = from_suppressions_json_entry
 
     def to_dict(self) -> dict[str, Any]:
         """Project back to ``.roam/suppressions.json`` entry shape.
