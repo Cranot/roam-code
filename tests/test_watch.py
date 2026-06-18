@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -248,6 +249,30 @@ class TestWebhookBridge:
             events = bridge.drain_events()
             assert len(events) == 1
             assert events[0]["event"] == "push"
+        finally:
+            bridge.shutdown()
+
+    def test_invalid_content_length_defaults_to_empty_body(self):
+        bridge = WebhookBridge(host="127.0.0.1", port=0)
+        bridge.start()
+        try:
+            request = (
+                "POST /roam/reindex HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{bridge.port}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: nope\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("ascii")
+            with socket.create_connection(("127.0.0.1", bridge.port), timeout=2) as sock:
+                sock.sendall(request)
+                response = sock.recv(4096)
+
+            assert response.startswith(b"HTTP/1.0 202")
+            events = bridge.drain_events()
+            assert len(events) == 1
+            assert events[0]["event"] == "webhook"
+            assert events[0]["force"] is False
         finally:
             bridge.shutdown()
 

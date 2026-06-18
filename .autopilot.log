@@ -1,0 +1,51 @@
+PROVIDER: codex
+
+REPLY:
+**Inspecting code repository**
+
+I'm acting as a coding agent and need to inspect the repo based on the user's target. I should follow the AGENTS instructions and read the backlog as well, focusing on the top unblocked item. I'll need to carefully check the backlog queue file to verify the item and execute the smallest coherent changes. After making edits, I'll run the verification process to ensure everything passes. I need to be cautious with the commands and avoid any that could cause issues.
+**Sending updates**
+
+I need to send a commentary update along with the tool. It’s important to communicate clearly about the progress or changes made. I should think about how to phrase my update so that it’s easy for the user to understand. I need to ensure that the commentary is concise yet informative. Once I've prepared everything, I'll send it out promptly to keep the user in the loop.I’ll inspect the backlog entry and the watch command around the reported catch site, then make the narrowest change that preserves the intended behavior. After editing I’ll run `roam verify` and report the actual result.**Inspecting codebase exceptions**
+
+I need to check the backlog to find a matching target, and there might be just one entry at line 371 rather than a broad search. The codebase appears to have 34 specific exception classes based on some static findings, and we should focus on fixing the target to catch only the expected errors. Also, I need to check for tests related to this. Maybe I can use a tool, like rg, to find the relevant tests.The backlog path is outside this worktree directory, so I’m checking the parent `.stoa` queue next. The reported line is the `Content-Length` parser; the expected failure there is an invalid integer value, not an arbitrary runtime exception.The queue file is two levels up from the worktree. I’m also checking existing `tests/test_watch.py` coverage so the fix can land with a focused regression if there’s already a good seam for it.**Exploring file paths and tests**
+
+I’m trying to figure out the backlog path; maybe it's .stoa inside the root. My current path is at /root/apps/union-web/roam-code/.stoa/wt. There’s this backlog-queue.json file to find relative to the repository root. I might want to use the find command to help locate it.
+
+Also, I need to consider tests. It seems I should add a test in TestWebhookBridge for invalid Content-Length. How can I send an invalid header using urllib.request when it sets the content length automatically? Maybe socket or http.client can help. I'm wondering about monkey-patching headers for the unit test too!
+**Refining error handling in do_POST**
+
+I'm thinking about narrowing the catch in the do_POST function. Instead of using `except Exception`, I could use `except (TypeError, ValueError)`. Maybe I can add a test through introspection with AST since there are already tests for broad exceptions.
+
+The user is looking for ground truth. Roam verify might be enough, but including a real test is essential. I also consider adding a helper function to parse Content-Length, which would change how exceptions are caught, making the code more coherent and easier to test. I need to examine the HTTP library behavior closely here!
+**Sending raw socket data**
+
+I’m considering how to send raw socket lines to the server. It looks like I can use Python's socket library for this. 
+
+I can create a connection to the server at 127.0.0.1 and use the specific bridge port. The code snippet indicates that I can send a POST request, including invalid content length, which should trigger the necessary error handling for my tests. It seems like a solid approach to check if everything works as expected.
+**Evaluating test requirements**
+
+I need to think about importing socket for my tests, since the existing ones use urllib. I’m considering adding a test in TestWebhookBridge to assert the status and check if the response starts with "HTTP/1.0 202". This could help with handling the event webhook. However, I realize I need to ensure that broad exceptions aren’t swallowed. I might want to test that narrow catches are enforced instead. Adding a specific test might address this without overcomplicating things.
+**Considering verification process**
+
+The user mentioned "real work," which leads me to think a small fix could be made. They also instructed me to verify the code, so I'll focus on that. I’m unsure if tests are necessary; however, I have to run "roam verify" after any edit. It might take a while, but I think it’s a requirement. If the static checks are part of the verify process, tests might not be necessary. I plan to inspect the backlog path using `find .. -name backlog-queue.json`.The existing webhook tests already spin up the bridge, so a raw HTTP request can cover the invalid `Content-Length` path directly. I’m locating the queue file before editing, then I’ll patch the catch to the expected conversion failures and add that regression.**Making necessary edits**
+
+I recognize that I need to make some edits. Importing the socket seems essential, and I should add a test with the raw socket. Using apply_patch is part of this process. But before making those edits, I need to update first, possibly patching the source and the tests. It feels like I need to keep my thoughts organized to make sure everything flows smoothly while I’m applying the patches.I couldn’t find a `backlog-queue.json` under this checkout, so I’m proceeding from the explicit target in the prompt. I’m making the catch specific to invalid integer conversion and adding a webhook regression for malformed `Content-Length`.The implementation change is in place. I’m adding one narrow test that sends a raw HTTP request with an invalid `Content-Length`, which exercises the expected `ValueError` path without going through urllib’s automatic header handling.**Planning test execution**
+
+I need to run some tests and verify the results. First, I might want to do a targeted test and consider linting too. I'll use pytest for testing, then move on to verification. I should inspect the git diff as well. But first things first, I need to run the tests. Hmm, should I try running tests in parallel? Nah, they might conflict, so it’s better to keep them sequential. I need to update my approach.The regression test is added. I’m running the targeted watch tests first to catch local mistakes quickly, then I’ll run the required `roam verify`.**Verifying installation**
+
+I need to run a verification for Roam. I'm wondering if it might be installed already. To check, I'll use the command `roam verify`. It could take a bit of time, and I'm hoping everything goes smoothly with that process. I just want to ensure that everything is set up correctly and functioning as it should be! Let's see how it turns out.`tests/test_watch.py` passed locally. I’m running `roam verify` now, since that is the required ground-truth check for this queue item.**Analyzing exception handling**
+
+I’m looking at a codebase that has 34 classes, and I see a potential issue with exception handling. Line 371 seems to be the target, but line 381 might also be relevant. I’m pondering whether to keep it minimal or expand to line 381. The user’s instruction is clear: focus on making the smallest coherent change. The objective is to narrow down the exception type in that specific line of code for better clarity.
+**Clarifying code changes**
+
+I’m thinking about changing line 381 to catch both JSONDecodeError and UnicodeDecodeError to handle malformed JSON more effectively. I might want to add a test for this, but I wonder if my idea of the "smallest coherent unit" is too much. After making edits, I need to verify and check for any warnings. If there are no issues, maybe I should state that clearly, as the user could want to know what “clean” refers to. I’ll need to run some diff checks too.`roam verify` exited 0 and the original line-371 finding is gone from its error-handling warnings. It still reports other pre-existing broad catches in `cmd_watch.py`, so I’m checking the final diff and whitespace before I wrap up.Implemented the targeted fix in [cmd_watch.py](/root/apps/union-web/roam-code/.stoa/wt/1781812106_src_roam_commands_cmd_watch.py_371/src/roam/commands/cmd_watch.py:371): `Content-Length` parsing now catches only `TypeError` and `ValueError`.
+
+Added a regression in [test_watch.py](/root/apps/union-web/roam-code/.stoa/wt/1781812106_src_roam_commands_cmd_watch.py_371/tests/test_watch.py:255) using a raw HTTP request with malformed `Content-Length`.
+
+Verification:
+- `pytest tests/test_watch.py -q` passed: 54 tests.
+- `roam verify` exited 0: `PASS (score 81/100)`.
+- `git diff --check` passed.
+
+Not fully clean: `roam verify` still reports other broad catches in `cmd_watch.py` at lines 43, 99, and 381. The requested line-371 finding is resolved. Untracked `node_modules` was already present and left untouched.
