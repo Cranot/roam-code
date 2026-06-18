@@ -1303,7 +1303,7 @@ def _project_name() -> str:
         from roam.db.connection import find_project_root
 
         return find_project_root().name
-    except Exception:
+    except OSError:
         return ""
 
 
