@@ -141,9 +141,6 @@ def _plugin_language_grammar_aliases():
         return get_plugin_language_grammar_aliases()
     except ImportError:
         return {}
-    except Exception:
-        log.debug("plugin grammar alias discovery failed", exc_info=True)
-        return {}
 
 
 def _is_supported_language(language: str) -> bool:
