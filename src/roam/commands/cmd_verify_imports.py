@@ -1125,12 +1125,12 @@ def _scan_file_imports(
     return results
 
 
-def verify_imports(
+def verify_imports_for_connection(
     conn: sqlite3.Connection,
     project_root: str,
     file_filter: str | None = None,
 ) -> dict:
-    """Run the full import verification pipeline.
+    """Run the full import verification pipeline against an open DB connection.
 
     Parameters
     ----------
@@ -1317,7 +1317,7 @@ def verify_imports_cmd(ctx, file_path):
     project_root = str(find_project_root())
 
     with open_db(readonly=True) as conn:
-        result = verify_imports(conn, project_root, file_filter=file_path)
+        result = verify_imports_for_connection(conn, project_root, file_filter=file_path)
 
         # --- SARIF output (W1229) ------------------------------------------
         # SARIF surfaces the closed-enum classification rule catalogue

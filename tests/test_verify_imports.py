@@ -535,22 +535,22 @@ class TestEdgeImports:
 
 
 # ===========================================================================
-# 10. verify_imports() function tests
+# 10. verify_imports_for_connection() function tests
 # ===========================================================================
 
 
 class TestVerifyImportsFunction:
-    """Test the main verify_imports() function directly."""
+    """Test the main verify_imports_for_connection() helper directly."""
 
     def test_returns_expected_keys(self, python_import_project):
-        from roam.commands.cmd_verify_imports import verify_imports
+        from roam.commands.cmd_verify_imports import verify_imports_for_connection
         from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(python_import_project))
             with open_db(readonly=True) as conn:
-                result = verify_imports(conn, str(python_import_project))
+                result = verify_imports_for_connection(conn, str(python_import_project))
                 assert "imports" in result
                 assert "total" in result
                 assert "resolved" in result
@@ -560,28 +560,30 @@ class TestVerifyImportsFunction:
             os.chdir(old_cwd)
 
     def test_total_is_sum_of_resolved_unresolved(self, python_import_project):
-        from roam.commands.cmd_verify_imports import verify_imports
+        from roam.commands.cmd_verify_imports import verify_imports_for_connection
         from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(python_import_project))
             with open_db(readonly=True) as conn:
-                result = verify_imports(conn, str(python_import_project))
+                result = verify_imports_for_connection(conn, str(python_import_project))
                 assert result["total"] == result["resolved"] + result["unresolved"]
         finally:
             os.chdir(old_cwd)
 
     def test_file_filter_limits_scope(self, python_import_project):
-        from roam.commands.cmd_verify_imports import verify_imports
+        from roam.commands.cmd_verify_imports import verify_imports_for_connection
         from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
             os.chdir(str(python_import_project))
             with open_db(readonly=True) as conn:
-                all_result = verify_imports(conn, str(python_import_project))
-                filtered_result = verify_imports(conn, str(python_import_project), file_filter="broken.py")
+                all_result = verify_imports_for_connection(conn, str(python_import_project))
+                filtered_result = verify_imports_for_connection(
+                    conn, str(python_import_project), file_filter="broken.py"
+                )
                 # Filtered should have fewer or equal imports
                 assert filtered_result["total"] <= all_result["total"]
                 # Filtered should only check 1 file at most
