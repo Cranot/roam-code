@@ -77,6 +77,11 @@ _SLSA_LEVELS = (
     "SLSA_SOURCE_LEVEL_3",
 )
 
+# ``assurance_floor`` is a computed read. Known schema/shape drift
+# should fail closed at the attestation boundary; unexpected runtime
+# defects should propagate so they can be fixed at the source.
+_ASSURANCE_FLOOR_ERRORS = (AttributeError, TypeError, ValueError)
+
 
 def _utc_now_iso() -> str:
     """RFC 3339 timestamp at second granularity. Same shape as the rest
@@ -152,19 +157,20 @@ def _verified_levels(change_evidence: ChangeEvidence) -> list[str]:
     harvesting that ships in a later wave (see SLSA-V12-POSITIONING
     memo Gap D).
 
-    Pattern-2 discipline (CLAUDE.md "lineage rule"): an exception inside
-    ``assurance_floor()`` must NOT silently downgrade L3 -> L1. Sibling
-    :func:`_verification_result` returns ``"FAILED"`` on the same
-    exception; we mirror that by returning an empty list (SLSA-legal
-    "no levels attested") so the verifier sees the same negative
-    signal on both axes instead of an asymmetric silent fallback.
+    Pattern-2 discipline (CLAUDE.md "lineage rule"): a known schema /
+    shape error inside ``assurance_floor()`` must NOT silently downgrade
+    L3 -> L1. Sibling :func:`_verification_result` returns ``"FAILED"``
+    on the same exception; we mirror that by returning an empty list
+    (SLSA-legal "no levels attested") so the verifier sees the same
+    negative signal on both axes instead of an asymmetric silent
+    fallback. Unexpected runtime defects propagate.
     ``assurance_floor`` is a pure read over stable dataclass attributes
     today, so this guard exists as belt-and-braces for future refactors,
     not because the exception path is currently reachable.
     """
     try:
         floor = change_evidence.assurance_floor() or {}
-    except Exception:
+    except _ASSURANCE_FLOOR_ERRORS:
         return []
     if floor.get("passes"):
         return ["SLSA_SOURCE_LEVEL_3"]
@@ -240,8 +246,9 @@ def _verification_result(change_evidence: ChangeEvidence) -> str:
     * ``assurance_floor().stale != True`` (the evidence is fresh; W1261), AND
     * ``risk_level`` not in ``("high", "critical")``.
 
-    Pattern-2 discipline: any error / missing floor / dangerous risk /
-    stale evidence yields FAILED (explicit absence beats silent success).
+    Pattern-2 discipline: known floor shape errors / missing floor /
+    dangerous risk / stale evidence yields FAILED (explicit absence
+    beats silent success). Unexpected runtime defects propagate.
 
     W1261 — stale-axis downgrade. The W210/W1254 staleness axis is a
     distinct quality signal from MVA-floor coverage: a packet can be
@@ -256,7 +263,7 @@ def _verification_result(change_evidence: ChangeEvidence) -> str:
     """
     try:
         floor = change_evidence.assurance_floor() or {}
-    except Exception:
+    except _ASSURANCE_FLOOR_ERRORS:
         return "FAILED"
     risk = (change_evidence.risk_level or "").lower()
     if risk in ("high", "critical"):
