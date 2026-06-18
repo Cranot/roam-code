@@ -1060,14 +1060,16 @@ def _emit_baseline_diff(
 
     try:
         _dead_rows = conn.execute(_UNREF_EXPORTS).fetchall()
-        _dead_exports = sum(
-            1
-            for r in _dead_rows
-            if not (r["file_path"] or "").lower().rsplit("/", 1)[-1].startswith("test_")
-            and not (r["file_path"] or "").lower().endswith("_test.py")
-        )
-    except Exception:
+    except sqlite3.Error:
         _dead_exports = 0
+    else:
+        _dead_exports = 0
+        for r in _dead_rows:
+            file_path = (_row_field(r, "file_path") or "").lower()
+            file_name = file_path.rsplit("/", 1)[-1]
+            if file_name.startswith("test_") or file_path.endswith("_test.py"):
+                continue
+            _dead_exports += 1
 
     current_metrics = {
         "health_score": health_score,
