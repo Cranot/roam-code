@@ -19,6 +19,7 @@ Built-in rules (10):
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import click
@@ -813,12 +814,12 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
     rules_to_run = _resolve_rules(rule_filter, severity_filter, user_overrides)
 
     # Build graph once (needed by several rules)
+    from roam.graph.builder import build_symbol_graph
+
     with open_db(readonly=True) as conn:
         try:
-            from roam.graph.builder import build_symbol_graph
-
             G = build_symbol_graph(conn)
-        except Exception:
+        except sqlite3.Error:
             G = None
 
         # Evaluate each built-in rule
