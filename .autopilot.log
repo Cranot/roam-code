@@ -1,0 +1,16 @@
+PROVIDER: codex
+
+REPLY:
+I’ll inspect the backlog item and the target code path first, then make the narrowest change that fits the existing error handling and run `roam verify` against the edited tree.The local worktree is nested under `.stoa/wt`, so the queue file is not at this worktree root. I found the target handler: it is only guarding `ast.literal_eval()` of a decorator keyword description, so the expected failure class should come from Python’s AST literal evaluation rather than every exception.The immediate queue file was not present under this worktree path, so I’m proceeding with the explicit target the prompt named. I’m checking the existing tests around `surface_counts` now so the change stays within the known contract.**Verifying exception handling**
+
+I need to determine the exact exception types that `ast.literal_eval` can raise. The documentation mentions `ValueError`, `TypeError`, and `SyntaxError`. For a malformed node, I expect a `ValueError`. If `ast.Constant` is being passed, I don't see any `SyntaxError`. I’m wondering if I should also narrow my error handling to just `ValueError` and `TypeError`, perhaps excluding `SyntaxError` since the input is an AST node. It seems my tests might also require adjustments.
+**Considering testing strategies**
+
+I think the smallest coherent unit may involve creating a regression test to verify that `mcp_tool_descriptions` propagates exceptions that aren't related to `literal_eval`. I should probably focus on catching `TypeError` and `ValueError`. I wonder how to test this effectively. Could I create a fake AST where the `kw.value` object might throw an unexpected exception? If the custom AST is malformed, maybe I could encounter an `AttributeError`. I’ll need to check everything before making any edits!The code only needs to tolerate “description is not a literal string expression”; unsupported AST expressions raise `ValueError`, and malformed/non-node inputs can raise `TypeError`. I’m going to narrow that handler to those two cases and leave unexpected parser/runtime failures visible.There is an unrelated untracked `node_modules` in the worktree; I’m leaving it alone. The AST implementation confirms the expected failure path here is malformed literal evaluation, so the edit is a one-line exception narrowing.The code change is in place. I’m running the required project verifier now, then I’ll run the narrow surface-count tests if the verifier does not already cover the target clearly.`roam verify` passed with 98/100. It reported three existing duplicate-similarity infos in `surface_counts.py`, not failures; now I’m running the focused tests that exercise this helper surface.Changed [src/roam/surface_counts.py](/root/apps/union-web/roam-code/.stoa/wt/1781818445_src_roam_surface_counts.py_259/src/roam/surface_counts.py:259): narrowed `except Exception:` to `except (TypeError, ValueError):` around `ast.literal_eval()`.
+
+Verification:
+- `roam verify` passed: `PASS (score 98/100)`, with 3 existing duplicate-similarity info items.
+- `python -m pytest tests/test_surface_counts.py tests/test_w444_mcp_tool_names_no_dedupe.py -q` passed: `8 passed`.
+- `rg -n "except Exception" src/roam/surface_counts.py` found none.
+
+I could not find `.stoa/backlog-queue.json` under this checkout, so I used the explicit target from the prompt.
