@@ -89,14 +89,14 @@ def detect_changes(
 def discover_current_files(project_root: Path) -> list[str]:
     """Discover source files on disk via the same logic as the indexer.
 
-    Falls back to an empty list on any error so the watcher degrades
+    Falls back to an empty list on filesystem errors so the watcher degrades
     gracefully when called before the project is fully initialised.
     """
     try:
         from roam.index.discovery import discover_files
 
         return discover_files(project_root)
-    except Exception:
+    except OSError:
         return []
 
 
