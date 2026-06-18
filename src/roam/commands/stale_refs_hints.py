@@ -330,6 +330,7 @@ class SymbolGraphHintProvider:
 # symbol-graph evidence — they're meant for domain-specific fallbacks
 # (e.g. a Sphinx-config-aware provider, a vendor-docs lookup, etc.).
 _EXTRA_PROVIDERS: list["HintProvider"] = []
+_RECOVERABLE_HINT_PROVIDER_ERRORS = (OSError, sqlite3.Error, subprocess.SubprocessError)
 
 
 def register_hint_provider(provider: "HintProvider") -> None:
@@ -397,16 +398,16 @@ def best_hint(
 ) -> Hint | None:
     """Run providers in order; return the first HIGH or, failing that, the first non-None.
 
-    Stable across providers that abstain. Never raises — provider failures
-    are absorbed as ``None`` so a flaky git invocation doesn't crash the
-    whole report.
+    Stable across providers that abstain. Recoverable provider failures are
+    absorbed as ``None`` so a flaky git invocation or DB lookup doesn't crash
+    the whole report.
     """
     pool = providers if providers is not None else default_providers()
     fallback: Hint | None = None
     for p in pool:
         try:
             h = p.hint(missing_rel, ctx)
-        except Exception:
+        except _RECOVERABLE_HINT_PROVIDER_ERRORS:
             continue
         if h is None:
             continue

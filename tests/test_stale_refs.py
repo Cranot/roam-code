@@ -3602,6 +3602,38 @@ class TestRepoConfig:
             if custom in _EXTRA_PROVIDERS:
                 _EXTRA_PROVIDERS.remove(custom)
 
+    def test_best_hint_skips_recoverable_provider_failures(self, tmp_path):
+        from roam.commands.stale_refs_hints import Hint, HintContext, best_hint
+
+        class _Flaky:
+            def hint(self, missing_rel, ctx):
+                raise OSError("provider cache unavailable")
+
+        class _Custom:
+            def hint(self, missing_rel, ctx):
+                return Hint(
+                    target="docs/intro.md",
+                    confidence="MEDIUM",
+                    reason="fallback provider",
+                    source="custom",
+                )
+
+        ctx = HintContext(project_root=tmp_path, basename_idx={})
+        result = best_hint("docs/missing.md", ctx, providers=[_Flaky(), _Custom()])
+        assert result is not None
+        assert result.target == "docs/intro.md"
+
+    def test_best_hint_propagates_programming_errors(self, tmp_path):
+        from roam.commands.stale_refs_hints import HintContext, best_hint
+
+        class _Broken:
+            def hint(self, missing_rel, ctx):
+                raise TypeError("bad provider contract")
+
+        ctx = HintContext(project_root=tmp_path, basename_idx={})
+        with pytest.raises(TypeError):
+            best_hint("docs/missing.md", ctx, providers=[_Broken()])
+
     def test_attest_with_sarif_writes_both_artifacts(self, cli_runner, dangling_project, tmp_path):
         """Dogfood-2 regression: ``--sarif`` previously short-circuited
         before the attest writer ran. Both must produce output now."""
