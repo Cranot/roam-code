@@ -7,6 +7,7 @@ Roam evaluates them against the indexed graph and reports violations.
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 
 from roam._glob_match import matches_glob as _matches_glob
@@ -603,7 +604,7 @@ def _table_columns(conn, table_name: str) -> set[str]:
     """Return the set of columns for a table, or empty set if unavailable."""
     try:
         rows = conn.execute("PRAGMA table_info({})".format(table_name)).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return set()
 
     cols: set[str] = set()
