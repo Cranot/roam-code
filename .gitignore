@@ -107,3 +107,4 @@ tmp_surface.json
 
 # Cloudflare Workers dev cache (landing-page deploy artifacts)
 .wrangler/
+.autopilot.log
