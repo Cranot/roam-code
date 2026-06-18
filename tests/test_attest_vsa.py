@@ -108,6 +108,26 @@ class TestBuildVsaPredicate:
         assert pred["verifiedLevels"] == ["SLSA_SOURCE_LEVEL_3"]
         assert pred["verificationResult"] == "PASSED"
 
+    def test_assurance_floor_shape_error_attests_no_levels(self, monkeypatch):
+        def _raise_value_error(self):
+            raise ValueError("synthetic invalid floor")
+
+        monkeypatch.setattr(ChangeEvidence, "assurance_floor", _raise_value_error)
+
+        pred = build_vsa_predicate(_minimal_evidence())
+
+        assert pred["verifiedLevels"] == []
+        assert pred["verificationResult"] == "FAILED"
+
+    def test_assurance_floor_unexpected_error_propagates(self, monkeypatch):
+        def _raise_runtime_error(self):
+            raise RuntimeError("synthetic runtime defect")
+
+        monkeypatch.setattr(ChangeEvidence, "assurance_floor", _raise_runtime_error)
+
+        with pytest.raises(RuntimeError, match="synthetic runtime defect"):
+            build_vsa_predicate(_minimal_evidence())
+
     def test_high_risk_forces_failed_verification(self):
         ev = _minimal_evidence(risk_level="critical")
         pred = build_vsa_predicate(ev)
