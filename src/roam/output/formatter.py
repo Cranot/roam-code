@@ -963,7 +963,7 @@ def _has_active_bundle(repo_root) -> bool:
             return False
         # ``any(...)`` short-circuits as soon as one .json is found.
         return any(p.suffix == ".json" and p.is_file() for p in bundle_dir.iterdir())
-    except Exception:
+    except OSError:
         return False
 
 
