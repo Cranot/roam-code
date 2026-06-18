@@ -19,6 +19,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
+from roam.commands.cmd_simulate_departure import compute_file_ownership as _compute_file_ownership_by_file_ids
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -42,52 +43,22 @@ def _compute_time_decay(days_old: float, half_life: float = _HALF_LIFE_DAYS) -> 
     return math.pow(0.5, days_old / half_life)
 
 
-def compute_file_ownership(
+def _compute_file_ownership_for_file(
     conn,
     file_id: int,
     now_ts: int | None = None,
 ) -> dict[str, float]:
-    """Compute time-decayed ownership scores for a file.
+    """Backward-compatible single-file wrapper for drift/watch callers."""
+    ownership_by_file = _compute_file_ownership_by_file_ids(
+        conn,
+        [file_id],
+        now=now_ts,
+        half_life_days=_HALF_LIFE_DAYS,
+    )
+    return ownership_by_file.get(file_id, {})
 
-    Queries ``git_file_changes`` joined with ``git_commits`` to get
-    per-author, per-commit contribution data.  Each contribution
-    (lines_added + lines_removed) is weighted by exponential time decay
-    so recent work counts more.
 
-    Returns a dict mapping author name to normalised ownership share
-    (values sum to 1.0).  Returns an empty dict if the file has no
-    git history.
-    """
-    if now_ts is None:
-        now_ts = int(time.time())
-
-    rows = conn.execute(
-        """SELECT gc.author,
-                  gfc.lines_added + gfc.lines_removed AS churn,
-                  gc.timestamp
-           FROM git_file_changes gfc
-           JOIN git_commits gc ON gfc.commit_id = gc.id
-           WHERE gfc.file_id = ?""",
-        (file_id,),
-    ).fetchall()
-
-    if not rows:
-        return {}
-
-    author_scores: dict[str, float] = defaultdict(float)
-    for row in rows:
-        author = row["author"]
-        churn = row["churn"] or 0
-        ts = row["timestamp"] or 0
-        days_old = max(0.0, (now_ts - ts) / 86400.0)
-        weight = _compute_time_decay(days_old)
-        author_scores[author] += churn * weight
-
-    total = sum(author_scores.values())
-    if total <= 0:
-        return {}
-
-    return {author: score / total for author, score in author_scores.items()}
+compute_file_ownership = _compute_file_ownership_for_file
 
 
 def _normalise_name(name: str) -> str:
@@ -281,8 +252,14 @@ def drift(ctx, threshold, limit, by_team):
         # full team scope, not just the drifting subset.
         drift_entries: list[dict] = []
         per_owner_files: dict[str, dict[str, int]] = defaultdict(lambda: {"owned": 0, "drifted": 0, "realised": 0})
+        ownership_by_file = _compute_file_ownership_by_file_ids(
+            conn,
+            [int(fo["file_id"]) for fo in owned_files],
+            now=now_ts,
+            half_life_days=_HALF_LIFE_DAYS,
+        )
         for fo in owned_files:
-            shares = compute_file_ownership(conn, fo["file_id"], now_ts)
+            shares = ownership_by_file.get(fo["file_id"], {})
             if not shares:
                 # No git history for this file -- skip
                 continue
