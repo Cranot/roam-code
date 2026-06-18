@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import networkx as nx
 import pytest
 
 
@@ -70,3 +71,36 @@ def test_context_helpers_exposes_sna_v2_fields(indexed_project):
             assert "debt_score" in metrics
     finally:
         os.chdir(old_cwd)
+
+
+def test_compute_centrality_falls_back_when_eigenvector_does_not_converge(monkeypatch):
+    from roam.graph import pagerank as pagerank_mod
+
+    def raise_non_convergence(*args, **kwargs):
+        raise nx.PowerIterationFailedConvergence(300)
+
+    monkeypatch.setattr(pagerank_mod.nx, "eigenvector_centrality", raise_non_convergence)
+
+    graph = nx.DiGraph()
+    graph.add_edges_from([(1, 2), (2, 3)])
+
+    metrics = pagerank_mod.compute_centrality(graph)
+
+    assert metrics[1]["eigenvector"] == pytest.approx(0.5)
+    assert metrics[2]["eigenvector"] == pytest.approx(1.0)
+    assert metrics[3]["eigenvector"] == pytest.approx(0.5)
+
+
+def test_compute_centrality_propagates_unexpected_eigenvector_errors(monkeypatch):
+    from roam.graph import pagerank as pagerank_mod
+
+    def raise_unexpected_error(*args, **kwargs):
+        raise RuntimeError("unexpected centrality failure")
+
+    monkeypatch.setattr(pagerank_mod.nx, "eigenvector_centrality", raise_unexpected_error)
+
+    graph = nx.DiGraph()
+    graph.add_edges_from([(1, 2), (2, 3)])
+
+    with pytest.raises(RuntimeError, match="unexpected centrality failure"):
+        pagerank_mod.compute_centrality(graph)

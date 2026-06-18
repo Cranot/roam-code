@@ -275,7 +275,7 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
             # Large-graph fallback: normalized degree proxy.
             max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
             eigen = {v: UG.degree(v) / max_deg for v in UG.nodes}
-    except Exception:
+    except nx.PowerIterationFailedConvergence:
         max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
         eigen = {v: UG.degree(v) / max_deg for v in UG.nodes}
 
