@@ -7,6 +7,7 @@ import sqlite3
 from collections import Counter, defaultdict
 
 import networkx as nx
+from networkx.algorithms.community.quality import NotAPartition
 
 from roam.db.connection import batched_in
 
@@ -243,12 +244,15 @@ def cluster_quality(G: nx.DiGraph, clusters: dict[int, int]) -> dict:
         covered_nodes |= members
     modularity_communities = list(partition_groups.values()) + [{n} for n in node_set - covered_nodes]
 
-    # Q-score over the repaired partition. The catch is a defensive floor for a
-    # genuine NetworkX failure only — the NotAPartition path that previously hid
-    # the real value is now structurally impossible.
+    # Q-score over the repaired partition. Edgeless graphs have no community
+    # structure, and NetworkX raises ZeroDivisionError for that case.
     try:
-        q = nx.community.modularity(undirected, modularity_communities) if modularity_communities else 0.0
-    except Exception:
+        q = (
+            nx.community.modularity(undirected, modularity_communities)
+            if modularity_communities and undirected.number_of_edges() > 0
+            else 0.0
+        )
+    except NotAPartition:
         q = 0.0
 
     # Per-cluster conductance: phi(S) = cut(S, S_bar) / min(vol(S), vol(S_bar))
