@@ -623,7 +623,7 @@ def propagate_effects(
                 for n in scc_nodes:
                     all_effects[n] = scc_effects.copy()
 
-    except Exception:
+    except nx.NetworkXException:
         # Fallback: simple iterative propagation
         changed = True
         max_iters = 20
