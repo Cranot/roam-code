@@ -146,6 +146,15 @@ class TestComputeGraphMetrics:
         assert metrics["edges"] == 0
         assert metrics["health_score"] == 100
 
+    def test_modularity_no_edge_partition_returns_zero(self):
+        """No-edge partitions keep the modularity sentinel."""
+        from roam.graph.simulate import _modularity_only
+
+        G = nx.DiGraph()
+        G.add_nodes_from([1, 2])
+
+        assert _modularity_only(G, {1: 1, 2: 2}) == 0.0
+
 
 class TestMetricDelta:
     """Test metric_delta computes deltas correctly."""

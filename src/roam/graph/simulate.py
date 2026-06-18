@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import networkx as nx
+from networkx.algorithms.community.quality import NotAPartition
 
 # ---------------------------------------------------------------------------
 # Higher-is-better map for direction logic
@@ -116,7 +117,7 @@ def _modularity_only(G: nx.DiGraph, clusters: dict[int, int]) -> float:
     communities = list(partition_groups.values()) + [{n} for n in node_set - covered_nodes]
     try:
         q = nx.community.modularity(undirected, communities) if communities else 0.0
-    except Exception:
+    except (NotAPartition, ZeroDivisionError):
         q = 0.0
     return round(q, 4)
 
