@@ -258,7 +258,7 @@ def cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float
 # ---------------------------------------------------------------------------
 
 
-def search(conn, query: str, top_k: int = 10) -> list[dict]:
+def tfidf_search(conn, query: str, top_k: int = 10) -> list[dict]:
     """Search symbols using TF-IDF cosine similarity.
 
     Returns top-k results: ``[{score, symbol_id, name, file_path, kind, line_start}]``.

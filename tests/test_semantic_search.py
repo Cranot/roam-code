@@ -17,7 +17,7 @@ from roam.search.index_embeddings import (
     fts5_available,
     search_stored,
 )
-from roam.search.tfidf import cosine_similarity, search, tokenize
+from roam.search.tfidf import cosine_similarity, tfidf_search, tokenize
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -244,7 +244,7 @@ class TestSearch:
         from roam.db.connection import open_db
 
         with open_db(readonly=True, project_root=semantic_project) as conn:
-            results = search(conn, "database connection")
+            results = tfidf_search(conn, "database connection")
             assert len(results) > 0
             # Top results should be from db/ directory
             top_names = [r["name"] for r in results[:4]]
@@ -262,7 +262,7 @@ class TestSearch:
         from roam.db.connection import open_db
 
         with open_db(readonly=True, project_root=semantic_project) as conn:
-            results = search(conn, "database connection")
+            results = tfidf_search(conn, "database connection")
             if len(results) >= 2:
                 assert results[0]["score"] >= results[1]["score"]
 
@@ -271,7 +271,7 @@ class TestSearch:
         from roam.db.connection import open_db
 
         with open_db(readonly=True, project_root=semantic_project) as conn:
-            results = search(conn, "database", top_k=2)
+            results = tfidf_search(conn, "database", top_k=2)
             assert len(results) <= 2
 
     def test_search_respects_threshold(self, semantic_project):
