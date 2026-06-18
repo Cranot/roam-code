@@ -6,6 +6,7 @@ import importlib
 import sqlite3
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -129,3 +130,24 @@ def test_plugin_language_extractor_and_extension_discovery(monkeypatch, tmp_path
     assert tree is not None
     assert source is not None
     assert lang == "mini"
+
+
+def test_parser_plugin_language_discovery_errors_propagate(monkeypatch):
+    import roam.plugins as plugins
+    from roam.index import parser
+
+    def fail_extension_discovery():
+        raise RuntimeError("plugin registry failed")
+
+    def fail_alias_discovery():
+        raise RuntimeError("plugin alias registry failed")
+
+    monkeypatch.setattr(plugins, "get_plugin_language_extensions", fail_extension_discovery)
+
+    with pytest.raises(RuntimeError, match="plugin registry failed"):
+        parser._plugin_language_extensions()
+
+    monkeypatch.setattr(plugins, "get_plugin_language_grammar_aliases", fail_alias_discovery)
+
+    with pytest.raises(RuntimeError, match="plugin alias registry failed"):
+        parser._plugin_grammar_aliases()
