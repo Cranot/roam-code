@@ -162,6 +162,27 @@ class TestFormatExplanationText:
 class TestFts5Available:
     """Tests for _fts5_available()."""
 
+    def test_false_on_sqlite_error(self):
+        import sqlite3 as _sq3
+
+        from roam.commands.cmd_search import _fts5_available
+
+        class BrokenConn:
+            def execute(self, sql, *args, **kwargs):
+                raise _sq3.DatabaseError("synthetic sqlite metadata failure")
+
+        assert _fts5_available(BrokenConn()) is False
+
+    def test_non_sqlite_error_propagates(self):
+        from roam.commands.cmd_search import _fts5_available
+
+        class BrokenConn:
+            def execute(self, sql, *args, **kwargs):
+                raise RuntimeError("synthetic non-sqlite failure")
+
+        with pytest.raises(RuntimeError, match="synthetic non-sqlite failure"):
+            _fts5_available(BrokenConn())
+
     def test_false_on_empty_db(self):
         import sqlite3 as _sq3
 
@@ -182,7 +203,7 @@ class TestFts5Available:
         try:
             conn.execute("CREATE VIRTUAL TABLE symbol_fts USING fts5(name)")
             assert _fts5_available(conn) is True
-        except Exception:
+        except _sq3.OperationalError:
             pytest.skip("FTS5 not available in this SQLite build")
         finally:
             conn.close()

@@ -10,6 +10,7 @@ the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
 from __future__ import annotations
 
 import re
+import sqlite3
 
 import click
 
@@ -317,7 +318,7 @@ def _fts5_available(conn) -> bool:
     try:
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
         return row is not None
-    except Exception:
+    except sqlite3.Error:
         return False
 
 
