@@ -264,7 +264,7 @@ def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path)
 _COMMIT_SEP = "COMMIT:"
 
 
-def parse_git_log(
+def read_git_log_commits(
     project_root: Path,
     max_commits: int = 5000,
     since: str | None = None,
@@ -377,6 +377,12 @@ def parse_git_log(
         commits.append(current)
 
     return commits
+
+
+# Backwards-compatible public name used by tests and external callers. Keep this
+# as an alias so the indexer no longer defines a second ``parse_git_log``
+# function alongside ``cmd_dev_profile.parse_git_log``.
+parse_git_log = read_git_log_commits
 
 
 def _normalize_numstat_path(raw: str) -> str:
