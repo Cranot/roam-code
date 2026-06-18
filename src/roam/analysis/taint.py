@@ -408,7 +408,7 @@ def compute_all_summaries(
                 src_bytes = cached[0]
                 try:
                     all_lines = src_bytes.decode("utf-8", errors="replace").splitlines()
-                except Exception:
+                except (AttributeError, TypeError):
                     all_lines = []
             else:
                 full_path = root / rel_path
