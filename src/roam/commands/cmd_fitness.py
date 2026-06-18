@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 
 import click
@@ -385,7 +386,7 @@ def _actionable_cycles(conn, cycles):
 def _check_cycles_metric(rule, conn) -> list[dict]:
     try:
         _, cycles = _symbol_graph_cycles(conn)
-    except Exception:
+    except (ImportError, sqlite3.DatabaseError):
         return []
     cycles = _actionable_cycles(conn, cycles)
     return _threshold_metric_violations(rule, "cycles", len(cycles), rule.get("max"), rule.get("min"))
