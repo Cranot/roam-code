@@ -422,7 +422,7 @@ _COMMANDS = {
     "commands": ("roam.commands.cmd_commands", "commands_cmd"),
     "explain-command": ("roam.commands.cmd_explain_command", "explain_command"),
     "db-check": ("roam.commands.cmd_db_check", "db_check"),
-    "batch-search": ("roam.commands.cmd_batch_search", "batch_search"),
+    "batch-search": ("roam.commands.cmd_batch_search", "batch_search_cmd"),
     "complete": ("roam.commands.cmd_complete", "complete"),
     "memory": ("roam.commands.cmd_memory", "memory_group"),
     "runs": ("roam.commands.cmd_runs", "runs_group"),

@@ -21,68 +21,10 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
+from roam.commands.batch_search_core import MAX_BATCH_QUERIES, batch_search_one
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
-
-_MAX_BATCH_QUERIES = 10
-
-# Symbol-name-only SQL — the default path. Matches ``s.name`` and
-# ``s.qualified_name`` only; explicitly does NOT touch ``f.path`` so a
-# substring that happens to appear in a directory or test fixture name
-# can't pollute the results.
-_BATCH_SYMBOL_ONLY_SQL = (
-    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
-    "FROM symbols s "
-    "JOIN files f ON s.file_id = f.id "
-    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE (s.name LIKE ? COLLATE NOCASE "
-    "    OR s.qualified_name LIKE ? COLLATE NOCASE) "
-    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
-    "LIMIT ?"
-)
-
-# Legacy wide-match SQL — restored only when --include-paths is set.
-# Matches symbol name OR qualified name OR file path. Useful for the
-# rare case where the agent is searching for a fixture / fragment by
-# the path it lives under, but the wrong default for exact symbol
-# lookup.
-_BATCH_WITH_PATHS_SQL = (
-    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
-    "FROM symbols s "
-    "JOIN files f ON s.file_id = f.id "
-    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE (s.name LIKE ? COLLATE NOCASE "
-    "    OR s.qualified_name LIKE ? COLLATE NOCASE "
-    "    OR f.path LIKE ? COLLATE NOCASE) "
-    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
-    "LIMIT ?"
-)
-
-
-def _run_one(conn, q: str, limit: int, include_paths: bool) -> list[dict]:
-    """Execute one query against the DB and return plain dict rows."""
-    like = f"%{q}%"
-    if include_paths:
-        rows = conn.execute(_BATCH_WITH_PATHS_SQL, (like, like, like, limit)).fetchall()
-    else:
-        rows = conn.execute(_BATCH_SYMBOL_ONLY_SQL, (like, like, limit)).fetchall()
-    return [
-        {
-            "name": r["name"],
-            "qualified_name": r["qualified_name"] or "",
-            "kind": r["kind"],
-            "file_path": r["file_path"],
-            "line_start": r["line_start"],
-            # W-dogfood (W336 sibling): 6-decimal precision —
-            # 4-decimal rounding zeroes ~72% of nonzero PR values on
-            # 5K+ symbol graphs (per-node PR floor ~1.4e-05).
-            "pagerank": round(float(r["pagerank"] or 0), 6),
-        }
-        for r in rows
-    ]
 
 
 @roam_capability(
@@ -127,7 +69,7 @@ def _run_one(conn, q: str, limit: int, include_paths: bool) -> list[dict]:
     ),
 )
 @click.pass_context
-def batch_search(ctx, queries, limit_per_query, include_paths):
+def batch_search_cmd(ctx, queries, limit_per_query, include_paths):
     """Search up to 10 symbol-name patterns in a single command.
 
     Replaces 10 sequential ``roam search`` calls with one DB connection.
@@ -144,7 +86,7 @@ def batch_search(ctx, queries, limit_per_query, include_paths):
     (prefix completion), and ``grep`` (file-content search).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
-    queries_list: list[str] = [str(q) for q in (queries or []) if q][:_MAX_BATCH_QUERIES]
+    queries_list: list[str] = [str(q) for q in (queries or []) if q][:MAX_BATCH_QUERIES]
     limit = max(1, min(int(limit_per_query), 50))
 
     if not queries_list:
@@ -178,9 +120,14 @@ def batch_search(ctx, queries, limit_per_query, include_paths):
     with open_db(readonly=True) as conn:
         for q in queries_list:
             try:
-                results[q] = _run_one(conn, q, limit, include_paths)
+                rows, err = batch_search_one(conn, q, limit, include_paths)
             except Exception as exc:  # noqa: BLE001 — surface any DB error per query
                 errors[q] = str(exc)
+                continue
+            if err:
+                errors[q] = err
+            else:
+                results[q] = rows
 
     total_matches = sum(len(v) for v in results.values())
     if results and total_matches:
