@@ -368,7 +368,7 @@ def _load_env_providers() -> list["HintProvider"]:
             if cls is None:
                 continue
             out.append(cls())
-        except Exception:
+        except (ImportError, AttributeError, TypeError, ValueError):
             continue
     return out
 
