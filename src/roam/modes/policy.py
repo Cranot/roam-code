@@ -335,12 +335,12 @@ def _materialise_from_constitution(
     """
     try:
         from roam.constitution.loader import load_constitution
-    except Exception:
+    except ImportError:
         return None
 
     try:
         constitution = load_constitution(repo_root)
-    except Exception:
+    except (OSError, TypeError, ValueError):
         return None
     if constitution is None:
         return None
