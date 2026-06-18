@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from roam.critique.aggregator import aggregate, severity_rank
+from roam.critique.aggregator import aggregate
 from roam.critique.checks import (
     ChangedRegion,
     ChangedSymbol,
@@ -27,6 +27,7 @@ from roam.critique.checks import (
     find_changed_symbols,
     parse_diff,
 )
+from roam.output._severity import severity_rank
 from tests.conftest import make_src_project as _make_project
 
 # ---------------------------------------------------------------------------
@@ -516,10 +517,10 @@ class TestImpactRuntimeBump:
 
 class TestAggregator:
     def test_severity_rank_ordering(self):
-        assert severity_rank("high") < severity_rank("medium")
-        assert severity_rank("medium") < severity_rank("low")
-        assert severity_rank("low") < severity_rank("info")
-        assert severity_rank("info") < severity_rank("unknown")
+        assert severity_rank("high") > severity_rank("medium")
+        assert severity_rank("medium") > severity_rank("low")
+        assert severity_rank("low") > severity_rank("info")
+        assert severity_rank("info") > severity_rank("unknown")
 
     def test_empty_findings_clean_verdict(self):
         result = aggregate([])

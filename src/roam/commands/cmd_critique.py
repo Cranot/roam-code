@@ -64,8 +64,8 @@ from roam.runs.helpers import auto_log
 # vocabulary axes" comment in ``roam.output.risk`` for the discipline.
 #
 # Conservative-on-critical: the critique severity vocabulary tops out
-# at ``high`` (no ``critical`` tier — see ``aggregator.severity_rank``
-# and the closed ``Finding`` constructor vocab). The projection
+# at ``high`` (no ``critical`` tier — see the closed ``Finding``
+# constructor vocab). The projection
 # saturates at ``high``; we do NOT escalate to ``critical`` on a
 # threshold the underlying detector can't reach (mirrors the W641-
 # followup-A discipline on ``_impact_risk_level``).
