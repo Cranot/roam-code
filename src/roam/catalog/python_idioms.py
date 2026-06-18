@@ -324,7 +324,7 @@ def _project_root_for_conn(conn: sqlite3.Connection) -> str:
     """
     try:
         row = conn.execute("PRAGMA database_list").fetchone()
-    except Exception:
+    except sqlite3.Error:
         return ""
     db_path = row[2] if row else ""
     if not db_path:
