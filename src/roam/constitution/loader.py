@@ -668,7 +668,7 @@ def _known_commands() -> set[str]:
         from roam.cli import _COMMANDS  # lazy: roam.cli is ~100ms to import
 
         return set(_COMMANDS.keys())
-    except Exception:
+    except ImportError:
         return set()
 
 
@@ -677,7 +677,7 @@ def _deprecated_commands() -> set[str]:
         from roam.cli import _DEPRECATED_COMMANDS  # type: ignore
 
         return set(_DEPRECATED_COMMANDS.keys())
-    except Exception:
+    except ImportError:
         return set()
 
 
