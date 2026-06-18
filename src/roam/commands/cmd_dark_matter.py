@@ -266,7 +266,7 @@ def _emit_dark_matter_findings(
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command(name="dark-matter")
 @click.option("-n", "limit", default=30, help="Max pairs to show")
 @click.option("--min-npmi", default=0.3, type=float, show_default=True, help="Minimum NPMI threshold")
 @click.option("--min-cochanges", default=3, type=int, show_default=True, help="Minimum co-change count")
@@ -286,7 +286,7 @@ def _emit_dark_matter_findings(
     ),
 )
 @click.pass_context
-def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist):
+def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, persist):
     """Detect dark matter: file pairs that co-change but have no structural link.
 
     Unlike ``coupling`` (which measures file-level co-change frequency),
@@ -904,3 +904,7 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
                     detail = hyp.get("detail", "")
                     click.echo(f"    Hypothesis: {cat} ({detail})")
                 click.echo()
+
+
+# Back-compat module attribute used by the lazy CLI registry.
+dark_matter = hidden_coupling_cmd
