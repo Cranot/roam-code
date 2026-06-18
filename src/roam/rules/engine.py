@@ -139,7 +139,7 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeError):
         return None
     try:
         return _parse_simple_yaml_text(text)
