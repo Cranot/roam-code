@@ -824,7 +824,7 @@ def _emit_vsa_sibling(
     ),
 )
 @click.pass_context
-def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_identity, cert_oidc_issuer):
+def cga_verify_command(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_identity, cert_oidc_issuer):
     """Re-derive the merkle root + edge digest and compare to *statement_path*.
 
     Verifier exits 0 on a clean match. Any mismatch (changed symbols,
