@@ -10,9 +10,13 @@ Covers:
 
 from __future__ import annotations
 
+import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
@@ -258,3 +262,56 @@ def test_health_baseline_last_resolves_most_recent(cli_runner, indexed_project, 
     delta = data["delta"]
     # `last` should resolve to the newer (release/v1) snapshot.
     assert delta["baseline_git_branch"] == "release/v1"
+
+
+def test_health_baseline_dead_exports_query_catches_only_sqlite_errors(monkeypatch, capsys):
+    """Auxiliary dead-export failures degrade only for expected SQLite errors."""
+    from roam.commands import cmd_health
+
+    baseline = {
+        "timestamp": int(time.time()) - 3600,
+        "git_branch": "main",
+        "git_commit": "abc1234",
+        "health_score": 100,
+        "cycles": 0,
+        "god_components": 0,
+        "bottlenecks": 0,
+        "dead_exports": 2,
+        "layer_violations": 0,
+    }
+    monkeypatch.setattr(cmd_health, "_find_baseline_snapshot", lambda _conn, _ref: baseline)
+
+    class SqliteBrokenConn:
+        def execute(self, _query):
+            raise sqlite3.OperationalError("legacy schema")
+
+    cmd_health._emit_baseline_diff(
+        conn=SqliteBrokenConn(),
+        baseline_ref="main",
+        health_score=100,
+        actionable_cycles=[],
+        god_items=[],
+        bn_items=[],
+        violations=[],
+        json_mode=True,
+        token_budget=1200,
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert data["delta"]["score_delta"]["dead_exports"] == -2
+
+    class RuntimeBrokenConn:
+        def execute(self, _query):
+            raise RuntimeError("programmer bug")
+
+    with pytest.raises(RuntimeError, match="programmer bug"):
+        cmd_health._emit_baseline_diff(
+            conn=RuntimeBrokenConn(),
+            baseline_ref="main",
+            health_score=100,
+            actionable_cycles=[],
+            god_items=[],
+            bn_items=[],
+            violations=[],
+            json_mode=True,
+            token_budget=1200,
+        )
