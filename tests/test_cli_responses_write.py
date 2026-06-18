@@ -164,6 +164,28 @@ def test_write_failure_does_not_raise(project, monkeypatch):
     assert env["command"] == "health"  # parent command still got its envelope
 
 
+def test_unexpected_response_write_error_propagates(project, monkeypatch):
+    """Programmer-class failures in the side-car writer must stay visible."""
+    from roam.output import formatter as fmt
+    from roam.output.formatter import _write_response_to_responses_dir
+
+    monkeypatch.setenv("ROAM_RUN_ID", "test-run-programmer-error")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated programmer bug")
+
+    monkeypatch.setattr(fmt._json, "dumps", boom)
+
+    with pytest.raises(RuntimeError, match="simulated programmer bug"):
+        _write_response_to_responses_dir(
+            {
+                "schema": "roam-envelope-v1",
+                "command": "health",
+                "summary": {"verdict": "ok"},
+            }
+        )
+
+
 def test_dedup_via_content_hash(project, monkeypatch):
     """Two identical envelope calls must produce a single file (content-hash dedup)."""
     from roam.output.formatter import json_envelope
