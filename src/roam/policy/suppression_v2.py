@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Mapping, MutableSequence, Optional, Union
 
+from roam.evidence.approval import expiry_is_expired as _approval_expiry_is_expired
+
 # ---------------------------------------------------------------------------
 # Status / source vocabularies (closed enumerations)
 # ---------------------------------------------------------------------------
@@ -100,6 +102,26 @@ LEGACY_STATUS_DEPRECATION_HINT = (
 WarningsOut = Optional[MutableSequence[str]]
 
 
+def _date_as_utc_midnight_iso(value: date) -> str:
+    """Represent a date-only expiry boundary as UTC midnight."""
+    return f"{value.isoformat()}T00:00:00Z"
+
+
+def _suppression_expiry_is_expired(
+    self: "_SuppressionBase",
+    *,
+    today: Optional[date] = None,
+) -> bool:
+    """Return True when ``expires`` is before the UTC date boundary."""
+    if self.expires is None:
+        return False
+    today_d = today or datetime.now(timezone.utc).date()
+    return _approval_expiry_is_expired(
+        _date_as_utc_midnight_iso(self.expires),
+        now_iso=_date_as_utc_midnight_iso(today_d),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Base class — universal audit fields
 # ---------------------------------------------------------------------------
@@ -143,17 +165,7 @@ class _SuppressionBase:
     policy_status: Optional[PolicyStatus] = None
     source: Optional[SuppressionSource] = None
 
-    def is_expired(self, *, today: Optional[date] = None) -> bool:
-        """Return True when ``expires`` is in the past.
-
-        Mirrors the semantics of
-        :func:`roam.commands.smells_suppress._is_expired` — missing/unparsed
-        ``expires`` is treated as "never expires". UTC date comparison.
-        """
-        if self.expires is None:
-            return False
-        today_d = today or datetime.now(timezone.utc).date()
-        return self.expires < today_d
+    is_expired = _suppression_expiry_is_expired
 
 
 # ---------------------------------------------------------------------------
