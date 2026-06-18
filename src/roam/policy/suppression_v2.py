@@ -187,7 +187,7 @@ class RuleFileSuppression(_SuppressionBase):
     line: Optional[int] = None
 
     @classmethod
-    def from_dict(
+    def from_rule_file_dict(
         cls,
         entry: Mapping[str, Any],
         *,
@@ -222,6 +222,11 @@ class RuleFileSuppression(_SuppressionBase):
             policy_status=policy_st,
             source="rule-file-yml",
         )
+
+    # Back-compat alias for the legacy public API. The implementation stays
+    # schema-specific: PolicyDecision.from_dict parses rule_id/decision rows,
+    # while this loader parses rule/file/line suppression rows.
+    from_dict = from_rule_file_dict
 
     def to_dict(self) -> dict[str, Any]:
         """Project back to the legacy dict shape (round-trippable).
