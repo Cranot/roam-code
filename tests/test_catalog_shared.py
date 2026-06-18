@@ -1,6 +1,6 @@
 """W1015: focused unit tests for ``roam.catalog._shared`` (W886 drive-by).
 
-The catalog-shared helpers (``loc`` / ``find_workspace_root`` /
+The catalog-shared helpers (``loc`` / ``find_indexed_source_root`` /
 ``is_test_path`` / ``enclosing_symbol`` / ``make_smell_finding``) are
 the W864 + W873 + W877 + W923 hoists that consolidated four+ historical
 in-file clones. Coverage was scattered across ``test_smells.py`` /
@@ -10,7 +10,7 @@ in-file clones. Coverage was scattered across ``test_smells.py`` /
 This file pins each helper's contract directly:
 
   * ``loc(path, line)``               -- W864, str builder with None-guard
-  * ``find_workspace_root()``         -- W864, returns Path on .git miss
+  * ``find_indexed_source_root()``    -- W864, returns Path on .git miss
   * ``is_test_path(path)``            -- W873 + W886 + W889, None / "" guard
                                          (broader coverage lives in
                                          ``test_is_test_path.py``)
@@ -40,7 +40,7 @@ import pytest
 
 from roam.catalog._shared import (
     enclosing_symbol,
-    find_workspace_root,
+    find_indexed_source_root,
     is_test_path,
     loc,
     make_smell_finding,
@@ -74,17 +74,17 @@ def test_loc_handles_empty_path() -> None:
 
 
 # ---------------------------------------------------------------------------
-# find_workspace_root() -- W864
+# find_indexed_source_root() -- W864
 # ---------------------------------------------------------------------------
 
 
-def test_find_workspace_root_returns_path() -> None:
+def test_find_indexed_source_root_returns_path() -> None:
     """Smoke: helper always returns a ``Path`` instance (never raises)."""
-    root = find_workspace_root()
+    root = find_indexed_source_root()
     assert isinstance(root, Path)
 
 
-def test_find_workspace_root_falls_back_to_cwd_in_temp(tmp_path, monkeypatch) -> None:
+def test_find_indexed_source_root_falls_back_to_cwd_in_temp(tmp_path, monkeypatch) -> None:
     """When invoked from a directory with no ``.git`` parent in any
     ancestor, the helper still returns a Path (cwd fallback). This
     pins the ``except (ImportError, OSError): return Path.cwd()``
@@ -94,7 +94,7 @@ def test_find_workspace_root_falls_back_to_cwd_in_temp(tmp_path, monkeypatch) ->
     walks to the filesystem root and returns that.
     """
     monkeypatch.chdir(tmp_path)
-    root = find_workspace_root()
+    root = find_indexed_source_root()
     assert isinstance(root, Path)
     # Returned path must exist (either a real ancestor with .git, or
     # cwd / the filesystem root after walking up).

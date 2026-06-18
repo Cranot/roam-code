@@ -4,13 +4,13 @@ This module is INTERNAL to ``roam.catalog`` — the leading underscore on
 the module name conveys that it is not part of any public surface.
 
 The detectors under ``roam.catalog`` historically duplicated a handful
-of tiny helpers (``_loc``, ``_find_workspace_root``, ``_is_test_path``,
+of tiny helpers (``_loc``, ``_find_indexed_source_root``, ``_is_test_path``,
 ``_enclosing_symbol``, ``_finding``) across multiple files. Three
 identical definitions is itself a W95-style clone (the very smell
 catalog this codebase ships detects for). Hoist canonical copies here;
 the per-file aliases now resolve via import rather than re-definition.
 
-``loc`` / ``find_workspace_root`` behavior is byte-identical to the
+``loc`` / ``find_indexed_source_root`` behavior is byte-identical to the
 prior in-file definitions in ``smells.py`` — pure relocation.
 
 ``is_test_path`` (W873 → W898) is now a thin delegate to the canonical
@@ -75,7 +75,7 @@ from typing import Any
 
 __all__ = [
     "loc",
-    "find_workspace_root",
+    "find_indexed_source_root",
     "is_test_path",
     "enclosing_symbol",
     "make_smell_finding",
@@ -95,7 +95,7 @@ def loc(path: str, line: int | None) -> str:
     return path
 
 
-def find_workspace_root() -> Path:
+def find_indexed_source_root() -> Path:
     """Locate the project root the indexed files are relative to.
 
     Uses ``find_project_root()`` (walks up from cwd looking for ``.git``).
