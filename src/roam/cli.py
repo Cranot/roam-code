@@ -282,7 +282,7 @@ _COMMANDS = {
     "pr-comment-render": ("roam.commands.cmd_pr_comment_render", "pr_comment_render"),
     "metrics-push": ("roam.commands.cmd_metrics_push", "metrics_push"),
     "audit-trail-verify": ("roam.commands.cmd_audit_trail_verify", "audit_trail_verify"),
-    "audit-trail-export": ("roam.commands.cmd_audit_trail_export", "audit_trail_export"),
+    "audit-trail-export": ("roam.commands.cmd_audit_trail_export", "audit_trail_export_cmd"),
     "audit-trail-conformance-check": (
         "roam.commands.cmd_audit_trail_conformance",
         "audit_trail_conformance_check_cmd",

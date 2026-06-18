@@ -415,7 +415,7 @@ def _render_aggregate_csv(agg: dict) -> str:
     help="Render only the top <N> actors ranked by BLOCK count (and total). Procurement-friendly hot list.",  # W1117-followup
 )
 @click.pass_context
-def audit_trail_export(
+def audit_trail_export_cmd(
     ctx,
     input_path: str | None,
     fmt: str,
