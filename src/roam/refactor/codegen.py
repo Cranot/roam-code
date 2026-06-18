@@ -2,51 +2,9 @@
 
 from __future__ import annotations
 
-import logging
-import os
 import posixpath
 
-_log = logging.getLogger(__name__)
-
-
-def detect_language(file_path: str) -> str:
-    """Detect language from file extension.
-
-    Uses the roam language registry when available, falls back to
-    extension-based detection for common languages.
-
-    Fallback discipline (CLAUDE.md "Make fallback chains loud" /
-    CP45-46-52-53): an unexpected registry failure is logged at DEBUG so
-    repeat occurrences are not silently lost. A clean ``return None``
-    from the registry is NOT a failure and stays quiet.
-    """
-    try:
-        from roam.languages.registry import get_language_for_file
-
-        lang = get_language_for_file(file_path)
-        if lang:
-            return lang
-    except Exception as exc:  # pragma: no cover -- registry is best-effort
-        _log.debug("language-registry lookup failed for %s: %s", file_path, exc)
-
-    ext = os.path.splitext(file_path)[1].lower()
-    ext_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".jsx": "javascript",
-        ".mjs": "javascript",
-        ".ts": "typescript",
-        ".tsx": "typescript",
-        ".go": "go",
-        ".rs": "rust",
-        ".java": "java",
-        ".rb": "ruby",
-        ".php": "php",
-        ".c": "c",
-        ".h": "c",
-        ".cpp": "cpp",
-    }
-    return ext_map.get(ext, "unknown")
+from roam.index.parser import detect_language
 
 
 def compute_relative_path(from_file: str, to_file: str) -> str:
