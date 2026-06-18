@@ -1048,7 +1048,7 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
 
     try:
         root = find_project_root()
-    except Exception:
+    except OSError:
         root = Path.cwd()
 
     rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
