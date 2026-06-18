@@ -115,19 +115,24 @@ class ApprovalRecord:
         chosen by the W211 directive). ``now_iso`` is overridable for
         deterministic tests; when omitted, we use the current UTC time.
         """
-        if self.expiry is None:
-            return False
-        expiry_dt = _parse_iso(self.expiry)
-        if now_iso is None:
-            now_dt = _dt.datetime.now(tz=_dt.timezone.utc)
-        else:
-            now_dt = _parse_iso(now_iso)
-        return now_dt > expiry_dt
+        return expiry_is_expired(self.expiry, now_iso=now_iso)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def expiry_is_expired(expiry: str | None, *, now_iso: str | None = None) -> bool:
+    """Return ``True`` if ISO ``expiry`` is set and ``now`` > ``expiry``."""
+    if expiry is None:
+        return False
+    expiry_dt = _parse_iso(expiry)
+    if now_iso is None:
+        now_dt = _dt.datetime.now(tz=_dt.timezone.utc)
+    else:
+        now_dt = _parse_iso(now_iso)
+    return now_dt > expiry_dt
 
 
 def _parse_iso(value: str) -> _dt.datetime:
@@ -151,4 +156,4 @@ def _parse_iso(value: str) -> _dt.datetime:
     return parsed
 
 
-__all__ = ["ApprovalRecord"]
+__all__ = ["ApprovalRecord", "expiry_is_expired"]

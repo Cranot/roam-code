@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from roam.commands.suppression import load_suppressions, load_suppressions_typed
 from roam.policy.suppression_v2 import (
     VALID_STATUSES,
@@ -107,6 +109,24 @@ def test_kind_symbol_expiry_semantics_match_legacy():
     assert none.is_expired(today=fixed_today) is False
     # No-arg path uses UTC today — must not raise.
     none.is_expired()
+
+
+def test_suppression_expiry_reuses_approval_helper(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str | None, str | None]] = []
+
+    def fake_expiry_is_expired(expiry: str | None, *, now_iso: str | None = None) -> bool:
+        calls.append((expiry, now_iso))
+        return True
+
+    monkeypatch.setattr(
+        "roam.policy.suppression_v2._approval_expiry_is_expired",
+        fake_expiry_is_expired,
+    )
+
+    sup = KindSymbolSuppression.from_dict({"kind": "k", "symbol": "s", "expires": "2026-05-13"})
+
+    assert sup.is_expired(today=date(2026, 5, 14)) is True
+    assert calls == [("2026-05-13T00:00:00Z", "2026-05-14T00:00:00Z")]
 
 
 # ---------------------------------------------------------------------------
