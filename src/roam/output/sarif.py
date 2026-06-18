@@ -756,7 +756,7 @@ def _version_control_provenance() -> list[dict]:
                 ).stdout.strip()
                 or "main"
             )
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             branch = "main"
         try:
             remote = subprocess.run(
@@ -765,7 +765,7 @@ def _version_control_provenance() -> list[dict]:
                 text=True,
                 timeout=2,
             ).stdout.strip()
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             remote = ""
         entry = {
             "revisionId": sha,
@@ -774,7 +774,7 @@ def _version_control_provenance() -> list[dict]:
         if remote:
             entry["repositoryUri"] = remote
         return [entry]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return []
 
 
