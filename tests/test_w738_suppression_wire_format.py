@@ -35,14 +35,20 @@ from roam.output.formatter import json_envelope, to_json
 
 
 def _envelope_for(suppressions: list[dict]) -> str:
-    return to_json(
-        json_envelope(
-            "triage-list",
-            summary={"verdict": f"{len(suppressions)} suppression(s)", "total": len(suppressions)},
-            budget=0,
-            suppressions=suppressions,
-        )
+    env = json_envelope(
+        "triage-list",
+        summary={"verdict": f"{len(suppressions)} suppression(s)", "total": len(suppressions)},
+        budget=0,
+        suppressions=suppressions,
     )
+    # Drop the non-deterministic metadata bucket before serializing: ``_meta``
+    # stamps ``timestamp`` + ``index_age_s`` (and, when stale, ``index_status``),
+    # which differ between two calls that straddle a second boundary. This test
+    # asserts the legacy-vs-typed-projection content equivalence, not metadata
+    # stability — comparing with ``_meta`` made it intermittently fail
+    # (e.g. ``index_age_s`` 2593 vs 2594) on slower CI lanes.
+    env.pop("_meta", None)
+    return to_json(env)
 
 
 def test_triage_list_envelope_byte_stable_well_formed(tmp_path: Path) -> None:
