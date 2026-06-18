@@ -3258,6 +3258,17 @@ class TestStaleRefsLspDynamicVersion:
 
         assert _server_version()
 
+    def test_server_version_falls_back_when_package_version_missing(self, monkeypatch):
+        import roam
+        from roam.commands.cmd_lsp import _server_version
+
+        saved = roam.__version__
+        monkeypatch.delattr(roam, "__version__")
+        try:
+            assert _server_version() == "unknown"
+        finally:
+            roam.__version__ = saved  # type: ignore[attr-defined]
+
 
 class TestFindBrokenLinksRecipeFollowups:
     """The find-broken-links recipe surfaces all v12.49 channels in

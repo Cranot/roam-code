@@ -523,7 +523,7 @@ def _server_version() -> str:
         from roam import __version__
 
         return str(__version__)
-    except Exception:
+    except ImportError:
         return "unknown"
 
 
