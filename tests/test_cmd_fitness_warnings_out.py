@@ -20,8 +20,12 @@ Cross-links:
 from __future__ import annotations
 
 import json as _json
+import sqlite3
 from pathlib import Path
 
+import pytest
+
+from roam.commands import cmd_fitness
 from roam.commands.cmd_fitness import _load_rules
 
 # ---------------------------------------------------------------------------
@@ -182,3 +186,28 @@ def test_load_no_pyyaml_falls_back_cleanly(
     assert warnings_out == []
     assert len(rules) == 1
     assert rules[0]["name"] == "No cycles"
+
+
+def test_health_score_metric_degrades_on_sqlite_graph_failure(monkeypatch) -> None:
+    """SQLite graph-read failures leave the health metric non-blocking."""
+
+    def _raise_database_error(_conn):
+        raise sqlite3.DatabaseError("synthetic graph read failure")
+
+    monkeypatch.setattr(cmd_fitness, "_symbol_graph_cycles", _raise_database_error)
+
+    rule = {"name": "Health score above 60", "metric": "health_score", "min": 60}
+    assert cmd_fitness._check_health_score_metric(rule, conn=None) == []
+
+
+def test_health_score_metric_does_not_swallow_unexpected_graph_failure(monkeypatch) -> None:
+    """Unexpected graph failures should surface instead of looking like a pass."""
+
+    def _raise_runtime_error(_conn):
+        raise RuntimeError("synthetic unexpected graph failure")
+
+    monkeypatch.setattr(cmd_fitness, "_symbol_graph_cycles", _raise_runtime_error)
+
+    rule = {"name": "Health score above 60", "metric": "health_score", "min": 60}
+    with pytest.raises(RuntimeError, match="synthetic unexpected graph failure"):
+        cmd_fitness._check_health_score_metric(rule, conn=None)

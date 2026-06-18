@@ -395,7 +395,7 @@ def _check_cycles_metric(rule, conn) -> list[dict]:
 def _check_health_score_metric(rule, conn) -> list[dict]:
     try:
         graph, cycles = _symbol_graph_cycles(conn)
-    except Exception:
+    except sqlite3.DatabaseError:
         return []
     total_syms = len(graph)
     if total_syms == 0:
