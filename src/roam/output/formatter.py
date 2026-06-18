@@ -988,8 +988,9 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
     Either signal alone is sufficient. Both still write only once per command
     invocation (the content-hash dedup prevents duplicates).
 
-    Best-effort: silently no-ops on any failure — never break the parent
-    command just because we couldn't write a side-car file.
+    Best-effort: silently no-ops on expected filesystem / JSON serialization
+    failures — never break the parent command just because we couldn't write a
+    side-car file. Programmer-class failures still propagate.
 
     Gates (all of these must pass before either trigger can fire):
       - envelope must carry the canonical ``schema`` marker
@@ -1044,8 +1045,9 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         safe_cmd = "".join(c if (c.isalnum() or c in "-_") else "_" for c in command)
         out_path = responses_dir / f"{safe_cmd}_{h}.json"
         out_path.write_text(_json.dumps(envelope, indent=2, default=str), encoding="utf-8")
-    except Exception:
-        # Best-effort. Never break the parent command.
+    except (OSError, TypeError, ValueError):
+        # Best-effort side-car persistence: filesystem failures and odd payload
+        # serialization shapes should not break the parent command.
         return
 
 
