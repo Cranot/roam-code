@@ -92,7 +92,7 @@ def _cosine_rank_tfidf(conn, query, *, top_k):
     {auto, tfidf, hybrid}. Surfaces a marker on raise + degrades to an
     empty list so the envelope still emits cleanly.
     """
-    from roam.search.tfidf import search as tfidf_search
+    from roam.search.tfidf import tfidf_search
 
     return tfidf_search(conn, query, top_k=top_k)
 
