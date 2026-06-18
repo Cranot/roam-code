@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 import sqlite3
 import time
@@ -96,7 +97,7 @@ def collect_metrics(conn):
 
         G = build_symbol_graph(conn)
         cycles = len(find_cycles(G))
-    except Exception:
+    except (ImportError, sqlite3.Error):
         cycles = 0
         G = None
 
