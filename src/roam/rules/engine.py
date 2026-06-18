@@ -610,7 +610,7 @@ def _table_columns(conn, table_name: str) -> set[str]:
     for row in rows:
         try:
             cols.add(str(row["name"]))
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             if len(row) > 1:
                 cols.add(str(row[1]))
     return cols
