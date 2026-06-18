@@ -256,7 +256,7 @@ def mcp_tool_descriptions() -> list[tuple[str, str]]:
                         val = ast.literal_eval(kw.value)
                         if isinstance(val, str):
                             description = val
-                    except Exception:
+                    except (TypeError, ValueError):
                         description = None
             if name is None:
                 continue
