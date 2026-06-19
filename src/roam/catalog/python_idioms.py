@@ -1522,7 +1522,7 @@ def detect_sync_calls_async_via_graph(conn: sqlite3.Connection) -> list[dict]:
             """,
             CALL_EDGE_KINDS,
         ).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return findings
     seen: set[tuple[int, int]] = set()
     for r in rows:
