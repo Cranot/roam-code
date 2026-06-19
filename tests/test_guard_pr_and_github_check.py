@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
+from roam.commands import cmd_guard_pr
 from roam.cli import cli
 from roam.github_check import (
     SUMMARY_BYTE_CAP,
@@ -169,6 +171,33 @@ def test_cli_guard_pr_json_envelope(tmp_path):
     payload = json.loads(result.output)
     assert payload["command"] == "guard-pr"
     assert "agent_change_proof_bundle" in payload
+
+
+def test_guard_pr_auto_collect_expected_failure_returns_marker(tmp_path, monkeypatch):
+    bundle_path = tmp_path / "main.json"
+    bundle_path.write_text(json.dumps(_make_pr_bundle()))
+
+    def _raise_os_error(*_args):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(cmd_guard_pr, "auto_collect", _raise_os_error)
+
+    assert cmd_guard_pr._run_auto_collect_inline(bundle_path, tmp_path) == {
+        "error": "auto_collect_failed: disk unavailable"
+    }
+
+
+def test_guard_pr_auto_collect_unexpected_failure_propagates(tmp_path, monkeypatch):
+    bundle_path = tmp_path / "main.json"
+    bundle_path.write_text(json.dumps(_make_pr_bundle()))
+
+    def _raise_runtime_error(*_args):
+        raise RuntimeError("programmer error")
+
+    monkeypatch.setattr(cmd_guard_pr, "auto_collect", _raise_runtime_error)
+
+    with pytest.raises(RuntimeError, match="programmer error"):
+        cmd_guard_pr._run_auto_collect_inline(bundle_path, tmp_path)
 
 
 def test_cli_guard_pr_strict_blocks_with_exit_5(tmp_path):
