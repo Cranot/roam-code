@@ -422,7 +422,7 @@ def _check_cognitive_complexity_metric(rule, conn) -> list[dict]:
                {limit_clause}""",
             (threshold,),
         ).fetchall()
-    except Exception:
+    except sqlite3.DatabaseError:
         return []
 
     return [
