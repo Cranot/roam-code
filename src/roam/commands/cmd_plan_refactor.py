@@ -14,6 +14,8 @@ allowlist + W1085 composer audit + W1224-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -98,12 +100,12 @@ def _simulation_previews(
             compute_graph_metrics,
             metric_delta,
         )
-    except Exception:
+    except ImportError:
         return []
 
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except sqlite3.Error:
         return []
 
     sym_id = int(sym["id"])
