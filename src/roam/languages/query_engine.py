@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from tree_sitter import Node, Parser, Query
@@ -571,18 +570,3 @@ class QueryEngine:
                 return True
             current = current.parent
         return False
-
-
-# ---------------------------------------------------------------------------
-# Convenience Functions
-# ---------------------------------------------------------------------------
-
-
-def extract_file(
-    file_path: Path,
-    config: LanguageConfig,
-) -> ExtractionResult:
-    """Extract symbols from a file using a language config."""
-    engine = QueryEngine(config)
-    source = file_path.read_text(encoding="utf-8")
-    return engine.extract(source, str(file_path))
