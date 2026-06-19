@@ -372,7 +372,7 @@ def _check_naming_law(law: Law, syms_added: list[dict]) -> list[Violation]:
     """
     try:
         from roam.commands.cmd_conventions import classify_case
-    except Exception:
+    except ImportError:
         return []
 
     rule = law.rule or {}
