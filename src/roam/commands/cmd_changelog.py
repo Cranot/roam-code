@@ -105,7 +105,7 @@ def _classify(subject: str) -> tuple[str, str]:
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command(name="changelog")
 @click.option(
     "--since",
     "since_ref",
@@ -115,7 +115,7 @@ def _classify(subject: str) -> tuple[str, str]:
 )
 @click.option("--suggest", is_flag=True, help="Emit a draft markdown CHANGELOG section.")
 @click.pass_context
-def changelog(ctx, since_ref, suggest) -> None:
+def changelog_command(ctx, since_ref, suggest) -> None:
     """List commits since the last tag, optionally as a markdown draft.
 
     Without ``--suggest``: prints a flat list of commits.
