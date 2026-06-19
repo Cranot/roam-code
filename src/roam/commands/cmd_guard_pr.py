@@ -85,7 +85,7 @@ def _init_bundle_if_missing(bundle_arg: str | None, intent: str) -> Path | None:
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bundle(target, empty_bundle(intent))
         return target
-    except Exception:
+    except OSError:
         return None
 
 
