@@ -53,7 +53,6 @@ __all__ = [
     "detect_broad_except",
     "detect_dict_keys_iter",
     "detect_django_n1",
-    "detect_except_pass",
     "detect_fastapi_depends",
     "detect_flask_debug_true",
     "detect_flask_routes",
@@ -237,71 +236,6 @@ _LAMBDA_IN_LOOP_RE = re.compile(
     r"^\s+for\s+(\w+)\s+in\s[^\n]+:\s*\n[\s\S]{0,200}?lambda\b",
     re.MULTILINE,
 )
-
-# ``except SomeError: pass`` — silently swallowing exceptions. The
-# capture group preserves the exception clause (between ``except`` and
-# ``:``) so ``detect_except_pass`` can suppress narrow-typed catches
-# (``except (OSError, UnicodeDecodeError): pass``) which are
-# legitimate "the file went away" handlers, not anti-patterns.
-_EXCEPT_PASS_RE = re.compile(r"^\s*except\b([^:]*):\s*\n\s*pass\s*\n", re.MULTILINE)
-
-# Exception clauses that DO NOT count as anti-patterns when followed by
-# pass. These are typically narrow OS / parse / unicode errors that
-# legitimately mean "skip this file / record". Anything else (bare
-# ``except:``, ``except Exception``, custom exception classes) still
-# fires.
-_LEGITIMATE_NARROW_EXCEPTIONS = frozenset(
-    {
-        "OSError",
-        "IOError",  # alias of OSError on Py3
-        "FileNotFoundError",
-        "PermissionError",
-        "NotADirectoryError",
-        "IsADirectoryError",
-        "UnicodeDecodeError",
-        "UnicodeEncodeError",
-        "UnicodeError",
-        "JSONDecodeError",
-        "TimeoutError",
-        "ConnectionError",
-        "BrokenPipeError",
-        "EOFError",
-        "subprocess.TimeoutExpired",
-        "subprocess.CalledProcessError",
-        # Optional-dependency / feature-gating patterns: legitimately
-        # swallowed when probing whether an optional package is
-        # installed.
-        "ImportError",
-        "ModuleNotFoundError",
-        # Concurrency primitives where a missed-state pass is the
-        # documented contract (e.g. queue.get_nowait()).
-        "KeyError",
-        "AttributeError",
-    }
-)
-
-
-def _except_clause_is_narrow(clause: str) -> bool:
-    """True when ``except`` clause names only narrow OS/parse exceptions
-    that are legitimately swallowed — e.g. ``OSError``, tuples thereof,
-    ``(OSError, UnicodeDecodeError)``. Returns False for bare ``except``,
-    ``Exception``, ``BaseException``, or any name not in the allowlist.
-    """
-    cleaned = clause.strip()
-    if not cleaned:
-        # bare ``except:`` — never narrow
-        return False
-    # Strip ``as exc`` and surrounding whitespace
-    cleaned = re.sub(r"\s+as\s+\w+\s*$", "", cleaned).strip()
-    # Strip outer parens for tuple form
-    if cleaned.startswith("(") and cleaned.endswith(")"):
-        cleaned = cleaned[1:-1]
-    # Split on commas and check every name
-    names = [n.strip() for n in cleaned.split(",") if n.strip()]
-    if not names:
-        return False
-    return all(name in _LEGITIMATE_NARROW_EXCEPTIONS for name in names)
-
 
 # ``except Exception:`` (broad) — catches too much. Less severe than
 # bare ``except:`` but still flagged.
@@ -1106,43 +1040,6 @@ def detect_lambda_in_loop(conn: sqlite3.Connection) -> list[dict]:
                     ),
                     confidence="medium",
                     fix=f"lambda x, {var}={var}: ...  # capture by default arg",
-                )
-            )
-    return findings
-
-
-def detect_except_pass(conn: sqlite3.Connection) -> list[dict]:
-    """Find ``except X: pass`` — silently swallowing exceptions. Skips
-    narrow-typed catches like ``except OSError: pass`` and tuples of
-    OS/parse errors which are legitimately swallowed when iterating over
-    files."""
-    findings: list[dict] = []
-    for file_id, path in _python_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_strings_and_comments(text)
-        if not text:
-            continue
-        sym_index = _line_to_symbol(conn, file_id)
-        for match in _EXCEPT_PASS_RE.finditer(text):
-            clause = match.group(1)
-            if _except_clause_is_narrow(clause):
-                continue
-            line_no = text.count("\n", 0, match.start()) + 1
-            sym = _enclosing_symbol(line_no, sym_index)
-            if sym is None:
-                continue
-            findings.append(
-                _idiom_finding(
-                    task_id="py-except-pass",
-                    detected_way="silent-swallow",
-                    symbol_id=sym[0],
-                    symbol_name=sym[1],
-                    file_path=path,
-                    line_no=line_no,
-                    reason="``except X: pass`` silently swallows the exception — log it or re-raise",
-                    confidence="high",
-                    fix="except X as exc:\n    logger.warning('...', exc_info=exc)\n    raise",
                 )
             )
     return findings
@@ -2021,7 +1918,6 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-flask-debug-true", "flask-debug-leak", detect_flask_debug_true),
     ("py-flask-secret-key-literal", "flask-hardcoded-secret", detect_flask_secret_key_literal),
     ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
-    ("py-except-pass", "silent-swallow", detect_except_pass),
     ("py-broad-except", "catch-too-much", detect_broad_except),
     # loop-body performance idioms (2026-06-11 wave)
     ("py-manual-counter", "dict-get-increment", detect_manual_counter_in_loop),
