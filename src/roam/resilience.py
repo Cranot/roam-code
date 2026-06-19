@@ -324,15 +324,14 @@ def harvest_source_files(
     root: str = ".",
     languages: tuple[str, ...] | None = None,
     max_files: int = 0,
+    pattern_languages: Iterable[str] | None = None,
 ) -> tuple[list[tuple[str, str, str]], list[str]]:
     """Harvest ``(path, language, text)`` for source-role files in the index.
 
-    Contract matches ``observability_opt.harvest_source_files``: excludes
-    non-source file roles + CI workflow path prefixes, reads file content from
-    disk relative to ``root``, records unreadable files separately. The
-    different ``languages``/``patterns`` set is owned by the detector, not the
-    harvester — i.e. a file that has no resilience pattern for its language is
-    still harvested; the detector simply emits no finding.
+    Excludes non-source file roles + CI workflow path prefixes, reads file
+    content from disk relative to ``root``, and records unreadable files
+    separately. ``pattern_languages`` lets related source-line detectors reuse
+    the same harvest policy with their own supported-language set.
     """
     import os
 
@@ -340,6 +339,8 @@ def harvest_source_files(
         "SELECT path, language, file_role FROM files WHERE language IS NOT NULL AND language != '' ORDER BY path"
     ).fetchall()
     want_langs = {name.lower() for name in languages} if languages else None
+    source_pattern_languages = _TIMEOUT_PATTERNS if pattern_languages is None else pattern_languages
+    supported_langs = {name.lower() for name in source_pattern_languages}
     sources: list[tuple[str, str, str]] = []
     unreadable: list[str] = []
     for row in rows:
@@ -351,7 +352,7 @@ def harvest_source_files(
         if any(path.startswith(prefix) for prefix in _NON_SOURCE_PATH_PREFIXES):
             continue
         lang = language.lower()
-        if lang not in _TIMEOUT_PATTERNS:
+        if lang not in supported_langs:
             continue
         if want_langs is not None and lang not in want_langs:
             continue

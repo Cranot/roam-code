@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import partial
 from typing import Any, Callable, Iterable
 
 # Reuse the CANONICAL closed-enum vocabularies (a typo fails fast against the
@@ -38,6 +39,7 @@ from roam.db.findings import (
     FindingRecord,
     make_finding_id,
 )
+from roam.resilience import harvest_source_files as _harvest_source_files
 
 __all__ = [
     "FAMILY",
@@ -271,72 +273,10 @@ def detect_print_debug_leftover(
 
 
 # ---------------------------------------------------------------------------
-# Signal-source harvester — source files from the index (never re-run a
-# detector; read roam's OWN file-role classification, Pattern 3)
+# Signal-source harvester — shared source-file policy from ``roam.resilience``.
 # ---------------------------------------------------------------------------
-# file_role values that are NOT application source we want to lint for
-# diagnosability. Tests / examples / scripts legitimately print; generated /
-# docs / config / data / build are not behavioural source. These are the
-# canonical roles from ``roam.index.file_roles`` (everything except "source").
-_NON_SOURCE_ROLES = frozenset({"test", "docs", "config", "generated", "data", "build", "examples", "scripts"})
-
-# Path prefixes that are CI / build infrastructure, not application source —
-# even when roam's file_role classifier scores them as "source". GitHub
-# Actions step scripts use ``print('::warning::...')`` for workflow commands,
-# which is the intended output mechanism, not a debug leftover.
-_NON_SOURCE_PATH_PREFIXES: tuple[str, ...] = (
-    ".github/",
-    ".circleci/",
-    ".gitlab/",
-    ".buildkite/",
-)
-
-
-def harvest_source_files(
-    conn,
-    *,
-    root: str = ".",
-    languages: tuple[str, ...] | None = None,
-    max_files: int = 0,
-) -> tuple[list[tuple[str, str, str]], list[str]]:
-    """Harvest ``(path, language, text)`` for source-role files in the index.
-
-    Returns ``(sources, unreadable)``. Reads file content from disk relative to
-    ``root``; a file in the index but missing/binary on disk is recorded in
-    ``unreadable`` (skipped, not failed). ``languages`` (if given) restricts to
-    those ``files.language`` values; ``max_files`` (>0) caps the harvest.
-    """
-    import os
-
-    rows = conn.execute(
-        "SELECT path, language, file_role FROM files WHERE language IS NOT NULL AND language != '' ORDER BY path"
-    ).fetchall()
-    want_langs = {name.lower() for name in languages} if languages else None
-    sources: list[tuple[str, str, str]] = []
-    unreadable: list[str] = []
-    for row in rows:
-        path = row["path"] if not isinstance(row, tuple) else row[0]
-        language = (row["language"] if not isinstance(row, tuple) else row[1]) or ""
-        role = (row["file_role"] if not isinstance(row, tuple) else row[2]) or "source"
-        if role in _NON_SOURCE_ROLES:
-            continue
-        if any(path.startswith(prefix) for prefix in _NON_SOURCE_PATH_PREFIXES):
-            continue
-        lang = language.lower()
-        if lang not in _DEBUG_PRINT_PATTERNS:
-            continue
-        if want_langs is not None and lang not in want_langs:
-            continue
-        try:
-            with open(os.path.join(root, path), "r", encoding="utf-8", errors="strict") as fh:
-                text = fh.read()
-        except (OSError, UnicodeDecodeError):
-            unreadable.append(path)
-            continue
-        sources.append((path, lang, text))
-        if max_files and len(sources) >= max_files:
-            break
-    return sources, unreadable
+harvest_source_files = partial(_harvest_source_files, pattern_languages=tuple(_DEBUG_PRINT_PATTERNS))
+harvest_source_files.__doc__ = _harvest_source_files.__doc__
 
 
 # ---------------------------------------------------------------------------
