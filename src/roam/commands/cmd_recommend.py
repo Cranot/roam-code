@@ -20,6 +20,8 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -112,7 +114,7 @@ def recommend(ctx, symbol, limit) -> None:
                 "SELECT DISTINCT commit_id FROM git_file_changes WHERE file_id = ? LIMIT 200",
                 (file_id,),
             ).fetchall()
-        except Exception:
+        except sqlite3.OperationalError:
             commit_rows = []
         commit_ids = [r["commit_id"] for r in commit_rows]
         if commit_ids:
