@@ -260,8 +260,8 @@ def _adjust_cluster_count(
                 nodes_list = sorted(largest)
                 sorted_groups.append(set(nodes_list[:half]))
                 sorted_groups.append(set(nodes_list[half:]))
-        except Exception:
-            # Fallback: simple bisection
+        except (nx.NetworkXError, ValueError):
+            # Fallback: simple bisection for graph/centrality failures.
             half = len(largest) // 2
             nodes_list = sorted(largest)
             sorted_groups.append(set(nodes_list[:half]))
