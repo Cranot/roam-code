@@ -77,7 +77,7 @@ def lift_packet_hashes(
     # pulls in HMAC + atomic_io + a Path-heavy startup cost.
     try:
         from roam.runs.ledger import read_run_meta
-    except Exception:  # pragma: no cover - defensive
+    except ImportError:  # pragma: no cover - defensive
         return None
     try:
         meta = read_run_meta(repo_root, run_id)
