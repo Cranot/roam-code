@@ -1292,10 +1292,10 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             # impactful files first; the rest are cut by the +N more
             # tail.
             try:
-                from roam.graph.pagerank import global_pagerank
+                from roam.graph.pagerank import compute_pagerank
 
-                _global_pr = global_pagerank(G)
-            except Exception:
+                _global_pr = compute_pagerank(G)
+            except ImportError:
                 _global_pr = {}
             _file_pr: dict[str, float] = {}
             for dep_id in dependents:
