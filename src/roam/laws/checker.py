@@ -138,7 +138,7 @@ def get_diff_text(
             return ""
         try:
             return Path(diff_file).read_text(encoding="utf-8", errors="replace")
-        except Exception:
+        except (OSError, ValueError):
             return ""
 
     cmd = ["git", "diff", "--unified=3"]
