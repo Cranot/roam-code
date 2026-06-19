@@ -151,8 +151,8 @@ def recommend(ctx, symbol, limit) -> None:
                 other = r["id"]
                 entry = scores.setdefault(other, _candidate_init())
                 entry["clone"] += 1.0
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            # clone_pairs absent (clones --persist not run) or query failure;
+        except sqlite3.OperationalError as _exc:
+            # clone_pairs absent (clones --persist not run) or schema mismatch;
             # recommendations degrade gracefully without clone-sibling signal.
             from roam.observability import log_swallowed
 
