@@ -276,7 +276,7 @@ def start_watcher(
         loop = asyncio.get_running_loop()
         reindexer.bind_loop(loop)
     except RuntimeError:
-        # No running loop yet -- caller will bind later via .bind_loop().
+        # No running loop yet; notification dispatch stays disabled.
         pass
 
     class _Handler(FileSystemEventHandler):
@@ -312,10 +312,3 @@ def start_watcher(
     handle.reindexer = reindexer
     handle.started_at = time.time()
     return handle
-
-
-def bind_loop(handle: _Watcher | None, loop: asyncio.AbstractEventLoop) -> None:
-    """Late-binding helper used when the loop wasn't running at start time."""
-    if handle is None or handle.reindexer is None:
-        return
-    handle.reindexer.bind_loop(loop)
