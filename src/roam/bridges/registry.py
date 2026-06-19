@@ -13,12 +13,16 @@ _DISCOVERED = False
 _REQUIRED_BRIDGE_ATTRS = ("name", "detect", "resolve")
 
 
-def register_bridge(bridge: LanguageBridge) -> None:
+def register_language_bridge(bridge: LanguageBridge) -> None:
     """Register a bridge instance."""
     for attr in _REQUIRED_BRIDGE_ATTRS:
         if not hasattr(bridge, attr):
             raise TypeError(f"bridge missing required attribute: {attr}")
     _BRIDGES.append(bridge)
+
+
+# Backwards-compatible public alias for older plugins and callers.
+register_bridge = register_language_bridge
 
 
 def get_bridges() -> list[LanguageBridge]:
@@ -83,4 +87,4 @@ def _auto_discover():
     if get_plugin_bridges is not None:
         for bridge in get_plugin_bridges():
             if bridge not in _BRIDGES:
-                register_bridge(bridge)
+                register_language_bridge(bridge)
