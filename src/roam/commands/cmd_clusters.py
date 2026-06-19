@@ -347,7 +347,7 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command("clusters")
 @click.option("--min-size", default=3, show_default=True, help="Hide clusters smaller than this")
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.option(
@@ -372,7 +372,7 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
     ),
 )
 @click.pass_context
-def clusters(ctx, min_size, mermaid_mode, weak_mode, strong_mode):
+def clusters_cmd(ctx, min_size, mermaid_mode, weak_mode, strong_mode):
     """Show code clusters and directory mismatches."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
@@ -584,3 +584,8 @@ def _print_mismatches(conn, visible_ids):
         )
     else:
         click.echo("  (none -- clusters align with directories)")
+
+
+# Preserve the lazy CLI registry attribute while keeping the callback's Python
+# function name distinct from graph.clone_detect._UnionFind.clusters.
+clusters = clusters_cmd
