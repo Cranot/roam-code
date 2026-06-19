@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands.cmd_oracle import (
+    _detect_sibling_backend_repos,
     oracle_is_clone_of,
     oracle_is_reachable_from_entry,
     oracle_is_test_only,
@@ -161,6 +163,25 @@ class TestRouteExists:
             v2, _ = oracle_route_exists(conn, "api/users")
         assert v1 == v2
 
+    def test_sibling_backend_probe_degrades_on_root_fs_error(self, monkeypatch):
+        import roam.db.connection as connection
+
+        def fail_lookup() -> Path:
+            raise OSError("synthetic cwd lookup failure")
+
+        monkeypatch.setattr(connection, "find_project_root", fail_lookup)
+        assert _detect_sibling_backend_repos() == []
+
+    def test_sibling_backend_probe_propagates_root_programmer_error(self, monkeypatch):
+        import roam.db.connection as connection
+
+        def fail_lookup() -> Path:
+            raise RuntimeError("synthetic programmer failure")
+
+        monkeypatch.setattr(connection, "find_project_root", fail_lookup)
+        with pytest.raises(RuntimeError, match="synthetic programmer failure"):
+            _detect_sibling_backend_repos()
+
 
 # ---------------------------------------------------------------------------
 # oracle_is_test_only — caller-role analysis
@@ -288,7 +309,7 @@ class TestIsCloneOf:
                     ),
                 )
                 conn.commit()
-            except Exception:
+            except sqlite3.DatabaseError:
                 pytest.skip("clone_pairs schema differs in this fixture")
 
         try:

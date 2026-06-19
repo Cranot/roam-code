@@ -163,7 +163,7 @@ def _detect_sibling_backend_repos() -> list[str]:
         from roam.db.connection import find_project_root
 
         root = find_project_root()
-    except Exception:
+    except OSError:
         return []
 
     parent = root.parent
