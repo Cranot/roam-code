@@ -252,7 +252,7 @@ _COMMANDS = {
     "annotate": ("roam.commands.cmd_annotate", "annotate"),
     "annotations": ("roam.commands.cmd_annotate", "annotations"),
     "dark-matter": ("roam.commands.cmd_dark_matter", "dark_matter"),
-    "pr-diff": ("roam.commands.cmd_pr_diff", "pr_diff"),
+    "pr-diff": ("roam.commands.cmd_pr_diff", "pr_diff_cmd"),
     "budget": ("roam.commands.cmd_budget", "budget"),
     "effects": ("roam.commands.cmd_effects", "effects"),
     "side-effects": ("roam.commands.cmd_side_effects", "side_effects_cmd"),
