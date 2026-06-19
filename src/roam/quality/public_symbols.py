@@ -30,6 +30,7 @@ side-by-side via :class:`PublicSymbolsSummary`.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 # Kinds considered "public-shape" by the API surface walker. Kept
@@ -132,7 +133,7 @@ def public_symbols_summary(conn) -> PublicSymbolsSummary:
     no_us_failed = False
     try:
         n_no_us = conn.execute(no_us_sql, kinds).fetchone()[0]
-    except Exception:
+    except sqlite3.Error:
         n_no_us = 0
         no_us_failed = True
 
@@ -149,7 +150,7 @@ def public_symbols_summary(conn) -> PublicSymbolsSummary:
     exp_failed = False
     try:
         n_exp = conn.execute(exp_sql, kinds).fetchone()[0]
-    except Exception:
+    except sqlite3.Error:
         n_exp = 0
         exp_failed = True
 
