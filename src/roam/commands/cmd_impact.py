@@ -817,7 +817,7 @@ def impact_cmd(ctx, name, hops, depth, max_callers, timeout):
                 from roam.graph.pagerank import personalized_pagerank
 
                 ppr = personalized_pagerank(RG, {sym_id: 1.0}, alpha=0.85)
-            except Exception as _exc:  # noqa: BLE001 — defensive
+            except ImportError as _exc:
                 from roam.observability import log_swallowed
 
                 log_swallowed("cmd_impact:personalized_pagerank", _exc)
