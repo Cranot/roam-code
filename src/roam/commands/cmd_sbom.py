@@ -21,7 +21,7 @@ import click
 from roam import __version__
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import StaleDbDirError, find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -701,7 +701,7 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
                     dep_names,
                     default={},
                 )
-        except Exception:
+        except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError):
             graph_reach = {}
 
         # Filesystem-based reachability (cheap, independent of index)
