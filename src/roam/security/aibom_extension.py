@@ -14,6 +14,7 @@ SBOM = "what's in it", VEX = "is it exploitable". AIBOM-with-binding =
 from __future__ import annotations
 
 import re
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -249,7 +250,7 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
                     files,
                 ).fetchone()
                 symbol_count = int(row[0]) if row else 0
-            except Exception:
+            except sqlite3.Error:
                 symbol_count = 0
         out_components.append(
             {
