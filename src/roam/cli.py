@@ -269,7 +269,7 @@ _COMMANDS = {
     "telemetry": ("roam.commands.cmd_telemetry", "telemetry"),
     "orphan-imports": ("roam.commands.cmd_orphan_imports", "orphan_imports"),
     "boundary": ("roam.commands.cmd_boundary", "boundary"),
-    "changelog": ("roam.commands.cmd_changelog", "changelog"),
+    "changelog": ("roam.commands.cmd_changelog", "changelog_command"),
     "graph-export": ("roam.commands.cmd_graph_export", "graph_export"),
     "graph-stats": ("roam.commands.cmd_graph_stats", "graph_stats"),
     "graph-diff": ("roam.commands.cmd_graph_diff", "graph_diff_cmd"),
