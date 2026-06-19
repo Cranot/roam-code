@@ -317,82 +317,6 @@ def _path_rank(path: str | None) -> int:
     return 0
 
 
-def pick_best(conn: sqlite3.Connection, rows: list) -> dict | None:
-    """Pick the most important symbol from ambiguous matches.
-
-    Tie-breaking order (high to low):
-    1. Highest incoming edge count (most-called).
-    2. Highest PageRank (transitive importance, useful when callers are
-       template-only or dynamic and not captured as edges).
-    3. Highest cognitive complexity (proxy for "real implementation"
-       beating placeholder/empty handlers with the same name).
-    4. Highest file churn (hot file > cold file).
-    5. Highest path priority (canonical src/ paths beat dev/ scripts).
-    6. Lowest symbol id (deterministic final tiebreak).
-
-    Returns the chosen row when at least one signal is present. When all
-    candidates score zero across every signal, returns ``None`` so the
-    caller can fall back to the first SQL-ordered row (the historic
-    behaviour) — this preserves stability for unindexed projects.
-    """
-    if not rows:
-        return None
-    if len(rows) == 1:
-        return rows[0]
-
-    ids = [r["id"] for r in rows]
-    ph = ",".join("?" for _ in ids)
-
-    counts = conn.execute(
-        f"SELECT target_id, COUNT(*) as cnt FROM edges WHERE target_id IN ({ph}) GROUP BY target_id",
-        ids,
-    ).fetchall()
-    ref_map = {c["target_id"]: c["cnt"] for c in counts}
-
-    pr_rows = conn.execute(
-        f"SELECT symbol_id, pagerank FROM graph_metrics WHERE symbol_id IN ({ph})",
-        ids,
-    ).fetchall()
-    pr_map = {r["symbol_id"]: r["pagerank"] or 0 for r in pr_rows}
-
-    cc_rows = conn.execute(
-        f"SELECT symbol_id, cognitive_complexity FROM symbol_metrics WHERE symbol_id IN ({ph})",
-        ids,
-    ).fetchall()
-    cc_map = {r["symbol_id"]: r["cognitive_complexity"] or 0 for r in cc_rows}
-
-    file_ids = list({r["file_id"] for r in rows if "file_id" in r.keys() and r["file_id"] is not None})
-    churn_map: dict[int, int] = {}
-    if file_ids:
-        ph_f = ",".join("?" for _ in file_ids)
-        churn_rows = conn.execute(
-            f"SELECT file_id, total_churn FROM file_stats WHERE file_id IN ({ph_f})",
-            file_ids,
-        ).fetchall()
-        churn_map = {r["file_id"]: r["total_churn"] or 0 for r in churn_rows}
-
-    def _key(r):
-        return (
-            ref_map.get(r["id"], 0),
-            pr_map.get(r["id"], 0),
-            cc_map.get(r["id"], 0),
-            churn_map.get(r["file_id"], 0) if "file_id" in r.keys() else 0,
-            _path_rank(r["file_path"]),
-            -r["id"],
-        )
-
-    best = max(rows, key=_key)
-    has_signal = (
-        ref_map.get(best["id"], 0) > 0
-        or pr_map.get(best["id"], 0) > 0
-        or cc_map.get(best["id"], 0) > 0
-        or (churn_map.get(best["file_id"], 0) if "file_id" in best.keys() else 0) > 0
-    )
-    if has_signal:
-        return best
-    return None
-
-
 def _parse_file_hint(name):
     """Parse 'file:symbol' syntax into (file_hint, symbol_name).
 
@@ -580,7 +504,7 @@ def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[
     Same lookup chain as :func:`find_symbol`, but also returns the other
     matches at the same lookup tier so callers can surface
     ``did_you_mean`` hints. Alternatives are sorted by the same importance
-    score :func:`pick_best` uses to choose the winner.
+    score used to choose the winner.
 
     W1249: every returned row (best + alternatives) carries the
     ``_resolution_tier`` key per the closed enum
@@ -637,7 +561,7 @@ def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     2. Try qualified_name match (fetchall)
     3. Try simple name match (fetchall)
     4. Try fuzzy LIKE match (limit 10)
-    5. At each step: if multiple matches -> pick_best (importance-weighted)
+    5. At each step: if multiple matches -> rank by importance signals
     6. If file hint provided -> filter candidates first
 
     Always returns a single row or None. Never returns a list.
