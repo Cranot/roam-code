@@ -722,7 +722,7 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
 
     try:
         bundle_path = _bundle_path(root)
-    except Exception:
+    except (TypeError, ValueError):
         return None, "emit_failed", True
 
     if not bundle_path.is_file():
