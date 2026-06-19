@@ -14,6 +14,8 @@ SARIF results. See action.yml _SUPPORTED_SARIF allowlist and W1154 audit memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -107,7 +109,7 @@ def _get_symbol_metrics(conn, sym_id):
                 "FROM git_file_changes WHERE file_id = ?",
                 (file_row["file_id"],),
             ).fetchone()
-        except Exception:
+        except sqlite3.OperationalError:
             fb = None
         if fb:
             commits = fb["cc"] or 0
