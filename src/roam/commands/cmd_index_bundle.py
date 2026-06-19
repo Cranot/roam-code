@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import tarfile
 import tempfile
 from datetime import datetime, timezone
@@ -84,7 +85,7 @@ def _read_schema_version(index_path: Path) -> int | None:
                 return int(row[0])
         finally:
             conn.close()
-    except Exception:
+    except (OSError, sqlite3.Error):
         return None
     return None
 
