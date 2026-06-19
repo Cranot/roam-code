@@ -409,7 +409,7 @@ _COMMANDS = {
     "fleet": ("roam.commands.cmd_fleet", "fleet"),
     "ask": ("roam.commands.cmd_ask", "ask"),
     "workflow": ("roam.commands.cmd_workflow", "workflow"),
-    "taint": ("roam.commands.cmd_taint", "taint"),
+    "taint": ("roam.commands.cmd_taint", "taint_command"),
     "cga": ("roam.commands.cmd_cga", "cga"),
     "eval-retrieve": ("roam.commands.cmd_eval_retrieve", "eval_retrieve"),
     "oracle": ("roam.commands.cmd_oracle", "oracle"),

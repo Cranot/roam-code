@@ -340,7 +340,7 @@ def _default_rules_dir() -> Path:
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command("taint")
 @click.option(
     "--rules-dir",
     "rules_dir",
@@ -413,7 +413,7 @@ def _default_rules_dir() -> Path:
     ),
 )
 @click.pass_context
-def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
+def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
     """Reach-analysis from rule sources to sinks over the indexed edges.
 
     Each finding lists the source, the sink, the path that connects
@@ -1152,3 +1152,6 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
 
     if ci_mode and high_count > 0:
         ctx.exit(5)
+
+
+taint = taint_command
