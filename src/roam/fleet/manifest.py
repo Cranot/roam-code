@@ -9,42 +9,9 @@ can choose execution order without re-deriving the graph itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 SCHEMA_VERSION = "roam-fleet/v1"
-
-
-@dataclass
-class FleetTask:
-    """One unit of fleet work — typically one partition."""
-
-    task_id: str
-    title: str
-    description: str
-    file_scope: list[str] = field(default_factory=list)
-    role: str = ""
-    conflict_risk: str = "LOW"
-    estimated_complexity: float = 0.0
-    test_coverage: float = 0.0
-    pagerank_anchors: list[str] = field(default_factory=list)
-    cross_repo_dependencies: list[str] = field(default_factory=list)
-    suggested_branch: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "title": self.title,
-            "description": self.description,
-            "file_scope": list(self.file_scope),
-            "role": self.role,
-            "conflict_risk": self.conflict_risk,
-            "estimated_complexity": round(self.estimated_complexity, 2),
-            "test_coverage": round(self.test_coverage, 4),
-            "pagerank_anchors": list(self.pagerank_anchors),
-            "cross_repo_dependencies": list(self.cross_repo_dependencies),
-            "suggested_branch": self.suggested_branch,
-        }
 
 
 def build_fleet_manifest(
@@ -88,18 +55,19 @@ def build_fleet_manifest(
             for ks in p.get("key_symbols", [])[:5]
         ]
         tasks.append(
-            FleetTask(
-                task_id=task_id,
-                title=title,
-                description=description,
-                file_scope=list(p.get("files", [])),
-                role=role,
-                conflict_risk=p.get("conflict_risk", "LOW"),
-                estimated_complexity=float(p.get("complexity", 0.0)),
-                test_coverage=float(p.get("test_coverage", 0.0)),
-                pagerank_anchors=anchors,
-                suggested_branch=f"{branch_prefix}/{p['id']}-{slug}",
-            ).to_dict()
+            {
+                "task_id": task_id,
+                "title": title,
+                "description": description,
+                "file_scope": list(p.get("files", [])),
+                "role": role,
+                "conflict_risk": p.get("conflict_risk", "LOW"),
+                "estimated_complexity": round(float(p.get("complexity", 0.0)), 2),
+                "test_coverage": round(float(p.get("test_coverage", 0.0)), 4),
+                "pagerank_anchors": list(anchors),
+                "cross_repo_dependencies": [],
+                "suggested_branch": f"{branch_prefix}/{p['id']}-{slug}",
+            }
         )
 
     return {
