@@ -141,7 +141,7 @@ _PR_RISK_LEVEL_TO_SEVERITY: dict[str, str] = {
 # Kept in sync (by hand, like the LAW 4 anchor lists) with the
 # ``_PR_RISK_LEVEL_TO_SEVERITY`` keys above — adding a new bucket means
 # updating BOTH this frozenset AND the severity mapping AND the bucketing
-# logic in :func:`pr_risk` (the risk-score thresholds at ~line 1000). The
+# logic in :func:`pr_risk_cmd` (the risk-score thresholds at ~line 1000). The
 # drift-guard test in ``tests/test_w989_pr_risk_pattern2.py`` pins the
 # frozenset-vs-mapping equality so a one-sided edit fails at CI time.
 _VALID_RISK_LEVELS: frozenset[str] = frozenset(_PR_RISK_LEVEL_TO_SEVERITY)
@@ -453,7 +453,7 @@ def _emit_pr_risk_findings(
     """Mirror pr-risk's invocation result into the central findings registry.
 
     Returns the count of finding rows written. ``data`` is the dict of
-    pre-computed signals built in the main ``pr_risk`` body — it's
+    pre-computed signals built in the main ``pr-risk`` command body — it's
     passed in rather than recomputed so the persist path stays a pure
     transcription of what the read path already calculated.
 
@@ -827,7 +827,7 @@ def _minor_contributor_risk(conn, author, changed_files):
     ),
 )
 @click.pass_context
-def pr_risk(ctx, commit_range, staged, author, persist):
+def pr_risk_cmd(ctx, commit_range, staged, author, persist):
     """Compute risk score for pending changes.
 
     Analyzes blast radius, hotspot churn, bus factor, test coverage,
@@ -879,7 +879,7 @@ def pr_risk(ctx, commit_range, staged, author, persist):
     # itself can still raise BEFORE reaching that floor (e.g., a downstream
     # refactor changes the SQL shape, or networkx blows up during
     # ``build_symbol_graph``, or a third-party patch surfaces an unexpected
-    # raise). The outer call sites in ``pr_risk()`` previously had no
+    # raise). The outer call sites in ``pr_risk_cmd()`` previously had no
     # guards, so the envelope crashed whole.
     #
     # W805-EEEE intersection: ``get_changed_files`` is the shared helper
