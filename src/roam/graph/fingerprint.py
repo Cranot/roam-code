@@ -7,6 +7,7 @@ import sqlite3
 from collections import Counter, defaultdict
 
 import networkx as nx
+from networkx.algorithms.community.quality import NotAPartition
 
 from roam.graph.stats import gini_coefficient as _gini_coefficient
 
@@ -76,7 +77,8 @@ def _fast_cluster_quality(G: nx.DiGraph, cluster_map: dict[int, int]) -> dict:
     O(edges) pass. The result is byte-identical to ``cluster_quality``:
 
       * ``modularity`` -- same ``nx.community.modularity`` call, same
-        community list-of-sets, same ``round(q, 4)``, same except-fallback.
+        community list-of-sets, same ``round(q, 4)``, same NotAPartition
+        fallback and edgeless-graph guard.
       * ``per_cluster`` -- conductance phi(S) = cut(S, S_bar) /
         min(vol(S), vol(S_bar)), same ``round(.., 4)``, same
         ``len(members) < 2 -> 0.0`` short-circuit.
@@ -117,8 +119,12 @@ def _fast_cluster_quality(G: nx.DiGraph, cluster_map: dict[int, int]) -> dict:
     modularity_communities = list(partition_groups.values()) + [{n} for n in node_set - covered_nodes]
 
     try:
-        q = nx.community.modularity(undirected, modularity_communities) if modularity_communities else 0.0
-    except Exception:
+        q = (
+            nx.community.modularity(undirected, modularity_communities)
+            if modularity_communities and undirected.number_of_edges() > 0
+            else 0.0
+        )
+    except NotAPartition:
         q = 0.0
 
     # Single O(edges) pass: accumulate per-cluster volume + cut.

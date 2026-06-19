@@ -188,6 +188,23 @@ class TestFastClusterQuality:
         assert fast["modularity"] == canonical["modularity"]
         assert fast["per_cluster"] == canonical["per_cluster"]
 
+    def test_fast_cluster_quality_surfaces_unexpected_modularity_errors(self, monkeypatch):
+        """Only NetworkX partition errors are converted to the 0.0 Q-score floor."""
+        import networkx as nx
+        import pytest
+
+        from roam.graph.fingerprint import _fast_cluster_quality
+
+        def fail_modularity(*_args, **_kwargs):
+            raise TypeError("unexpected modularity failure")
+
+        monkeypatch.setattr(nx.community, "modularity", fail_modularity)
+        G = nx.DiGraph()
+        G.add_edge(1, 2)
+
+        with pytest.raises(TypeError, match="unexpected modularity failure"):
+            _fast_cluster_quality(G, {1: 0, 2: 0})
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: compare_fingerprints
