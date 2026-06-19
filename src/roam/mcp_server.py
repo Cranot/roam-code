@@ -8029,7 +8029,7 @@ def search_symbol(query: str, root: str = ".") -> dict:
     name="roam_complete",
     description="Prefix completion for symbols / file paths / commands. Faster than search; returns just names.",
 )
-def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = ".") -> dict:
+def complete_tool(prefix: str, kind: str = "symbol", limit: int = 30, root: str = ".") -> dict:
     """Autocomplete a partial symbol name, file path, or command.
 
     WHEN TO USE: Call this when you have a partial identifier (e.g.
@@ -8105,6 +8105,11 @@ def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = "."
         },
         **payload,
     }
+
+
+# Back-compat for tests and in-process callers that imported the tool function
+# before the MCP wrapper name was disambiguated from the CLI entrypoint.
+complete = complete_tool
 
 
 @_tool(
