@@ -409,7 +409,7 @@ class RoamPluginContext:
 
     # ---- bridge registration --------------------------------------------
 
-    def add_bridge(self, bridge: "LanguageBridge") -> None:
+    def register_bridge(self, bridge: "LanguageBridge") -> None:
         """Register a cross-language bridge.
 
         A bridge resolves references that span language boundaries
@@ -423,9 +423,6 @@ class RoamPluginContext:
         state = _registry_state()
         state.bridges.append(bridge)
         self._note_capability("bridge")
-
-    # Backward-compatible public API for existing plugins.
-    register_bridge = add_bridge
 
     # ---- internal -------------------------------------------------------
 
