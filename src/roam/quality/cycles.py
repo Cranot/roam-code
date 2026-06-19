@@ -144,7 +144,7 @@ def cycles_summary(conn) -> CyclesSummary:
             format_cycles,
             mark_actionable_cycles,
         )
-    except Exception:
+    except ImportError:
         # Defensive: if networkx / graph module isn't importable we
         # return all-zero rather than crashing the caller. Cycles is an
         # advisory metric — its absence shouldn't break health/describe.
