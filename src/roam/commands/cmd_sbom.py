@@ -24,6 +24,15 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import StaleDbDirError, find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
+_SBOM_BOUNDARY_EXCEPTIONS = (
+    click.ClickException,
+    sqlite3.DatabaseError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 # ---------------------------------------------------------------------------
 # Ecosystem -> Package URL (purl) type mapping
 # ---------------------------------------------------------------------------
@@ -555,8 +564,8 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     # W607-AM -- substrate-boundary plumbing for the SBOM EMIT producer leg
-    # of the W805 cross-artifact-consistency family. Prior to W607-AM a
-    # raise inside any of find_project_root / discover_and_parse /
+    # of the W805 cross-artifact-consistency family. Prior to W607-AM,
+    # expected runtime failures in find_project_root / discover_and_parse /
     # compute_graph_reachability / compute_filesystem_reachability /
     # merge_reachability / generate_cyclonedx / generate_spdx /
     # build_aibom_block / serialize_sbom / write_sbom crashed the whole
@@ -582,14 +591,14 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
     def _run_check_am(phase: str, fn, *args, default=None, **kwargs):
         """Run one substrate helper with W607-AM marker emission.
 
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a ``sbom_<phase>_failed:<exc_class>:<detail>``
+        On a clean call the result is returned as-is. On an expected
+        boundary failure, surface a ``sbom_<phase>_failed:<exc_class>:<detail>``
         marker via ``_w607am_warnings_out`` and return *default* -- the
         envelope still emits cleanly with the remaining substrates.
         """
         try:
             return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        except _SBOM_BOUNDARY_EXCEPTIONS as exc:
             _w607am_warnings_out.append(f"sbom_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
@@ -656,7 +665,7 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
         """
         try:
             return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        except _SBOM_BOUNDARY_EXCEPTIONS as exc:
             _w607cg_warnings_out.append(f"sbom_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
