@@ -268,7 +268,7 @@ def _parse_iso8601(s: str) -> int:
         # Handle offsets like +05:30 — fromisoformat works in 3.7+
         dt = datetime.fromisoformat(s_clean)
         return int(dt.timestamp())
-    except Exception:
+    except ValueError:
         return 0
 
 
