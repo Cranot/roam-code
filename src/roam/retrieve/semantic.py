@@ -191,6 +191,28 @@ def _cosine_score(query_vec: Sequence[float], vec: Sequence[float] | None) -> fl
 _ENCODER_CACHE: object | None = None
 _ENCODER_LOAD_FAILED = False
 
+_ONNX_RUNTIME_ERROR_NAMES = (
+    "Fail",
+    "InvalidArgument",
+    "InvalidGraph",
+    "InvalidProtobuf",
+    "NoSuchFile",
+    "RuntimeException",
+    "EPFail",
+    "NotImplemented",
+)
+
+
+def _encoder_load_error_types(ort: object) -> tuple[type[BaseException], ...]:
+    """Return expected optional-backend failures for model/tokenizer loading."""
+    errors: list[type[BaseException]] = [OSError, ValueError, RuntimeError]
+    state = getattr(getattr(ort, "capi", None), "onnxruntime_pybind11_state", None)
+    for name in _ONNX_RUNTIME_ERROR_NAMES:
+        exc_type = getattr(state, name, None)
+        if isinstance(exc_type, type) and issubclass(exc_type, BaseException):
+            errors.append(exc_type)
+    return tuple(errors)
+
 
 def _load_text_encoder():
     """Return a callable ``str -> list[float]`` or ``None`` when unavailable.
@@ -202,10 +224,11 @@ def _load_text_encoder():
     Returns ``None`` when:
     * The optional packages aren't installed.
     * The model files aren't present.
-    * Loading fails for any reason.
+    * The model/session/tokenizer load hits an expected backend error.
 
-    This module never raises — the reranker always sees an empty score
-    dict on failure and the original blend stays consistent.
+    Unexpected defects still raise. Documented optional-backend failures
+    return ``None`` so the reranker sees an empty score dict and the
+    original blend stays consistent.
     """
     global _ENCODER_CACHE, _ENCODER_LOAD_FAILED
     if _ENCODER_CACHE is not None:
@@ -237,7 +260,7 @@ def _load_text_encoder():
     try:
         sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         tokenizer = Tokenizer.from_file(str(tokenizer_path))
-    except Exception:
+    except _encoder_load_error_types(ort):
         _ENCODER_LOAD_FAILED = True
         return None
 
