@@ -450,27 +450,6 @@ def _find_outliers(
 # ---------------------------------------------------------------------------
 
 
-def summarize_by_kind_text(by_kind: dict[str, dict]) -> list[str]:
-    """Render the per-kind summary as the compact lines describe /
-    understand emit. Returns a list of strings like
-    ``"function: 93% snake_case"``.
-    """
-    out: list[str] = []
-    # Preserve a stable order so output is deterministic across calls.
-    ordering = ("function", "class", "method", "variable", "constant", "property", "field", "interface", "struct")
-    seen = set()
-    for kind in ordering:
-        if kind in by_kind:
-            info = by_kind[kind]
-            out.append(f"{kind}: {info['pct']}% {info['style']}")
-            seen.add(kind)
-    for kind, info in sorted(by_kind.items()):
-        if kind in seen:
-            continue
-        out.append(f"{kind}: {info['pct']}% {info['style']}")
-    return out
-
-
 def short_conventions_string(by_kind: dict[str, dict], *, min_pct: int = 70) -> str:
     """Render the compact one-liner used by minimap and the agent-prompt
     section of describe. Returns ``"functions=snake_case, classes=PascalCase"``
