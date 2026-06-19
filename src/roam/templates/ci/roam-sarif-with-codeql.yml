@@ -1,19 +1,17 @@
-# Example: roam SARIF + CodeQL co-deploy on PRs
+# Example: roam SARIF upload to GitHub Code Scanning on PRs
 #
-# Both roam-code and CodeQL upload SARIF findings to GitHub Code Scanning.
-# Code Scanning de-duplicates by ruleId, so dual coverage is additive,
-# not redundant: CodeQL focuses on language-level vulnerability patterns,
+# roam-code uploads SARIF findings to GitHub Code Scanning via
+# github/codeql-action/upload-sarif. This complements any CodeQL workflow you
+# already run: CodeQL focuses on language-level vulnerability patterns, while
 # roam focuses on codebase-shape findings (cycles, dark-matter coupling,
 # god-components, dead code, AI rot, missing tests, n+1, over-fetch, ...).
 #
-# The two jobs run in parallel (default GitHub Actions behavior). The
-# `category:` field on `upload-sarif` distinguishes the two streams in the
-# Code Scanning UI so reviewers see "codeql" and "roam-health" findings
-# side-by-side without overlap.
+# The `category:` field on `upload-sarif` labels the roam stream in the Code
+# Scanning UI as "roam-health" without overlapping other SARIF producers.
 #
 # Copy this file to `.github/workflows/security.yml` in your repo.
 
-name: Security analysis (roam + CodeQL)
+name: Security analysis (roam SARIF)
 
 on:
   push:
@@ -26,25 +24,6 @@ permissions:
   security-events: write   # required for SARIF upload to Code Scanning
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # CodeQL — official GitHub language-level security scanner
-  # ---------------------------------------------------------------------------
-  codeql:
-    name: CodeQL
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: python   # adjust to match your repo (python, javascript, go, java, ...)
-
-      - uses: github/codeql-action/autobuild@v3
-
-      - uses: github/codeql-action/analyze@v3
-        with:
-          category: codeql
-
   # ---------------------------------------------------------------------------
   # roam — local codebase intelligence with SARIF 2.1.0 output
   # ---------------------------------------------------------------------------
