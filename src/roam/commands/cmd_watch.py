@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import queue
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -40,7 +41,7 @@ def load_tracked_files(project_root: Path) -> dict[str, float]:
         with open_db(readonly=True, project_root=project_root) as conn:
             rows = conn.execute("SELECT path, mtime FROM files").fetchall()
         return {row[0]: (row[1] or 0.0) for row in rows}
-    except Exception:
+    except (click.ClickException, sqlite3.Error):
         return {}
 
 
