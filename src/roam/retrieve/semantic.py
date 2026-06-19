@@ -122,7 +122,7 @@ def semantic_score(
 
     try:
         query_vec = encoder(task)
-    except Exception:
+    except _ENCODER_CALL_ERROR_TYPES:
         return {}
     if query_vec is None:
         return {}
@@ -202,10 +202,12 @@ _ONNX_RUNTIME_ERROR_NAMES = (
     "NotImplemented",
 )
 
+_ENCODER_CALL_ERROR_TYPES = (OSError, ValueError, RuntimeError)
+
 
 def _encoder_load_error_types(ort: object) -> tuple[type[BaseException], ...]:
     """Return expected optional-backend failures for model/tokenizer loading."""
-    errors: list[type[BaseException]] = [OSError, ValueError, RuntimeError]
+    errors: list[type[BaseException]] = list(_ENCODER_CALL_ERROR_TYPES)
     state = getattr(getattr(ort, "capi", None), "onnxruntime_pybind11_state", None)
     for name in _ONNX_RUNTIME_ERROR_NAMES:
         exc_type = getattr(state, name, None)
@@ -264,6 +266,8 @@ def _load_text_encoder():
         _ENCODER_LOAD_FAILED = True
         return None
 
+    inference_error_types = _encoder_load_error_types(ort)
+
     def _encode(text: str) -> list[float] | None:
         enc = tokenizer.encode(text)
         ids = np.array([enc.ids], dtype=np.int64)
@@ -273,7 +277,7 @@ def _load_text_encoder():
                 None,
                 {"input_ids": ids, "attention_mask": mask},
             )
-        except Exception:
+        except inference_error_types:
             return None
         # First output is typically the last_hidden_state; mean-pool.
         last_hidden = outputs[0][0]
