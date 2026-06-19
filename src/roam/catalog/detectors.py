@@ -76,7 +76,6 @@ __all__ = [
     "detect_list_prepend",
     "detect_loop_invariant_call",
     "detect_loop_lookup",
-    "detect_manual_accumulation",
     "detect_manual_gcd",
     "detect_manual_groupby",
     "detect_manual_maxmin",
@@ -1065,50 +1064,6 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
                 "manual-loop",
                 r,
                 "Manual loop with comparisons in max/min function (idiomatic improvement)",
-                "low",
-            )
-        )
-    return results
-
-
-@algorithm_detector(
-    task_id="accumulation",
-    languages=(),
-    confidence_basis="heuristic",
-    query_cost=QUERY_COST_LOW,
-)
-def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
-    """Loops with accumulator in sum/total-named functions.
-
-    Same Big-O (both O(n)) — idiom improvement, flagged at low confidence.
-    """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_depth, ms.loop_with_accumulator, ms.calls_in_loops "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%\\_sum%' ESCAPE '\\' OR s.name LIKE '%\\_total%' ESCAPE '\\' "
-        "  OR s.name LIKE '%Sum%' OR s.name LIKE '%Total%' "
-        "  OR s.name LIKE '%accumulate%' OR s.name LIKE '%Accumulate%') "
-        "AND s.kind IN ('function', 'method') "
-        "AND ms.loop_depth >= 1 "
-        "AND ms.loop_with_accumulator = 1"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        calls = _iter_loop_calls(r)
-        if _call_in(calls, {"sum", "reduce", "aggregate", "prod"}):
-            continue
-        results.append(
-            _finding(
-                "accumulation",
-                "manual-sum",
-                r,
-                "Loop with accumulator in sum/total function (idiomatic improvement)",
                 "low",
             )
         )
@@ -4717,7 +4672,6 @@ _MATH_DETECTORS = [
     ("membership", "list-scan", detect_list_membership),
     ("string-concat", "loop-concat", detect_string_concat_loop),
     ("max-min", "manual-loop", detect_manual_maxmin),
-    ("accumulation", "manual-sum", detect_manual_accumulation),
     ("manual-power", "loop-multiply", detect_manual_power),
     ("manual-gcd", "manual-gcd", detect_manual_gcd),
     ("fibonacci", "naive-recursive", detect_naive_fibonacci),
