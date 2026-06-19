@@ -23,9 +23,6 @@ from typing import Any
 
 import networkx as nx
 
-# Records the exception type when rustworkx fell back. Empty when no fallback.
-_LAST_PAGERANK_FALLBACK_REASON: str | None = None
-
 
 def _backend_choice() -> str:
     """Resolve the active graph backend.
@@ -54,20 +51,9 @@ def active_backend() -> str:
 
     NOTE: this is the *intended* backend per env-var / auto-detect; the
     actual backend that ran ``pagerank()`` may differ when rustworkx
-    silently fell back to NetworkX on a version mismatch. See
-    :func:`last_pagerank_fallback_reason` for the fallback sentinel.
+    fell back to NetworkX on a version mismatch.
     """
     return _backend_choice()
-
-
-def last_pagerank_fallback_reason() -> str | None:
-    """Return the exception class name from the last rustworkx fallback.
-
-    ``None`` when no fallback occurred (or rustworkx was never selected).
-    Lineage marker per CLAUDE.md §"Make fallback chains loud" to disclose
-    silent degradation.
-    """
-    return _LAST_PAGERANK_FALLBACK_REASON
 
 
 def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, float] | None = None) -> dict[int, float]:
@@ -78,8 +64,6 @@ def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, floa
     back to NetworkX on any incompatibility (rustworkx's PageRank API
     differs slightly between versions).
     """
-    global _LAST_PAGERANK_FALLBACK_REASON
-
     if len(G) == 0:
         return {}
 
@@ -105,18 +89,13 @@ def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, floa
             scores = rustworkx.pagerank(rx_g, alpha=alpha, personalization=pers_rx)
             # rustworkx returns a numpy-array-shaped result keyed by index.
             inv = {idx: orig for orig, idx in node_for.items()}
-            _LAST_PAGERANK_FALLBACK_REASON = None
             return {inv[idx]: float(score) for idx, score in scores.items()}
         except Exception as exc:  # noqa: BLE001 — version skew / numpy / API drift
             # rustworkx version skew or numpy missing — fall back cleanly to
-            # NetworkX, but RECORD the lineage so callers can distinguish a
-            # "selected rustworkx and got rustworkx" run from a "selected
-            # rustworkx and silently degraded" run (CLAUDE.md §"Make fallback
-            # chains loud"). Emit a ``RuntimeWarning`` (consistent with the
-            # cycles.py / spectral.py loud-fallback pattern from this
-            # session) so the degradation surfaces in pytest warnings AND
-            # CI stderr without polluting the happy path.
-            _LAST_PAGERANK_FALLBACK_REASON = type(exc).__name__
+            # NetworkX. Emit a ``RuntimeWarning`` (consistent with the
+            # cycles.py / spectral.py loud-fallback pattern) so degradation
+            # surfaces in pytest warnings and CI stderr without polluting the
+            # happy path.
             warnings.warn(
                 f"rustworkx pagerank failed ({type(exc).__name__}: {exc}); "
                 "falling back to NetworkX — active_backend() still reports 'rustworkx' "
