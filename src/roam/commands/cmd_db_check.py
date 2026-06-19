@@ -20,6 +20,8 @@ allowlist + W1192 audit memo + W1221-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -57,7 +59,7 @@ def _check_missing_fts(conn) -> dict:
         cur = conn.execute("SELECT COUNT(*) FROM symbols WHERE id NOT IN (SELECT rowid FROM symbol_fts)")
         n = cur.fetchone()[0]
         sev = "medium" if n else "ok"
-    except Exception:
+    except sqlite3.OperationalError:
         # FTS5 table not present (very old schema or build without FTS)
         return {"name": "missing_fts_rows", "count": 0, "severity": "ok", "note": "fts5 not available"}
     return {"name": "missing_fts_rows", "count": n, "severity": sev}
@@ -112,7 +114,7 @@ def _check_zero_symbols_per_file(conn) -> dict:
         )
         n = cur.fetchone()[0]
         sev = "medium" if n > 0 else "ok"
-    except Exception:
+    except sqlite3.OperationalError:
         return {"name": "files_with_zero_symbols", "count": 0, "severity": "ok", "note": "unsupported"}
     return {"name": "files_with_zero_symbols", "count": n, "severity": sev}
 
