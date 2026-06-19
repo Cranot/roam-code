@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
+import sqlite3
 from collections import Counter
 from pathlib import Path
 
@@ -179,7 +180,7 @@ def _table_available(conn, *names: str) -> bool:
     for name in names:
         try:
             conn.execute(f"SELECT 1 FROM {name} LIMIT 0")
-        except Exception:
+        except sqlite3.OperationalError:
             return False
     return True
 
