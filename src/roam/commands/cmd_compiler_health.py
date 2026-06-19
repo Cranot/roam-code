@@ -163,7 +163,7 @@ def _section_per_mode_kpis(rows: list[dict]) -> dict:
         return {"state": "not_initialized"}
     try:
         summ = _summarize(rows)
-    except Exception:
+    except (AttributeError, TypeError):
         return {"state": "not_initialized"}
 
     # Per-mode rollup (mirrors --by-mode flag on the CLI).
