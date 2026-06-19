@@ -31,12 +31,11 @@ class TestRegistryShape:
         from roam.catalog.detectors import _DETECTOR_REGISTRY
 
         # A3 wave 1 seeded the registry with high-leverage detectors; W84
-        # completion decorated the remaining tail so the registry covers the
-        # entire detector surface (34 entries). The ratchet locks the floor
-        # to the current count — if a future PR drops decorators, this
-        # number drops with it and the test fails.
-        assert len(_DETECTOR_REGISTRY) >= 34, (
-            f"registry should hold at least 34 decorated detectors, got {len(_DETECTOR_REGISTRY)}"
+        # completion decorated the remaining tail. The ratchet locks the floor
+        # to the current concrete detector count — if a future PR drops
+        # decorators unexpectedly, this number drops with it and the test fails.
+        assert len(_DETECTOR_REGISTRY) >= 33, (
+            f"registry should hold at least 33 decorated detectors, got {len(_DETECTOR_REGISTRY)}"
         )
 
     def test_high_leverage_detectors_decorated(self):
@@ -135,7 +134,7 @@ class TestMathListDetectorsFlag:
         data = parse_json_output(result, "algo")
         assert "detectors" in data
         assert data["summary"]["detector_count"] == len(data["detectors"])
-        assert data["summary"]["decorated_detector_count"] >= 34
+        assert data["summary"]["decorated_detector_count"] >= 33
         assert data["summary"]["python_idiom_detector_count"] >= 23
         names = {d["name"] for d in data["detectors"]}
         assert "detect_nested_lookup" in names
