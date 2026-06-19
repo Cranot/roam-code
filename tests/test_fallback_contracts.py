@@ -158,12 +158,22 @@ class TestSemanticEncoderFallback:
         ort_mod = types.ModuleType("onnxruntime")
         tokenizers_mod = types.ModuleType("tokenizers")
 
+        np_mod.int64 = object()
+        np_mod.array = lambda value, dtype=None: value
+
         ort_mod.InferenceSession = session_factory
+
+        class FakeEncoding:
+            ids = [1, 2]
+            attention_mask = [1, 1]
 
         class FakeTokenizer:
             @staticmethod
             def from_file(_path):
-                return object()
+                return FakeTokenizer()
+
+            def encode(self, _text):
+                return FakeEncoding()
 
         tokenizers_mod.Tokenizer = FakeTokenizer
 
@@ -177,6 +187,24 @@ class TestSemanticEncoderFallback:
         (model_dir / "model.onnx").write_bytes(b"fake model")
         (model_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
         monkeypatch.setenv("ROAM_SEMANTIC_MODEL_DIR", str(model_dir))
+
+    def _embedding_conn(self, tmp_path):
+        import sqlite3
+
+        conn = sqlite3.connect(str(tmp_path / "semantic.db"))
+        conn.execute(
+            "CREATE TABLE symbol_embeddings ("
+            "symbol_id INTEGER PRIMARY KEY, "
+            "vector TEXT NOT NULL, "
+            "dims INTEGER NOT NULL, "
+            "provider TEXT NOT NULL DEFAULT 'onnx')"
+        )
+        conn.execute(
+            "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider) VALUES (?, ?, ?, ?)",
+            (1, "[1.0, 0.0]", 2, "onnx"),
+        )
+        conn.commit()
+        return conn
 
     def test_returns_none_without_onnxruntime(self):
         """Force ImportError on numpy import (the first one) — caller
@@ -234,6 +262,70 @@ class TestSemanticEncoderFallback:
             assert semantic._ENCODER_LOAD_FAILED is False
         finally:
             self._reset_encoder_cache(semantic)
+
+    def test_expected_inference_error_returns_none(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        self._reset_encoder_cache(semantic)
+        self._install_model_files(monkeypatch, tmp_path)
+
+        class BadSession:
+            def run(self, *_args, **_kwargs):
+                raise ValueError("bad ONNX inputs")
+
+        self._install_fake_semantic_stack(monkeypatch, lambda *_args, **_kwargs: BadSession())
+
+        try:
+            encoder = semantic._load_text_encoder()
+            assert encoder is not None
+            assert encoder("database connection") is None
+        finally:
+            self._reset_encoder_cache(semantic)
+
+    def test_encoder_inference_programmer_fault_bubbles(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        self._reset_encoder_cache(semantic)
+        self._install_model_files(monkeypatch, tmp_path)
+
+        class BuggySession:
+            def run(self, *_args, **_kwargs):
+                raise AssertionError("programmer bug")
+
+        self._install_fake_semantic_stack(monkeypatch, lambda *_args, **_kwargs: BuggySession())
+
+        try:
+            encoder = semantic._load_text_encoder()
+            assert encoder is not None
+            with pytest.raises(AssertionError, match="programmer bug"):
+                encoder("database connection")
+        finally:
+            self._reset_encoder_cache(semantic)
+
+    def test_semantic_score_expected_encoder_fault_is_empty(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        conn = self._embedding_conn(tmp_path)
+
+        def _expected_encoder_failure(_text):
+            raise ValueError("bad encoder input")
+
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: _expected_encoder_failure)
+
+        assert semantic.semantic_score(conn, [1], "database connection") == {}
+
+    def test_semantic_score_programmer_fault_bubbles(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        conn = self._embedding_conn(tmp_path)
+
+        def _unexpected_encoder_failure(_text):
+            raise AssertionError("programmer bug")
+
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: _unexpected_encoder_failure)
+
+        with pytest.raises(AssertionError, match="programmer bug"):
+            semantic.semantic_score(conn, [1], "database connection")
 
 
 class TestLearnedRankerFallback:
