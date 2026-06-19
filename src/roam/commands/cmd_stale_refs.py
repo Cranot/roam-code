@@ -1773,7 +1773,7 @@ def _check_external_urls_parallel(
             url = future_to_url[fut]
             try:
                 results[url] = fut.result()
-            except Exception:
+            except (OSError, ValueError):
                 results[url] = (None, [])
     return results
 
