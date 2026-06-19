@@ -152,7 +152,7 @@ def post_check_run(
     except urllib.error.HTTPError as e:
         try:
             err_text = e.read().decode("utf-8", errors="replace")
-        except Exception:
+        except OSError:
             err_text = str(e)
         return {"ok": False, "status": e.code, "body": err_text, "error": f"http_{e.code}"}
     except (urllib.error.URLError, OSError) as e:
