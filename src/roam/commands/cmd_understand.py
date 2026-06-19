@@ -607,7 +607,7 @@ def _detect_patterns_summary(conn):
                     "count": r["impl_count"],
                 }
             )
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except sqlite3.Error as _exc:
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_understand", _exc)
