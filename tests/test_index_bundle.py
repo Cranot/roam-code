@@ -105,6 +105,24 @@ class TestReadSchemaVersion:
     def test_missing_file_returns_none(self, tmp_path):
         assert _read_schema_version(tmp_path / "nope.db") is None
 
+    def test_malformed_sqlite_returns_none(self, tmp_path):
+        bad_db = tmp_path / "bad.db"
+        bad_db.write_text("not a sqlite database", encoding="utf-8")
+
+        assert _read_schema_version(bad_db) is None
+
+    def test_unexpected_errors_propagate(self, tmp_path, monkeypatch):
+        index_path = tmp_path / "index.db"
+        index_path.write_bytes(b"placeholder")
+
+        def broken_connection(*args, **kwargs):
+            raise RuntimeError("programmer bug")
+
+        monkeypatch.setitem(_read_schema_version.__globals__, "get_connection", broken_connection)
+
+        with pytest.raises(RuntimeError, match="programmer bug"):
+            _read_schema_version(index_path)
+
 
 # ---------------------------------------------------------------------------
 # Round-trip: export → verify → import
