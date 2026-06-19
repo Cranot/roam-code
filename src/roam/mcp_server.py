@@ -9272,7 +9272,7 @@ def rules_validate(
 
 
 @_tool(name="roam_suggest_reviewers", description="Suggest optimal code reviewers for changed files.")  # W459
-def suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, root: str = ".") -> dict:
+def mcp_suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, root: str = ".") -> dict:
     """Suggest optimal code reviewers for changed files.
 
     WHEN TO USE: Call this before creating a PR to find the best reviewers.
