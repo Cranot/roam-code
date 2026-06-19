@@ -1,13 +1,12 @@
 """Tests for the fast-startup MCP wrapper (``roam.commands.cmd_mcp``).
 
-Regression guard for the eval finding in
-``internal/dogfood/evals/mcp/2026-05-12-startup-timeout.md``: ``roam mcp``
-booted in ~38 s on a 22 MB index because it ran a synchronous full
-reindex before ``mcp.run()``. The wrapper in ``cmd_mcp`` swaps that
-for a fast mtime-only ``check_stale`` so the server boots in under a
-second on the common case (index fresh) and emits a stderr warning
-on the rare case (index stale) rather than blocking past Claude
-Code's 30 s connect timeout.
+Regression guard for the private MCP startup-timeout eval finding:
+``roam mcp`` booted in ~38 s on a 22 MB index because it ran a
+synchronous full reindex before ``mcp.run()``. The wrapper in
+``cmd_mcp`` swaps that for a fast mtime-only ``check_stale`` so the
+server boots in under a second on the common case (index fresh) and
+emits a stderr warning on the rare case (index stale) rather than
+blocking past Claude Code's 30 s connect timeout.
 
 We deliberately avoid the full subprocess to keep the suite robust on
 machines without ``fastmcp`` installed; instead we monkey-patch the
@@ -293,6 +292,27 @@ def test_check_stale_filesystem_error_is_safe(stub_mcp_server, monkeypatch):
     assert result.exit_code == 0, result.output
     # Even on the exception path we still skip the heavy reindex.
     assert stub_mcp_server["no_auto_index"] is True
+
+
+def test_check_stale_unexpected_error_propagates(stub_mcp_server, monkeypatch):
+    """Programmer-class ``check_stale`` failures must not be swallowed.
+
+    The wrapper catches expected import/filesystem failures only. A broad
+    ``except Exception`` here would hide real bugs and still boot the server.
+    """
+
+    def boom(sensitivity="medium"):
+        raise RuntimeError("programmer bug")
+
+    monkeypatch.setattr("roam.commands.stale_index.check_stale", boom)
+
+    from roam.commands.cmd_mcp import mcp
+
+    runner = CliRunner()
+    with pytest.raises(RuntimeError, match="programmer bug"):
+        runner.invoke(mcp, [], standalone_mode=False, catch_exceptions=False)
+
+    assert stub_mcp_server == {}
 
 
 # ---------------------------------------------------------------------------
