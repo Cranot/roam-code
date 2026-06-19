@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import pickle
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -497,6 +498,7 @@ def _parallel_extract_func_infos(
     else:
         # Parallel path — ProcessPool because work is CPU-bound (tree-sitter).
         from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures.process import BrokenProcessPool
 
         workers = max(1, min(os.cpu_count() or 4, _PARALLEL_MAX_WORKERS))
         all_records = []
@@ -506,7 +508,7 @@ def _parallel_extract_func_infos(
                 # ex.map returns in submission order, preserving determinism.
                 for recs in ex.map(_extract_func_records_pickleable_starmap, args):
                     all_records.extend(recs)
-        except Exception:
+        except (BrokenProcessPool, OSError, RuntimeError, pickle.PicklingError, AttributeError, TypeError):
             # If process pool fails (sandbox/pickling), fall back to serial.
             all_records = []
             for fr in file_rows:
