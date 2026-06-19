@@ -969,7 +969,7 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
             envelope = json_envelope("sbom", **envelope_kwargs)
             try:
                 output_text = to_json(envelope)
-            except Exception:
+            except (TypeError, ValueError):
                 output_text = "{}"
     else:
         output_text = _run_check_am(
