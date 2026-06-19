@@ -100,7 +100,7 @@ def why_fail(ctx, target, days, max_hops, limit) -> None:
                 for n in lengths:
                     if n != s:
                         reach.add(n)
-            except Exception:
+            except nx.NodeNotFound:
                 continue
 
         if not reach:
@@ -195,7 +195,7 @@ def why_fail(ctx, target, days, max_hops, limit) -> None:
 
         try:
             day = datetime.fromtimestamp(int(s["last_touched"])).strftime("%Y-%m-%d")
-        except Exception:
+        except (OSError, OverflowError, TypeError, ValueError):
             day = "?"
         loc_str = f"{s['file']} ({day})"
         click.echo(f"{s['name'][:36]:<36}  {s['kind'][:6]:<6}  {s['pagerank']:>8.5f}  {loc_str}")
