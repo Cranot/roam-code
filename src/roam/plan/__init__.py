@@ -11,14 +11,12 @@ from .compiler import (
     PlanV0,
     compile_for_artifact,
     compile_plan,
-    plan_hash,
     select_artifact,
 )
 
 __all__ = [
     "PlanV0",
     "compile_plan",
-    "plan_hash",
     "select_artifact",
     "compile_for_artifact",
 ]
