@@ -257,7 +257,7 @@ def _section_self_magic(root: Path, threshold: int = _MAGIC_THRESHOLD) -> dict:
         return {"state": "not_initialized"}
     try:
         occurrences = _scan_file(target, threshold=threshold, include_trivial=False)
-    except Exception:
+    except (OSError, SyntaxError):
         return {"state": "not_initialized"}
 
     by_value: dict[int | float, list[tuple[int, str]]] = {}

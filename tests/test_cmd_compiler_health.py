@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_compiler_health import (
@@ -186,6 +187,25 @@ def test_section_self_magic_finds_repeats(tmp_path):
     values = {f["value"] for f in sect["top"]}
     assert 42 in values
     assert 99 in values
+
+
+def test_section_self_magic_only_degrades_expected_scan_errors(tmp_path, monkeypatch):
+    _seed_compiler(tmp_path, with_magic=True)
+
+    import roam.commands.cmd_magic_numbers as magic_numbers
+
+    def raise_syntax_error(*args, **kwargs):
+        raise SyntaxError("synthetic parse failure")
+
+    monkeypatch.setattr(magic_numbers, "_scan_file", raise_syntax_error)
+    assert _section_self_magic(tmp_path)["state"] == "not_initialized"
+
+    def raise_runtime_error(*args, **kwargs):
+        raise RuntimeError("synthetic scanner bug")
+
+    monkeypatch.setattr(magic_numbers, "_scan_file", raise_runtime_error)
+    with pytest.raises(RuntimeError, match="synthetic scanner bug"):
+        _section_self_magic(tmp_path)
 
 
 # ----------------------------------------------------------------------
