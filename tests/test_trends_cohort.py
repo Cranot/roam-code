@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import click
@@ -156,3 +158,42 @@ def test_trends_cohort_disallows_record(cohort_project):
     )
     assert result.exit_code != 0
     assert "Cannot combine --record with --cohort-by-author" in result.output
+
+
+def test_cohort_ai_ratio_unexpected_error_propagates(monkeypatch):
+    from roam.commands import cmd_ai_ratio, cmd_trends
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE git_commits (
+            id INTEGER PRIMARY KEY,
+            author TEXT,
+            timestamp INTEGER,
+            message TEXT
+        );
+        CREATE TABLE git_file_changes (
+            commit_id INTEGER,
+            path TEXT,
+            lines_added INTEGER,
+            lines_removed INTEGER
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO git_commits (id, author, timestamp, message) VALUES (?, ?, ?, ?)",
+        (1, "Human Dev", int(time.time()), "manual edit"),
+    )
+    conn.execute(
+        "INSERT INTO git_file_changes (commit_id, path, lines_added, lines_removed) VALUES (?, ?, ?, ?)",
+        (1, "src/example.py", 12, 0),
+    )
+
+    def _raise_unexpected(conn, since_days):
+        raise RuntimeError("unexpected ai-ratio failure")
+
+    monkeypatch.setattr(cmd_ai_ratio, "analyse_ai_ratio", _raise_unexpected)
+
+    with pytest.raises(RuntimeError, match="unexpected ai-ratio failure"):
+        cmd_trends._build_cohort_analysis(conn, days=30)
