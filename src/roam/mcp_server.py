@@ -10129,7 +10129,7 @@ def dashboard_tool(root: str = ".") -> dict:
     name="roam_ai_readiness",
     description="AI readiness score (0-100): how effectively AI agents can work on this codebase.",
 )
-def ai_readiness(threshold: int = 0, root: str = ".") -> dict:
+def ai_readiness_tool(threshold: int = 0, root: str = ".") -> dict:
     """Estimate AI agent effectiveness on this codebase across 7 dimensions.
 
     WHEN TO USE: Call this to assess whether AI agents will work well
