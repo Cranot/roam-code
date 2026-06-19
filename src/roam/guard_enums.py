@@ -59,14 +59,6 @@ RISK_LEVELS: tuple[str, ...] = (
     "medium",
     "high",
 )
-RISK_PRECEDENCE: dict[str, int] = {v: i for i, v in enumerate(RISK_LEVELS)}
-
-
-def promote_risk(current: str, candidate: str) -> str:
-    """Return the more severe of two risk levels."""
-    if RISK_PRECEDENCE.get(candidate, -1) > RISK_PRECEDENCE.get(current, -1):
-        return candidate
-    return current
 
 
 # ---- executed check statuses ----
