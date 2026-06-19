@@ -777,7 +777,7 @@ def _pagerank_scores(
 
             G = build_symbol_graph(conn)
             full = personalized_pagerank(G, seeds)
-        except Exception:
+        except (ImportError, sqlite3.Error):
             full = {}
         scores = {sid: full.get(sid, 0.0) for sid in candidate_set}
         if any(v > 0 for v in scores.values()):
