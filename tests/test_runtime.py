@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -409,6 +410,19 @@ class TestHotspots:
 
 
 class TestCliIngestTrace:
+    def test_cli_ingest_trace_callback_name_is_distinct_from_mcp_wrapper(self):
+        """CLI bridge name stays distinct from the MCP wrapper function."""
+        import roam.mcp_server as mcp_server
+        from roam.cli import _COMMANDS
+        from roam.commands.cmd_ingest_trace import ingest_trace_cmd
+
+        mcp_function_names = {
+            name for name, obj in inspect.getmembers(mcp_server, inspect.isfunction)
+        }
+        assert _COMMANDS["ingest-trace"] == ("roam.commands.cmd_ingest_trace", "ingest_trace_cmd")
+        assert ingest_trace_cmd.callback.__name__ == "ingest_trace_cmd"
+        assert ingest_trace_cmd.callback.__name__ not in mcp_function_names
+
     def test_cli_ingest_trace_runs(self, runtime_project, generic_trace, cli_runner):
         """Exit code 0."""
         result = invoke_cli(cli_runner, ["ingest-trace", generic_trace], cwd=runtime_project)
