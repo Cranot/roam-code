@@ -207,6 +207,51 @@ class TestLearnedRankerFallback:
             result = learned_ranker.score([{"symbol_id": 1, "fts_score": 1.0}], "task")
         assert result == {} or result is None
 
+    def test_is_available_false_when_model_file_is_invalid(self, tmp_path, monkeypatch):
+        """A LightGBM model-load failure is an expected unavailable-model path."""
+        from roam.retrieve import learned_ranker
+
+        class FakeLightGBMError(Exception):
+            pass
+
+        fake_lightgbm = types.ModuleType("lightgbm")
+        fake_lightgbm.basic = types.SimpleNamespace(LightGBMError=FakeLightGBMError)
+
+        def _raise_invalid_model(*args, **kwargs):
+            raise FakeLightGBMError("invalid model")
+
+        fake_lightgbm.Booster = _raise_invalid_model
+        model_path = tmp_path / "bad-model.lgbm"
+        model_path.write_text("not a LightGBM model", encoding="utf-8")
+
+        monkeypatch.setenv("ROAM_LEARNED_MODEL", str(model_path))
+        monkeypatch.setitem(sys.modules, "lightgbm", fake_lightgbm)
+
+        assert learned_ranker.is_available() is False
+
+    def test_model_loader_does_not_swallow_unexpected_booster_errors(self, tmp_path, monkeypatch):
+        """Unexpected Booster failures should not be hidden as fallback state."""
+        from roam.retrieve import learned_ranker
+
+        class FakeLightGBMError(Exception):
+            pass
+
+        fake_lightgbm = types.ModuleType("lightgbm")
+        fake_lightgbm.basic = types.SimpleNamespace(LightGBMError=FakeLightGBMError)
+
+        def _raise_unexpected_error(*args, **kwargs):
+            raise RuntimeError("unexpected booster failure")
+
+        fake_lightgbm.Booster = _raise_unexpected_error
+        model_path = tmp_path / "bad-model.lgbm"
+        model_path.write_text("not a LightGBM model", encoding="utf-8")
+
+        monkeypatch.setenv("ROAM_LEARNED_MODEL", str(model_path))
+        monkeypatch.setitem(sys.modules, "lightgbm", fake_lightgbm)
+
+        with pytest.raises(RuntimeError, match="unexpected booster failure"):
+            learned_ranker.is_available()
+
 
 class TestClustersLeidenFallback:
     """``detect_clusters`` falls back to Louvain when leiden isn't available."""
