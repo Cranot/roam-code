@@ -47,15 +47,6 @@ BATCH_LIKE_WITH_PATHS_SQL = (
     "LIMIT ?"
 )
 
-
-def fts_query_for(q: str) -> str:
-    """Build an FTS5 MATCH expression for a raw search query string."""
-    tokens = q.replace("_", " ").replace(".", " ").split()
-    if tokens:
-        return " OR ".join(f'"{t}"*' for t in tokens)
-    return f'"{q}"*'
-
-
 def batch_search_one(
     conn,
     q: str,
