@@ -286,11 +286,10 @@ def _check_affected_tests(conn, sym_ids, file_paths):
     # possible — noted preflight suggesting `pytest tests/`
     # for Vitest projects.
     try:
-        from roam.db.connection import find_project_root
         from roam.output.project_shape import _detect_test_runner
 
         runner_name, _runner_cmd = _detect_test_runner(find_project_root())
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         runner_name = None
     runner_token = "pytest"
     if runner_name == "vitest":
