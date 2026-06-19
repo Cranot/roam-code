@@ -383,8 +383,8 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
     ensure_index()
 
     # W1086 (Pattern 1B / Pattern 2): accumulator for silent-fallback warnings.
-    # The two consumer sites are the count-probe ``except Exception`` below
-    # (advisory: symbol_metrics unreadable, treat as empty) and the
+    # The two consumer sites are the count-probe ``sqlite3.OperationalError``
+    # handler below (advisory: symbol_metrics unreadable, treat as empty) and the
     # ``--persist`` ``except sqlite3.OperationalError`` further down (pre-W89
     # findings table missing, persist silently no-ops). Per-row ``_safe_metric``
     # KeyErrors stay silent — best-effort per cell, would spam the accumulator.
@@ -442,7 +442,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
         # Check if symbol_metrics table has data
         try:
             count = conn.execute("SELECT COUNT(*) FROM symbol_metrics").fetchone()[0]
-        except Exception:
+        except sqlite3.OperationalError:
             count = -1
             warnings.append("symbol_metrics count probe failed; treating as empty")
         if count <= 0:
