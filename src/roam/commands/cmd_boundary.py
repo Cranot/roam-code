@@ -531,7 +531,7 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
             _import_edges = (
                 conn.execute("SELECT COUNT(*) FROM edges WHERE kind IN ('imports', 'import')").fetchone()[0] or 0
             )
-        except Exception:
+        except sqlite3.OperationalError:
             _import_edges = -1  # unknown — schema may differ
 
     n_public = sum(1 for f in all_findings if f["kind"] == "public_by_accident")
