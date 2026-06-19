@@ -304,7 +304,7 @@ def start_watcher(
     observer.schedule(_Handler(), str(project_root), recursive=True)
     try:
         observer.start()
-    except Exception:
+    except (OSError, RuntimeError):
         return None
 
     handle = _Watcher()
