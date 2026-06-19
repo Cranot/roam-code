@@ -103,7 +103,7 @@ def _resolve_target_files(conn, file_args, staged, root):
     help="Restrict to files in the git staging area",
 )
 @click.pass_context
-def orchestrate(ctx, n_agents, file_args, staged):
+def orchestrate_cmd(ctx, n_agents, file_args, staged):
     """Partition the codebase for parallel multi-agent work.
 
     Assigns exclusive write zones, read-only dependencies, interface
@@ -436,3 +436,6 @@ def orchestrate(ctx, n_agents, file_args, staged):
         # warning rides into ``_w607ds_warnings_out`` even when text-mode
         # output is human-targeted (JSON mode carries the structured
         # disclosure surface).
+
+
+orchestrate = orchestrate_cmd
