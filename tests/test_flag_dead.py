@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
+from roam.commands import cmd_flag_dead
 from tests.conftest import (
     assert_json_envelope,
     git_init,
@@ -82,6 +85,36 @@ class TestFlagDeadSmoke:
         monkeypatch.chdir(flag_project)
         result = invoke_cli(cli_runner, ["flag-dead", "--include-tests"], cwd=flag_project)
         assert result.exit_code == 0
+
+    def test_index_read_database_error_falls_back_to_filesystem(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "app.py").write_text(
+            "def enabled(client):\n"
+            "    return client.variation('stale-flag', False)\n",
+            encoding="utf-8",
+        )
+
+        def fake_open_db(*_args, **_kwargs):
+            raise sqlite3.DatabaseError("synthetic index read failure")
+
+        monkeypatch.setattr(cmd_flag_dead, "open_db", fake_open_db)
+
+        findings = cmd_flag_dead.scan_project_for_flags(project, use_index=True)
+
+        assert [finding["flag_name"] for finding in findings] == ["stale-flag"]
+
+    def test_index_read_unexpected_error_is_not_swallowed(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        project.mkdir()
+
+        def fake_open_db(*_args, **_kwargs):
+            raise RuntimeError("synthetic programmer error")
+
+        monkeypatch.setattr(cmd_flag_dead, "open_db", fake_open_db)
+
+        with pytest.raises(RuntimeError, match="synthetic programmer error"):
+            cmd_flag_dead.scan_project_for_flags(project, use_index=True)
 
 
 class TestFlagDeadJSON:
