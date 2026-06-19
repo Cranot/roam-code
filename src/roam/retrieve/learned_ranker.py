@@ -100,7 +100,7 @@ def _load_model():
         return None
     try:
         return lgb.Booster(model_file=str(path))
-    except Exception:
+    except lgb.basic.LightGBMError:
         return None
 
 
