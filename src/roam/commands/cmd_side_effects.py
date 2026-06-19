@@ -92,7 +92,7 @@ def side_effects_cmd(ctx, symbol, kind, top):
 
     try:
         repo_root = find_project_root()
-    except Exception:
+    except (OSError, RuntimeError):
         repo_root = None
 
     with open_db(readonly=True) as conn:
