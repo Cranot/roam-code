@@ -648,7 +648,7 @@ def _build_cohort_analysis(conn, days: int) -> dict:
             prob = item.get("probability")
             if isinstance(path, str) and isinstance(prob, (int, float)):
                 ai_prob_by_file[path] = float(prob)
-    except Exception:
+    except sqlite3.Error:
         ai_prob_by_file = {}
 
     # Blame-based author attribution for high-churn files.
