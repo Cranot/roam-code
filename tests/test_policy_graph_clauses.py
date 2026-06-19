@@ -17,9 +17,12 @@ so the suite runs sub-second per test.
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import index_in_process  # noqa: E402
@@ -185,6 +188,27 @@ class TestImportsFrom:
 
 class TestClonesWith:
     """``clones_with`` clause: clone_pairs membership."""
+
+    def test_clones_with_missing_clone_pairs_table_returns_not_indexed(self):
+        """Pre-clone schemas without ``clone_pairs`` disclose not-indexed state."""
+        conn = sqlite3.connect(":memory:")
+        try:
+            matches, evidence = check_clones_with(conn, symbol_a="alpha", symbol_b="beta")
+        finally:
+            conn.close()
+
+        assert matches is False
+        assert evidence["status"] == "not_indexed"
+
+    def test_clones_with_unexpected_operational_error_propagates(self):
+        """Only the expected missing-table probe is downgraded to not-indexed."""
+
+        class BrokenConn:
+            def execute(self, *_args, **_kwargs):
+                raise sqlite3.OperationalError("database is locked")
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            check_clones_with(BrokenConn(), symbol_a="alpha", symbol_b="beta")
 
     def test_clones_with_positive(self, tmp_path):
         """Two near-identical functions are indexed; clone_pairs records them."""

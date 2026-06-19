@@ -25,6 +25,7 @@ field for ``target_not_indexed`` cases. Field names match
 
 from __future__ import annotations
 
+import sqlite3
 from collections import deque
 from typing import Any
 
@@ -357,7 +358,10 @@ def check_clones_with(
     #    from "ran but no match".
     try:
         any_row = conn.execute("SELECT 1 FROM clone_pairs LIMIT 1").fetchone()
-    except Exception:
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if "no such table" not in msg or "clone_pairs" not in msg:
+            raise
         any_row = None
     if any_row is None:
         return False, {
