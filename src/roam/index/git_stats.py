@@ -190,7 +190,7 @@ def _recorded_head_for_log(conn: sqlite3.Connection) -> str:
 
     W985-followup helper for the "HEAD unchanged" skip log. Returns the
     truncated SHA when the manifest is readable AND has a recorded HEAD;
-    returns ``"unknown"`` otherwise. Defensive: SQLite read failures collapse
+    returns ``"unknown"`` otherwise. Defensive: manifest read failures collapse
     to ``"unknown"`` rather than raising — this is a diagnostic log call,
     not a control-flow check, and the caller has already confirmed the
     skip is legitimate via ``_head_unchanged_since_last_run``.
@@ -199,7 +199,7 @@ def _recorded_head_for_log(conn: sqlite3.Connection) -> str:
 
     try:
         prev = latest_manifest(conn)
-    except sqlite3.Error:
+    except (sqlite3.Error, RuntimeError):
         return "unknown"
     if not prev:
         return "unknown"
@@ -265,7 +265,7 @@ def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path)
 _COMMIT_SEP = "COMMIT:"
 
 
-def read_git_log_commits(
+def _parse_git_log(
     project_root: Path,
     max_commits: int = 5000,
     since: str | None = None,
@@ -380,10 +380,7 @@ def read_git_log_commits(
     return commits
 
 
-# Backwards-compatible public name used by tests and external callers. Keep this
-# as an alias so the indexer no longer defines a second ``parse_git_log``
-# function alongside ``cmd_dev_profile.parse_git_log``.
-parse_git_log = read_git_log_commits
+parse_git_log = _parse_git_log
 
 
 def _normalize_numstat_path(raw: str) -> str:
