@@ -90,7 +90,7 @@ def _read_file_lines(project_root: Path, rel_path: str) -> list[str]:
     path = project_root / rel_path
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return []
     return text.splitlines()
 
