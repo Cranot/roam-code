@@ -34,11 +34,6 @@ VERDICT_PRECEDENCE: dict[str, int] = {v: i for i, v in enumerate(VERDICTS)}
 # Higher index = more severe. blocked > needs_review > pass_with_warnings > pass.
 
 
-def is_more_severe(a: str, b: str) -> bool:
-    """Return True if verdict `a` is more severe than `b`."""
-    return VERDICT_PRECEDENCE.get(a, -1) > VERDICT_PRECEDENCE.get(b, -1)
-
-
 # ---- modes ----
 
 MODES: tuple[str, ...] = (
