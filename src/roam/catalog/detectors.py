@@ -72,7 +72,6 @@ __all__ = [
     "detect_defer_in_loop",
     "detect_io_in_loop",
     "detect_linear_search",
-    "detect_list_membership",
     "detect_list_prepend",
     "detect_loop_invariant_call",
     "detect_loop_lookup",
@@ -900,57 +899,6 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
                 r,
                 "Linear scan in function that implies sorted data",
                 "low",
-            )
-        )
-    return results
-
-
-@algorithm_detector(
-    task_id="membership",
-    languages=(),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
-    """Nested loops with equality comparisons — structural pattern for
-    O(n^2) membership testing regardless of function name.
-
-    Note on the LIKE patterns: ``_`` is a single-char wildcard in SQL
-    LIKE, so ``LIKE '%in_%'`` matches *any* identifier with "in" followed
-    by another char (``find_x``, ``intent``, ``something_else`` — all
-    spurious hits). We use ``ESCAPE '\\'`` and double-write the literal
-    ``\\_`` so we only match the intended idiomatic prefixes
-    (``has_x``, ``is_in_y``, ``contains_z``).
-    """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_with_compare, ms.subscript_in_loops, "
-        "ms.has_nested_loops, ms.calls_in_loops "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE s.kind IN ('function', 'method') "
-        "AND ms.has_nested_loops = 1 "
-        "AND ms.loop_with_compare = 1 "
-        "AND ms.subscript_in_loops = 1 "
-        "AND (s.name LIKE '%contain%' OR s.name LIKE '%member%' "
-        "  OR s.name LIKE '%exist%' OR s.name LIKE '%has\\_%' ESCAPE '\\' "
-        "  OR s.name LIKE '%in\\_%' ESCAPE '\\' OR s.name LIKE '%check%' "
-        "  OR s.name LIKE '%includes%' OR s.name LIKE '%Includes%' "
-        "  OR s.name LIKE '%lookup%' OR s.name LIKE '%match%')"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        results.append(
-            _finding(
-                "membership",
-                "list-scan",
-                r,
-                "Nested loops with comparisons for membership check",
-                "medium",
             )
         )
     return results
@@ -4621,7 +4569,6 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
 _MATH_DETECTORS = [
     ("sorting", "manual-sort", detect_manual_sort),
     ("search-sorted", "linear-scan", detect_linear_search),
-    ("membership", "list-scan", detect_list_membership),
     ("string-concat", "loop-concat", detect_string_concat_loop),
     ("max-min", "manual-loop", detect_manual_maxmin),
     ("manual-power", "loop-multiply", detect_manual_power),
