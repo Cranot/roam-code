@@ -69,7 +69,7 @@ def _open() -> sqlite3.Connection | None:
                 )"""
             )
         return conn
-    except Exception:
+    except (OSError, sqlite3.Error):
         return None
 
 
