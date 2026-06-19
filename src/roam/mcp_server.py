@@ -10963,7 +10963,7 @@ def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root
     description="Critical call paths with zero test protection, ranked by risk.",
     task_mode="optional",
 )
-def path_coverage(from_pattern: str = "", to_pattern: str = "", max_depth: int = 8, root: str = ".") -> dict:
+def path_coverage_tool(from_pattern: str = "", to_pattern: str = "", max_depth: int = 8, root: str = ".") -> dict:
     """Find critical call paths with zero test protection.
 
     WHEN TO USE: Call this to discover untested paths from entry
