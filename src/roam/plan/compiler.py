@@ -4829,6 +4829,21 @@ def _probe_owner_for_task(task: str, named_paths: list[str], cwd: str | None) ->
     }
 
 
+def _resolve_probe_file_under_cwd(target: str, cwd: str | None) -> Path | None:
+    """Resolve a probe target to a file path contained by cwd."""
+    if not target or not cwd:
+        return None
+    try:
+        root = Path(cwd).resolve()
+        candidate = Path(target)
+        full = candidate if candidate.is_absolute() else root / candidate
+        resolved = full.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved
+
+
 def _probe_env_vars_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W110 — for env-var audit tasks, grep the named file for
     `os.environ` / `os.getenv` patterns and embed the names + lines."""
@@ -4837,7 +4852,9 @@ def _probe_env_vars_for_task(task: str, named_paths: list[str], cwd: str | None)
     if not named_paths:
         return None
     target = named_paths[0]
-    full = os.path.join(cwd, target) if cwd and not os.path.isabs(target) else target
+    full = _resolve_probe_file_under_cwd(target, cwd)
+    if full is None:
+        return None
     try:
         with open(full, encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
