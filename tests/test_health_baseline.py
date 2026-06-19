@@ -264,6 +264,54 @@ def test_health_baseline_last_resolves_most_recent(cli_runner, indexed_project, 
     assert delta["baseline_git_branch"] == "release/v1"
 
 
+def test_health_baseline_auto_filesystem_root_error_falls_back(monkeypatch):
+    """--baseline auto falls back to cwd only for filesystem root failures."""
+    from roam.commands import cmd_health
+    import roam.db.connection as db_connection
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO snapshots (timestamp, git_branch, git_commit, health_score) VALUES (?, ?, ?, ?)",
+        (123, "main", "abc1234", 90),
+    )
+
+    def _raise_oserror():
+        raise OSError("cwd vanished")
+
+    monkeypatch.setattr(db_connection, "find_project_root", _raise_oserror)
+    monkeypatch.setattr(cmd_health, "_resolve_main_branch", lambda _root: "main")
+
+    baseline = cmd_health._find_baseline_snapshot(conn, "auto")
+
+    assert baseline is not None
+    assert baseline["git_branch"] == "main"
+
+
+def test_health_baseline_auto_project_root_programmer_error_propagates(monkeypatch):
+    """--baseline auto must not swallow bug-class project-root failures."""
+    from roam.commands import cmd_health
+    import roam.db.connection as db_connection
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)"
+    )
+
+    def _raise_typeerror():
+        raise TypeError("bad find_project_root refactor")
+
+    monkeypatch.setattr(db_connection, "find_project_root", _raise_typeerror)
+    monkeypatch.setattr(cmd_health, "_resolve_main_branch", lambda _root: "main")
+
+    with pytest.raises(TypeError, match="bad find_project_root refactor"):
+        cmd_health._find_baseline_snapshot(conn, "auto")
+
+
 def test_health_baseline_dead_exports_query_catches_only_sqlite_errors(monkeypatch, capsys):
     """Auxiliary dead-export failures degrade only for expected SQLite errors."""
     from roam.commands import cmd_health

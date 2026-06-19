@@ -910,7 +910,7 @@ def _find_baseline_snapshot(conn, ref: str) -> dict | None:
 
         try:
             root = find_project_root()
-        except Exception:
+        except OSError:
             root = Path(".")
         branch = _resolve_main_branch(root)
         row = conn.execute(
