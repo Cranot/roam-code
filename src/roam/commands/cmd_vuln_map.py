@@ -36,7 +36,7 @@ from roam.output.formatter import json_envelope, to_json
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command("vuln-map")
 @click.option(
     "--npm-audit",
     "npm_audit_path",
@@ -73,7 +73,7 @@ from roam.output.formatter import json_envelope, to_json
     help="Path to generic JSON vulnerability list",
 )
 @click.pass_context
-def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_path):
+def vuln_map_cmd(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_path):
     """Ingest vulnerability scanner reports and match to codebase symbols.
 
     Reads vulnerability reports from npm-audit, pip-audit, Trivy, OSV, or
