@@ -33,12 +33,12 @@ from roam.output.formatter import json_envelope, to_json
     ai_safe=True,
     requires_index=False,
 )
-@click.command()
+@click.command(name="index")
 @click.option("--force", is_flag=True, help="Force full reindex")
 @click.option("--verbose", is_flag=True, help="Show detailed warnings during indexing")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress progress output")
 @click.pass_context
-def index(ctx, force, verbose, quiet):
+def run_index_command(ctx, force, verbose, quiet):
     """Build or rebuild the codebase index.
 
     Unlike ``init`` (which bootstraps the project with config files and
@@ -171,3 +171,6 @@ def index(ctx, force, verbose, quiet):
             click.echo(f"VERDICT: {_index_verdict}")
             click.echo(f"  Completed in {elapsed:.1f}s")
             click.echo("  Hint: check ROAM_DB_DIR / cloud-sync; run `roam doctor` for a diagnostic dump.")
+
+
+index = run_index_command
