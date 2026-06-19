@@ -219,6 +219,18 @@ class TestClassifyFinding:
         assert out is None
 
     @pytest.mark.asyncio
+    async def test_mcp_sampler_failure_returns_none(self):
+        from fastmcp.exceptions import McpError
+        from mcp.types import INTERNAL_ERROR, ErrorData
+
+        class _RaisingCtx:
+            async def sample(self, *args, **kwargs):
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message="sampling failed"))
+
+        out = await classify_finding(_BASE_FINDING, _RaisingCtx())
+        assert out is None
+
+    @pytest.mark.asyncio
     async def test_unsupported_sampling_returns_none(self):
         class _UnsupportedSamplingCtx:
             async def sample(self, *args, **kwargs):
