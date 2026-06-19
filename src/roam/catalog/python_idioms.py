@@ -467,13 +467,17 @@ def _coerce_idiom_scope(file_ids) -> set[int] | None:
     return set(file_ids) if file_ids is not None else None
 
 
+def _set_idiom_scope_value(scope_globals: dict[str, object], file_ids) -> None:
+    """Set an idiom detector pack's module-global file scope."""
+    scope_globals["_SCOPE_FILE_IDS"] = _coerce_idiom_scope(file_ids)
+
+
 def set_idiom_scope(file_ids) -> None:
     """Restrict subsequent idiom-detector runs to ``file_ids`` (None = all).
 
     Callers MUST reset to None in a ``finally`` (the scope is a module global, so
     a leaked scope would silently narrow an unrelated later run)."""
-    global _SCOPE_FILE_IDS
-    _SCOPE_FILE_IDS = _coerce_idiom_scope(file_ids)
+    _set_idiom_scope_value(globals(), file_ids)
 
 
 def _python_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:

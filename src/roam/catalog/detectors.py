@@ -4929,7 +4929,7 @@ def run_detectors(
     # never leaks into a later unscoped run.
     scope_ids = {int(f) for f in scope_file_ids} if scope_file_ids is not None else None
     _idiom_scope_reset = None  # bound to set_idiom_scope once it's applied
-    _js_idiom_scope_reset = None  # bound to js_idioms.set_idiom_scope once applied
+    _js_idiom_scope_reset = None  # bound to set_js_idiom_scope once applied
     _catalog_scope_applied = False
     if scope_ids is not None:
         try:
@@ -4941,7 +4941,7 @@ def run_detectors(
             log.warning("run_detectors: could not apply idiom scope: %s", exc)
         # The JS pack keeps its own module-global scope; apply it the same way.
         try:
-            from roam.catalog.js_idioms import set_idiom_scope as set_js_idiom_scope
+            from roam.catalog.js_idioms import set_js_idiom_scope
 
             set_js_idiom_scope(scope_ids)
             _js_idiom_scope_reset = set_js_idiom_scope  # captured for the finally

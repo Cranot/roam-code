@@ -2649,7 +2649,7 @@ def _collect_scoped_idiom_findings(conn, file_ids: list[int]) -> list:
     # the deep sweep language-honest instead of silently Python-only).
     try:
         from roam.catalog.js_idioms import applicable_js_idiom_detectors
-        from roam.catalog.js_idioms import set_idiom_scope as set_js_idiom_scope
+        from roam.catalog.js_idioms import set_js_idiom_scope
     except Exception as exc:  # noqa: BLE001 — deep mode is optional/advisory
         from roam.observability import log_swallowed
 
