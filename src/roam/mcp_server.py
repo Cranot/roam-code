@@ -10414,7 +10414,7 @@ def agent_export(format: str = "claude", root: str = ".") -> dict:
     name="roam_visualize",
     description="Generate Mermaid/DOT architecture diagram with smart filtering.",
 )
-def visualize(
+def visualize_tool(
     focus: str = "",
     format: str = "mermaid",
     depth: int = 1,
@@ -10470,6 +10470,9 @@ def visualize(
     if file_level:
         args.append("--file-level")
     return _run_roam(args, root)
+
+
+visualize = visualize_tool
 
 
 @_tool(
