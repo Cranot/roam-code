@@ -405,12 +405,19 @@ def _extract_func_records_pickleable(
         path = Path(file_path)
         if not path.is_absolute():
             path = Path(project_root_str) / file_path
-        if not path.exists():
-            return []
+        exists = path.exists()
+    except (OSError, TypeError, ValueError):
+        return []
+
+    if not exists:
+        return []
+
+    try:
         tree, source, _lang = parse_file(path, language)
-        if tree is None or source is None:
-            return []
-    except Exception:
+    except (OSError, LookupError, ValueError):
+        return []
+
+    if tree is None or source is None:
         return []
 
     out: list[tuple] = []
