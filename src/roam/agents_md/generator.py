@@ -219,7 +219,7 @@ def _section_conventions(conn) -> dict[str, Any]:
 
     by_kind = result.get("by_kind", {}) or {}
     rows: list[dict[str, Any]] = []
-    # Stable order matching summarize_by_kind_text.
+    # Stable order for deterministic convention summaries.
     ordering = (
         "function",
         "class",
