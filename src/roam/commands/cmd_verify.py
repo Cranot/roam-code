@@ -90,9 +90,10 @@ _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # Public module entrypoints that legitimately repeat across independent
 # domains. Exact-name matching alone is not useful signal for these API shapes:
 # ``load_rules`` exists in architecture-rule and taint-rule engines with
-# different schemas/return types, and ``verify`` exists as both a CLI command
-# entrypoint and an MCP wrapper.
-_DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules", "verify"})
+# different schemas/return types. CLI command entrypoints mirrored by MCP
+# wrappers are handled by a path-aware exemption below so real same-name
+# helpers are still checked.
+_DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 
 
 def _blast_radius_by_file(conn, files):
@@ -1319,6 +1320,27 @@ def _same_role_external_symbol(existing, new_sym, new_ids: set[int], role: str) 
     )
 
 
+def _command_entrypoint_name_for_path(path: str) -> str | None:
+    normalised = path.replace("\\", "/")
+    prefix = "src/roam/commands/cmd_"
+    if not normalised.startswith(prefix) or not normalised.endswith(".py"):
+        return None
+    return normalised[len(prefix) : -len(".py")]
+
+
+def _is_mcp_cli_entrypoint_pair(new_sym, existing) -> bool:
+    """MCP tool shims intentionally mirror Click command entrypoint names."""
+    new_path = (new_sym["file_path"] or "").replace("\\", "/")
+    existing_path = (existing["file_path"] or "").replace("\\", "/")
+    if new_path == "src/roam/mcp_server.py":
+        command_name = _command_entrypoint_name_for_path(existing_path)
+    elif existing_path == "src/roam/mcp_server.py":
+        command_name = _command_entrypoint_name_for_path(new_path)
+    else:
+        return False
+    return command_name == new_sym["name"]
+
+
 def _exact_duplicate_violation(new_sym, existing) -> dict:
     name = new_sym["name"]
     return {
@@ -1337,7 +1359,9 @@ def _exact_duplicate_for_symbol(
     for existing in existing_by_name.get(new_sym["name"].lower(), []):
         # Cross-role matches (src fn vs its test/script/ci namesake) are
         # expected mirroring, not duplication -- compare within a role only.
-        if _same_role_external_symbol(existing, new_sym, new_ids, role):
+        if _same_role_external_symbol(existing, new_sym, new_ids, role) and not _is_mcp_cli_entrypoint_pair(
+            new_sym, existing
+        ):
             return _exact_duplicate_violation(new_sym, existing)
     return None
 
