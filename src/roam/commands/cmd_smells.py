@@ -347,7 +347,7 @@ def _file_role_lookup(conn) -> dict[str, str]:
     """
     try:
         rows = conn.execute("SELECT path, file_role FROM files").fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return {}
     return {
         (r["path"] if hasattr(r, "keys") else r[0]): (r["file_role"] if hasattr(r, "keys") else r[1]) or ""
@@ -674,7 +674,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
 
     try:
         project_root = find_project_root()
-    except Exception:
+    except (OSError, RuntimeError):
         project_root = None
 
     # W987 (Pattern 1 — warnings_out plumb-through): single accumulator
