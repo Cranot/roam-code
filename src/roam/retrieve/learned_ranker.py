@@ -50,6 +50,13 @@ except ImportError as _lgb_import_exc:  # pragma: no cover - exercised via test 
 else:
     _LIGHTGBM_IMPORT_ERROR = None
 
+try:
+    from lightgbm.basic import LightGBMError as _LightGBMError  # type: ignore
+except ImportError:  # pragma: no cover - covered by no-LightGBM test envs
+    _PREDICT_ERRORS: tuple[type[BaseException], ...] = (ValueError,)
+else:  # pragma: no cover - depends on optional LightGBM extra
+    _PREDICT_ERRORS = (ValueError, _LightGBMError)
+
 # 22-feature vector — all derivable from rerank.py's existing per-candidate
 # scores plus a couple of structural extras. Order is fixed so model
 # training and inference align.
@@ -177,7 +184,7 @@ def score(candidates: list[dict], task: str) -> dict[int, float]:
         sids.append(int(c["symbol_id"]))
     try:
         preds = model.predict(feats)  # type: ignore[union-attr]
-    except Exception:
+    except _PREDICT_ERRORS:
         return {}
     for sid, p in zip(sids, preds):
         out[sid] = float(p)
