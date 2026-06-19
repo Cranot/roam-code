@@ -24,6 +24,8 @@ allowlist + W1175-RESEARCH propagation plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -148,6 +150,7 @@ def _risk_score(
 def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     """Collect layer violations and move-sensitive edges for a symbol."""
     try:
+        from networkx import NetworkXException
         from roam.graph.builder import build_symbol_graph
         from roam.graph.layers import detect_layers, find_violations
     except ImportError:
@@ -161,7 +164,7 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
 
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except sqlite3.Error:
         return {
             "current_layer": None,
             "violation_count": 0,
@@ -182,7 +185,7 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     try:
         layers = detect_layers(G)
         violations = find_violations(G, layers)
-    except Exception:
+    except NetworkXException:
         return {
             "current_layer": None,
             "violation_count": 0,
