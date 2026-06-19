@@ -770,7 +770,7 @@ def ws_health(ctx) -> None:
 @ws.command("context")
 @click.argument("symbol")
 @click.pass_context
-def ws_context(ctx, symbol: str) -> None:
+def ws_context_cmd(ctx, symbol: str) -> None:
     """Cross-repo augmented context for a symbol.
 
     Searches all repos in the workspace and shows cross-repo callers/callees.
