@@ -49,7 +49,7 @@ def _extract_error_context(source: bytes, node) -> str:
     """Extract a human-readable snippet around an ERROR / MISSING node."""
     try:
         text = source.decode("utf-8", errors="replace")
-    except Exception:
+    except UnicodeDecodeError:
         return "(unreadable)"
 
     lines = text.split("\n")
