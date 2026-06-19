@@ -15,6 +15,31 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+_GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(
+    {
+        # Needed for subprocess executable lookup on systems where git is not
+        # on os.defpath, plus Windows process startup basics.
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        # Preserve ordinary locale/temp behavior without forwarding Git's own
+        # control-plane variables such as GIT_DIR or GIT_CONFIG_COUNT.
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+    }
+)
+
+
+def _sanitized_git_subprocess_env() -> dict[str, str]:
+    """Return the small ambient env needed to launch local git commands."""
+    return {key: value for key in _GIT_SUBPROCESS_ENV_ALLOWLIST if (value := os.environ.get(key)) is not None}
+
 
 def _worktree_index_path(cwd: Path) -> Path | None:
     """Return the worktree-specific git index path, or ``None`` for the main worktree.
@@ -51,6 +76,12 @@ def worktree_git_env(cwd: Path | str) -> dict[str, str] | None:
     ``subprocess.run(env=...)`` — ``None`` falls through to the inherited
     process environment.
 
+    For linked worktrees this intentionally returns a sanitized environment
+    instead of copying ``os.environ`` wholesale. Git-specific environment
+    variables such as ``GIT_DIR`` / ``GIT_CONFIG_COUNT`` can redirect or
+    reconfigure the subprocess; the worktree helper only needs to add
+    ``GIT_INDEX_FILE``.
+
     Usage::
 
         env = worktree_git_env(repo_root)
@@ -60,4 +91,6 @@ def worktree_git_env(cwd: Path | str) -> dict[str, str] | None:
     wt_index = _worktree_index_path(cwd)
     if wt_index is None:
         return None
-    return {**os.environ, "GIT_INDEX_FILE": str(wt_index)}
+    env = _sanitized_git_subprocess_env()
+    env["GIT_INDEX_FILE"] = str(wt_index)
+    return env
