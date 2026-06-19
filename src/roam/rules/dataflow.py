@@ -258,7 +258,7 @@ def _inter_unused_param_findings(conn, file_glob: str | None) -> list[dict]:
         try:
             ptr = json.loads(row["param_taints_return"] or "{}")
             pts = json.loads(row["param_to_sink"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         params = _parse_param_names(row["signature"])
         for idx, pname in enumerate(params):
