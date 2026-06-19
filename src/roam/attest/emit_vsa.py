@@ -37,6 +37,7 @@ dicts MUST stay schema-stable (additive only). See
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +181,7 @@ def emit_pr_bundle_slsa_l3(
 
         try:
             commit_sha = _git_commit_sha(root)
-        except Exception:  # pragma: no cover — defensive
+        except (subprocess.SubprocessError, OSError):  # pragma: no cover — defensive
             commit_sha = None
     # W1279 — lift packet-side hashes from the active run's meta.json
     # (when ROAM_RUN_ID is set) and recompute the on-disk hashes so the
