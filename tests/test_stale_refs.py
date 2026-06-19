@@ -2071,6 +2071,16 @@ class TestStaleRefsDomainThrottle:
         assert _domain_of("not-a-url") == ""
         assert _domain_of("http://[::1") == ""
 
+    def test_domain_of_only_swallows_parse_value_errors(self, monkeypatch):
+        import roam.commands.cmd_stale_refs as stale_refs
+
+        def _raise_type_error(_url):
+            raise TypeError("parser bug")
+
+        monkeypatch.setattr(stale_refs.urllib.parse, "urlparse", _raise_type_error)
+        with pytest.raises(TypeError, match="parser bug"):
+            stale_refs._domain_of("https://example.com/foo")
+
     def test_per_domain_concurrency_constant(self):
         from roam.commands.cmd_stale_refs import _PER_DOMAIN_CONCURRENCY
 
@@ -2294,7 +2304,7 @@ class TestStaleRefsLspIntegration:
             cursor = body_start + length
             try:
                 msg = json.loads(body)
-            except Exception:
+            except json.JSONDecodeError:
                 continue
             if msg.get("id") == 7:
                 rename_response = msg
