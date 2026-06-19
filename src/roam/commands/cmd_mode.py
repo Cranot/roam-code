@@ -329,14 +329,14 @@ def mode_cmd(
 
     # W294 - capture the pre-switch active mode BEFORE _build_envelope
     # calls set_active_mode so we can emit the ``mode_from`` event field
-    # to the run ledger. Best-effort: any failure here just leaves
-    # ``mode_from`` unset (the W292 harvester needs only ``mode_to`` to
-    # corroborate the matching AuthorityRef).
+    # to the run ledger. Best-effort: expected policy/config resolution
+    # failures here just leave ``mode_from`` unset (the W292 harvester
+    # needs only ``mode_to`` to corroborate the matching AuthorityRef).
     mode_from_value: Optional[str] = None
     if mode_name:
         try:
             mode_from_value = resolve_mode(repo_root).name
-        except Exception:
+        except (OSError, TypeError, ValueError):
             mode_from_value = None
 
     envelope, exit_code = _build_envelope(
