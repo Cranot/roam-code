@@ -2611,7 +2611,6 @@ _DEEP_IDIOM_DENY: frozenset[str] = frozenset(
     {
         "py-broad-except",
         "py-bare-except",
-        "py-except-pass",
     }
 )
 

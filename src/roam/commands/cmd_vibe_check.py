@@ -36,8 +36,8 @@ W371 research backing:
 
 Counts are at occurrence level (not function level) and span all
 indexed languages. For a Python-only, function-level, actionable list
-of any specific anti-pattern, use ``roam math --task py-except-pass``
-(or the equivalent task slug). The two numbers will not match by
+of related exception handling issues, use ``roam math --task py-bare-except``
+or ``roam math --task py-broad-except``. The two numbers will not match by
 design — vibe-check is a coarse health signal.
 
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
@@ -364,8 +364,8 @@ def _detect_short_churn(conn) -> tuple[int, int, list[dict]]:
 # all count. This is intentional — vibe-check is a coarse health signal,
 # not an actionable refactor list.
 #
-# For a per-function actionable list, use ``roam math --task py-except-pass``
-# (Python-only, function-level). The two numbers won't match by design.
+# For a per-function actionable list, use the Python exception-handling
+# detectors in ``roam math``. The two numbers won't match by design.
 # ---------------------------------------------------------------------------
 
 _EMPTY_HANDLER_PATTERNS = {
