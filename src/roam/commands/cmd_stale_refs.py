@@ -2569,7 +2569,7 @@ def _collect_mtimes(project_root: Path, *, include_excluded: bool) -> dict[str, 
     out: dict[str, float] = {}
     try:
         all_files = discover_files(project_root, include_excluded=include_excluded)
-    except Exception:
+    except OSError:
         return out
 
     # Bucket files by their parent dir so each scandir() call returns
