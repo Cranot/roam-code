@@ -219,6 +219,24 @@ class TestClassifyFinding:
         assert out is None
 
     @pytest.mark.asyncio
+    async def test_unsupported_sampling_returns_none(self):
+        class _UnsupportedSamplingCtx:
+            async def sample(self, *args, **kwargs):
+                raise ValueError("Client does not support sampling")
+
+        out = await classify_finding(_BASE_FINDING, _UnsupportedSamplingCtx())
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_unexpected_sampler_bug_propagates(self):
+        class _BuggyCtx:
+            async def sample(self, *args, **kwargs):
+                raise AssertionError("sampler bug")
+
+        with pytest.raises(AssertionError, match="sampler bug"):
+            await classify_finding(_BASE_FINDING, _BuggyCtx())
+
+    @pytest.mark.asyncio
     async def test_unparseable_response_returns_none(self):
         ctx = _MockContext("not JSON at all, model went sideways")
         out = await classify_finding(_BASE_FINDING, ctx)
