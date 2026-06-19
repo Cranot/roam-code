@@ -181,8 +181,24 @@ class LanguageConfig:
     description: str = ""
 
     @classmethod
-    def from_yaml(cls, data: dict) -> "LanguageConfig":
-        """Parse from YAML dictionary."""
+    def load(cls, path: Path) -> "LanguageConfig":
+        """Load from a YAML file.
+
+        Requires PyYAML. Raises ``ImportError`` with an install hint when
+        PyYAML is missing (PyYAML is not a core dependency; it ships under
+        the ``[dev]`` extra and is commonly present via transitive deps,
+        but a bare ``pip install roam-code`` does not pull it in).
+        """
+        if yaml is None:
+            raise ImportError(
+                "LanguageConfig.load() requires PyYAML. "
+                "Install with: pip install 'roam-code[dev]' (or: pip install pyyaml). "
+                f"Original error: {_YAML_IMPORT_ERROR!r}"
+            )
+
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
         symbols = [SymbolPattern.from_yaml(s) for s in data.get("symbols", [])]
 
         references = {}
@@ -205,26 +221,6 @@ class LanguageConfig:
             version=data.get("version", "1.0"),
             description=data.get("description", ""),
         )
-
-    @classmethod
-    def load(cls, path: Path) -> "LanguageConfig":
-        """Load from a YAML file.
-
-        Requires PyYAML. Raises ``ImportError`` with an install hint when
-        PyYAML is missing (PyYAML is not a core dependency; it ships under
-        the ``[dev]`` extra and is commonly present via transitive deps,
-        but a bare ``pip install roam-code`` does not pull it in).
-        """
-        if yaml is None:
-            raise ImportError(
-                "LanguageConfig.load() requires PyYAML. "
-                "Install with: pip install 'roam-code[dev]' (or: pip install pyyaml). "
-                f"Original error: {_YAML_IMPORT_ERROR!r}"
-            )
-
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return cls.from_yaml(data)
 
 
 # ---------------------------------------------------------------------------
