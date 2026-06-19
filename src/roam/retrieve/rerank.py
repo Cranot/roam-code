@@ -743,7 +743,7 @@ def _semantic_scores(
         return {}
     try:
         return semantic_score(conn, cand_set, task)
-    except Exception:
+    except sqlite3.Error:
         return {}
 
 
