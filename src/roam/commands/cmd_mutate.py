@@ -166,7 +166,7 @@ def _emit_error(ctx, operation: str, message: str, warnings: list[str] | None = 
 )
 @click.group("mutate")
 @click.pass_context
-def mutate(ctx):
+def mutate_cmd(ctx):
     """Syntax-less agentic editing.
 
     Unlike ``simulate`` (which predicts metric impact on a cloned graph),
@@ -196,7 +196,7 @@ def mutate(ctx):
 # ---------------------------------------------------------------------------
 
 
-@mutate.command("move")
+@mutate_cmd.command("move")
 @click.argument("symbol")
 @click.argument("target_file")
 @click.option(
@@ -388,7 +388,7 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
     )
 
 
-@mutate.command("rename")
+@mutate_cmd.command("rename")
 @click.argument("symbol")
 @click.argument("new_name")
 @click.option(
@@ -449,7 +449,7 @@ def mutate_rename(ctx, symbol, new_name, apply_changes, dry_run):
         click.echo(f"Run `roam mutate rename {symbol} {new_name} --apply` to execute.")
 
 
-@mutate.command("add-call")
+@mutate_cmd.command("add-call")
 @click.option("--from", "from_symbol", required=True, help="The calling symbol.")
 @click.option("--to", "to_symbol", required=True, help="The callee symbol.")
 @click.option("--args", "call_args", default="", help="Arguments for the call (e.g. 'data, config').")
@@ -507,7 +507,7 @@ def mutate_add_call(ctx, from_symbol, to_symbol, call_args, apply_changes):
         click.echo(f"Run `roam mutate add-call --from {from_symbol} --to {to_symbol} --apply` to execute.")
 
 
-@mutate.command("extract")
+@mutate_cmd.command("extract")
 @click.argument("symbol")
 @click.option("--lines", required=True, help="Line range to extract (e.g. '5-10').")
 @click.option("--name", "new_name", required=True, help="Name for the new extracted function.")
