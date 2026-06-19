@@ -27,6 +27,7 @@ LAW 4 anchors: ``tests``, ``files``, ``imports``, ``findings``.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -86,6 +87,16 @@ def _run_cli_json(tmp_path: Path, *args: str) -> tuple[int, dict]:
         result = runner.invoke(cli, ["--json", *args], catch_exceptions=False)
     finally:
         os.chdir(cwd)
+
+
+def _exception_type_name(node: ast.expr | None) -> str:
+    if isinstance(node, ast.Attribute):
+        return f"{_exception_type_name(node.value)}.{node.attr}"
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Tuple):
+        return ",".join(_exception_type_name(elt) for elt in node.elts)
+    return type(node).__name__
     payload = json.loads(result.output) if result.output.strip() else {}
     return result.exit_code, payload
 
