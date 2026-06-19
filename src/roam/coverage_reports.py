@@ -443,7 +443,7 @@ def imported_coverage_overview(conn: sqlite3.Connection) -> dict:
             "FROM file_stats "
             "WHERE coverable_lines IS NOT NULL AND coverable_lines > 0"
         ).fetchone()
-    except Exception:
+    except sqlite3.Error:
         return {
             "files_with_coverage": 0,
             "covered_lines": 0,
