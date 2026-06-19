@@ -21,6 +21,9 @@ _SUPPORTED_SARIF allowlist and W1149 audit memo.
 
 from __future__ import annotations
 
+import re
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -602,7 +605,7 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
 
         try:
             violations = checker(rule, conn)
-        except Exception:
+        except (ImportError, re.error, sqlite3.DatabaseError):
             violations = []
 
         on_target = [v for v in violations if _violation_touches_target(v)]
