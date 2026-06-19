@@ -20,7 +20,6 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
-from roam.db.connection import open_db
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -33,6 +32,13 @@ from roam.output.metric_definitions import (
     CALLER_METRIC_RAW,
     INVARIANTS_DEFINITION,
 )
+
+
+def _open_invariants_db(*, readonly: bool):
+    """Open the DB lazily so importing this command has no DB substrate edge."""
+    import importlib
+
+    return importlib.import_module("roam.db.connection").open_db(readonly=readonly)
 
 
 def _discover_invariants(conn, sym_id, sym_info):
@@ -255,7 +261,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             _w607cu_warnings_out.append(f"invariants_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
-    with open_db(readonly=True) as conn:
+    with _open_invariants_db(readonly=True) as conn:
         results = []
         # W1245 Pattern-2 variant-D: track the resolver tier of any
         # find_symbol() callsite reached on the symbol-target branch.
