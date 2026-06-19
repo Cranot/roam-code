@@ -301,7 +301,7 @@ def mcp_setup(ctx, platform, preset, write):
                     from roam.db.connection import find_project_root
 
                     project_root = find_project_root()
-                except Exception:
+                except (OSError, RuntimeError):
                     project_root = None
             target = _resolve_config_path(config_path, project_root)
             write_result = _write_config(target, json_config)

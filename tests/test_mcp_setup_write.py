@@ -168,6 +168,44 @@ def test_cli_write_with_preset_injects_env(tmp_path):
         os.chdir(cwd)
 
 
+def test_cli_project_root_lookup_allows_filesystem_failure(tmp_path, monkeypatch):
+    """Filesystem lookup failures fall back to the current directory."""
+
+    from roam.db import connection
+
+    def fail_lookup():
+        raise PermissionError("cannot inspect parent")
+
+    monkeypatch.setattr(connection, "find_project_root", fail_lookup)
+    runner = CliRunner()
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        result = runner.invoke(mcp_setup, ["vscode", "--write"], obj={})
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / ".vscode" / "mcp.json").is_file()
+    finally:
+        os.chdir(cwd)
+
+
+def test_cli_project_root_lookup_propagates_programmer_errors(tmp_path, monkeypatch):
+    """Bug-class exceptions from project-root lookup stay visible."""
+
+    from roam.db import connection
+
+    def fail_lookup():
+        raise TypeError("bad refactor")
+
+    monkeypatch.setattr(connection, "find_project_root", fail_lookup)
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(mcp_setup, ["vscode", "--write"], obj={})
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, TypeError)
+    assert not (tmp_path / ".vscode" / "mcp.json").exists()
+
+
 def test_cli_write_emits_json_envelope(tmp_path):
     """In ``--json --write`` mode, the envelope must carry ``write_result``."""
     runner = CliRunner()
