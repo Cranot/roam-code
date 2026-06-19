@@ -104,7 +104,7 @@ def mcp_status(ctx) -> None:
         from roam.mcp_extras.concurrency import metrics as concurrency_metrics
 
         bp = concurrency_metrics()
-    except Exception:
+    except (ImportError, ValueError):
         bp = {"max_concurrent": None, "in_flight": None, "busy_responses_total": None, "per_tool_limits": {}}
 
     cache_size = len(_ROAM_RESULT_CACHE)
