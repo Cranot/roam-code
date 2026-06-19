@@ -77,7 +77,6 @@ __all__ = [
     "detect_loop_invariant_call",
     "detect_loop_lookup",
     "detect_manual_gcd",
-    "detect_manual_groupby",
     "detect_manual_maxmin",
     "detect_manual_power",
     "detect_manual_sort",
@@ -1480,53 +1479,6 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
                 r,
                 "Nested loops with subscript access and comparisons (potential O(n*m))",
                 "medium",
-            )
-        )
-    return results
-
-
-@algorithm_detector(
-    task_id="groupby",
-    languages=(),
-    confidence_basis="heuristic",
-    query_cost=QUERY_COST_LOW,
-)
-def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
-    """Loops in group/categorize-named functions without defaultdict/groupby.
-
-    Same Big-O (both O(n)) — idiom improvement.
-    """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_depth, ms.loop_with_accumulator, ms.calls_in_loops "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%group%' OR s.name LIKE '%Group%' "
-        "  OR s.name LIKE '%bucket%' OR s.name LIKE '%Bucket%' "
-        "  OR s.name LIKE '%partition%' OR s.name LIKE '%Partition%' "
-        "  OR s.name LIKE '%categorize%' OR s.name LIKE '%Categorize%' "
-        "  OR s.name LIKE '%classify%' OR s.name LIKE '%Classify%' "
-        "  OR s.name LIKE '%bin\\_by%' ESCAPE '\\' OR s.name LIKE '%key\\_by%' ESCAPE '\\' "
-        "  OR s.name LIKE '%index\\_by%' ESCAPE '\\') "
-        "AND s.kind IN ('function', 'method') "
-        "AND ms.loop_depth >= 1"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        calls = _iter_loop_calls(r)
-        if _call_in(calls, {"groupby", "group_by", "defaultdict", "setdefault", "groupingBy", "Collectors"}):
-            continue
-        results.append(
-            _finding(
-                "groupby",
-                "manual-check",
-                r,
-                "Manual loop in group-by function (idiomatic improvement)",
-                "low",
             )
         )
     return results
@@ -4676,7 +4628,6 @@ _MATH_DETECTORS = [
     ("manual-gcd", "manual-gcd", detect_manual_gcd),
     ("fibonacci", "naive-recursive", detect_naive_fibonacci),
     ("nested-lookup", "nested-iteration", detect_nested_lookup),
-    ("groupby", "manual-check", detect_manual_groupby),
     ("string-reverse", "manual-reverse", detect_string_reverse),
     ("matrix-mult", "naive-triple", detect_matrix_mult),
     ("busy-wait", "sleep-loop", detect_busy_wait),
