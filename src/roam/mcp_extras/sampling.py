@@ -30,6 +30,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+try:
+    from mcp.shared.exceptions import McpError as _McpError
+except ImportError:
+    _EXPECTED_SAMPLING_ERRORS: tuple[type[BaseException], ...] = ()
+else:
+    _EXPECTED_SAMPLING_ERRORS = (_McpError,)
+
 # A small cap so we don't blow out the sampling budget by accident.
 _MAX_PAYLOAD_CHARS = 60_000
 _DEFAULT_MAX_TOKENS = 600
@@ -42,6 +49,11 @@ _BRIEFING_SYSTEM_PROMPT = (
     "headings unless the report has multiple sections worth separating. "
     "Output plain prose or short lists -- no JSON, no markdown tables."
 )
+
+
+def _is_sampling_unavailable_error(exc: ValueError) -> bool:
+    """Return True for FastMCP's expected no-client-capability path."""
+    return str(exc) == "Client does not support sampling"
 
 
 def _shrink_payload(payload: Any) -> str:
@@ -132,8 +144,12 @@ async def compress_with_sampling(
             max_tokens=max_tokens,
             temperature=0.2,
         )
-    except Exception:
+    except _EXPECTED_SAMPLING_ERRORS:
         return None
+    except ValueError as exc:
+        if _is_sampling_unavailable_error(exc):
+            return None
+        raise
 
     summary_text = _extract_summary_text(result)
     if not summary_text:
