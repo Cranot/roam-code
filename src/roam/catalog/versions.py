@@ -58,16 +58,3 @@ def detector_version(task_id: str) -> str:
     Falls back to :data:`DEFAULT_VERSION` when no override is registered.
     """
     return DETECTOR_VERSION_OVERRIDES.get(task_id, DEFAULT_VERSION)
-
-
-def all_detector_versions(task_ids: list[str]) -> dict[str, str]:
-    """Return ``{task_id: version}`` for every id in *task_ids*.
-
-    Used by the manifest writer to capture the full version map at
-    index time. Caller is responsible for supplying the list of
-    currently-registered task ids — keeping the enumeration *out* of
-    this module avoids importing :mod:`roam.catalog.detectors` (and
-    transitively :mod:`roam.catalog.python_idioms`, the plugin
-    registry, …) just to write the manifest.
-    """
-    return {task_id: detector_version(task_id) for task_id in task_ids}
