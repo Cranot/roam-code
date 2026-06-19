@@ -77,12 +77,9 @@ def _isolate_handle_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
     # Reset GC counter so amortised cleanup doesn't fire mid-test and
     # delete the file under test.
-    try:
-        from roam.mcp_server import _HANDLE_GC_WRITE_COUNTER
+    from roam.mcp_server import _HANDLE_GC_WRITE_COUNTER
 
-        _HANDLE_GC_WRITE_COUNTER["n"] = 0
-    except Exception:
-        pass
+    _HANDLE_GC_WRITE_COUNTER["n"] = 0
     yield
     # W478-followup-3: dropped ``shutil.rmtree(_handle_storage_dir(),
     # ignore_errors=True)``. The chdir(tmp_path) above redirects
@@ -161,16 +158,16 @@ def test_central_interception_roundtrip_via_fetch_handle():
 
 # Tools registered as ``@_tool`` — the wrapper auto-applies handle-off.
 # Format: (mcp_tool_name, module_attr_name, kwargs)
-# Note: ``partition`` and ``simulate_departure`` are defined as
-# ``roam_partition`` / ``roam_simulate_departure`` at the Python level
-# (since they'd collide with stdlib or third-party names otherwise).
+# Note: some wrappers are defined with their MCP tool names at the
+# Python level to avoid collisions with command implementation names or
+# stdlib / third-party names.
 _BIG_TOOLS = [
     ("roam_capsule_export", "capsule_export", {}),
     ("roam_partition", "roam_partition", {"n_agents": 3}),
-    ("roam_fingerprint", "fingerprint", {}),
+    ("roam_fingerprint", "mcp_fingerprint", {}),
     ("roam_simulate_departure", "roam_simulate_departure", {"developer": "alice"}),
     ("roam_api", "api", {}),
-    ("roam_conventions", "conventions", {}),
+    ("roam_conventions", "roam_conventions", {}),
     ("roam_verify_imports", "verify_imports", {}),
     ("roam_changelog", "changelog", {}),
 ]
@@ -242,7 +239,7 @@ def test_new_mcp_wrappers_have_handle_off_wrappers():
     orig = mcp_server._run_roam
     try:
         mcp_server._run_roam = _fake_run
-        for fn_name in ("api", "conventions", "verify_imports", "changelog"):
+        for fn_name in ("api", "roam_conventions", "verify_imports", "changelog"):
             tool = getattr(mcp_server, fn_name, None)
             assert tool is not None, f"mcp_server.{fn_name} missing"
             fn = _unwrap(tool)
@@ -257,7 +254,7 @@ def test_new_mcp_wrappers_have_handle_off_wrappers():
 def test_new_mcp_wrappers_are_callable():
     """Smoke: each new MCP tool function is importable and callable
     (after unwrapping the FastMCP FunctionTool shell)."""
-    for fn_name in ("api", "conventions", "verify_imports", "changelog"):
+    for fn_name in ("api", "roam_conventions", "verify_imports", "changelog"):
         tool = getattr(mcp_server, fn_name, None)
         assert tool is not None, f"mcp_server.{fn_name} not exported"
         fn = _unwrap(tool)
