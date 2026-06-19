@@ -557,7 +557,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
         from roam.db.connection import find_project_root
 
         project_root = find_project_root()
-    except Exception:
+    except OSError:
         project_root = Path.cwd()
 
     project_name = _get_project_name(project_root)

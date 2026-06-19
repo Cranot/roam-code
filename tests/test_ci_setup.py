@@ -39,6 +39,20 @@ class TestCiSetupSmoke:
             result = invoke_cli(cli_runner, ["ci-setup", "--platform", platform], cwd=ci_project)
             assert result.exit_code == 0, f"ci-setup --platform {platform} failed"
 
+    def test_project_root_programmer_error_is_not_swallowed(self, ci_project, monkeypatch):
+        """Only filesystem root-lookup failures should fall back to cwd."""
+        from roam.commands.cmd_ci_setup import ci_setup
+        from roam.db import connection
+
+        def boom():
+            raise RuntimeError("synthetic root lookup bug")
+
+        monkeypatch.setattr(connection, "find_project_root", boom)
+        monkeypatch.chdir(ci_project)
+
+        with pytest.raises(RuntimeError, match="synthetic root lookup bug"):
+            ci_setup.main(["--platform", "github"], standalone_mode=False)
+
 
 class TestCiSetupJSON:
     def test_json_envelope(self, cli_runner, ci_project, monkeypatch):
