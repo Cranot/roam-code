@@ -10795,7 +10795,7 @@ def ws_context(symbol: str, root: str = ".") -> dict:
     name="roam_pr_diff",
     description="Structural graph delta of code changes: metric deltas, layer violations.",
 )
-def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+def pr_diff_tool(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Show structural consequences of code changes (graph delta).
 
     WHEN TO USE: Call this during code review to understand the
