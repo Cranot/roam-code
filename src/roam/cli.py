@@ -259,7 +259,7 @@ _COMMANDS = {
     "idempotency": ("roam.commands.cmd_idempotency", "idempotency_cmd"),
     "causal-graph": ("roam.commands.cmd_causal_graph", "causal_graph_cmd"),
     "tx-boundaries": ("roam.commands.cmd_tx_boundaries", "tx_boundaries_cmd"),
-    "attest": ("roam.commands.cmd_attest", "attest"),
+    "attest": ("roam.commands.cmd_attest", "attest_cmd"),
     "capsule": ("roam.commands.cmd_capsule", "capsule"),
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
     "plugins": ("roam.commands.cmd_plugins", "plugins_cmd"),

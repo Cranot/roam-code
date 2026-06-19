@@ -730,7 +730,7 @@ def _format_markdown(attestation, evidence, verdict):
 @click.option("--sign", is_flag=True, help="Include SHA-256 content hash for tamper detection.")
 @click.option("--output", "output_file", default=None, help="Write attestation to file.")
 @click.pass_context
-def attest(ctx, commit_range, staged, output_format, sign, output_file):
+def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
     """Generate a proof-carrying PR attestation.
 
     Bundles blast radius, risk score, breaking changes, fitness violations,
