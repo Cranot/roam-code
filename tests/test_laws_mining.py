@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import builtins
 import sys
 import textwrap
 from pathlib import Path
@@ -236,6 +237,37 @@ def test_check_naming_law_clean_diff_passes():
     )
     violations = check_laws([law], diff=diff)
     assert violations == []
+
+
+def test_check_naming_law_propagates_non_import_errors(monkeypatch):
+    from roam.laws.checker import _check_naming_law
+
+    law = Law(
+        id="snake_case_functions",
+        kind="naming",
+        description="Functions must be snake_case",
+        evidence={"sample_size": 10, "conformance_pct": 95, "style": "snake_case"},
+        confidence="high",
+        rule={"kind": "naming", "symbol_kind": "function", "style": "snake_case"},
+    )
+    syms_added = [
+        {
+            "kind": "function",
+            "name": "myCamelFunction",
+            "file": "app.py",
+            "line": 3,
+        }
+    ]
+    real_import = builtins.__import__
+
+    def raise_runtime_for_conventions(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "roam.commands.cmd_conventions" and "classify_case" in (fromlist or ()):
+            raise RuntimeError("conventions import executed module code")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", raise_runtime_for_conventions)
+    with pytest.raises(RuntimeError, match="conventions import executed module code"):
+        _check_naming_law(law, syms_added)
 
 
 # ---------------------------------------------------------------------------
