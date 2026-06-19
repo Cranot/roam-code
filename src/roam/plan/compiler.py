@@ -6481,44 +6481,6 @@ def _probe_trace_for_task(task: str, cwd: str | None) -> dict | None:
     }
 
 
-def zero_agent_answer(plan: "PlanV0", cwd: str | None = None) -> str | None:
-    """X2 (2026-05-29 evening) — ZERO-AGENT mode: deterministic answer
-    from probe data alone, no LLM call.
-
-    Eligibility (strict):
-      * procedure is structural with a defined template
-      * named_paths is non-empty (single target to anchor)
-      * classifier_confidence >= 0.85 (high-conf routing)
-      * probe returned usable data
-
-    For probe-fired structural tasks, the answer is a structured fact
-    list + scores + a one-sentence frame. Quality is BOUNDED by template
-    quality; for crisp pair-and-strength answers this is enough.
-
-    Returns the answer string or None if not eligible.
-    """
-    if plan.classifier_confidence < 0.85:
-        return None
-    # structural_dead is repo-wide; doesn't require a named target.
-    requires_target = plan.procedure != "structural_dead"
-    if requires_target and not plan.likely_files:
-        return None
-    facts = _probe_for_procedure(plan.procedure, plan.likely_files, cwd)
-    if not facts:
-        return None
-
-    target = plan.likely_files[0] if plan.likely_files else ""
-
-    if plan.procedure == "structural_coupling":
-        return _zero_agent_coupling(target, facts)
-    if plan.procedure == "structural_callers":
-        return _zero_agent_callers(target, facts)
-    if plan.procedure == "structural_dead":
-        return _zero_agent_dead(facts)
-
-    return None
-
-
 def _zero_agent_callers(target: str, facts: dict) -> str | None:
     callers = facts.get("callers")
     if not callers:
