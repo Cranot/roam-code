@@ -153,9 +153,9 @@ def _severity_label(score: int) -> str:
 #
 #  2. Quality-envelope ``as_envelope_dict`` methods in
 #     ``quality/cycles.py``, ``quality/god_components.py``,
-#     ``quality/public_symbols.py`` — consumers call ``obj.as_envelope_dict()``
-#     via attribute reflection on a result object; the indexer can't
-#     resolve the attribute access.
+#     ``quality/ai_rot.py`` — consumers call ``obj.as_envelope_dict()`` via
+#     attribute reflection on a result object; the indexer can't resolve the
+#     attribute access.
 #
 # This is a NAME-BASED allowlist (cheap, no class-hierarchy walk). Per
 # the W161 brief, a class-hierarchy variant (exempt anything inheriting
@@ -190,10 +190,9 @@ _FRAMEWORK_HOOK_NAMES: frozenset[str] = frozenset(
         "group",
         "result_callback",
         # --- Reflective dataclass-style serialisation methods ---
-        # ``quality/cycles.py``, ``quality/god_components.py``,
-        # ``quality/public_symbols.py``, ``quality/ai_rot.py`` all expose
-        # ``as_envelope_dict`` called via ``obj.as_envelope_dict()``
-        # reflection from consumers.
+        # ``quality/cycles.py``, ``quality/god_components.py``, and
+        # ``quality/ai_rot.py`` expose ``as_envelope_dict`` called via
+        # ``obj.as_envelope_dict()`` reflection from consumers.
         "as_envelope_dict",
         "as_dict",
         "to_dict",

@@ -12,9 +12,8 @@ positives:
   invoked by Click's runtime via duck-typing; the static call graph has
   zero edges to them.
 * ``as_envelope_dict`` methods in ``quality/cycles.py``,
-  ``quality/god_components.py``, ``quality/public_symbols.py`` — consumers
-  call ``obj.as_envelope_dict()`` via attribute reflection on a result
-  object.
+  ``quality/god_components.py``, and ``quality/ai_rot.py`` — consumers call
+  ``obj.as_envelope_dict()`` via attribute reflection on a result object.
 
 W161 ships a name-based allowlist (``_FRAMEWORK_HOOK_NAMES``) consulted
 at the SQL level in ``_detect_dead_exports`` and
@@ -70,9 +69,9 @@ def test_framework_hook_allowlist_covers_click_multicommand_methods():
 def test_framework_hook_allowlist_covers_reflective_serialisers():
     """``as_envelope_dict`` and sibling reflection-called methods are allowlisted.
 
-    ``roam/quality/cycles.py``, ``god_components.py``, ``public_symbols.py``
-    all expose ``as_envelope_dict`` called via attribute reflection — the
-    indexer can't resolve the attribute access at extract time.
+    ``roam/quality/cycles.py``, ``god_components.py``, and ``ai_rot.py``
+    expose ``as_envelope_dict`` called via attribute reflection — the indexer
+    can't resolve the attribute access at extract time.
     """
     must_have = {
         "as_envelope_dict",

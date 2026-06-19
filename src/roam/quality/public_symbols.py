@@ -24,13 +24,10 @@ counts measure genuinely different things:
 
 The fix is to NAME the criterion in every envelope via a
 ``public_symbols_inclusion_criterion`` field, so consumers know which
-subset they're seeing. Where appropriate, both counts can be reported
-side-by-side via :class:`PublicSymbolsSummary`.
+subset they're seeing.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 # Kinds considered "public-shape" by the API surface walker. Kept
 # minimal — adding kinds here changes both ``api`` and ``docs-coverage``
@@ -56,47 +53,3 @@ DEFINITION = (
 def definition() -> str:
     """Return the canonical public-symbols metric definition string."""
     return DEFINITION
-
-
-@dataclass
-class PublicSymbolsSummary:
-    """Canonical public-symbol summary across both inclusion criteria.
-
-    Attributes
-    ----------
-    by_no_underscore : int
-        Count under :data:`CRITERION_NO_UNDERSCORE` (the ``api`` rule).
-    by_export_marker : int
-        Count under :data:`CRITERION_HAS_EXPORT_MARKER` (the
-        ``docs-coverage`` rule).
-    definition : str
-        :data:`DEFINITION` string.
-    fallback_used : bool
-        ``True`` when EITHER count came back as a swallowed-exception
-        fallback rather than a real zero. The pre-W17 shape silently
-        returned 0/0 on any query failure — indistinguishable from a
-        genuinely empty index. Per CLAUDE.md "Make fallback chains loud",
-        agents now see the lineage.
-    fallback_reason : str
-        Short identifier (``"no_underscore_query_failed"`` /
-        ``"export_marker_query_failed"`` / ``"both_queries_failed"`` /
-        ``""``).
-    """
-
-    by_no_underscore: int
-    by_export_marker: int
-    definition: str = DEFINITION
-    fallback_used: bool = False
-    fallback_reason: str = ""
-
-    def as_envelope_dict(self) -> dict:
-        out: dict = {
-            "by_no_underscore_prefix": self.by_no_underscore,
-            "by_export_marker": self.by_export_marker,
-            "public_symbols_definition": self.definition,
-        }
-        if self.fallback_used:
-            out["fallback_used"] = True
-            out["fallback_reason"] = self.fallback_reason
-        return out
-
