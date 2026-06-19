@@ -282,7 +282,7 @@ def _recent_changes(conn, file_id, limit=5):
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command(name="diagnose")
 @click.argument("name", required=False, default=None, metavar="[SYMBOL]")
 @click.option("--depth", default=2, help="How many hops to analyze (default 2)")
 @click.option(
@@ -293,7 +293,7 @@ def _recent_changes(conn, file_id, limit=5):
     help='read newline-separated symbol names from this file ("-" for stdin) and run diagnose on each.',
 )
 @click.pass_context
-def diagnose(ctx, name, depth, batch_input):
+def diagnose_cmd(ctx, name, depth, batch_input):
     """Root cause analysis for a failing SYMBOL.
 
     SYMBOL is a symbol identifier (bare name or qualified name); omit it
