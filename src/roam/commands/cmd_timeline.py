@@ -31,7 +31,7 @@ def _fmt_ts(ts: int | None) -> str:
         return "?"
     try:
         return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d")
-    except Exception:
+    except (TypeError, ValueError, OverflowError, OSError):
         return "?"
 
 
