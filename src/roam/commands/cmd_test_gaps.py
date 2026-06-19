@@ -246,7 +246,7 @@ def _classify_severity(symbol_row, pagerank):
     ),
 )
 @click.pass_context
-def test_gaps(ctx, files, changed, min_severity):
+def test_gaps_cmd(ctx, files, changed, min_severity):
     """Map changed symbols to missing test coverage.
 
     Unlike ``test-map`` (which shows existing test topology for a symbol),
