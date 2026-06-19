@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from roam.index.laravel_post import (
     _ARTISAN_COMMAND_RE,
     _ELOQUENT_SCOPE_RE,
@@ -488,6 +490,29 @@ class TestNonLaravelProjectsSkipped:
         _add_symbol(conn, 101, 1, "baz", "Bar\\baz", "method")
 
         assert resolve_laravel_dispatch(conn, tmp_path) == 0
+
+
+class TestProjectRootFallback:
+    def test_expected_project_root_resolution_errors_degrade_to_zero(self, monkeypatch):
+        import roam.db.connection as connection
+
+        def raise_os_error():
+            raise OSError("synthetic project-root lookup failure")
+
+        monkeypatch.setattr(connection, "find_project_root", raise_os_error)
+
+        assert resolve_laravel_dispatch(_make_conn()) == 0
+
+    def test_programmer_project_root_errors_propagate(self, monkeypatch):
+        import roam.db.connection as connection
+
+        def raise_bug():
+            raise RuntimeError("synthetic project-root bug")
+
+        monkeypatch.setattr(connection, "find_project_root", raise_bug)
+
+        with pytest.raises(RuntimeError, match="synthetic project-root bug"):
+            resolve_laravel_dispatch(_make_conn())
 
 
 # ---------------------------------------------------------------------------

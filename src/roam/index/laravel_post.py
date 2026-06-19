@@ -703,7 +703,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
             from roam.db.connection import find_project_root
 
             project_root = find_project_root()
-        except Exception:
+        except OSError:
             return 0
     if project_root is None or not _is_laravel_project(Path(project_root)):
         return 0
