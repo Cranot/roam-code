@@ -295,6 +295,29 @@ class TestLearnedRankerHook:
         # the model fails CI loudly.
         assert len(feature_names()) == 22
 
+    def test_score_degrades_on_expected_predict_value_error(self, monkeypatch):
+        from roam.retrieve import learned_ranker
+
+        class BadModel:
+            def predict(self, _feats):
+                raise ValueError("feature shape mismatch")
+
+        monkeypatch.setattr(learned_ranker, "_load_model", lambda: BadModel())
+
+        assert learned_ranker.score([{"symbol_id": 1, "name": "foo"}], "find foo") == {}
+
+    def test_score_propagates_unexpected_predict_errors(self, monkeypatch):
+        from roam.retrieve import learned_ranker
+
+        class BadModel:
+            def predict(self, _feats):
+                raise RuntimeError("programmer bug")
+
+        monkeypatch.setattr(learned_ranker, "_load_model", lambda: BadModel())
+
+        with pytest.raises(RuntimeError, match="programmer bug"):
+            learned_ranker.score([{"symbol_id": 1, "name": "foo"}], "find foo")
+
 
 # ---------------------------------------------------------------------------
 # Leiden algorithm — preference order is correct, fallback works offline
