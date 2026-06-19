@@ -17,6 +17,7 @@ work before cli.py registration is complete.
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -53,6 +54,14 @@ def invoke_path_coverage(runner, args=None, cwd=None, json_mode=False):
     finally:
         os.chdir(old_cwd)
     return result
+
+
+class _RaisingConn:
+    def __init__(self, exc):
+        self.exc = exc
+
+    def execute(self, _sql):
+        raise self.exc
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +189,25 @@ def tested_project(tmp_path, monkeypatch):
 
 
 class TestPathCoverage:
+    def test_effect_sink_query_missing_schema_falls_back(self):
+        """Missing symbol_effects schema falls back to leaf-node sink discovery."""
+        from roam.commands.cmd_path_coverage import _find_sinks_from_effects
+
+        sink_info, sink_effects = _find_sinks_from_effects(
+            _RaisingConn(sqlite3.OperationalError("no such table: symbol_effects")),
+            None,
+        )
+
+        assert sink_info == {}
+        assert sink_effects == {}
+
+    def test_effect_sink_query_non_sqlite_error_surfaces(self):
+        """Non-SQL failures in sink discovery fail loud instead of degrading."""
+        from roam.commands.cmd_path_coverage import _find_sinks_from_effects
+
+        with pytest.raises(RuntimeError, match="synthetic sink failure"):
+            _find_sinks_from_effects(_RaisingConn(RuntimeError("synthetic sink failure")), None)
+
     def test_path_coverage_runs(self, path_cov_project, cli_runner):
         """Command exits with code 0 on a valid indexed project."""
         result = invoke_path_coverage(cli_runner, cwd=path_cov_project)

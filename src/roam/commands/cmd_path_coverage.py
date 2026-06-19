@@ -14,6 +14,7 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
 from collections import Counter, deque
 
 import click
@@ -83,7 +84,7 @@ def _find_sinks_from_effects(conn, to_pattern):
             "WHERE se.source = 'direct' "
             "AND se.effect_type IN ('writes_db', 'network', 'filesystem')"
         ).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return {}, {}
 
     sink_ids = {}
