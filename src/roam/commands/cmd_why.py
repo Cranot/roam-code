@@ -239,7 +239,7 @@ def _detect_communities(G) -> list[set]:
     except (AttributeError, TypeError):
         try:
             return list(nx.community.greedy_modularity_communities(UG))
-        except Exception:
+        except (AttributeError, TypeError, ValueError, nx.NetworkXException):
             return []
 
 

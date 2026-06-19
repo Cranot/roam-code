@@ -123,6 +123,25 @@ class TestWhySmoke:
         result = invoke_cli(cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project)
         assert result.exit_code == 0
 
+    def test_detect_communities_does_not_swallow_unexpected_greedy_failure(self, monkeypatch):
+        """Unexpected fallback failures should surface instead of looking like no communities."""
+        from roam.commands import cmd_why
+
+        graph = cmd_why.nx.Graph()
+        graph.add_edge(1, 2)
+
+        def missing_louvain(*_args, **_kwargs):
+            raise AttributeError("louvain unavailable")
+
+        def broken_greedy(*_args, **_kwargs):
+            raise RuntimeError("unexpected greedy failure")
+
+        monkeypatch.setattr(cmd_why.nx.community, "louvain_communities", missing_louvain, raising=False)
+        monkeypatch.setattr(cmd_why.nx.community, "greedy_modularity_communities", broken_greedy, raising=False)
+
+        with pytest.raises(RuntimeError, match="unexpected greedy failure"):
+            cmd_why._detect_communities(graph)
+
 
 # ---------------------------------------------------------------------------
 # JSON envelope tests
