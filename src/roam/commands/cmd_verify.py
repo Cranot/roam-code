@@ -2829,14 +2829,13 @@ def _emit_empty_verify(json_mode: bool, threshold: int) -> None:
 
 def _refresh_stale_verify_targets(root: Path, target_paths: list[str]) -> None:
     try:
-        # Aliased: `changed_files.get_changed_files` is already imported at module
-        # top and used for target discovery. Re-importing the same name in verify()
-        # made it function-local and caused an UnboundLocalError.
-        from roam.index.incremental import get_changed_files as _incremental_changed_files
+        # The index-state comparator is distinct from the git-diff helper
+        # imported at module top for target discovery.
+        from roam.index.incremental import get_index_changed_files
 
         with open_db(readonly=True) as idx_conn:
             on_disk = [path for path in target_paths if (root / path).exists()]
-            added, modified, _ = _incremental_changed_files(idx_conn, on_disk, root)
+            added, modified, _ = get_index_changed_files(idx_conn, on_disk, root)
         if added or modified:
             from roam.index.indexer import Indexer
 

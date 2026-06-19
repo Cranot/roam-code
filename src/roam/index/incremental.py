@@ -18,7 +18,7 @@ def file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def get_changed_files(
+def get_index_changed_files(
     conn,
     file_paths: list[str],
     root: Path,
