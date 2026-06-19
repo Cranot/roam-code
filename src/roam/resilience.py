@@ -305,9 +305,8 @@ def detect_missing_timeout(
 
 
 # ---------------------------------------------------------------------------
-# Signal-source harvester — source files from the index. Mirrors
-# ``observability_opt.harvest_source_files`` (different per-language pattern
-# map, otherwise identical contract).
+# Signal-source harvester — source files from the index. Canonical policy reused
+# by source-line detector families with their own per-language pattern maps.
 # ---------------------------------------------------------------------------
 _NON_SOURCE_ROLES = frozenset({"test", "docs", "config", "generated", "data", "build", "examples", "scripts"})
 _NON_SOURCE_PATH_PREFIXES: tuple[str, ...] = (
