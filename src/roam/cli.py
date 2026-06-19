@@ -234,7 +234,7 @@ _COMMANDS = {
     "init": ("roam.commands.cmd_init", "init"),
     "config": ("roam.commands.cmd_config", "config"),
     "tour": ("roam.commands.cmd_tour", "tour"),
-    "diagnose": ("roam.commands.cmd_diagnose", "diagnose"),
+    "diagnose": ("roam.commands.cmd_diagnose", "diagnose_cmd"),
     "ws": ("roam.commands.cmd_ws", "ws"),
     "visualize": ("roam.commands.cmd_visualize", "visualize"),
     "x-lang": ("roam.commands.cmd_xlang", "xlang"),
