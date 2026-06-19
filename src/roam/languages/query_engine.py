@@ -578,12 +578,6 @@ class QueryEngine:
 # ---------------------------------------------------------------------------
 
 
-def load_engine_from_yaml(yaml_path: Path) -> QueryEngine:
-    """Load a QueryEngine from a YAML config file."""
-    config = LanguageConfig.load(yaml_path)
-    return QueryEngine(config)
-
-
 def extract_file(
     file_path: Path,
     config: LanguageConfig,
