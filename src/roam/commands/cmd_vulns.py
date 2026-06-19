@@ -925,6 +925,7 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
         needs_analysis = any(v["reachable"] == 0 and v["matched_symbol_id"] is not None for v in vulns)
         if needs_analysis:
             try:
+                from networkx.exception import NetworkXException
                 from roam.graph.builder import build_symbol_graph
 
                 G = build_symbol_graph(conn)
@@ -946,7 +947,11 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
                             reached = True
                             break
                     v["reachable"] = 1 if reached else -1
-            except Exception as _exc:  # noqa: BLE001 — defensive
+            except ImportError as _exc:
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_vulns:reachability", _exc)
+            except (sqlite3.Error, NetworkXException) as _exc:
                 from roam.observability import log_swallowed
 
                 log_swallowed("cmd_vulns:reachability", _exc)
