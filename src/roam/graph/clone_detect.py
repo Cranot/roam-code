@@ -304,7 +304,7 @@ class _UnionFind:
         if self.rank[rx] == self.rank[ry]:
             self.rank[rx] += 1
 
-    def clusters(self) -> dict[int, list[int]]:
+    def groups(self) -> dict[int, list[int]]:
         groups: dict[int, list[int]] = defaultdict(list)
         for x in self.parent:
             groups[self.find(x)].append(x)
@@ -796,7 +796,7 @@ def detect_clones(
     pairs.sort(key=lambda p: -p.similarity)
 
     func_by_idx = {f.idx: f for f in funcs}
-    raw_clusters = uf.clusters()
+    raw_clusters = uf.groups()
     clusters: list[CloneCluster] = []
     cluster_id = 0
 

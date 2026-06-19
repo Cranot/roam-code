@@ -1025,7 +1025,7 @@ def duplicates(
         )
 
         # -- 4. Build clusters ----------------------------------------
-        raw_clusters = uf.clusters()
+        raw_clusters = uf.groups()
 
         # Filter to clusters with >= 2 members
         cluster_list = []
