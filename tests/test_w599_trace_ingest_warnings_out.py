@@ -71,7 +71,7 @@ Intentional-absence decisions (W978 + "Make fallback chains loud"):
     envelopes. There is no silent-None path to plumb there.
 
 Caller audit: only one live caller exists per format —
-``cmd_ingest_trace.ingest_trace`` (cmd_ingest_trace.py:165). It
+``cmd_ingest_trace.ingest_trace_cmd`` (cmd_ingest_trace.py:165). It
 catches ``(json.JSONDecodeError, OSError, ValueError)`` and surfaces a
 structured parse-error envelope via ``_emit_parse_error``. It does NOT
 thread ``warnings_out``. W599 leaves the caller unchanged — the plumb
@@ -484,7 +484,7 @@ def test_auto_detect_recognized_emits_no_warning(otel_clean, jaeger_clean, zipki
 def test_default_none_no_crash(db_conn, otel_clean, jaeger_clean, zipkin_clean, generic_clean) -> None:
     """Default ``warnings_out=None`` returns results cleanly with no crash.
 
-    Existing callers (``cmd_ingest_trace.ingest_trace`` at
+    Existing callers (``cmd_ingest_trace.ingest_trace_cmd`` at
     cmd_ingest_trace.py:165 + the ``test_runtime.py`` suite) call the
     ingesters with no kwargs — they must NOT regress on any failure
     mode covered by the W599 plumb.
@@ -566,7 +566,7 @@ def test_callers_unmodified() -> None:
     """AST-check that the CLI caller in cmd_ingest_trace.py is unchanged.
 
     The single live caller of the four ingesters is
-    ``cmd_ingest_trace.ingest_trace`` at cmd_ingest_trace.py:165 which
+    ``cmd_ingest_trace.ingest_trace_cmd`` at cmd_ingest_trace.py:165 which
     invokes ``ingester(conn, path)`` with positional args only. W599
     is read-only and additive — the caller does NOT thread
     ``warnings_out``. The audit confirms by AST:
@@ -607,7 +607,7 @@ def test_callers_unmodified() -> None:
 def test_auto_detect_caller_unmodified() -> None:
     """The ``auto_detect_format(trace_file)`` call site is unchanged.
 
-    ``cmd_ingest_trace.ingest_trace`` calls ``auto_detect_format`` at
+    ``cmd_ingest_trace.ingest_trace_cmd`` calls ``auto_detect_format`` at
     cmd_ingest_trace.py:137 and catches the wrapped ``ValueError``.
     W599's plumb is additive — the caller does not thread the bucket.
     """

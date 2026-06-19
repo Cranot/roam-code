@@ -327,7 +327,7 @@ _COMMANDS = {
     "mutate": ("roam.commands.cmd_mutate", "mutate"),
     "vuln-map": ("roam.commands.cmd_vuln_map", "vuln_map"),
     "vuln-reach": ("roam.commands.cmd_vuln_reach", "vuln_reach"),
-    "ingest-trace": ("roam.commands.cmd_ingest_trace", "ingest_trace"),
+    "ingest-trace": ("roam.commands.cmd_ingest_trace", "ingest_trace_cmd"),
     "hotspots": ("roam.commands.cmd_hotspots", "hotspots"),
     "why-slow": ("roam.commands.cmd_why_slow", "why_slow"),
     "schema": ("roam.commands.cmd_schema", "schema_cmd"),
