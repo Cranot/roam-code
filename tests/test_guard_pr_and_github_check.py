@@ -9,6 +9,7 @@ Per project_roam_guard_phase2_complete:
 from __future__ import annotations
 
 import json
+import urllib.error
 
 from click.testing import CliRunner
 
@@ -102,6 +103,37 @@ def test_post_check_run_returns_no_token_error_without_env(monkeypatch):
     result = post_check_run(owner="o", repo="r", payload={})
     assert result["ok"] is False
     assert result["error"] == "no_github_token"
+
+
+def test_post_check_run_http_error_body_read_failure_preserves_status(monkeypatch):
+    class BrokenErrorBody:
+        def read(self):
+            raise OSError("socket closed")
+
+        def close(self):
+            pass
+
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    error = urllib.error.HTTPError(
+        "https://api.github.com/repos/o/r/check-runs",
+        502,
+        "Bad Gateway",
+        hdrs={},
+        fp=BrokenErrorBody(),
+    )
+
+    def raise_http_error(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
+    result = post_check_run(owner="o", repo="r", payload={})
+
+    assert result == {
+        "ok": False,
+        "status": 502,
+        "body": "HTTP Error 502: Bad Gateway",
+        "error": "http_502",
+    }
 
 
 def test_verdict_conclusion_map_is_closed_enum():
