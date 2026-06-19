@@ -73,10 +73,10 @@ def check_stale(
     """
     if db_path is None:
         try:
-            from roam.db.connection import get_db_path
+            from roam.db.connection import StaleDbDirError, get_db_path
 
             db_path = get_db_path()
-        except Exception:
+        except StaleDbDirError:
             return True, "index db path could not be resolved"
 
     p = Path(db_path)

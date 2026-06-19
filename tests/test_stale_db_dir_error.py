@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from roam.commands.stale_index import check_stale
 from roam.db.connection import (
     StaleDbDirError,
     _safe_mkdir,
@@ -200,3 +201,33 @@ class TestGetDbPath:
         err = excinfo.value
         assert err.source == "ROAM_DB_DIR env"
         assert err.db_dir == str(stale)
+
+
+class TestStaleIndexDbPathResolution:
+    def test_check_stale_degrades_stale_db_dir_error(self, monkeypatch):
+        """Configured db_dir failures remain a stale-index signal."""
+
+        def _boom():
+            raise StaleDbDirError(
+                "/missing/.roam",
+                ".roam/config.json db_dir",
+                PermissionError("denied"),
+            )
+
+        monkeypatch.setattr("roam.db.connection.get_db_path", _boom)
+
+        is_stale, reason = check_stale()
+
+        assert is_stale is True
+        assert reason == "index db path could not be resolved"
+
+    def test_check_stale_propagates_unexpected_db_path_errors(self, monkeypatch):
+        """Programmer-class path resolution errors must not be mislabeled as stale."""
+
+        def _boom():
+            raise RuntimeError("programmer bug")
+
+        monkeypatch.setattr("roam.db.connection.get_db_path", _boom)
+
+        with pytest.raises(RuntimeError, match="programmer bug"):
+            check_stale()
