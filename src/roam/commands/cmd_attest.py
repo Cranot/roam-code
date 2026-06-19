@@ -1059,7 +1059,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             import roam
 
             tool_version = roam.__version__
-        except Exception:
+        except (ImportError, AttributeError):
             tool_version = "unknown"
 
         now = datetime.now(timezone.utc)
