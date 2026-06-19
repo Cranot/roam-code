@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import sqlite3
 
 import click
 
@@ -342,7 +343,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         if count is None:
             try:
                 file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] or 0
-            except Exception:
+            except sqlite3.Error:
                 file_count = 0
             if file_count >= 1000:
                 count = 100
