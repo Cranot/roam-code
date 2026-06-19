@@ -647,7 +647,7 @@ def ws_resolve(ctx) -> None:
 
 @ws.command("understand")
 @click.pass_context
-def ws_understand(ctx) -> None:
+def ws_understand_command(ctx) -> None:
     """Full workspace overview: repos, stats, cross-repo connections."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
