@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -222,3 +223,28 @@ class TestSbomReachabilityGraph:
         _record_match(info, "q10", G, entries, 10, set(entries))
         assert info["reachable"] is False
         assert info["entry_points"] == []
+
+
+class TestSbomReachabilityFailures:
+    def test_compute_reachability_returns_empty_result_on_sqlite_error(self, monkeypatch):
+        from roam.commands.cmd_sbom import _compute_reachability
+
+        def _raise_sqlite(_conn):
+            raise sqlite3.OperationalError("synthetic graph query failure")
+
+        monkeypatch.setattr("roam.graph.builder.build_symbol_graph", _raise_sqlite)
+
+        assert _compute_reachability(object(), ["requests"]) == {
+            "requests": {"reachable": False, "entry_points": [], "matched_symbols": []}
+        }
+
+    def test_compute_reachability_propagates_non_sqlite_errors(self, monkeypatch):
+        from roam.commands.cmd_sbom import _compute_reachability
+
+        def _raise_runtime(_conn):
+            raise RuntimeError("synthetic graph programming failure")
+
+        monkeypatch.setattr("roam.graph.builder.build_symbol_graph", _raise_runtime)
+
+        with pytest.raises(RuntimeError, match="synthetic graph programming failure"):
+            _compute_reachability(object(), ["requests"])

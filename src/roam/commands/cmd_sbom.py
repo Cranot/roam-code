@@ -11,6 +11,7 @@ CycloneDX/SPDX SBOM document. See action.yml _SUPPORTED_SARIF allowlist
 from __future__ import annotations
 
 import re
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -183,7 +184,7 @@ def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
         return result
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except sqlite3.Error:
         return result
     if not G.nodes:
         return result
