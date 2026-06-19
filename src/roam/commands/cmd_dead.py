@@ -1727,7 +1727,7 @@ def _detect_dead_param_chains(conn) -> list[dict]:
         try:
             ptr = json.loads(row["param_taints_return"] or "{}")
             pts = json.loads(row["param_to_sink"] or "{}")
-        except Exception:
+        except json.JSONDecodeError:
             continue
         param_names = _parse_param_names(row["signature"])
         for idx, pname in enumerate(param_names):
