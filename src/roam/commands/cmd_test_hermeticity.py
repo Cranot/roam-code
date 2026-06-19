@@ -64,13 +64,14 @@ from __future__ import annotations
 import ast
 import json as _json
 import sqlite3
+from pathlib import Path
 from typing import Any, Iterable
 
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.db.findings import (
     CONFIDENCE_STATIC_ANALYSIS,
     CONFIDENCE_STRUCTURAL,
@@ -297,14 +298,35 @@ def _collect_suppression_signals(tree: ast.AST) -> set[str]:
 # --- Per-file scan -----------------------------------------------------------
 
 
-def _scan_test_file(file_path: str) -> list[dict]:
+def _resolve_scannable_test_path(file_path: str, project_root: Path | None = None) -> Path | None:
+    """Resolve an indexed test path without allowing reads outside the repo."""
+    if project_root is None:
+        return Path(file_path)
+
+    indexed_path = Path(file_path)
+    if indexed_path.is_absolute():
+        return None
+
+    root = project_root.resolve()
+    candidate = (root / indexed_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _scan_test_file(file_path: str, project_root: Path | None = None) -> list[dict]:
     """Return one finding dict per non-hermetic call site in the file.
 
     Returns ``[]`` when the file can't be parsed, is suppressed in full,
     or contains no non-hermetic calls. The caller filters / persists.
     """
+    scan_path = _resolve_scannable_test_path(file_path, project_root)
+    if scan_path is None:
+        return []
     try:
-        with open(file_path, encoding="utf-8", errors="replace") as f:
+        with open(scan_path, encoding="utf-8", errors="replace") as f:
             source = f.read()
     except OSError:
         return []
@@ -472,6 +494,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
+    project_root = find_project_root()
 
     findings: list[dict] = []
     total_test_files = 0
@@ -486,7 +509,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         total_test_files = len(test_files)
 
         for path in test_files:
-            file_findings = _scan_test_file(path)
+            file_findings = _scan_test_file(path, project_root=project_root)
             if file_findings:
                 non_hermetic_files.add(path)
                 findings.extend(file_findings)
