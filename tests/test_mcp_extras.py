@@ -111,14 +111,40 @@ class TestSampling:
         result = asyncio.run(sampling.compress_with_sampling(ctx, {"k": "v"}, task="x"))
         assert result is None
 
-    def test_sample_failure_returns_none(self):
+    def test_mcp_sample_failure_returns_none(self, monkeypatch):
+        monkeypatch.setenv("ROAM_AI_ENABLED", "1")
+        from mcp.shared.exceptions import McpError
+        from mcp.types import INTERNAL_ERROR, ErrorData
+
         class CtxBadSample(_FakeCtx):
             async def sample(self, *args, **kwargs):
-                raise RuntimeError("sampling not configured")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message="sampling failed"))
 
         ctx = CtxBadSample()
         result = asyncio.run(sampling.compress_with_sampling(ctx, {"k": "v"}, task="x"))
         assert result is None
+
+    def test_client_without_sampling_capability_returns_none(self, monkeypatch):
+        monkeypatch.setenv("ROAM_AI_ENABLED", "1")
+
+        class CtxWithoutSamplingCapability(_FakeCtx):
+            async def sample(self, *args, **kwargs):
+                raise ValueError("Client does not support sampling")
+
+        ctx = CtxWithoutSamplingCapability()
+        result = asyncio.run(sampling.compress_with_sampling(ctx, {"k": "v"}, task="x"))
+        assert result is None
+
+    def test_unexpected_sample_failure_propagates(self, monkeypatch):
+        monkeypatch.setenv("ROAM_AI_ENABLED", "1")
+
+        class CtxBuggySample(_FakeCtx):
+            async def sample(self, *args, **kwargs):
+                raise RuntimeError("sampler bug")
+
+        ctx = CtxBuggySample()
+        with pytest.raises(RuntimeError, match="sampler bug"):
+            asyncio.run(sampling.compress_with_sampling(ctx, {"k": "v"}, task="x"))
 
     def test_successful_sample(self, monkeypatch):
         """must set ROAM_AI_ENABLED=1."""
