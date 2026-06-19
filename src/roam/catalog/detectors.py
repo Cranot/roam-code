@@ -77,7 +77,6 @@ __all__ = [
     "detect_loop_invariant_call",
     "detect_loop_lookup",
     "detect_manual_accumulation",
-    "detect_manual_dedup",
     "detect_manual_gcd",
     "detect_manual_groupby",
     "detect_manual_maxmin",
@@ -1020,49 +1019,6 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
                     "medium",
                 )
             )
-    return results
-
-
-@algorithm_detector(
-    task_id="unique",
-    languages=(),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
-    """Nested loops in dedup/unique-named functions without set usage."""
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.has_nested_loops, ms.loop_with_compare, ms.calls_in_loops "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%dedup%' OR s.name LIKE '%unique%' "
-        "  OR s.name LIKE '%Dedup%' OR s.name LIKE '%Unique%' "
-        "  OR s.name LIKE '%distinct%' OR s.name LIKE '%Distinct%' "
-        "  OR s.name LIKE '%remove\\_dup%' ESCAPE '\\' OR s.name LIKE '%removeDup%') "
-        "AND s.kind IN ('function', 'method') "
-        "AND ms.has_nested_loops = 1 "
-        "AND ms.loop_with_compare = 1"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        # Negative check: skip if they already use set/hash
-        calls = _iter_loop_calls(r)
-        if _call_in(calls, {"set", "Set", "HashSet"}):
-            continue
-        results.append(
-            _finding(
-                "unique",
-                "nested-dedup",
-                r,
-                "Nested loops with comparisons in dedup function",
-                "high",
-            )
-        )
     return results
 
 
@@ -4760,7 +4716,6 @@ _MATH_DETECTORS = [
     ("search-sorted", "linear-scan", detect_linear_search),
     ("membership", "list-scan", detect_list_membership),
     ("string-concat", "loop-concat", detect_string_concat_loop),
-    ("unique", "nested-dedup", detect_manual_dedup),
     ("max-min", "manual-loop", detect_manual_maxmin),
     ("accumulation", "manual-sum", detect_manual_accumulation),
     ("manual-power", "loop-multiply", detect_manual_power),
