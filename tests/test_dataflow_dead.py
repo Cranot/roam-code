@@ -17,11 +17,13 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 from click.testing import CliRunner
 from conftest import git_init, index_in_process, invoke_cli
 
-from roam.commands.cmd_dead import _analyze_dataflow_dead
+from roam.commands.cmd_dead import _analyze_dataflow_dead, _table_exists
 from roam.db.schema import SCHEMA_SQL
 
 # ===========================================================================
@@ -100,6 +102,29 @@ def _insert_symbol_effect(conn, symbol_id, effect_type, source="direct"):
 # ===========================================================================
 # Tests: _analyze_dataflow_dead() internals
 # ===========================================================================
+
+
+class TestTableExists:
+    """Test the dataflow table probe's expected-error boundary."""
+
+    def test_missing_table_returns_false(self, tmp_path):
+        """A missing optional table is absent state."""
+        db_path = tmp_path / "bare.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            assert _table_exists(conn, "taint_summaries") is False
+        finally:
+            conn.close()
+
+    def test_non_missing_operational_error_propagates(self):
+        """Unexpected SQLite operational failures stay visible."""
+
+        class LockedConn:
+            def execute(self, _sql):
+                raise sqlite3.OperationalError("database is locked")
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            _table_exists(LockedConn(), "taint_summaries")
 
 
 class TestDataflowDeadEmpty:

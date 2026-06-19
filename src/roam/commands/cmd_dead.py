@@ -1607,12 +1607,15 @@ def _table_exists(conn, name: str) -> bool:
     """small probe used by the dataflow analyzer.
 
     Replaces the ``try: SELECT ... LIMIT 0; except: pass`` pattern
-    repeated 3 times in the original ``_analyze_dataflow_dead``.
+    repeated 3 times in the original ``_analyze_dataflow_dead`` while
+    only treating a missing table as absent state.
     """
     try:
         conn.execute(f"SELECT 1 FROM {name} LIMIT 0")
         return True
-    except Exception:
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
         return False
 
 
