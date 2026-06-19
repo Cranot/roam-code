@@ -8,6 +8,8 @@ narrow-swallow FPs, 2026-06-05):
   * cross-role mirrors -- a source fn and its `test_*` namesake are expected.
   * MCP wrapper mirrors -- `mcp_server.py` shims intentionally share names with
     their matching `cmd_<name>.py` Click command entrypoints.
+  * substrate lifecycle records -- leases and permits intentionally share the
+    `is_expired_at` API while preserving different read-path semantics.
   * narrow-type silent swallows -- `except OSError: pass` cleanup is deliberate;
     only BROAD/bare `except: pass` is the dangerous swallow.
 """
@@ -146,6 +148,26 @@ def test_mcp_cli_command_entrypoints_not_flagged(tmp_path):
     env = _verify_json(proj, "src/roam/commands/cmd_search_semantic.py", "--checks", "duplicates")
     msgs = [v["message"] for v in env["categories"]["duplicates"]["violations"]]
     assert not any("`search_semantic`" in m for m in msgs), msgs
+
+
+def test_permit_lease_expiry_contract_not_flagged(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "src" / "roam" / "leases").mkdir(parents=True)
+    (proj / "src" / "roam" / "permits").mkdir(parents=True)
+    (proj / ".git").mkdir(exist_ok=True)  # isolate index root from any stray /tmp/.git
+    hdr = "from __future__ import annotations\n\n\n"
+    (proj / "src" / "roam" / "leases" / "store.py").write_text(
+        hdr + "class Lease:\n    def is_expired_at(self, now=None):\n        return False\n",
+        encoding="utf-8",
+    )
+    (proj / "src" / "roam" / "permits" / "store.py").write_text(
+        hdr + "class PermitRecord:\n    def is_expired_at(self, now=None):\n        return False\n",
+        encoding="utf-8",
+    )
+    _index(proj)
+    env = _verify_json(proj, "src/roam/permits/store.py", "--checks", "duplicates")
+    msgs = [v["message"] for v in env["categories"]["duplicates"]["violations"]]
+    assert not any("is_expired_at" in m for m in msgs), msgs
 
 
 def test_public_name_not_compared_to_private_helper(tmp_path):

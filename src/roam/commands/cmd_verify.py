@@ -1341,6 +1341,17 @@ def _is_mcp_cli_entrypoint_pair(new_sym, existing) -> bool:
     return command_name == new_sym["name"]
 
 
+def _is_shared_substrate_lifecycle_pair(new_sym, existing) -> bool:
+    """Permit and lease records intentionally expose the same expiry API."""
+    if new_sym["name"] != "is_expired_at":
+        return False
+    paths = {
+        (new_sym["file_path"] or "").replace("\\", "/"),
+        (existing["file_path"] or "").replace("\\", "/"),
+    }
+    return paths == {"src/roam/leases/store.py", "src/roam/permits/store.py"}
+
+
 def _exact_duplicate_violation(new_sym, existing) -> dict:
     name = new_sym["name"]
     return {
@@ -1360,6 +1371,8 @@ def _exact_duplicate_for_symbol(
         # Cross-role matches (src fn vs its test/script/ci namesake) are
         # expected mirroring, not duplication -- compare within a role only.
         if _same_role_external_symbol(existing, new_sym, new_ids, role) and not _is_mcp_cli_entrypoint_pair(
+            new_sym, existing
+        ) and not _is_shared_substrate_lifecycle_pair(
             new_sym, existing
         ):
             return _exact_duplicate_violation(new_sym, existing)
