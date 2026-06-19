@@ -195,7 +195,7 @@ _COMMANDS = {
     "report": ("roam.commands.cmd_report", "report"),
     "understand": ("roam.commands.cmd_understand", "understand_cmd"),
     "onboard": ("roam.commands.cmd_understand", "understand_cmd"),
-    "affected-tests": ("roam.commands.cmd_affected_tests", "affected_tests"),
+    "affected-tests": ("roam.commands.cmd_affected_tests", "affected_tests_cmd"),
     "complexity": ("roam.commands.cmd_complexity", "complexity"),
     "py-types": ("roam.commands.cmd_py_types", "py_types"),
     "py-modern": ("roam.commands.cmd_py_modern", "py_modern"),
