@@ -30,7 +30,7 @@ def _db_path() -> Path:
 
         root = find_project_root()
         return root / ".roam" / "telemetry.db"
-    except Exception:
+    except OSError:
         cache = Path(os.path.expanduser("~")) / ".cache" / "roam"
         cache.mkdir(parents=True, exist_ok=True)
         return cache / "telemetry.db"
