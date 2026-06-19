@@ -48,7 +48,7 @@ from roam.output.formatter import json_envelope, to_json
 )
 @click.option("--fail-on-degradation", is_flag=True, help="Exit 1 if health score degraded.")
 @click.pass_context
-def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
+def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     """Show structural impact of pending changes.
 
     Compares current metrics against the latest snapshot to show metric
