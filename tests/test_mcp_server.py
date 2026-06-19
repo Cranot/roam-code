@@ -323,6 +323,14 @@ class TestToolDecorator:
         # via the _WORKFLOW_TOOLS union.
         assert len(_CORE_TOOLS) == 16
 
+    def test_understand_tool_uses_boundary_specific_binding(self):
+        """The MCP wrapper keeps the public tool name without a generic binding."""
+        import roam.mcp_server as mod
+
+        assert callable(mod.roam_understand)
+        assert "roam_understand" in mod._TOOL_METADATA
+        assert not hasattr(mod, "understand")
+
     def test_workflow_tools_disjoint_from_core(self):
         """_WORKFLOW_TOOLS holds the tools that left core in the 2026-05-24
         shrink. Must be set-disjoint from _CORE_TOOLS so the union
