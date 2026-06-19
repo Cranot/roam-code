@@ -22,6 +22,8 @@ memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -263,12 +265,10 @@ def _retrieve_confidence_score(candidates: list[dict], task: str = "") -> tuple[
     # ---- Token-coverage signal ----
     coverage_signal = 1.0  # default: one-token queries can't fail this check
     if task:
-        try:
+        tokens = []
+        if isinstance(task, str):
             from roam.retrieve.seeds import extract_tokens
-
             tokens = extract_tokens(task)
-        except Exception:
-            tokens = []
         if len(tokens) >= 2:
             lowered = {t.lower() for t in tokens if len(t) >= 4}
             if lowered:
@@ -502,7 +502,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
         # remediation message instead.
         try:
             fts_count = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
-        except Exception:
+        except sqlite3.Error:
             fts_count = -1
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         semantic_diag = _run_check_bi(
