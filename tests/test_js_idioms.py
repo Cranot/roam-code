@@ -140,6 +140,26 @@ def test_applicable_js_idiom_detectors_is_content_driven():
     assert "js-delete-in-loop" in ids("delete obj.k")
 
 
+def test_js_scope_setter_is_named_for_js_and_independent_from_python():
+    from roam.catalog import js_idioms, python_idioms
+
+    assert not hasattr(js_idioms, "set_idiom_scope")
+
+    python_idioms.set_idiom_scope(None)
+    js_idioms.set_js_idiom_scope(None)
+    try:
+        js_idioms.set_js_idiom_scope({101})
+        assert js_idioms._SCOPE_FILE_IDS == {101}
+        assert python_idioms._SCOPE_FILE_IDS is None
+
+        python_idioms.set_idiom_scope({202})
+        assert js_idioms._SCOPE_FILE_IDS == {101}
+        assert python_idioms._SCOPE_FILE_IDS == {202}
+    finally:
+        js_idioms.set_js_idiom_scope(None)
+        python_idioms.set_idiom_scope(None)
+
+
 def test_js_pack_is_on_the_runtime_and_cli_surface():
     """The three detectors.py integration sites: runtime generator + surface."""
     from roam.catalog.detectors import _iter_registered_detectors, list_detector_surface
