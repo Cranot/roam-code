@@ -466,7 +466,7 @@ def _async_query_boost(candidates: list[dict], task: str, *, conn=None) -> dict[
             f"SELECT id FROM symbols WHERE id IN ({placeholders}) AND is_async = 1",
             sids,
         ).fetchall()
-    except Exception:
+    except sqlite3.Error:
         return {}
     for r in rows:
         out[int(r[0])] = 0.10
