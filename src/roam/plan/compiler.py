@@ -10514,9 +10514,3 @@ def compile_plan(task: str, cwd: str | None = None) -> PlanV0:
     _PLAN_CACHE[ckey] = plan
     _plan_cache_store(task, cwd, plan)  # W57 — best-effort persistent store
     return plan
-
-
-def plan_hash(plan: PlanV0) -> str:
-    """Stable hash for cacheable plan-id."""
-    payload = json.dumps(plan.to_envelope(), sort_keys=True).encode()
-    return sha256(payload).hexdigest()[:12]
