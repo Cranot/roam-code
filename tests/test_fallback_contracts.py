@@ -149,14 +149,42 @@ class TestPersonalizedPagerankAlphaIgnoredInFallback:
 class TestSemanticEncoderFallback:
     """``_load_text_encoder`` returns None when optional deps missing."""
 
+    def _reset_encoder_cache(self, semantic):
+        semantic._ENCODER_CACHE = None
+        semantic._ENCODER_LOAD_FAILED = False
+
+    def _install_fake_semantic_stack(self, monkeypatch, session_factory):
+        np_mod = types.ModuleType("numpy")
+        ort_mod = types.ModuleType("onnxruntime")
+        tokenizers_mod = types.ModuleType("tokenizers")
+
+        ort_mod.InferenceSession = session_factory
+
+        class FakeTokenizer:
+            @staticmethod
+            def from_file(_path):
+                return object()
+
+        tokenizers_mod.Tokenizer = FakeTokenizer
+
+        monkeypatch.setitem(sys.modules, "numpy", np_mod)
+        monkeypatch.setitem(sys.modules, "onnxruntime", ort_mod)
+        monkeypatch.setitem(sys.modules, "tokenizers", tokenizers_mod)
+
+    def _install_model_files(self, monkeypatch, tmp_path):
+        model_dir = tmp_path / "semantic-model"
+        model_dir.mkdir()
+        (model_dir / "model.onnx").write_bytes(b"fake model")
+        (model_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("ROAM_SEMANTIC_MODEL_DIR", str(model_dir))
+
     def test_returns_none_without_onnxruntime(self):
         """Force ImportError on numpy import (the first one) — caller
         must get ``None``, not a crash."""
         from roam.retrieve import semantic
 
         # Reset the module-level cache so the import gate is re-evaluated.
-        semantic._ENCODER_CACHE = None
-        semantic._ENCODER_LOAD_FAILED = False
+        self._reset_encoder_cache(semantic)
 
         original_import = __import__
 
@@ -170,8 +198,42 @@ class TestSemanticEncoderFallback:
         assert encoder is None
 
         # Reset for downstream tests
-        semantic._ENCODER_CACHE = None
-        semantic._ENCODER_LOAD_FAILED = False
+        self._reset_encoder_cache(semantic)
+
+    def test_expected_model_load_error_returns_none(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        self._reset_encoder_cache(semantic)
+        self._install_model_files(monkeypatch, tmp_path)
+
+        def _bad_session(*_args, **_kwargs):
+            raise ValueError("bad ONNX model")
+
+        self._install_fake_semantic_stack(monkeypatch, _bad_session)
+
+        try:
+            assert semantic._load_text_encoder() is None
+            assert semantic._ENCODER_LOAD_FAILED is True
+        finally:
+            self._reset_encoder_cache(semantic)
+
+    def test_unexpected_model_load_error_propagates(self, monkeypatch, tmp_path):
+        from roam.retrieve import semantic
+
+        self._reset_encoder_cache(semantic)
+        self._install_model_files(monkeypatch, tmp_path)
+
+        def _buggy_session(*_args, **_kwargs):
+            raise AssertionError("programmer bug")
+
+        self._install_fake_semantic_stack(monkeypatch, _buggy_session)
+
+        try:
+            with pytest.raises(AssertionError, match="programmer bug"):
+                semantic._load_text_encoder()
+            assert semantic._ENCODER_LOAD_FAILED is False
+        finally:
+            self._reset_encoder_cache(semantic)
 
 
 class TestLearnedRankerFallback:
