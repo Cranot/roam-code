@@ -162,7 +162,7 @@ def map_cmd(ctx, count, full, budget, seed_path, seed_depth):
                         try:
                             lengths = nx.single_source_shortest_path_length(G, sid, cutoff=int(seed_depth))
                             reach.update(lengths.keys())
-                        except Exception:
+                        except nx.NetworkXException:
                             continue
                     all_ranked = [r for r in all_ranked if r["id"] in reach]
 
