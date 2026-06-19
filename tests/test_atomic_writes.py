@@ -159,17 +159,29 @@ def test_telemetry_record_writes_transactionally(tmp_path, monkeypatch):
     assert rows == [("roam test", 42, 0), ("roam other", 99, 1)]
 
 
-def test_telemetry_open_returns_none_on_failure(tmp_path, monkeypatch):
-    """If anything goes wrong inside ``_open``, the contract is to
-    return ``None`` (telemetry must never break a CLI run). Verifies
-    the ``with conn:`` wrapper didn't change the surface contract."""
+def test_telemetry_open_returns_none_on_filesystem_failure(tmp_path, monkeypatch):
+    """Expected filesystem setup failures return ``None`` so telemetry
+    still never breaks a CLI run."""
     from roam import telemetry
 
     def boom():
-        raise RuntimeError("simulated _db_path failure")
+        raise OSError("simulated _db_path failure")
 
     monkeypatch.setattr(telemetry, "_db_path", boom)
     assert telemetry._open() is None
+
+
+def test_telemetry_open_propagates_bug_class_path_failure(monkeypatch):
+    """Bug-class exceptions from the path helper should not be hidden by
+    telemetry's expected OS/SQLite failure guard."""
+    from roam import telemetry
+
+    def boom():
+        raise RuntimeError("simulated _db_path bug")
+
+    monkeypatch.setattr(telemetry, "_db_path", boom)
+    with pytest.raises(RuntimeError, match="simulated _db_path bug"):
+        telemetry._open()
 
 
 # ---------------------------------------------------------------------------
