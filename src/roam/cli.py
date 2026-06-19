@@ -333,7 +333,7 @@ _COMMANDS = {
     "schema": ("roam.commands.cmd_schema", "schema_cmd"),
     "search-semantic": ("roam.commands.cmd_search_semantic", "search_semantic"),
     "relate": ("roam.commands.cmd_relate", "relate"),
-    "agent-export": ("roam.commands.cmd_agent_export", "agent_export"),
+    "agent-export": ("roam.commands.cmd_agent_export", "agent_export_cmd"),
     "agent-plan": ("roam.commands.cmd_agent_plan", "agent_plan"),
     "agent-context": ("roam.commands.cmd_agent_context", "agent_context"),
     "agents-md": ("roam.commands.cmd_agents_md", "agents_md_cmd"),

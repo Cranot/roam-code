@@ -798,7 +798,7 @@ def _write_with_preserve(filepath, content):
     help="emit a compact summary (top-level fields only) instead of the full agent doc.",
 )
 @click.pass_context
-def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
+def agent_export_cmd(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
     """Generate an AI agent context file from the roam index.
 
     Produces a concise markdown document with architecture, key files,
