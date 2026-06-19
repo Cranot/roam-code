@@ -186,7 +186,7 @@ _COMMANDS = {
     "sketch": ("roam.commands.cmd_sketch", "sketch"),
     "context": ("roam.commands.cmd_context", "context"),
     "safe-delete": ("roam.commands.cmd_safe_delete", "safe_delete"),
-    "pr-risk": ("roam.commands.cmd_pr_risk", "pr_risk"),
+    "pr-risk": ("roam.commands.cmd_pr_risk", "pr_risk_cmd"),
     "split": ("roam.commands.cmd_split", "split"),
     "risk": ("roam.commands.cmd_risk", "risk"),
     "why": ("roam.commands.cmd_why", "why"),
