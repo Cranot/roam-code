@@ -26,6 +26,8 @@ These tests pin the four-way consistency:
 
 from __future__ import annotations
 
+import pytest
+
 from roam.commands import cmd_preflight
 
 
@@ -112,6 +114,20 @@ def test_check_fitness_no_rules_emits_empty_sibling_list(monkeypatch):
     assert result["failed_rules"] == []
     assert result["failed_rules_on_siblings"] == []
     assert result["rules_failed"] == 0
+
+
+def test_check_fitness_reraises_unexpected_checker_errors(monkeypatch):
+    """Unexpected checker bugs must reach the outer preflight marker boundary."""
+    rules = [{"name": "Synthetic rule", "type": "synthetic"}]
+
+    def _checker(rule, conn):
+        raise RuntimeError("synthetic unexpected checker failure")
+
+    monkeypatch.setattr(cmd_preflight, "_load_rules", lambda root: rules)
+    monkeypatch.setitem(cmd_preflight._CHECKERS, "synthetic", _checker)
+
+    with pytest.raises(RuntimeError, match="synthetic unexpected checker failure"):
+        cmd_preflight._check_fitness(conn=None, root=".", target_paths={"src/x.py"})
 
 
 def test_fitness_text_branch_never_prints_hollow_parens():
