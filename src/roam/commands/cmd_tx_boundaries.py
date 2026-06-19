@@ -122,7 +122,7 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
 
     try:
         repo_root = find_project_root()
-    except Exception:
+    except (OSError, RuntimeError):
         repo_root = None
 
     with open_db(readonly=True) as conn:
