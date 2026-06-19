@@ -57,10 +57,6 @@ class Hint:
     reason: str
     source: str
 
-    @property
-    def is_high(self) -> bool:
-        return self.confidence == "HIGH"
-
 
 @dataclass
 class HintContext:
@@ -411,7 +407,7 @@ def best_hint(
             continue
         if h is None:
             continue
-        if h.is_high:
+        if h.confidence == "HIGH":
             return h
         if fallback is None:
             fallback = h
