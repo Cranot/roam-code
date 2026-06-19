@@ -529,7 +529,7 @@ def _generate_spdx(
     ),
 )
 @click.pass_context
-def sbom(ctx, fmt, output_path, no_reachability, aibom):
+def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
     """Generate a Software Bill of Materials (SBOM) enriched with call-graph reachability.
 
     Produces CycloneDX 1.5 or SPDX 2.3 JSON output.  Each dependency is
@@ -996,3 +996,8 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
             click.echo(f"VERDICT: {verdict}")
             click.echo()
             click.echo(output_text)
+
+
+# Backwards-compatible import name for tests and external callers that invoke
+# the Click command object directly.
+sbom = sbom_cmd

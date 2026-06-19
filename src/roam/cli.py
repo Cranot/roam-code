@@ -400,7 +400,7 @@ _COMMANDS = {
     "adrs": ("roam.commands.cmd_adrs", "adrs"),
     "flag-dead": ("roam.commands.cmd_flag_dead", "flag_dead"),
     "test-scaffold": ("roam.commands.cmd_test_scaffold", "test_scaffold"),
-    "sbom": ("roam.commands.cmd_sbom", "sbom"),
+    "sbom": ("roam.commands.cmd_sbom", "sbom_cmd"),
     "triage": ("roam.commands.cmd_triage", "triage"),
     "ci-setup": ("roam.commands.cmd_ci_setup", "ci_setup"),
     "clones": ("roam.commands.cmd_clones", "clones"),
