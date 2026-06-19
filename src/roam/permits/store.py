@@ -167,6 +167,8 @@ class PermitRecord:
     def is_expired_at(self, now: Optional[datetime] = None) -> bool:
         """Return True if ``expires_at`` has elapsed.
 
+        Uses the lease store's shared wall-clock expiry helper so permit
+        and lease timestamps keep identical ISO-8601 parsing semantics.
         Best-effort: a corrupt ``expires_at`` (shouldn't happen given the
         constructor validation, but readers may load older formats) is
         treated as not-expired so a bug in writers doesn't accidentally
