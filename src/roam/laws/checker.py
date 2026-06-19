@@ -551,7 +551,7 @@ def _check_testing_law(law: Law, parsed: dict, syms_added: list[dict]) -> list[V
     # silently re-introducing a narrower test-path heuristic.
     try:
         from roam.commands.changed_files import is_test_file
-    except Exception:
+    except ImportError:
         return []
 
     # Build the set of test-file basenames touched by the diff.
