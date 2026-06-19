@@ -366,6 +366,48 @@ class TestWatcherClassification:
         assert watcher._within_ignored("repo/src/main.py") is False
 
 
+class TestWatcherStartup:
+    @pytest.mark.parametrize("exc_type", [OSError, RuntimeError])
+    def test_start_watcher_returns_none_on_expected_startup_failure(self, tmp_path: Path, monkeypatch, exc_type):
+        (tmp_path / ".git").mkdir()
+
+        class FakeHandler:
+            pass
+
+        class FakeObserver:
+            def schedule(self, handler, path, recursive=False):
+                self.handler = handler
+                self.path = path
+                self.recursive = recursive
+
+            def start(self):
+                raise exc_type("watch backend unavailable")
+
+        monkeypatch.setattr(watcher, "_try_import_watchdog", lambda: (FakeObserver, FakeHandler))
+
+        assert watcher.start_watcher(None, root=tmp_path) is None
+
+    def test_start_watcher_propagates_unexpected_startup_failure(self, tmp_path: Path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+
+        class FakeHandler:
+            pass
+
+        class FakeObserver:
+            def schedule(self, handler, path, recursive=False):
+                self.handler = handler
+                self.path = path
+                self.recursive = recursive
+
+            def start(self):
+                raise ValueError("bad observer setup")
+
+        monkeypatch.setattr(watcher, "_try_import_watchdog", lambda: (FakeObserver, FakeHandler))
+
+        with pytest.raises(ValueError, match="bad observer setup"):
+            watcher.start_watcher(None, root=tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # mcp_server integration -- ensure the new tool surfaces in the registry
 # ---------------------------------------------------------------------------
