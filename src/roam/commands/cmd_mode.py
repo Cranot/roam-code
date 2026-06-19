@@ -384,10 +384,10 @@ def mode_cmd(
             repo_root=repo_root,
             extra_event_fields=extra_event_fields,
         )
-    except Exception as _exc:
+    except (AttributeError, TypeError) as _exc:
         # auto_log itself never raises, but the extra_event_fields
-        # derivation above touches the envelope dict — surface lineage
-        # so a dropped mode-switch ledger event has a discoverable cause.
+        # derivation above touches the envelope shape — surface lineage
+        # so a malformed envelope cannot silently drop the ledger event.
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_mode:auto_log_extra_fields", _exc)
