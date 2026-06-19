@@ -63,7 +63,6 @@ __all__ = [
     # Detector functions (alphabetical).
     "detect_async_blocking_sleep",
     "detect_async_fire_and_forget",
-    "detect_async_nested_run",
     "detect_branching_recursion",
     "detect_broad_except_swallow",
     "detect_busy_wait",
@@ -1298,6 +1297,65 @@ def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+_BOUNDED_NESTED_NAMES = {
+    # Grid / matrix traversal.
+    "matrix",
+    "grid",
+    "board",
+    "pixel",
+    "cell",
+    "permut",
+    "combin",
+    "cartesian",
+    "product",
+    "transpose",
+    "rotate",
+    "convolv",
+    # Diff / overlap / range-intersection.
+    "changed_symbols",
+    "overlap",
+    "intersect",
+    "diff",
+    "hunk",
+    "region",
+    "interval",
+    "range_overlap",
+    # Graph clustering / labelling.
+    "label_cluster",
+    "cluster_label",
+    "cluster_assignment",
+    "cluster_match",
+    # Co-change / coupling.
+    "cochange",
+    "co_change",
+    "coupling_pair",
+    "pairwise",
+    # Detector dispatch / rule application.
+    "run_detector",
+    "apply_rule",
+    "for_each_detector",
+    "dispatch_rule",
+    # Rendering / formatting.
+    "format_table",
+    "format_grid",
+    "render_table",
+    "render_grid",
+    "render_matrix",
+    "print_table",
+    "print_grid",
+    "emit_table",
+    "draw_grid",
+    "draw_table",
+    "tabulate",
+}
+
+
+def _is_bounded_nested_lookup_row(row) -> bool:
+    name_lower = (row["name"] or "").lower()
+    qname_lower = (row["qualified_name"] or "").lower() if "qualified_name" in row.keys() else ""
+    return any(kw in name_lower or kw in qname_lower for kw in _BOUNDED_NESTED_NAMES)
+
+
 @algorithm_detector(
     task_id="nested-lookup",
     languages=("python", "javascript", "typescript", "php", "ruby", "go", "java"),
@@ -1347,78 +1405,9 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
         "AND sm.cognitive_complexity >= 8"
     ).fetchall()
 
-    # Name hints that mean the nested-loop is the *algorithm*, not a
-    # latent N+1. The function is doing the work it's supposed to be
-    # doing — flagging it produces false positives that train users to
-    # ignore the detector.
-    _BOUNDED_NESTED_NAMES = {
-        # Grid / matrix traversal (original list)
-        "matrix",
-        "grid",
-        "board",
-        "pixel",
-        "cell",
-        "permut",
-        "combin",
-        "cartesian",
-        "product",
-        "transpose",
-        "rotate",
-        "convolv",
-        # Diff / overlap / range-intersection — both sides bounded by
-        # the diff (typical PR: <50 files, <50 symbols, <10 hunks).
-        "changed_symbols",
-        "overlap",
-        "intersect",
-        "diff",
-        "hunk",
-        "region",
-        "interval",
-        "range_overlap",
-        # Graph clustering / labelling — n is the cluster cardinality,
-        # bounded small in practice (Louvain partitions are usually
-        # <100 clusters).
-        "label_cluster",
-        "cluster_label",
-        "cluster_assignment",
-        "cluster_match",
-        # Co-change / coupling — pair-iteration is the entire point of
-        # the analysis; n is the symbol count for one file, bounded.
-        "cochange",
-        "co_change",
-        "coupling_pair",
-        "pairwise",
-        # Detector dispatch / rule application — the outer loop is
-        # detectors, the inner loop is the rule's payload. Bounded by
-        # the size of the rule list.
-        "run_detector",
-        "apply_rule",
-        "for_each_detector",
-        "dispatch_rule",
-        # Rendering / formatting — cell-formatting loops over a 2D
-        # structure (rows × cols) are intrinsically O(n*m). A hash-map
-        # join cannot apply to layout work.
-        "format_table",
-        "format_grid",
-        "render_table",
-        "render_grid",
-        "render_matrix",
-        "print_table",
-        "print_grid",
-        "emit_table",
-        "draw_grid",
-        "draw_table",
-        "tabulate",
-    }
-
     results = []
     for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        # Suppress bounded-nested patterns where O(n*m) IS the algorithm.
-        name_lower = (r["name"] or "").lower()
-        qname_lower = (r["qualified_name"] or "").lower() if "qualified_name" in r.keys() else ""
-        if any(kw in name_lower or kw in qname_lower for kw in _BOUNDED_NESTED_NAMES):
+        if _is_test_path(r["file_path"]) or _is_bounded_nested_lookup_row(r):
             continue
         results.append(
             _finding(
@@ -1430,6 +1419,66 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
             )
         )
     return results
+
+
+_POLL_NAMES = {
+    "poll",
+    "retry",
+    "health_check",
+    "healthcheck",
+    "monitor",
+    "wait_for",
+    "wait_until",
+    "watchdog",
+    "ping",
+    "heartbeat",
+    "keepalive",
+    "backoff",
+    "_loop",
+    "watch_",
+    "watcher",
+}
+_SPIN_THRESHOLD_SECONDS = 1.0
+_RE_SLEEP_ARG = re.compile(
+    r"\b(?:time\.sleep|asyncio\.sleep|Thread\.sleep|usleep|Sleep)\s*\(\s*"
+    r"(?:[A-Z][A-Z_]*|(?P<num>\d+(?:\.\d+)?))",
+)
+
+
+def _max_sleep_arg_seconds(snippet: str) -> float | None:
+    """Return the largest literal sleep argument in seconds, or None."""
+    max_seen: float | None = None
+    for m in _RE_SLEEP_ARG.finditer(snippet or ""):
+        num = m.group("num")
+        if num is None:
+            return None
+        val = float(num)
+        if max_seen is None or val > max_seen:
+            max_seen = val
+    return max_seen
+
+
+def _is_operator_paced_sleep(row) -> bool:
+    snippet = _read_symbol_source(
+        row["file_path"],
+        _row_value(row, "line_start", None),
+        _row_value(row, "line_end", None),
+    )
+    max_sleep = _max_sleep_arg_seconds(snippet)
+    return max_sleep is not None and max_sleep >= _SPIN_THRESHOLD_SECONDS
+
+
+def _is_busy_wait_candidate(row) -> bool:
+    if _is_test_path(row["file_path"]):
+        return False
+    calls = _iter_loop_calls(row)
+    sleep_calls = {"sleep", "time.sleep", "Thread.sleep", "usleep", "nanosleep", "Sleep"}
+    if not _call_in(calls, sleep_calls):
+        return False
+    name_lower = (row["name"] or "").lower()
+    if any(kw in name_lower for kw in _POLL_NAMES):
+        return False
+    return not _is_operator_paced_sleep(row)
 
 
 @algorithm_detector(
@@ -1454,75 +1503,9 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         "AND ms.loop_depth >= 1"
     ).fetchall()
 
-    # Intentional polling patterns — suppress these
-    _POLL_NAMES = {
-        "poll",
-        "retry",
-        "health_check",
-        "healthcheck",
-        "monitor",
-        "wait_for",
-        "wait_until",
-        "watchdog",
-        "ping",
-        "heartbeat",
-        "keepalive",
-        "backoff",
-        # also suppress *_loop and watch_* — found
-        # `_run_watch_loop` flagged on roam itself; the loop is a CLI
-        # poll loop with seconds-scale sleep, not a tight spin.
-        "_loop",
-        "watch_",
-        "watcher",
-    }
-
-    # sleep arg less than this many seconds counts as a "spin" in spirit;
-    # >= 1 second sleeps are operator-paced poll loops, not busy waits.
-    _SPIN_THRESHOLD_SECONDS = 1.0
-    _RE_SLEEP_ARG = re.compile(
-        r"\b(?:time\.sleep|asyncio\.sleep|Thread\.sleep|usleep|Sleep)\s*\(\s*"
-        r"(?:[A-Z][A-Z_]*|(?P<num>\d+(?:\.\d+)?))",
-    )
-
-    def _max_sleep_arg_seconds(snippet: str) -> float | None:
-        """Return the LARGEST literal sleep argument in seconds, or None.
-
-        Snippet sleeps with named-constant args (POLL_INTERVAL etc.) yield
-        None — we can't tell. usleep/Sleep are millisecond/microsecond on
-        their respective platforms, but for our threshold check we treat
-        the literal as seconds since a literal `usleep(1)` is unambiguous.
-        """
-        max_seen: float | None = None
-        for m in _RE_SLEEP_ARG.finditer(snippet or ""):
-            num = m.group("num")
-            if num is None:
-                # Named constant — bail. Can't classify safely.
-                return None
-            val = float(num)
-            if max_seen is None or val > max_seen:
-                max_seen = val
-        return max_seen
-
     results = []
     for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        calls = _iter_loop_calls(r)
-        if not _call_in(calls, {"sleep", "time.sleep", "Thread.sleep", "usleep", "nanosleep", "Sleep"}):
-            continue
-        # Suppress intentional polling by name.
-        name_lower = (r["name"] or "").lower()
-        if any(kw in name_lower for kw in _POLL_NAMES):
-            continue
-        # peek at the snippet: if every literal sleep argument is
-        # >= 1 second, this is operator-paced polling, not a busy wait.
-        snippet = _read_symbol_source(
-            r["file_path"],
-            _row_value(r, "line_start", None),
-            _row_value(r, "line_end", None),
-        )
-        max_sleep = _max_sleep_arg_seconds(snippet)
-        if max_sleep is not None and max_sleep >= _SPIN_THRESHOLD_SECONDS:
+        if not _is_busy_wait_candidate(r):
             continue
         results.append(
             _finding(
@@ -1974,6 +1957,90 @@ def list_framework_profiles() -> list[str]:
     return sorted(_FRAMEWORK_PROFILES.keys())
 
 
+def _read_project_json(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _read_project_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _package_dependencies(pkg: Mapping[str, Any]) -> dict[str, Any]:
+    return {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
+
+
+def _detect_package_profile(cwd: str) -> str | None:
+    pkg = _read_project_json(os.path.join(cwd, "package.json"))
+    if not pkg:
+        return None
+    deps = _package_dependencies(pkg)
+    if "@nestjs/core" in deps or "@nestjs/common" in deps:
+        return "nestjs"
+    vue_ver = str(deps.get("vue", ""))
+    tanstack = "@tanstack/vue-query" in deps or "@tanstack/query-core" in deps
+    if tanstack and vue_ver.startswith(("^3", "3", "~3")):
+        return "vue3-tanstack"
+    return None
+
+
+def _detect_composer_profile(cwd: str) -> str | None:
+    composer = _read_project_json(os.path.join(cwd, "composer.json"))
+    if not composer:
+        return None
+    require = composer.get("require") or {}
+    tenancy = "stancl/tenancy" in require or "spatie/laravel-multitenancy" in require
+    if "laravel/framework" in require and tenancy:
+        return "laravel-multitenant"
+    return None
+
+
+def _detect_python_profile(cwd: str) -> str | None:
+    req_text = _read_project_text(os.path.join(cwd, "requirements.txt")).lower()
+    pyp_text = _read_project_text(os.path.join(cwd, "pyproject.toml")).lower()
+    if "django" in req_text or '"django' in pyp_text or "'django" in pyp_text:
+        return "django"
+    return None
+
+
+def _detect_plugin_framework_profile(cwd: str) -> str | None:
+    try:
+        from pathlib import Path
+
+        from roam.plugins import get_plugin_framework_detectors
+    except Exception as err:
+        log.warning(
+            "framework-detector plugin discovery failed: %s: %s",
+            type(err).__name__,
+            err,
+        )
+        return None
+
+    root = Path(cwd)
+    for detect in get_plugin_framework_detectors():
+        try:
+            result = detect(root)
+        except Exception as err:
+            log.warning(
+                "framework detector plugin %r raised %s: %s",
+                getattr(detect, "__qualname__", repr(detect)),
+                type(err).__name__,
+                err,
+            )
+            continue
+        if result:
+            return str(result)
+    return None
+
+
 def autodetect_framework_profile() -> str | None:
     """sniff package.json / composer.json for known stacks.
 
@@ -1989,51 +2056,11 @@ def autodetect_framework_profile() -> str | None:
     Returns the profile name or None when no signal matches. Designed so
     a missing/unreadable manifest is silently None — never raises.
     """
-    import json as _json
-    import os as _os
-
-    cwd = _os.getcwd()
-
-    def _read_json(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                return _json.load(f)
-        except (OSError, _json.JSONDecodeError):
-            return None
-
-    def _read_text(path):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                return f.read()
-        except OSError:
-            return ""
-
-    pkg = _read_json(_os.path.join(cwd, "package.json"))
-    if pkg:
-        deps = {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
-        # NestJS check before generic vue3.
-        if "@nestjs/core" in deps or "@nestjs/common" in deps:
-            return "nestjs"
-        vue_ver = str(deps.get("vue", ""))
-        tanstack = "@tanstack/vue-query" in deps or "@tanstack/query-core" in deps
-        if tanstack and (vue_ver.startswith("^3") or vue_ver.startswith("3") or vue_ver.startswith("~3")):
-            return "vue3-tanstack"
-        # Express/Koa/Fastify don't have framework
-        # profiles yet (they're light frameworks; the I/O patterns are
-        # generic Node fs / http). Return None for now but flag in meta
-        # so future versions can add a profile when one becomes useful.
-
-    composer = _read_json(_os.path.join(cwd, "composer.json"))
-    if composer:
-        require = composer.get("require") or {}
-        if "laravel/framework" in require and ("stancl/tenancy" in require or "spatie/laravel-multitenancy" in require):
-            return "laravel-multitenant"
-
-    # X9 — Python/Django: check requirements.txt OR pyproject.toml.
-    req_text = _read_text(_os.path.join(cwd, "requirements.txt")).lower()
-    pyp_text = _read_text(_os.path.join(cwd, "pyproject.toml")).lower()
-    if "django" in req_text or '"django' in pyp_text or "'django" in pyp_text:
-        return "django"
+    cwd = os.getcwd()
+    for detect in (_detect_package_profile, _detect_composer_profile, _detect_python_profile):
+        result = detect(cwd)
+        if result:
+            return result
 
     # Ruby/Rails detection lives in the ``roam-plugin-rails`` plugin
     # under ``dev/example-plugin/roam_plugin_rails`` (W28.2 Path A
@@ -2048,43 +2075,8 @@ def autodetect_framework_profile() -> str | None:
     # lives in ``_FRAMEWORK_PROFILES`` so ``--framework rails`` keeps
     # working even when the detector plugin is absent.
 
-    # Plugin-contributed framework detectors. Built-ins win first
-    # (deterministic for the bundled profiles); plugins are consulted
-    # only if nothing built-in matched. Each detector is wrapped in a
-    # try/except so a buggy plugin can't break detection.
-    #
-    # W662 / W1238: plugin-isolation perimeter — a third-party detector
-    # may raise any exception class, so ``Exception`` is the correct
-    # width here. We log+continue instead of silently swallowing so the
-    # operator can spot a broken plugin via the warning stream while
-    # the host loop keeps running. Mirrors W531 fail-loud discipline.
-    try:
-        from pathlib import Path
-
-        from roam.plugins import get_plugin_framework_detectors
-
-        root = Path(cwd)
-        for detect in get_plugin_framework_detectors():
-            try:
-                result = detect(root)
-            except Exception as err:
-                log.warning(
-                    "framework detector plugin %r raised %s: %s",
-                    getattr(detect, "__qualname__", repr(detect)),
-                    type(err).__name__,
-                    err,
-                )
-                continue
-            if result:
-                return str(result)
-    except Exception as err:
-        log.warning(
-            "framework-detector plugin discovery failed: %s: %s",
-            type(err).__name__,
-            err,
-        )
-
-    return None
+    # Plugin-contributed framework detectors. Built-ins win first.
+    return _detect_plugin_framework_profile(cwd)
 
 
 def set_active_framework_profile(name: str | None) -> dict[str, set[str]] | None:
@@ -2948,73 +2940,6 @@ def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
         results[-1]["fix"] = (
             "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
         )
-    return results
-
-
-# `asyncio.run(...)` inside an async function. This
-# raises RuntimeError because the event loop is already running. The
-# fix is to call the coroutine directly with `await` instead.
-_RE_NESTED_ASYNCIO_RUN = re.compile(
-    r"^\s*(?:asyncio\.)?run\s*\(",
-    re.MULTILINE,
-)
-
-
-@algorithm_detector(
-    task_id="async-nested-run",
-    languages=("python",),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
-    """``asyncio.run()`` invoked inside another async function.
-
-    ``asyncio.run`` creates a new event loop. If one is already running
-    (which it is, inside an async function), this raises ``RuntimeError:
-    asyncio.run() cannot be called from a running event loop``. The fix
-    is to ``await`` the coroutine directly.
-
-    Python only, fires only when the host is async.
-    """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND s.is_async = 1 "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
-        if "asyncio.run(" not in snippet:
-            continue
-        # Heuristic: must be `asyncio.run(` (not `await asyncio.run(`); the
-        # latter is also wrong but caught by other linters more reliably.
-        match_count = snippet.count("asyncio.run(")
-        if match_count == 0:
-            continue
-        results.append(
-            _finding(
-                "async-nested-run",
-                "asyncio-run-in-async",
-                r,
-                "asyncio.run() invoked inside an async function — raises RuntimeError at runtime (loop already running)",
-                "high",
-                snippet=snippet,
-                matched_patterns=[
-                    "is_async = 1",
-                    f"asyncio.run( occurrences: {match_count}",
-                ],
-            )
-        )
-        results[-1]["fix"] = "Replace `asyncio.run(coro())` with `await coro()` — you're already inside an event loop."
     return results
 
 
@@ -4066,7 +3991,6 @@ _DETECTOR_METADATA = {
     # Async / event-loop:
     "async-blocking-sleep": {"precision": "high", "impact": "high", "tags": ["async", "blocking"]},
     "async-fire-and-forget-task": {"precision": "high", "impact": "medium", "tags": ["async", "task-management"]},
-    "async-nested-run": {"precision": "high", "impact": "high", "tags": ["async", "deadlock"]},
     "serial-await-loop": {"precision": "high", "impact": "medium", "tags": ["async", "performance"]},
     # Error handling:
     "broad-except-swallow": {"precision": "high", "impact": "high", "tags": ["error-handling", "anti-pattern"]},
@@ -4583,7 +4507,6 @@ _MATH_DETECTORS = [
     ("serial-await-loop", "for-of-await", detect_serial_await_loop),
     ("async-blocking-sleep", "blocking-call-in-async", detect_async_blocking_sleep),
     ("async-fire-and-forget-task", "leaked-asyncio-task", detect_async_fire_and_forget),
-    ("async-nested-run", "asyncio-run-in-async", detect_async_nested_run),
     ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
     ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
     ("defer-in-loop", "loop-defer", detect_defer_in_loop),
