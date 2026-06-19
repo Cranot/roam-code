@@ -1250,7 +1250,7 @@ def _gather_tour_data(conn, G):
             from roam.graph.builder import build_symbol_graph
 
             G = build_symbol_graph(conn)
-        except Exception:
+        except sqlite3.Error:
             G = None
 
     reading_order = _tour_reading_order(conn, G) if G is not None else []
