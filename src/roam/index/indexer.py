@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 from roam.db.connection import find_project_root, get_db_path, open_db
 from roam.index.discovery import discover_files
 from roam.index.file_roles import classify_file
-from roam.index.incremental import file_hash, get_changed_files
+from roam.index.incremental import file_hash, get_index_changed_files
 from roam.index.parser import (
     detect_language,
     extract_vue_template,
@@ -2131,7 +2131,7 @@ class Indexer:
         `roam index` would see them as unchanged and never recompute the skipped
         metrics — leaving pagerank/effects/churn/health stale until --force. Poison
         the stored hash so the next full run re-detects them. Set mtime=0 too:
-        `get_changed_files` takes an mtime fast-path and skips the hash check on an
+        `get_index_changed_files` takes an mtime fast-path and skips the hash check on an
         mtime match, so poisoning the hash alone would be short-circuited; mtime=0
         forces it past the fast-path into the (poisoned) hash comparison.
         """
@@ -2161,14 +2161,14 @@ class Indexer:
                 modified = []
                 removed = []
             else:
-                added, modified, removed = get_changed_files(conn, all_files, self.root)
+                added, modified, removed = get_index_changed_files(conn, all_files, self.root)
             # Discover-phase wallclock covers ls-files + change detection.
             self._record_phase("discover", time.perf_counter() - t_discover)
 
             total_changed = len(added) + len(modified) + len(removed)
             if total_changed == 0:
                 # W985-incremental: surface the source-of-truth (mtime+hash via
-                # ``get_changed_files``), the file count covered by the check,
+                # ``get_index_changed_files``), the file count covered by the check,
                 # AND the ``--force`` opt-out so an operator running ``roam
                 # index`` / ``roam health`` and expecting fresh metrics can
                 # disambiguate "nothing to do" from "broken / stale index"

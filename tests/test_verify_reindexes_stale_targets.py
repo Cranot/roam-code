@@ -100,7 +100,7 @@ def test_verify_reindexes_edited_indexed_file(tmp_path):
     an ALREADY-indexed file must trigger a reindex so it's actually checked."""
     proj = _build_indexed_project(tmp_path)
     # lib.py is already in the DB; append a PascalCase function (content changes →
-    # hash differs → get_changed_files reports it 'modified').
+    # hash differs -> get_index_changed_files reports it 'modified').
     with open(proj / "lib.py", "a", encoding="utf-8") as fh:
         fh.write("\n\ndef EditBadName():\n    return 99\n")
     env = _verify(proj, "lib.py")
@@ -121,8 +121,8 @@ def test_verify_source_pins_stale_target_reindex():
     from roam.commands import cmd_verify
 
     src = inspect.getsource(cmd_verify)
-    assert "get_changed_files" in src, (
-        "verify must detect stale targets via get_changed_files (added+modified), "
+    assert "get_index_changed_files" in src, (
+        "verify must detect stale targets via get_index_changed_files (added+modified), "
         "not an absence-only check — the latter false-greens on edits"
     )
     assert "Indexer().run(" in src, (
