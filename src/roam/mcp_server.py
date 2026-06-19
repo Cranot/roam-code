@@ -8797,7 +8797,7 @@ async def taint_classify(
     description="Shortest dependency path between two symbols with hop details.",
     output_schema=_SCHEMA_TRACE,
 )
-def trace(source: str, symbol: str, root: str = ".") -> dict:
+def trace_tool(source: str, symbol: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
     Call this to understand HOW a change in one symbol could affect
