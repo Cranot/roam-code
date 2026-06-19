@@ -36,6 +36,18 @@ from roam.guard_enums import VERDICT_TO_GH_CONCLUSION as VERDICT_TO_CONCLUSION  
 SUMMARY_BYTE_CAP = 65000
 
 
+def _normalize_github_token(token: str | None) -> tuple[str | None, str | None]:
+    """Return a header-safe token value plus an optional error code."""
+    if token is None:
+        return None, "no_github_token"
+    normalized = token.strip()
+    if not normalized:
+        return None, "no_github_token"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in normalized):
+        return None, "invalid_github_token"
+    return normalized, None
+
+
 def build_check_run_payload(
     v1: dict[str, Any],
     *,
@@ -123,9 +135,9 @@ def post_check_run(
       Dict with `{"ok": bool, "status": int, "body": ..., "error"?: str}`.
       Network or auth errors never raise — they surface in the dict.
     """
-    token = token or os.environ.get("GITHUB_TOKEN")
-    if not token:
-        return {"ok": False, "status": 0, "error": "no_github_token"}
+    token, token_error = _normalize_github_token(token or os.environ.get("GITHUB_TOKEN"))
+    if token_error:
+        return {"ok": False, "status": 0, "error": token_error}
 
     url = f"https://api.github.com/repos/{owner}/{repo}/check-runs"
     body = json.dumps(payload).encode("utf-8")
