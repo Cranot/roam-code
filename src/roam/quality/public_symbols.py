@@ -30,7 +30,6 @@ side-by-side via :class:`PublicSymbolsSummary`.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 
 # Kinds considered "public-shape" by the API surface walker. Kept
@@ -101,71 +100,3 @@ class PublicSymbolsSummary:
             out["fallback_reason"] = self.fallback_reason
         return out
 
-
-def public_symbols_summary(conn) -> PublicSymbolsSummary:
-    """Compute both canonical public-symbol counts on the indexed DB.
-
-    Both queries share the same kind list + test-file exclusion. The
-    difference is the inclusion rule (underscore-prefix vs
-    ``is_exported``), which is the chasm we are documenting.
-
-    Parameters
-    ----------
-    conn : sqlite3.Connection
-        Open roam DB connection (readonly is fine).
-
-    Returns
-    -------
-    PublicSymbolsSummary
-        Both counts side-by-side, plus the definition string.
-    """
-    placeholders = ",".join("?" for _ in _PUBLIC_KINDS)
-    kinds = list(_PUBLIC_KINDS)
-
-    # CRITERION_NO_UNDERSCORE — what `roam api` reports.
-    no_us_sql = (
-        "SELECT COUNT(*) FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.name NOT LIKE '\\_%' ESCAPE '\\' "
-        f"AND s.kind IN ({placeholders}) "
-        "AND COALESCE(f.file_role, 'source') NOT IN ('test', 'tests') "
-        "AND f.path NOT LIKE 'tests/%'"
-    )
-    no_us_failed = False
-    try:
-        n_no_us = conn.execute(no_us_sql, kinds).fetchone()[0]
-    except sqlite3.Error:
-        n_no_us = 0
-        no_us_failed = True
-
-    # CRITERION_HAS_EXPORT_MARKER — what `roam docs-coverage` reports.
-    exp_sql = (
-        "SELECT COUNT(*) FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.kind IN ({placeholders}) "
-        "AND s.is_exported = 1 "
-        "AND f.path NOT LIKE '%/tests/%' "
-        "AND f.path NOT LIKE '%/test/%' "
-        "AND f.path NOT LIKE '%test\\_%' ESCAPE '\\' "
-        "AND f.path NOT LIKE '%\\_test.%' ESCAPE '\\'"
-    )
-    exp_failed = False
-    try:
-        n_exp = conn.execute(exp_sql, kinds).fetchone()[0]
-    except sqlite3.Error:
-        n_exp = 0
-        exp_failed = True
-
-    if no_us_failed and exp_failed:
-        reason = "both_queries_failed"
-    elif no_us_failed:
-        reason = "no_underscore_query_failed"
-    elif exp_failed:
-        reason = "export_marker_query_failed"
-    else:
-        reason = ""
-
-    return PublicSymbolsSummary(
-        by_no_underscore=n_no_us,
-        by_export_marker=n_exp,
-        fallback_used=(no_us_failed or exp_failed),
-        fallback_reason=reason,
-    )
