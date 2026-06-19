@@ -636,13 +636,18 @@ class ChangeEvidence:
     # ------------------------------------------------------------------
 
     def compute_content_hash(self) -> str:
-        """Return sha256(canonical_json) with ``content_hash`` cleared.
+        """Return sha256(canonical_json) with ``content_hash`` cleared when present.
 
         Why clear it: the hash is part of the packet, so including it
         in the hash input would be circular. We compute the hash on
         the packet *without* this field and stamp the result back.
+
+        Dataclasses without a ``content_hash`` field reuse this helper
+        by hashing their canonical JSON as-is.
         """
-        stripped = dataclasses.replace(self, content_hash=None)
+        stripped = self
+        if any(field.name == "content_hash" for field in dataclasses.fields(self)):
+            stripped = dataclasses.replace(self, content_hash=None)
         canonical = stripped.to_canonical_json()
         return compute_canonical_json_hash(canonical)
 

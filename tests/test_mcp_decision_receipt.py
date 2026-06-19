@@ -74,6 +74,15 @@ def test_receipt_content_hash_changes_when_field_changes() -> None:
     assert a.compute_content_hash() != b.compute_content_hash()
 
 
+def test_receipt_content_hash_reuses_change_evidence_method() -> None:
+    """Receipt content hashes use the shared evidence hash contract."""
+    from roam.evidence.change_evidence import ChangeEvidence
+
+    receipt = _sample_receipt()
+    assert McpDecisionReceipt.compute_content_hash is ChangeEvidence.compute_content_hash
+    assert receipt.compute_content_hash() == ChangeEvidence.compute_content_hash(receipt)
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------

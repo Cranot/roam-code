@@ -47,7 +47,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
-from roam.evidence.change_evidence import compute_canonical_json_hash
+from roam.evidence.change_evidence import ChangeEvidence, compute_canonical_json_hash
 
 #: Closed enumeration of policy-layer decisions on an MCP tool call.
 #:
@@ -191,9 +191,10 @@ class McpDecisionReceipt:
         obj = dataclasses.asdict(self)
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
-    def compute_content_hash(self) -> str:
-        """sha256 of the canonical-JSON. Used as the receipt's stable id."""
-        return compute_canonical_json_hash(self.to_canonical_json())
+    # Reuse ChangeEvidence's content-hash contract. The shared method
+    # clears ``content_hash`` only when that field exists; receipts have
+    # no such field, so their canonical JSON is hashed as-is.
+    compute_content_hash = ChangeEvidence.compute_content_hash
 
 
 def hash_input_args(args: Mapping[str, Any]) -> str:
