@@ -108,10 +108,9 @@ def detect_roam_version() -> str:
     """Return the installed roam-code package version, or ``"unknown"``."""
     try:
         from roam import __version__
-
-        return str(__version__)
-    except Exception:
+    except ImportError:
         return "unknown"
+    return str(__version__)
 
 
 def utc_timestamp() -> str:
