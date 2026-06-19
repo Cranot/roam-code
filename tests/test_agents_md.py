@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -215,6 +216,34 @@ def test_cli_no_laws_no_rules_runs_cleanly(cli_runner, small_project):
     # Laws / rules absent from sources_consulted when toggled off.
     assert "laws" not in data["sources_consulted"]
     assert "rules" not in data["sources_consulted"]
+
+
+def test_cli_project_root_fallback_only_catches_oserror():
+    """The root fallback must not swallow programmer-class exceptions."""
+    source_path = Path(__file__).parents[1] / "src" / "roam" / "commands" / "cmd_agents_md.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    handler_names = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        calls_find_project_root = any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "find_project_root"
+            for stmt in node.body
+            for child in ast.walk(stmt)
+        )
+        if calls_find_project_root:
+            for handler in node.handlers:
+                if isinstance(handler.type, ast.Name):
+                    handler_names.append(handler.type.id)
+                elif handler.type is None:
+                    handler_names.append("<bare>")
+                else:
+                    handler_names.append(ast.unparse(handler.type))
+
+    assert handler_names == ["OSError"]
 
 
 @pytest.mark.xfail(
