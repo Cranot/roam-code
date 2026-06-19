@@ -15,8 +15,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import click
-
 _STALE_AGE_HOURS = 24
 _STALE_AGE_HOURS_HIGH_SENSITIVITY = 1
 
@@ -124,23 +122,3 @@ def check_stale(
         pass
 
     return False, None
-
-
-def warn_if_stale(sensitivity: str = "medium", allow_stale: bool = False) -> bool:
-    """Emit a stderr warning when the index looks stale.
-
-    Returns True if execution should proceed, False if the caller
-    should abort. Commands that pass --allow-stale always proceed.
-    """
-    is_stale, reason = check_stale(sensitivity=sensitivity)
-    if not is_stale:
-        return True
-    msg = f"warning: index appears stale — {reason}"
-    if not allow_stale:
-        msg += "  (use --allow-stale to proceed anyway, or run `roam index` to refresh)"
-    click.echo(msg, err=True)
-    if allow_stale:
-        return True
-    # Default policy: warn but proceed. Commands that want to BLOCK
-    # on stale should check the return value of check_stale() directly.
-    return True
