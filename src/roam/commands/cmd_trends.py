@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -283,13 +284,11 @@ def _collect_current_metrics(conn):
 
     # health_score -- reuse the snapshot infrastructure
     try:
-        from roam.commands.metrics_history import collect_metrics
-
         m = collect_metrics(conn)
         metrics["health_score"] = m.get("health_score", 0)
         metrics["cycle_count"] = m.get("cycles", 0)
         metrics["dead_symbols"] = m.get("dead_exports", 0)
-    except Exception:
+    except sqlite3.Error:
         metrics["health_score"] = 0
         metrics["cycle_count"] = 0
         metrics["dead_symbols"] = 0
