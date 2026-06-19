@@ -448,3 +448,36 @@ class TestCoreFunctions:
         fp.write_text("key: value\n", encoding="utf-8")
         result = _parse_file_for_syntax(str(fp))
         assert result is None
+
+    def test_parse_file_for_syntax_missing_grammar_skips(self, monkeypatch, tmp_path):
+        """_parse_file_for_syntax returns None when the grammar pack lacks a parser."""
+        import tree_sitter_language_pack
+
+        from roam.commands.cmd_syntax_check import _parse_file_for_syntax
+
+        def missing_grammar(_grammar):
+            raise LookupError("missing grammar")
+
+        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", missing_grammar)
+
+        fp = tmp_path / "source.py"
+        fp.write_text("def hello():\n    pass\n", encoding="utf-8")
+        result = _parse_file_for_syntax(str(fp))
+        assert result is None
+
+    def test_parse_file_for_syntax_parser_factory_failure_propagates(self, monkeypatch, tmp_path):
+        """_parse_file_for_syntax does not hide unexpected parser factory failures."""
+        import pytest
+        import tree_sitter_language_pack
+
+        from roam.commands.cmd_syntax_check import _parse_file_for_syntax
+
+        def broken_parser_factory(_grammar):
+            raise RuntimeError("parser factory crashed")
+
+        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", broken_parser_factory)
+
+        fp = tmp_path / "source.py"
+        fp.write_text("def hello():\n    pass\n", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="parser factory crashed"):
+            _parse_file_for_syntax(str(fp))

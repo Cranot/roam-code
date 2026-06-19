@@ -140,7 +140,7 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
         from tree_sitter_language_pack import get_parser
 
         parser = get_parser(grammar)
-    except Exception:
+    except LookupError:
         return None
 
     try:
