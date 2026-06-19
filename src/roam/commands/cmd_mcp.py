@@ -126,10 +126,9 @@ def mcp(transport, host, port, no_auto_index, list_tools, list_tools_json, compa
             from roam.commands.stale_index import check_stale
 
             is_stale, reason = check_stale(sensitivity="medium")
-        except Exception:
-            # Defensive: if the fast check itself fails, fall through to
-            # the original behaviour (which is correct, just slower) by
-            # leaving no_auto_index alone. That preserves the safety net.
+        except (ImportError, OSError):
+            # Defensive: if the fast check cannot import or read the local
+            # index, keep booting without paying the heavy reindex cost.
             is_stale, reason = False, None
 
         if is_stale:

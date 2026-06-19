@@ -273,15 +273,15 @@ def test_info_modes_bypass_freshness_check(info_flag, attr, stub_mcp_server, mon
         assert forwarded is True
 
 
-def test_check_stale_exception_is_safe(stub_mcp_server, monkeypatch):
-    """A defensive guard: if ``check_stale`` itself throws (e.g.
-    permission error reading the DB), the wrapper still boots the
-    server. It MUST NOT propagate the exception — that would be worse
-    than the original 36 s reindex.
+def test_check_stale_filesystem_error_is_safe(stub_mcp_server, monkeypatch):
+    """A defensive guard: if ``check_stale`` itself hits an expected
+    filesystem error reading the DB, the wrapper still boots the server.
+    It MUST NOT propagate the exception — that would be worse than the
+    original 36 s reindex.
     """
 
     def boom(sensitivity="medium"):
-        raise RuntimeError("disk gone")
+        raise PermissionError("disk gone")
 
     monkeypatch.setattr("roam.commands.stale_index.check_stale", boom)
 
