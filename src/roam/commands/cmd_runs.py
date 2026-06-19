@@ -711,13 +711,13 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
         / ``"emit_failed"``.
       - ``partial_success``: True if the bundle was not emitted cleanly.
 
-    Best-effort: catches every exception so a broken bundle never blocks
-    the run-close. (Pattern 2 + LAW 6 — surface the failure state explicitly
+    Best-effort: expected bundle lookup and emit failures never block the
+    run-close. (Pattern 2 + LAW 6 — surface the failure state explicitly
     rather than silently reporting success.)
     """
     try:
         from roam.commands.cmd_pr_bundle import _bundle_path, pr_bundle_emit
-    except Exception:
+    except ImportError:
         return None, "emit_failed", True
 
     try:
