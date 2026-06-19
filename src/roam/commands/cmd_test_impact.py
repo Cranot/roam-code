@@ -154,7 +154,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 continue
             try:
                 lengths = nx.single_source_shortest_path_length(RG, sid, cutoff=int(max_hops))
-            except Exception:
+            except nx.NetworkXException:
                 continue
             for nid in lengths:
                 if nid == sid:
