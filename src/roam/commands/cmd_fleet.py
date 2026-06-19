@@ -84,7 +84,7 @@ def fleet():
     help="Prefix for suggested per-task branch names (e.g. 'fleet/3-billing').",
 )
 @click.pass_context
-def fleet_plan(ctx, goal, n_agents, adapter, output_path, branch_prefix):
+def fleet_plan_command(ctx, goal, n_agents, adapter, output_path, branch_prefix):
     """Plan a multi-agent fleet for a given goal.
 
     Returns a `.roam-fleet.json` envelope consumable by Composio Agent
