@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -265,6 +266,29 @@ class TestSchema:
         with open_db(readonly=True) as conn:
             count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
             assert count > 0, "Expected effects to be populated"
+
+
+class TestEffectsCountGuard:
+    """Test the compatibility guard around the symbol_effects count probe."""
+
+    def test_missing_symbol_effects_table_counts_as_empty(self):
+        from roam.commands.cmd_effects import _count_symbol_effects
+
+        class MissingTableConn:
+            def execute(self, _sql):
+                raise sqlite3.OperationalError("no such table: symbol_effects")
+
+        assert _count_symbol_effects(MissingTableConn()) == 0
+
+    def test_other_operational_errors_propagate(self):
+        from roam.commands.cmd_effects import _count_symbol_effects
+
+        class LockedConn:
+            def execute(self, _sql):
+                raise sqlite3.OperationalError("database is locked")
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            _count_symbol_effects(LockedConn())
 
 
 # ---------------------------------------------------------------------------

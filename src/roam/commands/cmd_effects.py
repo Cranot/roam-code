@@ -10,12 +10,23 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
+
+
+def _count_symbol_effects(conn) -> int:
+    try:
+        return conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
+    except sqlite3.OperationalError as exc:
+        if "no such table: symbol_effects" not in str(exc).lower():
+            raise
+        return 0
 
 
 @roam_capability(
@@ -72,10 +83,7 @@ def effects(ctx, target, file_path, effect_type, transitive):
 
     with open_db(readonly=True) as conn:
         # Check if effects table has data
-        try:
-            count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
-        except Exception:
-            count = 0
+        count = _count_symbol_effects(conn)
 
         if count == 0:
             if json_mode:
