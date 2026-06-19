@@ -46,10 +46,10 @@ class TestCatalog:
 
         # Super-optimizer family tasks (agent-opt, observability-opt, ...) have
         # their own family-local detectors and are not run by ``_MATH_DETECTORS``.
-        # ``membership`` remains a catalog task for tips/fixes but no longer has
-        # a built-in detector after its dead detector removal.
+        # These remain catalog tasks for tips/fixes but no longer have built-in
+        # detectors after dead detector removals.
         math_task_keys = {tid for tid, t in CATALOG.items() if not t.get("family")}
-        catalog_only_task_keys = {"membership"}
+        catalog_only_task_keys = {"async-nested-run", "membership"}
         detector_tasks = {task_id for task_id, _way_id, _fn in _MATH_DETECTORS}
         assert detector_tasks == math_task_keys - catalog_only_task_keys
 
