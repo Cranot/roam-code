@@ -285,7 +285,7 @@ def _looks_like_file(target):
     help="Output a runnable pytest command",
 )
 @click.pass_context
-def affected_tests(ctx, target, staged, show_command):
+def affected_tests_cmd(ctx, target, staged, show_command):
     """Trace from a changed symbol or file to test files that exercise it.
 
     Unlike ``test-map`` (which maps test topology for a specific symbol),
