@@ -101,7 +101,7 @@ def resolve_actor_block(
             from roam.runs.ledger import latest_in_progress_run
 
             meta = latest_in_progress_run(Path(repo_root))
-        except Exception:
+        except (ImportError, OSError, ValueError):
             meta = None
         # Only treat the run-ledger agent as an agent-id when it looks
         # like one. The ledger accepts ANY non-empty string as ``agent``
@@ -131,7 +131,7 @@ def resolve_actor_block(
             from roam.commands.git_helpers import git_actor
 
             git_who = git_actor()
-        except Exception:
+        except ImportError:
             git_who = ""
         # ``git_actor`` returns the sentinel ``"<unknown>"`` when neither
         # ``user.email`` nor ``user.name`` is set; treat it as absence so
