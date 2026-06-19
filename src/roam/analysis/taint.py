@@ -414,7 +414,7 @@ def compute_all_summaries(
                 full_path = root / rel_path
                 try:
                     text = full_path.read_text(encoding="utf-8", errors="replace")
-                except Exception:
+                except OSError:
                     all_lines = []
                 else:
                     all_lines = text.splitlines()
