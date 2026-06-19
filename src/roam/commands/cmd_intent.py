@@ -21,6 +21,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS
+from roam.observability import log_swallowed
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # _DOC_EXTENSIONS re-exported from roam.index.file_roles (W37.5 consolidation —
@@ -202,8 +203,6 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                 symbol_names = set(s["name"] for s in top_syms)
             except Exception as _exc:  # noqa: BLE001 — defensive
                 # fall through with full set if query fails
-                from roam.observability import log_swallowed
-
                 log_swallowed("cmd_intent:pagerank_sample", _exc)
 
         _TIMEOUT_SECONDS = 30
