@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -307,7 +308,7 @@ def _collect_current_metrics(conn):
         row = conn.execute("SELECT AVG(cognitive_complexity), MAX(cognitive_complexity) FROM symbol_metrics").fetchone()
         metrics["avg_complexity"] = round(row[0], 2) if row and row[0] is not None else 0.0
         metrics["max_complexity"] = round(row[1], 2) if row and row[1] is not None else 0.0
-    except Exception:
+    except sqlite3.Error:
         metrics["avg_complexity"] = 0.0
         metrics["max_complexity"] = 0.0
 
