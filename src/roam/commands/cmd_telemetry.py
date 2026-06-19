@@ -28,7 +28,7 @@ from roam.telemetry import _enabled, fetch_recent, fetch_top_slow
 def _fmt_ts(ts: float) -> str:
     try:
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
+    except (TypeError, ValueError, OverflowError, OSError):
         return "?"
 
 
