@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+
+import pytest
 
 from roam.coverage_reports import (
+    imported_coverage_overview,
+    load_symbol_coverage_map,
     parse_cobertura_report,
     parse_coveragepy_json_report,
     parse_lcov_report,
@@ -121,3 +126,40 @@ def test_import_lcov_updates_metrics_health_and_test_gaps(project_factory, cli_r
     test_gaps_data = parse_json_output(test_gaps_result, "test-gaps")
     assert test_gaps_data["summary"]["total_gaps"] == 0
     assert test_gaps_data["summary"]["actual_only_count"] >= 1
+
+
+def test_imported_coverage_overview_handles_missing_sqlite_schema():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    assert imported_coverage_overview(conn) == {
+        "files_with_coverage": 0,
+        "covered_lines": 0,
+        "coverable_lines": 0,
+        "coverage_pct": None,
+    }
+
+
+def test_load_symbol_coverage_map_handles_missing_sqlite_schema():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    assert load_symbol_coverage_map(conn, {1}) == {}
+
+
+def test_load_symbol_coverage_map_does_not_swallow_non_sqlite_errors():
+    class RuntimeErrorConnection:
+        def execute(self, *_args, **_kwargs):
+            raise RuntimeError("unexpected failure")
+
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        load_symbol_coverage_map(RuntimeErrorConnection(), {1})  # type: ignore[arg-type]
+
+
+def test_imported_coverage_overview_does_not_swallow_non_sqlite_errors():
+    class RuntimeErrorConnection:
+        def execute(self, *_args, **_kwargs):
+            raise RuntimeError("unexpected failure")
+
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        imported_coverage_overview(RuntimeErrorConnection())  # type: ignore[arg-type]
