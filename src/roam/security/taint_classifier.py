@@ -22,6 +22,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from fastmcp.exceptions import McpError
+
 # Categories the classifier may return. The list is closed so the agent's
 # label is parseable without an LLM-side schema spec.
 _CATEGORIES: tuple[str, ...] = (
@@ -36,6 +38,12 @@ _CATEGORIES: tuple[str, ...] = (
     "OPEN_REDIRECT",
     "OTHER",  # taint reaches but the category is unclear
     "FALSE_POSITIVE",  # path exists but the LLM is confident it's not exploitable
+)
+
+_SAMPLING_FAILURE_EXCEPTIONS = (
+    McpError,
+    RuntimeError,
+    ValueError,
 )
 
 
@@ -185,7 +193,7 @@ async def classify_finding(
             max_tokens=options.max_tokens,
             temperature=options.temperature,
         )
-    except Exception:
+    except _SAMPLING_FAILURE_EXCEPTIONS:
         return None
 
     # Reuse the same text-extraction helper the compression module uses.
