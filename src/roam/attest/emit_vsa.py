@@ -337,7 +337,7 @@ def emit_cga_vsa_sibling(
 
         try:
             commit_sha = _git_commit_sha(project_root)
-        except Exception:  # pragma: no cover — defensive
+        except (subprocess.SubprocessError, OSError):  # pragma: no cover — defensive
             commit_sha = None
 
     # W1279 — same producer-side hash wire-up as the pr-bundle path.
