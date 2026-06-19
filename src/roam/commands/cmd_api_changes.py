@@ -696,7 +696,7 @@ def _format_change_text(change: dict) -> str:
     help="Only analyze files changed in git diff.",
 )
 @click.pass_context
-def api_changes(ctx, base, severity, changed_only):
+def api_changes_cmd(ctx, base, severity, changed_only):
     """Detect breaking and non-breaking API changes vs a git ref.
 
     Unlike ``breaking`` (which flags removed and renamed exports) and
@@ -874,3 +874,6 @@ def api_changes(ctx, base, severity, changed_only):
         for c in by_severity[SEVERITY_INFO]:
             click.echo(_format_change_text(c))
         click.echo()
+
+
+api_changes = api_changes_cmd
