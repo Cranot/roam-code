@@ -9862,7 +9862,7 @@ def clones_tool(threshold: float = 0.70, min_lines: int = 5, scope: str = "", to
     name="roam_vibe_check",
     description="AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns.",
 )
-def vibe_check(threshold: int = 0, root: str = ".") -> dict:
+def vibe_check_tool(threshold: int = 0, root: str = ".") -> dict:
     """Detect AI code anti-patterns and compute composite AI rot score.
 
     WHEN TO USE: Call this to audit a codebase for AI-generated code
