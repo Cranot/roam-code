@@ -35,6 +35,7 @@ never see one number in isolation.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 
 # Single-line label that should appear in every envelope reporting a
@@ -138,6 +139,7 @@ def cycles_summary(conn) -> CyclesSummary:
     they call the same underlying functions.
     """
     try:
+        from networkx import NetworkXException
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import (
             find_cycles,
@@ -163,7 +165,7 @@ def cycles_summary(conn) -> CyclesSummary:
         raw = find_cycles(G)
         formatted = format_cycles(raw, conn) if raw else []
         mark_actionable_cycles(formatted)
-    except Exception:
+    except (sqlite3.Error, NetworkXException):
         return CyclesSummary(
             total=0,
             actionable=0,
