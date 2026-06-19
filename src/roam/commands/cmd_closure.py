@@ -206,12 +206,12 @@ def _closure_verdict(changes, sym_name):
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command(name="closure")
 @click.argument("name", metavar="SYMBOL")
 @click.option("--rename", default=None, help="New name for rename closure")
 @click.option("--delete", "delete_mode", is_flag=True, help="Deletion closure")
 @click.pass_context
-def closure(ctx, name, rename, delete_mode):
+def closure_cmd(ctx, name, rename, delete_mode):
     """Compute the minimal set of changes needed when modifying SYMBOL.
 
     SYMBOL is a symbol identifier (bare name or qualified name). Unlike
@@ -594,3 +594,6 @@ def closure(ctx, name, rename, delete_mode):
         # warning rides into ``_w607em_warnings_out`` even when
         # text-mode output is human-targeted (JSON mode carries the
         # structured disclosure surface).
+
+
+closure = closure_cmd
