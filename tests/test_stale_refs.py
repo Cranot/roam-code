@@ -2069,6 +2069,7 @@ class TestStaleRefsDomainThrottle:
         assert _domain_of("http://example.com:8080/x") == "example.com:8080"
         assert _domain_of("https://Sub.Example.COM/x") == "sub.example.com"
         assert _domain_of("not-a-url") == ""
+        assert _domain_of("http://[::1") == ""
 
     def test_per_domain_concurrency_constant(self):
         from roam.commands.cmd_stale_refs import _PER_DOMAIN_CONCURRENCY

@@ -1725,7 +1725,7 @@ def _domain_of(url: str) -> str:
 
     try:
         return urllib.parse.urlparse(url).netloc.lower()
-    except Exception:
+    except ValueError:
         return ""
 
 
