@@ -728,7 +728,7 @@ def _do_import(
                     detected_fmt = "generic"
                 else:
                     detected_fmt = _run_check_aq("detect_format", _detect_format, raw, default="generic")
-            except Exception:
+            except (_json.JSONDecodeError, OSError, ValueError):
                 detected_fmt = "generic"
         else:
             detected_fmt = fmt
