@@ -126,10 +126,7 @@ async def run_with_phase_progress(
             return
         async for raw in proc.stderr:
             stderr_buf.append(raw)
-            try:
-                text = raw.decode("utf-8", errors="replace")
-            except Exception:
-                continue
+            text = raw.decode("utf-8", errors="replace")
             classified = classify_line(text)
             if classified is None:
                 continue
