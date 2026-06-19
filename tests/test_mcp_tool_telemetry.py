@@ -16,6 +16,8 @@ process and reset on restart.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -96,6 +98,40 @@ def test_wrap_with_guard_records_error_on_exception():
     summary = tool_invocation_summary()
     assert summary["test_boom"]["error"] == 1
     assert summary["test_boom"].get("success", 0) == 0
+
+
+def test_wrap_with_guard_records_async_expected_error():
+    from roam.mcp_extras.concurrency import (
+        tool_invocation_summary,
+        wrap_with_guard,
+    )
+
+    async def boom():
+        raise RuntimeError("intended")
+
+    wrapped = wrap_with_guard("test_async_boom", boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(wrapped())
+
+    summary = tool_invocation_summary()
+    assert summary["test_async_boom"]["error"] == 1
+    assert summary["test_async_boom"].get("success", 0) == 0
+
+
+def test_wrap_with_guard_does_not_record_unexpected_attribute_error():
+    from roam.mcp_extras.concurrency import (
+        tool_invocation_summary,
+        wrap_with_guard,
+    )
+
+    def boom():
+        raise AttributeError("programmer bug")
+
+    wrapped = wrap_with_guard("test_attr_bug", boom)
+    with pytest.raises(AttributeError):
+        wrapped()
+
+    assert "test_attr_bug" not in tool_invocation_summary()
 
 
 def test_metrics_snapshot_includes_invocations():
