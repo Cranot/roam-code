@@ -16,6 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.graph.clone_detect import _UnionFind
 from roam.index.file_roles import is_test as _is_test
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
@@ -312,44 +313,6 @@ def _compute_similarity(row_a, row_b) -> float:
     )
 
     return 0.40 * body_sim + 0.25 * param_sim + 0.20 * name_sim + 0.15 * sig_sim
-
-
-# ---------------------------------------------------------------------------
-# Union-Find for clustering
-# ---------------------------------------------------------------------------
-
-
-class _UnionFind:
-    """Disjoint-set / Union-Find data structure."""
-
-    def __init__(self):
-        self.parent: dict[int, int] = {}
-        self.rank: dict[int, int] = {}
-
-    def find(self, x: int) -> int:
-        if x not in self.parent:
-            self.parent[x] = x
-            self.rank[x] = 0
-        if self.parent[x] != x:
-            self.parent[x] = self.find(self.parent[x])
-        return self.parent[x]
-
-    def union(self, x: int, y: int):
-        rx, ry = self.find(x), self.find(y)
-        if rx == ry:
-            return
-        if self.rank[rx] < self.rank[ry]:
-            rx, ry = ry, rx
-        self.parent[ry] = rx
-        if self.rank[rx] == self.rank[ry]:
-            self.rank[rx] += 1
-
-    def clusters(self) -> dict[int, list[int]]:
-        """Return {root_id: [member_ids]}."""
-        groups: dict[int, list[int]] = defaultdict(list)
-        for x in self.parent:
-            groups[self.find(x)].append(x)
-        return dict(groups)
 
 
 # ---------------------------------------------------------------------------
