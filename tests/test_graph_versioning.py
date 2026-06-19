@@ -81,6 +81,64 @@ class TestSnapshotGraph:
         assert snap["metrics"]["symbol_count"] == len(snap["symbols"])
         assert snap["metrics"]["edge_count"] == len(snap["edges"])
 
+    def test_snapshot_graph_cycle_enrichment_degrades_on_networkx_error(self, small_project, monkeypatch):
+        monkeypatch.chdir(small_project)
+        import networkx as nx
+
+        from roam.db.connection import open_db
+        from roam.graph import builder as builder_module
+        from roam.graph.versioning import snapshot_graph
+
+        def fail_graph(_conn):
+            raise nx.NetworkXException("synthetic cycle failure")
+
+        monkeypatch.setattr(builder_module, "build_symbol_graph", fail_graph)
+
+        with open_db(readonly=True) as conn:
+            snap = snapshot_graph(conn)
+
+        assert snap["cycles"] == []
+        assert snap["metrics"]["cycle_count"] == 0
+
+    def test_snapshot_graph_layer_enrichment_degrades_on_networkx_error(self, small_project, monkeypatch):
+        monkeypatch.chdir(small_project)
+        import networkx as nx
+
+        from roam.db.connection import open_db
+        from roam.graph import layers as layers_module
+        from roam.graph.versioning import snapshot_graph
+
+        called = False
+
+        def fail_layers(_graph):
+            nonlocal called
+            called = True
+            raise nx.NetworkXException("synthetic layer failure")
+
+        monkeypatch.setattr(layers_module, "detect_layers", fail_layers)
+
+        with open_db(readonly=True) as conn:
+            snap = snapshot_graph(conn)
+
+        assert called
+        assert snap["layers"] == {}
+        assert snap["metrics"]["layer_count"] == 0
+
+    def test_snapshot_graph_cycle_enrichment_propagates_programmer_errors(self, small_project, monkeypatch):
+        monkeypatch.chdir(small_project)
+        from roam.db.connection import open_db
+        from roam.graph import builder as builder_module
+        from roam.graph.versioning import snapshot_graph
+
+        def fail_graph(_conn):
+            raise RuntimeError("synthetic programmer error")
+
+        monkeypatch.setattr(builder_module, "build_symbol_graph", fail_graph)
+
+        with open_db(readonly=True) as conn:
+            with pytest.raises(RuntimeError, match="synthetic programmer error"):
+                snapshot_graph(conn)
+
 
 # ---------------------------------------------------------------------------
 # Unit: diff_graphs

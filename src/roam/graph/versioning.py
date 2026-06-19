@@ -130,34 +130,41 @@ def snapshot_graph(conn: sqlite3.Connection) -> dict:
         symbols[src_key]["out_degree"] += 1
         symbols[tgt_key]["in_degree"] += 1
 
+    try:
+        import networkx as nx
+    except ImportError:
+        nx = None
+
     # Cycles: condense to symbol keys.
     cycles: list[list[str]] = []
-    try:
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.cycles import find_cycles
+    if nx is not None:
+        try:
+            from roam.graph.builder import build_symbol_graph
+            from roam.graph.cycles import find_cycles
 
-        G = build_symbol_graph(conn)
-        for scc in find_cycles(G):
-            cycle_keys = sorted({id_to_key[i] for i in scc if i in id_to_key})
-            if len(cycle_keys) >= 2:
-                cycles.append(cycle_keys)
-    except Exception:
-        # Snapshot must always succeed even when graph algorithms blow up.
-        cycles = []
+            G = build_symbol_graph(conn)
+            for scc in find_cycles(G):
+                cycle_keys = sorted({id_to_key[i] for i in scc if i in id_to_key})
+                if len(cycle_keys) >= 2:
+                    cycles.append(cycle_keys)
+        except (sqlite3.Error, nx.NetworkXException):
+            # Snapshot must always succeed when optional graph enrichment fails.
+            cycles = []
 
     # Layers: condense to {sym_key: layer}.
     layers: dict[str, int] = {}
-    try:
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
+    if nx is not None:
+        try:
+            from roam.graph.builder import build_symbol_graph
+            from roam.graph.layers import detect_layers
 
-        G = build_symbol_graph(conn)
-        for sid, layer in detect_layers(G).items():
-            key = id_to_key.get(sid)
-            if key is not None:
-                layers[key] = int(layer)
-    except Exception:
-        layers = {}
+            G = build_symbol_graph(conn)
+            for sid, layer in detect_layers(G).items():
+                key = id_to_key.get(sid)
+                if key is not None:
+                    layers[key] = int(layer)
+        except (sqlite3.Error, nx.NetworkXException):
+            layers = {}
 
     return {
         "symbols": symbols,
