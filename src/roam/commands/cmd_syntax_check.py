@@ -143,10 +143,7 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
     except LookupError:
         return None
 
-    try:
-        tree = parser.parse(source)
-    except Exception:
-        return None
+    tree = parser.parse(source)
 
     errors = check_syntax(file_path, source, tree)
     return {
