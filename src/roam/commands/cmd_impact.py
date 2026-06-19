@@ -346,7 +346,7 @@ def _impact_verdict(dependents, affected_files, total_syms, *, affected_count=No
     destructive=False,
     stale_sensitive=True,
 )
-@click.command()
+@click.command(name="impact")
 @click.argument("name", metavar="SYMBOL")
 @click.option(
     "--hops",
@@ -392,7 +392,7 @@ def _impact_verdict(dependents, affected_files, total_syms, *, affected_count=No
     ),
 )
 @click.pass_context
-def impact(ctx, name, hops, depth, max_callers, timeout):
+def impact_cmd(ctx, name, hops, depth, max_callers, timeout):
     """Show blast radius: what breaks if SYMBOL changes.
 
     SYMBOL is a symbol identifier (bare name or qualified name). Unlike
