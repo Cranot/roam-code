@@ -540,7 +540,7 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
 )
 @click.group("simulate")
 @click.pass_context
-def simulate(ctx):
+def simulate_cli(ctx):
     """Counterfactual architecture simulator.
 
     Unlike ``mutate`` (which generates actual code changes), this command
@@ -560,6 +560,9 @@ def simulate(ctx):
     (combined pre-change safety), and ``impact`` (current blast radius).
     """
     ctx.ensure_object(dict)
+
+
+simulate = simulate_cli
 
 
 # ---------------------------------------------------------------------------
