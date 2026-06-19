@@ -141,7 +141,7 @@ def agents_md_cmd(
     ensure_index()
     try:
         repo_root = find_project_root()
-    except Exception:
+    except OSError:
         repo_root = Path(".").resolve()
 
     with open_db(readonly=True) as conn:
