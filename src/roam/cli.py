@@ -324,7 +324,7 @@ _COMMANDS = {
     "fingerprint": ("roam.commands.cmd_fingerprint", "fingerprint"),
     "spectral": ("roam.commands.cmd_spectral", "spectral"),
     "orchestrate": ("roam.commands.cmd_orchestrate", "orchestrate"),
-    "mutate": ("roam.commands.cmd_mutate", "mutate"),
+    "mutate": ("roam.commands.cmd_mutate", "mutate_cmd"),
     "vuln-map": ("roam.commands.cmd_vuln_map", "vuln_map_cmd"),
     "vuln-reach": ("roam.commands.cmd_vuln_reach", "vuln_reach"),
     "ingest-trace": ("roam.commands.cmd_ingest_trace", "ingest_trace_cmd"),

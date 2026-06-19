@@ -148,13 +148,13 @@ def mutate_project(tmp_path):
 
 def _invoke_mutate_move(cli_runner, project_root, *args, json_mode=True):
     """Invoke the ``mutate move`` click command directly."""
-    from roam.commands.cmd_mutate import mutate
+    from roam.commands.cmd_mutate import mutate_cmd
 
     obj = {"json": json_mode, "sarif": False, "budget": 0, "ci_mode": False}
     old_cwd = os.getcwd()
     try:
         os.chdir(str(project_root))
-        return cli_runner.invoke(mutate, ["move", *list(args)], obj=obj, catch_exceptions=False)
+        return cli_runner.invoke(mutate_cmd, ["move", *list(args)], obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 
