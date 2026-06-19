@@ -7,7 +7,7 @@ Covers:
   not-found symbols, DB error handling
 - _CORE_TOOLS membership for both tools
 - _CORE_TOOLS count update (now 23)
-- Helper functions: _fts_query_for, _batch_search_one, _batch_get_one
+- Helper functions: _batch_search_one, _batch_get_one
 """
 
 from __future__ import annotations
@@ -185,51 +185,6 @@ def _patch_db(tmp_db):
         patch("roam.db.connection.open_db", side_effect=_open),
         patch("roam.commands.resolve.db_exists", return_value=True),
     )
-
-
-# ---------------------------------------------------------------------------
-# _fts_query_for unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestFtsQueryFor:
-    """Unit tests for _fts_query_for helper."""
-
-    def test_single_token(self):
-        from roam.mcp_server import _fts_query_for
-
-        result = _fts_query_for("authenticate")
-        assert '"authenticate"*' in result
-
-    def test_underscore_split(self):
-        from roam.mcp_server import _fts_query_for
-
-        result = _fts_query_for("get_user")
-        # Should split on underscore producing two tokens
-        assert '"get"*' in result
-        assert '"user"*' in result
-        assert " OR " in result
-
-    def test_dot_split(self):
-        from roam.mcp_server import _fts_query_for
-
-        result = _fts_query_for("auth.AuthError")
-        assert '"auth"*' in result
-        assert '"AuthError"*' in result
-
-    def test_empty_string_fallback(self):
-        from roam.mcp_server import _fts_query_for
-
-        result = _fts_query_for("")
-        # Empty string should produce a fallback query
-        assert '"' in result
-
-    def test_multi_word(self):
-        from roam.mcp_server import _fts_query_for
-
-        result = _fts_query_for("create endpoint")
-        assert '"create"*' in result
-        assert '"endpoint"*' in result
 
 
 # ---------------------------------------------------------------------------

@@ -5859,7 +5859,6 @@ from roam.commands.batch_search_core import (
     BATCH_LIKE_WITH_PATHS_SQL as _BATCH_LIKE_WITH_PATHS_SQL,
     MAX_BATCH_QUERIES as _MAX_BATCH_QUERIES,
     batch_search_one as _shared_batch_search_one,
-    fts_query_for as _fts_query_for,
 )
 
 _MAX_BATCH_SYMBOLS = 50
