@@ -123,12 +123,13 @@ def load_laws_yaml(text: str) -> list[Law]:
     """
     try:
         import yaml  # type: ignore
-
-        data = yaml.safe_load(text)
     except ImportError:
         data = _fallback_parse(text)
-    except Exception:
-        return []
+    else:
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return []
 
     if not isinstance(data, dict):
         return []
@@ -149,7 +150,7 @@ def load_laws_yaml(text: str) -> list[Law]:
                     rule=dict(entry.get("rule") or {}),
                 )
             )
-        except Exception:
+        except (TypeError, ValueError):
             continue
     return laws
 

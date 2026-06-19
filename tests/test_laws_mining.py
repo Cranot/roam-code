@@ -591,6 +591,44 @@ def test_laws_yml_round_trip(tmp_path):
     assert [v.law_id for v in v_before] == [v.law_id for v in v_after]
 
 
+def test_load_laws_yaml_only_swallows_yaml_parse_errors(monkeypatch):
+    assert load_laws_yaml("version: 1\nlaws:\n  - [") == []
+
+    import yaml
+
+    def boom(_text):
+        raise RuntimeError("unexpected parser bug")
+
+    monkeypatch.setattr(yaml, "safe_load", boom)
+    with pytest.raises(RuntimeError, match="unexpected parser bug"):
+        load_laws_yaml("version: 1\nlaws: []\n")
+
+
+def test_load_laws_yaml_skips_entries_with_bad_mapping_fields():
+    text = textwrap.dedent(
+        """\
+        version: 1
+        laws:
+          - id: bad_mapping
+            kind: naming
+            description: skipped because evidence is scalar
+            evidence: 12
+            rule:
+              kind: naming
+          - id: valid_mapping
+            kind: naming
+            description: kept
+            evidence:
+              sample_size: 1
+            rule:
+              kind: naming
+        """
+    )
+
+    loaded = load_laws_yaml(text)
+    assert [law.id for law in loaded] == ["valid_mapping"]
+
+
 # ---------------------------------------------------------------------------
 # CLI: --strict exit code & explain
 # ---------------------------------------------------------------------------
