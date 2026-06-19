@@ -10484,7 +10484,7 @@ def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     name="roam_relate",
     description="How symbols connect: shared deps, call chains, conflicts, cohesion score.",
 )
-def relate(symbols: list[str], files: list[str] | None = None, depth: int = 3, root: str = ".") -> dict:
+def relate_symbols(symbols: list[str], files: list[str] | None = None, depth: int = 3, root: str = ".") -> dict:
     """Show how a set of symbols relate: shared deps, call chains, conflicts.
 
     WHEN TO USE: Call this when you have queried multiple symbols via
