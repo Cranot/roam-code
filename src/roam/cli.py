@@ -175,7 +175,7 @@ _COMMANDS = {
     # work happens in cmd_uses through the indexed call/import graph
     # (no string-literal / comment false positives).
     "refs": ("roam.commands.cmd_uses", "uses"),
-    "impact": ("roam.commands.cmd_impact", "impact"),
+    "impact": ("roam.commands.cmd_impact", "impact_cmd"),
     "dict-consistency": ("roam.commands.cmd_dict_consistency", "dict_consistency"),
     "owner": ("roam.commands.cmd_owner", "owner"),
     "coupling": ("roam.commands.cmd_coupling", "coupling"),
