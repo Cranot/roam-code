@@ -103,7 +103,7 @@ def _run_subcommand(args: list[str]) -> dict:
     help="Pass-through to pr-analyze (default: auto-detect .roam/rules.yml).",
 )
 @click.pass_context
-def dogfood(
+def dogfood_cmd(
     ctx,
     audit: bool,
     pr_analyze_on: bool,
