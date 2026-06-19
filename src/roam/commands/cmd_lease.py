@@ -498,7 +498,7 @@ def lease_list(ctx, agent, include_expired, do_gc):
     if do_gc:
         try:
             freed = gc_expired_leases(root)
-        except Exception:
+        except OSError:
             freed = []
 
     if not lroot.exists():
