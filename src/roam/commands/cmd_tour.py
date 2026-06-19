@@ -577,7 +577,7 @@ def _write_or_echo_tour(output, write_file):
     destructive=False,
     stale_sensitive=True,
 )
-@click.command()
+@click.command(name="tour")
 @click.option(
     "--write",
     "write_file",
@@ -594,7 +594,7 @@ def _write_or_echo_tour(output, write_file):
     help="limit tour items (top symbols, reading order, entries) to files under this path prefix.",
 )
 @click.pass_context
-def tour(ctx, write_file, mermaid_mode, focus_path):
+def tour_command(ctx, write_file, mermaid_mode, focus_path):
     """Generate a codebase onboarding tour.
 
     Produces a structured guide: project overview, top symbols to learn,
@@ -647,3 +647,7 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
 
         output = _render_tour_markdown(verdict, langs, stats, top, order, entries)
         _write_or_echo_tour(output, write_file)
+
+
+# Keep the existing module attribute for lazy CLI loading and direct test imports.
+tour = tour_command
