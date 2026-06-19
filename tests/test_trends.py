@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -536,3 +537,34 @@ class TestCollectMetrics:
         with open_db(readonly=True) as conn:
             metrics = _collect_current_metrics(conn)
         assert metrics["total_symbols"] > 0
+
+    def test_collect_sqlite_metrics_failure_uses_health_defaults(self, trends_project, monkeypatch):
+        """SQLite failures from health metric collection degrade to zero."""
+        from roam.commands import cmd_trends
+        from roam.db.connection import open_db
+
+        def _raise_sqlite(_conn):
+            raise sqlite3.OperationalError("synthetic metrics failure")
+
+        monkeypatch.setattr(cmd_trends, "collect_metrics", _raise_sqlite)
+
+        with open_db(readonly=True) as conn:
+            metrics = cmd_trends._collect_current_metrics(conn)
+
+        assert metrics["health_score"] == 0
+        assert metrics["cycle_count"] == 0
+        assert metrics["dead_symbols"] == 0
+
+    def test_collect_unexpected_metrics_failure_propagates(self, trends_project, monkeypatch):
+        """Unexpected health metric failures are not converted to zeros."""
+        from roam.commands import cmd_trends
+        from roam.db.connection import open_db
+
+        def _raise_runtime(_conn):
+            raise RuntimeError("synthetic unexpected failure")
+
+        monkeypatch.setattr(cmd_trends, "collect_metrics", _raise_runtime)
+
+        with open_db(readonly=True) as conn:
+            with pytest.raises(RuntimeError, match="synthetic unexpected failure"):
+                cmd_trends._collect_current_metrics(conn)
