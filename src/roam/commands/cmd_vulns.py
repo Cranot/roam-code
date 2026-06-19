@@ -1264,7 +1264,7 @@ def _render_json_output(
         try:
             envelope = json_envelope("vulns", **envelope_kwargs)
             output_text = to_json(envelope)
-        except Exception:
+        except (TypeError, ValueError):
             output_text = "{}"
     click.echo(output_text)
 
