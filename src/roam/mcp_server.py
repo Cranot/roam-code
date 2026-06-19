@@ -6475,7 +6475,7 @@ async def health(
     description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.",
     output_schema=_SCHEMA_PREFLIGHT,
 )
-def preflight(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
+def roam_preflight(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
     Combines blast radius, affected tests, complexity, coupling, and
@@ -6492,6 +6492,9 @@ def preflight(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
     if staged:
         args.append("--staged")
     return _run_roam(args, root)
+
+
+preflight = roam_preflight
 
 
 # ---------------------------------------------------------------------------
