@@ -25,10 +25,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
+import roam.commands.cmd_compatibility as compat_cmd
 from roam.cli import cli
-from roam.commands.cmd_compatibility import _build_snapshot, _diff, _verdict_for
+from roam.commands.cmd_compatibility import _build_snapshot, _diff, _introspect_flags, _verdict_for
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,6 +46,23 @@ def _live_baseline(tmp_path: Path) -> Path:
     """Capture the live build's snapshot into ``tmp_path/baseline.json``."""
     snapshot = _build_snapshot()
     return _write(tmp_path / "baseline.json", snapshot)
+
+
+def test_introspect_flags_only_degrades_on_import_errors(monkeypatch):
+    """Missing optional imports degrade to no flags; other import-time bugs surface."""
+
+    def missing_optional(_module_path: str):
+        raise ImportError("optional extra missing")
+
+    monkeypatch.setattr(compat_cmd.importlib, "import_module", missing_optional)
+    assert _introspect_flags("roam.commands.missing_optional", "cmd") == []
+
+    def broken_module(_module_path: str):
+        raise RuntimeError("import-time command bug")
+
+    monkeypatch.setattr(compat_cmd.importlib, "import_module", broken_module)
+    with pytest.raises(RuntimeError, match="import-time command bug"):
+        _introspect_flags("roam.commands.broken", "cmd")
 
 
 # ---------------------------------------------------------------------------

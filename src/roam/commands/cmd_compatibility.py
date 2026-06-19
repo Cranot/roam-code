@@ -140,7 +140,7 @@ def _introspect_flags(module_path: str, func_name: str) -> list[str]:
     """
     try:
         mod = importlib.import_module(module_path)
-    except Exception:
+    except ImportError:
         return []
     cmd = getattr(mod, func_name, None)
     if cmd is None or not hasattr(cmd, "params"):
