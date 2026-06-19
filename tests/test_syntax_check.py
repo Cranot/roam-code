@@ -481,3 +481,21 @@ class TestCoreFunctions:
         fp.write_text("def hello():\n    pass\n", encoding="utf-8")
         with pytest.raises(RuntimeError, match="parser factory crashed"):
             _parse_file_for_syntax(str(fp))
+
+    def test_parse_file_for_syntax_parser_parse_failure_propagates(self, monkeypatch, tmp_path):
+        """_parse_file_for_syntax does not hide unexpected parser.parse failures."""
+        import pytest
+        import tree_sitter_language_pack
+
+        from roam.commands.cmd_syntax_check import _parse_file_for_syntax
+
+        class BrokenParser:
+            def parse(self, _source):
+                raise RuntimeError("parser.parse crashed")
+
+        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", lambda _grammar: BrokenParser())
+
+        fp = tmp_path / "source.py"
+        fp.write_text("def hello():\n    pass\n", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="parser.parse crashed"):
+            _parse_file_for_syntax(str(fp))
