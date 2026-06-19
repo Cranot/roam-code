@@ -83,14 +83,14 @@ def _emit_parse_error(json_mode: bool, trace_path: str, message: str) -> None:
     ai_safe=True,
     requires_index=True,
 )
-@click.command()
+@click.command(name="ingest-trace")
 @click.argument("trace_file", required=False, default=None)
 @click.option("--otel", "otel_file", default=None, help="OpenTelemetry JSON trace file")
 @click.option("--jaeger", "jaeger_file", default=None, help="Jaeger JSON trace file")
 @click.option("--zipkin", "zipkin_file", default=None, help="Zipkin JSON trace file")
 @click.option("--generic", "generic_file", default=None, help="Generic JSON stats file")
 @click.pass_context
-def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_file):
+def ingest_trace_cmd(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_file):
     """Ingest runtime trace data and match spans to symbols.
 
     Supports OpenTelemetry (OTLP JSON), Jaeger, Zipkin, and a simple generic
