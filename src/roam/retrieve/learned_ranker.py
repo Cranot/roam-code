@@ -93,14 +93,13 @@ def _resolve_model_path() -> Path:
 def _load_model():
     """Return a loaded LightGBM Booster or ``None`` when unavailable.
 
-    Catches the broader ``Exception`` not just ``ImportError`` because
-    LightGBM transitively imports sklearn, which can fail with a
-    ``ValueError`` on numpy/sklearn ABI mismatches (common in conda
-    environments where conda + pip versions diverge).
+    Catches ``ValueError`` in addition to ``ImportError`` because LightGBM
+    transitively imports sklearn, which can fail on numpy/sklearn ABI
+    mismatches in mixed conda + pip environments.
     """
     try:
         import lightgbm as lgb  # type: ignore
-    except Exception:
+    except (ImportError, ValueError):
         return None
     path = _resolve_model_path()
     if not path.is_file():

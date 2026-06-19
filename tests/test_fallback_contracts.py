@@ -252,6 +252,20 @@ class TestLearnedRankerFallback:
         with patch("builtins.__import__", side_effect=_fake_import):
             assert learned_ranker.is_available() is False
 
+    def test_is_available_false_when_lightgbm_import_hits_abi_mismatch(self):
+        """A numpy/sklearn ABI ``ValueError`` is an expected unavailable path."""
+        from roam.retrieve import learned_ranker
+
+        original_import = __import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "lightgbm":
+                raise ValueError("numpy.dtype size changed")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=_fake_import):
+            assert learned_ranker.is_available() is False
+
     def test_score_returns_empty_dict_when_unavailable(self):
         """The reranker calls ``score()`` defensively — when lightgbm
         is missing it must return an empty dict so the structural
