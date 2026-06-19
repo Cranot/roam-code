@@ -18,8 +18,6 @@ import time
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
 from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS
 from roam.observability import log_swallowed
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
@@ -28,6 +26,15 @@ from roam.output.formatter import abbrev_kind, json_envelope, to_json
 # was 1 of 3 divergent local copies before consolidation).
 _SKIP_DIRS = {"node_modules", ".roam", ".git", "__pycache__", "vendor", "dist", "build"}
 _MIN_NAME_LEN = 3  # skip very short names to avoid false positives
+
+
+def _load_runtime_dependencies():
+    """Load DB-backed helpers only when the command executes."""
+    from roam.commands.resolve import ensure_index as _ensure_index
+    from roam.db.connection import find_project_root as _find_project_root
+    from roam.db.connection import open_db as _open_db
+
+    return _ensure_index, _find_project_root, _open_db
 
 
 def _find_doc_files(root):
@@ -178,10 +185,11 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
     ``stale-refs`` (dangling file references in markdown).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
-    ensure_index()
-    root = find_project_root()
+    ensure_index_fn, find_project_root_fn, open_db_fn = _load_runtime_dependencies()
+    ensure_index_fn()
+    root = find_project_root_fn()
 
-    with open_db(readonly=True) as conn:
+    with open_db_fn(readonly=True) as conn:
         # Get all symbol names from DB (length >= _MIN_NAME_LEN)
         _MAX_SYMBOLS = 3000
         all_syms = conn.execute(
