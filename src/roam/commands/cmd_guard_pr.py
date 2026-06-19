@@ -102,7 +102,7 @@ def _run_auto_collect_inline(bundle_path: Path, root: Path) -> dict:
         totals = auto_collect(bundle, root)
         atomic_write_bundle(bundle_path, bundle)
         return totals
-    except Exception as e:  # pragma: no cover - protective
+    except (OSError, ValueError, TypeError, KeyError) as e:
         return {"error": f"auto_collect_failed: {e}"}
 
 
