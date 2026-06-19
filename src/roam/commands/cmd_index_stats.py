@@ -20,6 +20,7 @@ W1175-RESEARCH propagation plan + W1224-audit memo.
 from __future__ import annotations
 
 import os
+import sqlite3
 
 import click
 
@@ -80,7 +81,9 @@ def index_stats(ctx) -> None:
             try:
                 row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
                 table_counts[table] = row[0] if row else 0
-            except Exception:
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc).lower():
+                    raise
                 table_counts[table] = 0
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
         page_count = conn.execute("PRAGMA page_count").fetchone()[0]

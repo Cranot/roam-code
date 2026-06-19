@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 
 import pytest
@@ -149,6 +150,38 @@ def test_pass38_index_stats_runs():
     assert "fragmentation_pct" in summary
     assert "table_counts" in payload
     assert payload["table_counts"]["files"] >= 0
+
+
+def test_pass38_index_stats_propagates_unexpected_operational_error(monkeypatch, tmp_path):
+    """`roam index-stats` only suppresses missing optional tables."""
+    from roam.commands import cmd_index_stats
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql):
+            if sql.startswith("SELECT COUNT(*) FROM files"):
+                raise sqlite3.OperationalError("database is locked")
+            raise AssertionError(f"unexpected SQL: {sql}")
+
+    def fake_open_db(*, readonly):
+        assert readonly is True
+        return FakeConn()
+
+    db_path = tmp_path / "index.sqlite"
+    db_path.write_bytes(b"")
+    monkeypatch.setattr(cmd_index_stats, "ensure_index", lambda: None)
+    monkeypatch.setattr(cmd_index_stats, "get_db_path", lambda: db_path)
+    monkeypatch.setattr(cmd_index_stats, "open_db", fake_open_db)
+
+    result = CliRunner().invoke(cmd_index_stats.index_stats, obj={"json": True})
+    assert result.exit_code != 0
+    assert isinstance(result.exception, sqlite3.OperationalError)
+    assert str(result.exception) == "database is locked"
 
 
 def test_pass39_critique_batch(tmp_path):
