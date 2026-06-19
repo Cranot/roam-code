@@ -1328,17 +1328,20 @@ def _command_entrypoint_name_for_path(path: str) -> str | None:
     return normalised[len(prefix) : -len(".py")]
 
 
-def _is_mcp_cli_entrypoint_pair(new_sym, existing) -> bool:
-    """MCP tool shims intentionally mirror Click command entrypoint names."""
+def _is_cli_entrypoint_mirror_pair(new_sym, existing) -> bool:
+    """Integration shims intentionally mirror Click command entrypoint names."""
     new_path = (new_sym["file_path"] or "").replace("\\", "/")
     existing_path = (existing["file_path"] or "").replace("\\", "/")
-    if new_path == "src/roam/mcp_server.py":
+    mirror_paths = {"src/roam/api.py", "src/roam/mcp_server.py"}
+    if new_path in mirror_paths:
         command_name = _command_entrypoint_name_for_path(existing_path)
-    elif existing_path == "src/roam/mcp_server.py":
+        mirror_name = new_sym["name"]
+    elif existing_path in mirror_paths:
         command_name = _command_entrypoint_name_for_path(new_path)
+        mirror_name = existing["name"]
     else:
         return False
-    return command_name == new_sym["name"]
+    return command_name == mirror_name
 
 
 def _exact_duplicate_violation(new_sym, existing) -> dict:
@@ -1359,7 +1362,7 @@ def _exact_duplicate_for_symbol(
     for existing in existing_by_name.get(new_sym["name"].lower(), []):
         # Cross-role matches (src fn vs its test/script/ci namesake) are
         # expected mirroring, not duplication -- compare within a role only.
-        if _same_role_external_symbol(existing, new_sym, new_ids, role) and not _is_mcp_cli_entrypoint_pair(
+        if _same_role_external_symbol(existing, new_sym, new_ids, role) and not _is_cli_entrypoint_mirror_pair(
             new_sym, existing
         ):
             return _exact_duplicate_violation(new_sym, existing)
