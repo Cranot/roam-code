@@ -587,5 +587,5 @@ def _print_mismatches(conn, visible_ids):
 
 
 # Preserve the lazy CLI registry attribute while keeping the callback's Python
-# function name distinct from graph.clone_detect._UnionFind.clusters.
+# function name distinct from graph clone-detection helpers.
 clusters = clusters_cmd
