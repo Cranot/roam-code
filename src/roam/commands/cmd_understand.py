@@ -682,7 +682,7 @@ def _top_debt(conn, limit=5):
     destructive=False,
     stale_sensitive=True,
 )
-@click.command()
+@click.command("understand")
 @click.option("--full", is_flag=True, help="Show all clusters and hotspots, not just top-N")
 @click.option("--tour", "tour_mode", is_flag=True, help="Append tour: reading order, entry points, next steps")
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram (only active with --tour)")
@@ -695,7 +695,7 @@ def _top_debt(conn, limit=5):
     help="Show structural skeleton of a directory (skips normal output)",
 )
 @click.pass_context
-def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
+def understand_cmd(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     """Single-call codebase comprehension — everything in one shot.
 
     Returns project structure, tech stack, architecture, health, hotspots,
