@@ -566,12 +566,14 @@ def _declared_python_dependencies(project_root: Path) -> frozenset[str]:
     except ImportError:
         try:
             import tomli  # type: ignore[import-not-found]
-
+        except ImportError:
+            return frozenset()
+        try:
             with pyproject.open("rb") as f:
                 data = tomli.load(f)
-        except Exception:
+        except (OSError, tomli.TOMLDecodeError):
             return frozenset()
-    except Exception:
+    except (OSError, tomllib.TOMLDecodeError):
         return frozenset()
 
     project = data.get("project", {}) or {}
@@ -629,7 +631,7 @@ def _is_external_python_package(module: str, project_root: Path | None = None) -
             return True
     try:
         return importlib.util.find_spec(head) is not None
-    except Exception:
+    except (ImportError, AttributeError, ValueError):
         return False
 
 
