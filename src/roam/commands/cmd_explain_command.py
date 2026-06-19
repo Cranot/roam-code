@@ -139,7 +139,7 @@ def _scan_module_for_tables(module_path: Path) -> list[str]:
     """Best-effort scan: find DB table names referenced in SQL literals."""
     try:
         src = module_path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeError):
         return []
     tables: set[str] = set()
     for literal in _sql_literals_from_source(src):
@@ -156,7 +156,7 @@ def _scan_module_for_extras(module_path: Path) -> list[str]:
     """Detect optional-extras imports (network, ml, mcp)."""
     try:
         src = module_path.read_text(encoding="utf-8")
-    except Exception:
+    except (OSError, UnicodeError):
         return []
     extras: list[str] = []
     if re.search(r"\bimport\s+networkx|from\s+networkx\b", src):
