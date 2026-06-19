@@ -41,24 +41,25 @@ array once is legitimate) — hence its MEDIUM confidence.
 
 from __future__ import annotations
 
+from functools import partial
 import re
 import sqlite3
 
 # Language-agnostic plumbing shared with the Python pack: disk-read cache,
 # symbol attribution, and the finding-dict constructor.
 from roam.catalog.python_idioms import (
-    _coerce_idiom_scope,
     _enclosing_symbol,
     _file_text,
     _idiom_finding,
     _line_to_symbol,
+    _set_idiom_scope_value,
 )
 
 __all__ = [
     "JS_IDIOM_DETECTORS",
     "JS_IDIOM_TRIGGERS",
     "applicable_js_idiom_detectors",
-    "set_idiom_scope",
+    "set_js_idiom_scope",
     "detect_js_shift_in_loop",
     "detect_js_concat_reassign_in_loop",
     "detect_js_push_then_sort_in_loop",
@@ -87,17 +88,7 @@ _JS_LANGUAGES = ("javascript", "jsx", "typescript", "tsx", "vue", "svelte")
 # the mechanism is identical: ``run_detectors`` applies/resets both setters.
 _SCOPE_FILE_IDS: set[int] | None = None
 
-
-def set_js_idiom_scope(file_ids) -> None:
-    """Restrict subsequent JS idiom-detector runs to ``file_ids`` (None = all).
-
-    Callers MUST reset to None in a ``finally`` (the scope is a module global,
-    so a leaked scope would silently narrow an unrelated later run)."""
-    global _SCOPE_FILE_IDS
-    _SCOPE_FILE_IDS = _coerce_idiom_scope(file_ids)
-
-
-set_idiom_scope = set_js_idiom_scope
+set_js_idiom_scope = partial(_set_idiom_scope_value, globals())
 
 
 def _js_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:

@@ -250,7 +250,7 @@ def test_js_detectors_end_to_end(tmp_path):
         detect_js_json_deepclone,
         detect_js_push_then_sort_in_loop,
         detect_js_shift_in_loop,
-        set_idiom_scope,
+        set_js_idiom_scope,
     )
 
     js_path = tmp_path / "app.js"
@@ -267,7 +267,7 @@ def test_js_detectors_end_to_end(tmp_path):
     for i, (name, start, end) in enumerate(_FIXTURE_SYMBOLS, start=1):
         conn.execute("INSERT INTO symbols VALUES (?, 1, ?, 'function', ?, ?)", (i, name, start, end))
 
-    set_idiom_scope(None)  # reset any leaked scope from another test
+    set_js_idiom_scope(None)  # reset any leaked scope from another test
     cases = [
         (detect_js_shift_in_loop, "bugShift"),
         (detect_js_concat_reassign_in_loop, "bugConcat"),
@@ -281,11 +281,11 @@ def test_js_detectors_end_to_end(tmp_path):
         assert names == {expected}, f"{detect_fn.__name__}: expected {{{expected!r}}}, got {names}"
 
     # scope narrowing: an empty scope yields no findings; reset restores
-    set_idiom_scope(set())
+    set_js_idiom_scope(set())
     try:
         assert detect_js_shift_in_loop(conn) == []
     finally:
-        set_idiom_scope(None)
+        set_js_idiom_scope(None)
     assert {f["symbol_name"] for f in detect_js_shift_in_loop(conn)} == {"bugShift"}
 
 
@@ -294,7 +294,7 @@ def test_js_files_covers_the_language_variants(tmp_path):
     rows (SFCs included after the 2026-06-11 Vue3 dogfood)."""
     import sqlite3
 
-    from roam.catalog.js_idioms import _js_files, set_idiom_scope
+    from roam.catalog.js_idioms import _js_files, set_js_idiom_scope
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -310,6 +310,6 @@ def test_js_files_covers_the_language_variants(tmp_path):
         (8, "h.svelte", "svelte"),
     ]
     conn.executemany("INSERT INTO files VALUES (?, ?, ?)", rows)
-    set_idiom_scope(None)
+    set_js_idiom_scope(None)
     ids = {fid for fid, _p in _js_files(conn)}
     assert ids == {1, 2, 3, 4, 7, 8}
