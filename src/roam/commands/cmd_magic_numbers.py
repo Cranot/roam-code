@@ -295,27 +295,32 @@ def _scan_ts_file(
     raw: list[tuple[int | float, int, str]] = []
     used_treesitter = False
     if kinds is not None:
+        tree = None
         try:
             # NOTE: tree-sitter-language-pack is already a hard dep of
             # roam (see pyproject.toml), but we still guard the import
             # so that a missing grammar (e.g. older language-pack) falls
             # back to the regex sweep instead of crashing the command.
             from tree_sitter_language_pack import get_parser
-
+        except ImportError:
+            tree = None
+        else:
             from roam.index.parser import GRAMMAR_ALIASES
-            from roam.languages.registry import get_ts_language  # noqa: F401
 
-            grammar = GRAMMAR_ALIASES.get(language, language)
-            parser = get_parser(grammar)
-            tree = parser.parse(src_bytes)
+            try:
+                grammar = GRAMMAR_ALIASES.get(language, language)
+                parser = get_parser(grammar)
+                tree = parser.parse(src_bytes)
+            except (LookupError, TypeError):
+                # Fall through to the regex sweep — documented fallback.
+                tree = None
+
+        if tree is not None:
             walked = _walk_ts_numbers(tree.root_node, kinds, src_bytes)
             for value, lineno, _text in walked:
                 snippet = _line_snippet(source_lines, lineno)
                 raw.append((value, lineno, snippet))
             used_treesitter = True
-        except Exception:
-            # Fall through to the regex sweep — documented fallback.
-            used_treesitter = False
 
     if not used_treesitter:
         # Regex fallback: scan each line for numeric tokens. This is
