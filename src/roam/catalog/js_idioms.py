@@ -47,6 +47,7 @@ import sqlite3
 # Language-agnostic plumbing shared with the Python pack: disk-read cache,
 # symbol attribution, and the finding-dict constructor.
 from roam.catalog.python_idioms import (
+    _coerce_idiom_scope,
     _enclosing_symbol,
     _file_text,
     _idiom_finding,
@@ -87,13 +88,16 @@ _JS_LANGUAGES = ("javascript", "jsx", "typescript", "tsx", "vue", "svelte")
 _SCOPE_FILE_IDS: set[int] | None = None
 
 
-def set_idiom_scope(file_ids) -> None:
+def set_js_idiom_scope(file_ids) -> None:
     """Restrict subsequent JS idiom-detector runs to ``file_ids`` (None = all).
 
     Callers MUST reset to None in a ``finally`` (the scope is a module global,
     so a leaked scope would silently narrow an unrelated later run)."""
     global _SCOPE_FILE_IDS
-    _SCOPE_FILE_IDS = set(file_ids) if file_ids is not None else None
+    _SCOPE_FILE_IDS = _coerce_idiom_scope(file_ids)
+
+
+set_idiom_scope = set_js_idiom_scope
 
 
 def _js_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:

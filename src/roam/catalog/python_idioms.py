@@ -462,13 +462,18 @@ def _strip_strings_and_comments(text: str) -> str:
 _SCOPE_FILE_IDS: set[int] | None = None
 
 
+def _coerce_idiom_scope(file_ids) -> set[int] | None:
+    """Return the module-global scope value for an idiom detector pack."""
+    return set(file_ids) if file_ids is not None else None
+
+
 def set_idiom_scope(file_ids) -> None:
     """Restrict subsequent idiom-detector runs to ``file_ids`` (None = all).
 
     Callers MUST reset to None in a ``finally`` (the scope is a module global, so
     a leaked scope would silently narrow an unrelated later run)."""
     global _SCOPE_FILE_IDS
-    _SCOPE_FILE_IDS = set(file_ids) if file_ids is not None else None
+    _SCOPE_FILE_IDS = _coerce_idiom_scope(file_ids)
 
 
 def _python_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:
