@@ -35,6 +35,15 @@ from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import run_retrieve
 from roam.retrieve.semantic import semantic_coverage
 
+_RECOVERABLE_RETRIEVE_ERRORS: tuple[type[Exception], ...] = (
+    click.ClickException,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    sqlite3.Error,
+)
+
 # ---------------------------------------------------------------------------
 # W607-BI substrate-CALL boundaries (ADDITIVE to W607-B)
 # ---------------------------------------------------------------------------
@@ -460,14 +469,15 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
     def _run_check_bi(phase: str, fn, *args, default=None, **kwargs):
         """Run one substrate helper with W607-BI marker emission.
 
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a ``retrieve_<phase>_failed:<exc_class>:<detail>``
-        marker via ``_w607bi_warnings_out`` and return *default* — the
-        envelope still emits cleanly with the remaining substrates.
+        On a clean call the result is returned as-is. On a documented
+        recoverable substrate error, surface a
+        ``retrieve_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607bi_warnings_out`` and return *default* — the envelope still
+        emits cleanly with the remaining substrates.
         """
         try:
             return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        except _RECOVERABLE_RETRIEVE_ERRORS as exc:
             _w607bi_warnings_out.append(f"retrieve_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
@@ -552,14 +562,14 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
         def _fts5_search_capture(*args, **kwargs):
             try:
                 return _fts5_search_full(*args, **kwargs)
-            except Exception as exc:
+            except _RECOVERABLE_RETRIEVE_ERRORS as exc:
                 _captured_exceptions["full"] = exc
                 raise
 
         def _lexical_fallback_capture(*args, **kwargs):
             try:
                 return _fts5_search_lexical_only(*args, **kwargs)
-            except Exception as exc:
+            except _RECOVERABLE_RETRIEVE_ERRORS as exc:
                 _captured_exceptions["lexical"] = exc
                 raise
 
