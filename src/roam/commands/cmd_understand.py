@@ -655,7 +655,7 @@ def _top_debt(conn, limit=5):
             }
             for r in rows
         ]
-    except Exception:
+    except sqlite3.Error:
         return []
 
 
