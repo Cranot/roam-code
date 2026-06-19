@@ -10,6 +10,7 @@ W1224-audit memo.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 import click
 
 from roam.capability import roam_capability
+from roam.db.connection import find_project_root
 from roam.graph.stats import gini_coefficient
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -413,12 +415,8 @@ def dev_profile(ctx, author, days, limit):
 
     # Find project root (best-effort)
     try:
-        from roam.db.connection import find_project_root
-
         root = str(find_project_root())
-    except Exception:
-        import os
-
+    except OSError:
         root = os.getcwd()
 
     raw = _run_git_log(days, root)
