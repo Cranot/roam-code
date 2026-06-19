@@ -9418,7 +9418,7 @@ def api(limit: int = 0, scope: str = "", root: str = ".") -> dict:
     name="roam_conventions",
     description="Auto-detect codebase naming, file, import, and export conventions with outliers.",
 )
-def conventions(max_outliers: int = 10, root: str = ".") -> dict:
+def roam_conventions(max_outliers: int = 10, root: str = ".") -> dict:
     """Auto-detect codebase conventions.
 
     WHEN TO USE: Call this on a new-to-you codebase to learn its
