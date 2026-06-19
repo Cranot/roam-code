@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
@@ -259,7 +260,7 @@ def scan_project_for_flags(
             with open_db(readonly=True) as conn:
                 rows = conn.execute("SELECT path FROM files").fetchall()
                 file_paths = [row["path"] for row in rows]
-        except Exception:
+        except (click.ClickException, sqlite3.DatabaseError):
             file_paths = _walk_for_files(root)
     else:
         file_paths = _walk_for_files(root)
