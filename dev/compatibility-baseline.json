@@ -2299,7 +2299,7 @@
         "--pip-audit",
         "--trivy"
       ],
-      "function": "vuln_map",
+      "function": "vuln_map_cmd",
       "module": "roam.commands.cmd_vuln_map"
     },
     "vuln-reach": {
