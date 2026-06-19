@@ -47,6 +47,7 @@ Severity bands (matching ``cmd_health``):
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 
 # Symbol kinds that are *data attributes*, not refactorable units of logic.
@@ -164,7 +165,7 @@ def god_components(
 
     try:
         rows = conn.execute(TOP_BY_DEGREE, (top_n,)).fetchall()
-    except Exception:
+    except sqlite3.Error:
         # Stamp the fallback flag so consumers can distinguish a
         # crashed query from a clean codebase (CLAUDE.md "Make
         # fallback chains loud").
