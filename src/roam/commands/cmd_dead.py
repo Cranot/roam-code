@@ -1623,7 +1623,7 @@ def _read_caller_line(project_root, file_cache: dict, file_path: str, line_no: i
             file_cache[file_path] = (
                 (project_root / file_path).read_text(encoding="utf-8", errors="replace").splitlines()
             )
-        except Exception:
+        except OSError:
             file_cache[file_path] = []
     lines = file_cache.get(file_path, [])
     if 0 < line_no <= len(lines):
