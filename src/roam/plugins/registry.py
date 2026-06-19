@@ -409,7 +409,7 @@ class RoamPluginContext:
 
     # ---- bridge registration --------------------------------------------
 
-    def register_bridge(self, bridge: "LanguageBridge") -> None:
+    def add_bridge(self, bridge: "LanguageBridge") -> None:
         """Register a cross-language bridge.
 
         A bridge resolves references that span language boundaries
@@ -417,12 +417,15 @@ class RoamPluginContext:
         client fetch). The instance must implement
         ``roam.bridges.base.LanguageBridge``.
         """
-        from roam.bridges.registry import register_bridge
+        from roam.bridges.registry import register_bridge as register_language_bridge
 
-        register_bridge(bridge)
+        register_language_bridge(bridge)
         state = _registry_state()
         state.bridges.append(bridge)
         self._note_capability("bridge")
+
+    # Backward-compatible public API for existing plugins.
+    register_bridge = add_bridge
 
     # ---- internal -------------------------------------------------------
 
