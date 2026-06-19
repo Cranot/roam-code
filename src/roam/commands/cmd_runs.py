@@ -26,6 +26,8 @@ allowlist + W1181-audit memo.
 
 from __future__ import annotations
 
+import json
+
 import click
 
 from roam.capability import roam_capability
@@ -757,10 +759,8 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
     # Parse out the envelope. JSON output is one JSON object; text mode would
     # have ``VERDICT:`` prefix. Handle both gracefully.
     try:
-        import json as _json_mod
-
-        emit_env = _json_mod.loads(raw)
-    except Exception:
+        emit_env = json.loads(raw)
+    except json.JSONDecodeError:
         # Text mode — synthesize a minimal envelope so callers always see
         # something parseable.
         first_line = raw.splitlines()[0] if raw.splitlines() else ""
