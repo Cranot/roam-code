@@ -18,6 +18,7 @@ W1175-RESEARCH propagation plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import sqlite3
 import time
 
 import click
@@ -26,6 +27,24 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+
+
+def _is_missing_git_commits_schema(exc: sqlite3.OperationalError) -> bool:
+    """Return True for old/partial indexes without git commit metadata."""
+    message = str(exc).lower()
+    return ("no such table" in message and "git_commits" in message) or (
+        "no such column" in message and "timestamp" in message
+    )
+
+
+def _count_git_commits(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> int:
+    try:
+        row = conn.execute(sql, params).fetchone()
+    except sqlite3.OperationalError as exc:
+        if _is_missing_git_commits_schema(exc):
+            return 0
+        raise
+    return int(row[0] if row is not None else 0)
 
 
 @roam_capability(
@@ -59,18 +78,13 @@ def stats(ctx, days: int) -> None:
     with open_db(readonly=True) as conn:
         file_total = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         symbol_total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        try:
-            commits_total = conn.execute("SELECT COUNT(*) FROM git_commits").fetchone()[0]
-        except Exception:
-            commits_total = 0
+        commits_total = _count_git_commits(conn, "SELECT COUNT(*) FROM git_commits")
         cutoff_ts = int(time.time()) - days * 86400
-        try:
-            commits_recent = conn.execute(
-                "SELECT COUNT(*) FROM git_commits WHERE timestamp >= ?",
-                (cutoff_ts,),
-            ).fetchone()[0]
-        except Exception:
-            commits_recent = 0
+        commits_recent = _count_git_commits(
+            conn,
+            "SELECT COUNT(*) FROM git_commits WHERE timestamp >= ?",
+            (cutoff_ts,),
+        )
 
         languages = dict(
             conn.execute(
