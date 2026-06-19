@@ -363,7 +363,7 @@ _COMMANDS = {
     "guard-clean": ("roam.commands.cmd_guard_clean", "guard_clean"),
     "bench-compile": ("roam.commands.cmd_bench", "bench_compile"),
     "api-changes": ("roam.commands.cmd_api_changes", "api_changes"),
-    "test-gaps": ("roam.commands.cmd_test_gaps", "test_gaps"),
+    "test-gaps": ("roam.commands.cmd_test_gaps", "test_gaps_cmd"),
     "ai-ratio": ("roam.commands.cmd_ai_ratio", "ai_ratio"),
     "duplicates": ("roam.commands.cmd_duplicates", "duplicates"),
     "partition": ("roam.commands.cmd_partition", "partition"),

@@ -35,7 +35,7 @@ from conftest import (
 
 def invoke_test_gaps(runner, args=None, cwd=None, json_mode=False):
     """Invoke the test-gaps command directly via its Click command object."""
-    from roam.commands.cmd_test_gaps import test_gaps
+    from roam.commands.cmd_test_gaps import test_gaps_cmd
 
     full_args = list(args or [])
     obj = {"json": json_mode}
@@ -44,7 +44,7 @@ def invoke_test_gaps(runner, args=None, cwd=None, json_mode=False):
     try:
         if cwd:
             os.chdir(str(cwd))
-        result = runner.invoke(test_gaps, full_args, obj=obj, catch_exceptions=False)
+        result = runner.invoke(test_gaps_cmd, full_args, obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result
