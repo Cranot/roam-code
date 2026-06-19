@@ -2469,6 +2469,17 @@ class TestStaleRefsExternalDedup:
         assert "https://invalid.test.invalid/a" in results
         assert "https://invalid.test.invalid/b" in results
 
+    def test_parallel_helper_surfaces_programmer_errors(self, monkeypatch):
+        """Worker bugs must not be reported as unreachable URLs."""
+        import roam.commands.cmd_stale_refs as stale_refs
+
+        def _raise_type_error(*_args, **_kwargs):
+            raise TypeError("bad worker")
+
+        monkeypatch.setattr(stale_refs, "_check_one_external_url", _raise_type_error)
+        with pytest.raises(TypeError, match="bad worker"):
+            stale_refs._check_external_urls_parallel([("https://example.com", "README.md", 1)], timeout=0.5, concurrency=1)
+
 
 class TestStaleRefsWatchHelpersComposition:
     def test_collect_mtimes_skips_ignored_files(self, tmp_path):
