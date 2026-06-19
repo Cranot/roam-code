@@ -419,7 +419,7 @@ def load_symbol_coverage_map(conn: sqlite3.Connection, symbol_ids: set[int]) -> 
             "FROM symbol_metrics WHERE symbol_id IN ({ph})",
             sorted(symbol_ids),
         )
-    except Exception:
+    except sqlite3.Error:
         return {}
 
     out: dict[int, dict] = {}
