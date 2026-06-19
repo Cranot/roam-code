@@ -914,7 +914,7 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
             "matched_symbol_id, matched_file, reachable, shortest_path, hop_count "
             "FROM vulnerabilities ORDER BY id"
         ).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         return []
 
     vulns = [dict(r) for r in rows]
