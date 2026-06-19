@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sqlite3
 import time
 import urllib.error
 import urllib.request
@@ -454,11 +455,17 @@ class TestLoadTrackedFiles:
             result = load_tracked_files(tmp_path)
         assert result == {}
 
-    def test_returns_empty_on_exception(self, tmp_path):
+    def test_returns_empty_on_database_error(self, tmp_path):
         with patch("roam.commands.cmd_watch.db_exists", return_value=True):
-            with patch("roam.commands.cmd_watch.open_db", side_effect=Exception("db error")):
+            with patch("roam.commands.cmd_watch.open_db", side_effect=sqlite3.DatabaseError("db error")):
                 result = load_tracked_files(tmp_path)
         assert result == {}
+
+    def test_unexpected_errors_are_not_swallowed(self, tmp_path):
+        with patch("roam.commands.cmd_watch.db_exists", return_value=True):
+            with patch("roam.commands.cmd_watch.open_db", side_effect=RuntimeError("bug")):
+                with pytest.raises(RuntimeError, match="bug"):
+                    load_tracked_files(tmp_path)
 
 
 class TestDiscoverCurrentFiles:
