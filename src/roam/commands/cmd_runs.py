@@ -743,10 +743,9 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
     try:
         try:
             ctx.invoke(pr_bundle_emit, auto_collect=True)
-        except SystemExit:
-            # pr-bundle emit doesn't normally exit, but be defensive.
-            pass
-        except Exception:
+        except (SystemExit, click.Abort, click.ClickException, click.exceptions.Exit):
+            # pr-bundle emit doesn't normally exit, but Click command-flow
+            # exits can occur on incomplete or invalid bundle state.
             return None, "emit_failed", True
     finally:
         _sys.stdout = saved_stdout

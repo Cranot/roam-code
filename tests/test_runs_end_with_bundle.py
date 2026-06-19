@@ -18,6 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -160,6 +161,39 @@ def test_runs_end_with_flag_no_bundle_clean_envelope(cli_runner, bundle_run_proj
     assert "no pr-bundle" in data["summary"]["verdict"].lower(), data["summary"]
     # No nested envelope when no bundle existed.
     assert "pr_bundle_emitted" not in data or data.get("pr_bundle_emitted") is None
+
+
+def test_emit_pr_bundle_for_end_propagates_unexpected_runtime_errors(tmp_path, monkeypatch):
+    """Unexpected nested emit failures must not collapse to emit_failed."""
+    from roam.commands import cmd_pr_bundle
+    from roam.commands.cmd_runs import _emit_pr_bundle_for_end
+
+    bundle_path = tmp_path / "pr-bundle.json"
+    bundle_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(cmd_pr_bundle, "_bundle_path", lambda root: bundle_path)
+
+    class FakeCtx:
+        def invoke(self, command, **kwargs):
+            raise RuntimeError("synthetic nested emit bug")
+
+    with pytest.raises(RuntimeError, match="synthetic nested emit bug"):
+        _emit_pr_bundle_for_end(FakeCtx(), tmp_path)
+
+
+def test_emit_pr_bundle_for_end_catches_click_flow_errors(tmp_path, monkeypatch):
+    """Expected Click command-flow exits remain best-effort emit failures."""
+    from roam.commands import cmd_pr_bundle
+    from roam.commands.cmd_runs import _emit_pr_bundle_for_end
+
+    bundle_path = tmp_path / "pr-bundle.json"
+    bundle_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(cmd_pr_bundle, "_bundle_path", lambda root: bundle_path)
+
+    class FakeCtx:
+        def invoke(self, command, **kwargs):
+            raise click.ClickException("expected click failure")
+
+    assert _emit_pr_bundle_for_end(FakeCtx(), tmp_path) == (None, "emit_failed", True)
 
 
 # ---------------------------------------------------------------------------
