@@ -85,6 +85,33 @@ class TestZetaWiring:
         assert scores[1] > scores[2]
         assert scores[1] == 1.0
 
+    def test_rerank_semantic_scores_degrades_on_sqlite_errors(self, monkeypatch):
+        import sqlite3
+
+        from roam.retrieve import rerank, semantic
+
+        conn = sqlite3.connect(":memory:")
+
+        def _raise_sqlite(_conn, _candidate_ids, _task):
+            raise sqlite3.OperationalError("synthetic semantic score failure")
+
+        monkeypatch.setattr(semantic, "semantic_score", _raise_sqlite)
+        assert rerank._semantic_scores(conn, [1], "database connection") == {}
+
+    def test_rerank_semantic_scores_propagates_non_sqlite_errors(self, monkeypatch):
+        import sqlite3
+
+        from roam.retrieve import rerank, semantic
+
+        conn = sqlite3.connect(":memory:")
+
+        def _raise_runtime(_conn, _candidate_ids, _task):
+            raise RuntimeError("synthetic semantic score bug")
+
+        monkeypatch.setattr(semantic, "semantic_score", _raise_runtime)
+        with pytest.raises(RuntimeError, match="synthetic semantic score bug"):
+            rerank._semantic_scores(conn, [1], "database connection")
+
     def test_semantic_coverage_reports_empty_and_partial_states(self, tmp_path):
         import sqlite3
 
