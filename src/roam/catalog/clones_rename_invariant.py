@@ -194,7 +194,7 @@ def _extract_function_vectors(
 
     try:
         tree, source, _lang = parse_file(path, language)
-    except Exception:
+    except (LookupError, OSError, RuntimeError, TypeError, ValueError):
         return []
     if tree is None or source is None:
         return []
