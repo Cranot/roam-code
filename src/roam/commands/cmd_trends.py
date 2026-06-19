@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -317,7 +318,7 @@ def _collect_current_metrics(conn):
         test_count = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'test'").fetchone()[0] or 0
         source_count = total_files - test_count
         metrics["test_file_ratio"] = round(test_count / max(source_count, 1), 3)
-    except Exception:
+    except sqlite3.Error:
         metrics["test_file_ratio"] = 0.0
 
     return metrics
