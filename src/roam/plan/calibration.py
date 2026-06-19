@@ -149,11 +149,6 @@ def list_profiles() -> list[str]:
     return sorted(PROFILES)
 
 
-def list_validated_profiles() -> list[str]:
-    """Return only profiles backed by measured benchmark data."""
-    return sorted(VALIDATED_PROFILES)
-
-
 def get_profile(name: str | None = None) -> CalibrationProfile:
     """Return profile by name; default to the empirically validated one.
 
