@@ -129,6 +129,23 @@ CHECKS = (
     _check_zero_symbols_per_file,
 )
 
+def _run_checks(conn) -> list[dict]:
+    findings = []
+    for check in CHECKS:
+        try:
+            findings.append(check(conn))
+        except sqlite3.Error as exc:
+            findings.append(
+                {
+                    "name": check.__name__.lstrip("_check_"),
+                    "count": 0,
+                    "severity": "error",
+                    "note": f"check failed: {exc.__class__.__name__}: {exc}",
+                }
+            )
+    return findings
+
+
 EXIT_GATE_FAILURE = 5
 
 
@@ -158,20 +175,8 @@ def db_check(ctx, ci: bool):
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
     ensure_index()
 
-    findings = []
     with open_db(readonly=True) as conn:
-        for check in CHECKS:
-            try:
-                findings.append(check(conn))
-            except Exception as exc:
-                findings.append(
-                    {
-                        "name": check.__name__.lstrip("_check_"),
-                        "count": 0,
-                        "severity": "error",
-                        "note": f"check failed: {exc.__class__.__name__}: {exc}",
-                    }
-                )
+        findings = _run_checks(conn)
 
     high = sum(1 for f in findings if f["severity"] == "high")
     medium = sum(1 for f in findings if f["severity"] == "medium")
