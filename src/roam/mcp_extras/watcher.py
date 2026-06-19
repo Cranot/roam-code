@@ -198,7 +198,7 @@ def _try_import_watchdog() -> tuple[Any, Any] | None:
         from watchdog.observers import Observer
 
         return Observer, FileSystemEventHandler
-    except Exception:
+    except ImportError:
         # Genuine optional-dependency guard: watchdog is not a hard
         # dependency. Returning None disables the watcher entirely (the
         # caller's documented fall-through). No lineage needed — absence
