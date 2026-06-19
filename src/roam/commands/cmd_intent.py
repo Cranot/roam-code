@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import subprocess
 import time
 
@@ -407,7 +408,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                        LIMIT ?""",
                     (top_n * 3,),
                 ).fetchall()
-            except Exception:
+            except sqlite3.OperationalError:
                 high_pr = []
 
             undoc_list = [
