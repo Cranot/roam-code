@@ -92,6 +92,11 @@ _metrics_lock = threading.Lock()
 # weight?" without phoning home.
 _tool_invocations: Counter[tuple[str, str]] = Counter()
 
+# Tool-body exceptions are converted into structured envelopes by the
+# inner MCP exception wrapper before this guard sees them. These are the
+# expected wrapper-boundary failures worth counting before re-raising.
+_EXPECTED_GUARD_ERRORS = (RuntimeError, ValueError, OSError)
+
 
 def record_tool_outcome(tool_name: str, outcome: str) -> None:
     """Increment the invocation counter for ``(tool_name, outcome)``.
@@ -264,7 +269,7 @@ def wrap_with_guard(name: str, fn):
                     result = await fn(*args, **kwargs)
                     record_tool_outcome(name, "success")
                     return result
-                except Exception:
+                except _EXPECTED_GUARD_ERRORS:
                     record_tool_outcome(name, "error")
                     raise
                 finally:
@@ -283,7 +288,7 @@ def wrap_with_guard(name: str, fn):
                 result = fn(*args, **kwargs)
                 record_tool_outcome(name, "success")
                 return result
-            except Exception:
+            except _EXPECTED_GUARD_ERRORS:
                 record_tool_outcome(name, "error")
                 raise
             finally:
