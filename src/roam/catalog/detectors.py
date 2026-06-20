@@ -796,6 +796,29 @@ def _guard_hints_from_source(language: str | None, snippet: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+_RE_FIRE_AND_FORGET_TASK = re.compile(
+    r"^\s*(?:asyncio\.)?create_task\s*\(",
+    re.MULTILINE,
+)
+_RE_STORED_TASK = re.compile(
+    r"^\s*(?:\w+\s*[+\-*/]?=\s*|\w+\s*\.\s*append\s*\(\s*|\w+\s*\.\s*add\s*\(\s*|return\s+|await\s+)"
+    r"(?:asyncio\.)?create_task\s*\(",
+    re.MULTILINE,
+)
+_RE_SPREAD_ACC = re.compile(
+    r"\b(\w+)\s*=\s*\[\s*\.\.\.\s*\1\s*,",  # name = [...name,
+)
+_RE_SPREAD_OBJ_ACC = re.compile(
+    r"\b(\w+)\s*=\s*\{\s*\.\.\.\s*\1\s*[,}]",  # name = {...name,
+)
+_RE_REDUCE_SPREAD = re.compile(
+    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\[\s*\.\.\.\s*\1\s*,",
+)
+_RE_REDUCE_SPREAD_OBJ = re.compile(
+    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\{\s*\.\.\.\s*\1\s*[,}]",
+)
+
+
 @algorithm_detector(
     task_id="sorting",
     languages=(),
@@ -3991,6 +4014,241 @@ def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
                 matched_patterns=["for/range loop", "defer inside loop body"],
             )
         )
+    return results
+
+
+@algorithm_detector(
+    task_id="async-fire-and-forget-task",
+    languages=("python",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
+    """``asyncio.create_task(...)`` whose return value is discarded.
+
+    Background tasks that aren't held in a long-lived reference get
+    garbage-collected before they finish. Python 3.11+ explicitly warns
+    about this footgun. The fix is to store the task somewhere that
+    survives until ``await`` time, or just ``await`` it directly.
+
+    Conservative: Python only, only fires when the line clearly creates
+    a task without storing it.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
+        if "create_task" not in snippet:
+            continue
+        # Subtract stored-task lines from total create_task occurrences
+        total = len(_RE_FIRE_AND_FORGET_TASK.findall(snippet))
+        stored = len(_RE_STORED_TASK.findall(snippet))
+        leaked = total - stored
+        if leaked <= 0:
+            continue
+        results.append(
+            _finding(
+                "async-fire-and-forget-task",
+                "leaked-asyncio-task",
+                r,
+                f"{leaked} asyncio.create_task call(s) whose return value isn't stored — gc may discard the task before it completes",
+                "high",
+                snippet=snippet,
+                matched_patterns=[
+                    f"create_task occurrences: {total}",
+                    f"stored: {stored}, leaked: {leaked}",
+                ],
+            )
+        )
+        results[-1]["fix"] = (
+            "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
+        )
+    return results
+
+
+@algorithm_detector(
+    task_id="max-min",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
+def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
+    """Loops with comparisons in max/min-named functions.
+
+    Same Big-O (both O(n)) — this is an idiom improvement, flagged at low
+    confidence.
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_depth, ms.loop_with_compare, "
+        "ms.loop_with_accumulator, ms.calls_in_loops "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE (s.name LIKE '%find\\_max%' ESCAPE '\\' OR s.name LIKE '%find\\_min%' ESCAPE '\\' "
+        "  OR s.name LIKE '%findMax%' OR s.name LIKE '%findMin%' "
+        "  OR s.name LIKE '%get\\_max%' ESCAPE '\\' OR s.name LIKE '%get\\_min%' ESCAPE '\\' "
+        "  OR s.name LIKE '%getMax%' OR s.name LIKE '%getMin%' "
+        "  OR s.name LIKE '%find\\_largest%' ESCAPE '\\' OR s.name LIKE '%find\\_smallest%' ESCAPE '\\' "
+        "  OR s.name LIKE '%findLargest%' OR s.name LIKE '%findSmallest%') "
+        "AND s.kind IN ('function', 'method') "
+        "AND ms.loop_depth >= 1 "
+        "AND ms.loop_with_compare = 1"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        calls = _iter_loop_calls(r)
+        if _call_in(calls, {"max", "min", "Math.max", "Math.min", "Collections.max", "Collections.min"}):
+            continue
+        results.append(
+            _finding(
+                "max-min",
+                "manual-loop",
+                r,
+                "Manual loop with comparisons in max/min function (idiomatic improvement)",
+                "low",
+            )
+        )
+    return results
+
+
+@algorithm_detector(
+    task_id="spread-accumulator",
+    languages=JS_FAMILY_LANGUAGES,
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
+    """JS/TS: `acc = [...acc, x]` or `.reduce((acc, x) => [...acc, x])` is O(n²)."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "f.language AS language, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        matched: list[str] = []
+        first_pos: int | None = None
+        for pat, label in (
+            (_RE_REDUCE_SPREAD, "reduce array spread accumulator"),
+            (_RE_REDUCE_SPREAD_OBJ, "reduce object spread accumulator"),
+            (_RE_SPREAD_ACC, "in-place array spread re-bind"),
+            (_RE_SPREAD_OBJ_ACC, "in-place object spread re-bind"),
+        ):
+            m = pat.search(snippet)
+            if m is None:
+                continue
+            matched.append(label)
+            if first_pos is None or m.start() < first_pos:
+                first_pos = m.start()
+        if not matched:
+            continue
+        if first_pos is None:
+            first_pos = 0
+        line_offset = snippet[:first_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "spread-accumulator",
+                "spread-rebind",
+                r,
+                f"Spread accumulator ({matched[0]}) is O(n^2) — use .push() / Object.assign()",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=matched,
+            )
+        )
+    return results
+
+
+@algorithm_detector(
+    task_id="string-concat",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Loops with accumulation patterns and string-related call hints.
+
+    Relies primarily on the structural pattern (loop + accumulator) combined
+    with calls to string methods (append/concat) or string-building name hints.
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_depth, ms.calls_in_loops, ms.loop_with_accumulator "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.loop_depth >= 1 "
+        "AND ms.loop_with_accumulator = 1"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        calls = _iter_loop_calls(r)
+        # Structural signal: calls to string concat/append methods
+        has_concat_call = bool(_call_in(calls, {"concat", "strcat", "append", "push"}))
+        # Name signal: function name suggests string building
+        name_lower = (r["name"] or "").lower()
+        has_name_hint = any(
+            kw in name_lower
+            for kw in (
+                "concat",
+                "build_str",
+                "build_string",
+                "format",
+                "render",
+                "serialize",
+                "to_string",
+                "tostring",
+                "stringify",
+                "to_csv",
+                "to_html",
+                "to_xml",
+                "generate_report",
+                "join",
+            )
+        )
+        if has_concat_call or has_name_hint:
+            results.append(
+                _finding(
+                    "string-concat",
+                    "loop-concat",
+                    r,
+                    "Loop accumulation in string-building function",
+                    "medium",
+                )
+            )
     return results
 
 
