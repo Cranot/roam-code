@@ -10041,17 +10041,35 @@ def _query_unique_module_path(db_path: str, name: str) -> str | None:
     files) is skipped so the probe never anchors on the wrong module."""
     import sqlite3 as _sq
 
+    # W1150: single files-table scan instead of three leading-wildcard LIKE
+    # probes (each `LIKE '%/...'` is a full scan, so describe-module resolution
+    # full-scanned `files` up to three times per name). Bucket every path once,
+    # then resolve in the original precedence order — subdir `<name>.py`, root
+    # `<name>.py`, then `<name>/__init__.py` package — returning the first
+    # bucket with a UNIQUE match. Lowercase comparison preserves the ASCII
+    # case-insensitivity of SQLite's default LIKE; the len==1 guard matches the
+    # old `LIMIT 2` / single-row check.
+    subdir_suffix = ("/" + name + ".py").lower()        # `%/<name>.py`
+    root_path = (name + ".py").lower()                  # exact root `<name>.py`
+    pkg_suffix = ("/" + name + "/__init__.py").lower()  # `%/<name>/__init__.py`
+    subdir_hits: list[str] = []
+    root_hits: list[str] = []
+    pkg_hits: list[str] = []
     conn = _sq.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
     try:
-        for pattern in ("%/" + name + ".py", name + ".py", "%/" + name + "/__init__.py"):
-            rows = conn.execute(
-                "SELECT path FROM files WHERE path LIKE ? LIMIT 2",
-                (pattern,),
-            ).fetchall()
-            if len(rows) == 1:
-                return rows[0][0]
+        for (path,) in conn.execute("SELECT path FROM files").fetchall():
+            pl = path.lower()
+            if pl == root_path:
+                root_hits.append(path)
+            elif pl.endswith(subdir_suffix):
+                subdir_hits.append(path)
+            if pl.endswith(pkg_suffix):
+                pkg_hits.append(path)
     finally:
         conn.close()
+    for bucket in (subdir_hits, root_hits, pkg_hits):
+        if len(bucket) == 1:
+            return bucket[0]
     return None
 
 
