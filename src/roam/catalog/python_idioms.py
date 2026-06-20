@@ -50,7 +50,6 @@ __all__ = [
     "detect_async_not_awaited",
     "detect_async_with_missing",
     "detect_bare_except",
-    "detect_broad_except",
     "detect_dict_keys_iter",
     "detect_django_n1",
     "detect_fastapi_depends",
@@ -236,10 +235,6 @@ _LAMBDA_IN_LOOP_RE = re.compile(
     r"^\s+for\s+(\w+)\s+in\s[^\n]+:\s*\n[\s\S]{0,200}?lambda\b",
     re.MULTILINE,
 )
-
-# ``except Exception:`` (broad) — catches too much. Less severe than
-# bare ``except:`` but still flagged.
-_BROAD_EXCEPT_RE = re.compile(r"^\s*except\s+(?:Exception|BaseException)\s*(?:as\s+\w+\s*)?:", re.MULTILINE)
 
 # ``async for`` missing on async iterators (StreamReader, async generators)
 # — heuristic: ``for X in <name>`` where the iterator type hint suggests
@@ -1040,37 +1035,6 @@ def detect_lambda_in_loop(conn: sqlite3.Connection) -> list[dict]:
                     ),
                     confidence="medium",
                     fix=f"lambda x, {var}={var}: ...  # capture by default arg",
-                )
-            )
-    return findings
-
-
-def detect_broad_except(conn: sqlite3.Connection) -> list[dict]:
-    """Find ``except Exception:`` / ``except BaseException:``."""
-    findings: list[dict] = []
-    for file_id, path in _python_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_strings_and_comments(text)
-        if not text:
-            continue
-        sym_index = _line_to_symbol(conn, file_id)
-        for match in _BROAD_EXCEPT_RE.finditer(text):
-            line_no = text.count("\n", 0, match.start()) + 1
-            sym = _enclosing_symbol(line_no, sym_index)
-            if sym is None:
-                continue
-            findings.append(
-                _idiom_finding(
-                    task_id="py-broad-except",
-                    detected_way="catch-too-much",
-                    symbol_id=sym[0],
-                    symbol_name=sym[1],
-                    file_path=path,
-                    line_no=line_no,
-                    reason="``except Exception:`` catches more than intended — narrow to specific class(es)",
-                    confidence="low",
-                    fix="except (ValueError, KeyError):  # or whatever the actual cases are",
                 )
             )
     return findings
@@ -1918,7 +1882,6 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-flask-debug-true", "flask-debug-leak", detect_flask_debug_true),
     ("py-flask-secret-key-literal", "flask-hardcoded-secret", detect_flask_secret_key_literal),
     ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
-    ("py-broad-except", "catch-too-much", detect_broad_except),
     # loop-body performance idioms (2026-06-11 wave)
     ("py-manual-counter", "dict-get-increment", detect_manual_counter_in_loop),
     ("py-quadratic-list-concat", "list-reassign-concat", detect_list_reassign_concat_in_loop),
