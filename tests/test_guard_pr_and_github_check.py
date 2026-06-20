@@ -107,6 +107,47 @@ def test_post_check_run_returns_no_token_error_without_env(monkeypatch):
     assert result["error"] == "no_github_token"
 
 
+def test_post_check_run_rejects_control_chars_in_env_token(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "token\nX-Injected: yes")
+
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("urlopen should not be called with an invalid token")
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    result = post_check_run(owner="o", repo="r", payload={})
+
+    assert result == {"ok": False, "status": 0, "error": "invalid_github_token"}
+
+
+def test_post_check_run_strips_token_before_authorization_header(monkeypatch):
+    class FakeResponse:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"id": 123}'
+
+    captured = {}
+    monkeypatch.setenv("GITHUB_TOKEN", "  token\n")
+
+    def fake_urlopen(req, **_kwargs):
+        captured["authorization"] = req.get_header("Authorization")
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    result = post_check_run(owner="o", repo="r", payload={})
+
+    assert result["ok"] is True
+    assert result["status"] == 201
+    assert result["body"] == {"id": 123}
+    assert captured["authorization"] == "Bearer token"
+
+
 def test_post_check_run_http_error_body_read_failure_preserves_status(monkeypatch):
     class BrokenErrorBody:
         def read(self):
