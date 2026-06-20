@@ -4772,7 +4772,10 @@ def _probe_find_by_description_for_task(task: str, cwd: str | None) -> dict | No
     """
     if not _FIND_BY_DESC_RE.search(task):
         return None
-    d = _run_roam(["search-semantic", task], cwd, timeout=12.0)
+    # `--` delimiter forces the task to be parsed as the positional query, so
+    # a task beginning with `--help` / `--backend=...` is not silently
+    # consumed as a search-semantic option.
+    d = _run_roam(["search-semantic", "--", task], cwd, timeout=12.0)
     if not d:
         return None
     results = (d.get("results") or d.get("matches") or [])[:5]
@@ -10341,7 +10344,11 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
         return files[:top_n], False  # cached → subprocess NOT invoked
 
     # Only when NO explicit paths and no cache hit: fall back to semantic.
-    env = _run_roam(["search-semantic", task], cwd=cwd)
+    # `--` delimiter forces the task to be parsed as the positional query, so
+    # a task beginning with `--help` / `--backend=...` is not silently
+    # consumed as a search-semantic option (which would alter or drop the
+    # likely-file prefetch).
+    env = _run_roam(["search-semantic", "--", task], cwd=cwd)
     if not env:
         # Cache the negative result too so we don't keep firing.
         _symbol_resolution_cache_store(task, cwd, [])
