@@ -2422,13 +2422,20 @@ def _probe_l10_symbol_resolution(task: str, cwd: str | None) -> dict | None:
     # calls (and the [:5] cap could be filled by one symbol repeated 5×).
     seen: set = set()
     uniq = [s for s in backticked if not (s in seen or seen.add(s))]
+    targets = uniq[:5]  # cap at 5 unique symbols to bound subprocess time
+    # Resolve all unique symbols in ONE `roam batch-search` subprocess instead
+    # of up to five sequential `roam search` calls. batch-search groups rows by
+    # query under `results[query]` (rows use `file_path`/`line_start`), so each
+    # row is normalized to the `roam search` row shape the ranker expects.
+    d = _run_roam(["batch-search", *targets], cwd, timeout=6.0)
+    if not d:
+        return None
+    grouped = d.get("results") or {}
     resolved = []
-    for sym in uniq[:5]:  # cap at 5 unique symbols to bound subprocess time
-        d = _run_roam(["search", sym], cwd, timeout=4.0)
-        if not d:
-            continue
-        results = d.get("results", []) or d.get("matches", []) or d.get("symbols", [])
-        ranked = _rank_symbol_search_rows(results, sym)
+    for sym in targets:
+        rows = grouped.get(sym) or []
+        norm = [_normalize_batch_search_row(r) for r in rows if isinstance(r, dict)]
+        ranked = _rank_symbol_search_rows(norm, sym)
         if not ranked:
             continue
         first = ranked[0]
@@ -5358,6 +5365,23 @@ def _split_loc_line(loc, line):
         except (ValueError, TypeError) as exc:
             log_swallowed("compile.loc_line_parse", exc)
     return loc, line
+
+
+def _normalize_batch_search_row(r: dict) -> dict:
+    """Map a `roam batch-search` row onto the `roam search` row shape.
+
+    batch-search groups rows under `results[query]` with `file_path` /
+    `line_start` / `qualified_name`; the symbol ranker (`_rank_symbol_search_rows`)
+    and `_split_loc_line` read `roam search`'s `location` / `file` / `line` keys.
+    Normalizing here lets one batched call feed the same ranker as the legacy
+    per-symbol search path. Already-search-shaped rows pass through unchanged."""
+    if "file_path" not in r and "line_start" not in r:
+        return r
+    out = dict(r)
+    out.setdefault("file", r.get("file_path"))
+    out.setdefault("line", r.get("line_start"))
+    out.setdefault("signature", r.get("qualified_name") or r.get("name"))
+    return out
 
 
 # `roam search` substring-matches AND interleaves tests with source, so
