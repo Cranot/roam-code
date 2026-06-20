@@ -2417,8 +2417,13 @@ def _probe_l10_symbol_resolution(task: str, cwd: str | None) -> dict | None:
     backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", task)
     if not backticked:
         return None
+    # Order-preserving dedupe: a symbol named N times is resolved once, not N
+    # times. Without this the loop repeats identical `roam search` subprocess
+    # calls (and the [:5] cap could be filled by one symbol repeated 5×).
+    seen: set = set()
+    uniq = [s for s in backticked if not (s in seen or seen.add(s))]
     resolved = []
-    for sym in backticked[:5]:  # cap at 5 to bound subprocess time
+    for sym in uniq[:5]:  # cap at 5 unique symbols to bound subprocess time
         d = _run_roam(["search", sym], cwd, timeout=4.0)
         if not d:
             continue
