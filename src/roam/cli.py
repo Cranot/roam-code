@@ -790,7 +790,13 @@ def _recipe_hint_for_bad_command(bad: str) -> str | None:
         from roam.ask.classifier import classify
 
         matches = classify(bad)
-    except Exception:  # noqa: BLE001 — command suggestions must never break unknown-command errors
+    except Exception as exc:  # noqa: BLE001 — best-effort recipe hints must never break the unknown-command error path; classifier is optional and may fail to import or score.
+        # Log (not pass) so the silent skip stays observable when tracing why suggestions disappeared.
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "recipe hint skipped for unknown command %r: %s", bad, exc
+        )
         return None
 
     if matches and matches[0][1] >= 0.5:
