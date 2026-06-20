@@ -49,7 +49,7 @@ class TestCatalog:
         # These remain catalog tasks for tips/fixes but no longer have built-in
         # detectors after dead detector removals.
         math_task_keys = {tid for tid, t in CATALOG.items() if not t.get("family")}
-        catalog_only_task_keys = {"async-nested-run", "membership"}
+        catalog_only_task_keys = {"async-fire-and-forget-task", "async-nested-run", "membership"}
         detector_tasks = {task_id for task_id, _way_id, _fn in _MATH_DETECTORS}
         assert detector_tasks == math_task_keys - catalog_only_task_keys
 

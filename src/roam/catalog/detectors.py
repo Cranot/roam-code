@@ -62,7 +62,6 @@ __all__ = [
     "QUERY_COST_HIGH",
     # Detector functions (alphabetical).
     "detect_async_blocking_sleep",
-    "detect_async_fire_and_forget",
     "detect_branching_recursion",
     "detect_broad_except_swallow",
     "detect_busy_wait",
@@ -2097,6 +2096,20 @@ def _is_call_awaited_in_snippet(call: str, snippet: str) -> bool:
 _FRAMEWORK_PACK_CACHE: dict[tuple[str, str], dict | None] = {}
 
 
+def _lower_string_set(values: Iterable[Any]) -> set[str]:
+    return {str(v).lower() for v in values}
+
+
+def _io_pack_matches(pack: dict, lower_call: str, leaf: str, receiver: str) -> bool:
+    leaves = _lower_string_set(pack.get("leaves", set()))
+    receiver_hints = _lower_string_set(pack.get("receiver_hints", set()))
+    if lower_call in _lower_string_set(pack.get("exact", set())):
+        return True
+    if leaf not in leaves:
+        return False
+    return not receiver_hints or any(hint in receiver for hint in receiver_hints)
+
+
 def _io_match_framework_pack(call: str, language: str | None) -> dict | None:
     cache_key = (call, language or "")
     if cache_key in _FRAMEWORK_PACK_CACHE:
@@ -2106,21 +2119,67 @@ def _io_match_framework_pack(call: str, language: str | None) -> dict | None:
     lower_c = call.lower()
     result: dict | None = None
     for pack in _framework_packs(language):
-        leaves = {str(v).lower() for v in pack.get("leaves", set())}
-        recv_hints = {str(v).lower() for v in pack.get("receiver_hints", set())}
-        if lower_c in {c.lower() for c in pack.get("exact", set())}:
-            result = pack
-            break
-        if leaf not in leaves:
-            continue
-        if not recv_hints:
-            result = pack
-            break
-        if any(h in recv for h in recv_hints):
+        if _io_pack_matches(pack, lower_c, leaf, recv):
             result = pack
             break
     _FRAMEWORK_PACK_CACHE[cache_key] = result
     return result
+
+
+def _classify_known_in_memory_call(c: str, snippet: str | None) -> tuple[str | None, dict | None] | None:
+    if not _io_is_known_in_memory_call(c):
+        return None
+    if snippet and _is_call_awaited_in_snippet(c, snippet):
+        return "medium", None
+    return None, None
+
+
+def _classify_framework_io_call(c: str, language: str | None) -> tuple[str | None, dict | None] | None:
+    pack = _io_match_framework_pack(c, language)
+    if not pack:
+        return None
+    level = "high" if pack.get("confidence") == "high" else "medium"
+    return level, pack
+
+
+def _classify_named_io_call(c: str) -> str | None:
+    lower_c = c.lower()
+    leaf = _call_leaf(c).lower()
+    if lower_c in _IO_HIGH_EXACT_LOWER:
+        return "high"
+    if leaf in _IO_HIGH_LEAF and _io_receiver_is_ioish(c):
+        return "high"
+    if leaf in {"get", "post", "put", "delete", "patch", "request"}:
+        recv = _io_receiver_hint(c)
+        if "requests" in recv or recv.endswith("http"):
+            return "high"
+    if leaf in _IO_MEDIUM_LEAF and _io_receiver_is_ioish(c):
+        return "medium"
+    if leaf == "open":
+        return "medium"
+    return None
+
+
+def _is_local_ambiguous_helper(conn, r, leaf: str) -> bool:
+    local_helper = conn.execute(
+        "SELECT 1 FROM edges e "
+        "JOIN symbols t ON e.target_id = t.id "
+        "WHERE e.source_id = ? "
+        "AND lower(t.name) = ? "
+        "AND t.file_id = ? "
+        "LIMIT 1",
+        (r["id"], leaf, r["file_id"]),
+    ).fetchone()
+    return bool(local_helper)
+
+
+def _classify_ambiguous_bare_call(c: str, conn, r) -> str | None:
+    leaf = _call_leaf(c).lower()
+    if "." in c or leaf not in _IO_AMBIGUOUS_BARE:
+        return None
+    if _is_local_ambiguous_helper(conn, r, leaf):
+        return None
+    return "ambiguous"
 
 
 def _io_classify_call(
@@ -2145,45 +2204,125 @@ def _io_classify_call(
     """
     # D2: if call name matches cache allowlist BUT is awaited in the body,
     # the await says it really IS asynchronous I/O — escalate to medium.
-    in_memory = _io_is_known_in_memory_call(c)
-    if in_memory:
-        if snippet and _is_call_awaited_in_snippet(c, snippet):
-            return "medium", None  # await proves it's async I/O, not cache
-        return None, None
-    pack = _io_match_framework_pack(c, language)
-    if pack:
-        if pack.get("confidence") == "high":
-            return "high", pack
-        return "medium", pack
-
-    lower_c = c.lower()
-    leaf = _call_leaf(c).lower()
-    if lower_c in _IO_HIGH_EXACT_LOWER:
-        return "high", None
-    if leaf in _IO_HIGH_LEAF and _io_receiver_is_ioish(c):
-        return "high", None
-    if leaf in {"get", "post", "put", "delete", "patch", "request"}:
-        recv = _io_receiver_hint(c)
-        if "requests" in recv or recv.endswith("http"):
-            return "high", None
-    if leaf in _IO_MEDIUM_LEAF and _io_receiver_is_ioish(c):
-        return "medium", None
-    if "." not in c and leaf in _IO_AMBIGUOUS_BARE:
-        local_helper = conn.execute(
-            "SELECT 1 FROM edges e "
-            "JOIN symbols t ON e.target_id = t.id "
-            "WHERE e.source_id = ? "
-            "AND lower(t.name) = ? "
-            "AND t.file_id = ? "
-            "LIMIT 1",
-            (r["id"], leaf, r["file_id"]),
-        ).fetchone()
-        if local_helper:
-            return None, None
-        return "ambiguous", None
-    if leaf == "open":
-        return "medium", None
+    memory_result = _classify_known_in_memory_call(c, snippet)
+    if memory_result is not None:
+        return memory_result
+    framework_result = _classify_framework_io_call(c, language)
+    if framework_result is not None:
+        return framework_result
+    named_level = _classify_named_io_call(c)
+    if named_level:
+        return named_level, None
+    ambiguous_level = _classify_ambiguous_bare_call(c, conn, r)
+    if ambiguous_level:
+        return ambiguous_level, None
     return None, None
+
+
+def _io_derived_match_line(
+    match_line: int | None,
+    snippet: str | None,
+    calls: list[str],
+    row,
+) -> int | None:
+    if match_line is not None or not snippet or not calls:
+        return match_line
+    first_call = calls[0]
+    leaf = _call_leaf(first_call) or first_call
+    if not leaf:
+        return match_line
+    for offset, line in enumerate(snippet.splitlines()):
+        if leaf in line:
+            return (row["line_start"] or 0) + offset
+    return match_line
+
+
+def _io_common_evidence_extras(dev_gated: bool) -> dict:
+    if not dev_gated:
+        return {}
+    return {
+        "dev_gated": True,
+        "dev_gated_note": (
+            "loop body sits inside a DEV-only conditional (import.meta.env.DEV / __DEV__ / "
+            "process.env.NODE_ENV); production-stripped, so the N+1 cost is not paid in prod"
+        ),
+    }
+
+
+def _io_matched_patterns(
+    high_calls: list[str],
+    medium_calls: list[str],
+    ambiguous_calls: list[str],
+    frameworks: set[str],
+    guard_applies: bool,
+    dev_gated: bool,
+) -> list[str]:
+    patterns: list[str] = []
+    if high_calls:
+        patterns.append(f"high-confidence I/O leaves ({len(high_calls)})")
+    if medium_calls:
+        patterns.append(f"medium-confidence I/O leaves ({len(medium_calls)})")
+    if ambiguous_calls:
+        patterns.append(f"ambiguous bare calls ({len(ambiguous_calls)})")
+    if frameworks:
+        patterns.append(f"framework pack: {', '.join(sorted(frameworks))}")
+    if guard_applies:
+        patterns.append("eager/batch guard nearby (confidence demoted)")
+    if dev_gated:
+        patterns.append("DEV-only gate (confidence demoted)")
+    return patterns
+
+
+def _io_level_reason_and_confidence(
+    level: str,
+    high_calls: list[str],
+    medium_calls: list[str],
+    ambiguous_calls: list[str],
+    frameworks: set[str],
+    guard_hints: list[str],
+    guard_applies: bool,
+) -> tuple[str, str]:
+    calls_by_level = {
+        "high": high_calls,
+        "medium": medium_calls,
+        "ambiguous": ambiguous_calls,
+    }
+    reason_calls = _dedupe(calls_by_level.get(level, ambiguous_calls))[:2]
+    reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
+    if level in {"high", "medium"} and guard_applies:
+        reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
+    if level == "high":
+        reason = f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}"
+    elif level == "medium":
+        reason = f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}"
+    else:
+        reason = f"Ambiguous bare call ({', '.join(reason_calls)}) inside loop (possible I/O, review manually)"
+    confidence = {"high": "high", "medium": "medium"}.get(level, "low")
+    if level in {"high", "medium"} and guard_applies:
+        confidence = _lower_confidence(confidence)
+    return reason, confidence
+
+
+def _io_evidence(
+    level: str,
+    evidence_io_calls: list[str],
+    ambiguous_calls: list[str],
+    frameworks: set[str],
+    guard_hints: list[str],
+    common_extras: dict,
+    suppress_hint: str,
+) -> dict:
+    evidence = {
+        "io_calls": evidence_io_calls,
+        "frameworks": sorted(frameworks),
+        "guard_hints": guard_hints,
+        "to_suppress": suppress_hint,
+        **common_extras,
+    }
+    if level == "ambiguous":
+        evidence["ambiguous_io_calls"] = _dedupe(ambiguous_calls)[:4]
+        evidence["ambiguous_io_only"] = True
+    return evidence
 
 
 def _io_emit_finding(
@@ -2211,23 +2350,9 @@ def _io_emit_finding(
     """
     fix_text = "; ".join(sorted(fixes)) if fixes else None
     # M1: try to find the line of the first I/O call inside the snippet.
-    derived_match_line = match_line
-    if derived_match_line is None and snippet and (high_calls or medium_calls or ambiguous_calls):
-        first_call = (high_calls + medium_calls + ambiguous_calls)[0]
-        leaf = _call_leaf(first_call) or first_call
-        # Use a loose substring match — call shapes vary across extractors.
-        if leaf:
-            for offset, line in enumerate(snippet.splitlines()):
-                if leaf in line:
-                    derived_match_line = (r["line_start"] or 0) + offset
-                    break
-    common_evidence_extras = {}
-    if dev_gated:
-        common_evidence_extras["dev_gated"] = True
-        common_evidence_extras["dev_gated_note"] = (
-            "loop body sits inside a DEV-only conditional (import.meta.env.DEV / __DEV__ / "
-            "process.env.NODE_ENV); production-stripped, so the N+1 cost is not paid in prod"
-        )
+    all_calls = high_calls + medium_calls + ambiguous_calls
+    derived_match_line = _io_derived_match_line(match_line, snippet, all_calls, r)
+    common_evidence_extras = _io_common_evidence_extras(dev_gated)
     suppress_hint = (
         "wrap the loop in a batch/eager guard (e.g. `with()` or `map()`+`Promise.all`), OR "
         "add `# roam: ignore-math[io-in-loop]` on the function line if the call is intentional"
@@ -2236,93 +2361,45 @@ def _io_emit_finding(
     # Surfaces in `evidence.matched_patterns` so users see which classifier
     # branches contributed (high-leaf / framework-pack / ambiguous-bare /
     # dev-gated / batch-iteration). Quiet (empty list) when no signal.
-    matched_patterns: list[str] = []
-    if high_calls:
-        matched_patterns.append(f"high-confidence I/O leaves ({len(high_calls)})")
-    if medium_calls:
-        matched_patterns.append(f"medium-confidence I/O leaves ({len(medium_calls)})")
-    if ambiguous_calls:
-        matched_patterns.append(f"ambiguous bare calls ({len(ambiguous_calls)})")
-    if frameworks:
-        matched_patterns.append(f"framework pack: {', '.join(sorted(frameworks))}")
-    if guard_applies:
-        matched_patterns.append("eager/batch guard nearby (confidence demoted)")
-    if dev_gated:
-        matched_patterns.append("DEV-only gate (confidence demoted)")
-
-    if level == "high":
-        reason_calls = _dedupe(high_calls)[:2]
-        reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
-        confidence = "high"
-        if guard_applies:
-            confidence = _lower_confidence(confidence)
-            reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-        return _finding(
-            "io-in-loop",
-            "loop-query",
-            r,
-            f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
-            confidence,
-            evidence={
-                "io_calls": evidence_io_calls,
-                "frameworks": sorted(frameworks),
-                "guard_hints": guard_hints,
-                "to_suppress": suppress_hint,
-                **common_evidence_extras,
-            },
-            fix=fix_text,
-            match_line=derived_match_line,
-            snippet=snippet,
-            matched_patterns=matched_patterns,
-        )
-    if level == "medium":
-        reason_calls = _dedupe(medium_calls)[:2]
-        reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
-        confidence = "medium"
-        if guard_applies:
-            confidence = _lower_confidence(confidence)
-            reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-        return _finding(
-            "io-in-loop",
-            "loop-query",
-            r,
-            f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
-            confidence,
-            evidence={
-                "io_calls": evidence_io_calls,
-                "frameworks": sorted(frameworks),
-                "guard_hints": guard_hints,
-                "to_suppress": suppress_hint,
-                **common_evidence_extras,
-            },
-            fix=fix_text,
-            match_line=derived_match_line,
-            snippet=snippet,
-            matched_patterns=matched_patterns,
-        )
-    # Ambiguous bare calls (get/find/query) — weak evidence, low confidence.
-    reason_calls = _dedupe(ambiguous_calls)[:2]
+    matched_patterns = _io_matched_patterns(
+        high_calls,
+        medium_calls,
+        ambiguous_calls,
+        frameworks,
+        guard_applies,
+        dev_gated,
+    )
+    reason, confidence = _io_level_reason_and_confidence(
+        level,
+        high_calls,
+        medium_calls,
+        ambiguous_calls,
+        frameworks,
+        guard_hints,
+        guard_applies,
+    )
     finding = _finding(
         "io-in-loop",
         "loop-query",
         r,
-        f"Ambiguous bare call ({', '.join(reason_calls)}) inside loop (possible I/O, review manually)",
-        "low",
-        evidence={
-            "io_calls": evidence_io_calls,
-            "ambiguous_io_calls": _dedupe(ambiguous_calls)[:4],
-            "ambiguous_io_only": True,
-            "frameworks": sorted(frameworks),
-            "guard_hints": guard_hints,
-            "to_suppress": suppress_hint,
-            **common_evidence_extras,
-        },
+        reason,
+        confidence,
+        evidence=_io_evidence(
+            level,
+            evidence_io_calls,
+            ambiguous_calls,
+            frameworks,
+            guard_hints,
+            common_evidence_extras,
+            suppress_hint,
+        ),
         fix=fix_text,
         match_line=derived_match_line,
         snippet=snippet,
         matched_patterns=matched_patterns,
     )
-    finding["precision"] = "low"
+    if level == "ambiguous":
+        finding["precision"] = "low"
     return finding
 
 
@@ -2796,82 +2873,6 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
                     f"blocking calls: {', '.join(body_blocking[:3])}",
                 ],
             )
-        )
-    return results
-
-
-# `asyncio.create_task(coro())` whose return value is
-# discarded. The task is gc-collected before it runs to completion. The
-# fix is to either store the task in a long-lived collection or `await`
-# it. PEP 649 / Python 3.11+ docs explicitly call this a footgun.
-_RE_FIRE_AND_FORGET_TASK = re.compile(
-    r"^\s*(?:asyncio\.)?create_task\s*\(",
-    re.MULTILINE,
-)
-_RE_STORED_TASK = re.compile(
-    r"^\s*(?:\w+\s*[+\-*/]?=\s*|\w+\s*\.\s*append\s*\(\s*|\w+\s*\.\s*add\s*\(\s*|return\s+|await\s+)"
-    r"(?:asyncio\.)?create_task\s*\(",
-    re.MULTILINE,
-)
-
-
-@algorithm_detector(
-    task_id="async-fire-and-forget-task",
-    languages=("python",),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
-    """``asyncio.create_task(...)`` whose return value is discarded.
-
-    Background tasks that aren't held in a long-lived reference get
-    garbage-collected before they finish. Python 3.11+ explicitly warns
-    about this footgun. The fix is to store the task somewhere that
-    survives until ``await`` time, or just ``await`` it directly.
-
-    Conservative: Python only, only fires when the line clearly creates
-    a task without storing it.
-    """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
-        if "create_task" not in snippet:
-            continue
-        # Subtract stored-task lines from total create_task occurrences
-        total = len(_RE_FIRE_AND_FORGET_TASK.findall(snippet))
-        stored = len(_RE_STORED_TASK.findall(snippet))
-        leaked = total - stored
-        if leaked <= 0:
-            continue
-        results.append(
-            _finding(
-                "async-fire-and-forget-task",
-                "leaked-asyncio-task",
-                r,
-                f"{leaked} asyncio.create_task call(s) whose return value isn't stored — gc may discard the task before it completes",
-                "high",
-                snippet=snippet,
-                matched_patterns=[
-                    f"create_task occurrences: {total}",
-                    f"stored: {stored}, leaked: {leaked}",
-                ],
-            )
-        )
-        results[-1]["fix"] = (
-            "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
         )
     return results
 
@@ -4156,7 +4157,6 @@ _DETECTOR_METADATA = {
     # W913 backfill: rows for previously-silent fallback detectors.
     # Async / event-loop:
     "async-blocking-sleep": {"precision": "high", "impact": "high", "tags": ["async", "blocking"]},
-    "async-fire-and-forget-task": {"precision": "high", "impact": "medium", "tags": ["async", "task-management"]},
     "serial-await-loop": {"precision": "high", "impact": "medium", "tags": ["async", "performance"]},
     # Error handling:
     "broad-except-swallow": {"precision": "high", "impact": "high", "tags": ["error-handling", "anti-pattern"]},
@@ -4668,7 +4668,6 @@ _MATH_DETECTORS = [
     ("io-in-loop", "loop-query", detect_io_in_loop),
     ("serial-await-loop", "for-of-await", detect_serial_await_loop),
     ("async-blocking-sleep", "blocking-call-in-async", detect_async_blocking_sleep),
-    ("async-fire-and-forget-task", "leaked-asyncio-task", detect_async_fire_and_forget),
     ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
     ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
     ("useeffect-missing-deps", "no-deps-array", detect_useeffect_missing_deps),
