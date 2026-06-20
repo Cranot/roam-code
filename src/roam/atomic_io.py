@@ -140,6 +140,7 @@ def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") 
             try:
                 os.close(fd)
             except OSError:
+                # Intentional swallow: best-effort fd close inside the outer except that re-raises the original error.
                 pass
         _cleanup_tmp(tmp_name)
         raise
