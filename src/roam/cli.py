@@ -1202,7 +1202,13 @@ def _mode_gate_decision(canonical: str):
         repo_root = find_project_root()
         allowed, reason = check_command_allowed(repo_root, canonical)
         return repo_root, allowed, reason
-    except Exception:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
+    except Exception as exc:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
+        # Log (not pass) so the silent fail-open stays observable when tracing why a command was allowed despite enforcement.
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "mode-gate decision skipped for command %r: %s", canonical, exc
+        )
         return None
 
 
