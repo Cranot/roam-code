@@ -10179,27 +10179,32 @@ def _path_token_recall(task: str, cwd: str | None, known: set[str], cap: int = 6
             return []
         conn = sqlite3.connect(index_path, timeout=1.0)
         try:
-            # Basename matching happens in Python: a SQL LIKE over the full
-            # path is too loose (the repo-name token matches every path
-            # under src/<repo>/, crowding out real basename hits). The
-            # source-role file list is small (hundreds of rows).
-            paths = [r[0] for r in conn.execute("SELECT path FROM files WHERE COALESCE(file_role,'source') = 'source'")]
-            matches = [p for p in paths if p not in known and any(t in os.path.basename(p).lower() for t in tokens)]
-            if not matches:
-                return []
-            qmarks = ",".join("?" for _ in matches)
+            # One read returns path + summed PageRank for every source file;
+            # basename filtering and top-N selection happen in memory. A
+            # SELECT-all-paths then dynamic `IN (...)` over the matches builds
+            # an unbounded clause when a broad task token hits hundreds of
+            # paths — and can blow SQLite's bound-variable limit. Basename
+            # matching stays in Python regardless: a SQL LIKE over the full
+            # path is too loose (the repo-name token matches every path under
+            # src/<repo>/, crowding out real basename hits). The source-role
+            # file list is small (hundreds of rows).
             rows = conn.execute(
-                f"""SELECT f.path, COALESCE(SUM(g.pagerank), 0) pr
-                    FROM files f
-                    LEFT JOIN symbols s ON s.file_id = f.id
-                    LEFT JOIN graph_metrics g ON g.symbol_id = s.id
-                    WHERE f.path IN ({qmarks})
-                    GROUP BY f.id ORDER BY pr DESC LIMIT ?""",
-                [*matches, cap],
+                """SELECT f.path, COALESCE(SUM(g.pagerank), 0) pr
+                   FROM files f
+                   LEFT JOIN symbols s ON s.file_id = f.id
+                   LEFT JOIN graph_metrics g ON g.symbol_id = s.id
+                   WHERE COALESCE(f.file_role,'source') = 'source'
+                   GROUP BY f.id"""
             ).fetchall()
         finally:
             conn.close()
-        out = [(path, 0.0) for path, _pr in rows]
+        matches = [
+            (p, float(pr))
+            for p, pr in rows
+            if p not in known and any(t in os.path.basename(p).lower() for t in tokens)
+        ]
+        matches.sort(key=lambda pr_pair: pr_pair[1], reverse=True)
+        out = [(path, 0.0) for path, _pr in matches[:cap]]
     except Exception as exc:  # noqa: BLE001 — recall must never break compile
         log_swallowed("compile.likely_files.token_recall", exc)
     return out
