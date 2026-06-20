@@ -6407,16 +6407,31 @@ _BUG_SITE_SLICE_AFTER = 12
 def _bug_site_target(cited_path: str, named_paths: list[str], cwd: str | None) -> tuple[str, str] | None:
     """Resolve the bug-site file: prefer the cited path; fall back to the
     first named_path (a bare cited basename may already be resolved
-    upstream). Returns (repo_relative_target, absolute_path) or None."""
+    upstream). Returns (repo_relative_target, absolute_path) or None.
+
+    Paths under a forbidden/private prefix (``internal/**``, ``.env``,
+    ``.git/**``, ...) are rejected — embedding their source would serialize
+    private bug-site content into the compile envelope, contradicting the
+    same ``forbidden_paths`` set the envelope advertises as off-limits."""
+    import fnmatch
     import os
 
     def _abs(p: str) -> str:
         return os.path.join(cwd, p) if cwd and not os.path.isabs(p) else p
 
-    if os.path.exists(_abs(cited_path)):
-        return cited_path, _abs(cited_path)
-    if named_paths and os.path.exists(_abs(named_paths[0])):
-        return named_paths[0], _abs(named_paths[0])
+    def _is_forbidden(p: str) -> bool:
+        rel = p
+        if os.path.isabs(p) and cwd:
+            try:
+                rel = os.path.relpath(p, cwd)
+            except ValueError:  # different drive on Windows
+                rel = p
+        norm = os.path.normpath(rel).replace(os.sep, "/")
+        return any(fnmatch.fnmatch(norm, pat) for pat in _FORBIDDEN_PATHS_DEFAULT)
+
+    for cand in (cited_path, *(named_paths[:1] if named_paths else ())):
+        if cand and os.path.exists(_abs(cand)) and not _is_forbidden(cand):
+            return cand, _abs(cand)
     return None
 
 
