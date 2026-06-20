@@ -220,7 +220,7 @@ def test_cli_no_laws_no_rules_runs_cleanly(cli_runner, small_project):
 
 def test_cli_project_root_fallback_only_catches_oserror():
     """The root fallback must not swallow programmer-class exceptions."""
-    source_path = Path(__file__).parents[1] / "src" / "roam" / "commands" / "cmd_agents_md.py"
+    source_path = _repo_root() / "src" / "roam" / "commands" / "cmd_agents_md.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
     handler_names = []
@@ -228,9 +228,7 @@ def test_cli_project_root_fallback_only_catches_oserror():
         if not isinstance(node, ast.Try):
             continue
         calls_find_project_root = any(
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Name)
-            and child.func.id == "find_project_root"
+            isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "find_project_root"
             for stmt in node.body
             for child in ast.walk(stmt)
         )

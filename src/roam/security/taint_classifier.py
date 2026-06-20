@@ -22,7 +22,14 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from fastmcp.exceptions import McpError
+try:
+    from fastmcp.exceptions import McpError
+except ImportError:  # fastmcp is an optional runtime dependency
+
+    class McpError(Exception):  # type: ignore[no-redef]
+        """Fallback when fastmcp is unavailable; the sampling path that raises
+        the real McpError is itself gated on fastmcp being importable."""
+
 
 # Categories the classifier may return. The list is closed so the agent's
 # label is parseable without an LLM-side schema spec.
