@@ -55,7 +55,6 @@ __all__ = [
     "detect_django_n1",
     "detect_fastapi_depends",
     "detect_flask_debug_true",
-    "detect_flask_routes",
     "detect_flask_secret_key_literal",
     "detect_lambda_in_loop",
     "detect_lock_without_with",
@@ -204,13 +203,8 @@ _SQLALCHEMY_ALL_THEN_DOT = re.compile(
 # FastAPI Depends() — dependency injection chain.
 _FASTAPI_DEPENDS_RE = re.compile(r"\bDepends\s*\(\s*(\w+)\s*\)")
 
-# Flask. Surface routes (``@app.route``, ``@bp.route``, ``@blueprint.route``)
-# and known anti-patterns (``debug=True`` to ``app.run``, hard-coded
+# Flask. Known anti-patterns (``debug=True`` to ``app.run``, hard-coded
 # ``SECRET_KEY``, raw query parameters into SQL, missing CSRF protection).
-# Captures the route path so the finding can list it.
-_FLASK_ROUTE_RE = re.compile(
-    r"@\s*(?:\w+)\.route\s*\(\s*[\"']([^\"']+)[\"']",
-)
 # ``app.run(debug=True)`` — leaks the Werkzeug debugger to anyone who
 # can reach the host. Real-world CVE class.
 _FLASK_DEBUG_TRUE_RE = re.compile(
@@ -1259,50 +1253,6 @@ def detect_fastapi_depends(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
-def detect_flask_routes(conn: sqlite3.Connection) -> list[dict]:
-    """Inventory Flask ``@app.route`` / ``@blueprint.route`` decorators.
-
-    Info-level: surfaces routes so agents can discover the URL surface
-    (analogous to ``py-fastapi-depends`` for FastAPI). Each finding
-    names the route's URL path in the reason field.
-    """
-    findings: list[dict] = []
-    for file_id, path in _python_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_strings_and_comments(text)
-        if not text:
-            continue
-        # Quick reject: skip files without any Flask context. We require
-        # ``flask`` import OR a ``.route(`` decorator pattern OR an
-        # ``@app.route`` style. The decorator regex itself is a strong
-        # enough signal but the prefilter saves a regex sweep on
-        # non-Flask files.
-        if "flask" not in text.lower() and ".route(" not in text:
-            continue
-        sym_index = _line_to_symbol(conn, file_id)
-        for match in _FLASK_ROUTE_RE.finditer(text):
-            url = match.group(1)
-            line_no = text.count("\n", 0, match.start()) + 1
-            sym = _enclosing_symbol(line_no, sym_index)
-            if sym is None:
-                continue
-            findings.append(
-                _idiom_finding(
-                    task_id="py-flask-routes",
-                    detected_way="route-decorator",
-                    symbol_id=sym[0],
-                    symbol_name=sym[1],
-                    file_path=path,
-                    line_no=line_no,
-                    reason=f"Flask route registered at ``{url}``",
-                    confidence="high",
-                    fix="",
-                )
-            )
-    return findings
-
-
 def detect_flask_debug_true(conn: sqlite3.Connection) -> list[dict]:
     """Find ``app.run(debug=True)`` — leaks the Werkzeug debugger.
 
@@ -1914,7 +1864,6 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-django-n1", "django-orm", detect_django_n1),
     ("py-sqlalchemy-lazy", "sqla-lazy", detect_sqlalchemy_lazy),
     ("py-fastapi-depends", "fastapi-di", detect_fastapi_depends),
-    ("py-flask-routes", "flask-route", detect_flask_routes),
     ("py-flask-debug-true", "flask-debug-leak", detect_flask_debug_true),
     ("py-flask-secret-key-literal", "flask-hardcoded-secret", detect_flask_secret_key_literal),
     ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
@@ -1952,7 +1901,6 @@ _IDIOM_TRIGGERS: dict[str, tuple[str, ...]] = {
     "py-django-n1": (".objects", "django"),
     "py-sqlalchemy-lazy": ("relationship", "sqlalchemy"),
     "py-fastapi-depends": ("Depends", "fastapi", "APIRouter"),
-    "py-flask-routes": ("flask", "Flask", "Blueprint", ".route("),
     "py-flask-debug-true": ("debug=True", "flask", "Flask"),
     "py-flask-secret-key-literal": ("SECRET_KEY", "secret_key"),
     "py-manual-counter": (".get(",),
