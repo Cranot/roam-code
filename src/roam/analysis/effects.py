@@ -7,8 +7,11 @@ inherit the transitive effects of their callees.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Effect taxonomy
@@ -708,7 +711,12 @@ def _source_and_tree(root, rel_path, language, source_cache, parse_file):
     try:
         with open(full_path, "rb") as f:
             source = f.read()
-    except OSError:
+    except OSError as exc:
+        # Intentional skip: an unreadable file (deleted mid-index, permission
+        # denied, broken symlink) has no effects to classify, and the caller
+        # does `if st is None: continue`. Surface it so the swallow isn't
+        # silent — mirrors parser.py's unreadable-file handling.
+        log.warning("effects: skipping unreadable file %s: %s", rel_path, exc)
         return None
     tree, _parsed_source, _lang = parse_file(full_path, language)
     return source, tree
