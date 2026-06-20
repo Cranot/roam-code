@@ -176,9 +176,12 @@ def atomic_write_bytes(path: PathLike, content: bytes) -> None:
         if not fdopen_succeeded:
             try:
                 os.close(fd)
-            except OSError:
-                # Intentional swallow: best-effort fd close inside the outer except that re-raises the original error.
-                pass
+            except OSError as exc:
+                # Best-effort fd close inside the outer except that re-raises
+                # the original error, so re-raising this would mask the real
+                # failure. Surface the miss via the opt-in swallow logger
+                # (silent unless ROAM_VERBOSE=1) instead of a bare ``pass``.
+                log_swallowed("atomic_io.atomic_write_bytes.fd_close", exc)
         _cleanup_tmp(tmp_name)
         raise
 
