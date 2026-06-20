@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -41,6 +42,31 @@ _PHASE_MAP: list[tuple[re.Pattern, int, str]] = [
 ]
 
 _FILE_COUNT_RE = re.compile(r"(\d+)\s+files?", re.I)
+_ROAM_IMPORT_ROOT = str(Path(__file__).resolve().parents[2])
+_RUN_ROAM_SNIPPET = (
+    "import os, sys;"
+    f"_root = {_ROAM_IMPORT_ROOT!r};"
+    "_cwd = os.path.abspath(os.getcwd());"
+    "sys.path[:] = [_root] + ["
+    "p for p in sys.path "
+    "if p and os.path.abspath(p) not in {_root, _cwd}"
+    "];"
+    "from roam.cli import cli;"
+    "cli()"
+)
+
+
+def _roam_subprocess_cmd(args: list[str]) -> list[str]:
+    """Build a child Python command that imports this installed/source tree."""
+    return [sys.executable, "-E", "-c", _RUN_ROAM_SNIPPET, "--json", *args]
+
+
+def _subprocess_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Inherit non-Python env while blocking import-path control of the child."""
+    clean = {key: value for key, value in os.environ.items() if not key.upper().startswith("PYTHON")}
+    if env:
+        clean.update({key: value for key, value in env.items() if not key.upper().startswith("PYTHON")})
+    return clean
 
 
 def classify_line(line: str) -> tuple[int, str] | None:
@@ -97,14 +123,14 @@ async def run_with_phase_progress(
 
     Caller is responsible for parsing the stdout JSON envelope.
     """
-    full_cmd = [sys.executable, "-m", "roam", "--json", *args]
+    full_cmd = _roam_subprocess_cmd(args)
 
     await _ctx_report_progress(ctx, 2, total=100, message=initial_message)
 
     proc = await asyncio.create_subprocess_exec(
         *full_cmd,
         cwd=cwd,
-        env={**os.environ, **(env or {})},
+        env=_subprocess_env(env),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -160,11 +186,11 @@ def run_with_phase_progress_sync(
     ``on_phase`` is a callable ``(percent, phase_name) -> None`` invoked
     on every recognised phase marker.
     """
-    full_cmd = [sys.executable, "-m", "roam", "--json", *args]
+    full_cmd = _roam_subprocess_cmd(args)
     proc = subprocess.Popen(
         full_cmd,
         cwd=cwd,
-        env={**os.environ, **(env or {})},
+        env=_subprocess_env(env),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

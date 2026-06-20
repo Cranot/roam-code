@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
@@ -256,6 +257,27 @@ class TestProgressPhases:
         pcts = [p for p, _ in emitted]
         assert pcts == sorted(pcts)
         assert pcts[-1] >= 70
+
+    def test_runner_ignores_pythonpath_and_cwd_hijack(self, tmp_path: Path, monkeypatch):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+        (root / "app.py").write_text("def hello():\n    return 'world'\n", encoding="utf-8")
+        (root / "roam.py").write_text("print('CWD_HIJACKED')\n", encoding="utf-8")
+
+        pythonpath_hijack = tmp_path / "pythonpath"
+        pythonpath_hijack.mkdir()
+        (pythonpath_hijack / "roam.py").write_text("print('PYTHONPATH_HIJACKED')\n", encoding="utf-8")
+        monkeypatch.setenv("PYTHONPATH", str(pythonpath_hijack))
+
+        code, stdout, stderr = progress.run_with_phase_progress_sync(["index"], cwd=str(root))
+
+        assert code == 0
+        assert "CWD_HIJACKED" not in stdout
+        assert "PYTHONPATH_HIJACKED" not in stdout
+        assert "CWD_HIJACKED" not in stderr
+        assert "PYTHONPATH_HIJACKED" not in stderr
+        assert json.loads(stdout)["command"] == "index"
 
 
 # ---------------------------------------------------------------------------
