@@ -983,6 +983,8 @@ def known_command_names() -> set[str]:
 
         names |= set(_DEPRECATED_COMMANDS.keys())
     except ImportError:
+        # _DEPRECATED_COMMANDS is optional; degrade to _COMMANDS-only
+        # if this attribute is absent in an older/newer roam.cli.
         pass
     return names
 
