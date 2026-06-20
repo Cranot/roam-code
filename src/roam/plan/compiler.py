@@ -8973,11 +8973,22 @@ def _envelope_deps_are_fresh(cwd: str | None, dep_json: str | None) -> bool:
     # compile re-caches with the stamp.
     if _INDEX_DEP_KEY not in deps and os.path.exists(_index_db_path(cwd)):
         return False
+    # Check the index stamp FIRST. It is the single most decisive signal (a
+    # re-index busts every row compiled before it) and costs exactly one stat,
+    # vs. up to 40 source-file stats below. Failing fast here avoids statting
+    # the whole dep set only to discover the index already invalidated the row.
+    if _INDEX_DEP_KEY in deps:
+        try:
+            current = round(os.path.getmtime(_index_db_path(cwd)), 3)
+        except OSError as exc:
+            log_swallowed("compile.envelope_deps_are_fresh.index_stat", exc)
+            return False  # index vanished → stale
+        if abs(current - deps[_INDEX_DEP_KEY]) > 0.005:
+            return False
     for rel, cached_mtime in deps.items():
         if rel == _INDEX_DEP_KEY:
-            full = _index_db_path(cwd)
-        else:
-            full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
+            continue  # already validated above
+        full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
         try:
             current = round(os.path.getmtime(full), 3)
         except OSError as exc:
