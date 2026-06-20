@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections import defaultdict
 
 import networkx as nx
 
@@ -235,19 +234,39 @@ def spectral_communities(G, k=None):
     if n_parts <= k:
         remap = {old: new for new, old in enumerate(partitions)}
         return {node: remap[pid] for node, pid in raw.items()}
-    merged = dict(raw)
-    while len(set(merged.values())) > k:
-        counts = defaultdict(int)
-        for pid in merged.values():
-            counts[pid] += 1
-        smallest = min(counts, key=lambda p: counts[p])
-        all_pids = sorted(set(merged.values()))
-        idx = all_pids.index(smallest)
-        target = all_pids[idx + 1] if idx + 1 < len(all_pids) else all_pids[idx - 1]
-        merged = {n: (target if p == smallest else p) for n, p in merged.items()}
-    final_pids = sorted(set(merged.values()))
+    # Maintain partition counts/order incrementally instead of rescanning every
+    # node on each merge iteration. `counts` insertion order tracks each pid's
+    # first appearance (via `order`), so the (count, order) tie-break reproduces
+    # the original `min(counts, ...)` choice exactly; `active` stays sorted by
+    # pid so neighbor selection matches the prior `sorted(set(...))` logic.
+    counts: dict = {}
+    order: dict = {}
+    for pid in raw.values():
+        if pid not in counts:
+            counts[pid] = 0
+            order[pid] = len(order)
+        counts[pid] += 1
+    active = sorted(counts)
+    merge_map: dict = {}
+    while len(counts) > k:
+        smallest = min(counts, key=lambda p: (counts[p], order[p]))
+        idx = active.index(smallest)
+        target = active[idx + 1] if idx + 1 < len(active) else active[idx - 1]
+        counts[target] += counts[smallest]
+        order[target] = min(order[target], order[smallest])
+        del counts[smallest]
+        del order[smallest]
+        active.pop(idx)
+        merge_map[smallest] = target
+
+    def _resolve(pid):
+        while pid in merge_map:
+            pid = merge_map[pid]
+        return pid
+
+    final_pids = sorted(counts)
     remap2 = {old: new for new, old in enumerate(final_pids)}
-    return {node: remap2[pid] for node, pid in merged.items()}
+    return {node: remap2[_resolve(pid)] for node, pid in raw.items()}
 
 
 def verdict_from_gap(gap: float) -> str:
