@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import re
@@ -595,14 +596,18 @@ def search_stored(
                 warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")
             pack_results = []
         if pack_results:
-            semantic_results = sorted(
+            # Only the top candidate_k of the merged list is needed; nsmallest
+            # is O(n log candidate_k) and avoids fully sorting the combined
+            # list. The (-score, name, symbol_id) key keeps selection stable.
+            semantic_results = heapq.nsmallest(
+                candidate_k,
                 semantic_results + pack_results,
                 key=lambda r: (
                     -r.get("score", 0.0),
                     r.get("name", ""),
                     r.get("symbol_id", 0),
                 ),
-            )[:candidate_k]
+            )
 
     # Hybrid fusion when both signals exist.
     if lexical_results and semantic_results:
