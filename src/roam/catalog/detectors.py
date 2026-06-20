@@ -84,7 +84,6 @@ __all__ = [
     "detect_serial_await_loop",
     "detect_sort_to_select",
     "detect_spread_accumulator",
-    "detect_string_concat_loop",
     "detect_string_reverse",
     "detect_unremoved_event_listener",
     "detect_useeffect_missing_deps",
@@ -898,70 +897,6 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
                 "low",
             )
         )
-    return results
-
-
-@algorithm_detector(
-    task_id="string-concat",
-    languages=(),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
-    """Loops with accumulation patterns and string-related call hints.
-
-    Relies primarily on the structural pattern (loop + accumulator) combined
-    with calls to string methods (append/concat) or string-building name hints.
-    """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_depth, ms.calls_in_loops, ms.loop_with_accumulator "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE s.kind IN ('function', 'method') "
-        "AND ms.loop_depth >= 1 "
-        "AND ms.loop_with_accumulator = 1"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        calls = _iter_loop_calls(r)
-        # Structural signal: calls to string concat/append methods
-        has_concat_call = bool(_call_in(calls, {"concat", "strcat", "append", "push"}))
-        # Name signal: function name suggests string building
-        name_lower = (r["name"] or "").lower()
-        has_name_hint = any(
-            kw in name_lower
-            for kw in (
-                "concat",
-                "build_str",
-                "build_string",
-                "format",
-                "render",
-                "serialize",
-                "to_string",
-                "tostring",
-                "stringify",
-                "to_csv",
-                "to_html",
-                "to_xml",
-                "generate_report",
-                "join",
-            )
-        )
-        if has_concat_call or has_name_hint:
-            results.append(
-                _finding(
-                    "string-concat",
-                    "loop-concat",
-                    r,
-                    "Loop accumulation in string-building function",
-                    "medium",
-                )
-            )
     return results
 
 
@@ -4721,7 +4656,6 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
 _MATH_DETECTORS = [
     ("sorting", "manual-sort", detect_manual_sort),
     ("search-sorted", "linear-scan", detect_linear_search),
-    ("string-concat", "loop-concat", detect_string_concat_loop),
     ("max-min", "manual-loop", detect_manual_maxmin),
     ("manual-power", "loop-multiply", detect_manual_power),
     ("manual-gcd", "manual-gcd", detect_manual_gcd),
