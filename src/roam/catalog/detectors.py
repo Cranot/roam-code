@@ -73,7 +73,6 @@ __all__ = [
     "detect_loop_invariant_call",
     "detect_loop_lookup",
     "detect_manual_gcd",
-    "detect_manual_maxmin",
     "detect_manual_power",
     "detect_manual_sort",
     "detect_matrix_mult",
@@ -894,55 +893,6 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
                 "linear-scan",
                 r,
                 "Linear scan in function that implies sorted data",
-                "low",
-            )
-        )
-    return results
-
-
-@algorithm_detector(
-    task_id="max-min",
-    languages=(),
-    confidence_basis="heuristic",
-    query_cost=QUERY_COST_LOW,
-)
-def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
-    """Loops with comparisons in max/min-named functions.
-
-    Same Big-O (both O(n)) — this is an idiom improvement, flagged at low
-    confidence.
-    """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_depth, ms.loop_with_compare, "
-        "ms.loop_with_accumulator, ms.calls_in_loops "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%find\\_max%' ESCAPE '\\' OR s.name LIKE '%find\\_min%' ESCAPE '\\' "
-        "  OR s.name LIKE '%findMax%' OR s.name LIKE '%findMin%' "
-        "  OR s.name LIKE '%get\\_max%' ESCAPE '\\' OR s.name LIKE '%get\\_min%' ESCAPE '\\' "
-        "  OR s.name LIKE '%getMax%' OR s.name LIKE '%getMin%' "
-        "  OR s.name LIKE '%find\\_largest%' ESCAPE '\\' OR s.name LIKE '%find\\_smallest%' ESCAPE '\\' "
-        "  OR s.name LIKE '%findLargest%' OR s.name LIKE '%findSmallest%') "
-        "AND s.kind IN ('function', 'method') "
-        "AND ms.loop_depth >= 1 "
-        "AND ms.loop_with_compare = 1"
-    ).fetchall()
-
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        calls = _iter_loop_calls(r)
-        if _call_in(calls, {"max", "min", "Math.max", "Math.min", "Collections.max", "Collections.min"}):
-            continue
-        results.append(
-            _finding(
-                "max-min",
-                "manual-loop",
-                r,
-                "Manual loop with comparisons in max/min function (idiomatic improvement)",
                 "low",
             )
         )
@@ -4656,7 +4606,6 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
 _MATH_DETECTORS = [
     ("sorting", "manual-sort", detect_manual_sort),
     ("search-sorted", "linear-scan", detect_linear_search),
-    ("max-min", "manual-loop", detect_manual_maxmin),
     ("manual-power", "loop-multiply", detect_manual_power),
     ("manual-gcd", "manual-gcd", detect_manual_gcd),
     ("fibonacci", "naive-recursive", detect_naive_fibonacci),
