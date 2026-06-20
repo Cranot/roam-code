@@ -174,6 +174,7 @@ def atomic_write_bytes(path: PathLike, content: bytes) -> None:
             try:
                 os.close(fd)
             except OSError:
+                # Intentional swallow: best-effort fd close inside the outer except that re-raises the original error.
                 pass
         _cleanup_tmp(tmp_name)
         raise
