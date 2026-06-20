@@ -452,10 +452,18 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                 resolution_tier,
                 resolved_target,
             )
-        for path, fid in file_map.items():
-            file_paths.add(path)
-            syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
-            sym_ids.update(s["id"] for s in syms)
+        file_paths.update(file_map.keys())
+        # Batch the symbol fetch across ALL staged file_ids in one IN-clause
+        # query rather than one query per file (the prior per-file loop scaled
+        # subprocess-free but issued N round-trips for N staged files).
+        from roam.db.connection import batched_in
+
+        rows = batched_in(
+            conn,
+            "SELECT id FROM symbols WHERE file_id IN ({ph})",
+            list(file_map.values()),
+        )
+        sym_ids.update(r["id"] for r in rows)
         label = f"staged changes ({len(file_map)} files)"
 
     # --symbol option
