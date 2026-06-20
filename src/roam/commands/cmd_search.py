@@ -526,7 +526,9 @@ def _format_explanation_text(expl: dict) -> list[str]:
     help="boost results in files modified within <N> days (0 = no boost).",
 )
 @click.pass_context
-def search_cmd(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
+def search_cmd(
+    ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days
+):
     """Find symbols matching a name substring (case-insensitive).
 
     Unlike ``grep`` (which searches file contents) and ``search-semantic``

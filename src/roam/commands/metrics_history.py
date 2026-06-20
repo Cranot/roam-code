@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
-import sqlite3
 import time
 
 # W886: delegate to the canonical commands-layer helper (W873 audit).

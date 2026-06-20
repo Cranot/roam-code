@@ -41,9 +41,9 @@ array once is legitimate) — hence its MEDIUM confidence.
 
 from __future__ import annotations
 
-from functools import partial
 import re
 import sqlite3
+from functools import partial
 
 # Language-agnostic plumbing shared with the Python pack: disk-read cache,
 # symbol attribution, and the finding-dict constructor.

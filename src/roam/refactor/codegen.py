@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import posixpath
 
-from roam.index.parser import detect_language
-
 
 def compute_relative_path(from_file: str, to_file: str) -> str:
     """Compute the relative import path between two files.

@@ -926,6 +926,7 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
         if needs_analysis:
             try:
                 from networkx.exception import NetworkXException
+
                 from roam.graph.builder import build_symbol_graph
 
                 G = build_symbol_graph(conn)

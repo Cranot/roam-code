@@ -47,6 +47,7 @@ BATCH_LIKE_WITH_PATHS_SQL = (
     "LIMIT ?"
 )
 
+
 def batch_search_one(
     conn,
     q: str,

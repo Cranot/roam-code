@@ -1373,10 +1373,10 @@ def _exact_duplicate_for_symbol(
     for existing in existing_by_name.get(new_sym["name"].lower(), []):
         # Cross-role matches (src fn vs its test/script/ci namesake) are
         # expected mirroring, not duplication -- compare within a role only.
-        if _same_role_external_symbol(existing, new_sym, new_ids, role) and not _is_cli_entrypoint_mirror_pair(
-            new_sym, existing
-        ) and not _is_shared_substrate_lifecycle_pair(
-            new_sym, existing
+        if (
+            _same_role_external_symbol(existing, new_sym, new_ids, role)
+            and not _is_cli_entrypoint_mirror_pair(new_sym, existing)
+            and not _is_shared_substrate_lifecycle_pair(new_sym, existing)
         ):
             return _exact_duplicate_violation(new_sym, existing)
     return None
@@ -2660,8 +2660,7 @@ def _collect_scoped_idiom_findings(conn, file_ids: list[int]) -> list:
     # (2026-06-11 — the pack landed after the Python wiring above; this keeps
     # the deep sweep language-honest instead of silently Python-only).
     try:
-        from roam.catalog.js_idioms import applicable_js_idiom_detectors
-        from roam.catalog.js_idioms import set_js_idiom_scope
+        from roam.catalog.js_idioms import applicable_js_idiom_detectors, set_js_idiom_scope
     except Exception as exc:  # noqa: BLE001 — deep mode is optional/advisory
         from roam.observability import log_swallowed
 

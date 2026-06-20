@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 from roam.observability import log_swallowed

@@ -17,9 +17,9 @@ from collections import defaultdict
 import click
 
 from roam.capability import roam_capability
+from roam.commands.cmd_simulate_departure import compute_file_ownership as _compute_file_ownership_by_file_ids
 from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
-from roam.commands.cmd_simulate_departure import compute_file_ownership as _compute_file_ownership_by_file_ids
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 

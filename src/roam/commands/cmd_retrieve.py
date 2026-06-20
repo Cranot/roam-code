@@ -277,6 +277,7 @@ def _retrieve_confidence_score(candidates: list[dict], task: str = "") -> tuple[
         tokens = []
         if isinstance(task, str):
             from roam.retrieve.seeds import extract_tokens
+
             tokens = extract_tokens(task)
         if len(tokens) >= 2:
             lowered = {t.lower() for t in tokens if len(t) >= 4}

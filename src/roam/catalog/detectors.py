@@ -66,9 +66,7 @@ __all__ = [
     "detect_branching_recursion",
     "detect_broad_except_swallow",
     "detect_busy_wait",
-    "detect_chained_collection_walks",
     "detect_dangerous_eval",
-    "detect_defer_in_loop",
     "detect_io_in_loop",
     "detect_linear_search",
     "detect_list_prepend",
@@ -3113,145 +3111,6 @@ def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# Go: `defer` inside a loop accumulates the deferred
-# call stack until the FUNCTION returns, not the loop iteration. Common
-# bug: `for _, f := range files { fh, _ := os.Open(f); defer fh.Close() }`
-# — none of the file handles close until the function returns, exhausting
-# fds on big input. Fix: extract the loop body to a helper function so
-# defer fires per call, OR use an explicit `fh.Close()` at the end.
-_RE_DEFER_IN_LOOP_BODY = re.compile(
-    r"\b(?:for|range)\b[^{]*\{[^}]*\bdefer\b\s+[\w$.]+",
-    re.DOTALL,
-)
-
-
-@algorithm_detector(
-    task_id="defer-in-loop",
-    languages=("go",),
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
-    """Go: `defer` inside a `for`/`range` loop accumulates instead of firing per-iteration."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "f.language AS language, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language = 'go'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
-        if not snippet:
-            continue
-        m = _RE_DEFER_IN_LOOP_BODY.search(snippet)
-        if not m:
-            continue
-        # Find the line of the defer keyword (not the for keyword) for precise location.
-        defer_pos = snippet.find("defer ", m.start())
-        if defer_pos == -1:
-            defer_pos = m.start()
-        line_offset = snippet[:defer_pos].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "defer-in-loop",
-                "loop-defer",
-                r,
-                "`defer` inside loop — fires when function returns, not when iteration ends "
-                "(extract loop body to a helper, or close explicitly)",
-                "high",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=["for/range loop", "defer inside loop body"],
-            )
-        )
-    return results
-
-
-# JS/TS: `.filter(predA).find(predB)` walks the array
-# fully then searches the filtered subset. Equivalent to a single pass
-# `.find(x => predA(x) && predB(x))`. Other equivalent patterns:
-# `.map().find()` (could be `.find()` then `.map()`), `.filter().length`
-# (use `.some()` or `.every()`), `.reduce()` to a boolean (use `.some()`).
-_RE_FILTER_FIND = re.compile(
-    r"\.\s*filter\s*\([^)]*\)\s*\.\s*find\s*\(",
-)
-_RE_FILTER_LENGTH_BOOL = re.compile(
-    r"\.\s*filter\s*\([^)]*\)\s*\.\s*length\s*(?:>\s*0|>=\s*1|!==?\s*0)",
-)
-_RE_MAP_FIND = re.compile(
-    r"\.\s*map\s*\([^)]*\)\s*\.\s*find\s*\(",
-)
-
-
-@algorithm_detector(
-    task_id="chained-collection-walk",
-    languages=JS_FAMILY_LANGUAGES,
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
-    """JS/TS: `.filter().find()` and friends are 2-pass; one-pass equivalents exist."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
-        if not snippet:
-            continue
-        matched: list[str] = []
-        first_pos: int | None = None
-        for pat, label, fix_hint in (
-            (_RE_FILTER_FIND, "filter().find() — two passes", ".find(x => predA(x) && predB(x))"),
-            (_RE_FILTER_LENGTH_BOOL, "filter().length — full walk for boolean", ".some(x => predA(x))"),
-            (_RE_MAP_FIND, "map().find() — full transform before search", ".find() then .map() of one item"),
-        ):
-            m = pat.search(snippet)
-            if m is None:
-                continue
-            matched.append(f"{label} → {fix_hint}")
-            if first_pos is None or m.start() < first_pos:
-                first_pos = m.start()
-        if not matched:
-            continue
-        if first_pos is None:
-            first_pos = 0
-        line_offset = snippet[:first_pos].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "chained-collection-walk",
-                "two-pass-walk",
-                r,
-                f"Chained collection walk ({matched[0].split(' →')[0]}) — single-pass form available",
-                "medium",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=matched,
-            )
-        )
-    return results
-
-
 # React: `useEffect(() => { ... })` without a dependency
 # array runs on EVERY render. Almost always a bug — the dev forgot the
 # second argument. The fix is `useEffect(() => { ... }, [deps])` or
@@ -3987,7 +3846,7 @@ _DETECTOR_METADATA = {
     "branching-recursion": {"precision": "high", "impact": "high", "tags": ["recursion", "dp"]},
     "quadratic-string": {"precision": "high", "impact": "high", "tags": ["string", "quadratic"]},
     "loop-invariant-call": {"precision": "medium", "impact": "medium", "tags": ["hoisting"]},
-    # W913 backfill: 11 rows for previously-silent fallback detectors.
+    # W913 backfill: rows for previously-silent fallback detectors.
     # Async / event-loop:
     "async-blocking-sleep": {"precision": "high", "impact": "high", "tags": ["async", "blocking"]},
     "async-fire-and-forget-task": {"precision": "high", "impact": "medium", "tags": ["async", "task-management"]},
@@ -3995,10 +3854,7 @@ _DETECTOR_METADATA = {
     # Error handling:
     "broad-except-swallow": {"precision": "high", "impact": "high", "tags": ["error-handling", "anti-pattern"]},
     # Collections / idioms:
-    "chained-collection-walk": {"precision": "medium", "impact": "low", "tags": ["collections", "idiom"]},
     "spread-accumulator": {"precision": "medium", "impact": "medium", "tags": ["javascript", "quadratic"]},
-    # Language-specific footguns:
-    "defer-in-loop": {"precision": "high", "impact": "medium", "tags": ["go", "memory"]},
     # Security:
     "dangerous-eval": {"precision": "high", "impact": "high", "tags": ["security", "code-injection"]},
     # React / DOM:
@@ -4509,8 +4365,6 @@ _MATH_DETECTORS = [
     ("async-fire-and-forget-task", "leaked-asyncio-task", detect_async_fire_and_forget),
     ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
     ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
-    ("defer-in-loop", "loop-defer", detect_defer_in_loop),
-    ("chained-collection-walk", "two-pass-walk", detect_chained_collection_walks),
     ("useeffect-missing-deps", "no-deps-array", detect_useeffect_missing_deps),
     ("dangerous-eval", "eval-or-exec", detect_dangerous_eval),
     ("unremoved-event-listener", "no-cleanup", detect_unremoved_event_listener),

@@ -151,6 +151,7 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     """Collect layer violations and move-sensitive edges for a symbol."""
     try:
         from networkx import NetworkXException
+
         from roam.graph.builder import build_symbol_graph
         from roam.graph.layers import detect_layers, find_violations
     except ImportError:

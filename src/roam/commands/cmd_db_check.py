@@ -129,6 +129,7 @@ CHECKS = (
     _check_zero_symbols_per_file,
 )
 
+
 def _run_checks(conn) -> list[dict]:
     findings = []
     for check in CHECKS:

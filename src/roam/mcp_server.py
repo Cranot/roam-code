@@ -5854,10 +5854,15 @@ def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = "."
 # ===================================================================
 
 from roam.commands.batch_search_core import (
-    BATCH_FTS_SQL as _BATCH_FTS_SQL,
     BATCH_LIKE_SQL as _BATCH_LIKE_SQL,
+)
+from roam.commands.batch_search_core import (
     BATCH_LIKE_WITH_PATHS_SQL as _BATCH_LIKE_WITH_PATHS_SQL,
+)
+from roam.commands.batch_search_core import (
     MAX_BATCH_QUERIES as _MAX_BATCH_QUERIES,
+)
+from roam.commands.batch_search_core import (
     batch_search_one as _shared_batch_search_one,
 )
 

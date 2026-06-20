@@ -11,7 +11,6 @@ from pathlib import Path
 
 from roam.graph.simulate import metric_delta as metric_delta
 
-
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------

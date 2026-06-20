@@ -140,6 +140,7 @@ def cycles_summary(conn) -> CyclesSummary:
     """
     try:
         from networkx import NetworkXException
+
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import (
             find_cycles,
