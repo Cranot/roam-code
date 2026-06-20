@@ -644,8 +644,7 @@ def test_caller_unmodified():
         (
             n
             for n in tree.body
-            if isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "search" for t in n.targets)
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "search" for t in n.targets)
         ),
         None,
     )

@@ -266,14 +266,12 @@ def test_health_baseline_last_resolves_most_recent(cli_runner, indexed_project, 
 
 def test_health_baseline_auto_filesystem_root_error_falls_back(monkeypatch):
     """--baseline auto falls back to cwd only for filesystem root failures."""
-    from roam.commands import cmd_health
     import roam.db.connection as db_connection
+    from roam.commands import cmd_health
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute(
-        "CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)"
-    )
+    conn.execute("CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)")
     conn.execute(
         "INSERT INTO snapshots (timestamp, git_branch, git_commit, health_score) VALUES (?, ?, ?, ?)",
         (123, "main", "abc1234", 90),
@@ -293,14 +291,12 @@ def test_health_baseline_auto_filesystem_root_error_falls_back(monkeypatch):
 
 def test_health_baseline_auto_project_root_programmer_error_propagates(monkeypatch):
     """--baseline auto must not swallow bug-class project-root failures."""
-    from roam.commands import cmd_health
     import roam.db.connection as db_connection
+    from roam.commands import cmd_health
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute(
-        "CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)"
-    )
+    conn.execute("CREATE TABLE snapshots (timestamp INTEGER, git_branch TEXT, git_commit TEXT, health_score INTEGER)")
 
     def _raise_typeerror():
         raise TypeError("bad find_project_root refactor")

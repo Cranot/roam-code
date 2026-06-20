@@ -17,7 +17,9 @@ def test_gather_tour_data_degrades_on_sqlite_graph_error(monkeypatch):
     monkeypatch.setattr(builder, "build_symbol_graph", boom)
     monkeypatch.setattr(cmd_tour, "_entry_points", lambda _conn: entry_points)
     monkeypatch.setattr(cmd_tour, "_reading_order", lambda _conn, _graph: pytest.fail("graph fallback not used"))
-    monkeypatch.setattr(cmd_tour, "_top_symbols", lambda _conn, _graph, limit=10: pytest.fail("graph fallback not used"))
+    monkeypatch.setattr(
+        cmd_tour, "_top_symbols", lambda _conn, _graph, limit=10: pytest.fail("graph fallback not used")
+    )
 
     assert cmd_understand._gather_tour_data(object(), None) == {
         "reading_order": [],

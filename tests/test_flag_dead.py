@@ -90,8 +90,7 @@ class TestFlagDeadSmoke:
         project = tmp_path / "project"
         project.mkdir()
         (project / "app.py").write_text(
-            "def enabled(client):\n"
-            "    return client.variation('stale-flag', False)\n",
+            "def enabled(client):\n    return client.variation('stale-flag', False)\n",
             encoding="utf-8",
         )
 

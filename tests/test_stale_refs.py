@@ -2488,7 +2488,9 @@ class TestStaleRefsExternalDedup:
 
         monkeypatch.setattr(stale_refs, "_check_one_external_url", _raise_type_error)
         with pytest.raises(TypeError, match="bad worker"):
-            stale_refs._check_external_urls_parallel([("https://example.com", "README.md", 1)], timeout=0.5, concurrency=1)
+            stale_refs._check_external_urls_parallel(
+                [("https://example.com", "README.md", 1)], timeout=0.5, concurrency=1
+            )
 
 
 class TestStaleRefsWatchHelpersComposition:

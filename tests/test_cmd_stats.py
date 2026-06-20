@@ -19,11 +19,14 @@ def test_count_git_commits_missing_timestamp_returns_zero() -> None:
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE git_commits (id INTEGER PRIMARY KEY)")
 
-    assert _count_git_commits(
-        conn,
-        "SELECT COUNT(*) FROM git_commits WHERE timestamp >= ?",
-        (0,),
-    ) == 0
+    assert (
+        _count_git_commits(
+            conn,
+            "SELECT COUNT(*) FROM git_commits WHERE timestamp >= ?",
+            (0,),
+        )
+        == 0
+    )
 
 
 def test_count_git_commits_unexpected_operational_error_raises() -> None:

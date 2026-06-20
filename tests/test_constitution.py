@@ -31,14 +31,14 @@ from conftest import (  # noqa: E402
 
 from roam.constitution.loader import (  # noqa: E402
     Constitution,
+    _deprecated_commands,
+    _known_commands,
     _project_name,
     apply_constitution,
     check_constitution,
     constitution_path,
     init_constitution,
     load_constitution,
-    _deprecated_commands,
-    _known_commands,
 )
 
 # ---------------------------------------------------------------------------

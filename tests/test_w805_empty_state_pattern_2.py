@@ -87,6 +87,8 @@ def _run_cli_json(tmp_path: Path, *args: str) -> tuple[int, dict]:
         result = runner.invoke(cli, ["--json", *args], catch_exceptions=False)
     finally:
         os.chdir(cwd)
+    payload = json.loads(result.output) if result.output.strip() else {}
+    return result.exit_code, payload
 
 
 def _exception_type_name(node: ast.expr | None) -> str:
@@ -97,8 +99,6 @@ def _exception_type_name(node: ast.expr | None) -> str:
     if isinstance(node, ast.Tuple):
         return ",".join(_exception_type_name(elt) for elt in node.elts)
     return type(node).__name__
-    payload = json.loads(result.output) if result.output.strip() else {}
-    return result.exit_code, payload
 
 
 # ---------------------------------------------------------------------------

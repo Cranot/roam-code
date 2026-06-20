@@ -416,9 +416,7 @@ class TestCliIngestTrace:
         from roam.cli import _COMMANDS
         from roam.commands.cmd_ingest_trace import ingest_trace_cmd
 
-        mcp_function_names = {
-            name for name, obj in inspect.getmembers(mcp_server, inspect.isfunction)
-        }
+        mcp_function_names = {name for name, obj in inspect.getmembers(mcp_server, inspect.isfunction)}
         assert _COMMANDS["ingest-trace"] == ("roam.commands.cmd_ingest_trace", "ingest_trace_cmd")
         assert ingest_trace_cmd.callback.__name__ == "ingest_trace_cmd"
         assert ingest_trace_cmd.callback.__name__ not in mcp_function_names

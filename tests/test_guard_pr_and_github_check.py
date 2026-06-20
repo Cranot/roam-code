@@ -14,8 +14,8 @@ import urllib.error
 import pytest
 from click.testing import CliRunner
 
-from roam.commands import cmd_guard_pr
 from roam.cli import cli
+from roam.commands import cmd_guard_pr
 from roam.github_check import (
     SUMMARY_BYTE_CAP,
     VERDICT_TO_CONCLUSION,
