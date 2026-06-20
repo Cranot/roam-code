@@ -60,3 +60,39 @@ class TestBugSiteSlice:
     def test_missing_file_returns_empty(self, tmp_path):
         facts = _freeform_bug_site_slice("fix the bug in ghost.py:45", [], str(tmp_path))
         assert facts == {}
+
+
+class TestBugSiteForbiddenPaths:
+    """Private/forbidden bug-site source must NOT be embedded — it would
+    serialize content the envelope's `forbidden_paths` set marks off-limits
+    (e.g. the `internal/**` private folder, `.env`)."""
+
+    def test_internal_cited_path_not_embedded(self, tmp_path):
+        _write(tmp_path, "internal/planning/secret.py", 100)
+        facts = _freeform_bug_site_slice(
+            "fix the bug in internal/planning/secret.py:45",
+            ["internal/planning/secret.py"],
+            str(tmp_path),
+        )
+        assert facts == {}
+
+    def test_internal_named_fallback_not_embedded(self, tmp_path):
+        _write(tmp_path, "internal/planning/secret.py", 100)
+        # cited basename unresolvable; the only candidate is the private path
+        facts = _freeform_bug_site_slice(
+            "fix the bug in secret.py:45",
+            ["internal/planning/secret.py"],
+            str(tmp_path),
+        )
+        assert facts == {}
+
+    def test_dotenv_not_embedded(self, tmp_path):
+        _write(tmp_path, ".env", 30)
+        facts = _freeform_bug_site_slice("fix the bug in .env:5", [".env"], str(tmp_path))
+        assert facts == {}
+
+    def test_public_path_still_embedded(self, tmp_path):
+        # regression guard: the forbidden filter must not block public source
+        _write(tmp_path, "src/mod.py", 100)
+        facts = _freeform_bug_site_slice("fix the bug in src/mod.py:45", ["src/mod.py"], str(tmp_path))
+        assert "bug_site_slice" in facts
