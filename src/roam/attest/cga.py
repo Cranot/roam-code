@@ -90,6 +90,7 @@ def _git_dirty_hash(root: Path) -> str | None:
             errors="replace",
         )
     except (subprocess.SubprocessError, OSError):
+        # No git binary / not a repo / timed out — None is the documented "clean or non-git" sentinel.
         return None
     if proc.returncode != 0:
         return None
