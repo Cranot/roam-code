@@ -6480,7 +6480,11 @@ def _probe_trace_for_task(task: str, cwd: str | None) -> dict | None:
     — agent reads the actual files via Read if needed. Tested on trace_query
     tasks only (no other procedure has natural task-text input).
     """
-    d = _run_roam(["retrieve", task], cwd, timeout=12.0)
+    # `--` halts Click option parsing so a leading-dash trace prompt
+    # (e.g. "-v then look at ...") is treated as the positional task text
+    # instead of an unknown option — otherwise retrieve emits help/error
+    # output and the trace evidence is dropped.
+    d = _run_roam(["retrieve", "--", task], cwd, timeout=12.0)
     if not d:
         return None
     candidates = d.get("candidates", [])
