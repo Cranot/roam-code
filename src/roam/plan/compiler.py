@@ -4458,9 +4458,37 @@ def _probe_sibling_test_for_task(task: str, named_paths: list[str], cwd: str | N
     return out
 
 
+def _diff_operand_is_private(path: str, full: str, cwd: str | None) -> bool:
+    """W36b safety — return True when a diff operand resolves into a
+    private / secret-bearing location per `_FORBIDDEN_PATHS_DEFAULT`
+    (e.g. `internal/`, `.env`, `.git/`, `.roam/`). A unified diff embeds
+    BOTH operands' lines, so diffing a private file against a public one
+    would leak the private file's contents into the compile envelope.
+    Matches the named path AND its repo-relative form (so an absolute
+    path still trips the relative `internal/**` globs).
+    """
+    import fnmatch
+
+    candidates = {path.replace(os.sep, "/")}
+    if cwd:
+        try:
+            candidates.add(os.path.relpath(full, cwd).replace(os.sep, "/"))
+        except (ValueError, OSError):
+            pass
+    return any(
+        fnmatch.fnmatch(cand, pat)
+        for cand in candidates
+        for pat in _FORBIDDEN_PATHS_DEFAULT
+    )
+
+
 def _probe_path_comparison_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W36b — when ≥2 named paths + compare vocabulary, embed a unified
     diff between the first two paths (truncated to 200 lines).
+
+    Both operands are validated against the forbidden-path set first: a
+    diff against a private file (e.g. `internal/.../prism.py`) would leak
+    its lines into the envelope, so the probe bails rather than embed it.
     """
     if len(named_paths) < 2 or not _COMPARE_RE.search(task):
         return None
@@ -4471,6 +4499,12 @@ def _probe_path_comparison_for_task(task: str, named_paths: list[str], cwd: str 
     a_full = os.path.join(cwd, a) if cwd and not os.path.isabs(a) else a
     b_full = os.path.join(cwd, b) if cwd and not os.path.isabs(b) else b
     if not (os.path.exists(a_full) and os.path.exists(b_full)):
+        return None
+    if _diff_operand_is_private(a, a_full, cwd) or _diff_operand_is_private(b, b_full, cwd):
+        log_swallowed(
+            "compile.path_comparison.private_operand",
+            ValueError(f"refusing to embed diff with private operand: {a!r} vs {b!r}"),
+        )
         return None
     try:
         proc = subprocess.run(
