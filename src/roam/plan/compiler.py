@@ -6771,7 +6771,11 @@ def _extract_grep_patterns(task: str) -> list[str]:
 def _grep_one_pattern(pat: str, search_root: str):
     """W196 — `roam grep` for one pattern. Returns (match_lines, total_count) or
     None. The total comes from the `agent_contract.facts` "N matches …" string."""
-    d = _run_roam(["grep", pat, "-n", "50", "--source-only"], search_root, timeout=6.0)
+    # Fixed options FIRST, then `--`, then the (untrusted) pattern as a
+    # positional. Without `--`, a task literal like `--patterns-from=/etc/passwd`
+    # is parsed by Click as an option, reading an attacker-named local file as
+    # patterns instead of being searched for literally.
+    d = _run_roam(["grep", "-n", "50", "--source-only", "--", pat], search_root, timeout=6.0)
     if not d or not isinstance(d, dict):
         return None
     raw_matches = d.get("matches") or []
