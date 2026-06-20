@@ -7906,14 +7906,26 @@ def _apply_envelope_budget_cap(prefetched: dict, proc: str, conf: float) -> int:
         key=lambda kv: -kv[1],
     )
     dropped: list[str] = []
-    while sizes:
-        if len(_fast_json_dumps(prefetched)) <= budget:
+    # Walk `sizes` largest-first by index (no O(n) front pops) and track the
+    # envelope size with running byte deltas instead of re-serializing the full
+    # `prefetched` payload on every drop. In compact JSON each removed field
+    # sheds its `"key":value` span plus one comma separator; its companion
+    # `_definition` field sheds the same. The running total is exact (a comma
+    # always precedes/follows a dropped field while ≥1 field remains), so the
+    # loop's stop point matches a per-iteration full dump.
+    running = envelope_bytes
+    for k, vbytes in sizes:
+        if running <= budget:
             break
-        k, _ = sizes.pop(0)
-        if k in prefetched:
-            del prefetched[k]
-            prefetched.pop(f"{k}_definition", None)
-            dropped.append(k)
+        if k not in prefetched:
+            continue
+        del prefetched[k]
+        running -= len(_fast_json_dumps(k)) + 1 + vbytes + 1
+        def_key = f"{k}_definition"
+        if def_key in prefetched:
+            running -= len(_fast_json_dumps(def_key)) + 1 + len(_fast_json_dumps(prefetched[def_key])) + 1
+            del prefetched[def_key]
+        dropped.append(k)
     envelope_bytes = len(_fast_json_dumps(prefetched))
     if dropped:
         prefetched["_envelope_budget_pruned"] = {
