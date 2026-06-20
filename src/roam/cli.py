@@ -743,7 +743,12 @@ def _ensure_plugin_commands_loaded() -> None:
             if cmd_name in _COMMANDS:
                 continue
             _COMMANDS[cmd_name] = target
-    except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior
+    except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior (ROAM_DEBUG re-raises)
+        # Per-plugin discovery errors are already recorded on the registry
+        # (visible via `roam plugins doctor`); this catch only guards the
+        # rare import/aggregation failure. Surface it under ROAM_DEBUG.
+        if os.environ.get("ROAM_DEBUG"):
+            raise
         return
 
 
