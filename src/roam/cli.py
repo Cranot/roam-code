@@ -1182,7 +1182,7 @@ def _mode_gate_dependencies():
         from roam.modes import check_command_allowed
 
         return find_project_root, check_command_allowed
-    except ImportError:
+    except ImportError:  # mode substrate is optional; absent import means gating fails open (no policy)
         return None
 
 
