@@ -6676,22 +6676,39 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
     module = m.group(1) or m.group(2)
     if not module:
         return None
-    # Try importing in a sandboxed subprocess
+    # Resolve the module WITHOUT executing its top-level code. The module
+    # name is captured from the (untrusted) task string, so `import {module}`
+    # would run arbitrary top-level code under the repo cwd — e.g. a task
+    # naming a module that matches an attacker-placed file in cwd. Instead
+    # resolve the spec with importlib.util.find_spec in an isolated
+    # interpreter (`-I` drops cwd/PYTHONPATH/user-site from sys.path), then
+    # re-add the project roots explicitly so project modules still resolve.
+    # find_spec never imports the leaf module's body the way `import` does.
+    probe_src = (
+        "import importlib.util, sys, os\n"
+        "root = os.getcwd()\n"
+        "for p in (os.path.join(root, 'src'), root):\n"
+        "    if p not in sys.path:\n"
+        "        sys.path.insert(0, p)\n"
+        "mod = sys.argv[1]\n"
+        "try:\n"
+        "    spec = importlib.util.find_spec(mod)\n"
+        "except (ImportError, ValueError, AttributeError, TypeError) as e:\n"
+        "    print('FAILED', type(e).__name__ + ': ' + str(e)); sys.exit(1)\n"
+        "if spec is None:\n"
+        "    print('FAILED', 'No module named ' + repr(mod)); sys.exit(1)\n"
+        "print('OK', spec.origin or '<no-file>')\n"
+    )
     try:
         proc = subprocess.run(
-            [
-                "python3",
-                "-c",
-                f"import {module}; import sys; "
-                f"print('OK', getattr(sys.modules.get('{module}'), '__file__', '<no-file>'))",
-            ],
+            ["python3", "-I", "-c", probe_src, module],
             capture_output=True,
             text=True,
             timeout=4.0,
             cwd=cwd or os.getcwd(),
         )
         importable = proc.returncode == 0
-        details = proc.stdout.strip() if importable else proc.stderr.strip()
+        details = (proc.stdout.strip() or proc.stderr.strip())
     except (subprocess.TimeoutExpired, OSError) as exc:
         log_swallowed("compile.import_audit", exc)
         return None
