@@ -9765,13 +9765,23 @@ def _resolve_bare_filenames(task: str, cwd: str | None) -> list[str]:
     try:
         conn = _sq.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
         try:
+            # W1150: single files-table read → basename map (one scan, not one
+            # per name). Prompts commonly mention several bare filenames; the
+            # old loop issued a `SELECT ... path = ? OR path LIKE '%/name'`
+            # per name — and `LIKE '%/...'` is a full scan, so N names = N
+            # scans. Both branches are "basename(path) == name" (a root file
+            # `name` and a subdir `.../name` share the basename), so one read
+            # + an in-memory map is equivalent. Lowercase keys preserve the
+            # ASCII case-insensitivity of SQLite's default LIKE; only UNIQUE
+            # basenames resolve (ambiguous → skipped), matching the old
+            # `LIMIT 2` / len==1 guard.
+            basename_paths: dict[str, list[str]] = {}
+            for (path,) in conn.execute("SELECT path FROM files").fetchall():
+                basename_paths.setdefault(path.rsplit("/", 1)[-1].lower(), []).append(path)
             for name in bares:
-                rows = conn.execute(
-                    "SELECT path FROM files WHERE path = ? OR path LIKE ? LIMIT 2",
-                    (name, "%/" + name),
-                ).fetchall()
-                if len(rows) == 1:  # unique match only — ambiguous names skipped
-                    resolved.append(rows[0][0])
+                bucket = basename_paths.get(name.lower())
+                if bucket is not None and len(bucket) == 1:  # unique only — ambiguous skipped
+                    resolved.append(bucket[0])
         finally:
             conn.close()
     except Exception as exc:  # noqa: BLE001 — best-effort resolution
