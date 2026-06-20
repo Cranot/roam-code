@@ -27,6 +27,7 @@ on builds without FTS5 support compiled into SQLite).
 
 from __future__ import annotations
 
+import heapq
 import re
 import sqlite3
 
@@ -539,7 +540,11 @@ def infer_seeds(
     if not accumulated:
         return {}
 
-    top = sorted(accumulated.items(), key=lambda kv: -kv[1])[:max_seeds]
+    # Stable top-k: heapq.nlargest is O(N log max_seeds) vs sorting the whole
+    # accumulator O(N log N). It also decorates entries with a descending
+    # counter, so for equal scores earlier-inserted symbols still come first --
+    # identical to the previous score-descending stable sort + slice.
+    top = heapq.nlargest(max_seeds, accumulated.items(), key=lambda kv: kv[1])
     return dict(top)
 
 
