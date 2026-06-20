@@ -10,6 +10,7 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import heapq
 from collections import defaultdict
 
 import click
@@ -101,11 +102,15 @@ def _build_symbol_cochange(
 
     # Step 3: rank symbols per file by PageRank descending and trim. This
     # gives every commit the "architecturally important" symbols only.
+    # Large files only need the capped PageRank leaders, so select them with
+    # heapq.nlargest (O(n log k) partial selection, equivalent to
+    # sorted(..., reverse=True)[:k] including tie-stability) instead of
+    # fully sorting every symbol.
     file_top_syms: dict[int, list[int]] = {}
     for fid, syms in file_to_syms.items():
         if len(syms) > max_symbols_per_file:
             suppressions["capped_symbols"] += len(syms) - max_symbols_per_file
-            ranked = sorted(syms, key=lambda x: -x[1])[:max_symbols_per_file]
+            ranked = heapq.nlargest(max_symbols_per_file, syms, key=lambda x: x[1])
             file_top_syms[fid] = [s[0] for s in ranked]
         else:
             file_top_syms[fid] = [s[0] for s in syms]
