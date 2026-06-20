@@ -50,3 +50,44 @@ def test_extract_file_paths_finds_path_across_boundaries(task, expected):
 def test_extract_file_paths_empty_when_no_path():
     assert _extract_file_paths("What does this code do") == []
     assert _extract_file_paths("Refactor the auth module") == []
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        # Absolute path escapes the cwd join (os.path.join(cwd, "/etc/x") == "/etc/x").
+        "summarize /etc/secret.py please",
+        # `..` traversal escapes the repo.
+        "read ../../../etc/passwd.py now",
+        "look at sub/../../escape.py",
+        # Forbidden folders (internal/**, .git/**, node_modules/**, .venv/**, .roam/**).
+        "what is in internal/planning/secret.md?",
+        "open .git/config.yml",
+        "look at node_modules/foo/bar.js",
+        ".roam/index.db notes in .roam/cache.json",
+        # Forbidden bare-name patterns nested under a directory.
+        "a path like a/b/package.json here",
+        "see config/pnpm-lock.yaml",
+        # Forbidden directory anchor (trailing slash).
+        "check internal/ for notes",
+    ],
+)
+def test_extract_file_paths_drops_unsafe_paths(task):
+    """Task text is attacker-influenced: absolute, `..`, and forbidden paths
+    must never reach named_paths / likely_files or the downstream read/diff
+    probes that open() them. The single repo-contained resolver drops them."""
+    assert _extract_file_paths(task) == []
+
+
+@pytest.mark.parametrize(
+    "task,expected",
+    [
+        # `./` and `//` collapse; the path is otherwise repo-contained.
+        ("collapse ./src/roam/cli.py path", ["src/roam/cli.py"]),
+        ("double src//roam//cli.py slash", ["src/roam/cli.py"]),
+        # Directory anchors keep their trailing slash (scope-lock relies on it).
+        ("look in src/roam/commands/ dir", ["src/roam/commands/"]),
+    ],
+)
+def test_extract_file_paths_normalizes_safe_paths(task, expected):
+    assert _extract_file_paths(task) == expected
