@@ -464,6 +464,15 @@ _API_SURFACE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# W189 — stability markers for the api_surface probe. Hoisted to module
+# scope so the pattern compiles once at import instead of per probe call.
+_STABILITY_RE = re.compile(
+    r"\b(experimental|deprecated|legacy|TODO|FIXME|XXX|HACK|"
+    r"NOTE\s*:\s*temporary|stable\s+API|public\s+API|"
+    r"not\s+(?:yet\s+)?stable|alpha|beta|preview)\b",
+    re.IGNORECASE,
+)
+
 # W80 — test-impact ("what tests should I run", "which tests cover X").
 # Runs `roam test-impact` if available; falls back to glob of sibling
 # tests / tests mentioning the file name.
@@ -5242,7 +5251,14 @@ def _probe_api_surface_for_task(task: str, named_paths: list[str], cwd: str | No
     except (OSError, ValueError) as exc:
         log_swallowed("compile.api_surface.read", exc)
         return None
+    # W189 — collect top-level exports AND stability markers in ONE pass
+    # over the file. The stability markers (TODO/FIXME/deprecated/...) give
+    # the W124/W165 t4 "audit what's stable vs experimental" task concrete,
+    # line-tagged evidence to cite — that task wandered for 19 turns when the
+    # envelope offered nothing to ground "stable/experimental" claims.
     exports: list[dict] = []
+    stability_hits: list[dict] = []
+    stability_full = False
     for i, line in enumerate(lines, 1):
         # Top-level (no leading whitespace) def/class/async def
         if line.startswith(("def ", "class ", "async def ")):
@@ -5251,35 +5267,22 @@ def _probe_api_surface_for_task(task: str, named_paths: list[str], cwd: str | No
             name_match = re.match(r"(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", line)
             if name_match:
                 name = name_match.group(1)
-                if name.startswith("_") and not target.endswith("__init__.py"):
-                    continue
-                exports.append({"name": name, "line": i, "kind": "class" if line.startswith("class") else "function"})
+                if not (name.startswith("_") and not target.endswith("__init__.py")):
+                    exports.append({"name": name, "line": i, "kind": "class" if line.startswith("class") else "function"})
+        if not stability_full:
+            m = _STABILITY_RE.search(line)
+            if m:
+                stability_hits.append(
+                    {
+                        "line": i,
+                        "marker": m.group(1).lower(),
+                        "snippet": line.strip()[:140],
+                    }
+                )
+                if len(stability_hits) >= 50:  # W205 — 30→50
+                    stability_full = True
     if not exports:
         return None
-    # W189 — stability markers. The W124/W165 t4 task "audit what's
-    # stable vs experimental" wandered for 19 turns because nothing in
-    # the envelope told the agent how to ground "stable/experimental".
-    # Scan all lines for canonical stability words; tag each nearby
-    # export. Provides concrete evidence the agent can cite.
-    _STABILITY_RE = re.compile(
-        r"\b(experimental|deprecated|legacy|TODO|FIXME|XXX|HACK|"
-        r"NOTE\s*:\s*temporary|stable\s+API|public\s+API|"
-        r"not\s+(?:yet\s+)?stable|alpha|beta|preview)\b",
-        re.IGNORECASE,
-    )
-    stability_hits: list[dict] = []
-    for i, line in enumerate(lines, 1):
-        m = _STABILITY_RE.search(line)
-        if m:
-            stability_hits.append(
-                {
-                    "line": i,
-                    "marker": m.group(1).lower(),
-                    "snippet": line.strip()[:140],
-                }
-            )
-            if len(stability_hits) >= 50:  # W205 — 30→50
-                break
     payload: dict = {
         "api_surface": {
             "path": target,
