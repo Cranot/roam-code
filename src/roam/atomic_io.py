@@ -57,6 +57,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Union
 
+from roam.observability import log_swallowed
+
 # Public surface kept intentionally small. Callers should NOT reach in to
 # the private helpers — they may grow os-specific flags (O_TMPFILE,
 # FILE_FLAG_WRITE_THROUGH) in future iterations.
@@ -78,13 +80,13 @@ def _cleanup_tmp(tmp_name: str) -> None:
     """
     try:
         os.unlink(tmp_name)
-    except OSError:
-        # Intentional swallow: this is best-effort cleanup run inside the
-        # caller's except block, which is already re-raising the original
-        # error. OSError means the temp file is already gone or held open
-        # by another process (AV/indexer on Windows); re-raising would
-        # mask the real failure. See the docstring for the full rationale.
-        pass
+    except OSError as exc:
+        # Best-effort cleanup: we run inside the caller's except block,
+        # which already re-raises the original error, so re-raising this
+        # OSError would mask the real failure. Surface the miss via the
+        # opt-in swallow logger (silent unless ROAM_VERBOSE=1) instead of
+        # a bare ``pass``. See the docstring for the full OSError rationale.
+        log_swallowed("atomic_io._cleanup_tmp", exc)
 
 
 def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") -> None:
