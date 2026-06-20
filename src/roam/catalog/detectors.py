@@ -1867,6 +1867,8 @@ def _read_project_json(path: str) -> dict | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
+        # Missing/unreadable/malformed project JSON is expected during
+        # framework profiling — callers treat None as "no such manifest".
         return None
     return data if isinstance(data, dict) else None
 
