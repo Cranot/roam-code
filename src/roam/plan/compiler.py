@@ -5137,11 +5137,24 @@ def _embed_move_caller_imports(callers: list, symbol: str, cwd: str | None) -> d
     caller_imports: dict[str, str] = {}
     if not (callers and cwd):
         return caller_imports
-    for caller in callers[:8]:
+    # Dedupe caller paths first: repeated callers from the same file would
+    # otherwise re-run exists/stat/read_text and re-scan its first 60 lines,
+    # all to overwrite the same `caller_imports[path_str]` entry. Scan each
+    # unique file once; cap at 8 distinct files.
+    seen_paths: set[str] = set()
+    unique_paths: list[str] = []
+    for caller in callers:
         loc = caller if isinstance(caller, str) else (caller.get("location") if isinstance(caller, dict) else None)
         if not loc or ":" not in str(loc):
             continue
         path_str, _, _ = str(loc).partition(":")
+        if path_str in seen_paths:
+            continue
+        seen_paths.add(path_str)
+        unique_paths.append(path_str)
+        if len(unique_paths) >= 8:
+            break
+    for path_str in unique_paths:
         try:
             full = Path(cwd) / path_str if not os.path.isabs(path_str) else Path(path_str)
             if not full.exists() or full.stat().st_size > 200 * 1024:
