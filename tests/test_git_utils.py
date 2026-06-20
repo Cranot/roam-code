@@ -6,7 +6,7 @@ roam in sibling worktrees of the same repo. It must:
 1. Return ``None`` for the main worktree (so callers fall through to the
    inherited environment).
 2. Return ``None`` when ``.git`` doesn't exist at all (not-a-repo).
-3. Return ``{"GIT_INDEX_FILE": <abs path>, ...}`` for a real worktree.
+3. Return a sanitized env with ``GIT_INDEX_FILE`` for a real worktree.
 4. Resolve relative ``gitdir`` paths against ``cwd``.
 
 The test fixture builds a real ``git worktree add`` so we exercise the
@@ -92,9 +92,8 @@ class TestWorktree:
         assert idx.name == "index", idx
         assert idx != main_repo / ".git" / "index"
 
-    def test_env_dict_contains_inherited_plus_override(self, main_repo: Path, tmp_path: Path):
-        """Returned env must inherit ``os.environ`` so subprocess doesn't
-        lose PATH/HOME/etc. — it just adds ``GIT_INDEX_FILE``."""
+    def test_env_dict_contains_launch_basics_plus_override(self, main_repo: Path, tmp_path: Path):
+        """Returned env keeps launch essentials and adds ``GIT_INDEX_FILE``."""
         wt_path = tmp_path / "wt2"
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t"}
         subprocess.run(
@@ -108,10 +107,43 @@ class TestWorktree:
         out = worktree_git_env(wt_path)
         assert out is not None
         assert "GIT_INDEX_FILE" in out
-        # Inheritance check: any var from os.environ must be present.
         for key in ("PATH",):
             if key in os.environ:
                 assert key in out
+
+    def test_git_control_environment_is_not_forwarded(
+        self, main_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Git control-plane env must not leak into linked-worktree commands."""
+        wt_path = tmp_path / "wt-sanitized"
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t"}
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), "-b", "branch-sanitized"],
+            cwd=str(main_repo),
+            check=True,
+            env=env,
+            capture_output=True,
+        )
+
+        monkeypatch.setenv("GIT_DIR", "/tmp/attacker-git-dir")
+        monkeypatch.setenv("GIT_WORK_TREE", "/tmp/attacker-work-tree")
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.fsmonitor")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", "/tmp/attacker-hook")
+        monkeypatch.setenv("GIT_EXTERNAL_DIFF", "/tmp/attacker-diff")
+
+        out = worktree_git_env(wt_path)
+        assert out is not None
+        assert "GIT_INDEX_FILE" in out
+        for key in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "GIT_EXTERNAL_DIFF",
+        ):
+            assert key not in out
 
     def test_str_arg_accepted(self, main_repo: Path, tmp_path: Path):
         """The public helper accepts ``str`` as well as ``Path``."""
