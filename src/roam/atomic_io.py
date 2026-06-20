@@ -79,6 +79,11 @@ def _cleanup_tmp(tmp_name: str) -> None:
     try:
         os.unlink(tmp_name)
     except OSError:
+        # Intentional swallow: this is best-effort cleanup run inside the
+        # caller's except block, which is already re-raising the original
+        # error. OSError means the temp file is already gone or held open
+        # by another process (AV/indexer on Windows); re-raising would
+        # mask the real failure. See the docstring for the full rationale.
         pass
 
 
