@@ -66,6 +66,7 @@ def _git_commit_sha(root: Path) -> str | None:
             timeout=5,
         )
     except (subprocess.SubprocessError, OSError):
+        # No git binary / not a repo / timed out — None is the documented "no SHA" sentinel.
         return None
     if proc.returncode != 0:
         return None
