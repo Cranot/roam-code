@@ -3632,6 +3632,24 @@ def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+_RE_DEFER_IN_LOOP_BODY = re.compile(
+    r"\b(?:for|range)\b[^{]*\{[^}]*\bdefer\b\s+[\w$.]+",
+    re.DOTALL,
+)
+
+_RE_FILTER_FIND = re.compile(
+    r"\.\s*filter\s*\([^)]*\)\s*\.\s*find\s*\(",
+)
+
+_RE_FILTER_LENGTH_BOOL = re.compile(
+    r"\.\s*filter\s*\([^)]*\)\s*\.\s*length\s*(?:>\s*0|>=\s*1|!==?\s*0)",
+)
+
+_RE_MAP_FIND = re.compile(
+    r"\.\s*map\s*\([^)]*\)\s*\.\s*find\s*\(",
+)
+
+
 @algorithm_detector(
     task_id="loop-invariant-call",
     languages=(),
@@ -3811,6 +3829,360 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
                 + (f" — heavyweight parse ({', '.join(heavyweight_hits[:2])})" if heavyweight_hits else ""),
                 confidence,
                 matched_patterns=matched_patterns,
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="membership",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
+    """Nested loops with equality comparisons — structural pattern for
+    O(n^2) membership testing regardless of function name.
+
+    Note on the LIKE patterns: ``_`` is a single-char wildcard in SQL
+    LIKE, so ``LIKE '%in_%'`` matches *any* identifier with "in" followed
+    by another char (``find_x``, ``intent``, ``something_else`` — all
+    spurious hits). We use ``ESCAPE '\\'`` and double-write the literal
+    ``\\_`` so we only match the intended idiomatic prefixes
+    (``has_x``, ``is_in_y``, ``contains_z``).
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_with_compare, ms.subscript_in_loops, "
+        "ms.has_nested_loops, ms.calls_in_loops "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.has_nested_loops = 1 "
+        "AND ms.loop_with_compare = 1 "
+        "AND ms.subscript_in_loops = 1 "
+        "AND (s.name LIKE '%contain%' OR s.name LIKE '%member%' "
+        "  OR s.name LIKE '%exist%' OR s.name LIKE '%has\\_%' ESCAPE '\\' "
+        "  OR s.name LIKE '%in\\_%' ESCAPE '\\' OR s.name LIKE '%check%' "
+        "  OR s.name LIKE '%includes%' OR s.name LIKE '%Includes%' "
+        "  OR s.name LIKE '%lookup%' OR s.name LIKE '%match%')"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        results.append(
+            _finding(
+                "membership",
+                "list-scan",
+                r,
+                "Nested loops with comparisons for membership check",
+                "medium",
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="unique",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
+    """Nested loops in dedup/unique-named functions without set usage."""
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.has_nested_loops, ms.loop_with_compare, ms.calls_in_loops "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE (s.name LIKE '%dedup%' OR s.name LIKE '%unique%' "
+        "  OR s.name LIKE '%Dedup%' OR s.name LIKE '%Unique%' "
+        "  OR s.name LIKE '%distinct%' OR s.name LIKE '%Distinct%' "
+        "  OR s.name LIKE '%remove\\_dup%' ESCAPE '\\' OR s.name LIKE '%removeDup%') "
+        "AND s.kind IN ('function', 'method') "
+        "AND ms.has_nested_loops = 1 "
+        "AND ms.loop_with_compare = 1"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        # Negative check: skip if they already use set/hash
+        calls = _iter_loop_calls(r)
+        if _call_in(calls, {"set", "Set", "HashSet"}):
+            continue
+        results.append(
+            _finding(
+                "unique",
+                "nested-dedup",
+                r,
+                "Nested loops with comparisons in dedup function",
+                "high",
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="accumulation",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
+def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
+    """Loops with accumulator in sum/total-named functions.
+
+    Same Big-O (both O(n)) — idiom improvement, flagged at low confidence.
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_depth, ms.loop_with_accumulator, ms.calls_in_loops "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE (s.name LIKE '%\\_sum%' ESCAPE '\\' OR s.name LIKE '%\\_total%' ESCAPE '\\' "
+        "  OR s.name LIKE '%Sum%' OR s.name LIKE '%Total%' "
+        "  OR s.name LIKE '%accumulate%' OR s.name LIKE '%Accumulate%') "
+        "AND s.kind IN ('function', 'method') "
+        "AND ms.loop_depth >= 1 "
+        "AND ms.loop_with_accumulator = 1"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        calls = _iter_loop_calls(r)
+        if _call_in(calls, {"sum", "reduce", "aggregate", "prod"}):
+            continue
+        results.append(
+            _finding(
+                "accumulation",
+                "manual-sum",
+                r,
+                "Loop with accumulator in sum/total function (idiomatic improvement)",
+                "low",
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="groupby",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
+def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
+    """Loops in group/categorize-named functions without defaultdict/groupby.
+
+    Same Big-O (both O(n)) — idiom improvement.
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_depth, ms.loop_with_accumulator, ms.calls_in_loops "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE (s.name LIKE '%group%' OR s.name LIKE '%Group%' "
+        "  OR s.name LIKE '%bucket%' OR s.name LIKE '%Bucket%' "
+        "  OR s.name LIKE '%partition%' OR s.name LIKE '%Partition%' "
+        "  OR s.name LIKE '%categorize%' OR s.name LIKE '%Categorize%' "
+        "  OR s.name LIKE '%classify%' OR s.name LIKE '%Classify%' "
+        "  OR s.name LIKE '%bin\\_by%' ESCAPE '\\' OR s.name LIKE '%key\\_by%' ESCAPE '\\' "
+        "  OR s.name LIKE '%index\\_by%' ESCAPE '\\') "
+        "AND s.kind IN ('function', 'method') "
+        "AND ms.loop_depth >= 1"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        calls = _iter_loop_calls(r)
+        if _call_in(calls, {"groupby", "group_by", "defaultdict", "setdefault", "groupingBy", "Collectors"}):
+            continue
+        results.append(
+            _finding(
+                "groupby",
+                "manual-check",
+                r,
+                "Manual loop in group-by function (idiomatic improvement)",
+                "low",
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="async-nested-run",
+    languages=("python",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
+    """``asyncio.run()`` invoked inside another async function.
+
+    ``asyncio.run`` creates a new event loop. If one is already running
+    (which it is, inside an async function), this raises ``RuntimeError:
+    asyncio.run() cannot be called from a running event loop``. The fix
+    is to ``await`` the coroutine directly.
+
+    Python only, fires only when the host is async.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND s.is_async = 1 "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
+        if "asyncio.run(" not in snippet:
+            continue
+        # Heuristic: must be `asyncio.run(` (not `await asyncio.run(`); the
+        # latter is also wrong but caught by other linters more reliably.
+        match_count = snippet.count("asyncio.run(")
+        if match_count == 0:
+            continue
+        results.append(
+            _finding(
+                "async-nested-run",
+                "asyncio-run-in-async",
+                r,
+                "asyncio.run() invoked inside an async function — raises RuntimeError at runtime (loop already running)",
+                "high",
+                snippet=snippet,
+                matched_patterns=[
+                    "is_async = 1",
+                    f"asyncio.run( occurrences: {match_count}",
+                ],
+            )
+        )
+        results[-1]["fix"] = "Replace `asyncio.run(coro())` with `await coro()` — you're already inside an event loop."
+    return results
+
+
+@detector(
+    task_id="chained-collection-walk",
+    languages=JS_FAMILY_LANGUAGES,
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
+    """JS/TS: `.filter().find()` and friends are 2-pass; one-pass equivalents exist."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        matched: list[str] = []
+        first_pos: int | None = None
+        for pat, label, fix_hint in (
+            (_RE_FILTER_FIND, "filter().find() — two passes", ".find(x => predA(x) && predB(x))"),
+            (_RE_FILTER_LENGTH_BOOL, "filter().length — full walk for boolean", ".some(x => predA(x))"),
+            (_RE_MAP_FIND, "map().find() — full transform before search", ".find() then .map() of one item"),
+        ):
+            m = pat.search(snippet)
+            if m is None:
+                continue
+            matched.append(f"{label} → {fix_hint}")
+            if first_pos is None or m.start() < first_pos:
+                first_pos = m.start()
+        if not matched:
+            continue
+        if first_pos is None:
+            first_pos = 0
+        line_offset = snippet[:first_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "chained-collection-walk",
+                "two-pass-walk",
+                r,
+                f"Chained collection walk ({matched[0].split(' →')[0]}) — single-pass form available",
+                "medium",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=matched,
+            )
+        )
+    return results
+
+
+@detector(
+    task_id="defer-in-loop",
+    languages=("go",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
+def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Go: `defer` inside a `for`/`range` loop accumulates instead of firing per-iteration."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "f.language AS language, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language = 'go'"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        m = _RE_DEFER_IN_LOOP_BODY.search(snippet)
+        if not m:
+            continue
+        # Find the line of the defer keyword (not the for keyword) for precise location.
+        defer_pos = snippet.find("defer ", m.start())
+        if defer_pos == -1:
+            defer_pos = m.start()
+        line_offset = snippet[:defer_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "defer-in-loop",
+                "loop-defer",
+                r,
+                "`defer` inside loop — fires when function returns, not when iteration ends "
+                "(extract loop body to a helper, or close explicitly)",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=["for/range loop", "defer inside loop body"],
             )
         )
     return results
