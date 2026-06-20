@@ -470,23 +470,26 @@ def test_w607e_explain_inner_fallback_preserved(cli_runner, search_project, monk
     """
     from roam.commands import cmd_search
 
-    # _get_explain_data is invoked per-row when --explain is set. Patch
-    # it to record warnings_out usage and then raise inside one inner
-    # phase to force the W607-E marker.
-    def _bm25_boom_explain(conn, symbol_id, pattern, *, warnings_out=None):
+    # _get_explain_data_batch is invoked (once, batched) when --explain is
+    # set. Patch it to record warnings_out usage and then raise inside one
+    # inner phase to force the W607-E marker.
+    def _bm25_boom_explain(conn, symbol_ids, pattern, *, warnings_out=None):
         # Inject a W607-E explain marker directly via the bucket so the
         # disclosure path is exercised even though we did not actually
         # patch the FTS5 internals.
         if warnings_out is not None:
             warnings_out.append("search_explain_bm25_failed:RuntimeError:synthetic-explain-from-W607-BR")
         return {
-            "bm25_score": None,
-            "matched_fields": [],
-            "highlights": {},
-            "term_counts": {},
+            sid: {
+                "bm25_score": None,
+                "matched_fields": [],
+                "highlights": {},
+                "term_counts": {},
+            }
+            for sid in symbol_ids
         }
 
-    monkeypatch.setattr(cmd_search, "_get_explain_data", _bm25_boom_explain)
+    monkeypatch.setattr(cmd_search, "_get_explain_data_batch", _bm25_boom_explain)
 
     result = _invoke_search(
         cli_runner,
