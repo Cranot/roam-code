@@ -231,11 +231,12 @@ def list_detector_surface() -> list[dict[str, Any]]:
                     "source": "python_idioms",
                 }
             )
-    except ImportError:
-        # Genuine optional-module guard: python_idioms is an optional
-        # detector pack. Its absence simply yields fewer surface entries
-        # — an expected, non-error state. No lineage needed.
-        pass
+    except ImportError as exc:
+        # Optional-module guard: python_idioms absence just yields fewer
+        # surface entries — logged loud rather than silently swallowed.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.surface.python_idioms_import", exc)
 
     try:
         from roam.catalog.js_idioms import JS_IDIOM_DETECTORS
