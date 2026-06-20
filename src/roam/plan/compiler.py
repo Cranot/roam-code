@@ -9731,6 +9731,58 @@ _DIR_RE = re.compile(
 )
 
 
+def _path_is_forbidden(path: str) -> bool:
+    """True when *path* matches a `_FORBIDDEN_PATHS_DEFAULT` glob.
+
+    Both the full path and its basename are tested so bare-name patterns
+    (`.env`, `package.json`) also match nested occurrences. The trailing
+    slash on directory anchors (`internal/`) is preserved by the caller so
+    `internal/**`-style patterns match the bare directory too.
+    """
+    import fnmatch
+
+    base = path.rsplit("/", 1)[-1]
+    for pat in _FORBIDDEN_PATHS_DEFAULT:
+        if fnmatch.fnmatch(path, pat):
+            return True
+        if "/" not in pat and base and fnmatch.fnmatch(base, pat):
+            return True
+    return False
+
+
+def _repo_contained_path(path: str) -> str | None:
+    """Normalize a task-extracted path and reject anything that escapes the
+    repo or names a forbidden file. Returns the repo-relative path, or None.
+
+    Task text is attacker-influenced: a prompt can name `/etc/passwd.py`,
+    `../../secret.py`, or `internal/planning/secret.md`. Downstream probes
+    join these onto cwd and `open()` them — and an ABSOLUTE target bypasses
+    the join entirely (`os.path.join(cwd, "/etc/x") == "/etc/x"`), reading
+    outside the repo. Funnel every extracted path through this single
+    resolver so named_paths / likely_files only carry repo-contained,
+    non-forbidden paths. A trailing slash (directory anchor) is preserved.
+    """
+    if not path:
+        return None
+    # Absolute paths escape the cwd join and read outside the repo.
+    if path.startswith("/") or os.path.isabs(path):
+        return None
+    trailing = "/" if path.endswith("/") else ""
+    segments: list[str] = []
+    for seg in path.split("/"):
+        if seg in ("", "."):
+            continue  # collapse `./` and `//`
+        if seg == "..":
+            return None  # repo escape via traversal
+        segments.append(seg)
+    if not segments:
+        return None
+    normalized = "/".join(segments) + trailing
+    if _path_is_forbidden(normalized):
+        return None
+    return normalized
+
+
 def _extract_file_paths(task: str) -> list[str]:
     """Pull file and directory paths from task text. Higher signal than search.
 
@@ -9738,6 +9790,11 @@ def _extract_file_paths(task: str) -> list[str]:
     that are scope anchors even without a specific filename. Empirically
     this cuts ~30% of search-semantic calls (the ones where the user
     referenced a directory but not a specific file inside it).
+
+    Every extracted path is funnelled through `_repo_contained_path` before
+    returning, so absolute, `..`-traversal, and forbidden paths (e.g.
+    `internal/**`) never reach named_paths / likely_files or the downstream
+    read/diff probes that `open()` them.
     """
     seen: list[str] = []
     for m in _PATH_RE.finditer(task):
@@ -9751,7 +9808,12 @@ def _extract_file_paths(task: str) -> list[str]:
             continue
         if p not in seen:
             seen.append(p)
-    return seen
+    out: list[str] = []
+    for p in seen:
+        norm = _repo_contained_path(p)
+        if norm and norm not in out:
+            out.append(norm)
+    return out
 
 
 _BARE_FILE_RE = re.compile(
