@@ -365,6 +365,38 @@ def test_freshness_helper_resolves_index_key_specially(tmp_path):
     assert stale is False
 
 
+def test_stale_index_short_circuits_before_source_stats(tmp_path, monkeypatch):
+    """A stale index stamp must fail fast — without statting any source dep.
+
+    The index stamp is the single most decisive signal (a re-index busts every
+    row compiled before it) and costs one stat. Validating the whole dep set
+    first would stat up to 40 source files only to discover the index already
+    invalidated the row. This pins that ordering: a stale index returns False
+    after exactly one getmtime (the index), never touching the source paths.
+    """
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    idx_mt = round(os.path.getmtime(repo / ".roam" / "index.db"), 3)
+
+    statted: list[str] = []
+    real_getmtime = os.path.getmtime
+
+    def _spy(path):
+        statted.append(str(path))
+        return real_getmtime(path)
+
+    monkeypatch.setattr(os.path, "getmtime", _spy)
+
+    deps = {
+        "__index_db__": idx_mt - 1.0,  # stale → must fail fast
+        "src/a.py": 1.0,
+        "src/b.py": 2.0,
+    }
+    assert _envelope_deps_are_fresh(str(repo), json.dumps(deps)) is False
+    # Only the index was statted; the source deps were never reached.
+    assert statted == [str(repo / ".roam" / "index.db")]
+
+
 # ---- Generation sweep: re-index wipes ALL index-derived persist tables ----
 #
 # probe_pos / probe_neg / run_roam / symbol_resolution / plan_cache rows are
