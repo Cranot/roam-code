@@ -228,6 +228,31 @@ class TestScanner:
         findings = _scan_test_file(str(f))
         assert findings == []
 
+    def test_project_root_allows_indexed_relative_test_path(self, tmp_path):
+        from roam.commands.cmd_test_hermeticity import _scan_test_file
+
+        project = tmp_path / "proj"
+        test_dir = project / "tests"
+        test_dir.mkdir(parents=True)
+        f = test_dir / "test_x.py"
+        f.write_text("import time\ndef test_a():\n    return time.time()\n", encoding="utf-8")
+
+        findings = _scan_test_file("tests/test_x.py", project_root=project)
+
+        assert any(x["kind"] == "time" for x in findings)
+        assert all(x["file"] == "tests/test_x.py" for x in findings)
+
+    def test_project_root_blocks_indexed_paths_outside_repo(self, tmp_path):
+        from roam.commands.cmd_test_hermeticity import _scan_test_file
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        outside = tmp_path / "test_outside.py"
+        outside.write_text("import time\ndef test_a():\n    return time.time()\n", encoding="utf-8")
+
+        assert _scan_test_file("../test_outside.py", project_root=project) == []
+        assert _scan_test_file(str(outside), project_root=project) == []
+
 
 # ---------------------------------------------------------------------------
 # CLI-level integration: run `roam test-hermeticity` on the fixture project.
