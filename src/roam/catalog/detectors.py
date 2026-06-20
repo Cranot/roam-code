@@ -81,7 +81,6 @@ __all__ = [
     "detect_regex_in_loop",
     "detect_serial_await_loop",
     "detect_sort_to_select",
-    "detect_spread_accumulator",
     "detect_string_reverse",
     "detect_unremoved_event_listener",
     "detect_useeffect_missing_deps",
@@ -2918,85 +2917,6 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# JS/TS: `acc = [...acc, x]` (or `.reduce((acc, x) => [...acc, x])`)
-# allocates a fresh O(n) array per iteration → O(n²) total. The fix is
-# `acc.push(x)` (or `flat()` for nested arrays). Same shape applies to
-# `obj = {...obj, k: v}` in loops, and to `acc + [x]`.
-_RE_SPREAD_ACC = re.compile(
-    r"\b(\w+)\s*=\s*\[\s*\.\.\.\s*\1\s*,",  # name = [...name,
-)
-_RE_SPREAD_OBJ_ACC = re.compile(
-    r"\b(\w+)\s*=\s*\{\s*\.\.\.\s*\1\s*[,}]",  # name = {...name,
-)
-_RE_REDUCE_SPREAD = re.compile(
-    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\[\s*\.\.\.\s*\1\s*,",
-)
-_RE_REDUCE_SPREAD_OBJ = re.compile(
-    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\{\s*\.\.\.\s*\1\s*[,}]",
-)
-
-
-@algorithm_detector(
-    task_id="spread-accumulator",
-    languages=JS_FAMILY_LANGUAGES,
-    confidence_basis="structural",
-    query_cost=QUERY_COST_MEDIUM,
-)
-def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
-    """JS/TS: `acc = [...acc, x]` or `.reduce((acc, x) => [...acc, x])` is O(n²)."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "f.language AS language, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
-        if not snippet:
-            continue
-        matched: list[str] = []
-        first_pos: int | None = None
-        for pat, label in (
-            (_RE_REDUCE_SPREAD, "reduce array spread accumulator"),
-            (_RE_REDUCE_SPREAD_OBJ, "reduce object spread accumulator"),
-            (_RE_SPREAD_ACC, "in-place array spread re-bind"),
-            (_RE_SPREAD_OBJ_ACC, "in-place object spread re-bind"),
-        ):
-            m = pat.search(snippet)
-            if m is None:
-                continue
-            matched.append(label)
-            if first_pos is None or m.start() < first_pos:
-                first_pos = m.start()
-        if not matched:
-            continue
-        if first_pos is None:
-            first_pos = 0
-        line_offset = snippet[:first_pos].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "spread-accumulator",
-                "spread-rebind",
-                r,
-                f"Spread accumulator ({matched[0]}) is O(n^2) — use .push() / Object.assign()",
-                "high",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=matched,
-            )
-        )
-    return results
-
-
 # React: `useEffect(() => { ... })` without a dependency
 # array runs on EVERY render. Almost always a bug — the dev forgot the
 # second argument. The fix is `useEffect(() => { ... }, [deps])` or
@@ -4110,8 +4030,6 @@ _DETECTOR_METADATA = {
     "serial-await-loop": {"precision": "high", "impact": "medium", "tags": ["async", "performance"]},
     # Error handling:
     "broad-except-swallow": {"precision": "high", "impact": "high", "tags": ["error-handling", "anti-pattern"]},
-    # Collections / idioms:
-    "spread-accumulator": {"precision": "medium", "impact": "medium", "tags": ["javascript", "quadratic"]},
     # Security:
     "dangerous-eval": {"precision": "high", "impact": "high", "tags": ["security", "code-injection"]},
     # React / DOM:
@@ -4618,7 +4536,6 @@ _MATH_DETECTORS = [
     ("serial-await-loop", "for-of-await", detect_serial_await_loop),
     ("async-blocking-sleep", "blocking-call-in-async", detect_async_blocking_sleep),
     ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
-    ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
     ("useeffect-missing-deps", "no-deps-array", detect_useeffect_missing_deps),
     ("dangerous-eval", "eval-or-exec", detect_dangerous_eval),
     ("unremoved-event-listener", "no-cleanup", detect_unremoved_event_listener),
