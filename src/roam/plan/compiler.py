@@ -8304,12 +8304,12 @@ class PlanV0:
         if self.recommended_parallel_tools:
             plan_obj["recommended_parallel_tools"] = list(self.recommended_parallel_tools)
         # W21: surface stale-index signals so the agent can verify
-        # named_paths before trusting them (see cvc A/B 2026-05-30).
-        staleness = _named_path_staleness(named_only, None)
+        # named_paths before trusting them (see cvc A/B 2026-05-30). One
+        # stat pass yields both the staleness warning and the
+        # files-newer-than-index (post-index edit) signal.
+        staleness, newer_files = _index_freshness_signals(named_only, cwd)
         if staleness:
             plan_obj["index_staleness"] = staleness
-        # Check for files newer than index (post-index edits)
-        newer_files = _check_files_newer_than_index(named_only, cwd)
         if newer_files:
             plan_obj["index_stale"] = True
             if "prefetched_facts" not in plan_obj:
@@ -8543,12 +8543,12 @@ class PlanV0:
         }
         if prefetched:
             plan["prefetched_facts"] = prefetched
-        # W21: stale-index warning even in the minimum-information envelope.
-        staleness = _named_path_staleness(named_only, None)
+        # W21: stale-index warning even in the minimum-information
+        # envelope. One stat pass yields both the staleness warning and
+        # the files-newer-than-index (post-index edit) signal.
+        staleness, newer_files = _index_freshness_signals(named_only, cwd)
         if staleness:
             plan["index_staleness"] = staleness
-        # Check for files newer than index (post-index edits)
-        newer_files = _check_files_newer_than_index(named_only, cwd)
         if newer_files:
             plan["index_stale"] = True
             if "prefetched_facts" not in plan:
@@ -10063,114 +10063,105 @@ def _explain_classifier(task: str) -> dict:
     }
 
 
-def _named_path_staleness(named_paths: list[str], cwd: str | None) -> dict | None:
-    """Detect stale-index conditions that would mislead the agent.
+def _index_freshness_signals(named_paths: list[str], cwd: str | None) -> tuple[dict | None, dict | None]:
+    """Compute BOTH stale-index signals from ONE filesystem stat pass.
 
-    Two signals (either triggers `is_stale=True`):
-      * Any named_path doesn't exist on disk under cwd. The compiler
-        extracted it from the task text — if it's not actually there,
-        the agent will hallucinate when it tries to Read or grep.
-      * The .roam/index.db is older than 24h (or missing). Any roam-derived
-        named_paths (from search-semantic) may point at deleted/renamed files.
+    The facts-contract and facts envelopes used to call
+    `_named_path_staleness` and `_check_files_newer_than_index` back to
+    back, each re-stat'ing the same `.roam/index.db` and the same
+    named_paths. This merges them: stat the index once, stat each unique
+    named path once, then derive both verdicts.
 
-    Returns None when no staleness signal fires. Otherwise:
-      {"is_stale": True, "missing_paths": [...], "index_age_seconds": int|None,
-       "warning": "<one-line human-readable hint>"}
+    Returns `(staleness, newer_files)` — each is the dict the standalone
+    helper would have returned, or None:
+      * staleness: {"is_stale", "missing_paths", "index_age_seconds",
+        "warning"} when a named_path is missing on disk OR the index is
+        >24h old / absent (with named_paths present).
+      * newer_files: {"files_newer_than_index": [...]} for paths edited
+        after the index mtime (post-index edits).
     """
     import os as _os
 
     base = cwd or _os.getcwd()
-    missing: list[str] = []
-    seen: set[str] = set()
-    for p in named_paths:
-        if p in seen:
-            continue
-        seen.add(p)
-        # Skip non-path-looking entries (regex captures dirs as "src/" — fine).
-        full = _os.path.join(base, p)
-        if not _os.path.exists(full):
-            missing.append(p)
-    # Index age
     index_db = _os.path.join(base, ".roam", "index.db")
-    age_sec = None
+
+    # ---- single stat: index.db mtime ----
+    index_mtime: float | None = None
     if _os.path.isfile(index_db):
         try:
-            mtime = _os.path.getmtime(index_db)
-            age_sec = int(time.time() - mtime)
+            index_mtime = _os.path.getmtime(index_db)
         except OSError as exc:
-            log_swallowed("compile.named_path_staleness.index_mtime", exc)
+            log_swallowed("compile.index_freshness.index_mtime", exc)
 
-    is_stale = bool(missing) or (age_sec is not None and age_sec > 24 * 3600)
-    if not is_stale and named_paths and age_sec is None:
-        # Missing index AND we have named_paths — treat as stale.
-        is_stale = True
-
-    if not is_stale:
-        return None
-
-    parts = []
-    if missing:
-        parts.append(f"{len(missing)} named_paths missing on disk")
-    if age_sec is not None and age_sec > 24 * 3600:
-        parts.append(f"index is {age_sec // 3600}h old")
-    if age_sec is None:
-        parts.append("no .roam/index.db present")
-    warning = "named_paths may be unreliable: " + "; ".join(parts) + ". Verify with Read/Grep before trusting."
-    return {
-        "is_stale": True,
-        "missing_paths": missing,
-        "index_age_seconds": age_sec,
-        "warning": warning,
-    }
-
-
-def _check_files_newer_than_index(named_paths: list[str], cwd: str | None) -> dict | None:
-    """Detect files newer than the index.db (post-index edits).
-
-    Returns None if all files are older than index or index doesn't exist.
-    Otherwise returns:
-      {"files_newer_than_index": [...]} — list of named_paths that were edited
-      after the index.db mtime.
-    """
-    import os as _os
-
-    if not named_paths:
-        return None
-
-    base = cwd or _os.getcwd()
-    index_db = _os.path.join(base, ".roam", "index.db")
-
-    # If index doesn't exist, no comparison possible
-    if not _os.path.isfile(index_db):
-        return None
-
-    try:
-        index_mtime = _os.path.getmtime(index_db)
-    except OSError as exc:
-        log_swallowed("compile.files_newer_than_index.index_mtime", exc)
-        return None
-
+    # ---- single stat per unique named path ----
+    missing: list[str] = []
     newer_files: list[str] = []
     seen: set[str] = set()
     for p in named_paths:
         if p in seen:
             continue
         seen.add(p)
+        # Non-path-looking entries (regex captures dirs as "src/") are fine.
         full = _os.path.join(base, p)
-        if _os.path.exists(full):
+        if not _os.path.exists(full):
+            missing.append(p)
+            continue
+        # Post-index edit check — only meaningful with an index present.
+        if index_mtime is not None:
             try:
                 file_mtime = _os.path.getmtime(full)
-                # Use a small tolerance (5ms) to avoid false positives from
-                # filesystem timestamp granularity
+                # 5ms tolerance avoids false positives from FS timestamp
+                # granularity.
                 if file_mtime > index_mtime + 0.005:
                     newer_files.append(p)
             except OSError as exc:
-                log_swallowed("compile.files_newer_than_index.file_mtime", exc)
+                log_swallowed("compile.index_freshness.file_mtime", exc)
 
-    if not newer_files:
-        return None
+    age_sec = int(time.time() - index_mtime) if index_mtime is not None else None
+    is_stale = bool(missing) or (age_sec is not None and age_sec > 24 * 3600)
+    if not is_stale and named_paths and age_sec is None:
+        # Missing index AND we have named_paths — treat as stale.
+        is_stale = True
 
-    return {"files_newer_than_index": newer_files}
+    staleness: dict | None = None
+    if is_stale:
+        parts = []
+        if missing:
+            parts.append(f"{len(missing)} named_paths missing on disk")
+        if age_sec is not None and age_sec > 24 * 3600:
+            parts.append(f"index is {age_sec // 3600}h old")
+        if age_sec is None:
+            parts.append("no .roam/index.db present")
+        warning = "named_paths may be unreliable: " + "; ".join(parts) + ". Verify with Read/Grep before trusting."
+        staleness = {
+            "is_stale": True,
+            "missing_paths": missing,
+            "index_age_seconds": age_sec,
+            "warning": warning,
+        }
+
+    newer = {"files_newer_than_index": newer_files} if newer_files else None
+    return staleness, newer
+
+
+def _named_path_staleness(named_paths: list[str], cwd: str | None) -> dict | None:
+    """Detect stale-index conditions that would mislead the agent.
+
+    Thin wrapper over `_index_freshness_signals` (kept for direct callers
+    and tests); see that helper for the two staleness signals.
+    """
+    staleness, _ = _index_freshness_signals(named_paths, cwd)
+    return staleness
+
+
+def _check_files_newer_than_index(named_paths: list[str], cwd: str | None) -> dict | None:
+    """Detect files newer than the index.db (post-index edits).
+
+    Thin wrapper over `_index_freshness_signals` (kept for direct callers
+    and tests). Returns {"files_newer_than_index": [...]} or None.
+    """
+    _, newer = _index_freshness_signals(named_paths, cwd)
+    return newer
 
 
 # ---- W57.5 — conservative task canonicalization + symbol-resolution cache ----
