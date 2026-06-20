@@ -87,7 +87,7 @@ def collect_metrics(conn):
     symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
     # Keep health math aligned with `roam health`.
-    from roam.commands.cmd_health import _is_utility_path, _percentile
+    from roam.commands.cmd_health import _betweenness_percentiles, _is_utility_path
 
     # Cycles
     try:
@@ -115,10 +115,7 @@ def collect_metrics(conn):
     god_components = len(god_items)
 
     # Bottlenecks (same query + thresholds as cmd_health.py)
-    all_bw = sorted(
-        r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
-    )
-    bn_p90 = _percentile(all_bw, 90)
+    bn_p90 = _betweenness_percentiles(conn, (90,)).values[0]
 
     bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
     _round = round
