@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from roam.plan.compiler import _extract_file_paths
+from roam.plan.compiler import _extract_file_paths, _likely_files_from_search
 
 
 @pytest.mark.parametrize(
@@ -91,3 +91,46 @@ def test_extract_file_paths_drops_unsafe_paths(task):
 )
 def test_extract_file_paths_normalizes_safe_paths(task, expected):
     assert _extract_file_paths(task) == expected
+
+
+# --- likely_files resolver parity ----------------------------------------
+# The explicit-path branch funnels through `_repo_contained_path`, but the
+# search-semantic and cache-hit branches of `_likely_files_from_search`
+# produce index-derived paths that must ALSO be repo-contained: an indexed
+# forbidden file (.env, a lockfile, internal/**) or a stale cache row must
+# never reach likely_files or the downstream read/diff probes that open() it.
+import roam.plan.compiler as _c
+
+
+def test_likely_files_drops_forbidden_search_results(monkeypatch):
+    # Force the search-semantic branch (no explicit path, no cache hit).
+    monkeypatch.setattr(_c, "_symbol_resolution_cache_lookup", lambda *a, **k: None)
+    monkeypatch.setattr(_c, "_symbol_resolution_cache_store", lambda *a, **k: None)
+    monkeypatch.setattr(_c, "_path_token_recall", lambda *a, **k: [])
+    # Rerank is index/db-driven; keep the input ordering deterministic here.
+    monkeypatch.setattr(_c, "_rerank_likely_files", lambda task, scored, cwd: [p for p, _ in scored])
+    monkeypatch.setattr(
+        _c,
+        "_run_roam",
+        lambda *a, **k: {
+            "results": [
+                {"file_path": "internal/planning/secret.md", "score": 9.0},
+                {"file_path": ".env", "score": 8.0},
+                {"file_path": "src/roam/cli.py", "score": 1.0},
+            ]
+        },
+    )
+    files, invoked = _c._likely_files_from_search("anything about caching", cwd="/tmp/x")
+    assert invoked is True
+    assert files == ["src/roam/cli.py"]
+
+
+def test_likely_files_drops_forbidden_cache_hit(monkeypatch):
+    monkeypatch.setattr(
+        _c,
+        "_symbol_resolution_cache_lookup",
+        lambda *a, **k: (["internal/planning/secret.md", "src/roam/cli.py", "../escape.py"], True),
+    )
+    files, invoked = _c._likely_files_from_search("cached task", cwd="/tmp/x")
+    assert invoked is False  # cache hit → subprocess not run
+    assert files == ["src/roam/cli.py"]
