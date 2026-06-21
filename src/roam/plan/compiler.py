@@ -156,7 +156,10 @@ def _classify_structural_subtype(task: str) -> str | None:
     return None
 
 
-# Back-compat alias — structural_query == any sub-type matched.
+# Back-compat alias — structural_query == any sub-type matched. This is a
+# boolean OR-union, so alternation order does not change the match result; it
+# mirrors the same precedence tuple as `_classify_structural_subtype`
+# (coupling before blast/callers) so the two stay readable side-by-side.
 _STRUCTURAL_RE = re.compile(
     "|".join(
         r.pattern
@@ -164,9 +167,9 @@ _STRUCTURAL_RE = re.compile(
             _STRUCTURAL_DEAD_RE,
             _STRUCTURAL_CYCLE_RE,
             _STRUCTURAL_COMPLEXITY_RE,
+            _STRUCTURAL_COUPLING_RE,
             _STRUCTURAL_BLAST_RE,
             _STRUCTURAL_CALLERS_RE,
-            _STRUCTURAL_COUPLING_RE,
         )
     ),
     re.IGNORECASE,
