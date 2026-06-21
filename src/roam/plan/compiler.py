@@ -10496,16 +10496,6 @@ def _named_path_staleness(named_paths: list[str], cwd: str | None) -> dict | Non
     return staleness
 
 
-def _check_files_newer_than_index(named_paths: list[str], cwd: str | None) -> dict | None:
-    """Detect files newer than the index.db (post-index edits).
-
-    Thin wrapper over `_index_freshness_signals` (kept for direct callers
-    and tests). Returns {"files_newer_than_index": [...]} or None.
-    """
-    _, newer = _index_freshness_signals(named_paths, cwd)
-    return newer
-
-
 # ---- W57.5 — conservative task canonicalization + symbol-resolution cache ----
 #
 # Goal: close the W56-exposed gap where the backticked-symbol task only got 1.6×
