@@ -2375,6 +2375,64 @@ def _roam_invoke_inproc(args: list[str], cwd: str | None) -> tuple[int, str] | N
                 log_swallowed("compile.run_roam.chdir_restore", exc)
 
 
+# Argv safety: task-derived positional values (symbols, file paths, free-text
+# tasks) can begin with `-` and would otherwise be parsed as downstream Click
+# options — "roam search -foo" errors as an unknown option, or a value-flag
+# swallows the next token. _safe_roam_argv separates the trusted subcommand +
+# roam-controlled flags from untrusted positionals and inserts a `--`
+# end-of-options marker before the positionals so Click parses them literally.
+# This guards BOTH the in-process Click dispatch and the subprocess fallback
+# (the marker is just another argv token both honor).
+#
+# These are the only flags this module passes inside an `args` list, with
+# arity. A value-flag consumes the following token as its value; a bool flag
+# stands alone. Any dash-leading token NOT in either set is treated as an
+# untrusted positional and pushed past the `--` marker — fail-safe, since a
+# genuine task value like "-foo" then lands where it belongs.
+_ROAM_VALUE_FLAGS = frozenset({"--mode", "-n"})
+_ROAM_BOOL_FLAGS = frozenset({"--multi", "--no-decay", "--source-only"})
+
+
+def _safe_roam_argv(args: list[str]) -> list[str]:
+    """Build a Click-safe argv from a roam subcommand arg list.
+
+    `args[0]` is the subcommand (a trusted literal). The remainder is a mix of
+    roam-controlled flags (see `_ROAM_VALUE_FLAGS` / `_ROAM_BOOL_FLAGS`) and
+    task-derived positional values. Returns `[subcommand, *flags, "--",
+    *positionals]` so leading-dash positionals cannot be reinterpreted as
+    options. The `--` marker is omitted when there are no positionals, leaving
+    flag-only and bare-subcommand calls byte-identical to the legacy argv.
+    """
+    if not args:
+        return []
+    flags: list[str] = []
+    positionals: list[str] = []
+    rest = args[1:]
+    i = 0
+    n = len(rest)
+    while i < n:
+        tok = rest[i]
+        if tok in _ROAM_VALUE_FLAGS:
+            flags.append(tok)
+            if i + 1 < n:
+                flags.append(rest[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if tok in _ROAM_BOOL_FLAGS:
+            flags.append(tok)
+            i += 1
+            continue
+        positionals.append(tok)
+        i += 1
+    argv = [args[0], *flags]
+    if positionals:
+        argv.append("--")
+        argv.extend(positionals)
+    return argv
+
+
 def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bool = False) -> dict | None:
     """Run a roam --json subcommand, return parsed JSON or None on failure.
 
@@ -2399,7 +2457,8 @@ def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bo
     cli_args: list[str] = []
     if detail:
         cli_args.append("--detail")
-    cli_args.extend(["--json", *args])
+    cli_args.append("--json")
+    cli_args.extend(_safe_roam_argv(args))
     value = None
     # W147 — persistent SQLite cache. Survives process restart. ~0.5-1ms
     # lookup vs 30-50ms subprocess/inproc cold call → ~30× win on hit.
