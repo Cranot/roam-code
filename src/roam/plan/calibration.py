@@ -159,9 +159,27 @@ PROFILES: dict[str, CalibrationProfile] = {
 # `get_profile()` raises a warning when callers pick a non-validated profile.
 VALIDATED_PROFILES: frozenset[str] = frozenset({"claude-2026-05"})
 
+# Profile names already warned about this process. The warning is
+# informational, not an error: `route_for_plan` calls `get_profile` once per
+# compile, and calibration sweeps re-emit routes repeatedly for the same
+# profile, which would turn a single validation warning into a flood of
+# duplicate stderr I/O. Warn once per unvalidated profile instead. Clear via
+# `reset_profile_warnings()` (test isolation / batch boundaries).
+_WARNED_PROFILES: set[str] = set()
+
 
 # --- Default selection ---
 DEFAULT_PROFILE = "claude-2026-05"
+
+
+def reset_profile_warnings() -> None:
+    """Clear the once-per-profile warning memory.
+
+    Public so tests can assert the fire-once behavior deterministically and
+    so batch entry points (e.g. the start of a calibration sweep) can force
+    the warning to re-emit after an intentional profile change.
+    """
+    _WARNED_PROFILES.clear()
 
 
 def list_profiles() -> list[str]:
@@ -173,15 +191,17 @@ def get_profile(name: str | None = None) -> CalibrationProfile:
     """Return profile by name; default to the empirically validated one.
 
     Emits a stderr warning when callers pick a non-validated profile —
-    the recommendations won't carry quantitative guarantees.
+    the recommendations won't carry quantitative guarantees. The warning
+    fires at most once per profile per process (see ``_WARNED_PROFILES``).
     """
     if name is None:
         name = DEFAULT_PROFILE
     if name not in PROFILES:
         raise KeyError(f"Unknown calibration profile: {name!r}. Known: {list(PROFILES)}")
-    if name not in VALIDATED_PROFILES:
+    if name not in VALIDATED_PROFILES and name not in _WARNED_PROFILES:
         import sys
 
+        _WARNED_PROFILES.add(name)
         print(  # noqa: T201 — intentional stderr warning from a non-CLI plan helper
             f"warning: calibration profile {name!r} is UNVALIDATED — "
             f"routes are placeholders, not measured. Use one of: "
