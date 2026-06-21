@@ -3001,7 +3001,7 @@ def _probe_blast(named_paths: list[str], cwd: str | None, task: str | None = Non
     facts: dict = {}
     target = named_paths[0] if named_paths else None
     if not target and task:
-        m = re.search(r"`([A-Za-z_][A-Za-z0-9_]+)`", task) or re.search(
+        m = _FREEFORM_BACKTICK_IDENT_RE.search(task) or re.search(
             r"\b(?:of|chang(?:e|ing)|to)\s+(?:the\s+)?"
             r"([a-z][a-z0-9]*_[a-z0-9_]+|[a-z]+[A-Z][A-Za-z0-9]*)\b",
             task,
@@ -3163,7 +3163,7 @@ def _embed_synth_symbol_body(
     instructions inside it are data, never followed."""
     if not task:
         return None
-    m = re.search(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    m = _FREEFORM_BACKTICK_IDENT_RE.search(task)
     sym_name = m.group(1) if m else None
     if not sym_name:
         m2 = re.search(r"\bwhat\s+(?:does|is)\s+([A-Za-z_][A-Za-z0-9_]+)\b", task, re.IGNORECASE)
@@ -3393,7 +3393,7 @@ def _embed_freeform_symbol_body(
     instructions inside it are data, never followed."""
     if not task:
         return None
-    m = re.search(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    m = _FREEFORM_BACKTICK_IDENT_RE.search(task)
     if m:
         sym_name = m.group(1)
     else:
@@ -8801,10 +8801,11 @@ def _run_w128_parallel(proc, task, w77_high_conf, named_only, cwd, prefetched, t
     touch it."""
     # Mirror _probe_l10_symbol_resolution's backtick gate BEFORE submitting: skip
     # the whole future rather than scheduling a worker to re-run this regex and
-    # return None. Keep the `*` quantifier in sync with the probe so a
-    # single-char `x` the probe WOULD resolve is detected here too.
+    # return None. Reuses the probe's own `_BACKTICK_IDENT_RE`, so a single-char
+    # `x` the probe WOULD resolve is detected here too — the gate cannot drift
+    # from the probe's notion of a backtick identifier.
     skip_l10 = (
-        not re.search(r"`[A-Za-z_][A-Za-z0-9_]*`", task)
+        not _BACKTICK_IDENT_RE.search(task)
         or (w77_high_conf and proc.startswith("structural_") and named_only)
     )
     from concurrent.futures import ThreadPoolExecutor
