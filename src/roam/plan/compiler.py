@@ -4085,9 +4085,47 @@ def _probe_for_procedure(
     return facts or None
 
 
+def _contain_frame_path(path: str, cwd: str | None) -> str | None:
+    """Contain an UNTRUSTED stack-frame path to the repo root before open().
+
+    Frame paths are regex-extracted from attacker-influenced task text (a pasted
+    stack trace), so they are NOT hardened by the `_extract_file_paths` pipeline.
+    Real tracebacks cite ABSOLUTE paths, so — unlike `_repo_contained_path`, which
+    rejects every absolute path — in-repo absolutes are allowed; only paths that
+    resolve OUTSIDE the root (absolute `/etc/secret.py`, `..`-traversal escapes,
+    third-party site-packages frames) or name a forbidden file are rejected.
+
+    Root = `cwd` when given, else the process cwd (production `compile_plan` may
+    pass cwd=None but still runs inside the repo). Returns the resolved absolute
+    path string, or None.
+    """
+    if not path:
+        return None
+    try:
+        root = Path(cwd).resolve() if cwd else Path.cwd().resolve()
+        candidate = Path(path)
+        full = candidate if candidate.is_absolute() else root / candidate
+        resolved = full.resolve(strict=False)
+        rel = resolved.relative_to(root)  # raises ValueError if it escapes root
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if _path_is_forbidden(rel.as_posix()):
+        return None
+    return str(resolved)
+
+
 def _read_file_slice(path: str, line: int, cwd: str | None, before: int = 5, after: int = 5) -> dict | None:
     """W35a — read ±N lines around `line` in `path`. Returns None on missing/IO error."""
-    full = os.path.join(cwd, path) if cwd and not os.path.isabs(path) else path
+    # W-TRUST — `path` is a frame extracted from the UNTRUSTED task string (a
+    # pasted stack trace). A task-controlled absolute (`/etc/secret.py`) or
+    # `..`-traversal (`../../secret.py`) frame would otherwise be opened and read
+    # source slices OUTSIDE the repo. Contain it to the repo root (cwd, or the
+    # process cwd when cwd is None) before any open(): in-repo absolute frames
+    # (real tracebacks cite absolute paths) are allowed; anything resolving
+    # outside the root — or a forbidden file inside it — is rejected (None).
+    full = _contain_frame_path(path, cwd)
+    if full is None:
+        return None
     try:
         with open(full, encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
@@ -4862,7 +4900,7 @@ def _probe_module_name_for_task(task: str, named_paths: list[str], cwd: str | No
     # (L1 probe + facts envelope) where they chain into the downstream read/diff
     # probes that `open()` them; routing them here keeps the forbidden-path /
     # repo-escape gate that every other extraction path honors.
-    candidates = [np for c in candidates if (np := _repo_contained_path(c))]
+    candidates = [np for c in candidates if (np := _repo_contained_path(c, cwd))]
     if not candidates:
         return None
     return {
@@ -6714,7 +6752,7 @@ def _bug_site_target(cited_path: str, named_paths: list[str], cwd: str | None) -
         return os.path.join(cwd, p) if cwd and not os.path.isabs(p) else p
 
     for cand in (cited_path, *(named_paths[:1] if named_paths else ())):
-        norm = _repo_contained_path(cand) if cand else None
+        norm = _repo_contained_path(cand, cwd) if cand else None
         if norm and os.path.exists(_abs(norm)):
             return norm, _abs(norm)
     return None
@@ -8545,7 +8583,7 @@ class PlanV0:
         scores). Each procedure now gets a contract tailored to what a
         good answer LOOKS like in that family.
         """
-        named_only = _extract_file_paths(self.task)
+        named_only = _extract_file_paths(self.task, cwd)
         contract = _PROCEDURE_CONTRACTS.get(self.procedure, _GENERIC_CONTRACT)
         # v0.4 — batch-search override fires when 3+ symbols are named.
         # Documented -69% to -79% tokens vs N sequential single-symbol calls.
@@ -8604,7 +8642,7 @@ class PlanV0:
         (`_apply_task_text_probe`, `_apply_backtick_fallback`,
         `_apply_always_on_extenders`). Was cc=63 brain-method.
         """
-        named_only = _extract_file_paths(self.task)
+        named_only = _extract_file_paths(self.task, cwd)
         if not named_only:
             # Bare-filename fallback: "what's exported from cmd_verify.py" has no
             # slash-path, so _extract_file_paths returns [] and the path-driven
@@ -8794,7 +8832,7 @@ class PlanV0:
         """
         # Re-extract: keep only paths the task text NAMED. Drop any
         # search-semantic noise even if it's already in self.likely_files.
-        named_only = _extract_file_paths(self.task)
+        named_only = _extract_file_paths(self.task, cwd)
         prefetched: dict = {}
         # W45 C1 — module-name shorthand ("the thing module") resolves to a
         # concrete file path via filesystem glob. A glob-resolved path is an
@@ -9112,6 +9150,23 @@ _L1_TASK_TEXT_TARGET_PROCEDURES = frozenset(
 _L1_PROCEDURE_KEYS: dict[str, tuple[str, ...]] = {
     p: m.keys for p, m in _L1_PROCEDURE_METADATA.items()
 }
+
+
+def known_procedures() -> frozenset[str]:
+    """The universe of procedures the static compiler knows about.
+
+    Every procedure key across the routing-relevant registry tables:
+    ``_ARTIFACT_POLICY`` (artifact selection) unioned with ``_L1_PROBE_ELIGIBLE``
+    (the L1-probe families derived from ``_L1_PROCEDURE_METADATA``). This is the
+    set that flows through ``route_for_plan -> _model -> profile.tier_for`` — any
+    procedure a classifier can emit must be known here, or it silently inherits
+    the calibration profile's ``DEFAULT_TIER``.
+
+    Shared (not reconstructed at each call site) so calibration profiles audit
+    their own route coverage against the compiler's true universe instead of
+    re-deriving it. See ``CalibrationProfile.unrouted_procedures``.
+    """
+    return frozenset(_ARTIFACT_POLICY) | frozenset(_L1_PROBE_ELIGIBLE)
 
 
 def _l1_has_target(plan: "PlanV0") -> bool:
@@ -10104,7 +10159,7 @@ def _path_is_forbidden(path: str) -> bool:
     return False
 
 
-def _repo_contained_path(path: str) -> str | None:
+def _repo_contained_path(path: str, cwd: str | None = None) -> str | None:
     """Normalize a task-extracted path and reject anything that escapes the
     repo or names a forbidden file. Returns the repo-relative path, or None.
 
@@ -10115,6 +10170,16 @@ def _repo_contained_path(path: str) -> str | None:
     outside the repo. Funnel every extracted path through this single
     resolver so named_paths / likely_files only carry repo-contained,
     non-forbidden paths. A trailing slash (directory anchor) is preserved.
+
+    The lexical checks above (absolute / `..`-traversal / forbidden) are
+    necessary but NOT sufficient: a repo-tracked SYMLINK whose name passes
+    every lexical rule (`src/link.py -> /etc/passwd`) survives normalization,
+    and the downstream read/diff probes that `open()` / `read_text()` the
+    `os.path.join(cwd, "src/link.py")` then follow the link OUTSIDE the repo.
+    When `cwd` is supplied, resolve the candidate's REAL path (following
+    symlinks) against the realpath'd repo root and reject anything that
+    escapes — the same containment guarantee `_resolve_probe_file_under_cwd`
+    enforces at the probe boundary, applied here at the central funnel.
     """
     if not path:
         return None
@@ -10134,10 +10199,20 @@ def _repo_contained_path(path: str) -> str | None:
     normalized = "/".join(segments) + trailing
     if _path_is_forbidden(normalized):
         return None
+    # cwd-aware symlink containment: a lexically-clean name can still be a
+    # symlink that points outside the repo. Resolve the REAL path (following
+    # symlinks) and require it to stay under the realpath'd repo root.
+    if cwd:
+        try:
+            root = Path(cwd).resolve()
+            resolved = (root / normalized.rstrip("/")).resolve(strict=False)
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            return None  # repo escape via symlink (or unresolvable path)
     return normalized
 
 
-def _extract_file_paths(task: str) -> list[str]:
+def _extract_file_paths(task: str, cwd: str | None = None) -> list[str]:
     """Pull file and directory paths from task text. Higher signal than search.
 
     R10: also extracts directory paths like `src/roam/commands/`
@@ -10148,7 +10223,8 @@ def _extract_file_paths(task: str) -> list[str]:
     Every extracted path is funnelled through `_repo_contained_path` before
     returning, so absolute, `..`-traversal, and forbidden paths (e.g.
     `internal/**`) never reach named_paths / likely_files or the downstream
-    read/diff probes that `open()` them.
+    read/diff probes that `open()` them. When `cwd` is supplied, the resolver
+    also rejects repo symlinks that point outside the repo (realpath check).
     """
     seen: list[str] = []
     for m in _PATH_RE.finditer(task):
@@ -10164,7 +10240,7 @@ def _extract_file_paths(task: str) -> list[str]:
             seen.append(p)
     out: list[str] = []
     for p in seen:
-        norm = _repo_contained_path(p)
+        norm = _repo_contained_path(p, cwd)
         if norm and norm not in out:
             out.append(norm)
     return out
@@ -10238,7 +10314,7 @@ def _resolve_bare_filenames(task: str, cwd: str | None) -> list[str]:
     # ("what's in pyproject.toml") would otherwise resolve one and feed it to
     # the downstream read/diff probes that `open()` it, bypassing the
     # forbidden-path gate that every other extraction path honors.
-    return [np for p in resolved if (np := _repo_contained_path(p))]
+    return [np for p in resolved if (np := _repo_contained_path(p, cwd))]
 
 
 def _query_unique_module_path(db_path: str, name: str) -> str | None:
@@ -10823,7 +10899,7 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     # invoked" (NOT "we have files"). On cache hit we return False — the
     # subprocess didn't run this turn — which is what model_calls_avoided
     # accounting wants.
-    explicit = _extract_file_paths(task)
+    explicit = _extract_file_paths(task, cwd)
     if explicit:
         # Explicit paths in the task = high-confidence signal; skip search-semantic.
         return explicit[:top_n], False  # search NOT invoked
@@ -10835,7 +10911,7 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
         # Funnel cache-hit paths through the resolver too: a row stored before
         # this guard (or one carrying an indexed forbidden path) must not feed
         # likely_files / downstream read probes.
-        files = [np for f in files if (np := _repo_contained_path(f))]
+        files = [np for f in files if (np := _repo_contained_path(f, cwd))]
         return files[:top_n], False  # cached → subprocess NOT invoked
 
     # Only when NO explicit paths and no cache hit: fall back to semantic.
@@ -10867,7 +10943,7 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     # resolver — parity with the explicit branch — so forbidden (internal/**,
     # .env, lockfiles) or repo-escaping index paths can't reach likely_files
     # or the downstream read/diff probes that open() them.
-    scored = [(np, s) for (p, s) in scored if (np := _repo_contained_path(p))]
+    scored = [(np, s) for (p, s) in scored if (np := _repo_contained_path(p, cwd))]
     seen = _rerank_likely_files(task, scored, cwd)[:top_n]
     # Store the full resolution (top_n trim happens at consumer; cache the
     # superset so future top_n values up to the cap are served).
