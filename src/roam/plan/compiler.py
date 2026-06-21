@@ -1440,57 +1440,72 @@ _W12_DIMENSION_MAP: dict[str, str] = {
 #    classification is correct, R10 wins. When wrong (vue01 misclassified
 #    as freeform), R10 LOSES MORE than the generic contract."
 # Confidence gates specialized policy application — fall back to safe
-# generic when the regex match was thin/ambiguous. The hit-count below reuses
-# `_STRUCTURAL_SUBTYPE_REGEXES` (defined near `_classify_structural_subtype`,
-# the routing source of truth) so confidence and routing share one ordering.
+# generic when the regex match was thin/ambiguous.
+#
+# W-CONF (2026-06-21) — explicit per-procedure base-confidence buckets.
+# These scores used to live inline in `_classifier_confidence`'s if/elif
+# chain; any procedure absent from the chain silently fell to the
+# `_DEFAULT_PROCEDURE_CONFIDENCE` (0.50) else branch. `refactor_move` did
+# exactly this despite carrying explicit entries in
+# `_PER_PROCEDURE_CONF_THRESHOLD` (0.70) and `_ARTIFACT_POLICY` ("full") —
+# a precedence-registry asymmetry. Extracting the flat buckets into this
+# table makes them introspectable, so the procedure-registry lint can pin
+# parity: every non-structural canonical procedure MUST have an explicit
+# bucket here (tests/test_procedure_registry_lint.py). structural_* is NOT
+# in this table — its confidence is hit-count-dependent (scored inline).
+_DEFAULT_PROCEDURE_CONFIDENCE = 0.50
+_PROCEDURE_BASE_CONFIDENCE: dict[str, float] = {
+    # freeform_explore — regex fall-through, the least certain class.
+    "freeform_explore": 0.35,
+    # W35a — stack-trace pattern requires BOTH a real frame AND an error
+    # context word, so the match is unambiguous when it fires.
+    "stack_trace_fix": 0.90,
+    # trace/synthesis — clean phrasing reads unambiguously.
+    "trace_query": 0.85,
+    "synthesis_query": 0.85,
+    # W11/W12/W13 + W-HIST/REPO/ENTRY/CFG/META/BATCH — precise intent
+    # regexes (bareword + verb / dimension token + anchor / CLI verb
+    # resolver-gated). Without these, the score fell to 0.50 (below the
+    # 0.80 L1 threshold) — caused 46 historical calls to drop to
+    # `art_label: full` instead of `l1_probe` despite probes firing.
+    # Discovered by 2026-06-02 compiler-usage analysis.
+    "symbol_defined_where": 0.85,
+    "top_n_ranking": 0.85,
+    "cli_verb_why_slow": 0.85,
+    "file_history": 0.85,
+    "repo_structure": 0.85,
+    "entry_point_where": 0.85,
+    "config_where": 0.85,
+    "session_meta": 0.85,
+    "self_contained_task": 0.85,
+    # W28 — comparison regex requires a concrete (X, Y) pair AND a
+    # comparison verb; the matched shape is unambiguous when it fires.
+    "compare_x_vs_y": 0.85,
+    # W-LIFT — a describe verb + a concrete file path is unambiguous;
+    # the file skeleton/summary IS the answer.
+    "describe_file": 0.85,
+    # W181/W-CONF — refactor_move pinned explicitly at the historical
+    # default (0.50) to preserve current scores; tune in a later behavior
+    # wave (W-CONF intentionally separates the extraction from any retune).
+    "refactor_move": _DEFAULT_PROCEDURE_CONFIDENCE,
+}
+
+
+# The hit-count below reuses `_STRUCTURAL_SUBTYPE_REGEXES` (defined near
+# `_classify_structural_subtype`, the routing source of truth) so confidence
+# and routing share one ordering.
 def _classifier_confidence(task: str, procedure: str) -> float:
     """Confidence in the classifier's procedure choice on 0..1.
 
     Signals:
-      * trace/synthesis regex hit cleanly             → 0.85
+      * flat per-procedure buckets from `_PROCEDURE_BASE_CONFIDENCE`
       * structural_*: exactly one subtype matched     → 0.85
       * structural_*: 2 subtypes matched (compound)   → 0.55
       * structural_*: 3+ matched (ambiguous compound) → 0.40
-      * freeform_explore (regex fall-through)         → 0.35
+      * unknown procedure (no bucket)                 → 0.50 default
       * named explicit path present                   → +0.10 boost (caps at 0.95)
     """
-    if procedure == "freeform_explore":
-        score = 0.35
-    elif procedure == "stack_trace_fix":
-        # W35a — stack-trace pattern requires BOTH a real frame AND an
-        # error context word, so the match is unambiguous when it fires.
-        score = 0.90
-    elif procedure == "trace_query" or procedure == "synthesis_query":
-        score = 0.85
-    elif procedure in (
-        "symbol_defined_where",
-        "top_n_ranking",
-        "cli_verb_why_slow",
-        "file_history",
-        "repo_structure",
-        "entry_point_where",
-        "config_where",
-        "session_meta",
-        "self_contained_task",
-    ):
-        # W11/W12/W13 — regex matches are precise (bareword + verb / dimension
-        # token + anchor / CLI verb resolver-gated). Confidence parity with
-        # trace/synthesis. Without this, score fell to 0.50 (the else branch)
-        # which is below the 0.80 L1 threshold — caused 46 historical calls
-        # to drop to `art_label: full` instead of `l1_probe` despite probes
-        # firing. Discovered by 2026-06-02 compiler-usage analysis.
-        score = 0.85
-    elif procedure == "compare_x_vs_y":
-        # W28 — comparison regex requires a concrete (X, Y) pair AND a
-        # comparison verb ("compare" / "vs" / "diff" / "difference between");
-        # the matched shape is unambiguous when it fires.
-        score = 0.85
-    elif procedure == "describe_file":
-        # W-LIFT — a describe verb + a concrete file path is unambiguous;
-        # the file skeleton/summary IS the answer. Parity with the precise
-        # regex procedures so the `facts` policy fires the probe (not `full`).
-        score = 0.85
-    elif procedure.startswith("structural_"):
+    if procedure.startswith("structural_"):
         hits = sum(1 for _, rgx in _STRUCTURAL_SUBTYPE_REGEXES if rgx.search(task))
         if hits <= 1:
             score = 0.85
@@ -1499,7 +1514,7 @@ def _classifier_confidence(task: str, procedure: str) -> float:
         else:
             score = 0.40
     else:
-        score = 0.50
+        score = _PROCEDURE_BASE_CONFIDENCE.get(procedure, _DEFAULT_PROCEDURE_CONFIDENCE)
 
     # Named explicit path is a strong scope anchor; bump confidence.
     if _extract_file_paths(task):
