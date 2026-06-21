@@ -7881,7 +7881,14 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
         }
     ),
     # `config_where` — the dedicated probe IS the W49 config probe; skip
-    #   the always-on duplicate plus unrelated audits.
+    #   the always-on duplicate plus unrelated audits. `grep_replication`
+    #   (W196) re-greps the captured config name, but the dedicated probe
+    #   already ran that same `roam grep -- <name>` into `config_matches`,
+    #   so W196 only adds a redundant `grep_results`. `env_vars` (W110) is
+    #   a different question — a file-scoped `os.environ`/`os.getenv` read
+    #   audit that needs a named file + env-var-list vocab — which a
+    #   "where is X configured" task never satisfies; the repo-wide config
+    #   grep already surfaces those call sites anyway.
     "config_where": frozenset(
         {
             "why_slow",
@@ -7889,11 +7896,13 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
             "subprocess_audit",
             "todo_audit",
             "deprecation",
+            "env_vars",
             "compare",
             "refactor_move",
             "import_audit",
             "test_impact",
             "module_name",
+            "grep_replication",
             "pickaxe",
             "api_surface",
             "config",
