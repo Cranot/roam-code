@@ -241,7 +241,7 @@ def test_w45_c3_read_slice_line_below_one(tmp_path):
     f = tmp_path / "x.py"
     f.write_text("a\nb\nc\n")
     # line=0 should NOT crash; returns a slice without a marker
-    out = _read_file_slice(str(f), 0, cwd=None)
+    out = _read_file_slice(str(f), 0, cwd=str(tmp_path))
     assert out is not None
     # No marker line for line=0
     assert ">> " not in out["excerpt"]
@@ -250,7 +250,7 @@ def test_w45_c3_read_slice_line_below_one(tmp_path):
 def test_w45_c3_read_slice_line_past_eof(tmp_path):
     f = tmp_path / "x.py"
     f.write_text("a\nb\nc\n")
-    out = _read_file_slice(str(f), 999, cwd=None)
+    out = _read_file_slice(str(f), 999, cwd=str(tmp_path))
     assert out is not None
     assert out["line_count"] == 3
 
