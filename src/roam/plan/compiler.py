@@ -10386,6 +10386,15 @@ def _explain_classifier(task: str) -> dict:
             signals[name] = hits
 
     winner, rejected = _classify(task)
+    # Rule 5 (structural sub-type order) is the one mechanically-derivable
+    # rule: pull it from the SAME registry `_classify_structural_subtype`
+    # scans (`_STRUCTURAL_SUBTYPE_REGEXES`) so the text can never drift from
+    # the code if that tuple is ever reordered — the exact staleness class the
+    # `# Keep in sync` comment below warned about. The other rules cite memos
+    # (R10 / W166) or express stable dominance concepts, so they stay as prose.
+    subtype_order = ", ".join(
+        name.removeprefix("structural_") for name, _ in _STRUCTURAL_SUBTYPE_REGEXES
+    )
     return {
         "task": task,
         "winner": winner,
@@ -10399,7 +10408,7 @@ def _explain_classifier(task: str) -> dict:
             "2. refactor_move wins over synthesis (W166: 'extract X from Y' is a refactor, not a synthesis query)",
             "3. synthesis phrasing wins over structural",
             "4. top_n_ranking and compare_x_vs_y win over structural sub-types",
-            "5. structural sub-types checked in order: dead, cycle, complexity, coupling, blast, callers",
+            f"5. structural sub-types checked in order: {subtype_order}",
             "6. fallback to freeform_explore when no pattern fires",
         ],
     }
