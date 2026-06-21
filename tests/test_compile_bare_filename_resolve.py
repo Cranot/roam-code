@@ -46,6 +46,31 @@ def test_no_cwd_or_no_filename_returns_empty() -> None:
     assert _resolve_bare_filenames("trace the login flow", _REPO) == []
 
 
+def test_bare_filename_resolution_drops_forbidden_indexed_path(tmp_path) -> None:
+    """The `files` table can contain forbidden-but-tracked paths (`uv.lock`,
+    `pyproject.toml`, `.env`). A bare-filename prompt that resolves one must
+    NOT return it — every extraction path funnels through `_repo_contained_path`
+    so the forbidden-path gate is honored before downstream read/diff probes
+    `open()` the file. Parity with `_extract_file_paths` /
+    `_likely_files_from_search`."""
+    import sqlite3
+
+    roam_dir = tmp_path / ".roam"
+    roam_dir.mkdir()
+    conn = sqlite3.connect(str(roam_dir / "index.db"))
+    conn.execute("CREATE TABLE files(path TEXT)")
+    # Both unique basenames; one is forbidden, one is safe.
+    conn.executemany("INSERT INTO files VALUES (?)", [("uv.lock",), ("src/roam/widget.py",)])
+    conn.commit()
+    conn.close()
+
+    cwd = str(tmp_path)
+    # Forbidden indexed file is filtered out (would otherwise feed read probes).
+    assert _resolve_bare_filenames("what is in uv.lock", cwd) == []
+    # Safe indexed file still resolves normally.
+    assert _resolve_bare_filenames("describe widget.py", cwd) == ["src/roam/widget.py"]
+
+
 @pytest.mark.skipif(not _HAS_INDEX, reason="requires .roam/index.db")
 def test_api_surface_probe_self_resolves_bare_filename() -> None:
     """`_probe_api_surface_for_task` self-resolves a bare filename when handed

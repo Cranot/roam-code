@@ -10129,7 +10129,14 @@ def _resolve_bare_filenames(task: str, cwd: str | None) -> list[str]:
     except Exception as exc:  # noqa: BLE001 — best-effort resolution
         log_swallowed("compile.resolve_bare_filenames", exc)
         return []
-    return resolved
+    # Funnel index-resolved paths through the single repo-contained resolver
+    # too — parity with `_extract_file_paths` / `_likely_files_from_search`.
+    # The `files` table can contain forbidden-but-tracked paths
+    # (`pyproject.toml`, `package.json`, `.env`), so a bare-filename prompt
+    # ("what's in pyproject.toml") would otherwise resolve one and feed it to
+    # the downstream read/diff probes that `open()` it, bypassing the
+    # forbidden-path gate that every other extraction path honors.
+    return [np for p in resolved if (np := _repo_contained_path(p))]
 
 
 def _query_unique_module_path(db_path: str, name: str) -> str | None:
