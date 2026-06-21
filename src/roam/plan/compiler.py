@@ -7214,6 +7214,24 @@ _FORBIDDEN_PATHS_DEFAULT = [
 ]
 
 
+def _private_dir_names() -> frozenset[str]:
+    """Simple directory names from `_FORBIDDEN_PATHS_DEFAULT` (entries shaped
+    `name/**` or `**/name/**`) — used to reject private trees as a grep root."""
+    names: set[str] = set()
+    for entry in _FORBIDDEN_PATHS_DEFAULT:
+        if not entry.endswith("/**"):
+            continue
+        core = entry[:-3].removeprefix("**/")
+        if core and "/" not in core and "*" not in core:
+            names.add(core)
+    return frozenset(names)
+
+
+# Private/forbidden directory names (e.g. internal, .git, .roam, node_modules,
+# .venv, migrations, lockfiles) — a grep search root must never resolve here.
+_PRIVATE_DIR_NAMES = _private_dir_names()
+
+
 # ---- W42 — L1-envelope extender registries ----
 #
 # `to_l1_probe_envelope` used to be a 130-line / cc=63 brain-method
@@ -7446,6 +7464,24 @@ def _grep_one_pattern(pat: str, search_root: str):
     return lines, total
 
 
+def _is_private_search_root(d: str, cwd: str) -> bool:
+    """W196 safety — True if directory `d` resolves inside a private/forbidden
+    tree (e.g. `internal/`, `.git/`, `.roam/`, `node_modules/`). Picking such a
+    dir as the grep root would leak snippets from private files into the
+    envelope. Names are derived from `_FORBIDDEN_PATHS_DEFAULT` so the two
+    stay in sync."""
+    try:
+        rel = os.path.relpath(os.path.realpath(d), os.path.realpath(cwd))
+    except ValueError:
+        # Different drive (Windows) — treat as outside the repo, hence unsafe.
+        return True
+    parts = rel.split(os.sep)
+    if parts and parts[0] == "..":
+        # Escapes the repo root — refuse rather than grep an arbitrary tree.
+        return True
+    return any(p in _PRIVATE_DIR_NAMES for p in parts)
+
+
 def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W196 — pre-run grep for literal patterns mentioned in the task.
     Replaces the 22% of agent tool calls that are Grep."""
@@ -7454,14 +7490,15 @@ def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> 
     patterns = _extract_grep_patterns(task)
     if not patterns:
         return None
-    # Pick search root: a directory from named_paths if one exists,
-    # else repo root.
+    # Pick search root: a directory from named_paths if one exists AND is not
+    # private (W196 safety — a private named path like `internal/foo` must not
+    # become the grep root and leak private snippets), else repo root.
     search_root = cwd
     for p in named_paths or []:
         if isinstance(p, str):
             full = p if os.path.isabs(p) else os.path.join(cwd, p)
             d = full if os.path.isdir(full) else os.path.dirname(full)
-            if d and os.path.isdir(d):
+            if d and os.path.isdir(d) and not _is_private_search_root(d, cwd):
                 search_root = d
                 break
     # W196 — `roam grep` per pattern (ripgrep under the hood, ~0.16s,
