@@ -8670,9 +8670,19 @@ def _timed_future_result(timings: dict, label: str, fn):
 def _run_w128_parallel(proc, task, w77_high_conf, named_only, cwd, prefetched, timings):
     """W128 — fan the always_on extenders + L10 symbol resolution in parallel
     (independent IO → sum-of-two collapses to max-of-two). W88 skips L10 for
-    high-confidence structural tasks that already have a named path. Merges the
-    L10 result + records both section timings; returns updated prefetched."""
-    skip_l10 = w77_high_conf and proc.startswith("structural_") and named_only
+    high-confidence structural tasks that already have a named path. L10 is
+    also skipped when the task names no backticked symbol — the probe returns
+    None immediately then, so submitting its future would only pay thread
+    scheduling + the in-worker regex for no value (the common L1 cache miss).
+    Merges the L10 result + records both section timings; returns updated prefetched."""
+    # Mirror _probe_l10_symbol_resolution's backtick gate BEFORE submitting: skip
+    # the whole future rather than scheduling a worker to re-run this regex and
+    # return None. Keep the `*` quantifier in sync with the probe so a
+    # single-char `x` the probe WOULD resolve is detected here too.
+    skip_l10 = (
+        not re.search(r"`[A-Za-z_][A-Za-z0-9_]*`", task)
+        or (w77_high_conf and proc.startswith("structural_") and named_only)
+    )
     from concurrent.futures import ThreadPoolExecutor
 
     pool = ThreadPoolExecutor(max_workers=2)
