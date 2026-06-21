@@ -10400,11 +10400,15 @@ def _explain_classifier(task: str) -> dict:
         "rejected": rejected,
         "regex_matches": signals,
         "named_paths_extracted": _extract_file_paths(task),
+        # Mirrors the actual arbitration order in `_classify` (top-to-bottom).
+        # Keep in sync with that function; the `winner` above is authoritative.
         "tiebreak_rules": [
             "1. trace phrasing wins over structural (R10 memo)",
-            "2. synthesis phrasing wins over structural",
-            "3. structural sub-types checked in order: dead, cycle, complexity, coupling, blast, callers",
-            "4. fallback to freeform_explore when no pattern fires",
+            "2. refactor_move wins over synthesis (W166: 'extract X from Y' is a refactor, not a synthesis query)",
+            "3. synthesis phrasing wins over structural",
+            "4. top_n_ranking and compare_x_vs_y win over structural sub-types",
+            "5. structural sub-types checked in order: dead, cycle, complexity, coupling, blast, callers",
+            "6. fallback to freeform_explore when no pattern fires",
         ],
     }
 
