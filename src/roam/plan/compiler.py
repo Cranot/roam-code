@@ -7553,6 +7553,13 @@ _PROBE_NEG_PERSIST_TTL_S = 6 * 3600.0
 _PROBE_NEG_PERSIST_TABLE_INITED: set[str] = set()
 
 
+def _probe_neg_persist_key(label: str, task: str) -> str:
+    """Persistent-cache row key for a (label, task) negative entry. Shared by
+    the per-label getter/putter and the batch reader so the derivation lives in
+    exactly one place."""
+    return sha256((label + "\x1f" + (task or "")).encode("utf-8", "replace")).hexdigest()[:24]
+
+
 def _probe_neg_persist_ensure_schema(conn) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS probe_neg_cache (key TEXT PRIMARY KEY, label TEXT, ts REAL)")
     _set_wal(conn)
@@ -7649,6 +7656,13 @@ _PROBE_POS_PERSIST_TTL_S = 24 * 3600.0
 _PROBE_POS_PERSIST_TABLE_INITED: set[str] = set()
 
 
+def _probe_pos_persist_key(label: str, task: str, named_paths: list[str]) -> str:
+    """Persistent-cache row key for a (label, task, named_paths) positive entry.
+    Shared by the per-label getter/putter and the batch reader so the derivation
+    lives in exactly one place."""
+    return sha256(_probe_pos_cache_key(label, task, named_paths).encode("utf-8", "replace")).hexdigest()[:24]
+
+
 def _probe_pos_persist_ensure_schema(conn) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS probe_pos_cache "
@@ -7669,7 +7683,7 @@ def _probe_pos_persist_get(label: str, task: str, named_paths: list[str], cwd: s
             if path not in _PROBE_POS_PERSIST_TABLE_INITED:
                 _probe_pos_persist_ensure_schema(conn)
                 _PROBE_POS_PERSIST_TABLE_INITED.add(path)
-            key = sha256(_probe_pos_cache_key(label, task, named_paths).encode("utf-8", "replace")).hexdigest()[:24]
+            key = _probe_pos_persist_key(label, task, named_paths)
             row = conn.execute(
                 "SELECT head, result_json, ts FROM probe_pos_cache WHERE key=?",
                 (key,),
@@ -7712,7 +7726,7 @@ def _probe_pos_persist_put(
             if path not in _PROBE_POS_PERSIST_TABLE_INITED:
                 _probe_pos_persist_ensure_schema(conn)
                 _PROBE_POS_PERSIST_TABLE_INITED.add(path)
-            key = sha256(_probe_pos_cache_key(label, task, named_paths).encode("utf-8", "replace")).hexdigest()[:24]
+            key = _probe_pos_persist_key(label, task, named_paths)
             conn.execute(
                 "INSERT OR REPLACE INTO probe_pos_cache VALUES (?,?,?,?,?)",
                 (key, head or "", label, _fast_json_dumps(result), time.time()),
@@ -7728,6 +7742,106 @@ def _probe_pos_persist_put(
             conn.close()
     except Exception as exc:  # noqa: BLE001
         log_swallowed("compile.probe_pos_persist.put", exc)
+
+
+def _probe_persist_lookup_batch(
+    labels: list[str], task: str, named_paths: list[str], cwd: str | None, head: str
+) -> tuple[dict[str, dict], set[str]]:
+    """Batch the persistent positive AND negative probe-cache reads for every
+    candidate `label` through ONE SQLite connection.
+
+    Replaces the per-label `_probe_pos_persist_get` + `_probe_neg_persist_get`
+    pair the always-on path used to call in a loop — that opened up to
+    2·len(labels) connections per compile (cold cache: one pos open + one neg
+    open for each of ~two-dozen probes). This reads both tables in a single
+    connection and a single SELECT each.
+
+    Returns ``(pos_hits, neg_hits)``:
+      - ``pos_hits``: ``{label: result_dict}`` for labels with a FRESH,
+        head-matching positive row.
+      - ``neg_hits``: ``set[label]`` for labels with a FRESH negative row.
+
+    A negative lookup is only performed for labels that had NO positive hit,
+    mirroring the per-label short-circuit (a positive hit skips the neg check).
+    Stale (expired / head-mismatched / corrupt) rows are collected and deleted
+    in one commit — the same cleanup the per-label getters did inline.
+    """
+    pos_hits: dict[str, dict] = {}
+    neg_hits: set[str] = set()
+    if not labels or not cwd:
+        return pos_hits, neg_hits
+    path = _run_roam_persist_path(cwd)
+    if not path:
+        return pos_hits, neg_hits
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(path, timeout=1.0)
+        try:
+            if path not in _PROBE_POS_PERSIST_TABLE_INITED:
+                _probe_pos_persist_ensure_schema(conn)
+                _PROBE_POS_PERSIST_TABLE_INITED.add(path)
+            if path not in _PROBE_NEG_PERSIST_TABLE_INITED:
+                _probe_neg_persist_ensure_schema(conn)
+                _PROBE_NEG_PERSIST_TABLE_INITED.add(path)
+            now = time.time()
+            stale_pos: list[str] = []
+
+            # --- positive read: one IN-clause for all candidate keys. ---
+            pos_keys = [_probe_pos_persist_key(label, task, named_paths) for label in labels]
+            pos_key_to_label = dict(zip(pos_keys, labels))
+            placeholders = ",".join("?" for _ in pos_keys)
+            rows = conn.execute(
+                f"SELECT key, head, result_json, ts FROM probe_pos_cache WHERE key IN ({placeholders})",
+                tuple(pos_keys),
+            ).fetchall()
+            for key, cached_head, result_json, ts in rows:
+                label = pos_key_to_label.get(key)
+                if label is None:
+                    continue
+                if (now - ts) > _PROBE_POS_PERSIST_TTL_S:
+                    stale_pos.append(key)
+                    continue
+                if head and cached_head and cached_head != head:
+                    stale_pos.append(key)
+                    continue
+                try:
+                    pos_hits[label] = json.loads(result_json)
+                except json.JSONDecodeError:
+                    stale_pos.append(key)
+
+            # --- negative read: only for labels without a fresh positive hit. ---
+            neg_candidates = [label for label in labels if label not in pos_hits]
+            stale_neg: list[str] = []
+            if neg_candidates:
+                neg_keys = [_probe_neg_persist_key(label, task) for label in neg_candidates]
+                neg_key_to_label = dict(zip(neg_keys, neg_candidates))
+                placeholders = ",".join("?" for _ in neg_keys)
+                rows = conn.execute(
+                    f"SELECT key, ts FROM probe_neg_cache WHERE key IN ({placeholders})",
+                    tuple(neg_keys),
+                ).fetchall()
+                for key, ts in rows:
+                    label = neg_key_to_label.get(key)
+                    if label is None:
+                        continue
+                    if (now - ts) > _PROBE_NEG_PERSIST_TTL_S:
+                        stale_neg.append(key)
+                        continue
+                    neg_hits.add(label)
+
+            # --- one commit for all stale-row cleanup (both tables). ---
+            if stale_pos:
+                conn.executemany("DELETE FROM probe_pos_cache WHERE key=?", [(k,) for k in stale_pos])
+            if stale_neg:
+                conn.executemany("DELETE FROM probe_neg_cache WHERE key=?", [(k,) for k in stale_neg])
+            if stale_pos or stale_neg:
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("compile.probe_persist_lookup_batch", exc)
+    return pos_hits, neg_hits
 
 
 def _probe_pos_cache_key(label: str, task: str, named_paths: list[str]) -> str:
@@ -8237,10 +8351,18 @@ def _filter_runnable_probes(
 ):
     """W126/W129/W130/W152/W155 — harvest cached positive hits (in-memory then
     persistent) and skip negative-cached / procedure-irrelevant probes. Returns
-    (runnable_probes, prefetched_with_cache_hits_merged)."""
+    (runnable_probes, prefetched_with_cache_hits_merged).
+
+    Persistent reads are batched: the per-label persistent pos/neg lookups used
+    to open up to 2·N SQLite connections per compile. They now go through a
+    single `_probe_persist_lookup_batch` connection for all candidate labels."""
     skip_for_procedure = _PROCEDURE_PROBE_SKIPS.get(procedure, frozenset())
-    runnable: list[tuple[str, object]] = []
-    for label, fn in _L1_ALWAYS_ON_PROBES:
+    # Pass 1 (in-memory only): resolve positive hits that need no disk read,
+    # and collect the labels that still need a persistent lookup. The positive
+    # data is merged in pass 2 to keep a single label-ordered merge.
+    inmem_pos: dict[str, dict] = {}
+    candidates: list[str] = []
+    for label, _fn in _L1_ALWAYS_ON_PROBES:
         if label in skip_for_procedure:
             continue
         # Cheap task-text trigger BEFORE the cache lookups: when the probe's
@@ -8253,17 +8375,30 @@ def _filter_runnable_probes(
             continue
         cached = _probe_pos_cached_hit(label, task, named_paths)
         if cached is not None:
+            inmem_pos[label] = cached
+        else:
+            candidates.append(label)
+    # ONE connection serves both the persistent positive and negative reads
+    # for every candidate label. Empty (and no-op) when cwd is unset.
+    pos_hits, neg_hits = _probe_persist_lookup_batch(candidates, task, named_paths, cwd, head)
+    # Pass 2: settle every label in iteration order — merges stay ordered so
+    # prefetched matches the prior per-label behavior exactly.
+    runnable: list[tuple[str, object]] = []
+    for label, fn in _L1_ALWAYS_ON_PROBES:
+        if label in skip_for_procedure:
+            continue
+        cached = inmem_pos.get(label)
+        if cached is not None:
             prefetched = prefetched | cached
             continue
-        if cwd:
-            persisted = _probe_pos_persist_get(label, task, named_paths, cwd, head)
-            if persisted is not None:
-                prefetched = prefetched | persisted
-                _probe_pos_record(label, task, named_paths, persisted)
-                continue
+        persisted = pos_hits.get(label)
+        if persisted is not None:
+            prefetched = prefetched | persisted
+            _probe_pos_record(label, task, named_paths, persisted)
+            continue
         if _probe_neg_cached_miss(label, task):
             continue
-        if cwd and _probe_neg_persist_get(label, task, cwd):
+        if label in neg_hits:
             _probe_neg_record(label, task)
             continue
         runnable.append((label, fn))
