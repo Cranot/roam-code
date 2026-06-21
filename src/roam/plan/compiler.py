@@ -9954,8 +9954,9 @@ def route_for_plan(plan: "PlanV0", cwd: str | None = None, profile_name: str | N
     profile = get_profile(profile_name)
 
     def _model(procedure: str) -> str:
-        tier = profile.procedure_routes.get(procedure, "heavy")
-        return profile.model_for(tier)
+        # Absent procedures fall through to profile.DEFAULT_TIER ("heavy") via
+        # tier_for — the documented conservative default, not a magic literal.
+        return profile.model_for(profile.tier_for(procedure))
 
     # Procedure-specific probe fired -> cheap model x L1. Keep this in sync
     # with compile_for_artifact's auto-L1 families, including task-text-only

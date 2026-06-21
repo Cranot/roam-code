@@ -24,6 +24,16 @@ from typing import Literal
 
 ModelTier = Literal["light", "heavy"]
 
+# Conservative default tier for any procedure NOT listed in a profile's
+# `procedure_routes`. Heavy (the more capable, costlier model) is deliberate:
+# a procedure absent from the table has never been validated for the cheap
+# model, so we pay for safety rather than silently downgrade. New classifier
+# procedures therefore inherit `heavy` until someone explicitly measures and
+# adds a `light` route — the route table is opt-in to cheapness, not opt-out.
+# The lint `tests/test_calibration_route_fallback.py` pins which procedures
+# currently rely on this fallback so the next addition is an intentional choice.
+DEFAULT_TIER: ModelTier = "heavy"
+
 
 @dataclass(frozen=True)
 class CalibrationProfile:
@@ -55,6 +65,16 @@ class CalibrationProfile:
 
     def model_for(self, tier: ModelTier) -> str:
         return self.light_model if tier == "light" else self.heavy_model
+
+    def tier_for(self, procedure: str) -> ModelTier:
+        """Return the routing tier for a procedure, defaulting to `DEFAULT_TIER`.
+
+        Encapsulates the absent-procedure fallback in one place (instead of a
+        bare literal at the call site) so the conservative `heavy` default is
+        documented and uniform. A procedure not in `procedure_routes` is routed
+        heavy on purpose — see `DEFAULT_TIER`.
+        """
+        return self.procedure_routes.get(procedure, DEFAULT_TIER)
 
     def is_stale(self, today: str) -> bool:
         """Crude staleness heuristic — 90+ days since measurement."""
