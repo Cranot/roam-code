@@ -3065,25 +3065,36 @@ def _parallel_probe_dispatch(
     return ordered
 
 
+# Synthesis target extraction is a repeated routing probe (called per
+# synthesis compile), so the two synthesis-specific patterns below are
+# compiled once at module import rather than re-parsed on every call. The
+# backtick form reuses the shared `_FREEFORM_BACKTICK_IDENT_RE` (defined
+# further down, near the freeform probe) so the identical pattern lives in
+# exactly one place — see `_extract_synthesis_target_symbol`.
+_SYNTHESIS_TEST_TARGET_RE = re.compile(
+    r"\b(?:test|tests|spec|docstring|function|class|method)\s+"
+    r"(?:for|of|covering|documenting|around)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]{2,})\b",
+    re.IGNORECASE,
+)
+_SYNTHESIS_FOR_TARGET_RE = re.compile(
+    r"\bfor\s+([a-z][a-z0-9]*_[a-z0-9_]+|[a-z]+[A-Z][A-Za-z0-9]*)\b"
+)
+
+
 def _extract_synthesis_target_symbol(task: str | None) -> str | None:
     """For "write a unit test for open_db" / "write a docstring for `X`" — the
     symbol the synthesis is ABOUT. Backtick first, then `test/spec/… for|of <X>`,
     then a bare identifier-shaped token after `for`. None when nothing concrete."""
     if not task:
         return None
-    m = re.search(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    m = _FREEFORM_BACKTICK_IDENT_RE.search(task)
     if m:
         return m.group(1)
-    m = re.search(
-        r"\b(?:test|tests|spec|docstring|function|class|method)\s+"
-        r"(?:for|of|covering|documenting|around)\s+"
-        r"([A-Za-z_][A-Za-z0-9_]{2,})\b",
-        task,
-        re.IGNORECASE,
-    )
+    m = _SYNTHESIS_TEST_TARGET_RE.search(task)
     if m:
         return m.group(1)
-    m = re.search(r"\bfor\s+([a-z][a-z0-9]*_[a-z0-9_]+|[a-z]+[A-Z][A-Za-z0-9]*)\b", task)
+    m = _SYNTHESIS_FOR_TARGET_RE.search(task)
     if m:
         return m.group(1)
     return None
