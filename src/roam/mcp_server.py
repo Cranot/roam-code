@@ -8233,7 +8233,7 @@ def retrieve_context(
                 # Append symbol names as additional task tokens; the retrieve
                 # pipeline already extracts identifiers from the task string.
                 task = f"{task} {' '.join(recent)}".strip()
-    args = ["retrieve", task]
+    args = ["retrieve"]
     if budget:
         args.extend(["--budget", str(budget)])
     if k:
@@ -8246,6 +8246,11 @@ def retrieve_context(
             args.extend(["--seed-file", path])
     if dry_run:
         args.append("--dry-run")
+    # `--` halts Click option parsing so a leading-dash task ("-v trace the
+    # login flow") is treated as the positional task text instead of an
+    # unknown option (which would drop the retrieval). Mirrors the compiler
+    # trace probe's fix at compiler._probe_trace_for_task.
+    args.extend(["--", task])
     return _run_roam(args, root)
 
 
