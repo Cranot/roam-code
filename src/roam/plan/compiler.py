@@ -8331,18 +8331,48 @@ _PROBE_TRIGGER_BY_LABEL: dict[str, "re.Pattern[str]"] = {
 }
 
 
-def _record_probe_outcome(label, result, task, named_paths, cwd, head, prefetched):
+@dataclass
+class ProbeCacheContext:
+    """Cache-keying context shared across every probe outcome in one compile.
+
+    Bundles the four values that key the in-memory (W129/W126) and persistent
+    (W152/W155) probe caches, so the probe→cache boundary carries one explicit
+    object instead of four positional args threaded through each probe.
+    """
+
+    task: str
+    named_paths: list[str]
+    cwd: str | None
+    head: str
+
+
+def _record_probe_positive(label: str, result: dict, ctx: ProbeCacheContext) -> None:
+    """Record a non-None probe outcome: in-memory positive cache (W129) plus
+    persistent positive cache (W152) when a cwd is available."""
+    _probe_pos_record(label, ctx.task, ctx.named_paths, result)
+    if ctx.cwd:
+        _probe_pos_persist_put(label, ctx.task, ctx.named_paths, ctx.cwd, ctx.head, result)
+
+
+def _record_probe_negative(label: str, ctx: ProbeCacheContext) -> None:
+    """Record a None probe outcome: in-memory negative cache (W126) plus
+    persistent negative cache (W155) when a cwd is available."""
+    _probe_neg_record(label, ctx.task)
+    if ctx.cwd:
+        _probe_neg_persist_put(label, ctx.task, ctx.cwd)
+
+
+def _record_probe_outcome(label, result, ctx: ProbeCacheContext, prefetched):
     """Merge a probe result into prefetched + record the pos/neg caches
-    (in-memory W129/W126 + persistent W152/W155). Returns updated prefetched."""
+    (in-memory W129/W126 + persistent W152/W155). Returns updated prefetched.
+
+    The cache side effects are delegated to `_record_probe_positive` /
+    `_record_probe_negative` so the only mutable thread is `prefetched`."""
     if result:
         prefetched = prefetched | result
-        _probe_pos_record(label, task, named_paths, result)
-        if cwd:
-            _probe_pos_persist_put(label, task, named_paths, cwd, head, result)
+        _record_probe_positive(label, result, ctx)
     else:
-        _probe_neg_record(label, task)
-        if cwd:
-            _probe_neg_persist_put(label, task, cwd)
+        _record_probe_negative(label, ctx)
     return prefetched
 
 
@@ -8416,6 +8446,9 @@ def _run_always_on_probes(runnable_probes, task, named_paths, cwd, procedure, pr
 
     budget_s = _W42_ALWAYS_ON_BUDGET_MS / 1000.0
     start = _t.monotonic()
+    # Build the cache-keying context once — task/named_paths/cwd/head are
+    # loop-invariant, so every probe outcome records against the same context.
+    cache_ctx = ProbeCacheContext(task=task, named_paths=named_paths, cwd=cwd, head=head)
     pool = ThreadPoolExecutor(max_workers=min(6, len(runnable_probes)))
     try:
         label_for: dict = {pool.submit(fn, task, named_paths, cwd, procedure): label for label, fn in runnable_probes}
@@ -8431,7 +8464,7 @@ def _run_always_on_probes(runnable_probes, task, named_paths, cwd, procedure, pr
                 except Exception as exc:  # noqa: BLE001
                     log_swallowed(f"compile.always_on.{label}", exc)
                     continue
-                prefetched = _record_probe_outcome(label, result, task, named_paths, cwd, head, prefetched)
+                prefetched = _record_probe_outcome(label, result, cache_ctx, prefetched)
         except _CFTimeout:
             for prem in pending:
                 prem.cancel()
