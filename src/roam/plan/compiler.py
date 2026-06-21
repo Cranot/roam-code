@@ -5505,6 +5505,49 @@ def _probe_refactor_move_for_task(task: str, cwd: str | None) -> dict | None:
     return payload
 
 
+def _collect_api_surface(lines: list[str], target: str) -> tuple[list[dict], list[dict]]:
+    """W102/W189 — pure single-pass scan of file lines for top-level exports
+    (def/class/async def) and stability markers (TODO/FIXME/deprecated/...).
+
+    Returns ``(exports, stability_hits)``. ``target`` is the file path, used
+    only for the dunder-init exception that lets ``_``-prefixed names through
+    in ``__init__.py``. Pure: no I/O, no logging, no envelope concerns — the
+    caller (_probe_api_surface_for_task) reads the file and builds the payload.
+    """
+    # W189 — collect top-level exports AND stability markers in ONE pass
+    # over the file. The stability markers (TODO/FIXME/deprecated/...) give
+    # the W124/W165 t4 "audit what's stable vs experimental" task concrete,
+    # line-tagged evidence to cite — that task wandered for 19 turns when the
+    # envelope offered nothing to ground "stable/experimental" claims.
+    is_init = target.endswith("__init__.py")
+    exports: list[dict] = []
+    stability_hits: list[dict] = []
+    stability_full = False
+    for i, line in enumerate(lines, 1):
+        # Top-level (no leading whitespace) def/class/async def
+        if line.startswith(("def ", "class ", "async def ")):
+            # Skip names starting with `_` (private convention) unless
+            # the file is dunder-init.
+            name_match = _API_SURFACE_EXPORT_RE.match(line)
+            if name_match:
+                name = name_match.group(1)
+                if not (name.startswith("_") and not is_init):
+                    exports.append({"name": name, "line": i, "kind": "class" if line.startswith("class") else "function"})
+        if not stability_full:
+            m = _STABILITY_RE.search(line)
+            if m:
+                stability_hits.append(
+                    {
+                        "line": i,
+                        "marker": m.group(1).lower(),
+                        "snippet": line.strip()[:140],
+                    }
+                )
+                if len(stability_hits) >= 50:  # W205 — 30→50
+                    stability_full = True
+    return exports, stability_hits
+
+
 def _probe_api_surface_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W102 — for "what does this module export / what's the public API"
     tasks, run a fast grep for top-level `def`/`class`/`async def` and
@@ -5529,36 +5572,7 @@ def _probe_api_surface_for_task(task: str, named_paths: list[str], cwd: str | No
     except (OSError, ValueError) as exc:
         log_swallowed("compile.api_surface.read", exc)
         return None
-    # W189 — collect top-level exports AND stability markers in ONE pass
-    # over the file. The stability markers (TODO/FIXME/deprecated/...) give
-    # the W124/W165 t4 "audit what's stable vs experimental" task concrete,
-    # line-tagged evidence to cite — that task wandered for 19 turns when the
-    # envelope offered nothing to ground "stable/experimental" claims.
-    exports: list[dict] = []
-    stability_hits: list[dict] = []
-    stability_full = False
-    for i, line in enumerate(lines, 1):
-        # Top-level (no leading whitespace) def/class/async def
-        if line.startswith(("def ", "class ", "async def ")):
-            # Skip names starting with `_` (private convention) unless
-            # the file is dunder-init.
-            name_match = _API_SURFACE_EXPORT_RE.match(line)
-            if name_match:
-                name = name_match.group(1)
-                if not (name.startswith("_") and not target.endswith("__init__.py")):
-                    exports.append({"name": name, "line": i, "kind": "class" if line.startswith("class") else "function"})
-        if not stability_full:
-            m = _STABILITY_RE.search(line)
-            if m:
-                stability_hits.append(
-                    {
-                        "line": i,
-                        "marker": m.group(1).lower(),
-                        "snippet": line.strip()[:140],
-                    }
-                )
-                if len(stability_hits) >= 50:  # W205 — 30→50
-                    stability_full = True
+    exports, stability_hits = _collect_api_surface(lines, target)
     if not exports:
         return None
     payload: dict = {
