@@ -7155,7 +7155,14 @@ def _grep_one_pattern(pat: str, search_root: str):
     # positional. Without `--`, a task literal like `--patterns-from=/etc/passwd`
     # is parsed by Click as an option, reading an attacker-named local file as
     # patterns instead of being searched for literally.
-    d = _run_roam(["grep", "-n", "50", "--source-only", "--", pat], search_root, timeout=6.0)
+    #
+    # `--fixed-string` (literal mode): _extract_grep_patterns documents these as
+    # literal task mentions (backticked symbols, quoted strings, dotted paths).
+    # Default regex mode widens them — `sqlite3.connect` matches `sqlite3Xconnect`
+    # (the `.` is a wildcard), and any `+`/`*`/`?`/`[`/`(` inside a quoted literal
+    # expands the match set. Literal mode keeps hits exact AND faster (no regex
+    # compile), so fewer false lines fill the 20-hit cap before real matches land.
+    d = _run_roam(["grep", "-n", "50", "--source-only", "--fixed-string", "--", pat], search_root, timeout=6.0)
     if not d or not isinstance(d, dict):
         return None
     raw_matches = d.get("matches") or []
