@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import Future
 
 from roam.plan.compiler import (
     _CONFIDENCE_THRESHOLD,
@@ -17,6 +18,8 @@ from roam.plan.compiler import (
     _probe_module_name_for_task,
     _read_file_slice,
     _run_w128_parallel,
+    _ProbeRunContext,
+    _harvest_probe_future,
     compile_for_artifact,
     compile_plan,
 )
@@ -64,6 +67,60 @@ def test_w128_outer_parallel_honors_always_on_budget(monkeypatch):
     assert out == {}
     assert elapsed < 0.5
     assert "always_on" in timings
+
+
+# ---- _harvest_probe_future — the W128 four-concerns seam ----
+# The extraction of timeout/exception/timing/None-contract into one function
+# only de-risks probe-boundary edits if its contract is pinned. Each case below
+# also asserts the unconditional-timing invariant: a skipped or failed probe
+# still stamps a (near-zero) timing so telemetry sees every section.
+
+
+def test_harvest_probe_future_returns_none_and_records_timing_when_no_future():
+    """The skip path (e.g. L10 never submitted) yields None without raising,
+    and STILL stamps a timing — telemetry asserts every section appears even
+    when the probe was skipped."""
+    timings: dict[str, float] = {}
+    ctx = _ProbeRunContext(timings=timings)
+    result = _harvest_probe_future(ctx, None, 1.0, "l10_symbol_resolution", "l10")
+    assert result is None
+    assert "l10_symbol_resolution" in timings
+    assert isinstance(timings["l10_symbol_resolution"], (int, float))
+
+
+def test_harvest_probe_future_passes_through_successful_result():
+    """A resolved future's payload passes through verbatim; timing recorded."""
+    fut: Future = Future()
+    fut.set_result({"resolved": [1, 2, 3]})
+    timings: dict[str, float] = {}
+    ctx = _ProbeRunContext(timings=timings)
+    result = _harvest_probe_future(ctx, fut, 1.0, "always_on", "always_on")
+    assert result == {"resolved": [1, 2, 3]}
+    assert "always_on" in timings
+
+
+def test_harvest_probe_future_returns_none_on_timeout():
+    """A future that never resolves must NOT raise past the seam; it returns
+    None so the payload merge leaves the prior prefetched dict untouched."""
+    fut: Future = Future()  # never resolved -> times out under the budget below
+    timings: dict[str, float] = {}
+    ctx = _ProbeRunContext(timings=timings)
+    result = _harvest_probe_future(ctx, fut, 0.01, "always_on", "always_on")
+    fut.cancel()  # tidy the pending future
+    assert result is None
+    assert "always_on" in timings
+
+
+def test_harvest_probe_future_returns_none_on_exception():
+    """A probe that raised must NOT propagate — the seam isolates the failure
+    (swallow-log) and returns None, matching the None-on-failure contract."""
+    fut: Future = Future()
+    fut.set_exception(RuntimeError("probe blew up"))
+    timings: dict[str, float] = {}
+    ctx = _ProbeRunContext(timings=timings)
+    result = _harvest_probe_future(ctx, fut, 1.0, "l10_symbol_resolution", "l10")
+    assert result is None
+    assert "l10_symbol_resolution" in timings
 
 
 # ---- W44 I1 — conventions probe ----
