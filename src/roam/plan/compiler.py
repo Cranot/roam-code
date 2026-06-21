@@ -481,6 +481,14 @@ _API_SURFACE_RE = re.compile(
 # the target file and is central to API-surface envelopes.
 _API_SURFACE_EXPORT_RE = re.compile(r"(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)")
 
+# Optional-backtick identifier tokenizer: pulls candidate symbol names out of
+# free-form task text, tolerating a single surrounding backtick (`handleSave`
+# or handleSave). Shared by the three structural target extractors
+# (_extract_dead_target_symbol, _resolve_complexity_target,
+# _probe_test_impact_for_task) so the pattern compiles once at import instead
+# of being re-compiled on every findall call. {2,} drops 1-2 char noise.
+_OPTIONAL_BACKTICK_IDENT_RE = re.compile(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?")
+
 # W189 — stability markers for the api_surface probe. Hoisted to module
 # scope so the pattern compiles once at import instead of per probe call.
 _STABILITY_RE = re.compile(
@@ -2887,7 +2895,7 @@ def _extract_dead_target_symbol(task: str | None) -> str | None:
     ('find unused functions', 'unused exports') so those still get the full
     scan. Conservative: the token must be identifier-shaped (snake_case or
     camelCase) and not part of the dead-code question vocabulary."""
-    for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task or ""):
+    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task or ""):
         if tok.lower() in _DEAD_TARGET_STOPWORDS:
             continue
         if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
@@ -3610,7 +3618,7 @@ def _resolve_complexity_target(task: str | None, cwd: str | None):
     if not task:
         return None, None
     sym = None
-    for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task):
+    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task):
         if tok.lower() in _COMPLEXITY_TARGET_STOPWORDS:
             continue
         if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
@@ -5597,7 +5605,7 @@ def _probe_test_impact_for_task(task: str, named_paths: list[str], cwd: str | No
     # command. Tried FIRST because path-resolution often surfaces a TEST file
     # as named_paths[0], which would mis-target the file branch below.
     sym = None
-    for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task):
+    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task):
         if tok.lower() in _TEST_IMPACT_STOPWORDS:
             continue
         if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
