@@ -9764,25 +9764,40 @@ _DEP_ILLUSTRATIVE_KEYS = frozenset(
 _DEP_REF_FIELDS = ("path", "file", "location", "test_path", "src_path", "file_a", "file_b")
 
 
+def _dep_paths_from_mapping(m: dict):
+    """File-path references in a single mapping (a prefetched-facts dict value).
+
+    Scans `_DEP_REF_FIELDS`; each value that is a string containing `/` yields
+    its prefix before the first `:` (location strings carry `path:line:col`).
+    """
+    for f in _DEP_REF_FIELDS:
+        val = m.get(f)
+        if isinstance(val, str) and "/" in val:
+            yield val.split(":")[0]
+
+
+def _dep_paths_from_sequence(seq):
+    """File-path references in a sequence (a prefetched-facts list value).
+
+    Dict items delegate to `_dep_paths_from_mapping`; bare-string items with a
+    `/` yield as-is.
+    """
+    for item in seq:
+        if isinstance(item, dict):
+            yield from _dep_paths_from_mapping(item)
+        elif isinstance(item, str) and "/" in item:
+            yield item
+
+
 def _dep_paths_from_value(v) -> list[str]:
     """File-path references inside one prefetched-facts value (str / list / dict)."""
-    paths: list[str] = []
     if isinstance(v, str):
-        if "." in v and "/" in v:
-            paths.append(v)
-    elif isinstance(v, list):
-        for item in v:
-            if isinstance(item, dict):
-                for f in _DEP_REF_FIELDS:
-                    if isinstance(item.get(f), str) and "/" in item[f]:
-                        paths.append(item[f].split(":")[0])
-            elif isinstance(item, str) and "/" in item:
-                paths.append(item)
-    elif isinstance(v, dict):
-        for f in _DEP_REF_FIELDS:
-            if isinstance(v.get(f), str) and "/" in v[f]:
-                paths.append(v[f].split(":")[0])
-    return paths
+        return [v] if ("." in v and "/" in v) else []
+    if isinstance(v, list):
+        return list(_dep_paths_from_sequence(v))
+    if isinstance(v, dict):
+        return list(_dep_paths_from_mapping(v))
+    return []
 
 
 def _envelope_dep_files(plan: "PlanV0", env: dict, cwd: str | None) -> dict:

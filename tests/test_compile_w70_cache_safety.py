@@ -20,6 +20,9 @@ from roam.plan.compiler import (
     _HEAD_BY_CWD,
     _PLAN_CACHE,
     _RUN_ROAM_CACHE,
+    _dep_paths_from_mapping,
+    _dep_paths_from_sequence,
+    _dep_paths_from_value,
     _envelope_cache_lookup,
     _envelope_cache_store,
     _envelope_dep_files,
@@ -297,6 +300,46 @@ def test_w70_dep_files_extracts_from_prefetched_facts(tmp_path):
     deps = _envelope_dep_files(_MockPlan(), env, str(tmp_path))
     assert "src/x.py" not in deps, "file_excerpt is illustrative — W45 excludes it"
     assert "src/y.py" in deps, "structural_imports is answer-determining — keep it"
+
+
+def test_w70_dep_paths_from_value_each_branch(tmp_path):
+    """`_dep_paths_from_value` flattens str / list / dict prefetched-fact shapes.
+
+    Pins the contract of the three extracted generators so a new prefetched-fact
+    shape (or a refactor of the str/list/dict branches) can't silently drop a
+    dependency path. Location strings carry `path:line:col`; only the path is a dep.
+    """
+    # str branch: needs BOTH `.` and `/` (matches the historical loose heuristic).
+    assert _dep_paths_from_value("src/x.py") == ["src/x.py"]
+    assert _dep_paths_from_value("just-slash") == []
+    assert _dep_paths_from_value("has/d.ot") == ["has/d.ot"]
+
+    # list branch: dict items delegate to the mapping scan; bare strings yield as-is.
+    assert _dep_paths_from_value([{"path": "src/a.py"}]) == ["src/a.py"]
+    assert _dep_paths_from_value([{"path": "src/a.py:12:3"}]) == ["src/a.py"]
+    assert _dep_paths_from_value(["src/b.py"]) == ["src/b.py"]
+    # Order is preserved across dict + str items within one list.
+    assert _dep_paths_from_value([{"path": "z/1.py"}, "z/2.py", {"file": "z/3.py"}]) == [
+        "z/1.py",
+        "z/2.py",
+        "z/3.py",
+    ]
+    assert _dep_paths_from_value([]) == []
+
+    # dict branch: scans _DEP_REF_FIELDS; location prefix split; non-ref fields ignored.
+    assert _dep_paths_from_value({"path": "src/c.py:9"}) == ["src/c.py"]
+    assert _dep_paths_from_value({"content": "x"}) == []
+
+    # Non str/list/dict shapes degrade to no deps (never raise).
+    assert _dep_paths_from_value(None) == []
+    assert _dep_paths_from_value(42) == []
+
+    # The generators are lazy and reusable on their own.
+    assert list(_dep_paths_from_mapping({"path": "m/n.py"})) == ["m/n.py"]
+    assert list(_dep_paths_from_sequence([{"path": "s/t.py"}, "s/u.py"])) == [
+        "s/t.py",
+        "s/u.py",
+    ]
 
 
 # ---- Index-stamp invalidation (2026-06-11): re-index must bust the cache ----
