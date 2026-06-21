@@ -65,6 +65,79 @@ def test_w101_refactor_move_extracts_symbol_and_paths(monkeypatch):
     assert rm["callers_count"] == 1
 
 
+_CONSUMER_REPLY = {
+    "consumers": {
+        "call": [{"location": "x.py:1", "name": "caller1", "kind": "function", "scope": "production"}],
+        "import": [],
+    }
+}
+
+
+def test_w101_refactor_move_rejects_absolute_outside_repo_src(tmp_path, monkeypatch):
+    """Security: a task-controlled ABSOLUTE src_file (`/tmp/secret.py`) must NOT
+    be read into source_body — that would embed outside-repo content in the plan.
+
+    src_file comes straight off `_REFACTOR_MOVE_RE` (untrusted task text) and is
+    funneled through `_repo_contained_path` before `_embed_move_source_body`
+    reads it. An absolute source is contained to "" so nothing is read.
+    """
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "abs_secret.py"  # deliberately OUTSIDE the repo cwd
+    secret.write_text('def secret():\n    return "TOPSECRET-ABS"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    task = f"extract secret from {secret} to helpers.py"
+    result = _probe_refactor_move_for_task(task, cwd=str(repo))
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == ""  # contained — never opened
+    assert "source_body" not in rm
+    assert "TOPSECRET-ABS" not in repr(result)
+
+
+def test_w101_refactor_move_rejects_traversal_outside_repo_src(tmp_path, monkeypatch):
+    """Security: a `..`-traversal src_file (`../secret.py`) resolves OUTSIDE the
+    repo and must NOT be read into source_body."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "leaked.py"  # repo/../leaked.py lands here
+    secret.write_text('def secret():\n    return "TOPSECRET-DOTDOT"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    task = "extract secret from ../leaked.py to helpers.py"
+    result = _probe_refactor_move_for_task(task, cwd=str(repo))
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == ""  # contained — never opened
+    assert "source_body" not in rm
+    assert "TOPSECRET-DOTDOT" not in repr(result)
+
+
+def test_w101_refactor_move_embeds_inrepo_source_body(tmp_path, monkeypatch):
+    """Positive control: a legit IN-REPO src_file still embeds source_body, so
+    the containment fix does not regress the happy-path W163 embedding."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "origin.py").write_text('def my_func():\n    return "OK"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    result = _probe_refactor_move_for_task(
+        "move my_func from origin.py to helpers.py", cwd=str(repo)
+    )
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == "origin.py"
+    assert "source_body" in rm
+    assert "def my_func" in rm["source_body"]
+
+
 # ---- W102 API surface ----
 
 
