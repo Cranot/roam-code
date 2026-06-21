@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from roam.plan.compiler import _extract_file_paths, _likely_files_from_search
+from roam.plan.compiler import _extract_file_paths, _likely_files_from_search, _repo_contained_path
 
 
 @pytest.mark.parametrize(
@@ -169,3 +169,55 @@ def test_probe_module_name_returns_none_when_all_hits_forbidden(monkeypatch):
     )
     result = _c._probe_module_name_for_task("Refactor the auth module", [], cwd="/tmp/x")
     assert result is None
+
+
+# --- cwd-aware symlink containment ----------------------------------------
+# Lexical normalization (absolute / `..` / forbidden) is necessary but NOT
+# sufficient: a repo-tracked SYMLINK whose name passes every lexical rule
+# (`src/link.py -> /etc/passwd`) survives normalization, and the downstream
+# read/diff probes that open()/read_text() the os.path.join(cwd, name) then
+# follow the link OUTSIDE the repo. When cwd is supplied, the resolver must
+# realpath the candidate and reject anything that escapes the repo root.
+import os
+
+
+def _make_repo_with_escaping_symlink(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "passwd").write_text("SECRET")
+    # repo-tracked symlink that escapes the repo
+    os.symlink(outside / "passwd", repo / "src" / "link.py")
+    # in-repo real file + an in-repo symlink pointing at it (must be allowed)
+    (repo / "src" / "real.py").write_text("ok")
+    os.symlink(repo / "src" / "real.py", repo / "src" / "innerlink.py")
+    return repo
+
+
+def test_repo_contained_path_rejects_escaping_symlink(tmp_path):
+    repo = _make_repo_with_escaping_symlink(tmp_path)
+    # The lexical-only call (no cwd) cannot see the symlink — it passes,
+    # which is precisely the hole the cwd realpath check closes.
+    assert _repo_contained_path("src/link.py") == "src/link.py"
+    # With cwd, the realpath escapes the repo root → rejected.
+    assert _repo_contained_path("src/link.py", str(repo)) is None
+
+
+def test_repo_contained_path_allows_in_repo_paths_with_cwd(tmp_path):
+    repo = _make_repo_with_escaping_symlink(tmp_path)
+    # Real in-repo file, in-repo symlink, and a not-yet-existent in-repo path
+    # all stay contained — the check must not require existence (paths are
+    # extracted from task text before any probe reads them).
+    assert _repo_contained_path("src/real.py", str(repo)) == "src/real.py"
+    assert _repo_contained_path("src/innerlink.py", str(repo)) == "src/innerlink.py"
+    assert _repo_contained_path("src/not_created_yet.py", str(repo)) == "src/not_created_yet.py"
+
+
+def test_extract_file_paths_drops_escaping_symlink_with_cwd(tmp_path):
+    repo = _make_repo_with_escaping_symlink(tmp_path)
+    task = "summarize src/link.py and src/real.py"
+    # Text-only (no cwd) cannot resolve the symlink, so both pass.
+    assert _extract_file_paths(task) == ["src/link.py", "src/real.py"]
+    # cwd-aware: the escaping symlink is dropped, the real file survives.
+    assert _extract_file_paths(task, str(repo)) == ["src/real.py"]

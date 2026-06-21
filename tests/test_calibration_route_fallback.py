@@ -23,17 +23,11 @@ Adding `light` routes would be a separate behavior change, out of scope here.
 from __future__ import annotations
 
 from roam.plan.calibration import (
-    DEFAULT_TIER,
     CLAUDE_2026_05,
+    DEFAULT_TIER,
     get_profile,
 )
-from roam.plan.compiler import _ARTIFACT_POLICY, _L1_PROBE_ELIGIBLE
-
-
-# Classifier procedures the compiler knows about: every artifact-policy key
-# plus every L1-probe-eligible procedure. This is the universe that flows
-# through `route_for_plan -> _model -> profile.tier_for`.
-_CLASSIFIER_PROCEDURES = frozenset(_ARTIFACT_POLICY) | frozenset(_L1_PROBE_ELIGIBLE)
+from roam.plan.compiler import _L1_PROBE_ELIGIBLE, known_procedures
 
 # Procedures KNOWN to rely on the heavy fallback today (absent from the
 # validated profile's procedure_routes). Pinned so a new addition is a
@@ -72,6 +66,23 @@ def test_tier_for_respects_explicit_routes() -> None:
         assert CLAUDE_2026_05.tier_for(procedure) == tier
 
 
+def test_known_procedures_is_the_shared_universe() -> None:
+    """``known_procedures()`` is the single shared procedure universe.
+
+    It is the union of the two routing-relevant registry tables
+    (``_ARTIFACT_POLICY`` + ``_L1_PROBE_ELIGIBLE``) — the set that flows through
+    ``route_for_plan -> tier_for``. Pinned so a procedure added to either table
+    is automatically visible to every coverage audit instead of being
+    re-derived per call site.
+    """
+    universe = known_procedures()
+    assert isinstance(universe, frozenset)
+    assert set(_L1_PROBE_ELIGIBLE) <= universe
+    # The validated profile must not route a procedure the compiler never emits
+    # — a phantom route is dead config (a typo in procedure_routes).
+    assert set(CLAUDE_2026_05.procedure_routes) <= universe
+
+
 def test_no_unintended_fallback_procedures() -> None:
     """Lint: every classifier procedure absent from procedure_routes is acknowledged.
 
@@ -79,8 +90,13 @@ def test_no_unintended_fallback_procedures() -> None:
     without a routing decision. Either add a measured route to
     CLAUDE_2026_05.procedure_routes, or add the name to
     _EXPECTED_FALLBACK_PROCEDURES to record that heavy is intentional.
+
+    The procedure universe comes from the shared ``known_procedures()`` helper
+    via ``CalibrationProfile.unrouted_procedures`` — not reconstructed here — so
+    a procedure added to either routing-relevant registry table is automatically
+    visible to this coverage audit.
     """
-    actual_fallback = _CLASSIFIER_PROCEDURES - set(CLAUDE_2026_05.procedure_routes)
+    actual_fallback = CLAUDE_2026_05.unrouted_procedures()
     missing = actual_fallback - _EXPECTED_FALLBACK_PROCEDURES
     stale = _EXPECTED_FALLBACK_PROCEDURES - actual_fallback
     assert not missing, (
