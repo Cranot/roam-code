@@ -7512,9 +7512,13 @@ _PROBE_NEG_CAP = 512
 
 
 def _probe_neg_cache_key(label: str, task: str) -> tuple[str, str]:
-    import hashlib
-
-    return (label, hashlib.sha256(task.encode("utf-8", "replace")).hexdigest()[:12])
+    # Canonicalize the task before hashing — sister to the positive-cache
+    # keying (W129/W152) and the envelope/symbol-resolution caches. Raw
+    # task hashing made a formatting-only rephrase (case, trailing `?`,
+    # whitespace collapse) miss the cache and re-run the regex just to
+    # rediscover the same None and re-persist it.
+    canon = _canonicalize_task(task or "")
+    return (label, sha256(canon.encode("utf-8", "replace")).hexdigest()[:12])
 
 
 def _probe_neg_cached_miss(label: str, task: str) -> bool:
@@ -7554,6 +7558,15 @@ def _probe_neg_persist_ensure_schema(conn) -> None:
     _set_wal(conn)
 
 
+def _probe_neg_persist_key(label: str, task: str) -> str:
+    # Canonicalize before hashing (sister to _probe_neg_cache_key and the
+    # positive-cache keying). Without this, an equivalent prompt that only
+    # differs in case/punctuation/whitespace hashes to a distinct row, so
+    # the absent regex trigger is re-run and re-persisted across sessions.
+    canon = _canonicalize_task(task or "")
+    return sha256((label + "\x1f" + canon).encode("utf-8", "replace")).hexdigest()[:24]
+
+
 def _probe_neg_persist_get(label: str, task: str, cwd: str | None) -> bool:
     path = _run_roam_persist_path(cwd)
     if not path:
@@ -7566,7 +7579,7 @@ def _probe_neg_persist_get(label: str, task: str, cwd: str | None) -> bool:
             if path not in _PROBE_NEG_PERSIST_TABLE_INITED:
                 _probe_neg_persist_ensure_schema(conn)
                 _PROBE_NEG_PERSIST_TABLE_INITED.add(path)
-            key = sha256((label + "\x1f" + (task or "")).encode("utf-8", "replace")).hexdigest()[:24]
+            key = _probe_neg_persist_key(label, task)
             row = conn.execute(
                 "SELECT ts FROM probe_neg_cache WHERE key=?",
                 (key,),
@@ -7598,7 +7611,7 @@ def _probe_neg_persist_put(label: str, task: str, cwd: str | None) -> None:
             if path not in _PROBE_NEG_PERSIST_TABLE_INITED:
                 _probe_neg_persist_ensure_schema(conn)
                 _PROBE_NEG_PERSIST_TABLE_INITED.add(path)
-            key = sha256((label + "\x1f" + (task or "")).encode("utf-8", "replace")).hexdigest()[:24]
+            key = _probe_neg_persist_key(label, task)
             conn.execute(
                 "INSERT OR REPLACE INTO probe_neg_cache VALUES (?,?,?)",
                 (key, label, time.time()),
