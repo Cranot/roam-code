@@ -32,6 +32,16 @@ from roam.plan.compiler import (
 # probe, so it is intentionally absent from the diagnostic registry.
 _FALLBACK_PROCEDURES = {"freeform_explore"}
 
+# `structural_general` is a DIAGNOSTIC-ONLY signal, not a `_classify` winner.
+# `_STRUCTURAL_RE` is the broad alias built FROM every structural sub-type
+# pattern, so its probe reports "this task looks structural" in the explain
+# dump — but `_classify` never *returns* `structural_general`: the only
+# structural winners are the six specific sub-types in
+# `_STRUCTURAL_SUBTYPE_REGEXES`, and an otherwise-unmatched structural-ish task
+# falls through to `freeform_explore`. It is allowlisted so the reverse-direction
+# guard below treats it as intentional rather than stale.
+_DIAGNOSTIC_ONLY_SIGNALS = {"structural_general"}
+
 
 def _classify_return_literals() -> set[str]:
     """Every string literal `_classify` can `return` as the procedure name.
@@ -66,6 +76,33 @@ def test_every_classify_winner_has_a_diagnostic_probe():
         "These procedures can win in _classify but have no probe in "
         f"_CLASSIFIER_DIAGNOSTICS: {missing}. Add a ("
         "name, _diag_*) entry so `roam compile --explain` can mark the winner."
+    )
+
+
+def test_no_stale_diagnostic_probes():
+    """Reverse-direction lockstep: every registry key must be EITHER a real
+    `_classify` winner (literal return or structural sub-type) OR an explicitly
+    allowlisted diagnostic-only signal.
+
+    The forward guard (`test_every_classify_winner_has_a_diagnostic_probe`)
+    catches a NEW procedure added to `_classify` without a probe. This catches
+    the opposite drift: a probe left behind in `_CLASSIFIER_DIAGNOSTICS` after
+    its procedure was removed from `_classify`, which would make
+    `roam compile --explain` advertise a key that can never become the winner.
+    Together they make the "keep this list in lockstep" comment a two-way guard.
+    """
+    registry_keys = {name for name, _ in _CLASSIFIER_DIAGNOSTICS}
+
+    allowed = _classify_return_literals() - _FALLBACK_PROCEDURES
+    allowed |= {subtype for subtype, _ in _STRUCTURAL_SUBTYPE_REGEXES}
+    allowed |= _DIAGNOSTIC_ONLY_SIGNALS
+
+    stale = sorted(registry_keys - allowed)
+    assert not stale, (
+        "These _CLASSIFIER_DIAGNOSTICS keys are neither a _classify winner nor "
+        f"an allowlisted diagnostic-only signal: {stale}. Remove the stale probe "
+        "(its procedure left _classify) or, if it is an intentional non-winner "
+        "signal, add it to _DIAGNOSTIC_ONLY_SIGNALS with a rationale."
     )
 
 
