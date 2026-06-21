@@ -57,6 +57,7 @@ _TABLES = {
     "_PROBE_DISPATCH": lambda: set(C._PROBE_DISPATCH),
     "_PROCEDURE_PROBE_SKIPS": lambda: set(C._PROCEDURE_PROBE_SKIPS),
     "_ARTIFACT_POLICY": lambda: set(C._ARTIFACT_POLICY),
+    "_PROCEDURE_BASE_CONFIDENCE": lambda: set(C._PROCEDURE_BASE_CONFIDENCE),
     "_L1_PROBE_ELIGIBLE": lambda: set(C._L1_PROBE_ELIGIBLE),
     "_L1_TASK_TEXT_TARGET_PROCEDURES": lambda: set(C._L1_TASK_TEXT_TARGET_PROCEDURES),
     "_L1_PROCEDURE_KEYS": lambda: set(C._L1_PROCEDURE_KEYS),
@@ -81,6 +82,42 @@ def test_required_tables_cover_every_procedure():
         keys = _TABLES[required]()
         missing = CANONICAL_PROCEDURES - keys
         assert not missing, f"{required} is missing procedures: {sorted(missing)}"
+
+
+def test_classifier_confidence_has_explicit_bucket_per_procedure():
+    """Every non-structural canonical procedure must carry an EXPLICIT
+    confidence bucket in `_PROCEDURE_BASE_CONFIDENCE` — never a silent
+    fall-through to `_DEFAULT_PROCEDURE_CONFIDENCE`.
+
+    This pins the W-CONF asymmetry: `refactor_move` once had explicit
+    `_PER_PROCEDURE_CONF_THRESHOLD` + `_ARTIFACT_POLICY` rows yet no
+    confidence bucket, so it scored the 0.50 default while every sibling
+    procedure scored from an intentional bucket. structural_* is exempt —
+    its confidence is computed dynamically from subtype hit-count.
+    """
+    non_structural = {p for p in CANONICAL_PROCEDURES if not p.startswith("structural_")}
+    buckets = set(C._PROCEDURE_BASE_CONFIDENCE)
+    missing = non_structural - buckets
+    assert not missing, (
+        "non-structural procedures lack an explicit confidence bucket "
+        f"(silent 0.50 default): {sorted(missing)} — add them to "
+        "_PROCEDURE_BASE_CONFIDENCE."
+    )
+
+
+def test_classifier_confidence_buckets_are_valid_probabilities():
+    """Every bucket score must be a probability in [0, 1]."""
+    for proc, score in C._PROCEDURE_BASE_CONFIDENCE.items():
+        assert 0.0 <= score <= 1.0, f"{proc} bucket {score!r} not in [0, 1]"
+    assert 0.0 <= C._DEFAULT_PROCEDURE_CONFIDENCE <= 1.0
+
+
+def test_refactor_move_confidence_preserved_at_default():
+    """W-CONF preserved current scores: extraction must NOT change
+    refactor_move's behavior. It was 0.50 (the else default) before the
+    bucket existed; pin that until a deliberate retune wave moves it."""
+    assert C._PROCEDURE_BASE_CONFIDENCE["refactor_move"] == C._DEFAULT_PROCEDURE_CONFIDENCE
+    assert C._classifier_confidence("move open_db from a.py to b.py", "refactor_move") == 0.50
 
 
 def test_l1_eligible_procedures_have_promotion_keys():
