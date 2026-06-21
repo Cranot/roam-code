@@ -8485,6 +8485,12 @@ class PlanV0:
         if self.procedure == "trace_query":
             trace = _probe_trace_for_task(self.task, cwd)
             if trace:
+                # W201 — whole-payload trust boundary (mirrors the L1
+                # probe site). trace_spans embed repository-derived strings
+                # (symbol names + file paths a malicious repo controls);
+                # stamp the aggregate marker signal before assignment so
+                # the agent treats them as untrusted DATA.
+                _stamp_prefetched_injection_markers(trace)
                 plan_obj["prefetched_facts"] = trace
         return {
             "schema": "roam-plan-v0-lean",
@@ -8815,6 +8821,13 @@ class PlanV0:
             if "prefetched_facts" not in plan:
                 plan["prefetched_facts"] = {}
             plan["prefetched_facts"]["index_stale"] = newer_files
+        # W201 — whole-payload trust boundary (mirrors the L1 probe site).
+        # The facts-only path embeds repository-derived text (module-name
+        # glob resolution + stale-index file lists); stamp the aggregate
+        # marker signal on the FINAL payload so the agent treats it as
+        # untrusted DATA. No-op when prefetched_facts is absent/empty.
+        if plan.get("prefetched_facts"):
+            _stamp_prefetched_injection_markers(plan["prefetched_facts"])
         return {
             "schema": "roam-plan-v0-facts",
             "schema_version": self.plan_version,
