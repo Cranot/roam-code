@@ -8700,6 +8700,44 @@ def _timed_future_result(timings: dict, label: str, fn):
         timings[label] = (time.monotonic() - t0) * 1000.0
 
 
+@dataclass
+class _ProbeRunContext:
+    """Small per-probe-run context that bundles the state shared across every
+    future-harvest call inside one W128 parallel run: the per-section timing
+    recorder (`timings`) and the swallow-log namespace prefix. Lets
+    `_harvest_probe_future` take (ctx, fut, timeout, labels) instead of
+    threading `timings` plus a hand-built `compile.section.<x>` log string
+    through each submit site — the seam for probe-boundary changes collapses
+    into one place rather than being copied per probe."""
+
+    timings: dict
+    log_prefix: str = "compile.section"
+
+
+def _harvest_probe_future(
+    ctx: _ProbeRunContext, fut, timeout_s: float, timing_label: str, log_label: str
+):
+    """The single seam for harvesting a probe-future result.
+
+    Concentrates the four concerns the W128 scheduler used to interleave at
+    EACH submit site — (1) timeout bookkeeping, (2) exception isolation,
+    (3) per-section timing/cache recording, (4) the None-on-failure contract
+    the payload merge relies on — so probe-boundary changes (timeout policy,
+    exception logging, telemetry) edit HERE, not at every call site. Records
+    `timing_label` into `ctx.timings` unconditionally: a skipped probe still
+    stamps a near-zero timing (telemetry asserts every section appears even
+    when the probe was never submitted). Returns the future's result, or None
+    when there is no future, the timeout fires, or the probe raised; the
+    caller treats None as "no payload, leave the prior prefetched dict
+    untouched"."""
+
+    return _timed_future_result(
+        ctx.timings,
+        timing_label,
+        lambda: None if fut is None else _future_result_or_none(fut, timeout_s, f"{ctx.log_prefix}.{log_label}"),
+    )
+
+
 def _run_w128_parallel(proc, task, w77_high_conf, named_only, cwd, prefetched, timings):
     """W128 — fan the always_on extenders + L10 symbol resolution in parallel
     (independent IO → sum-of-two collapses to max-of-two). W88 skips L10 for
@@ -8707,7 +8745,12 @@ def _run_w128_parallel(proc, task, w77_high_conf, named_only, cwd, prefetched, t
     also skipped when the task names no backticked symbol — the probe returns
     None immediately then, so submitting its future would only pay thread
     scheduling + the in-worker regex for no value (the common L1 cache miss).
-    Merges the L10 result + records both section timings; returns updated prefetched."""
+    Merges the L10 result + records both section timings; returns updated prefetched.
+
+    Harvesting (timeout / exception / timing / None-contract) is delegated to
+    `_harvest_probe_future` via a `_ProbeRunContext`, so this function only
+    owns pool lifecycle + payload merge — probe-boundary edits no longer
+    touch it."""
     # Mirror _probe_l10_symbol_resolution's backtick gate BEFORE submitting: skip
     # the whole future rather than scheduling a worker to re-run this regex and
     # return None. Keep the `*` quantifier in sync with the probe so a
@@ -8718,22 +8761,19 @@ def _run_w128_parallel(proc, task, w77_high_conf, named_only, cwd, prefetched, t
     )
     from concurrent.futures import ThreadPoolExecutor
 
+    ctx = _ProbeRunContext(timings=timings)
     pool = ThreadPoolExecutor(max_workers=2)
     l10 = None
     try:
         ao_fut = pool.submit(_apply_always_on_extenders, proc, task, named_only, cwd, prefetched)
         l10_fut = None if skip_l10 else pool.submit(_probe_l10_symbol_resolution, task, cwd)
-        ao_result = _timed_future_result(
-            timings,
-            "always_on",
-            lambda: _future_result_or_none(ao_fut, _w128_always_on_timeout_s(), "compile.section.always_on"),
+        ao_result = _harvest_probe_future(
+            ctx, ao_fut, _w128_always_on_timeout_s(), "always_on", "always_on"
         )
         if ao_result is not None:
             prefetched = ao_result
-        l10 = _timed_future_result(
-            timings,
-            "l10_symbol_resolution",
-            lambda: None if l10_fut is None else _future_result_or_none(l10_fut, 20.0, "compile.section.l10"),
+        l10 = _harvest_probe_future(
+            ctx, l10_fut, 20.0, "l10_symbol_resolution", "l10"
         )
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
