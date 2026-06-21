@@ -10864,7 +10864,33 @@ def _rerank_likely_files(task: str, scored: list[tuple[str, float]], cwd: str | 
     return [p for p, _ in sorted(scored, key=blended, reverse=True)]
 
 
-def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tuple[list[str], bool]:
+_TASK_TEXT_NO_REPO_PROCEDURES: frozenset[str] = frozenset({
+    # Procedures that classify from task text alone and carry no file/symbol
+    # anchor the semantic likely-file fallback would resolve: session
+    # continuation, self-contained payloads, repo-level structure, rankings,
+    # CLI-verb perf, comparisons, entry-point/env lookups. Explicit path
+    # mentions are still honored (a "compare cli.py vs mcp_server.py" task
+    # still extracts both files), but on a cache miss these skip the
+    # `roam search-semantic` subprocess + rerank pass — the fallback only
+    # adds tangential noise + ~200ms for procedures that never need it.
+    "session_meta",
+    "self_contained_task",
+    "repo_structure",
+    "top_n_ranking",
+    "cli_verb_why_slow",
+    "compare_x_vs_y",
+    "entry_point_where",
+    "config_where",
+})
+
+
+def _likely_files_from_search(
+    task: str,
+    cwd: str | None,
+    top_n: int = 6,
+    *,
+    procedure: str | None = None,
+) -> tuple[list[str], bool]:
     """Hybrid: explicit path mentions first, then symbol-resolution cache,
     then `roam search-semantic` as the fallback.
 
@@ -10877,6 +10903,14 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     cache is keyed by canonical task text + repo_head, so trivial
     rephrasings (case, whitespace, smart quotes, trailing punctuation) share
     a row. Invalidated on HEAD change.
+
+    Task-text/no-repo procedures (`_TASK_TEXT_NO_REPO_PROCEDURES`): after
+    explicit-path extraction, skip the cache + semantic fallback entirely.
+    Classification already resolved these and they carry no symbol anchor the
+    fallback would improve, so on a cache miss this avoids the
+    `roam search-semantic` subprocess and the rerank pass. `procedure` is
+    keyword-only and defaults to None (callers that omit it get the prior
+    behavior), so existing direct callers are unaffected.
     """
     # W33c (M4): the second return value means "search subprocess WAS
     # invoked" (NOT "we have files"). On cache hit we return False — the
@@ -10886,6 +10920,12 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     if explicit:
         # Explicit paths in the task = high-confidence signal; skip search-semantic.
         return explicit[:top_n], False  # search NOT invoked
+
+    # Task-text/no-repo procedures need no likely-file fallback — they
+    # classify from the task alone. Honor any explicit mentions (handled
+    # above), then stop: no cache read, no `roam search-semantic`, no rerank.
+    if procedure in _TASK_TEXT_NO_REPO_PROCEDURES:
+        return [], False  # search NOT invoked
 
     # W57.5 — persistent symbol-resolution cache check before the subprocess.
     cached = _symbol_resolution_cache_lookup(task, cwd)
@@ -11042,7 +11082,9 @@ def compile_plan(task: str, cwd: str | None = None) -> PlanV0:
     procedure, rejected = _classify(task)
     # W33c: second value is now "search subprocess WAS invoked" (was: "we
     # have files"). Rename for clarity at the call site.
-    likely_files, search_invoked = _likely_files_from_search(task, cwd=cwd)
+    likely_files, search_invoked = _likely_files_from_search(
+        task, cwd=cwd, procedure=procedure
+    )
 
     # Required checks only matter for synthesis (the agent will write code
     # and the user wants to know how to verify). Other procedures don't use
