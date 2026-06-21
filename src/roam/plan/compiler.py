@@ -6598,29 +6598,30 @@ def _bug_site_target(cited_path: str, named_paths: list[str], cwd: str | None) -
     first named_path (a bare cited basename may already be resolved
     upstream). Returns (repo_relative_target, absolute_path) or None.
 
-    Paths under a forbidden/private prefix (``internal/**``, ``.env``,
-    ``.git/**``, ...) are rejected — embedding their source would serialize
-    private bug-site content into the compile envelope, contradicting the
-    same ``forbidden_paths`` set the envelope advertises as off-limits."""
-    import fnmatch
+    The cited path is regex-extracted from attacker-influenced task text
+    (a stack-frame match), so it is NOT normalized by the `_extract_file_paths`
+    pipeline that hardens `named_paths`. Funnel BOTH candidates through the
+    shared `_repo_contained_path` resolver before any `open()`:
+
+    - Absolute paths (`/etc/passwd.py`) bypass the cwd join entirely and read
+      outside the repo — rejected.
+    - `..`-traversal (`../../secret.py`) escapes the repo via the join —
+      rejected.
+    - Forbidden/private prefixes (``internal/**``, ``.env``, ``.git/**``, ...)
+      would serialize private bug-site content into the compile envelope,
+      contradicting the same ``forbidden_paths`` set the envelope advertises
+      as off-limits — rejected.
+
+    Returns (repo_relative_target, absolute_path) or None."""
     import os
 
     def _abs(p: str) -> str:
         return os.path.join(cwd, p) if cwd and not os.path.isabs(p) else p
 
-    def _is_forbidden(p: str) -> bool:
-        rel = p
-        if os.path.isabs(p) and cwd:
-            try:
-                rel = os.path.relpath(p, cwd)
-            except ValueError:  # different drive on Windows
-                rel = p
-        norm = os.path.normpath(rel).replace(os.sep, "/")
-        return any(fnmatch.fnmatch(norm, pat) for pat in _FORBIDDEN_PATHS_DEFAULT)
-
     for cand in (cited_path, *(named_paths[:1] if named_paths else ())):
-        if cand and os.path.exists(_abs(cand)) and not _is_forbidden(cand):
-            return cand, _abs(cand)
+        norm = _repo_contained_path(cand) if cand else None
+        if norm and os.path.exists(_abs(norm)):
+            return norm, _abs(norm)
     return None
 
 
