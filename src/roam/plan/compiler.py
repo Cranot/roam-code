@@ -4825,24 +4825,15 @@ def _probe_conventions_for_task(task: str, named_paths: list[str], cwd: str | No
     if not _CONVENTIONS_RE.search(task):
         return None
     import glob as _glob
+    import heapq
 
-    target_dir = os.path.dirname(named_paths[0]) if named_paths else "src"
-    base = cwd or "."
-    pattern = os.path.join(base, target_dir, "*.py")
-    matches = sorted(_glob.glob(pattern))
-    if not matches:
-        # W104 — fall back to recursive search one level deep when the
-        # target dir has no .py files directly (e.g. "src/" with only
-        # "src/roam/" inside). Avoids the W104-discovered hole where
-        # the probe silently returned None.
-        deep_pattern = os.path.join(base, target_dir, "**", "*.py")
-        matches = sorted(_glob.glob(deep_pattern, recursive=True))
-    if not matches:
-        return None
     # W104 — adaptive sample count. Short / simple tasks get just 1
     # sample (avoid the W100 t17 over-delivery: 3 samples → 6t vs vanilla
     # 2t). Longer / more nuanced tasks ("show me the canonical pattern
     # for X") get up to 3. Heuristic: task length + keyword density.
+    # Computed BEFORE globbing so the selection step can bound itself:
+    # generic conventions prompts default to `src` and can match
+    # thousands of .py files when we only read 1-3 of them.
     rich_signals = sum(
         1
         for w in ("canonical", "comprehensive", "examples", "patterns", "all", "every", "complete", "thorough")
@@ -4854,8 +4845,26 @@ def _probe_conventions_for_task(task: str, named_paths: list[str], cwd: str | No
         max_samples = 2
     else:
         max_samples = 1
+
+    target_dir = os.path.dirname(named_paths[0]) if named_paths else "src"
+    base = cwd or "."
+    pattern = os.path.join(base, target_dir, "*.py")
+    # Lazy bounded selection: heapq.nsmallest walks the iglob iterator and
+    # keeps only the k smallest paths in a fixed-size heap (k = max_samples,
+    # 1..3) — equivalent to ``sorted(glob.glob(pattern))[:max_samples]`` but
+    # O(n log k) with no full-list materialization or O(n log n) sort.
+    matches = heapq.nsmallest(max_samples, _glob.iglob(pattern))
+    if not matches:
+        # W104 — fall back to recursive search one level deep when the
+        # target dir has no .py files directly (e.g. "src/" with only
+        # "src/roam/" inside). Avoids the W104-discovered hole where
+        # the probe silently returned None.
+        deep_pattern = os.path.join(base, target_dir, "**", "*.py")
+        matches = heapq.nsmallest(max_samples, _glob.iglob(deep_pattern, recursive=True))
+    if not matches:
+        return None
     samples: list[dict] = []
-    for full in matches[:max_samples]:
+    for full in matches:
         rel = os.path.relpath(full, base) if cwd else full
         try:
             with open(full, encoding="utf-8", errors="replace") as fh:
