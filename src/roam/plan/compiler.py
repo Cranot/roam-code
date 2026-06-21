@@ -6916,14 +6916,19 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
     module = m.group(1) or m.group(2)
     if not module:
         return None
-    # Resolve the module WITHOUT executing its top-level code. The module
-    # name is captured from the (untrusted) task string, so `import {module}`
-    # would run arbitrary top-level code under the repo cwd — e.g. a task
-    # naming a module that matches an attacker-placed file in cwd. Instead
-    # resolve the spec with importlib.util.find_spec in an isolated
-    # interpreter (`-I` drops cwd/PYTHONPATH/user-site from sys.path), then
-    # re-add the project roots explicitly so project modules still resolve.
-    # find_spec never imports the leaf module's body the way `import` does.
+    # Resolve the module WITHOUT executing ANY top-level code — neither the
+    # leaf nor any parent package. The module name is captured from the
+    # (untrusted) task string, so `import {module}` would run arbitrary code
+    # under the repo cwd (e.g. a task naming a module that matches an
+    # attacker-placed file). find_spec in an isolated interpreter (`-I`
+    # drops cwd/PYTHONPATH/user-site from sys.path; we re-add the project
+    # roots so project modules still resolve) is the right primitive, BUT
+    # only for the top-level component: find_spec on a DOTTED name imports
+    # each intermediate parent package to read its __path__, executing those
+    # parents' top-level code. So we find_spec only the head (which has no
+    # parents and so executes nothing), then walk the remaining dotted parts
+    # by filesystem lookup over submodule_search_locations — never importing
+    # the leaf or any parent the way `import` does.
     probe_src = (
         "import importlib.util, sys, os\n"
         "root = os.getcwd()\n"
@@ -6931,13 +6936,29 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
         "    if p not in sys.path:\n"
         "        sys.path.insert(0, p)\n"
         "mod = sys.argv[1]\n"
+        "parts = mod.split('.')\n"
         "try:\n"
-        "    spec = importlib.util.find_spec(mod)\n"
+        "    cur = importlib.util.find_spec(parts[0])\n"
         "except (ImportError, ValueError, AttributeError, TypeError) as e:\n"
         "    print('FAILED', type(e).__name__ + ': ' + str(e)); sys.exit(1)\n"
-        "if spec is None:\n"
-        "    print('FAILED', 'No module named ' + repr(mod)); sys.exit(1)\n"
-        "print('OK', spec.origin or '<no-file>')\n"
+        "if cur is None:\n"
+        "    print('FAILED', 'No module named ' + repr(parts[0])); sys.exit(1)\n"
+        "for part in parts[1:]:\n"
+        "    next_origin, next_locs = None, None\n"
+        "    for base in (cur.submodule_search_locations or []):\n"
+        "        pkg = os.path.join(base, part, '__init__.py')\n"
+        "        sub = os.path.join(base, part + '.py')\n"
+        "        if os.path.isfile(pkg):\n"
+        "            next_origin, next_locs = pkg, [os.path.dirname(pkg)]\n"
+        "            break\n"
+        "        if os.path.isfile(sub):\n"
+        "            next_origin = sub\n"
+        "            break\n"
+        "    if next_origin is None:\n"
+        "        print('FAILED', 'No module named ' + repr(mod)); sys.exit(1)\n"
+        "    cur = importlib.util.spec_from_file_location(\n"
+        "        part, next_origin, submodule_search_locations=next_locs)\n"
+        "print('OK', cur.origin or '<no-file>')\n"
     )
     try:
         proc = subprocess.run(
