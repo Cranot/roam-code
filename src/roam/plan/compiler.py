@@ -50,6 +50,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
+from typing import NamedTuple
 
 
 def _set_wal(conn) -> None:
@@ -8813,181 +8814,186 @@ def select_artifact(plan: "PlanV0") -> str:
     return policy
 
 
-_L1_PROBE_ELIGIBLE = (
-    "structural_coupling",
-    "structural_callers",
-    "structural_dead",
-    "structural_blast",
-    "structural_complexity",
-    "structural_cycle",
-    "trace_query",
+# ---- Single source of truth for L1 per-procedure metadata ----
+#
+# Before this table existed, three hand-maintained sets (`_L1_PROBE_ELIGIBLE`,
+# `_L1_TASK_TEXT_TARGET_PROCEDURES`, `_L1_PROCEDURE_KEYS`) plus a FOURTH inline
+# copy of the keys map inside `compile_for_artifact` each had to be edited in
+# lockstep when a new regex route landed. They drifted: a route could classify
+# and pass CI yet silently miss its intended L1 envelope (e.g. the inline keys
+# copy had lost `bug_site_slice` from `freeform_explore`). Now every L1 fact is
+# declared ONCE here; the three public sets below are DERIVED so they cannot
+# disagree. `tests/test_procedure_registry_lint.py` reads the derived names.
+#
+# Per entry:
+#   keys              — prefetched-fact keys whose presence promotes the
+#                       envelope to `l1_probe` (vs degrading to `full`).
+#   task_text_target  — True when the L1 target is extracted from the task
+#                       text (no named_paths needed); see `_l1_has_target`.
+
+
+class _L1ProcedureMeta(NamedTuple):
+    keys: tuple[str, ...]
+    task_text_target: bool = False
+
+
+_L1_PROCEDURE_METADATA: dict[str, _L1ProcedureMeta] = {
+    "structural_coupling": _L1ProcedureMeta(
+        keys=(
+            "structural_imports",
+            "structural_imported_by_top",
+            "temporal_coupling_pairs",
+        ),
+    ),
+    "structural_callers": _L1ProcedureMeta(keys=("callers",)),
+    "structural_dead": _L1ProcedureMeta(keys=("unused_top_10", "target_symbol")),
+    "structural_blast": _L1ProcedureMeta(keys=("impact_top_files",)),
+    "structural_complexity": _L1ProcedureMeta(keys=("complexity_metrics",)),
+    "structural_cycle": _L1ProcedureMeta(keys=("cycles", "cycle_count")),
+    "trace_query": _L1ProcedureMeta(keys=("trace_spans",), task_text_target=True),
     # W34c (E2/E3): synthesis + freeform on named files now ship file skeleton.
-    "synthesis_query",
-    "freeform_explore",
-    # W-LIFT — describe-file ships the same file skeleton/summary probe; needs
-    # L1 eligibility or it silently degrades to a `full` no-probe envelope.
-    "describe_file",
+    "synthesis_query": _L1ProcedureMeta(
+        keys=(
+            "file_skeleton",
+            "sibling_test_excerpt",
+            "convention_samples",
+            "grep_results",
+        ),
+    ),
+    "freeform_explore": _L1ProcedureMeta(
+        keys=(
+            "symbol_definitions",
+            "resolved_entity",
+            "file_skeleton",
+            "file_excerpt",
+            "recent_commits",
+            "symbol_history",
+            "path_comparison",
+            "bug_site_slice",
+            "grep_results",
+            "convention_samples",
+            "resolved_named_paths_from_module_name",
+            "reachability",
+            "config_matches",
+            "semantic_matches",
+            "runtime_hotspots",
+            "runtime_hotspots_unavailable",
+            "entry_points",
+            "test_impact",
+            "refactor_move",
+            "api_surface",
+            "owners",
+            "env_vars_used",
+            "todo_items",
+            "deprecation_markers",
+            "subprocess_sites",
+            # Security taint scan + perf algo-catalog findings.
+            "taint_summary",
+            "algo_findings",
+            # World-model classifiers + design-pattern instances.
+            "world_model",
+            "design_patterns",
+        ),
+    ),
+    # W-LIFT — describe-file ships the file skeleton/summary probe; without
+    # L1 eligibility it silently degrades to a `full` no-probe envelope.
+    # W1-fix (2026-06-10) — describe_file's file/module NAME in the task text
+    # is the target, so a module-describe prompt in an index-less repo (DB
+    # resolver returns []) still runs the W45 filesystem module-name probe
+    # instead of skipping L1 and emitting an EMPTY envelope (caught by
+    # test_w45_c1_module_name_stitches_into_named_paths). The W45 stitch key
+    # must count as procedure data or the envelope downgrades and DROPS the
+    # resolution.
+    "describe_file": _L1ProcedureMeta(
+        keys=(
+            "file_skeleton",
+            "file_summary",
+            "full_file_body",
+            "file_excerpt",
+            "resolved_named_paths_from_module_name",
+        ),
+        task_text_target=True,
+    ),
     # W35a: stack-trace frames are extracted from the task text, not from
     # named_paths — eligibility handled specially in compile_for_artifact.
-    "stack_trace_fix",
+    "stack_trace_fix": _L1ProcedureMeta(
+        keys=("stack_frames", "import_audit", "grep_results"),
+        task_text_target=True,
+    ),
     # W181 — refactor_move added; W166 classifier returns it but L1
     # eligibility was missing, silently degrading the envelope.
-    "refactor_move",
-    # W11/W12/W13 — three new probe families need L1 eligibility
-    # so that when their probes fire (and return non-None data), the artifact
-    # is labelled `l1_probe` instead of `full`. Without this, the L1 fire-rate
-    # KPI under-counted by 46 calls in 2 days. See W22 → compiler-health
-    # alert "l1 fire rate 45% below 60% target" (the 2026-06-02 readings).
-    "symbol_defined_where",
-    "top_n_ranking",
-    "cli_verb_why_slow",
+    "refactor_move": _L1ProcedureMeta(keys=("refactor_move", "grep_results")),
+    # W11/W12/W13 — three new probe families need L1 eligibility so that when
+    # their probes fire (and return non-None data), the artifact is labelled
+    # `l1_probe` instead of `full`. Without this, the L1 fire-rate KPI
+    # under-counted by 46 calls in 2 days. See W22 → compiler-health alert
+    # "l1 fire rate 45% below 60% target" (the 2026-06-02 readings).
+    "symbol_defined_where": _L1ProcedureMeta(
+        keys=("symbol_definitions", "symbol_definitions_unavailable"),
+        task_text_target=True,
+    ),
+    "top_n_ranking": _L1ProcedureMeta(
+        keys=("top_n_ranking", "top_n_ranking_unavailable"),
+        task_text_target=True,
+    ),
+    "cli_verb_why_slow": _L1ProcedureMeta(
+        keys=(
+            "cli_verb_slow_diagnosis",
+            "cli_verb_subcommand",
+            "cli_verb_remediation",
+        ),
+        task_text_target=True,
+    ),
     # W28 — compare-X-vs-Y (2026-06-02): task-text-driven, no named_paths
-    # needed. The extractor pulls (X, Y) directly from the task.
-    "compare_x_vs_y",
+    # needed. The extractor pulls (X, Y) directly from the task. Either the
+    # result or the unavailable-remediation key signals probe data is present.
+    "compare_x_vs_y": _L1ProcedureMeta(
+        keys=("compare_x_vs_y_result", "compare_x_vs_y_unavailable"),
+        task_text_target=True,
+    ),
     # W-HIST (2026-06-09) — file-history needs L1 eligibility so the embedded
     # git log labels the artifact `l1_probe` instead of degrading to `full`.
-    "file_history",
+    "file_history": _L1ProcedureMeta(
+        keys=("file_recent_commits", "file_history_unavailable"),
+    ),
     # W-REPO (2026-06-09) — repo-structure is task-text-driven (no named
-    # paths); eligibility + the task-text-target set below.
-    "repo_structure",
-    # W-ENTRY / W-CFG (2026-06-09) — both task-text-driven.
-    "entry_point_where",
-    "config_where",
-    # W-META (2026-06-09) — continuation directives; brief embed.
-    "session_meta",
-    # W-BATCH (2026-06-09) — self-contained payloads; notice embed.
-    "self_contained_task",
-)
+    # paths); the dimension keyword in the task text IS the target.
+    "repo_structure": _L1ProcedureMeta(
+        keys=("repo_structure_result", "repo_structure_unavailable"),
+        task_text_target=True,
+    ),
+    # W-ENTRY / W-CFG (2026-06-09) — both task-text-driven; the intent
+    # keyword / config name IS the target.
+    "entry_point_where": _L1ProcedureMeta(
+        keys=("entry_points", "declared_entry_points", "entry_points_unavailable"),
+        task_text_target=True,
+    ),
+    "config_where": _L1ProcedureMeta(
+        keys=("config_matches", "config_matches_unavailable"),
+        task_text_target=True,
+    ),
+    # W-META (2026-06-09) — continuation directives; brief embed. The
+    # directive itself is the target.
+    "session_meta": _L1ProcedureMeta(
+        keys=("session_brief", "session_brief_unavailable"),
+        task_text_target=True,
+    ),
+    # W-BATCH (2026-06-09) — self-contained payloads; notice embed. The
+    # payload itself is the target.
+    "self_contained_task": _L1ProcedureMeta(
+        keys=("self_contained_notice",),
+        task_text_target=True,
+    ),
+}
 
 
+# Derived — DO NOT hand-edit. Add procedures to `_L1_PROCEDURE_METADATA` above.
+_L1_PROBE_ELIGIBLE: tuple[str, ...] = tuple(_L1_PROCEDURE_METADATA)
 _L1_TASK_TEXT_TARGET_PROCEDURES = frozenset(
-    {
-        "trace_query",
-        "stack_trace_fix",
-        "symbol_defined_where",
-        "top_n_ranking",
-        "cli_verb_why_slow",
-        "compare_x_vs_y",
-        # W1-fix (2026-06-10) — describe_file's file/module NAME in the task
-        # text is the target. Without this, a module-describe prompt in an
-        # index-less repo ("what does the thing module do" where the DB
-        # resolver returns []) skipped the L1 path entirely — so the W45
-        # filesystem module-name probe never ran and the envelope was EMPTY
-        # (caught by test_w45_c1_module_name_stitches_into_named_paths).
-        "describe_file",
-        # W-REPO — the dimension keyword in the task text IS the target.
-        "repo_structure",
-        # W-ENTRY / W-CFG — intent keyword / config name IS the target.
-        "entry_point_where",
-        "config_where",
-        # W-META — the directive itself is the target.
-        "session_meta",
-        # W-BATCH — the payload itself is the target.
-        "self_contained_task",
-    }
+    p for p, m in _L1_PROCEDURE_METADATA.items() if m.task_text_target
 )
-
-
 _L1_PROCEDURE_KEYS: dict[str, tuple[str, ...]] = {
-    "structural_coupling": (
-        "structural_imports",
-        "structural_imported_by_top",
-        "temporal_coupling_pairs",
-    ),
-    "structural_callers": ("callers",),
-    "structural_dead": ("unused_top_10", "target_symbol"),
-    "structural_blast": ("impact_top_files",),
-    "structural_complexity": ("complexity_metrics",),
-    "structural_cycle": ("cycles", "cycle_count"),
-    "trace_query": ("trace_spans",),
-    "symbol_defined_where": (
-        "symbol_definitions",
-        "symbol_definitions_unavailable",
-    ),
-    "top_n_ranking": ("top_n_ranking", "top_n_ranking_unavailable"),
-    "cli_verb_why_slow": (
-        "cli_verb_slow_diagnosis",
-        "cli_verb_subcommand",
-        "cli_verb_remediation",
-    ),
-    "compare_x_vs_y": (
-        "compare_x_vs_y_result",
-        "compare_x_vs_y_unavailable",
-    ),
-    "file_history": (
-        "file_recent_commits",
-        "file_history_unavailable",
-    ),
-    "repo_structure": (
-        "repo_structure_result",
-        "repo_structure_unavailable",
-    ),
-    "entry_point_where": (
-        "entry_points",
-        "declared_entry_points",
-        "entry_points_unavailable",
-    ),
-    "config_where": (
-        "config_matches",
-        "config_matches_unavailable",
-    ),
-    "session_meta": (
-        "session_brief",
-        "session_brief_unavailable",
-    ),
-    "self_contained_task": ("self_contained_notice",),
-    "synthesis_query": (
-        "file_skeleton",
-        "sibling_test_excerpt",
-        "convention_samples",
-        "grep_results",
-    ),
-    "freeform_explore": (
-        "symbol_definitions",
-        "resolved_entity",
-        "file_skeleton",
-        "file_excerpt",
-        "recent_commits",
-        "symbol_history",
-        "path_comparison",
-        "bug_site_slice",
-        "grep_results",
-        "convention_samples",
-        "resolved_named_paths_from_module_name",
-        "reachability",
-        "config_matches",
-        "semantic_matches",
-        "runtime_hotspots",
-        "runtime_hotspots_unavailable",
-        "entry_points",
-        "test_impact",
-        "refactor_move",
-        "api_surface",
-        "owners",
-        "env_vars_used",
-        "todo_items",
-        "deprecation_markers",
-        "subprocess_sites",
-        # Security taint scan + perf algo-catalog findings.
-        "taint_summary",
-        "algo_findings",
-        # World-model classifiers + design-pattern instances.
-        "world_model",
-        "design_patterns",
-    ),
-    "stack_trace_fix": ("stack_frames", "import_audit", "grep_results"),
-    "refactor_move": ("refactor_move", "grep_results"),
-    "describe_file": (
-        "file_skeleton",
-        "file_summary",
-        "full_file_body",
-        "file_excerpt",
-        # W1-fix (2026-06-10) — module-describe prompts in an index-less
-        # repo resolve via the W45 filesystem probe; its stitch key must
-        # count as procedure data or the envelope downgrades to "full"
-        # and DROPS the resolution.
-        "resolved_named_paths_from_module_name",
-    ),
+    p: m.keys for p, m in _L1_PROCEDURE_METADATA.items()
 }
 
 
@@ -9810,99 +9816,11 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
         probe_attempted = True
         env = plan.to_l1_probe_envelope(cwd=cwd)
         pre = env.get("plan", {}).get("prefetched_facts") or {}
-        procedure_keys = {
-            "structural_coupling": ("structural_imports", "structural_imported_by_top", "temporal_coupling_pairs"),
-            "structural_callers": ("callers",),
-            "structural_dead": ("unused_top_10", "target_symbol"),
-            "structural_blast": ("impact_top_files",),
-            "structural_complexity": ("complexity_metrics",),
-            "structural_cycle": ("cycles", "cycle_count"),
-            "trace_query": ("trace_spans",),
-            # W11/W12/W13 — procedure-specific probe keys so the
-            # L1 envelope recognizes that probe data is present and avoids
-            # falling back to "full". Without these, the existing
-            # `any(k in pre for k in procedure_keys[procedure])` test
-            # returned False and the envelope downgraded.
-            "symbol_defined_where": ("symbol_definitions", "symbol_definitions_unavailable"),
-            "top_n_ranking": ("top_n_ranking", "top_n_ranking_unavailable"),
-            "cli_verb_why_slow": ("cli_verb_slow_diagnosis", "cli_verb_subcommand", "cli_verb_remediation"),
-            # W28 — either the result or the unavailable-remediation key
-            # signals that probe data is present and L1 should fire.
-            "compare_x_vs_y": ("compare_x_vs_y_result", "compare_x_vs_y_unavailable"),
-            # W-HIST — embedded git log (or the explicit no-history answer).
-            "file_history": ("file_recent_commits", "file_history_unavailable"),
-            # W-REPO — embedded repo-scoped summary (or explicit degraded).
-            "repo_structure": ("repo_structure_result", "repo_structure_unavailable"),
-            # W-ENTRY / W-CFG — embedded probe data (or explicit degraded).
-            "entry_point_where": ("entry_points", "declared_entry_points", "entry_points_unavailable"),
-            "config_where": ("config_matches", "config_matches_unavailable"),
-            # W-META — embedded brief (or explicit degraded).
-            "session_meta": ("session_brief", "session_brief_unavailable"),
-            # W-BATCH — the zero-probe notice.
-            "self_contained_task": ("self_contained_notice",),
-            # W34c (E2/E3): file_skeleton is the procedure-specific key for
-            # synth + freeform L1 routing.
-            "synthesis_query": ("file_skeleton", "sibling_test_excerpt", "convention_samples", "grep_results"),
-            "freeform_explore": (
-                # W-ENTITY (2026-06-05) — a resolved identifier upgrades a
-                # no-file freeform prompt to l1_probe so the entity facts
-                # (def + body + references) reach the envelope instead of an
-                # empty one. Closes the ~49%-no-prefetch freeform population.
-                "symbol_definitions",
-                "resolved_entity",
-                "file_skeleton",
-                "file_excerpt",
-                "recent_commits",
-                "symbol_history",
-                "path_comparison",
-                "grep_results",  # W196 — grep-replication probe
-                # W44 I1/I2 — convention samples and module-name resolution
-                # are always-on but only freeform_explore consults the keys
-                # to decide L1 routing.
-                "convention_samples",
-                "resolved_named_paths_from_module_name",
-                # W48-W50 — reachability, config-by-name, semantic find.
-                "reachability",
-                "config_matches",
-                "semantic_matches",
-                # W66-W67 — runtime hotspots + entry-points.
-                "runtime_hotspots",
-                "runtime_hotspots_unavailable",
-                "entry_points",
-                # W80 — test-impact reverse map.
-                "test_impact",
-                # W101 — cross-file refactor impact.
-                "refactor_move",
-                # W102 — API surface scan.
-                "api_surface",
-                # W109-W113 — owner + env-vars + TODO + deprecation + subprocess.
-                "owners",
-                "env_vars_used",
-                "todo_items",
-                "deprecation_markers",
-                "subprocess_sites",
-                # Security taint scan + perf algo-catalog findings.
-                "taint_summary",
-                "algo_findings",
-                # World-model classifiers + design-pattern instances.
-                "world_model",
-                "design_patterns",
-            ),
-            "stack_trace_fix": ("stack_frames", "import_audit", "grep_results"),
-            "refactor_move": ("refactor_move", "grep_results"),  # W181 + W196
-            # W-LIFT — describe-file: the skeleton probe's keys signal that the
-            # file's structure/purpose is embedded, so L1 fires (not "full").
-            # W1-fix — the W45 module-name stitch key counts too (index-less
-            # repos resolve via filesystem, not the DB).
-            "describe_file": (
-                "file_skeleton",
-                "file_summary",
-                "full_file_body",
-                "file_excerpt",
-                "resolved_named_paths_from_module_name",
-            ),
-        }
-        required = procedure_keys.get(plan.procedure, ())
+        # Promotion keys come from the single `_L1_PROCEDURE_METADATA` source of
+        # truth (derived into `_L1_PROCEDURE_KEYS`). This used to be a fourth
+        # hand-maintained copy that silently drifted from the module-level map
+        # (it had lost `bug_site_slice` from freeform_explore).
+        required = _L1_PROCEDURE_KEYS.get(plan.procedure, ())
         if required and any(k in pre for k in required):
             return _emit(env, "l1_probe")
 
