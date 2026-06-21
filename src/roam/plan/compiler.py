@@ -4854,6 +4854,14 @@ def _probe_module_name_for_task(task: str, named_paths: list[str], cwd: str | No
                 candidates.append(rel)
         if candidates:
             break
+    # Funnel glob-resolved candidates through the single repo-contained
+    # resolver — parity with `_extract_file_paths` / `_likely_files_from_search`
+    # / `_resolve_bare_filenames`. The broad `src/**/*{name}*.py` pattern is
+    # task-text-driven, and these paths are stitched straight into named_paths
+    # (L1 probe + facts envelope) where they chain into the downstream read/diff
+    # probes that `open()` them; routing them here keeps the forbidden-path /
+    # repo-escape gate that every other extraction path honors.
+    candidates = [np for c in candidates if (np := _repo_contained_path(c))]
     if not candidates:
         return None
     return {
