@@ -8381,17 +8381,23 @@ _PROBE_TRIGGER_BY_LABEL: dict[str, "re.Pattern[str]"] = {
 
 @dataclass
 class ProbeCacheContext:
-    """Cache-keying context shared across every probe outcome in one compile.
+    """Probe-run context shared across the whole always-on pipeline of one compile.
 
-    Bundles the four values that key the in-memory (W129/W126) and persistent
-    (W152/W155) probe caches, so the probe→cache boundary carries one explicit
-    object instead of four positional args threaded through each probe.
+    Bundles the six values threaded through probe selection AND execution —
+    procedure, task, named_paths, cwd, head, and the mutable prefetched
+    accumulator — so selection and execution carry ONE explicit object instead
+    of re-passing six positional args at each cache boundary. task/named_paths/
+    cwd/head key the in-memory (W129/W126) and persistent (W152/W155) probe
+    caches; procedure selects which probes a route skips; prefetched is the
+    evolving merged-result dict mutated in place across selection → execution.
     """
 
+    procedure: str
     task: str
     named_paths: list[str]
     cwd: str | None
     head: str
+    prefetched: dict
 
 
 def _record_probe_positive(label: str, result: dict, ctx: ProbeCacheContext) -> None:
@@ -8410,31 +8416,68 @@ def _record_probe_negative(label: str, ctx: ProbeCacheContext) -> None:
         _probe_neg_persist_put(label, ctx.task, ctx.cwd)
 
 
-def _record_probe_outcome(label, result, ctx: ProbeCacheContext, prefetched):
-    """Merge a probe result into prefetched + record the pos/neg caches
-    (in-memory W129/W126 + persistent W152/W155). Returns updated prefetched.
+def _record_probe_outcome(label, result, ctx: ProbeCacheContext):
+    """Merge a probe result into ctx.prefetched + record the pos/neg caches
+    (in-memory W129/W126 + persistent W152/W155).
 
     The cache side effects are delegated to `_record_probe_positive` /
-    `_record_probe_negative` so the only mutable thread is `prefetched`."""
+    `_record_probe_negative` so the only mutable thread is `ctx.prefetched`."""
     if result:
-        prefetched = prefetched | result
+        ctx.prefetched = ctx.prefetched | result
         _record_probe_positive(label, result, ctx)
     else:
         _record_probe_negative(label, ctx)
-    return prefetched
 
 
-def _filter_runnable_probes(
-    procedure: str, task: str, named_paths: list[str], cwd: str | None, head: str, prefetched: dict
-):
+def _consume_positive_cache(
+    label: str, ctx: ProbeCacheContext, inmem_pos: dict[str, dict], pos_hits: dict[str, dict]
+) -> bool:
+    """Positive cache-storage policy for one label: if a cached positive result
+    exists (in-memory W129 then persistent W152), merge it into ctx.prefetched
+    and promote a persistent hit into the in-memory cache. Returns True when a
+    hit was consumed (the label should NOT run).
+
+    `_select_runnable_probes` calls this; the merge + record here is the whole
+    of the positive cache-storage policy, kept out of the run/skip decision so
+    the two concerns stay separate."""
+    cached = inmem_pos.get(label)
+    if cached is not None:
+        ctx.prefetched = ctx.prefetched | cached
+        return True
+    persisted = pos_hits.get(label)
+    if persisted is not None:
+        ctx.prefetched = ctx.prefetched | persisted
+        _probe_pos_record(label, ctx.task, ctx.named_paths, persisted)
+        return True
+    return False
+
+
+def _is_negative_cached(label: str, ctx: ProbeCacheContext, neg_hits: set[str]) -> bool:
+    """Negative cache-storage policy for one label: if the label is negatively
+    cached (in-memory W126 then persistent W155), promote a persistent hit into
+    the in-memory cache. Returns True when the label should be skipped (NOT run).
+
+    Mirrors `_consume_positive_cache` on the miss side; called only after no
+    positive hit was consumed, so the two never both record for one label."""
+    if _probe_neg_cached_miss(label, ctx.task):
+        return True
+    if label in neg_hits:
+        _probe_neg_record(label, ctx.task)
+        return True
+    return False
+
+
+def _select_runnable_probes(ctx: ProbeCacheContext) -> list[tuple[str, object]]:
     """W126/W129/W130/W152/W155 — harvest cached positive hits (in-memory then
-    persistent) and skip negative-cached / procedure-irrelevant probes. Returns
-    (runnable_probes, prefetched_with_cache_hits_merged).
+    persistent) and skip negative-cached / procedure-irrelevant probes, leaving
+    only the probes that must run. Mutates ctx.prefetched with the merged hits.
 
-    Persistent reads are batched: the per-label persistent pos/neg lookups used
-    to open up to 2·N SQLite connections per compile. They now go through a
-    single `_probe_persist_lookup_batch` connection for all candidate labels."""
-    skip_for_procedure = _PROCEDURE_PROBE_SKIPS.get(procedure, frozenset())
+    Runnable selection ONLY — the cache merge/record policy lives in
+    `_consume_positive_cache` / `_is_negative_cached`, so this body decides
+    run-vs-skip and nothing else. Persistent reads stay batched: one
+    `_probe_persist_lookup_batch` connection serves every candidate label
+    (was up to 2·N SQLite opens per compile)."""
+    skip_for_procedure = _PROCEDURE_PROBE_SKIPS.get(ctx.procedure, frozenset())
     # Pass 1 (in-memory only): resolve positive hits that need no disk read,
     # and collect the labels that still need a persistent lookup. The positive
     # data is merged in pass 2 to keep a single label-ordered merge.
@@ -8449,57 +8492,74 @@ def _filter_runnable_probes(
         # probes the body would never populate. `_PROBE_TRIGGER_BY_LABEL`
         # only lists labels whose trigger is exact (no-match => None).
         trigger = _PROBE_TRIGGER_BY_LABEL.get(label)
-        if trigger is not None and not trigger.search(task):
+        if trigger is not None and not trigger.search(ctx.task):
             continue
-        cached = _probe_pos_cached_hit(label, task, named_paths)
+        cached = _probe_pos_cached_hit(label, ctx.task, ctx.named_paths)
         if cached is not None:
             inmem_pos[label] = cached
         else:
             candidates.append(label)
     # ONE connection serves both the persistent positive and negative reads
     # for every candidate label. Empty (and no-op) when cwd is unset.
-    pos_hits, neg_hits = _probe_persist_lookup_batch(candidates, task, named_paths, cwd, head)
+    pos_hits, neg_hits = _probe_persist_lookup_batch(
+        candidates, ctx.task, ctx.named_paths, ctx.cwd, ctx.head
+    )
     # Pass 2: settle every label in iteration order — merges stay ordered so
-    # prefetched matches the prior per-label behavior exactly.
+    # prefetched matches the prior per-label behavior exactly. The loop body
+    # is pure runnable selection; all cache merge/record policy is in the two
+    # named helpers above.
     runnable: list[tuple[str, object]] = []
     for label, fn in _L1_ALWAYS_ON_PROBES:
         if label in skip_for_procedure:
             continue
-        cached = inmem_pos.get(label)
-        if cached is not None:
-            prefetched = prefetched | cached
+        if _consume_positive_cache(label, ctx, inmem_pos, pos_hits):
             continue
-        persisted = pos_hits.get(label)
-        if persisted is not None:
-            prefetched = prefetched | persisted
-            _probe_pos_record(label, task, named_paths, persisted)
-            continue
-        if _probe_neg_cached_miss(label, task):
-            continue
-        if label in neg_hits:
-            _probe_neg_record(label, task)
+        if _is_negative_cached(label, ctx, neg_hits):
             continue
         runnable.append((label, fn))
-    return runnable, prefetched
+    return runnable
 
 
-def _run_always_on_probes(runnable_probes, task, named_paths, cwd, procedure, prefetched, head):
+def _filter_runnable_probes(
+    procedure: str, task: str, named_paths: list[str], cwd: str | None, head: str, prefetched: dict
+):
+    """Public test-pinned entry over `_select_runnable_probes`: build the shared
+    probe-run context, run selection, and return (runnable_probes,
+    prefetched_with_cache_hits_merged). The positional signature is preserved so
+    `tests/test_probe_persist_batch.py` can drive the batched-cache path
+    end-to-end without knowing about ProbeCacheContext."""
+    ctx = ProbeCacheContext(
+        procedure=procedure,
+        task=task,
+        named_paths=named_paths,
+        cwd=cwd,
+        head=head,
+        prefetched=prefetched,
+    )
+    runnable = _select_runnable_probes(ctx)
+    return runnable, ctx.prefetched
+
+
+def _run_always_on_probes(ctx: ProbeCacheContext, runnable_probes):
     """W42 — run the runnable always-on probes in parallel under a total wall
     budget (default 2500ms); `as_completed(timeout=budget)` stops waiting on a
     blocker, `shutdown(wait=False)` avoids re-blocking on a runaway thread.
-    Merges results + records pos/neg caches. Returns updated prefetched."""
+    Merges results + records pos/neg caches against ctx. Returns ctx.prefetched."""
     import time as _t
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from concurrent.futures import TimeoutError as _CFTimeout
 
     budget_s = _W42_ALWAYS_ON_BUDGET_MS / 1000.0
     start = _t.monotonic()
-    # Build the cache-keying context once — task/named_paths/cwd/head are
-    # loop-invariant, so every probe outcome records against the same context.
-    cache_ctx = ProbeCacheContext(task=task, named_paths=named_paths, cwd=cwd, head=head)
+    # ctx is the one probe-run context threaded in from selection;
+    # task/named_paths/cwd/procedure are loop-invariant, so every probe outcome
+    # records + merges against the same ctx.prefetched.
     pool = ThreadPoolExecutor(max_workers=min(6, len(runnable_probes)))
     try:
-        label_for: dict = {pool.submit(fn, task, named_paths, cwd, procedure): label for label, fn in runnable_probes}
+        label_for: dict = {
+            pool.submit(fn, ctx.task, ctx.named_paths, ctx.cwd, ctx.procedure): label
+            for label, fn in runnable_probes
+        }
         pending = set(label_for.keys())
         try:
             for fut in as_completed(label_for, timeout=budget_s):
@@ -8512,7 +8572,7 @@ def _run_always_on_probes(runnable_probes, task, named_paths, cwd, procedure, pr
                 except Exception as exc:  # noqa: BLE001
                     log_swallowed(f"compile.always_on.{label}", exc)
                     continue
-                prefetched = _record_probe_outcome(label, result, cache_ctx, prefetched)
+                _record_probe_outcome(label, result, ctx)
         except _CFTimeout:
             for prem in pending:
                 prem.cancel()
@@ -8521,7 +8581,7 @@ def _run_always_on_probes(runnable_probes, task, named_paths, cwd, procedure, pr
             )
     finally:
         pool.shutdown(wait=False)
-    return prefetched
+    return ctx.prefetched
 
 
 def _apply_always_on_extenders(
@@ -8543,10 +8603,20 @@ def _apply_always_on_extenders(
             head = _memoized_head(cwd) or ""
         except Exception:  # noqa: BLE001
             head = ""
-    runnable, prefetched = _filter_runnable_probes(procedure, task, named_paths, cwd, head, prefetched)
+    # One probe-run context threads selection → execution so prefetched evolves
+    # in place across both phases instead of being passed out and back in.
+    ctx = ProbeCacheContext(
+        procedure=procedure,
+        task=task,
+        named_paths=named_paths,
+        cwd=cwd,
+        head=head,
+        prefetched=prefetched,
+    )
+    runnable = _select_runnable_probes(ctx)
     if not runnable:
-        return prefetched
-    return _run_always_on_probes(runnable, task, named_paths, cwd, procedure, prefetched, head)
+        return ctx.prefetched
+    return _run_always_on_probes(ctx, runnable)
 
 
 # W42: total wall budget across all always_on probes per call.
