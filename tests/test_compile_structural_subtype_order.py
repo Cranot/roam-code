@@ -10,9 +10,9 @@ other without an obvious route failure. These tests pin that invariant.
 
 from __future__ import annotations
 
-import roam.plan.compiler as compiler
 from roam.plan.compiler import (
     _STRUCTURAL_SUBTYPE_REGEXES,
+    _classifier_confidence,
     _classify_structural_subtype,
 )
 
@@ -59,9 +59,31 @@ def test_non_structural_task_returns_none():
     assert _classify_structural_subtype("write a haiku about the sea") is None
 
 
-def test_confidence_and_router_share_one_tuple_object():
-    # No second copy exists: the module exposes exactly one tuple, and both
-    # consumers reference it by name. Identity check guards against a future
-    # edit re-introducing a duplicate literal.
-    assert _STRUCTURAL_SUBTYPE_REGEXES is compiler._STRUCTURAL_SUBTYPE_REGEXES
-    assert len(_STRUCTURAL_SUBTYPE_REGEXES) == len(EXPECTED_ORDER)
+def test_confidence_hit_count_derives_from_the_shared_tuple():
+    # The real drift guard. `_classifier_confidence` must count structural
+    # matches from the SAME tuple the router scans — not an independent copy.
+    # Observable signature of that: as more shared-tuple regexes match a task,
+    # the structural confidence score must drop monotonically. If a future edit
+    # re-introduces a private subtype list inside confidence (the historical
+    # bug these tests exist to prevent), the monotonic drop breaks and turns
+    # silent drift into an obvious failure. Buckets are intentionally not
+    # pinned — only the monotonic relation to the shared-tuple hit count is.
+    one_hit = "find the dead code in this module"
+    two_hit = "strongest coupling to parse.py and who calls it"
+    many_hit = "blast radius of the import cycles in the dead code"
+
+    def _shared_hits(task: str) -> int:
+        return sum(1 for _, rgx in _STRUCTURAL_SUBTYPE_REGEXES if rgx.search(task))
+
+    # Sanity: the probes really do hit 1 / 2 / 3+ shared-tuple regexes, so a
+    # monotonic score drop can only come from confidence reading this tuple.
+    assert _shared_hits(one_hit) == 1
+    assert _shared_hits(two_hit) == 2
+    assert _shared_hits(many_hit) >= 3
+
+    s_one = _classifier_confidence(one_hit, "structural_dead")
+    s_two = _classifier_confidence(two_hit, "structural_dead")
+    s_many = _classifier_confidence(many_hit, "structural_dead")
+    assert s_one > s_two > s_many, (
+        f"confidence must drop as shared-tuple hits rise; got {s_one} > {s_two} > {s_many}"
+    )
