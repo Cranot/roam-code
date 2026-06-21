@@ -47,10 +47,12 @@ def test_fixed_options_precede_the_separator(monkeypatch):
     args = seen["args"]
 
     # subcommand is first; every fixed option sits before `--`.
+    # `--fixed-string` pins W196 literal-mode: _extract_grep_patterns yields
+    # literal task mentions, so the engine must not widen them via regex.
     assert args[0] == "grep"
     dd = args.index("--")
     head = args[:dd]
-    assert "-n" in head and "--source-only" in head
+    assert "-n" in head and "--source-only" in head and "--fixed-string" in head
 
 
 def test_leading_dash_pattern_is_not_an_option(monkeypatch):
