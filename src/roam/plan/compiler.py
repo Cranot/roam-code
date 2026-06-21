@@ -4903,8 +4903,11 @@ def _probe_config_for_task(task: str, cwd: str | None) -> dict | None:
     name = (m.group(3) or m.group(6) or "").strip()
     if not name or len(name) < 2:
         return None
-    # Run `roam grep` for the name; cheap, indexed search.
-    d = _run_roam(["grep", name], cwd)
+    # Run `roam grep` for the name; cheap, indexed search. Pass `--` before the
+    # (task-derived, untrusted) name so a literal like `--patterns-from=/etc/passwd`
+    # is searched for literally rather than parsed by Click as an option that
+    # reads an attacker-named local file.
+    d = _run_roam(["grep", "--", name], cwd)
     if not d:
         return None
     matches = (d.get("matches") or d.get("results") or [])[:10]
