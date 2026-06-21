@@ -23,7 +23,7 @@ def test_likely_files_from_search_uses_dashdash(monkeypatch):
     task = "--backend=onnx where does authentication happen"
     captured: list[list[str]] = []
 
-    monkeypatch.setattr(compiler, "_extract_file_paths", lambda t: [])
+    monkeypatch.setattr(compiler, "_extract_file_paths", lambda t, cwd=None: [])
     monkeypatch.setattr(compiler, "_symbol_resolution_cache_lookup", lambda t, c: None)
     monkeypatch.setattr(compiler, "_symbol_resolution_cache_store", lambda *a, **k: None)
 
