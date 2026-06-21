@@ -9152,6 +9152,23 @@ _L1_PROCEDURE_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
+def known_procedures() -> frozenset[str]:
+    """The universe of procedures the static compiler knows about.
+
+    Every procedure key across the routing-relevant registry tables:
+    ``_ARTIFACT_POLICY`` (artifact selection) unioned with ``_L1_PROBE_ELIGIBLE``
+    (the L1-probe families derived from ``_L1_PROCEDURE_METADATA``). This is the
+    set that flows through ``route_for_plan -> _model -> profile.tier_for`` — any
+    procedure a classifier can emit must be known here, or it silently inherits
+    the calibration profile's ``DEFAULT_TIER``.
+
+    Shared (not reconstructed at each call site) so calibration profiles audit
+    their own route coverage against the compiler's true universe instead of
+    re-deriving it. See ``CalibrationProfile.unrouted_procedures``.
+    """
+    return frozenset(_ARTIFACT_POLICY) | frozenset(_L1_PROBE_ELIGIBLE)
+
+
 def _l1_has_target(plan: "PlanV0") -> bool:
     return bool(plan.likely_files) or plan.procedure in _L1_TASK_TEXT_TARGET_PROCEDURES
 
