@@ -133,26 +133,37 @@ _STRUCTURAL_COUPLING_RE = re.compile(
 )
 
 
+# Ordered structural subtypes — the SINGLE source of truth for both the
+# first-match-wins routing scan in `_classify_structural_subtype` AND the
+# confidence hit-count in `_classifier_confidence` (defined far below). Both
+# loop over THIS tuple so a regex inserted here can never drift between the
+# route order and the confidence count — the historical bug was two
+# independently-maintained copies of this order.
+#
+# Order is significant: most-specific intent first. coupling precedes
+# blast/callers (v0.3) so a compound task like "highest structural coupling
+# (most callers / largest blast radius)" routes to coupling — the
+# authoritative intent — instead of latching on the first secondary signal.
+_STRUCTURAL_SUBTYPE_REGEXES = (
+    ("structural_dead", _STRUCTURAL_DEAD_RE),
+    ("structural_cycle", _STRUCTURAL_CYCLE_RE),
+    ("structural_complexity", _STRUCTURAL_COMPLEXITY_RE),
+    ("structural_coupling", _STRUCTURAL_COUPLING_RE),
+    ("structural_blast", _STRUCTURAL_BLAST_RE),
+    ("structural_callers", _STRUCTURAL_CALLERS_RE),
+)
+
+
 def _classify_structural_subtype(task: str) -> str | None:
     """Most-specific structural intent. None if not a structural query.
 
-    v0.3: coupling moved BEFORE blast/callers so compound tasks like
-    "highest structural coupling (most callers / largest blast radius)"
-    route to coupling — the authoritative intent — instead of latching
-    on the first secondary signal.
+    Scans `_STRUCTURAL_SUBTYPE_REGEXES` in order and returns the first
+    match — the ordered tuple is shared with `_classifier_confidence` so the
+    two can never diverge on which subtypes exist or their precedence.
     """
-    if _STRUCTURAL_DEAD_RE.search(task):
-        return "structural_dead"
-    if _STRUCTURAL_CYCLE_RE.search(task):
-        return "structural_cycle"
-    if _STRUCTURAL_COMPLEXITY_RE.search(task):
-        return "structural_complexity"
-    if _STRUCTURAL_COUPLING_RE.search(task):
-        return "structural_coupling"
-    if _STRUCTURAL_BLAST_RE.search(task):
-        return "structural_blast"
-    if _STRUCTURAL_CALLERS_RE.search(task):
-        return "structural_callers"
+    for subtype, regex in _STRUCTURAL_SUBTYPE_REGEXES:
+        if regex.search(task):
+            return subtype
     return None
 
 
@@ -1429,17 +1440,9 @@ _W12_DIMENSION_MAP: dict[str, str] = {
 #    classification is correct, R10 wins. When wrong (vue01 misclassified
 #    as freeform), R10 LOSES MORE than the generic contract."
 # Confidence gates specialized policy application — fall back to safe
-# generic when the regex match was thin/ambiguous.
-_STRUCTURAL_SUBTYPE_REGEXES = (
-    ("structural_dead", _STRUCTURAL_DEAD_RE),
-    ("structural_cycle", _STRUCTURAL_CYCLE_RE),
-    ("structural_complexity", _STRUCTURAL_COMPLEXITY_RE),
-    ("structural_coupling", _STRUCTURAL_COUPLING_RE),
-    ("structural_blast", _STRUCTURAL_BLAST_RE),
-    ("structural_callers", _STRUCTURAL_CALLERS_RE),
-)
-
-
+# generic when the regex match was thin/ambiguous. The hit-count below reuses
+# `_STRUCTURAL_SUBTYPE_REGEXES` (defined near `_classify_structural_subtype`,
+# the routing source of truth) so confidence and routing share one ordering.
 def _classifier_confidence(task: str, procedure: str) -> float:
     """Confidence in the classifier's procedure choice on 0..1.
 
