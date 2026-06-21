@@ -699,6 +699,16 @@ _COMPARE_X_VS_Y_RE = re.compile(
 )
 
 
+# Shared compiled backtick-identifier extractors. `_BACKTICK_IDENT_RE` admits
+# single-char symbols (`` `x` ``) — used by the L10 symbol-resolution prefetch
+# (_probe_l10_symbol_resolution, a high-value always-on path) and the batch-search
+# starter. The stricter `_FREEFORM_BACKTICK_IDENT_RE` (2+ chars, defined further
+# down near _extract_freeform_identifiers) backs the remaining backtick probes.
+# Both replace inline `re.findall(r"`...`", task)` literals that were duplicated
+# across every backtick symbol probe.
+_BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`")
+
+
 def _extract_stack_frames(task: str) -> list[tuple[str, int]]:
     """W35a — return all (file, line_int) tuples present in the task text."""
     frames: list[tuple[str, int]] = []
@@ -2491,7 +2501,7 @@ def _probe_l10_symbol_resolution(task: str, cwd: str | None) -> dict | None:
     Cheap and always-safe — only adds cost if backticked symbol is found.
     Returns dict for `resolved_symbols` envelope key, or None.
     """
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", task)
+    backticked = _BACKTICK_IDENT_RE.findall(task)
     if not backticked:
         return None
     # Order-preserving dedupe: a symbol named N times is resolved once, not N
@@ -4491,7 +4501,7 @@ def _extract_test_target_function(task: str) -> str | None:
 
     Backticked symbols win when present.
     """
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    backticked = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     if backticked:
         return backticked[0]
     m = re.search(r"\bcovering\s+([a-zA-Z_][a-zA-Z0-9_]+)", task, re.IGNORECASE)
@@ -4983,7 +4993,7 @@ def _probe_reachability_for_task(task: str, cwd: str | None) -> dict | None:
     """
     if not _REACHABILITY_RE.search(task):
         return None
-    syms = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    syms = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     if len(syms) < 2:
         return None
     source, target = syms[0], syms[1]
@@ -6232,7 +6242,7 @@ def _probe_coupling_backtick_for_task(task: str, cwd: str | None) -> dict | None
     `roam search-symbol`, then runs the standard coupling probe on
     that file.
     """
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    backticked = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     if not backticked:
         return None
     sym = backticked[0]
@@ -6276,7 +6286,7 @@ def _probe_blast_backtick_for_task(task: str, cwd: str | None) -> dict | None:
     blast probe finds no named_paths and skips. This wrapper runs
     `roam impact <symbol>` and embeds the affected file set.
     """
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    backticked = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     if not backticked:
         return None
     sym = backticked[0]
@@ -6306,7 +6316,7 @@ def _probe_callers_backtick_for_task(task: str, cwd: str | None) -> dict | None:
     and skips. This wrapper extracts the first backticked identifier
     and runs `roam uses <symbol>`.
     """
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    backticked = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     sym = backticked[0] if backticked else _extract_bare_callers_symbol(task)
     if not sym:
         return None
@@ -6422,7 +6432,7 @@ def _probe_symbol_pickaxe_for_task(task: str, cwd: str | None) -> dict | None:
     """
     if not _SYMBOL_PICKAXE_RE.search(task):
         return None
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]+)`", task)
+    backticked = _FREEFORM_BACKTICK_IDENT_RE.findall(task)
     if not backticked:
         return None
     import subprocess
@@ -7000,7 +7010,7 @@ def _maybe_batch_search_starter(task: str, named_paths: list[str]) -> str | None
     snake_case identifiers in backticks or as "X function" / "X method").
     """
     # Conservative — just count named paths + backtick-quoted identifiers.
-    backticked = re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", task)
+    backticked = _BACKTICK_IDENT_RE.findall(task)
     total = len(named_paths) + len(backticked)
     if total >= _BATCH_SEARCH_THRESHOLD:
         targets = (named_paths + backticked)[:10]
