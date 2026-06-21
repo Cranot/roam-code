@@ -112,6 +112,23 @@ CLAUDE_2026_05 = CalibrationProfile(
         # Freeform + trace work on light with 3-step+few-shot
         "freeform_explore": "light",
         "trace_query": "light",
+        # L1 probe-answer procedures (W11/W12/W13/W28) → light. These are the
+        # task-text-only probe families where, when the probe fires, the
+        # envelope ALREADY contains the answer — a definition location
+        # (W11), a top-N ranking (W12), a pre-computed slow-diagnosis +
+        # remediation (W13), or a compare-result (W28). The model's job is to
+        # render the embedded result, the same shape as the structural_* light
+        # routes above. `route_for_plan` consults this tier only after
+        # `_l1_has_procedure_data` returns True, so `light` takes effect ONLY
+        # on a successful probe; an empty probe still falls through to the
+        # heavy FC-R9 path. Without these explicit routes the four families
+        # defaulted to `heavy` (DEFAULT_TIER), paying Sonnet to restate an
+        # answer the probe had already computed. See AGENTS.md "Compiler
+        # classifier procedures added this wave".
+        "symbol_defined_where": "light",
+        "top_n_ranking": "light",
+        "cli_verb_why_slow": "light",
+        "compare_x_vs_y": "light",
         # Synthesis genuinely needs heavy (P120: behavioral reasoning is model-sensitive)
         "synthesis_query": "heavy",
     },
