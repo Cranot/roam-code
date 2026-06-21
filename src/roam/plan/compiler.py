@@ -758,13 +758,20 @@ def _classify(task: str) -> tuple[str, list[str]]:
         return "refactor_move", rejected
     if _SYNTHESIS_RE.search(task):
         return "synthesis_query", rejected
+    # Compute the structural subtype ONCE here and reuse it for the top_n /
+    # compare arbitration AND the final structural winner below. The helper
+    # is a pure function of `task`, so a single evaluation keeps the three
+    # call sites consistent — any future contextual guard added to the
+    # helper can't make the arbitration "rejected" reasons disagree with the
+    # route actually taken (which a recompute could).
+    sub = _classify_structural_subtype(task)
     # W12 — top-N ranking. Checked BEFORE structural subtype because
     # "top 5 most-imported files" matches BOTH _is_top_n_ranking AND
     # `structural_coupling` regex; the ranking intent is the more
     # specific signal and should win. Only fires when a recognised
     # ranking DIMENSION is present.
     if _is_top_n_ranking(task):
-        if _classify_structural_subtype(task):
+        if sub:
             rejected.append("structural_subtype: top_n_ranking is more specific")
         return "top_n_ranking", rejected
     # W28 — compare-X-vs-Y. Checked BEFORE structural subtype because
@@ -772,10 +779,9 @@ def _classify(task: str) -> tuple[str, list[str]]:
     # files and could be misread as a coupling query; the comparison
     # intent is more specific.
     if _is_compare_x_vs_y(task):
-        if _classify_structural_subtype(task):
+        if sub:
             rejected.append("structural_subtype: compare_x_vs_y is more specific")
         return "compare_x_vs_y", rejected
-    sub = _classify_structural_subtype(task)
     if sub:
         return sub, rejected
     # W-REPO (2026-06-09) — repo-level structure ("what are the layers of
