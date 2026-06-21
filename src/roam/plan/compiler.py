@@ -24,7 +24,11 @@ import threading as _w131_threading  # W131 — pre-import for cross-block use
 import time
 
 from roam.observability import log_swallowed
-from roam.security.redact import scan_prompt_injection_in_value, scan_prompt_injection_markers
+from roam.security.redact import (
+    redact_secrets_in_value,
+    scan_prompt_injection_in_value,
+    scan_prompt_injection_markers,
+)
 
 # W127 — orjson fast-path. orjson serializes 5-10× faster than stdlib
 # `json` and produces compact output by default. We use it when available
@@ -9540,12 +9544,53 @@ def _envelope_cache_lookup(plan: "PlanV0", cwd: str | None) -> tuple[dict, str] 
                 conn.commit()
                 return None
             env = json.loads(env_json)
+            # The raw task is stripped before persisting (see
+            # _sanitize_for_persist); re-inject it from the live plan so a
+            # cache hit returns an envelope identical to a miss.
+            if isinstance(env.get("plan"), dict):
+                env["plan"]["task"] = plan.task
             return env, art_label
         finally:
             conn.close()
     except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
         log_swallowed("compile.envelope_cache.lookup", exc)
         return None
+
+
+def _sanitize_for_persist(payload: dict) -> dict:
+    """Redact secret patterns and strip the raw task before an envelope or
+    plan payload is written to the on-disk cache
+    (``compile-envelope-cache.sqlite``).
+
+    The cache outlives the process, so full prompts and prefetched source
+    bodies — both of which can carry credentials — must not survive a
+    cache write. The free-form ``task`` (the prompt itself, and the most
+    likely carrier of a credential in a shape no regex covers: pasted
+    passwords, bespoke tokens) is dropped outright; it is re-injected from
+    the live ``PlanV0`` on cache lookup, so stripping is loss-free for
+    cache function. Every other string (prefetched source bodies, facts,
+    task-derived prefixes) is run through ``redact_secrets_in_value`` so
+    embedded snippets matching a known secret shape are scrubbed in place.
+
+    Handles both stored shapes: the envelope dict
+    (``payload["plan"]["task"]``) and the flat ``PlanV0`` asdict
+    (``payload["task"]``). Returns a NEW dict — the caller's in-memory
+    payload is never mutated. Never raises: on any redaction failure the
+    task is still stripped, so caching (which is best-effort) is never
+    blocked.
+    """
+    try:
+        redacted, _ = redact_secrets_in_value(payload)
+    except Exception:  # noqa: BLE001 — never block caching on redaction
+        # Redaction hit an unexpected shape; deep-copy so the task strip
+        # below can never mutate the caller's in-memory envelope/plan.
+        redacted = json.loads(json.dumps(payload)) if isinstance(payload, dict) else {}
+    if isinstance(redacted, dict):
+        plan_obj = redacted.get("plan")
+        if isinstance(plan_obj, dict):
+            plan_obj.pop("task", None)
+        redacted.pop("task", None)
+    return redacted
 
 
 def _envelope_cache_store(plan: "PlanV0", env: dict, art_label: str, cwd: str | None) -> None:
@@ -9585,7 +9630,7 @@ def _envelope_cache_store(plan: "PlanV0", env: dict, art_label: str, cwd: str | 
                     key,
                     plan.repo_head or "",
                     art_label,
-                    _fast_json_dumps(env),
+                    _fast_json_dumps(_sanitize_for_persist(env)),
                     time.time(),
                     _fast_json_dumps(dep_mtimes) if dep_mtimes else None,
                 ),
@@ -9660,7 +9705,10 @@ def _plan_cache_lookup(task: str, cwd: str | None) -> "PlanV0 | None":
                 conn.commit()
                 return None
             data = json.loads(plan_json)
-            # Reconstruct PlanV0 from its asdict() form.
+            # Reconstruct PlanV0 from its asdict() form. The raw task is
+            # stripped before persisting; re-inject the live task (task is a
+            # required field with no default) so a cache hit == a miss.
+            data["task"] = task
             return PlanV0(**data)
         finally:
             conn.close()
@@ -9686,7 +9734,7 @@ def _plan_cache_store(task: str, cwd: str | None, plan: "PlanV0") -> None:
             data = asdict(plan)
             conn.execute(
                 "INSERT OR REPLACE INTO plan_cache VALUES (?,?,?,?)",
-                (key, head, _fast_json_dumps(data), time.time()),
+                (key, head, _fast_json_dumps(_sanitize_for_persist(data)), time.time()),
             )
             # Capacity: 2048 rows (same as env_cache).
             (count,) = conn.execute("SELECT COUNT(*) FROM plan_cache").fetchone()
