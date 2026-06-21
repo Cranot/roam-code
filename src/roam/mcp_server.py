@@ -11815,7 +11815,10 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05, root: st
     Returns: ranked list of matching symbols with similarity scores,
     file paths, kinds, and line numbers.
     """
-    args = ["search-semantic", query, "--top", str(top), "--threshold", str(threshold)]
+    # Options first, then a `--` delimiter so an option-shaped query
+    # (e.g. one beginning with `--top` or `--help`) is parsed as the
+    # positional query rather than silently consumed as a flag.
+    args = ["search-semantic", "--top", str(top), "--threshold", str(threshold), "--", query]
     return _run_roam(args, root)
 
 
