@@ -76,6 +76,25 @@ class CalibrationProfile:
         """
         return self.procedure_routes.get(procedure, DEFAULT_TIER)
 
+    def unrouted_procedures(self) -> frozenset[str]:
+        """Procedures the compiler knows about that this profile has no route for.
+
+        These inherit ``DEFAULT_TIER`` ("heavy") via ``tier_for`` — the
+        conservative fallback for a procedure this profile has never measured a
+        cheap route for. Use this to audit profile route coverage: an unexpected
+        entry here is a newly-added compiler procedure the profile forgot to
+        measure, not a silent downgrade.
+
+        The known-procedure universe is shared from the compiler
+        (``roam.plan.compiler.known_procedures``) so the coverage audit stays in
+        lockstep with the registry tables instead of being reconstructed at each
+        call site. The import is local to avoid a calibration→compiler cycle
+        (the compiler already imports calibration lazily inside ``route_for_plan``).
+        """
+        from roam.plan.compiler import known_procedures  # local import avoids cycle
+
+        return known_procedures() - self.procedure_routes.keys()
+
     def is_stale(self, today: str) -> bool:
         """Crude staleness heuristic — 90+ days since measurement."""
         # YYYY-MM compare. Conservative.
