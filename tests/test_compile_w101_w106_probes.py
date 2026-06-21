@@ -188,3 +188,56 @@ def test_w106_reachability_handles_int_affected_symbols(monkeypatch):
     )
     assert out is not None
     assert out["reachability"]["affected_total"] in (5, 0)
+
+
+# ---- _embed_move_caller_imports dedup (repeated callers from one file) ----
+
+
+def test_embed_move_caller_imports_scans_each_file_once(tmp_path, monkeypatch):
+    """Repeated callers from the SAME file must trigger exactly one
+    filesystem scan, not one per caller row. Pins the dedup so a future
+    refactor cannot reintroduce per-row exists/stat/read_text reads."""
+    from roam.plan import compiler as M
+
+    caller = tmp_path / "uses_widget.py"
+    caller.write_text("from lib.widget import Widget\n\n\ndef go():\n    return Widget()\n")
+
+    # Five caller rows, all pointing at the same file (distinct lines).
+    callers = [{"location": f"uses_widget.py:{ln}"} for ln in (1, 5, 12, 30, 44)]
+
+    reads: list[str] = []
+    real_read_text = M.Path.read_text
+
+    def counting_read_text(self, *a, **k):
+        reads.append(str(self))
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(M.Path, "read_text", counting_read_text)
+
+    out = M._embed_move_caller_imports(callers, "Widget", str(tmp_path))
+
+    assert out == {"uses_widget.py": "from lib.widget import Widget"}
+    # The file is read exactly once despite five caller rows.
+    assert reads.count(str(caller)) == 1
+
+
+def test_embed_move_caller_imports_caps_at_eight_distinct_files(tmp_path):
+    """The 8-file cap counts DISTINCT files, so duplicate rows from the
+    first file do not consume cap slots that later distinct files need."""
+    from roam.plan import compiler as M
+
+    # First file appears 4 times; then 9 more distinct files. With per-row
+    # capping the later distinct files would be starved; with path-dedup the
+    # cap admits 8 distinct files.
+    callers = [{"location": "f0.py:1"}] * 4
+    for i in range(9):
+        name = f"f{i}.py"
+        (tmp_path / name).write_text(f"from pkg import Sym  # {name}\n")
+        callers.append({"location": f"{name}:1"})
+
+    out = M._embed_move_caller_imports(callers, "Sym", str(tmp_path))
+
+    # 8 DISTINCT files admitted (f0..f7); the duplicate f0.py rows did not
+    # eat slots, so exactly the cap's worth of distinct files are scanned.
+    assert len(out) == 8
+    assert "f8.py" not in out
