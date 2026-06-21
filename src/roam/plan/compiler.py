@@ -10664,6 +10664,10 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     cached = _symbol_resolution_cache_lookup(task, cwd)
     if cached is not None:
         files, _ = cached
+        # Funnel cache-hit paths through the resolver too: a row stored before
+        # this guard (or one carrying an indexed forbidden path) must not feed
+        # likely_files / downstream read probes.
+        files = [np for f in files if (np := _repo_contained_path(f))]
         return files[:top_n], False  # cached → subprocess NOT invoked
 
     # Only when NO explicit paths and no cache hit: fall back to semantic.
@@ -10691,6 +10695,11 @@ def _likely_files_from_search(task: str, cwd: str | None, top_n: int = 6) -> tup
     # with basename-token recall (the module the task literally names), then
     # blend path-token match, file role, and PageRank before trimming.
     scored += _path_token_recall(task, cwd, known=set(best))
+    # Funnel every search/recall-derived path through the single repo-contained
+    # resolver — parity with the explicit branch — so forbidden (internal/**,
+    # .env, lockfiles) or repo-escaping index paths can't reach likely_files
+    # or the downstream read/diff probes that open() them.
+    scored = [(np, s) for (p, s) in scored if (np := _repo_contained_path(p))]
     seen = _rerank_likely_files(task, scored, cwd)[:top_n]
     # Store the full resolution (top_n trim happens at consumer; cache the
     # superset so future top_n values up to the cap are served).
