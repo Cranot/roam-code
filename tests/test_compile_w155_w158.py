@@ -63,6 +63,29 @@ def test_w155_neg_persist_wal_mode(tmp_path):
         conn.close()
 
 
+def test_w155_neg_persist_canonical_rephrase_reuses_miss(tmp_path):
+    # A formatting-only rephrase (case, trailing punctuation, whitespace
+    # collapse) canonicalizes to the same key, so a persisted miss is reused
+    # instead of re-running the regex and re-writing the row.
+    (tmp_path / ".roam").mkdir()
+    M._probe_neg_persist_put("regex_probe", "Where is foo defined?", str(tmp_path))
+    assert M._probe_neg_persist_get("regex_probe", "where is foo defined", str(tmp_path)) is True
+    assert M._probe_neg_persist_get("regex_probe", "  WHERE   is foo defined  ", str(tmp_path)) is True
+    # A genuinely different task still misses (negative control).
+    assert M._probe_neg_persist_get("regex_probe", "what does foo do", str(tmp_path)) is False
+
+
+def test_w126_neg_inmem_canonical_rephrase_reuses_miss():
+    label = "regex_probe_inmem_canon"
+    try:
+        M._probe_neg_record(label, "Who calls handleSave?")
+        assert M._probe_neg_cached_miss(label, "who calls handleSave") is True
+        assert M._probe_neg_cached_miss(label, "WHO calls handleSave!") is True
+        assert M._probe_neg_cached_miss(label, "what does handleSave do") is False
+    finally:
+        M._PROBE_NEGATIVE_CACHE.pop(M._probe_neg_cache_key(label, "Who calls handleSave?"), None)
+
+
 def test_w156_caller_body_embed_when_few_callers(tmp_path, monkeypatch):
     """When _probe_callers gets <=3 callers, embed their source bodies."""
     # Set up a tiny project
