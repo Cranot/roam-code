@@ -3276,6 +3276,15 @@ def _freeform_parallel_fetch(target: str, cwd: str | None):
             if not full_path.exists():
                 return None
             st = full_path.stat()
+            # Cap BEFORE read_text: no consumer uses a payload over 400 KB
+            # (the embed gate at <= 400 * 1024, the full-file gate at <= 40 KB),
+            # so reading the whole named file would be pure waste AND would
+            # slurp an arbitrarily large tracked file into memory at compile
+            # time (memory/latency DoS). Returning None here mirrors a read
+            # failure and is behavior-preserving — every consumer re-stats and
+            # re-caps when the payload is absent (see L3326-3331).
+            if st.st_size > 400 * 1024:
+                return None
             raw = full_path.read_text(encoding="utf-8", errors="replace")
             return {"raw": raw, "size": st.st_size}
         except (OSError, ValueError) as exc:
