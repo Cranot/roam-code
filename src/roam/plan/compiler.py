@@ -475,6 +475,12 @@ _API_SURFACE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# W102 — top-level def/class name matcher for the api_surface probe. Hoisted
+# to module scope so the pattern compiles once at import instead of once per
+# export candidate in the file-scan loop; the probe runs over every line of
+# the target file and is central to API-surface envelopes.
+_API_SURFACE_EXPORT_RE = re.compile(r"(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)")
+
 # W189 — stability markers for the api_surface probe. Hoisted to module
 # scope so the pattern compiles once at import instead of per probe call.
 _STABILITY_RE = re.compile(
@@ -5536,7 +5542,7 @@ def _probe_api_surface_for_task(task: str, named_paths: list[str], cwd: str | No
         if line.startswith(("def ", "class ", "async def ")):
             # Skip names starting with `_` (private convention) unless
             # the file is dunder-init.
-            name_match = re.match(r"(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", line)
+            name_match = _API_SURFACE_EXPORT_RE.match(line)
             if name_match:
                 name = name_match.group(1)
                 if not (name.startswith("_") and not target.endswith("__init__.py")):
