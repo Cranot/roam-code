@@ -41,6 +41,16 @@ _OVERLAP_BOTH_FIRE = [
     ("most coupled file", "structural_coupling"),
     ("most complex functions", "structural_complexity"),
     ("top 3 most complex files", "structural_complexity"),
+    # COMPOUND structural text — the exact precedence the target flagged.
+    # This is the SAME prompt that `test_compile_structural_subtype_order.py
+    # ::test_coupling_wins_over_blast_and_callers_on_compound_task` pins to
+    # `structural_coupling` at the SUBTYPE level. At the full `_classify`
+    # arbiter it routes to top_n_ranking instead — the "most callers" clause
+    # trips the broad W12 ranking regex, and top_n_ranking is checked first.
+    # Pinning both levels makes the cross-layer interaction explicit: the
+    # subtype sentinel guarantees coupling wins AMONG structural subtypes,
+    # this guarantees top_n_ranking wins OVER any of them when both fire.
+    ("highest structural coupling (most callers / largest blast radius)", "structural_coupling"),
 ]
 
 
