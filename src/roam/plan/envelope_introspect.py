@@ -12,13 +12,56 @@ re-introduce the class of bug.
 A compile envelope has the inner-artifact shape ``{plan, schema,
 schema_version}`` and sometimes a wrapping ``{summary, artifact, plan, ...}``
 (the outer CLI envelope). This helper reads both.
+
+``*_unavailable`` keys — two lenses, not a bug. ``_meta_key`` treats them as
+annotation/meta here (the *diagnostic* lens: substantive agent-actionable
+data), while ``_L1_PROCEDURE_METADATA`` in ``compiler.py`` counts the paired
+``*_unavailable`` key toward ``l1_probe`` promotion (the *routing* lens: the
+probe fired and emitted a structured honest-degradation result). See
+``_meta_key`` for the full distinction and the consequence (an L1 envelope
+can be both ``l1_probe`` AND ``probe_empty``).
 """
 
 from __future__ import annotations
 
 
 def _meta_key(k: str) -> bool:
-    """True for annotation keys that are NOT real probe families."""
+    """True for annotation keys that are NOT real probe families.
+
+    Two suffix families: ``*_definition`` (a metric's vocabulary sidecar,
+    Pattern 3) and ``*_unavailable`` (an honest-degradation remediation,
+    e.g. ``symbol_definitions_unavailable`` = "run `roam search`"). Neither
+    carries substantive agent-actionable data, so both are excluded from
+    :func:`probe_families`; an L1 envelope whose ONLY prefetched facts are
+    such keys is reported ``probe_empty``.
+
+    Deliberate distinction from ``_L1_PROCEDURE_METADATA`` (compiler.py):
+    the two answer DIFFERENT questions, so an ``*_unavailable`` key is meta
+    here and signal there — not a contradiction.
+
+    * compiler (routing lens): "did the probe FIRE and emit a structured
+      result, even an honest-degradation one?" A paired ``*_unavailable``
+      key COUNTS toward ``l1_probe`` promotion. Nearly every
+      task-text-driven procedure lists its data key beside an
+      ``*_unavailable`` partner (``symbol_defined_where`` ->
+      ``symbol_definitions`` + ``symbol_definitions_unavailable``; likewise
+      ``top_n_ranking``, ``compare_x_vs_y``, ``file_history``,
+      ``repo_structure``, ``entry_point_where``, ``config_where``,
+      ``session_meta``, ``freeform_explore``) so a correct-but-empty probe
+      does not silently degrade to ``full``.
+    * here (diagnostic lens): "does the envelope carry SUBSTANTIVE facts a
+      downstream agent can act on?" The same ``*_unavailable`` key does NOT
+      count -- only the remediation string is present.
+
+    Consequence: an L1 envelope degraded to unavailable-only content is
+    correctly BOTH ``l1_probe`` (probe fired; routing was right) AND
+    ``probe_empty`` (no substantive facts survived) -- a distinct signal
+    ("probe ran but the source was empty"), not a routing miss. Making
+    degraded probes count as non-empty in this lens is a BEHAVIOR CHANGE:
+    it re-pins ``test_l1_with_only_annotation_keys_is_empty`` and changes
+    ``top_misses`` in ``compiler-corpus``. Raise it as a separate issue;
+    do not bury it here.
+    """
     return k.endswith("_definition") or k.endswith("_unavailable")
 
 
@@ -43,8 +86,12 @@ def introspect(env: dict) -> dict:
     - ``label``: artifact type ('l1_probe' / 'facts' / 'full' / 'lean' / 'contract').
     - ``probe_families``: substantive prefetched-fact keys.
     - ``probe_empty``: True when an L1 envelope carries no substantive families
-      (the real "miss" signal). Non-L1 labels are never probe_empty (by design
-      lower-signal, not misses).
+      (the real "miss" signal — *no substantive facts to act on*). A
+      correctly-routed L1 envelope that degraded to ``*_unavailable``-only
+      content is BOTH ``l1_probe`` AND ``probe_empty`` (probe fired, source
+      was empty); that is a distinct signal from a routing miss, not a
+      contradiction. See ``_meta_key``. Non-L1 labels are never probe_empty
+      (by design lower-signal, not misses).
     """
     if not isinstance(env, dict):
         return {"label": "", "procedure": "", "classifier_confidence": None, "probe_families": [], "probe_empty": False}

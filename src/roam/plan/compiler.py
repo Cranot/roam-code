@@ -9278,6 +9278,11 @@ def select_artifact(plan: "PlanV0") -> str:
 #                       envelope to `l1_probe` (vs degrading to `full`).
 #   task_text_target  — True when the L1 target is extracted from the task
 #                       text (no named_paths needed); see `_l1_has_target`.
+# A paired `*_unavailable` key counts toward L1 promotion HERE (routing lens:
+# the probe fired and emitted a structured honest-degradation result). It is
+# deliberately treated as annotation/meta in the *diagnostic* lens — see
+# `roam.plan.envelope_introspect._meta_key` — so a degraded L1 envelope is
+# both `l1_probe` and `probe_empty`. Not a contradiction; two axes.
 
 
 class _L1ProcedureMeta(NamedTuple):
