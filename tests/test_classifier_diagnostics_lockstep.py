@@ -26,6 +26,7 @@ from roam.plan.compiler import (
     _CLASSIFIER_DIAGNOSTICS,
     _STRUCTURAL_SUBTYPE_REGEXES,
     _classify,
+    _explain_classifier,
 )
 
 # `freeform_explore` is the catch-all fallback — it has no regex/helper to
@@ -81,3 +82,66 @@ def test_diagnostic_probes_are_callable_and_return_lists():
     for name, probe in _CLASSIFIER_DIAGNOSTICS:
         result = probe("")
         assert isinstance(result, list), f"probe {name!r} did not return a list on empty input"
+
+
+# ---- tiebreak_rules-vs-_classify lockstep ------------------------------------
+# `_explain_classifier` ships a human-readable `tiebreak_rules` list that
+# "Mirrors the actual arbitration order in `_classify`". Rule 5 (structural
+# sub-type order) is mechanically derived from `_STRUCTURAL_SUBTYPE_REGEXES`,
+# but rules 1-4/6 are hand-prose whose ordering claims (`trace > structural`,
+# `refactor_move > synthesis`, `synthesis > structural`,
+# `top_n_ranking / compare_x_vs_y > structural sub-types`) were only enforced by
+# a `# Keep in sync` comment. These guards turn each prose claim into an
+# executable assertion: a representative prompt that triggers BOTH competing
+# procedures must route to the procedure the prose says wins. A future `_classify`
+# reorder that contradicts the displayed rules now fails CI instead of silently
+# shipping a misleading explain dump.
+
+
+def test_tiebreak_rule5_matches_structural_subtype_registry():
+    # Rule 5's displayed order must equal the live precedence tuple — this pins
+    # `coupling` before `blast`/`callers` (the ordering the backlog item flagged)
+    # to the single source of truth, so the text cannot drift on a reorder.
+    rules = _explain_classifier("x")["tiebreak_rules"]
+    rule5 = next(r for r in rules if r.startswith("5."))
+    derived = ", ".join(
+        name.removeprefix("structural_") for name, _ in _STRUCTURAL_SUBTYPE_REGEXES
+    )
+    assert rule5.endswith(derived), (
+        f"tiebreak rule 5 ({rule5!r}) does not list the live "
+        f"_STRUCTURAL_SUBTYPE_REGEXES order ({derived!r})."
+    )
+    # Guard the specific inversion the backlog item described.
+    assert derived.index("coupling") < derived.index("blast") < derived.index("callers")
+
+
+def test_tiebreak_prose_ordering_claims_match_classify():
+    # Each prompt fires BOTH competing procedures; the value is the winner the
+    # prose claims. If `_classify`'s arbitration order ever contradicts a
+    # displayed rule, the corresponding case fails.
+    claims = {
+        "1. trace > structural": ("trace the import cycle through the auth module", "trace_query"),
+        "2. refactor_move > synthesis": (
+            "extract validate_token from auth.py into a new helper module",
+            "refactor_move",
+        ),
+        "3. synthesis > structural": (
+            "write a test that exercises the coupling between modules",
+            "synthesis_query",
+        ),
+        "4a. top_n_ranking > structural": ("top 5 most coupled files", "top_n_ranking"),
+        "4b. compare_x_vs_y > structural": ("compare cli.py vs mcp_server.py", "compare_x_vs_y"),
+        "6. freeform fallback": ("tell me a joke about cats", "freeform_explore"),
+    }
+    mismatches = {
+        rule: (prompt, expected, _classify(prompt)[0])
+        for rule, (prompt, expected) in claims.items()
+        if _classify(prompt)[0] != expected
+    }
+    assert not mismatches, (
+        "tiebreak_rules prose contradicts _classify routing: "
+        + "; ".join(
+            f"{rule}: {prompt!r} -> got {got!r}, prose claims {exp!r}"
+            for rule, (prompt, exp, got) in mismatches.items()
+        )
+    )
