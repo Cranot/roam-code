@@ -488,3 +488,155 @@ def test_stale_index_discloses_files_newer_than_index(tmp_path):
     plan3 = compile_plan("what does src/a.py do", cwd=str(repo))
     env3, _ = compile_for_artifact(plan3, cwd=str(repo))
     assert (env3.get("plan") or {}).get("index_stale") is None, "fresh index must not flag"
+
+
+# ---- Secret / prompt redaction in the persistent envelope cache --------
+#
+# compile-envelope-cache.sqlite outlives the process. The raw plan.task
+# (the full prompt) and prefetched source bodies can both carry credentials,
+# so neither survives a cache write: the task is stripped (re-injected from
+# the live plan on lookup), source bodies are redacted in place.
+
+def _make_plan(task: str, repo_head: str = "head"):
+    from roam.plan.compiler import PlanV0
+
+    return PlanV0(
+        task=task,
+        procedure="freeform_explore",
+        likely_files=[],
+        required_checks=[],
+        forbidden_paths=[],
+        plan_quality=0.5,
+        model_calls_avoided=[],
+        recommended_first_command="roam ask",
+        repo_head=repo_head,
+    )
+
+
+def test_envelope_cache_strips_plan_task_from_persisted_row(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    secret_prompt = "deploy using token ghp_" + "a" * 36
+
+    class _MockPlan:
+        task = secret_prompt
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    _envelope_cache_store(
+        _MockPlan(),
+        {"plan": {"task": secret_prompt, "procedure": "freeform_explore"}},
+        "facts",
+        str(tmp_path),
+    )
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT envelope_json FROM env_cache").fetchone()
+    conn.close()
+    assert row is not None
+    stored = row[0]
+    # The full prompt (including the credential) must not survive the write.
+    assert "ghp_" not in stored
+    assert secret_prompt not in stored
+    assert '"task"' not in stored, "raw task key must be stripped from the persisted plan"
+
+
+def test_envelope_cache_redacts_source_bodies_in_persisted_row(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    leaked_pat = "ghp_" + "b" * 36
+
+    class _MockPlan:
+        task = "show me the auth module"
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    _envelope_cache_store(
+        _MockPlan(),
+        {
+            "plan": {"task": _MockPlan.task},
+            "prefetched_facts": {
+                "file_excerpt": {"path": "auth.py", "content": f"TOKEN = '{leaked_pat}'"},
+            },
+        },
+        "facts",
+        str(tmp_path),
+    )
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT envelope_json FROM env_cache").fetchone()
+    conn.close()
+    stored = row[0]
+    assert leaked_pat not in stored, "secret in a prefetched source body must be redacted"
+    assert "[REDACTED]" in stored
+
+
+def test_envelope_cache_store_does_not_mutate_inmemory_env(tmp_path):
+    (tmp_path / ".roam").mkdir()
+
+    class _MockPlan:
+        task = "prompt carrying ghp_" + "c" * 36
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    env = {"plan": {"task": _MockPlan.task}}
+    _envelope_cache_store(_MockPlan(), env, "facts", str(tmp_path))
+    # The in-memory env handed to the store keeps its task intact — the
+    # caller's result is unaffected by the cache sanitization.
+    assert env["plan"]["task"] == _MockPlan.task
+
+
+def test_envelope_cache_lookup_reinjects_task(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    plan = _make_plan("investigate latency, ghp_" + "d" * 36)
+    _envelope_cache_store(
+        plan,
+        {"plan": {"task": plan.task, "procedure": plan.procedure}},
+        "facts",
+        str(tmp_path),
+    )
+
+    cached = _envelope_cache_lookup(plan, str(tmp_path))
+    assert cached is not None
+    env, _label = cached
+    # Task re-injected from the live plan; the secret-laden prompt lives
+    # only in memory, so a cache hit is indistinguishable from a miss.
+    assert env["plan"]["task"] == plan.task
+
+
+def test_plan_cache_strips_task_on_store(tmp_path):
+    from roam.plan.compiler import _plan_cache_store
+
+    (tmp_path / ".roam").mkdir()
+    plan = _make_plan("rotate the ghp_" + "e" * 36 + " key")
+    _plan_cache_store(plan.task, str(tmp_path), plan)
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT plan_json FROM plan_cache").fetchone()
+    conn.close()
+    assert row is not None
+    stored = row[0]
+    assert "ghp_" not in stored
+    assert plan.task not in stored
+    assert '"task"' not in stored, "raw task key must be stripped from the persisted plan"
+
+
+def test_plan_cache_lookup_reinjects_task(tmp_path, monkeypatch):
+    import roam.plan.compiler as _compiler
+    from roam.plan.compiler import _plan_cache_lookup, _plan_cache_store
+
+    (tmp_path / ".roam").mkdir()
+    monkeypatch.setattr(_compiler, "_memoized_head", lambda cwd: "deadbeef")
+    plan = _make_plan("who calls handleAuth ghp_" + "f" * 36, repo_head="deadbeef")
+    _plan_cache_store(plan.task, str(tmp_path), plan)
+
+    restored = _plan_cache_lookup(plan.task, str(tmp_path))
+    assert restored is not None
+    # task is a required PlanV0 field with no default; reconstruction only
+    # succeeds because lookup re-injects the live task.
+    assert restored.task == plan.task
+
