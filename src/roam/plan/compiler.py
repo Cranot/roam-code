@@ -6694,6 +6694,46 @@ def _probe_freeform_entities_for_task(task: str, cwd: str | None) -> dict | None
     return None
 
 
+def _freeform_excerpt_safe_path(target: str, cwd: str | None) -> str | None:
+    """Repo-containment + forbidden-path gate for the `file_excerpt` probe.
+
+    Returns the absolute path to read, or `None` when `target` escapes the
+    repo root (path traversal / an absolute path outside `cwd`) or matches a
+    forbidden glob (private folders, secrets, lockfiles). Without this gate,
+    'tell me about internal/.../secret.py' would leak the first
+    `_FILE_EXCERPT_LINES` lines of a private file into the compile envelope.
+
+    When `cwd` is set we resolve symlinks and require the target to stay
+    under the repo root; when it is absent (conversational compiles with no
+    project anchor) containment cannot be enforced, but the forbidden-path
+    globs still apply to the supplied path and its basename.
+    """
+    import fnmatch
+    import os
+
+    if cwd:
+        base = os.path.realpath(cwd)
+        full = os.path.realpath(target if os.path.isabs(target) else os.path.join(cwd, target))
+        # Repo containment: `full` must be the root itself or live under it.
+        if full != base and not full.startswith(base + os.sep):
+            return None
+        rel = os.path.relpath(full, base)
+    else:
+        full = os.path.realpath(target) if os.path.isabs(target) else target
+        rel = target
+
+    rel_posix = rel.replace(os.sep, "/")
+    base_name = os.path.basename(rel_posix)
+    for pat in _FORBIDDEN_PATHS_DEFAULT:
+        if fnmatch.fnmatchcase(rel_posix, pat):
+            return None
+        # Slash-free patterns (e.g. `.env`, `package.json`) match the file at
+        # any depth, mirroring gitignore semantics for bare names.
+        if "/" not in pat and fnmatch.fnmatchcase(base_name, pat):
+            return None
+    return full
+
+
 def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W35b/c — augment freeform_explore probe with:
       (b) `file_excerpt`: when task is an explain-question on a single small
@@ -6718,13 +6758,18 @@ def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str
     target = named_paths[0]
 
     if _EXPLAIN_RE.search(task):
-        full = os.path.join(cwd, target) if cwd and not os.path.isabs(target) else target
-        try:
-            with open(full, encoding="utf-8", errors="replace") as fh:
-                head_lines = fh.readlines()[:_FILE_EXCERPT_LINES]
-        except (OSError, ValueError) as exc:
-            log_swallowed("compile.freeform_augment.read_excerpt", exc)
-            head_lines = []
+        safe_full = _freeform_excerpt_safe_path(target, cwd)
+        if safe_full is None:
+            # Out-of-repo target or a forbidden path (private folder / secret /
+            # lockfile) — skip the excerpt rather than leaking its contents.
+            head_lines: list[str] = []
+        else:
+            try:
+                with open(safe_full, encoding="utf-8", errors="replace") as fh:
+                    head_lines = fh.readlines()[:_FILE_EXCERPT_LINES]
+            except (OSError, ValueError) as exc:
+                log_swallowed("compile.freeform_augment.read_excerpt", exc)
+                head_lines = []
         if head_lines:
             facts["file_excerpt"] = {
                 "path": target,
