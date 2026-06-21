@@ -182,6 +182,55 @@ def test_w35b_probe_embeds_file_excerpt(tmp_path):
     assert "# line 0" in out["file_excerpt"]["content"]
 
 
+def test_w35b_excerpt_refuses_forbidden_private_path(tmp_path):
+    # 'tell me about internal/.../secret.py' must NOT leak the file body —
+    # `internal/**` is a forbidden path. The excerpt is skipped even though
+    # the file exists and the task is a valid explain-question.
+    priv = tmp_path / "internal" / "planning"
+    priv.mkdir(parents=True)
+    secret = priv / "secret.py"
+    secret.write_text("\n".join(f"SECRET {i}" for i in range(100)))
+    out = _probe_freeform_augment_for_task(
+        "tell me about internal/planning/secret.py",
+        named_paths=["internal/planning/secret.py"],
+        cwd=str(tmp_path),
+    )
+    if out is not None:
+        assert "file_excerpt" not in out
+
+
+def test_w35b_excerpt_refuses_repo_escape(tmp_path):
+    # A path-traversal target that resolves OUTSIDE the repo root must be
+    # refused — repo containment, not just forbidden-name matching.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("\n".join(f"# line {i}" for i in range(100)))
+    out = _probe_freeform_augment_for_task(
+        "explain what ../outside.py does",
+        named_paths=["../outside.py"],
+        cwd=str(repo),
+    )
+    if out is not None:
+        assert "file_excerpt" not in out
+
+
+def test_w35b_excerpt_allows_in_repo_source(tmp_path):
+    # The guard is not over-broad: an ordinary in-repo source file still
+    # embeds its excerpt.
+    (tmp_path / "src").mkdir()
+    f = tmp_path / "src" / "ok.py"
+    f.write_text("\n".join(f"# line {i}" for i in range(100)))
+    out = _probe_freeform_augment_for_task(
+        "explain what src/ok.py does",
+        named_paths=["src/ok.py"],
+        cwd=str(tmp_path),
+    )
+    assert out is not None
+    assert "file_excerpt" in out
+    assert out["file_excerpt"]["lines_shown"] == 80
+
+
 def test_w35b_probe_skips_when_no_explain_word():
     # "files coupled to X" is NOT an explain question — no excerpt expected
     out = _probe_freeform_augment_for_task(
