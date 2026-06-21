@@ -10263,34 +10263,93 @@ def _resolve_module_names(task: str, cwd: str | None) -> list[str]:
     return [path] if path else []
 
 
+def _diag_regex(pattern: "re.Pattern[str]"):
+    """Build a diagnostic probe over a regex: returns up to 5 deduped match
+    strings (grouped-regex tuples flattened), or [] when nothing matched."""
+
+    def probe(task: str) -> list[str]:
+        matches = pattern.findall(task)
+        if not matches:
+            return []
+        # `findall` may return tuples for grouped regexes — flatten.
+        flat: list[str] = []
+        for m in matches:
+            if isinstance(m, tuple):
+                flat.extend(x for x in m if x)
+            else:
+                flat.append(m)
+        return sorted(set(flat))[:5]
+
+    return probe
+
+
+def _diag_bool(fn):
+    """Build a diagnostic probe over a boolean helper: ['matched'] / []."""
+    return lambda task: ["matched"] if fn(task) else []
+
+
+def _diag_value(fn):
+    """Build a diagnostic probe over a value-returning helper: [value] / []."""
+
+    def probe(task: str) -> list[str]:
+        v = fn(task)
+        return [v] if v else []
+
+    return probe
+
+
+# ---- Shared classifier diagnostic registry --------------------------------
+# Single source of truth enumerating EVERY procedure `_classify` can return,
+# paired with the regex/helper that fires it, IN PRIORITY ORDER. Both
+# `_explain_classifier` (roam compile --explain) and the dispatch-trace
+# command read this so the diagnostic dump can name the actual winner — not
+# just the synthesis regex. Before W-DIAG, `refactor_move` / `stack_trace_fix`
+# / `session_meta` / `self_contained_task` / `top_n_ranking` / `compare_x_vs_y`
+# / `describe_file` (and the rest of the helper-routed procedures) could WIN in
+# `_classify` while the explain dump reported only the structural/synthesis
+# regexes, so `winner` never matched a reported key and no "← winner" marker
+# rendered. Keep this list in lockstep with the `_classify` chain above.
+_CLASSIFIER_DIAGNOSTICS: tuple[tuple[str, object], ...] = (
+    ("session_meta", _diag_bool(_is_session_meta)),
+    ("self_contained_task", _diag_bool(_is_self_contained_task)),
+    ("stack_trace_fix", _diag_bool(_looks_like_stack_trace)),
+    ("trace_query", _diag_regex(_TRACE_RE)),
+    ("refactor_move", _diag_regex(_REFACTOR_MOVE_RE)),
+    ("synthesis_query", _diag_regex(_SYNTHESIS_RE)),
+    ("top_n_ranking", _diag_bool(_is_top_n_ranking)),
+    ("compare_x_vs_y", _diag_bool(_is_compare_x_vs_y)),
+    ("structural_dead", _diag_regex(_STRUCTURAL_DEAD_RE)),
+    ("structural_cycle", _diag_regex(_STRUCTURAL_CYCLE_RE)),
+    ("structural_complexity", _diag_regex(_STRUCTURAL_COMPLEXITY_RE)),
+    ("structural_coupling", _diag_regex(_STRUCTURAL_COUPLING_RE)),
+    ("structural_blast", _diag_regex(_STRUCTURAL_BLAST_RE)),
+    ("structural_callers", _diag_regex(_STRUCTURAL_CALLERS_RE)),
+    ("structural_general", _diag_regex(_STRUCTURAL_RE)),
+    ("repo_structure", _diag_value(_extract_repo_structure)),
+    ("entry_point_where", _diag_regex(_ENTRY_POINT_RE)),
+    ("config_where", _diag_regex(_CONFIG_BY_NAME_RE)),
+    ("cli_verb_why_slow", _diag_bool(_is_cli_verb_why_slow)),
+    ("file_history", _diag_value(_extract_file_history_target)),
+    ("symbol_defined_where", _diag_value(_extract_symbol_defined_where)),
+    ("describe_file", _diag_bool(_is_describe_file)),
+)
+
+
 def _explain_classifier(task: str) -> dict:
     """Diagnostic dump of which regexes matched and why a procedure won.
 
     Used by `roam compile --explain` to surface the routing decision tree
-    when an agent or human is surprised by the classifier's verdict.
+    when an agent or human is surprised by the classifier's verdict. Walks
+    the shared `_CLASSIFIER_DIAGNOSTICS` registry so every helper- or
+    regex-routed procedure (refactor_move, stack_trace_fix, session_meta,
+    top_n_ranking, compare_x_vs_y, describe_file, ...) is reported — the
+    `winner` always lines up with a reported key now.
     """
     signals: dict[str, list[str]] = {}
-    for name, pattern in (
-        ("trace_query", _TRACE_RE),
-        ("synthesis_query", _SYNTHESIS_RE),
-        ("structural_dead", _STRUCTURAL_DEAD_RE),
-        ("structural_cycle", _STRUCTURAL_CYCLE_RE),
-        ("structural_complexity", _STRUCTURAL_COMPLEXITY_RE),
-        ("structural_blast", _STRUCTURAL_BLAST_RE),
-        ("structural_callers", _STRUCTURAL_CALLERS_RE),
-        ("structural_coupling", _STRUCTURAL_COUPLING_RE),
-        ("structural_general", _STRUCTURAL_RE),
-    ):
-        matches = pattern.findall(task)
-        if matches:
-            # `findall` may return tuples for grouped regexes — flatten.
-            flat = []
-            for m in matches:
-                if isinstance(m, tuple):
-                    flat.extend([x for x in m if x])
-                else:
-                    flat.append(m)
-            signals[name] = sorted(set(flat))[:5]
+    for name, probe in _CLASSIFIER_DIAGNOSTICS:
+        hits = probe(task)
+        if hits:
+            signals[name] = hits
 
     winner, rejected = _classify(task)
     return {
@@ -10302,7 +10361,7 @@ def _explain_classifier(task: str) -> dict:
         "tiebreak_rules": [
             "1. trace phrasing wins over structural (R10 memo)",
             "2. synthesis phrasing wins over structural",
-            "3. structural sub-types checked in order: dead, cycle, complexity, blast, callers, coupling",
+            "3. structural sub-types checked in order: dead, cycle, complexity, coupling, blast, callers",
             "4. fallback to freeform_explore when no pattern fires",
         ],
     }
