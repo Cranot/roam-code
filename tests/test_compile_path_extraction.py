@@ -134,3 +134,38 @@ def test_likely_files_drops_forbidden_cache_hit(monkeypatch):
     files, invoked = _c._likely_files_from_search("cached task", cwd="/tmp/x")
     assert invoked is False  # cache hit → subprocess not run
     assert files == ["src/roam/cli.py"]
+
+
+# --- module-name resolver parity ------------------------------------------
+# `_probe_module_name_for_task` globs the filesystem for "the auth module"
+# shorthand and stitches the hits straight into named_paths (L1 probe + facts
+# envelope), where they chain into the downstream read/diff probes. Those
+# glob hits must funnel through `_repo_contained_path` too — the broad
+# `src/**/*{name}*.py` pattern is task-text-driven, so a forbidden-but-tracked
+# or repo-escaping hit must never reach named_paths.
+
+
+def test_probe_module_name_drops_forbidden_glob_hits(monkeypatch):
+    # base = cwd = /tmp/x; relpath of these hits yields one forbidden
+    # (internal/**) path and one safe src path.
+    monkeypatch.setattr(
+        "glob.glob",
+        lambda pat, recursive=False: [
+            "/tmp/x/internal/planning/auth.py",
+            "/tmp/x/src/roam/auth.py",
+        ],
+    )
+    result = _c._probe_module_name_for_task("Refactor the auth module", [], cwd="/tmp/x")
+    assert result is not None
+    assert result["resolved_named_paths_from_module_name"] == ["src/roam/auth.py"]
+
+
+def test_probe_module_name_returns_none_when_all_hits_forbidden(monkeypatch):
+    # When every glob hit is forbidden, the probe yields no usable target —
+    # it must return None, not an empty-path payload.
+    monkeypatch.setattr(
+        "glob.glob",
+        lambda pat, recursive=False: ["/tmp/x/internal/planning/auth.py"],
+    )
+    result = _c._probe_module_name_for_task("Refactor the auth module", [], cwd="/tmp/x")
+    assert result is None
