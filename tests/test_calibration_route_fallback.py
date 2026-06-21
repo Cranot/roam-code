@@ -46,10 +46,6 @@ _EXPECTED_FALLBACK_PROCEDURES = frozenset(
         "refactor_move",
         "describe_file",
         "stack_trace_fix",
-        "symbol_defined_where",
-        "top_n_ranking",
-        "cli_verb_why_slow",
-        "compare_x_vs_y",
         "file_history",
         "repo_structure",
         "entry_point_where",
@@ -97,3 +93,38 @@ def test_no_unintended_fallback_procedures() -> None:
         f"These procedures no longer fall through (now routed explicitly); "
         f"drop them from _EXPECTED_FALLBACK_PROCEDURES: {sorted(stale)}."
     )
+
+
+# The W11/W12/W13/W28 task-text-only probe families. AGENTS.md documents these
+# as "route to `l1_probe` with embedded probe answers": when the probe fires,
+# the envelope already contains the answer, so the light model suffices to
+# render it. Pinned here (not just as values in procedure_routes) so a future
+# retune can't silently revert them to the heavy default — the decision is
+# probe-answer-shape, not a magnitude guess.
+_L1_PROBE_ANSWER_PROCEDURES = frozenset(
+    {"symbol_defined_where", "top_n_ranking", "cli_verb_why_slow", "compare_x_vs_y"}
+)
+
+
+def test_l1_probe_answer_procedures_route_light() -> None:
+    """Successful probe routes must not pay the heavy model.
+
+    For these four families `route_for_plan` reaches `tier_for` only after
+    `_l1_has_procedure_data` is True — the envelope already contains the
+    answer. A `heavy` value here means Sonnet is paid to restate a
+    probe-computed answer (the regression this pins). The four are also
+    L1-probe-eligible; if that ever changes the test fails loudly so the
+    light route is re-justified rather than rotting.
+    """
+    assert _L1_PROBE_ANSWER_PROCEDURES <= set(_L1_PROBE_ELIGIBLE), (
+        "An L1 probe-answer procedure is no longer L1-probe-eligible; the "
+        "light route needs re-justifying."
+    )
+    profile = get_profile("claude-2026-05")
+    for procedure in _L1_PROBE_ANSWER_PROCEDURES:
+        tier = profile.tier_for(procedure)
+        assert tier == "light", (
+            f"{procedure} is an L1 probe-answer procedure (answer embedded on a "
+            f"successful probe) but routes {tier!r}; it should be 'light'. See "
+            f"CLAUDE_2026_05.procedure_routes."
+        )
