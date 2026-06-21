@@ -5055,11 +5055,17 @@ def _probe_config_for_task(task: str, cwd: str | None) -> dict | None:
     name = (m.group(3) or m.group(6) or "").strip()
     if not name or len(name) < 2:
         return None
-    # Run `roam grep` for the name; cheap, indexed search. Pass `--` before the
-    # (task-derived, untrusted) name so a literal like `--patterns-from=/etc/passwd`
-    # is searched for literally rather than parsed by Click as an option that
-    # reads an attacker-named local file.
-    d = _run_roam(["grep", "--", name], cwd)
+    # Run `roam grep` for the name; cheap, indexed search. Three guards:
+    #  * `-n 10` — cap at the 10 matches the envelope keeps below, so the
+    #    subprocess doesn't serialize/parse rows the probe will discard.
+    #  * `--fixed-string` — treat the (task-derived) name as a literal, so a
+    #    regex metacharacter inside a config name (`.`, `*`, `[`, ...) doesn't
+    #    broaden the scan to unintended text.
+    #  * `--` before the (task-derived, untrusted) name — force it to parse as
+    #    the positional query, so a literal like `--patterns-from=/etc/passwd`
+    #    is searched for literally rather than read by Click as an option that
+    #    names an attacker-chosen local file.
+    d = _run_roam(["grep", "-n", "10", "--fixed-string", "--", name], cwd)
     if not d:
         return None
     matches = (d.get("matches") or d.get("results") or [])[:10]
