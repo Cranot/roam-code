@@ -6509,7 +6509,8 @@ _FREEFORM_BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]+)`")
 # A lowercase→uppercase transition ("camelCase hump"). The identifier-shape
 # gate shared by the dead-code, complexity, test-impact, callers, and freeform
 # identifier extractors: a token is identifier-shaped if it has an underscore
-# (snake_case) OR matches this hump (camelCase). Compiled once, used in 5 gates.
+# (snake_case) OR matches this hump (camelCase). Compiled once, used in 5 gates
+# plus _freeform_ident_rarity's hump-count scorer (the only other [a-z][A-Z] use).
 _CAMEL_HUMP_RE = re.compile(r"[a-z][A-Z]")
 # Identifier-shaped tokens that are code/English noise, not resolvable symbols.
 _FREEFORM_IDENT_STOPWORDS = frozenset(
@@ -6537,7 +6538,7 @@ def _freeform_ident_rarity(tok: str, backticked: bool) -> int:
     length approximate specificity ('compile_plan' outranks 'data')."""
     score = 1000 if backticked else 0
     score += tok.count("_") * 5
-    score += len(re.findall(r"[a-z][A-Z]", tok)) * 5
+    score += len(_CAMEL_HUMP_RE.findall(tok)) * 5
     score += min(len(tok), 24)
     return score
 
