@@ -51,6 +51,20 @@ _OVERLAP_BOTH_FIRE = [
     # subtype sentinel guarantees coupling wins AMONG structural subtypes,
     # this guarantees top_n_ranking wins OVER any of them when both fire.
     ("highest structural coupling (most callers / largest blast radius)", "structural_coupling"),
+    # W12 dimension `callers`/`called` overlaps structural_callers. These read
+    # as callers-of-a-symbol queries (compound structural intent — "who calls
+    # compile_plan") but the broad W12 ranking regex wins. The exact "broad
+    # top-N precedence over compound structural text" the target flagged, on a
+    # subtype the original matrix (coupling + complexity) did not pin.
+    # Verified empirically 2026-06-21: _is_top_n_ranking AND structural_callers
+    # both fire; _classify resolves to top_n_ranking.
+    ("most callers of compile_plan", "structural_callers"),
+    ("top 5 callers of handleSave", "structural_callers"),
+    # W12 dimension `cycles` overlaps structural_cycle. "largest cycles in the
+    # imports" reads as a cycle query but routes to top_n_ranking — pin it so a
+    # future W12 tightening that drops the `cycles` dimension surfaces as an
+    # explicit, reviewed flip rather than silent drift.
+    ("largest cycles in the imports", "structural_cycle"),
 ]
 
 
