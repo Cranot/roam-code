@@ -5452,7 +5452,14 @@ def _probe_refactor_move_for_task(task: str, cwd: str | None) -> dict | None:
     if not m:
         return None
     symbol = m.group(2)
-    src_file = m.group(3) or m.group(6) or ""
+    # W-TRUST — src_file is regex-extracted from the UNTRUSTED task string, so
+    # it is NOT hardened by the _extract_file_paths pipeline. A task-controlled
+    # absolute (`/tmp/secret.py`) or `..`-traversal (`../secret.py`) source
+    # would otherwise be read by _embed_move_source_body and embedded as
+    # source_body, leaking outside-repo content into the plan. Funnel it through
+    # the repo-contained resolver (realpath-checked against cwd): the contained
+    # repo-relative path, or "" when it escapes the repo.
+    src_file = _repo_contained_path(m.group(3) or m.group(6) or "", cwd) or ""
     dst_file = m.group(4) or m.group(5) or ""
     # W162 — symbolic destination ("into a new helper module"): infer a filename.
     if not dst_file:
