@@ -1968,6 +1968,39 @@ _RUN_ROAM_PERSIST_TTL_S = 24 * 3600.0
 _RUN_ROAM_PERSIST_TABLE_INITED: set[str] = set()
 
 
+# W468 — subcommands whose JSON results embed raw source snippets, matched
+# file lines, or config values. These can carry secrets lifted from the repo
+# (API keys, tokens, PEM blocks) and would otherwise sit in the cross-session
+# SQLite cache (compile-envelope-cache.sqlite) for the full 24h TTL. We skip
+# persisting them at rest; the 60s in-proc cache (_RUN_ROAM_CACHE) is
+# unaffected because it never touches disk. `grep`/`retrieve`/`search-semantic`/
+# `taint` are wired through _run_roam today; `file`/`refs-text`/`history-grep`/
+# `config` are listed preemptively so a future probe that routes them through
+# _run_roam is covered.
+_RUN_ROAM_PERSIST_SENSITIVE_SUBCMDS = frozenset(
+    {
+        "grep",            # matched source lines
+        "retrieve",        # ranked source spans
+        "search-semantic", # ranked code snippets
+        "taint",           # source spans along taint flows
+        "file",            # file skeleton incl. signatures
+        "refs-text",       # string audit with surrounding source
+        "history-grep",    # matched lines from git history
+        "config",          # raw config values
+    }
+)
+
+
+def _run_roam_persist_is_sensitive(args: list[str]) -> bool:
+    """True if the subcommand result embeds raw source/config content.
+
+    Used to skip the persistent SQLite cache so secrets/snippets are not held
+    at rest for the 24h TTL. The first token of ``args`` is the roam subcommand
+    name (e.g. ``["grep", "--", pat]`` -> ``"grep"``).
+    """
+    return bool(args) and args[0] in _RUN_ROAM_PERSIST_SENSITIVE_SUBCMDS
+
+
 def _run_roam_persist_path(cwd: str | None) -> str | None:
     if not cwd:
         return None
@@ -2324,8 +2357,11 @@ def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bo
     value = None
     # W147 — persistent SQLite cache. Survives process restart. ~0.5-1ms
     # lookup vs 30-50ms subprocess/inproc cold call → ~30× win on hit.
+    # W468 — skip the persistent cache entirely for content-bearing probes
+    # (grep/file/retrieve/...) so secrets/snippets are never held at rest.
+    _persist_sensitive = _run_roam_persist_is_sensitive(args)
     _persist_head = ""
-    if cwd:
+    if cwd and not _persist_sensitive:
         try:
             _persist_head = _memoized_head(cwd) or ""
         except Exception:  # noqa: BLE001
@@ -2368,7 +2404,8 @@ def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bo
         del _RUN_ROAM_CACHE[oldest[0]]
     _RUN_ROAM_CACHE[key] = (now, value)
     # W147 — persist successful results for cross-session reuse.
-    if value is not None and cwd:
+    # W468 — never persist content-bearing probe results (secrets at rest).
+    if value is not None and cwd and not _persist_sensitive:
         _run_roam_persist_put(cli_args, cwd, _persist_head, value)
     return value
 
