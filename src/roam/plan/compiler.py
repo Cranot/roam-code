@@ -8179,6 +8179,43 @@ _PROBE_TIMEOUT_BY_LABEL: dict[str, float] = {
 }
 _PROBE_TIMEOUT_DEFAULT = 12.0
 
+# Per-label cheap task-text trigger predicates. Each value is the SAME
+# compiled regex a probe body self-gates on as its first line
+# (`if not <RE>.search(task): return None`). Invariant: for every label
+# here, `RE.search(task) is None` => the probe returns None. Running the
+# trigger BEFORE the positive/negative cache lookups lets absent-trigger
+# labels skip the key hashing (sha256 of the task string) + in-memory dict
+# probe + persistent SQLite probe that the cache path otherwise pays for
+# every always-on probe on every compile. A single `.search(task)` that
+# fails fast is cheaper than one sha256, let alone 18 + their DB sisters.
+#
+# Labels absent here either gate on non-task state (named_paths / cwd /
+# verify-report.json, e.g. known_findings) or compose several inline
+# regexes via a `_detect_*` helper (criterion / scope_lock / output_shape)
+# or `_extract_grep_patterns` (grep_replication); those keep using the
+# cache path unchanged. The trigger is a strictly-cheaper, behavior-preserving
+# pre-filter, never a substitute for the probe's own full gating.
+_PROBE_TRIGGER_BY_LABEL: dict[str, "re.Pattern[str]"] = {
+    "import_audit": _W201_IMPORT_RE,
+    "compare": _COMPARE_RE,
+    "pickaxe": _SYMBOL_PICKAXE_RE,
+    "conventions": _CONVENTIONS_RE,
+    "module_name": _MODULE_NAME_RE,
+    "reachability": _REACHABILITY_RE,
+    "config": _CONFIG_BY_NAME_RE,
+    "find_by_desc": _FIND_BY_DESC_RE,
+    "why_slow": _WHY_SLOW_RE,
+    "entry_points": _ENTRY_POINT_RE,
+    "test_impact": _TEST_IMPACT_RE,
+    "refactor_move": _REFACTOR_MOVE_RE,
+    "api_surface": _API_SURFACE_RE,
+    "owners": _OWNER_RE,
+    "env_vars": _ENV_VAR_AUDIT_RE,
+    "todo_audit": _TODO_AUDIT_RE,
+    "deprecation": _DEPRECATION_RE,
+    "subprocess_audit": _SUBPROCESS_AUDIT_RE,
+}
+
 
 def _record_probe_outcome(label, result, task, named_paths, cwd, head, prefetched):
     """Merge a probe result into prefetched + record the pos/neg caches
@@ -8205,6 +8242,14 @@ def _filter_runnable_probes(
     runnable: list[tuple[str, object]] = []
     for label, fn in _L1_ALWAYS_ON_PROBES:
         if label in skip_for_procedure:
+            continue
+        # Cheap task-text trigger BEFORE the cache lookups: when the probe's
+        # own first-line regex doesn't match, the probe returns None, so skip
+        # it now and avoid the sha256 key hash + in-mem/persistent cache
+        # probes the body would never populate. `_PROBE_TRIGGER_BY_LABEL`
+        # only lists labels whose trigger is exact (no-match => None).
+        trigger = _PROBE_TRIGGER_BY_LABEL.get(label)
+        if trigger is not None and not trigger.search(task):
             continue
         cached = _probe_pos_cached_hit(label, task, named_paths)
         if cached is not None:
