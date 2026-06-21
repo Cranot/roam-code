@@ -7799,7 +7799,11 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
     ),
     # `symbol_defined_where` ("where is X defined") — single-symbol
     #   definition lookup; no perf / runtime / audit angle, no
-    #   comparison, no move.
+    #   comparison, no move. The W11 probe IS the answer — it embeds the
+    #   top-N definitions plus inline `references` + `body_preview`, so
+    #   `grep_replication` (a broad literal grep of usages) adds always-on
+    #   work and would distract with reference noise while preserving no
+    #   definition behavior.
     "symbol_defined_where": frozenset(
         {
             "why_slow",
@@ -7810,6 +7814,7 @@ _PROCEDURE_PROBE_SKIPS: dict[str, frozenset[str]] = {
             "env_vars",
             "compare",
             "refactor_move",
+            "grep_replication",
             "find_by_desc",
             "test_impact",
         }
