@@ -489,6 +489,24 @@ _API_SURFACE_EXPORT_RE = re.compile(r"(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*
 # of being re-compiled on every findall call. {2,} drops 1-2 char noise.
 _OPTIONAL_BACKTICK_IDENT_RE = re.compile(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?")
 
+
+def _first_target_symbol(task: str | None, stopwords: frozenset[str]) -> str | None:
+    """First identifier-shaped target symbol in free-form task text, skipping
+    question vocabulary. The three structural target extractors
+    (_extract_dead_target_symbol, _resolve_complexity_target,
+    _probe_test_impact_for_task) share this exact probe: tokenize the task with
+    `_OPTIONAL_BACKTICK_IDENT_RE`, then pick the first token that is identifier-
+    shaped (snake_case, or camelCase via `_CAMEL_HUMP_RE`) and not a stopword.
+    Returns None when no token survives the filters."""
+    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task or ""):
+        if tok.lower() in stopwords:
+            continue
+        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
+            continue
+        return tok
+    return None
+
+
 # W189 — stability markers for the api_surface probe. Hoisted to module
 # scope so the pattern compiles once at import instead of per probe call.
 _STABILITY_RE = re.compile(
@@ -2905,13 +2923,7 @@ def _extract_dead_target_symbol(task: str | None) -> str | None:
     ('find unused functions', 'unused exports') so those still get the full
     scan. Conservative: the token must be identifier-shaped (snake_case or
     camelCase) and not part of the dead-code question vocabulary."""
-    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task or ""):
-        if tok.lower() in _DEAD_TARGET_STOPWORDS:
-            continue
-        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
-            continue
-        return tok
-    return None
+    return _first_target_symbol(task, _DEAD_TARGET_STOPWORDS)
 
 
 def _probe_dead(named_paths: list[str], cwd: str | None, task: str | None = None) -> dict:
@@ -3638,14 +3650,7 @@ def _resolve_complexity_target(task: str | None, cwd: str | None):
     file via `roam search --mode exact`. Returns (sym, target_file) or (None, None)."""
     if not task:
         return None, None
-    sym = None
-    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task):
-        if tok.lower() in _COMPLEXITY_TARGET_STOPWORDS:
-            continue
-        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
-            continue
-        sym = tok
-        break
+    sym = _first_target_symbol(task, _COMPLEXITY_TARGET_STOPWORDS)
     if not sym:
         return None, None
     r = _run_roam(["search", sym, "--mode", "exact"], cwd, detail=True)
@@ -5639,14 +5644,7 @@ def _probe_test_impact_for_task(task: str, named_paths: list[str], cwd: str | No
     # `roam affected-tests <sym>`, which returns the ready-to-run pytest
     # command. Tried FIRST because path-resolution often surfaces a TEST file
     # as named_paths[0], which would mis-target the file branch below.
-    sym = None
-    for tok in _OPTIONAL_BACKTICK_IDENT_RE.findall(task):
-        if tok.lower() in _TEST_IMPACT_STOPWORDS:
-            continue
-        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
-            continue
-        sym = tok
-        break
+    sym = _first_target_symbol(task, _TEST_IMPACT_STOPWORDS)
     if sym:
         d = _run_roam(["affected-tests", sym], cwd, detail=True, timeout=4.0)
         test_files = (d.get("test_files") or [])[:15] if d else []
