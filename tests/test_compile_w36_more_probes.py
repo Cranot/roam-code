@@ -12,6 +12,7 @@ from roam.plan.compiler import (
     _COMPARE_RE,
     _SYMBOL_PICKAXE_RE,
     _TEST_WRITE_RE,
+    _diff_operand_is_private,
     _probe_path_comparison_for_task,
     _probe_sibling_test_for_task,
     _probe_symbol_pickaxe_for_task,
@@ -228,6 +229,44 @@ def test_w36b_missing_file_returns_none(tmp_path):
         cwd=None,
     )
     assert out is None
+
+
+def test_w36b_private_operand_not_embedded(tmp_path):
+    # A private operand (internal/) must never be diffed — embedding the
+    # unified diff would leak the private file's lines into the envelope.
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    priv = internal / "prism.py"
+    priv.write_text("SECRET_PRIVATE_LINE = 42\n")
+    pub = tmp_path / "public.py"
+    pub.write_text("PUBLIC = 1\n")
+    out = _probe_path_comparison_for_task(
+        "compare internal/prism.py and public.py",
+        named_paths=["internal/prism.py", "public.py"],
+        cwd=str(tmp_path),
+    )
+    assert out is None
+    # The same probe on two public files still embeds a diff (guard is
+    # scoped, not a blanket disable).
+    pub2 = tmp_path / "public2.py"
+    pub2.write_text("PUBLIC = 2\n")
+    out2 = _probe_path_comparison_for_task(
+        "compare public.py and public2.py",
+        named_paths=["public.py", "public2.py"],
+        cwd=str(tmp_path),
+    )
+    assert out2 is not None
+    assert "PUBLIC = 2" in out2["path_comparison"]["diff"]
+
+
+def test_w36b_diff_operand_is_private_helper(tmp_path):
+    assert _diff_operand_is_private(
+        "internal/planning/prism.py", str(tmp_path / "internal/planning/prism.py"), str(tmp_path)
+    )
+    assert _diff_operand_is_private(".env", str(tmp_path / ".env"), str(tmp_path))
+    assert not _diff_operand_is_private(
+        "src/roam/plan/compiler.py", str(tmp_path / "src/roam/plan/compiler.py"), str(tmp_path)
+    )
 
 
 # ---- W36c symbol-pickaxe probe ----
