@@ -69,6 +69,11 @@ OVERLAP_CASES = [
     ("top 5 most complex files", "structural_complexity", "top_n_ranking"),
     # Shape A "biggest cycles" overlaps structural_cycle ("cycles in").
     ("biggest cycles in the codebase", "structural_cycle", "top_n_ranking"),
+    # "callers" is BOTH a recognised top-N dimension and the trigger for the
+    # structural_callers regex ("callers of <X>"), so "top N callers of <X>"
+    # is a genuine overlap, not a coincidental keyword hit.
+    ("top 10 callers of the function", "structural_callers", "top_n_ranking"),
+    ("top 5 callers of handleSave", "structural_callers", "top_n_ranking"),
 ]
 
 
