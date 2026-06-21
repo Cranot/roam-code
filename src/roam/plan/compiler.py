@@ -2890,7 +2890,7 @@ def _extract_dead_target_symbol(task: str | None) -> str | None:
     for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task or ""):
         if tok.lower() in _DEAD_TARGET_STOPWORDS:
             continue
-        if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
+        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
             continue
         return tok
     return None
@@ -3613,7 +3613,7 @@ def _resolve_complexity_target(task: str | None, cwd: str | None):
     for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task):
         if tok.lower() in _COMPLEXITY_TARGET_STOPWORDS:
             continue
-        if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
+        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
             continue
         sym = tok
         break
@@ -5600,7 +5600,7 @@ def _probe_test_impact_for_task(task: str, named_paths: list[str], cwd: str | No
     for tok in re.findall(r"`?([A-Za-z_][A-Za-z0-9_]{2,})`?", task):
         if tok.lower() in _TEST_IMPACT_STOPWORDS:
             continue
-        if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
+        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
             continue
         sym = tok
         break
@@ -6408,7 +6408,7 @@ def _extract_bare_callers_symbol(task: str) -> str | None:
             if not sym or sym.lower() in _BARE_CALLERS_STOPWORDS:
                 continue
             # Identifier-shaped: snake_case (has _) OR camelCase (lower→Upper).
-            if "_" not in sym and not re.search(r"[a-z][A-Z]", sym):
+            if "_" not in sym and not _CAMEL_HUMP_RE.search(sym):
                 continue
             return sym
     return None
@@ -6463,6 +6463,11 @@ def _probe_symbol_pickaxe_for_task(task: str, cwd: str | None) -> dict | None:
 # most specific identifier wins and English-but-identifier-shaped noise loses.
 _FREEFORM_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 _FREEFORM_BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]+)`")
+# A lowercase→uppercase transition ("camelCase hump"). The identifier-shape
+# gate shared by the dead-code, complexity, test-impact, callers, and freeform
+# identifier extractors: a token is identifier-shaped if it has an underscore
+# (snake_case) OR matches this hump (camelCase). Compiled once, used in 5 gates.
+_CAMEL_HUMP_RE = re.compile(r"[a-z][A-Z]")
 # Identifier-shaped tokens that are code/English noise, not resolvable symbols.
 _FREEFORM_IDENT_STOPWORDS = frozenset(
     {
@@ -6514,7 +6519,7 @@ def _extract_freeform_identifiers(task: str | None) -> list[str]:
         if low in _FREEFORM_IDENT_STOPWORDS or low in _BARE_CALLERS_STOPWORDS:
             continue
         # Shape gate: snake_case (has _) OR camelCase (lower→Upper).
-        if "_" not in tok and not re.search(r"[a-z][A-Z]", tok):
+        if "_" not in tok and not _CAMEL_HUMP_RE.search(tok):
             continue
         cands[tok] = False
     return [
