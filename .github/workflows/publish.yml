@@ -134,7 +134,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # W1055: pin the checkout to the resolved tag commit, NOT the
           # workflow's default ref. For a delayed ``release: published`` or a
@@ -530,7 +530,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # W1055: smoke-test the SAME tagged commit's verification scripts,
           # not trunk's — keeps the post-publish check bound to the release.
