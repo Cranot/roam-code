@@ -210,6 +210,38 @@ def format_table(headers: list[str], rows: list[list[str]], budget: int = 0) -> 
     return "\n".join(out_lines)
 
 
+def format_catalog_output(
+    json_mode: bool,
+    command_name: str,
+    verdict: str,
+    items: list,
+    field_name: str,
+    text_lines: list[str],
+    footer: str | None = None,
+) -> str:
+    """Return either a JSON envelope or a plain-text catalog listing.
+
+    Used by simple enumerate-and-tabulate commands to centralise the
+    invariant output dispatch (JSON envelope vs. ``VERDICT:``-prefixed
+    text table) while keeping each command responsible for its own data
+    assembly and table formatting.
+    """
+    if json_mode:
+        return to_json(
+            json_envelope(
+                command_name,
+                summary={"verdict": verdict, "count": len(items)},
+                **{field_name: items},
+            )
+        )
+
+    lines = [f"VERDICT: {verdict}", ""]
+    lines.extend(text_lines)
+    if footer:
+        lines.extend(["", footer])
+    return "\n".join(lines)
+
+
 def to_json(data) -> str:
     """Serialize data to a JSON string with deterministic key ordering.
 
