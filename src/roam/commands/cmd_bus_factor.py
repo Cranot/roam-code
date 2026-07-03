@@ -11,6 +11,7 @@ import time
 import click
 
 from roam.capability import roam_capability
+from roam.commands.boundary_helpers import make_run_check
 from roam.commands.conventions_helper import (
     DEFAULT_EXCLUDE_PREFIXES,
     has_excluded_prefix,
@@ -721,11 +722,9 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         marker via ``_w607cq_warnings_out`` and return *default* -- the
         envelope still emits cleanly with the remaining substrates.
         """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607cq_warnings_out.append(f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        return make_run_check("bus_factor", _w607cq_warnings_out)(
+            phase, fn, *args, default=default, **kwargs
+        )
 
     # W607-EH -- AGGREGATION-layer plumbing on top of W607-CQ substrate
     # layer. The two buckets are disjoint and merged at envelope-emit
@@ -776,14 +775,14 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         ``bus_factor_<phase>_failed:`` marker family) but writes into
         ``_w607eh_warnings_out`` so the additive bucket stays
         distinguishable in tests + audits. W607-DW finding pin: the
-        return statement is verbatim ``return default`` (NOT
-        ``return default if default is not None else {}``) so the floor
-        is a literal pass-through.
+        shared helper passes the supplied *default* through unchanged so
+        the floor remains a literal pass-through.
         """
         try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607eh_warnings_out.append(f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return make_run_check("bus_factor", _w607eh_warnings_out)(
+                phase, fn, *args, default=default, **kwargs
+            )
+        except Exception:  # noqa: BLE001 -- safety-net fallback; helper already discloses
             return default
 
     with open_db(readonly=not persist) as conn:
