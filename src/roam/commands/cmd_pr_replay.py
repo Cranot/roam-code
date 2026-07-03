@@ -1228,6 +1228,18 @@ def _policy_project_root(find_project_root, prefix: str, warnings: list[str]) ->
     return Path(repo_root)
 
 
+def _permit_reader_dependencies_for_degraded_replay(
+    warnings: list[str],
+) -> tuple[Callable[[], Path | None], Callable[..., list[dict]]] | None:
+    try:
+        from roam.db.connection import find_project_root
+        from roam.permits.store import load_permits_from_disk
+    except ImportError as exc:
+        warnings.append(f"_gather_permit_policy_decisions: import failed ({exc})")
+        return None
+    return find_project_root, load_permits_from_disk
+
+
 def _gather_permit_policy_decisions(
     warnings: list[str],
 ) -> list[dict]:
@@ -1250,12 +1262,10 @@ def _gather_permit_policy_decisions(
     actionable warnings here in ``warnings`` (the W199 collector's
     ``producer_warnings`` bucket).
     """
-    try:
-        from roam.db.connection import find_project_root
-        from roam.permits.store import load_permits_from_disk
-    except ImportError as exc:
-        warnings.append(f"_gather_permit_policy_decisions: import failed ({exc})")
+    deps = _permit_reader_dependencies_for_degraded_replay(warnings)
+    if deps is None:
         return []
+    find_project_root, load_permits_from_disk = deps
     # W591: mirror W590's surgical Pattern-2 fix for the SIBLING permit
     # gatherer. Before W591 the project-root lookup silently fell through
     # to an empty list — making "not a roam project" indistinguishable
