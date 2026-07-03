@@ -181,47 +181,79 @@ class _ConventionRegistryFields:
     confidence: str
 
 
-def _prepare_convention_fields_for_registry_row(outlier: dict) -> _ConventionRegistryFields:
-    """Normalize one naming outlier before the shared registry emit loop."""
-    name = outlier.get("name") or ""
+@dataclass(frozen=True)
+class _StableConventionRegistrySubject:
+    """Normalized convention outlier fields that preserve registry identity."""
+
+    name: str
+    kind: str
+    file_path: str
+    line_start: int | None
+    family: str
+    group: str
+    actual_style: str
+    expected_style: str
+    expected_source: str | None
+
+
+def _normalize_outlier_for_stable_convention_registry_identity(
+    outlier: dict,
+) -> _StableConventionRegistrySubject:
+    """Tolerate loose detector output before deriving a stable finding id."""
     kind = outlier.get("kind") or ""
-    file_path = outlier.get("file") or ""
     line_start = outlier.get("line")
     try:
         line_start_int: int | None = int(line_start) if line_start is not None else None
     except (TypeError, ValueError):
         line_start_int = None
-    family = outlier.get("language_family") or "unknown"
-    group = _group_for_kind(kind)
-    actual_style = outlier.get("actual_style") or "?"
-    expected_style = outlier.get("expected_style") or "?"
-    expected_source = outlier.get("expected_source")
 
-    finding_id = _conventions_finding_id(family, group, name, file_path, line_start_int)
+    return _StableConventionRegistrySubject(
+        name=outlier.get("name") or "",
+        kind=kind,
+        file_path=outlier.get("file") or "",
+        line_start=line_start_int,
+        family=outlier.get("language_family") or "unknown",
+        group=_group_for_kind(kind),
+        actual_style=outlier.get("actual_style") or "?",
+        expected_style=outlier.get("expected_style") or "?",
+        expected_source=outlier.get("expected_source"),
+    )
+
+
+def _prepare_convention_fields_for_registry_row(outlier: dict) -> _ConventionRegistryFields:
+    """Normalize one naming outlier before the shared registry emit loop."""
+    subject = _normalize_outlier_for_stable_convention_registry_identity(outlier)
+    finding_id = _conventions_finding_id(
+        subject.family,
+        subject.group,
+        subject.name,
+        subject.file_path,
+        subject.line_start,
+    )
     evidence = {
-        "name": name,
-        "kind": kind,
-        "language_family": family,
-        "kind_group": group,
-        "actual_style": actual_style,
-        "expected_style": expected_style,
-        "expected_source": expected_source,
-        "file_path": file_path,
-        "line_start": line_start_int,
+        "name": subject.name,
+        "kind": subject.kind,
+        "language_family": subject.family,
+        "kind_group": subject.group,
+        "actual_style": subject.actual_style,
+        "expected_style": subject.expected_style,
+        "expected_source": subject.expected_source,
+        "file_path": subject.file_path,
+        "line_start": subject.line_start,
     }
-    location = f"{file_path}:{line_start_int}" if line_start_int is not None else file_path
+    location = f"{subject.file_path}:{subject.line_start}" if subject.line_start is not None else subject.file_path
     claim = (
-        f"naming-outlier: {name} ({kind}) is {actual_style}, "
-        f"expected {expected_style} for {family}/{group} at {location}"
+        f"naming-outlier: {subject.name} ({subject.kind}) is {subject.actual_style}, "
+        f"expected {subject.expected_style} for {subject.family}/{subject.group} at {location}"
     )
     return _ConventionRegistryFields(
-        name=name,
-        file_path=file_path,
-        line_start=line_start_int,
+        name=subject.name,
+        file_path=subject.file_path,
+        line_start=subject.line_start,
         finding_id=finding_id,
         claim=claim,
         evidence_json=_json.dumps(evidence, sort_keys=True),
-        confidence=_conventions_violation_confidence(expected_source),
+        confidence=_conventions_violation_confidence(subject.expected_source),
     )
 
 
