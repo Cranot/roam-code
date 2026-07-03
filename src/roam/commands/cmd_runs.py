@@ -125,6 +125,39 @@ def _resolve_run_target_for_consistent_failure_contract(
     return root, active.run_id
 
 
+def _emit_runs_failure(
+    ctx,
+    command_name: str,
+    verdict: str,
+    json_mode: bool,
+    warnings_out: list[str] | None = None,
+    extra_summary: dict | None = None,
+    extra_kwargs: dict | None = None,
+) -> None:
+    """Emit a uniform failure envelope for ``runs-*`` and exit 2.
+
+    Conservation law: every ``runs-*`` command must fail with the same
+    envelope shape, but each command carries distinct summary flags and
+    top-level payload fields. This helper owns the uniform scaffolding;
+    callers inject only the command-specific deltas.
+    """
+    summary: dict = {"verdict": verdict, "partial_success": True}
+    if extra_summary:
+        summary.update(extra_summary)
+    if warnings_out:
+        summary["warnings_out"] = list(warnings_out)
+    kwargs: dict = {"summary": summary}
+    if warnings_out:
+        kwargs["warnings_out"] = list(warnings_out)
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
+    if json_mode:
+        click.echo(to_json(json_envelope(command_name, **kwargs)))
+        ctx.exit(2)
+    click.echo(f"VERDICT: {verdict}")
+    ctx.exit(2)
+
+
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
@@ -201,25 +234,14 @@ def runs_start(ctx, agent):
     if root is None:
         # find_project_root raised -- surface the marker + bail with a
         # usage-error envelope rather than crashing.
-        verdict = "error: could not resolve project root"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-start",
-                        summary={
-                            "verdict": verdict,
-                            "partial_success": True,
-                            "started": False,
-                            "warnings_out": list(_w607as_warnings_out),
-                        },
-                        warnings_out=list(_w607as_warnings_out),
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
+        _emit_runs_failure(
+            ctx,
+            "runs-start",
+            "error: could not resolve project root",
+            json_mode,
+            _w607as_warnings_out,
+            extra_summary={"started": False},
+        )
 
     try:
         meta = _run_check_as("start_run", _w607as_warnings_out, start_run, root, agent=agent, default=None)
@@ -228,24 +250,14 @@ def runs_start(ctx, agent):
             # failure but preserve the original ValueError envelope shape.
             raise ValueError(_w607as_warnings_out[-1] if _w607as_warnings_out else "start_run failed")
     except ValueError as exc:
-        verdict = f"error: {exc}"
-        if json_mode:
-            err_summary = {"verdict": verdict, "partial_success": True, "started": False}
-            err_kwargs: dict = {"summary": err_summary}
-            if _w607as_warnings_out:
-                err_summary["warnings_out"] = list(_w607as_warnings_out)
-                err_kwargs["warnings_out"] = list(_w607as_warnings_out)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-start",
-                        **err_kwargs,
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
+        _emit_runs_failure(
+            ctx,
+            "runs-start",
+            f"error: {exc}",
+            json_mode,
+            _w607as_warnings_out,
+            extra_summary={"started": False},
+        )
 
     # W14.2 Synergy 4 — surface the mode tag the ledger captured.
     mode_phrase = f", mode={meta.mode}" if meta.mode else ""
@@ -567,29 +579,14 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
             # error path but with the marker already on the bucket.
             raise FileNotFoundError(_w607as_warnings_out[-1] if _w607as_warnings_out else "end_run failed")
     except (FileNotFoundError, ValueError) as exc:
-        verdict = f"error: {exc}"
-        if json_mode:
-            err_summary = {
-                "verdict": verdict,
-                "partial_success": True,
-                "state": "error",
-                "ended": False,
-            }
-            err_kwargs: dict = {"summary": err_summary}
-            if _w607as_warnings_out:
-                err_summary["warnings_out"] = list(_w607as_warnings_out)
-                err_kwargs["warnings_out"] = list(_w607as_warnings_out)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-end",
-                        **err_kwargs,
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
+        _emit_runs_failure(
+            ctx,
+            "runs-end",
+            f"error: {exc}",
+            json_mode,
+            _w607as_warnings_out,
+            extra_summary={"state": "error", "ended": False},
+        )
 
     # W15.2 — optionally chain into ``pr-bundle emit`` so the close-run
     # and ship-bundle acts fuse into one command. The run is already closed
@@ -878,32 +875,23 @@ def runs_show(ctx, run_id):
     root = find_project_root()
     meta = read_run_meta(root, run_id)
     if meta is None:
-        verdict = f"run {run_id} does not exist -- run `roam runs list` to find a valid run_id"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-show",
-                        summary={
-                            "verdict": verdict,
-                            "partial_success": True,
-                            "state": "unknown_run",
-                            "total": 0,
-                        },
-                        budget=token_budget,
-                        run=None,
-                        events=[],
-                        # W20.6 error-msg consistency
-                        agent_contract={
-                            "facts": [f"no run named {run_id} in this repo"],
-                            "next_commands": ["roam runs list"],
-                        },
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
+        _emit_runs_failure(
+            ctx,
+            "runs-show",
+            f"run {run_id} does not exist -- run `roam runs list` to find a valid run_id",
+            json_mode,
+            extra_summary={"state": "unknown_run", "total": 0},
+            extra_kwargs={
+                "budget": token_budget,
+                "run": None,
+                "events": [],
+                # W20.6 error-msg consistency
+                "agent_contract": {
+                    "facts": [f"no run named {run_id} in this repo"],
+                    "next_commands": ["roam runs list"],
+                },
+            },
+        )
 
     events = list(read_run_events(root, run_id))
     total = len(events)
