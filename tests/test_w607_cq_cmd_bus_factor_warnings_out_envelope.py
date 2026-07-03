@@ -898,12 +898,24 @@ def test_detector_family_11way_marker_prefixes_coexist(cli_runner, bus_factor_pr
 
 
 def test_w607cq_marker_shape_documented_in_source():
-    """Source-level guard: canonical W607-CQ marker shape lives in cmd_bus_factor."""
-    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
-    src = src_path.read_text(encoding="utf-8")
-    fstring_pattern = 'f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}"'
-    assert fstring_pattern in src, (
-        f"canonical W607-CQ marker fstring missing from cmd_bus_factor; expected: {fstring_pattern}"
+    """Source-level guard: canonical W607-CQ marker shape is implemented
+    in the shared ``boundary_helpers`` module and wired to the ``bus_factor``
+    recipe in cmd_bus_factor.
+    """
+    cmd_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
+    helper_src_path = (
+        Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
+    )
+    cmd_src = cmd_src_path.read_text(encoding="utf-8")
+    helper_src = helper_src_path.read_text(encoding="utf-8")
+    # The generic marker template lives in the shared helper.
+    fstring_pattern = 'f"{recipe_name}_{phase}_failed:{type(exc).__name__}:{exc}"'
+    assert fstring_pattern in helper_src, (
+        f"canonical W607-CQ marker fstring missing from boundary_helpers; expected: {fstring_pattern}"
+    )
+    # cmd_bus_factor binds the template to the bus_factor recipe name.
+    assert 'make_run_check("bus_factor",' in cmd_src, (
+        "cmd_bus_factor must wire the shared helper to the bus_factor marker family."
     )
 
 

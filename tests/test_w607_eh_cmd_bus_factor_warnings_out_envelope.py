@@ -1016,17 +1016,25 @@ def test_both_helpers_use_bus_factor_marker_family():
     """Source-level audit: both ``_run_check_cq`` and ``_run_check_eh``
     must emit markers under the canonical ``bus_factor_*`` family so a
     consumer regex spans both layers without rework.
-    """
-    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
-    src = src_path.read_text(encoding="utf-8")
 
-    # Both f-string marker templates must use the same prefix
-    assert 'f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}"' in src, (
-        "Canonical W607 marker f-string template must be present at least once."
+    The marker construction now lives in the shared ``boundary_helpers``
+    module; each wrapper pins the recipe name (``bus_factor``) at the
+    ``make_run_check`` call site.
+    """
+    cmd_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
+    helper_src_path = (
+        Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
     )
-    # And it must appear at least twice (once per helper)
-    assert src.count('f"bus_factor_{phase}_failed:{type(exc).__name__}:{exc}"') >= 2, (
+    cmd_src = cmd_src_path.read_text(encoding="utf-8")
+    helper_src = helper_src_path.read_text(encoding="utf-8")
+
+    # Generic marker template lives in the shared helper.
+    assert 'f"{recipe_name}_{phase}_failed:{type(exc).__name__}:{exc}"' in helper_src, (
+        "Canonical W607 marker f-string template must live in boundary_helpers."
+    )
+    # Both wrappers route through the helper with the bus_factor recipe name.
+    assert cmd_src.count('make_run_check("bus_factor",') >= 2, (
         "Both ``_run_check_cq`` and ``_run_check_eh`` must emit markers "
         "under the canonical bus_factor_<phase>_failed:<exc>:<detail> "
-        "family; found only one instance."
+        "family; expected both wrappers to call make_run_check(\"bus_factor\", ...)."
     )
