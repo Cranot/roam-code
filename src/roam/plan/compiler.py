@@ -5017,8 +5017,11 @@ def _diff_operand_is_private(path: str, full: str, cwd: str | None) -> bool:
     if cwd:
         try:
             candidates.add(os.path.relpath(full, cwd).replace(os.sep, "/"))
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as exc:
+            # relpath unavailable (e.g. cross-drive on Windows); the named
+            # path candidate above still gates the forbidden-path check, so
+            # this stays fail-soft — surface it rather than swallow silently.
+            log_swallowed("compile.diff_operand.relpath", exc)
     return any(fnmatch.fnmatch(cand, pat) for cand in candidates for pat in _FORBIDDEN_PATHS_DEFAULT)
 
 
