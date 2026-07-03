@@ -79,26 +79,54 @@ def _session_overlap(path, tokens):
     return min(matches / 3.0, 1.0)
 
 
-def _resolve_recent_symbol_paths(conn, recent_symbols):
-    if not recent_symbols:
-        return set()
-    paths = set()
+def _recent_symbol_lookup_keys(recent_symbols):
+    keys = []
+    seen = set()
     for sym_name in recent_symbols:
         name = (sym_name or "").strip()
         if not name:
             continue
-        row = conn.execute(
-            "SELECT f.path FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE lower(s.name) = lower(?) "
-            "   OR lower(COALESCE(s.qualified_name, '')) = lower(?) "
-            "ORDER BY CASE WHEN lower(s.name) = lower(?) THEN 0 ELSE 1 END, s.id "
-            "LIMIT 1",
-            (name, name, name),
-        ).fetchone()
-        if row:
-            paths.add(row["path"].replace("\\", "/"))
-    return paths
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def _keep_best_recent_symbol_match(best_by_key, lookup_key, row, match_rank):
+    path = row["path"].replace("\\", "/")
+    candidate = (match_rank, row["id"], path)
+    current = best_by_key.get(lookup_key)
+    if current is None or candidate < current:
+        best_by_key[lookup_key] = candidate
+
+
+def _resolve_recent_symbol_paths(conn, recent_symbols):
+    lookup_keys = _recent_symbol_lookup_keys(recent_symbols)
+    if not lookup_keys:
+        return set()
+
+    requested = set(lookup_keys)
+    best_by_key = {}
+    rows = batched_in(
+        conn,
+        "SELECT s.id, "
+        "       lower(s.name) AS name_key, "
+        "       lower(COALESCE(s.qualified_name, '')) AS qualified_key, "
+        "       f.path AS path "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE lower(s.name) IN ({ph}) "
+        "   OR lower(COALESCE(s.qualified_name, '')) IN ({ph})",
+        lookup_keys,
+    )
+    for row in rows:
+        if row["name_key"] in requested:
+            _keep_best_recent_symbol_match(best_by_key, row["name_key"], row, 0)
+        if row["qualified_key"] in requested:
+            _keep_best_recent_symbol_match(best_by_key, row["qualified_key"], row, 1)
+    return {path for _match_rank, _sym_id, path in best_by_key.values()}
 
 
 def _recent_path_boost(path, recent_paths):
