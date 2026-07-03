@@ -1524,7 +1524,7 @@ def _collect_corroborated_authorities_from_runs(
             read_run_events,
         )
         from roam.runs.signing import ensure_ledger_key, verify_chain
-    except Exception as exc:  # noqa: BLE001 - runs module optional
+    except (ImportError, ModuleNotFoundError) as exc:  # noqa: BLE001 - runs module optional
         warnings.append(f"authority-corroboration: runs module unavailable ({exc})")
         return frozenset()
 
@@ -2277,7 +2277,7 @@ def _collect_corroborated_ids_from_runs(
             read_run_events,
         )
         from roam.runs.signing import ensure_ledger_key, verify_chain
-    except Exception as exc:  # noqa: BLE001 - runs module optional
+    except (ImportError, ModuleNotFoundError) as exc:  # noqa: BLE001 - runs module optional
         warnings.append(f"corroboration: runs module unavailable ({exc})")
         return frozenset(), frozenset()
 
