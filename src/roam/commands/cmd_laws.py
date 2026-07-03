@@ -773,6 +773,27 @@ def laws_list(ctx, laws_file):
 # ---------------------------------------------------------------------------
 
 
+def _emit_consistent_laws_explain_contract(
+    json_mode,
+    token_budget,
+    summary,
+    **payload,
+):
+    """Emit one laws-explain envelope shape across all result states."""
+    envelope = json_envelope(
+        "laws-explain",
+        budget=token_budget,
+        summary=summary,
+        **payload,
+    )
+    if json_mode:
+        click.echo(to_json(envelope))
+        return True
+
+    click.echo(f"VERDICT: {summary['verdict']}")
+    return False
+
+
 @laws_group.command("explain")
 @click.argument("law_id")
 @click.option("--laws-file", default=None, help="Path to a roam-laws.yml.")
@@ -789,10 +810,10 @@ def laws_explain(ctx, law_id, laws_file):
         # Pattern 1: parallel with laws-list / laws-check — JSON-mode
         # consumers reaching the not_initialized branch get the same
         # recovery hint that text-mode users see.
-        envelope = json_envelope(
-            "laws-explain",
-            budget=token_budget,
-            summary={
+        _emit_consistent_laws_explain_contract(
+            json_mode,
+            token_budget,
+            {
                 "verdict": verdict,
                 "law_id": law_id,
                 "partial_success": True,
@@ -804,20 +825,16 @@ def laws_explain(ctx, law_id, laws_file):
                 "next_commands": ["roam laws mine --out roam-laws.yml"],
             },
         )
-        if json_mode:
-            click.echo(to_json(envelope))
-        else:
-            click.echo(f"VERDICT: {verdict}")
         return
 
     laws = load_laws_yaml(laws_path.read_text(encoding="utf-8"))
     match = next((law for law in laws if law.id == law_id), None)
     if match is None:
         verdict = f"no law with id '{law_id}'"
-        envelope = json_envelope(
-            "laws-explain",
-            budget=token_budget,
-            summary={
+        _emit_consistent_laws_explain_contract(
+            json_mode,
+            token_budget,
+            {
                 "verdict": verdict,
                 "law_id": law_id,
                 "partial_success": True,
@@ -826,20 +843,17 @@ def laws_explain(ctx, law_id, laws_file):
             law=None,
             available_ids=[law.id for law in laws],
         )
-        if json_mode:
-            click.echo(to_json(envelope))
-        else:
-            click.echo(f"VERDICT: {verdict}")
+        if not json_mode:
             click.echo("Available ids:")
             for law in laws:
                 click.echo(f"  {law.id}")
         return
 
     verdict = f"{match.id} -- {match.description}"
-    envelope = json_envelope(
-        "laws-explain",
-        budget=token_budget,
-        summary={
+    wrote_json = _emit_consistent_laws_explain_contract(
+        json_mode,
+        token_budget,
+        {
             "verdict": verdict,
             "law_id": match.id,
             "kind": match.kind,
@@ -849,12 +863,9 @@ def laws_explain(ctx, law_id, laws_file):
         },
         law=match.to_dict(),
     )
-
-    if json_mode:
-        click.echo(to_json(envelope))
+    if wrote_json:
         return
 
-    click.echo(f"VERDICT: {verdict}")
     click.echo("")
     click.echo(f"  id:          {match.id}")
     click.echo(f"  kind:        {match.kind}")
