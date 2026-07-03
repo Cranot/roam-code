@@ -13,7 +13,8 @@ from collections import defaultdict, deque
 from roam.commands.changed_files import is_test_file
 from roam.commands.graph_helpers import build_forward_adj
 from roam.db.connection import batched_in
-from roam.output.formatter import loc
+from roam.output.formatter import json_envelope, loc
+from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 _DEFAULT_REASON_WEIGHTS = {
     "definition": 1.0,
@@ -1244,6 +1245,18 @@ def summarize_tests(test_hits: list[dict], cap: int) -> tuple[list[dict], int, i
 # ---------------------------------------------------------------------------
 
 
+def _count_distinct_paths(rows, key):
+    paths = set()
+    for row in rows:
+        try:
+            path = row[key]
+        except (KeyError, IndexError, TypeError):
+            continue
+        if path:
+            paths.add(str(path).replace("\\", "/"))
+    return len(paths)
+
+
 def gather_task_bundle(
     conn,
     sym,
@@ -1272,13 +1285,15 @@ def gather_task_bundle(
 
     Read-only: issues no writes and adds no DB queries beyond what those
     helpers already run (no index-schema change). Each section is best-effort
-    and degrades to a neutral default so the bundle always emits a non-empty
-    envelope even when an optional table is absent or a helper fails. Returns a
-    plain dict of JSON-serializable scalars/lists/dicts (no ``sqlite3.Row``
-    leakage) ready to hand to ``json_envelope(...)``.
+    and degrades to a neutral default with an explicit ``degraded_sections``
+    marker so the bundle always emits a non-empty envelope even when an
+    optional table is absent or a helper fails. Returns a plain dict of
+    JSON-serializable scalars/lists/dicts (no ``sqlite3.Row`` leakage) ready to
+    hand to ``json_envelope(...)``.
     """
     sym_id = sym["id"]
     file_path = sym["file_path"]
+    degraded_sections = []
 
     try:
         qualified_name = sym["qualified_name"] or sym["name"]
@@ -1297,9 +1312,11 @@ def gather_task_bundle(
         )
         context = {
             "files_to_read": ctx["files_to_read"],
-            "caller_files": len(ctx["non_test_callers"]),
-            "callee_files": len(ctx["callees"]),
-            "sibling_files": len(ctx["siblings"]),
+            "caller_symbols": len(ctx["non_test_callers"]),
+            "caller_files": _count_distinct_paths(ctx["non_test_callers"], "file_path"),
+            "callee_symbols": len(ctx["callees"]),
+            "callee_files": _count_distinct_paths(ctx["callees"], "file_path"),
+            "sibling_symbols": len(ctx["siblings"]),
             "skipped_callers": ctx["skipped_callers"],
             "skipped_callees": ctx["skipped_callees"],
         }
@@ -1307,7 +1324,17 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:context", _exc)
-        context = {}
+        degraded_sections.append("context")
+        context = {
+            "files_to_read": [],
+            "caller_symbols": 0,
+            "caller_files": 0,
+            "callee_symbols": 0,
+            "callee_files": 0,
+            "sibling_symbols": 0,
+            "skipped_callers": 0,
+            "skipped_callees": 0,
+        }
 
     # --- affected tests (file-level collapse) ---
     try:
@@ -1322,6 +1349,7 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:affected_tests", _exc)
+        degraded_sections.append("affected_tests")
         affected_tests = {"rows": [], "direct_files": 0, "total_files": 0}
 
     # --- recent churn ---
@@ -1331,6 +1359,7 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:git_churn", _exc)
+        degraded_sections.append("git_churn")
         git_churn = None
 
     try:
@@ -1339,6 +1368,7 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:coupling", _exc)
+        degraded_sections.append("coupling")
         coupling = []
 
     # --- blast radius (downstream dependents) ---
@@ -1348,6 +1378,7 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:blast_radius", _exc)
+        degraded_sections.append("blast_radius")
         blast_radius = None
 
     # --- policy hints (human annotations on the symbol) ---
@@ -1357,9 +1388,11 @@ def gather_task_bundle(
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_task_bundle:policy_hints", _exc)
+        degraded_sections.append("policy_hints")
         policy_hints = []
 
     return {
+        "task": _normalize_task(task) or None,
         "symbol": {
             "id": sym_id,
             "name": sym["name"],
@@ -1375,4 +1408,106 @@ def gather_task_bundle(
         "coupling": coupling,
         "blast_radius": blast_radius,
         "policy_hints": policy_hints,
+        "degraded_sections": degraded_sections,
     }
+
+
+def _task_bundle_summary(bundle):
+    symbol = bundle["symbol"]
+    context = bundle["context"]
+    affected_tests = bundle["affected_tests"]
+    blast_radius = bundle.get("blast_radius") or {}
+    git_churn = bundle.get("git_churn") or {}
+    policy_hints = bundle.get("policy_hints") or []
+    degraded_sections = bundle.get("degraded_sections") or []
+
+    symbol_name = symbol["qualified_name"] or symbol["name"]
+    files_to_read = len(context.get("files_to_read") or [])
+    affected_test_files = affected_tests.get("total_files", 0)
+    dependent_symbols = blast_radius.get("dependent_symbols", 0)
+    verdict = (
+        f"{symbol_name}: {files_to_read} files, "
+        f"{affected_test_files} test files, {dependent_symbols} dependent symbols"
+    )
+
+    summary = {
+        "verdict": verdict,
+        "partial_success": bool(degraded_sections),
+        "task": bundle.get("task"),
+        "symbol": symbol_name,
+        "files_to_read": files_to_read,
+        "caller_files": context.get("caller_files", 0),
+        "caller_symbols": context.get("caller_symbols", 0),
+        "caller_metric_definition": CALLER_METRIC_RAW,
+        "caller_file_metric_definition": "distinct file_path values among non-test caller edge rows.",
+        "callee_files": context.get("callee_files", 0),
+        "callee_symbols": context.get("callee_symbols", 0),
+        "affected_test_files": affected_test_files,
+        "direct_test_files": affected_tests.get("direct_files", 0),
+        "dependent_symbols": dependent_symbols,
+        "dependent_files": blast_radius.get("dependent_files", 0),
+        "coupling_partners": len(bundle.get("coupling") or []),
+        "policy_hints": len(policy_hints),
+    }
+    if git_churn:
+        summary["churn_commits"] = git_churn.get("commit_count", 0)
+        summary["churn_total"] = git_churn.get("total_churn", 0)
+    if degraded_sections:
+        summary["degraded_sections"] = degraded_sections
+    return summary
+
+
+def _task_bundle_agent_contract(summary):
+    symbol_name = summary["symbol"]
+    facts = [
+        f"{symbol_name} task bundle ranks {summary['files_to_read']} files",
+        f"{summary['affected_test_files']} affected test files",
+        f"{summary['dependent_symbols']} dependent symbols",
+    ]
+    if summary.get("churn_commits") is not None:
+        facts.append(f"{summary['churn_commits']} churn commits")
+    if summary.get("policy_hints"):
+        facts.append(f"{summary['policy_hints']} policy annotations")
+    if summary.get("degraded_sections"):
+        facts.append(f"{len(summary['degraded_sections'])} degraded warnings")
+
+    return {
+        "facts": facts,
+        "next_commands": [
+            f"roam context {symbol_name}",
+            f"roam preflight {symbol_name}",
+        ],
+    }
+
+
+def build_task_bundle_envelope(
+    conn,
+    sym,
+    task=None,
+    session_hint="",
+    recent_symbols=(),
+    use_propagation=True,
+    *,
+    test_cap=10,
+    coupling_limit=8,
+    budget=0,
+):
+    """Return a JSON-first task-bundle envelope for future CLI/MCP wiring."""
+    bundle = gather_task_bundle(
+        conn,
+        sym,
+        task=task,
+        session_hint=session_hint,
+        recent_symbols=recent_symbols,
+        use_propagation=use_propagation,
+        test_cap=test_cap,
+        coupling_limit=coupling_limit,
+    )
+    summary = _task_bundle_summary(bundle)
+    return json_envelope(
+        "task-bundle",
+        summary=summary,
+        budget=budget,
+        agent_contract=_task_bundle_agent_contract(summary),
+        **bundle,
+    )
