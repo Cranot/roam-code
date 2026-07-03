@@ -15,7 +15,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import empty_corpus_state, ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.builder import build_symbol_graph
 from roam.graph.clusters import cluster_quality, compare_with_directories
@@ -72,8 +72,6 @@ def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, tota
     visible_mega_ids = [r["cluster_id"] for r in visible if r["cluster_id"] in mega_ids]
     syms_by_cluster: dict[int, list] = {cid: [] for cid in visible_mega_ids}
     if visible_mega_ids:
-        from roam.db.connection import batched_in
-
         rows = batched_in(
             conn,
             "SELECT c.cluster_id, s.id, s.name, s.kind, f.path, "
@@ -181,6 +179,33 @@ def _print_coupling_matrix(big_groups, edges):
             click.echo(f"    Cross-group coupling: {overall_cross:.0f}% — moderate, some seams visible")
 
 
+def _load_capped_mermaid_members_in_one_query(conn, cluster_ids, members_per_cluster):
+    """Load the rendered cluster-member slice without per-cluster queries."""
+    rows = batched_in(
+        conn,
+        "SELECT cluster_id, id, name, kind, path, pagerank FROM ("
+        "  SELECT c.cluster_id, s.id, s.name, s.kind, f.path, "
+        "         COALESCE(gm.pagerank, 0) AS pagerank, "
+        "         ROW_NUMBER() OVER ("
+        "           PARTITION BY c.cluster_id "
+        "           ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name, s.id"
+        "         ) AS member_rank "
+        "  FROM clusters c "
+        "  JOIN symbols s ON c.symbol_id = s.id "
+        "  JOIN files f ON s.file_id = f.id "
+        "  LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+        "  WHERE c.cluster_id IN ({ph})"
+        ") ranked WHERE member_rank <= ? "
+        "ORDER BY cluster_id, member_rank",
+        cluster_ids,
+        post=[members_per_cluster],
+    )
+    members_by_cluster: dict[int, list] = {cid: [] for cid in cluster_ids}
+    for row in rows:
+        members_by_cluster.setdefault(row["cluster_id"], []).append(row)
+    return members_by_cluster
+
+
 def _clusters_mermaid(conn, rows, min_size):
     """Generate a Mermaid left-right diagram for code clusters.
 
@@ -193,49 +218,30 @@ def _clusters_mermaid(conn, rows, min_size):
 
     elements: list[str] = []
     members_per_cluster = 5
+    rendered_clusters = visible[:15]
+    rendered_ids = [r["cluster_id"] for r in rendered_clusters]
+    members_by_cluster = _load_capped_mermaid_members_in_one_query(conn, rendered_ids, members_per_cluster)
 
     # Build subgraph for each cluster
-    for r in visible[:15]:  # Cap at 15 clusters for readability
+    for r in rendered_clusters:  # Cap at 15 clusters for readability
         cid = r["cluster_id"]
         label = r["cluster_label"] or f"Cluster {cid}"
-        # Fetch top symbols by PageRank for this cluster
-        top_syms = conn.execute(
-            "SELECT s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pr "
-            "FROM clusters c "
-            "JOIN symbols s ON c.symbol_id = s.id "
-            "JOIN files f ON s.file_id = f.id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "WHERE c.cluster_id = ? "
-            "ORDER BY pr DESC LIMIT ?",
-            (cid, members_per_cluster),
-        ).fetchall()
         node_lines = []
-        for s in top_syms:
+        for s in members_by_cluster.get(cid, []):
             node_id = f"c{cid}_{s['name']}"
             node_lines.append(mnode(node_id, s["name"]))
         elements.append(msubgraph(f"Cluster {cid}: {label}", node_lines))
 
     # Add inter-cluster edges
     _, _, _, inter_pairs = _compute_cohesion(conn)
-    visible_ids = {r["cluster_id"] for r in visible[:15]}
+    visible_ids = set(rendered_ids)
     visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
     top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
     for (ca, cb), cnt in top_inter:
         # Use cluster-level node IDs for inter-cluster edges
-        # Pick the first symbol from each cluster as the edge anchor
-        src_sym = conn.execute(
-            "SELECT s.name FROM clusters c JOIN symbols s ON c.symbol_id = s.id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "WHERE c.cluster_id = ? ORDER BY COALESCE(gm.pagerank, 0) DESC LIMIT 1",
-            (ca,),
-        ).fetchone()
-        tgt_sym = conn.execute(
-            "SELECT s.name FROM clusters c JOIN symbols s ON c.symbol_id = s.id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "WHERE c.cluster_id = ? ORDER BY COALESCE(gm.pagerank, 0) DESC LIMIT 1",
-            (cb,),
-        ).fetchone()
-        if src_sym and tgt_sym:
+        src_sym = next(iter(members_by_cluster.get(ca, [])), None)
+        tgt_sym = next(iter(members_by_cluster.get(cb, [])), None)
+        if src_sym is not None and tgt_sym is not None:
             elements.append(medge(f"c{ca}_{src_sym['name']}", f"c{cb}_{tgt_sym['name']}"))
 
     return mdiagram("LR", elements)
