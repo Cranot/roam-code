@@ -1133,6 +1133,91 @@ def _detect_hash_drift(
     return tuple(reasons), current
 
 
+@dataclasses.dataclass(frozen=True)
+class _ChangeScopeEvidence:
+    context_read_at: str | None
+    edits_started_at: str | None
+    edits_completed_at: str | None
+    evidence_stale: bool
+    stale_reasons: tuple[str, ...]
+    rules_config_hash: str | None
+    constitution_hash: str | None
+    control_map_hash: str | None
+
+
+def _derive_change_scope_evidence(
+    events: Iterable[Mapping[str, Any]],
+    *,
+    packet_config_hashes: Mapping[str, str] | None,
+    current_config_hashes: Mapping[str, str] | None,
+) -> _ChangeScopeEvidence:
+    """Derive W1234 timestamp staleness plus W1253 config-hash drift fields."""
+    (
+        context_read_at,
+        edits_started_at,
+        edits_completed_at,
+    ) = _collect_change_scope_timestamps(events)
+    evidence_stale, stale_reasons_tuple = _compute_evidence_stale(
+        context_read_at,
+        edits_started_at,
+    )
+
+    hash_drift_reasons, _ = _detect_hash_drift(
+        packet_config_hashes,
+        current_config_hashes,
+    )
+    if hash_drift_reasons:
+        evidence_stale = True
+    stale_reasons = stale_reasons_tuple + hash_drift_reasons
+
+    # Packet fields record the run-start hashes. Empty strings are the
+    # W1255 absent sentinel and collapse to None for W210 omit-defaults.
+    packet_hashes = dict(packet_config_hashes) if packet_config_hashes else {}
+    return _ChangeScopeEvidence(
+        context_read_at=context_read_at,
+        edits_started_at=edits_started_at,
+        edits_completed_at=edits_completed_at,
+        evidence_stale=evidence_stale,
+        stale_reasons=stale_reasons,
+        rules_config_hash=packet_hashes.get("rules_config_hash") or None,
+        constitution_hash=packet_hashes.get("constitution_hash") or None,
+        control_map_hash=packet_hashes.get("control_map_hash") or None,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _BundleIdentity:
+    """Identity + collections lifted from the pr-bundle envelope (Step 1).
+
+    ``collect_change_evidence`` delegates the pr-bundle parsing to
+    :func:`_extract_bundle_identity`, which returns one of these. The
+    fields mirror the ``bundle_*`` locals the orchestrator used to set
+    inline. ``redactions`` is a mutable list so later steps can keep
+    ``.extend()``-ing it; the dataclass is frozen but frozen only blocks
+    attribute reassignment, not in-place mutation.
+    """
+
+    commit_sha: str | None = None
+    git_range: str | None = None
+    diff_hash: str | None = None
+    run_ids: tuple[str, ...] = ()
+    agent_id: str | None = None
+    human_actor: str | None = None
+    mode: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    verdict: str | None = None
+    risk_level: str | None = None
+    repo_id: str | None = None
+    subjects: tuple[EvidenceSubject, ...] = ()
+    context_refs: tuple[EvidenceArtifact, ...] = ()
+    tests_required: tuple[str, ...] = ()
+    tests_run: tuple[Mapping[str, Any], ...] = ()
+    approvals: tuple[Mapping[str, Any], ...] = ()
+    accepted_risks: tuple[Mapping[str, Any], ...] = ()
+    redactions: list[str] = dataclasses.field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Helpers - W190 agentic-assurance refs (actor / authority / environment)
 # ---------------------------------------------------------------------------
@@ -1311,6 +1396,45 @@ def _build_actor_refs(
         classified.append(dataclasses.replace(ref, trust_tier=tier))
 
     return tuple(classified)
+
+
+def _merge_mcp_receipt_actor_refs(
+    actor_refs: tuple[ActorRef, ...],
+    mcp_receipt_actor_refs: Iterable[ActorRef],
+    *,
+    corroborated_tool_ids: frozenset[str],
+    corroborated_actor_ids: frozenset[str],
+) -> tuple[ActorRef, ...]:
+    """Merge receipt-derived ActorRefs and classify their trust tier."""
+    receipt_refs = tuple(mcp_receipt_actor_refs)
+    if not receipt_refs:
+        return actor_refs
+
+    existing_pairs: set[tuple[str, str]] = {(r.actor_kind, r.actor_id) for r in actor_refs}
+    # Cache the env/git/run-ledger probes once - they're invariant
+    # across the merged refs and re-reading would only cost cycles.
+    ci_env_detected = _detect_ci_env_id() is not None
+    ci_actor_id = _detect_ci_actor_id() if ci_env_detected else None
+    git_email = _read_git_user_email()
+    run_ledger_actor = _read_run_ledger_actor()
+    merged: list[ActorRef] = list(actor_refs)
+    for ref in receipt_refs:
+        key = (ref.actor_kind, ref.actor_id)
+        if key in existing_pairs:
+            continue
+        existing_pairs.add(key)
+        tier = classify_actor_trust_tier(
+            actor_id=ref.actor_id,
+            actor_kind=ref.actor_kind,
+            ci_env_detected=ci_env_detected,
+            ci_actor_id=ci_actor_id,
+            git_email=git_email,
+            run_ledger_actor=run_ledger_actor,
+            corroborated_tool_ids=corroborated_tool_ids,
+            corroborated_actor_ids=corroborated_actor_ids,
+        )
+        merged.append(dataclasses.replace(ref, trust_tier=tier))
+    return tuple(merged)
 
 
 # ---------------------------------------------------------------------------
@@ -2527,7 +2651,7 @@ def _flatten_rules_envelope_to_policy_decisions(
         if isinstance(violations, list) and violations:
             entry["violation_count"] = len(violations)
         # Surface unknown per-row keys so callers spot drift.
-        for key in row.keys():
+        for key in row:
             if key not in _RULE_RESULT_KNOWN_FIELDS:
                 warnings.append(f"{source_label}[{idx}]: unrecognised field {key!r} on rule {rule_id!r}")
         entry["provenance"] = _rule_prov
@@ -3175,6 +3299,371 @@ def _read_mcp_receipts_dir(
     return artifacts, refs
 
 
+def _stamp_missing_provenance_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    provenance: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Return rows with a provenance label where producers omitted one."""
+    stamped_rows: list[Mapping[str, Any]] = []
+    for row in rows:
+        if not row.get("provenance"):
+            stamped = dict(row)
+            stamped["provenance"] = provenance
+            stamped_rows.append(stamped)
+        else:
+            stamped_rows.append(row)
+    return tuple(stamped_rows)
+
+
+def _merge_policy_decisions(
+    *,
+    rules_decisions: Iterable[Mapping[str, Any]],
+    audit_trail_decisions: Iterable[Mapping[str, Any]],
+    extra_policy_decisions: Iterable[Mapping[str, Any]],
+    warnings: list[str],
+) -> tuple[Mapping[str, Any], ...]:
+    """Merge policy-decision producers in wire-stable order.
+
+    Rules land first, audit-trail decisions second, caller-supplied
+    extras last. Producer-stamped provenance is preserved; legacy rows
+    get ``"unknown"`` so the wire shape remains uniform.
+    """
+    all_policy_decisions: list[Mapping[str, Any]] = []
+    all_policy_decisions.extend(rules_decisions)
+    all_policy_decisions.extend(audit_trail_decisions)
+    for idx, entry in enumerate(extra_policy_decisions):
+        if not isinstance(entry, Mapping):
+            warnings.append(f"extra_policy_decisions[{idx}]: expected dict, got {type(entry).__name__}; skipped")
+            continue
+        if not entry.get("rule_id"):
+            warnings.append(f"extra_policy_decisions[{idx}]: missing rule_id; skipped")
+            continue
+        if not entry.get("decision"):
+            warnings.append(f"extra_policy_decisions[{idx}]: missing decision; skipped")
+            continue
+        all_policy_decisions.append(entry)
+
+    return _stamp_missing_provenance_rows(
+        all_policy_decisions,
+        provenance=provenance_label("unknown"),
+    )
+
+
+def _stamp_approval_provenance(
+    approvals: Iterable[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """Stamp missing approval provenance with the collector fallback.
+
+    Producer-stamped values from pr-bundle / GitHub reviews are
+    preserved; legacy rows get ``"unknown"``.
+    """
+    return _stamp_missing_provenance_rows(
+        approvals,
+        provenance=provenance_label("unknown"),
+    )
+
+
+def _collect_findings_and_redactions(
+    *,
+    findings_envelopes: Iterable[Mapping[str, Any]],
+    critique_envelope: Mapping[str, Any] | None,
+    pr_risk_envelope: Mapping[str, Any] | None,
+    warnings: list[str],
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    """Collect finding rows and redaction stamps from finding-shaped inputs."""
+    findings: list[Mapping[str, Any]] = []
+    redactions: list[str] = []
+
+    for idx, env in enumerate(findings_envelopes):
+        source_label = f"findings_envelopes[{idx}]"
+        if not isinstance(env, Mapping):
+            warnings.append(f"{source_label}: expected dict, got {type(env).__name__}; skipped")
+            continue
+        findings.extend(_normalise_findings_envelope(env, warnings, source_label=source_label))
+        redactions.extend(
+            _normalise_redactions(
+                env.get("redactions"),
+                warnings,
+                source_label=source_label,
+            )
+        )
+
+    for source_label, envelope in (
+        ("critique_envelope", critique_envelope),
+        ("pr_risk_envelope", pr_risk_envelope),
+    ):
+        if envelope is None:
+            continue
+        if not isinstance(envelope, Mapping):
+            warnings.append(f"{source_label}: expected dict, got {type(envelope).__name__}; ignored")
+            continue
+        findings.extend(
+            _normalise_findings_envelope(
+                envelope,
+                warnings,
+                source_label=source_label,
+            )
+        )
+        redactions.extend(
+            _normalise_redactions(
+                envelope.get("redactions"),
+                warnings,
+                source_label=source_label,
+            )
+        )
+
+    return findings, redactions
+
+
+def _extract_bundle_identity(
+    pr_bundle_envelope: Mapping[str, Any] | None,
+    *,
+    caller_repo_id: str | None,
+    warnings: list[str],
+) -> _BundleIdentity:
+    """Parse the pr-bundle envelope into identity + collections (Step 1).
+
+    Returns a :class:`_BundleIdentity` with all-default fields when the
+    envelope is ``None`` or not a mapping (the non-mapping case appends a
+    warning so the caller sees the dropped input). The caller-wins
+    precedence over run-event-derived values is applied by the
+    orchestrator, not here. See :func:`collect_change_evidence` docstring
+    for the per-field mapping contract.
+    """
+    if pr_bundle_envelope is None:
+        return _BundleIdentity()
+    if not isinstance(pr_bundle_envelope, Mapping):
+        warnings.append(f"pr_bundle_envelope: expected dict, got {type(pr_bundle_envelope).__name__}; ignored")
+        return _BundleIdentity()
+
+    # Identity fields - top-level OR nested under bundle_meta /
+    # actor / timestamps containers. We probe both shapes.
+    commit_sha = _coalesce(
+        _get_pr_bundle_field(pr_bundle_envelope, "commit_sha"),
+        _nested(pr_bundle_envelope, ("bundle_meta", "git", "head_sha")),
+        _nested(pr_bundle_envelope, ("bundle_meta", "commit_sha")),
+    )
+    git_range = _coalesce(
+        _get_pr_bundle_field(pr_bundle_envelope, "git_range"),
+        _nested(pr_bundle_envelope, ("bundle_meta", "git_range")),
+    )
+    diff_hash = _coalesce(
+        _get_pr_bundle_field(pr_bundle_envelope, "diff_hash"),
+    )
+    run_ids_raw = _coalesce(
+        pr_bundle_envelope.get("run_ids"),
+        _nested(pr_bundle_envelope, ("bundle_meta", "run_ids")),
+    )
+    run_ids: tuple[str, ...] = ()
+    if isinstance(run_ids_raw, (list, tuple)):
+        run_ids = tuple(str(r) for r in run_ids_raw if isinstance(r, str) and r)
+    # W249 - layer-2 scrub. Run BEFORE picking values so the
+    # secret-shaped substrings never land in agent_id /
+    # human_actor (which feed ChangeEvidence.agent_id /
+    # .human_actor verbatim). ``had_actor_secret`` rolls up
+    # whether any pattern fired; we stamp ``"secret"`` into
+    # ``redactions`` below when True.
+    had_actor_secret = False
+    actor_block_raw = pr_bundle_envelope.get("actor")
+    scrubbed_actor_block, ab_hit = _scrub_actor_block(actor_block_raw)
+    if ab_hit:
+        had_actor_secret = True
+    actor_block = scrubbed_actor_block
+    agent_id: str | None = None
+    human_actor: str | None = None
+    if isinstance(actor_block, Mapping):
+        agent_id = _coalesce(
+            actor_block.get("agent_id"),
+            actor_block.get("agent"),
+        )
+        human_actor = _coalesce(
+            actor_block.get("human_actor"),
+            actor_block.get("human"),
+            actor_block.get("user"),
+        )
+    # Legacy top-level fields - scrub each individually.
+    legacy_agent_id, lai_hit = _redact_secrets_in_string(
+        pr_bundle_envelope.get("agent_id") if isinstance(pr_bundle_envelope.get("agent_id"), str) else ""
+    )
+    if lai_hit:
+        had_actor_secret = True
+    legacy_human_actor, lha_hit = _redact_secrets_in_string(
+        pr_bundle_envelope.get("human_actor") if isinstance(pr_bundle_envelope.get("human_actor"), str) else ""
+    )
+    if lha_hit:
+        had_actor_secret = True
+    agent_id = _coalesce(
+        agent_id,
+        legacy_agent_id or None,
+    )
+    human_actor = _coalesce(
+        human_actor,
+        legacy_human_actor or None,
+    )
+    mode = _coalesce(
+        pr_bundle_envelope.get("mode"),
+        _nested(pr_bundle_envelope, ("summary", "active_mode")),
+        _nested(pr_bundle_envelope, ("mode_block", "active_mode")),
+    )
+    started_at: str | None = None
+    completed_at: str | None = None
+    ts_block = pr_bundle_envelope.get("timestamps")
+    if isinstance(ts_block, Mapping):
+        started_at = _coalesce(
+            ts_block.get("started_at"),
+            ts_block.get("start"),
+            ts_block.get("created_at"),
+        )
+        completed_at = _coalesce(
+            ts_block.get("completed_at"),
+            ts_block.get("end"),
+            ts_block.get("updated_at"),
+        )
+    # bundle_meta carries created_at / updated_at on the real
+    # pr-bundle envelope shape; fall back to those when no
+    # explicit timestamps block is present.
+    started_at = _coalesce(
+        started_at,
+        _nested(pr_bundle_envelope, ("bundle_meta", "created_at")),
+    )
+    completed_at = _coalesce(
+        completed_at,
+        _nested(pr_bundle_envelope, ("bundle_meta", "updated_at")),
+    )
+    # W249 - layer-2 scrub on verdict. The verdict is a free-
+    # form string that flows verbatim into ChangeEvidence.verdict
+    # so secret-shaped substrings would otherwise survive into
+    # the on-wire canonical JSON.
+    raw_verdict = _coalesce(
+        pr_bundle_envelope.get("verdict"),
+        _nested(pr_bundle_envelope, ("summary", "verdict")),
+    )
+    if isinstance(raw_verdict, str):
+        scrubbed_verdict, verdict_hit = _redact_secrets_in_string(raw_verdict)
+        if verdict_hit:
+            had_actor_secret = True
+        verdict = scrubbed_verdict
+    else:
+        verdict = raw_verdict
+    # W641-followup-F — prefer the canonical risk-LEVEL axis emitted
+    # by the W641 cluster producers (pr_risk, impact, critique,
+    # pr_bundle, attest). The producer→packet projection loop closes
+    # here: when ``risk_level_canonical`` is present we lift it
+    # verbatim; we only fall back to the legacy ``risk_level`` /
+    # ``summary.risk_level`` synthesis path for backward-compat with
+    # older pr-bundle envelopes that pre-date the canonical field.
+    #
+    # Priority chain (per "Make fallback chains loud" rule, CP45 /
+    # CP46):
+    #   1. ``envelope["risk_level_canonical"]``         → canonical
+    #   2. ``envelope["summary"]["risk_level_canonical"]`` → canonical
+    #   3. ``envelope["risk_level"]``                   → legacy verdict
+    #      ``envelope["summary"]["risk_level"]``          synthesis
+    #   4. neither present                              → None (Q5
+    #                                                     not_applicable
+    #                                                     or missing —
+    #                                                     ``evidence_completeness``
+    #                                                     classifies)
+    #
+    # Lineage disclosure: the canonical / legacy lineage is tracked by
+    # ``_resolve_risk_level_with_lineage`` (returns ``(value, source,
+    # divergence)`` where ``source`` is one of the three closed-enum
+    # tokens). The collector keeps the lineage tuple internally; it
+    # only surfaces a ``warnings`` entry when ACTUAL producer drift is
+    # detected (the canonical + legacy sources disagree). Silent
+    # happy-paths keep pre-existing collector tests green.
+    risk_level, _risk_level_source, _risk_level_divergence = _resolve_risk_level_with_lineage(pr_bundle_envelope)
+    if _risk_level_divergence is not None:
+        warnings.append(_risk_level_divergence)
+    repo_id = _coalesce(
+        pr_bundle_envelope.get("repo_id"),
+    )
+
+    # changed_subjects come straight from affected_symbols[].
+    subjects = _build_changed_subjects_from_affected(
+        pr_bundle_envelope.get("affected_symbols"),
+        repo_id=caller_repo_id or repo_id,
+        warnings=warnings,
+    )
+
+    # context_refs come from context_files[].
+    context_refs = _build_context_refs_from_context_files(
+        pr_bundle_envelope.get("context_files"),
+        warnings=warnings,
+    )
+
+    # tests_required is a list of dicts or strings; flatten to
+    # a tuple of strings for the packet field (which is typed
+    # tuple[str, ...]). Dicts get their ``test_file`` key.
+    tests_required: tuple[str, ...] = ()
+    tests_req_raw = pr_bundle_envelope.get("tests_required")
+    if isinstance(tests_req_raw, list):
+        tr_out: list[str] = []
+        for t in tests_req_raw:
+            if isinstance(t, str) and t:
+                tr_out.append(t)
+            elif isinstance(t, Mapping):
+                tf = t.get("test_file") or t.get("path") or t.get("file")
+                if isinstance(tf, str) and tf:
+                    tr_out.append(tf)
+        tests_required = tuple(tr_out)
+
+    tests_run: tuple[Mapping[str, Any], ...] = ()
+    tests_run_raw = pr_bundle_envelope.get("tests_run")
+    if isinstance(tests_run_raw, list):
+        tests_run = tuple(dict(t) for t in tests_run_raw if isinstance(t, Mapping))
+
+    approvals: tuple[Mapping[str, Any], ...] = ()
+    approvals_raw = pr_bundle_envelope.get("approvals")
+    if isinstance(approvals_raw, list):
+        approvals = tuple(dict(a) for a in approvals_raw if isinstance(a, Mapping))
+    accepted_risks: tuple[Mapping[str, Any], ...] = ()
+    accepted_raw = pr_bundle_envelope.get("accepted_risks")
+    if isinstance(accepted_raw, list):
+        accepted_risks = tuple(dict(r) for r in accepted_raw if isinstance(r, Mapping))
+
+    # Redactions on the pr-bundle envelope.
+    redactions = _normalise_redactions(
+        pr_bundle_envelope.get("redactions"),
+        warnings,
+        source_label="pr_bundle_envelope",
+    )
+    # W249 - stamp ``"secret"`` if the layer-2 scrub fired on any
+    # actor / verdict field above. Dedup against any ``"secret"``
+    # the producer already declared (W240).
+    if had_actor_secret and "secret" not in redactions:
+        redactions.append("secret")
+
+    # Unrecognised top-level keys -> warning. This is the memo's
+    # "warning list for fields that cannot yet map cleanly".
+    for key in pr_bundle_envelope:
+        if key not in _PR_BUNDLE_ENVELOPE_CHROME and key not in _PR_BUNDLE_KNOWN_PAYLOAD:
+            warnings.append(f"pr_bundle_envelope: unrecognised top-level field {key!r}")
+
+    return _BundleIdentity(
+        commit_sha=commit_sha,
+        git_range=git_range,
+        diff_hash=diff_hash,
+        run_ids=run_ids,
+        agent_id=agent_id,
+        human_actor=human_actor,
+        mode=mode,
+        started_at=started_at,
+        completed_at=completed_at,
+        verdict=verdict,
+        risk_level=risk_level,
+        repo_id=repo_id,
+        subjects=subjects,
+        context_refs=context_refs,
+        tests_required=tests_required,
+        tests_run=tests_run,
+        approvals=approvals,
+        accepted_risks=accepted_risks,
+        redactions=redactions,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -3300,287 +3789,23 @@ def collect_change_evidence(
     # Step 1 - extract identity from the pr-bundle envelope (if any).
     # Caller args still override at the end; this step gathers fallbacks.
     # ------------------------------------------------------------------
-    bundle_commit_sha: str | None = None
-    bundle_git_range: str | None = None
-    bundle_diff_hash: str | None = None
-    bundle_run_ids: tuple[str, ...] = ()
-    bundle_agent_id: str | None = None
-    bundle_human_actor: str | None = None
-    bundle_mode: str | None = None
-    bundle_started_at: str | None = None
-    bundle_completed_at: str | None = None
-    bundle_verdict: str | None = None
-    bundle_risk_level: str | None = None
-    bundle_repo_id: str | None = None
-    bundle_subjects: tuple[EvidenceSubject, ...] = ()
-    bundle_context_refs: tuple[EvidenceArtifact, ...] = ()
-    bundle_tests_required: tuple[str, ...] = ()
-    bundle_tests_run: tuple[Mapping[str, Any], ...] = ()
-    bundle_approvals: tuple[Mapping[str, Any], ...] = ()
-    bundle_accepted_risks: tuple[Mapping[str, Any], ...] = ()
-    bundle_redactions: list[str] = []
-
-    if pr_bundle_envelope is not None:
-        if not isinstance(pr_bundle_envelope, Mapping):
-            warnings.append(f"pr_bundle_envelope: expected dict, got {type(pr_bundle_envelope).__name__}; ignored")
-        else:
-            # Identity fields - top-level OR nested under bundle_meta /
-            # actor / timestamps containers. We probe both shapes.
-            bundle_commit_sha = _coalesce(
-                _get_pr_bundle_field(pr_bundle_envelope, "commit_sha"),
-                _nested(pr_bundle_envelope, ("bundle_meta", "git", "head_sha")),
-                _nested(pr_bundle_envelope, ("bundle_meta", "commit_sha")),
-            )
-            bundle_git_range = _coalesce(
-                _get_pr_bundle_field(pr_bundle_envelope, "git_range"),
-                _nested(pr_bundle_envelope, ("bundle_meta", "git_range")),
-            )
-            bundle_diff_hash = _coalesce(
-                _get_pr_bundle_field(pr_bundle_envelope, "diff_hash"),
-            )
-            run_ids_raw = _coalesce(
-                pr_bundle_envelope.get("run_ids"),
-                _nested(pr_bundle_envelope, ("bundle_meta", "run_ids")),
-            )
-            if isinstance(run_ids_raw, (list, tuple)):
-                bundle_run_ids = tuple(str(r) for r in run_ids_raw if isinstance(r, str) and r)
-            # W249 - layer-2 scrub. Run BEFORE picking values so the
-            # secret-shaped substrings never land in bundle_agent_id /
-            # bundle_human_actor (which feed ChangeEvidence.agent_id /
-            # .human_actor verbatim). ``had_actor_secret`` rolls up
-            # whether any pattern fired; we stamp ``"secret"`` into
-            # ``bundle_redactions`` below when True.
-            had_actor_secret = False
-            actor_block_raw = pr_bundle_envelope.get("actor")
-            scrubbed_actor_block, ab_hit = _scrub_actor_block(actor_block_raw)
-            if ab_hit:
-                had_actor_secret = True
-            actor_block = scrubbed_actor_block
-            if isinstance(actor_block, Mapping):
-                bundle_agent_id = _coalesce(
-                    actor_block.get("agent_id"),
-                    actor_block.get("agent"),
-                )
-                bundle_human_actor = _coalesce(
-                    actor_block.get("human_actor"),
-                    actor_block.get("human"),
-                    actor_block.get("user"),
-                )
-            # Legacy top-level fields - scrub each individually.
-            legacy_agent_id, lai_hit = _redact_secrets_in_string(
-                pr_bundle_envelope.get("agent_id") if isinstance(pr_bundle_envelope.get("agent_id"), str) else ""
-            )
-            if lai_hit:
-                had_actor_secret = True
-            legacy_human_actor, lha_hit = _redact_secrets_in_string(
-                pr_bundle_envelope.get("human_actor") if isinstance(pr_bundle_envelope.get("human_actor"), str) else ""
-            )
-            if lha_hit:
-                had_actor_secret = True
-            bundle_agent_id = _coalesce(
-                bundle_agent_id,
-                legacy_agent_id or None,
-            )
-            bundle_human_actor = _coalesce(
-                bundle_human_actor,
-                legacy_human_actor or None,
-            )
-            bundle_mode = _coalesce(
-                pr_bundle_envelope.get("mode"),
-                _nested(pr_bundle_envelope, ("summary", "active_mode")),
-                _nested(pr_bundle_envelope, ("mode_block", "active_mode")),
-            )
-            ts_block = pr_bundle_envelope.get("timestamps")
-            if isinstance(ts_block, Mapping):
-                bundle_started_at = _coalesce(
-                    ts_block.get("started_at"),
-                    ts_block.get("start"),
-                    ts_block.get("created_at"),
-                )
-                bundle_completed_at = _coalesce(
-                    ts_block.get("completed_at"),
-                    ts_block.get("end"),
-                    ts_block.get("updated_at"),
-                )
-            # bundle_meta carries created_at / updated_at on the real
-            # pr-bundle envelope shape; fall back to those when no
-            # explicit timestamps block is present.
-            bundle_started_at = _coalesce(
-                bundle_started_at,
-                _nested(pr_bundle_envelope, ("bundle_meta", "created_at")),
-            )
-            bundle_completed_at = _coalesce(
-                bundle_completed_at,
-                _nested(pr_bundle_envelope, ("bundle_meta", "updated_at")),
-            )
-            # W249 - layer-2 scrub on verdict. The verdict is a free-
-            # form string that flows verbatim into ChangeEvidence.verdict
-            # so secret-shaped substrings would otherwise survive into
-            # the on-wire canonical JSON.
-            raw_verdict = _coalesce(
-                pr_bundle_envelope.get("verdict"),
-                _nested(pr_bundle_envelope, ("summary", "verdict")),
-            )
-            if isinstance(raw_verdict, str):
-                scrubbed_verdict, verdict_hit = _redact_secrets_in_string(raw_verdict)
-                if verdict_hit:
-                    had_actor_secret = True
-                bundle_verdict = scrubbed_verdict
-            else:
-                bundle_verdict = raw_verdict
-            # W641-followup-F — prefer the canonical risk-LEVEL axis emitted
-            # by the W641 cluster producers (pr_risk, impact, critique,
-            # pr_bundle, attest). The producer→packet projection loop closes
-            # here: when ``risk_level_canonical`` is present we lift it
-            # verbatim; we only fall back to the legacy ``risk_level`` /
-            # ``summary.risk_level`` synthesis path for backward-compat with
-            # older pr-bundle envelopes that pre-date the canonical field.
-            #
-            # Priority chain (per "Make fallback chains loud" rule, CP45 /
-            # CP46):
-            #   1. ``envelope["risk_level_canonical"]``         → canonical
-            #   2. ``envelope["summary"]["risk_level_canonical"]`` → canonical
-            #   3. ``envelope["risk_level"]``                   → legacy verdict
-            #      ``envelope["summary"]["risk_level"]``          synthesis
-            #   4. neither present                              → None (Q5
-            #                                                     not_applicable
-            #                                                     or missing —
-            #                                                     ``evidence_completeness``
-            #                                                     classifies)
-            #
-            # Lineage disclosure: the canonical / legacy lineage is observable
-            # via ``_resolve_risk_level_with_lineage`` (returns ``(value,
-            # source)`` where ``source`` is one of the three closed-enum
-            # tokens). The collector keeps the lineage-tuple internally; we
-            # only surface a ``warnings`` entry when ACTUAL producer drift is
-            # detected (the canonical + legacy sources disagree). Silent
-            # happy-paths keep pre-existing collector tests green; the
-            # closed-enum lineage marker is exposed for downstream tests via
-            # the module-level :func:`resolve_risk_level_with_lineage` helper
-            # (W641-followup-F).
-            bundle_risk_level, _risk_level_source, _risk_level_divergence = _resolve_risk_level_with_lineage(
-                pr_bundle_envelope
-            )
-            if _risk_level_divergence is not None:
-                warnings.append(_risk_level_divergence)
-            bundle_repo_id = _coalesce(
-                pr_bundle_envelope.get("repo_id"),
-            )
-
-            # changed_subjects come straight from affected_symbols[].
-            bundle_subjects = _build_changed_subjects_from_affected(
-                pr_bundle_envelope.get("affected_symbols"),
-                repo_id=repo_id or bundle_repo_id,
-                warnings=warnings,
-            )
-
-            # context_refs come from context_files[].
-            bundle_context_refs = _build_context_refs_from_context_files(
-                pr_bundle_envelope.get("context_files"),
-                warnings=warnings,
-            )
-
-            # tests_required is a list of dicts or strings; flatten to
-            # a tuple of strings for the packet field (which is typed
-            # tuple[str, ...]). Dicts get their ``test_file`` key.
-            tests_req_raw = pr_bundle_envelope.get("tests_required")
-            if isinstance(tests_req_raw, list):
-                tr_out: list[str] = []
-                for t in tests_req_raw:
-                    if isinstance(t, str) and t:
-                        tr_out.append(t)
-                    elif isinstance(t, Mapping):
-                        tf = t.get("test_file") or t.get("path") or t.get("file")
-                        if isinstance(tf, str) and tf:
-                            tr_out.append(tf)
-                bundle_tests_required = tuple(tr_out)
-
-            tests_run_raw = pr_bundle_envelope.get("tests_run")
-            if isinstance(tests_run_raw, list):
-                bundle_tests_run = tuple(dict(t) for t in tests_run_raw if isinstance(t, Mapping))
-
-            approvals_raw = pr_bundle_envelope.get("approvals")
-            if isinstance(approvals_raw, list):
-                bundle_approvals = tuple(dict(a) for a in approvals_raw if isinstance(a, Mapping))
-            accepted_raw = pr_bundle_envelope.get("accepted_risks")
-            if isinstance(accepted_raw, list):
-                bundle_accepted_risks = tuple(dict(r) for r in accepted_raw if isinstance(r, Mapping))
-
-            # Redactions on the pr-bundle envelope.
-            bundle_redactions = _normalise_redactions(
-                pr_bundle_envelope.get("redactions"),
-                warnings,
-                source_label="pr_bundle_envelope",
-            )
-            # W249 - stamp ``"secret"`` if the layer-2 scrub fired on any
-            # actor / verdict field above. Dedup against any ``"secret"``
-            # the producer already declared (W240).
-            if had_actor_secret and "secret" not in bundle_redactions:
-                bundle_redactions.append("secret")
-
-            # Unrecognised top-level keys -> warning. This is the memo's
-            # "warning list for fields that cannot yet map cleanly".
-            for key in pr_bundle_envelope.keys():
-                if key not in _PR_BUNDLE_ENVELOPE_CHROME and key not in _PR_BUNDLE_KNOWN_PAYLOAD:
-                    warnings.append(f"pr_bundle_envelope: unrecognised top-level field {key!r}")
+    bundle = _extract_bundle_identity(pr_bundle_envelope, caller_repo_id=repo_id, warnings=warnings)
+    # ``redactions`` is the one mutable accumulator later steps keep
+    # ``.extend()``-ing; bind a single handle so those sites stay as-is.
+    bundle_redactions = bundle.redactions
 
     # ------------------------------------------------------------------
     # Step 2 - flatten findings from every findings envelope into one
     # tuple, plus the critique / pr-risk envelopes (each carries its own
     # ``findings`` array per W153 / W134).
     # ------------------------------------------------------------------
-    findings: list[Mapping[str, Any]] = []
-    for idx, env in enumerate(findings_envelopes):
-        if not isinstance(env, Mapping):
-            warnings.append(f"findings_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
-            continue
-        findings.extend(_normalise_findings_envelope(env, warnings, source_label=f"findings_envelopes[{idx}]"))
-        # Also harvest redactions from findings envelopes.
-        bundle_redactions.extend(
-            _normalise_redactions(
-                env.get("redactions"),
-                warnings,
-                source_label=f"findings_envelopes[{idx}]",
-            )
-        )
-
-    if critique_envelope is not None:
-        if not isinstance(critique_envelope, Mapping):
-            warnings.append(f"critique_envelope: expected dict, got {type(critique_envelope).__name__}; ignored")
-        else:
-            findings.extend(
-                _normalise_findings_envelope(
-                    critique_envelope,
-                    warnings,
-                    source_label="critique_envelope",
-                )
-            )
-            bundle_redactions.extend(
-                _normalise_redactions(
-                    critique_envelope.get("redactions"),
-                    warnings,
-                    source_label="critique_envelope",
-                )
-            )
-
-    if pr_risk_envelope is not None:
-        if not isinstance(pr_risk_envelope, Mapping):
-            warnings.append(f"pr_risk_envelope: expected dict, got {type(pr_risk_envelope).__name__}; ignored")
-        else:
-            findings.extend(
-                _normalise_findings_envelope(
-                    pr_risk_envelope,
-                    warnings,
-                    source_label="pr_risk_envelope",
-                )
-            )
-            bundle_redactions.extend(
-                _normalise_redactions(
-                    pr_risk_envelope.get("redactions"),
-                    warnings,
-                    source_label="pr_risk_envelope",
-                )
-            )
+    findings, finding_redactions = _collect_findings_and_redactions(
+        findings_envelopes=findings_envelopes,
+        critique_envelope=critique_envelope,
+        pr_risk_envelope=pr_risk_envelope,
+        warnings=warnings,
+    )
+    bundle_redactions.extend(finding_redactions)
 
     # W195 promotion: the audit-trail envelope is no longer folded
     # into findings[] as a synthetic row. Instead it becomes a
@@ -3691,79 +3916,33 @@ def collect_change_evidence(
     # ------------------------------------------------------------------
     ev_list = list(run_events) if run_events else []
     ev_run_ids, ev_earliest, ev_latest = _collect_run_event_metadata(ev_list)
-
-    # W1234 - W210 change-scope timestamps from the run-ledger event
-    # stream. Distinct from the run-wide ``started_at`` / ``completed_at``
-    # above: those bracket the WHOLE run; these bracket the change-scope
-    # phases inside it (context-read vs. post-edit). When the event
-    # stream doesn't surface phase-classifiable entries the three values
-    # stay ``None`` (honest-default; the W210 omit-when-default rule
-    # keeps the canonical-JSON / content_hash byte-stable).
-    (
-        change_scope_context_read_at,
-        change_scope_edits_started_at,
-        change_scope_edits_completed_at,
-    ) = _collect_change_scope_timestamps(ev_list)
-    evidence_stale, stale_reasons_tuple = _compute_evidence_stale(
-        change_scope_context_read_at,
-        change_scope_edits_started_at,
+    change_scope = _derive_change_scope_evidence(
+        ev_list,
+        packet_config_hashes=packet_config_hashes,
+        current_config_hashes=current_config_hashes,
     )
-
-    # W1253 - config-hash drift detection. The W1255-IMPL producer
-    # stamps the three canonical config hashes into RunMeta.extra at
-    # run-start; this consumer-side block compares those packet-stamped
-    # hashes against the current on-disk hashes and flips
-    # ``evidence_stale=True`` when any of the three drift. Drift
-    # reasons combine with the W1234 timestamp staleness reasons; the
-    # flag is sticky (either signal raises it). Both kwargs are
-    # optional - when neither side is provided the packet's three
-    # hash fields stay ``None`` and the W210 omit-when-default rule
-    # keeps the canonical JSON byte-stable for pre-W1253 packets.
-    #
-    # The packet records the PACKET-STAMPED hashes (the run-start
-    # values), NOT the current on-disk values. An audit-time consumer
-    # re-computes the on-disk hashes itself and compares against the
-    # packet record to re-verify the drift signal independently.
-    hash_drift_reasons, _current_hashes_seen = _detect_hash_drift(
-        packet_config_hashes,
-        current_config_hashes,
-    )
-    if hash_drift_reasons:
-        evidence_stale = True
-    stale_reasons = stale_reasons_tuple + hash_drift_reasons
-
-    # Lift the packet-stamped hashes onto the ChangeEvidence packet
-    # fields. Empty strings ("") collapse to None so the W210
-    # omit-when-default discipline kicks in and the canonical JSON
-    # stays byte-stable for packets whose run never stamped a given
-    # config (insufficient-data discipline: "" is the W1255 absent
-    # sentinel, distinct from "computed but empty").
-    _packet_h = dict(packet_config_hashes) if packet_config_hashes else {}
-    _stamped_rules_config_hash = _packet_h.get("rules_config_hash") or None
-    _stamped_constitution_hash = _packet_h.get("constitution_hash") or None
-    _stamped_control_map_hash = _packet_h.get("control_map_hash") or None
 
     # ------------------------------------------------------------------
     # Step 4 - resolve final values with the caller-wins precedence:
     #   caller arg > pr-bundle envelope > run-event derived
     # ------------------------------------------------------------------
-    final_commit_sha = commit_sha or bundle_commit_sha
-    final_git_range = git_range or bundle_git_range
-    final_diff_hash = diff_hash or bundle_diff_hash
-    final_mode = mode or bundle_mode
-    final_repo_id = repo_id or bundle_repo_id
+    final_commit_sha = commit_sha or bundle.commit_sha
+    final_git_range = git_range or bundle.git_range
+    final_diff_hash = diff_hash or bundle.diff_hash
+    final_mode = mode or bundle.mode
+    final_repo_id = repo_id or bundle.repo_id
     final_schema_version = schema_version  # only set if caller passed it
 
     # run_ids: union, caller-derived bundle ids first (preserve order),
     # then run-event ids that weren't in the bundle.
-    final_run_ids_list: list[str] = list(bundle_run_ids)
+    final_run_ids_list: list[str] = list(bundle.run_ids)
     for rid in ev_run_ids:
         if rid not in final_run_ids_list:
             final_run_ids_list.append(rid)
     final_run_ids = tuple(final_run_ids_list)
 
-    final_started_at = bundle_started_at or ev_earliest
-    final_completed_at = bundle_completed_at or ev_latest
+    final_started_at = bundle.started_at or ev_earliest
+    final_completed_at = bundle.completed_at or ev_latest
 
     # Redactions: union; dedup preserving order.
     final_redactions: list[str] = []
@@ -3841,32 +4020,12 @@ def collect_change_evidence(
     # than ``unknown``. Refs that don't match any corroboration signal
     # (e.g. an mcp_client whose id isn't in any verified source) stay
     # ``unknown`` per the honest-noise contract.
-    if mcp_receipt_actor_refs:
-        existing_pairs: set[tuple[str, str]] = {(r.actor_kind, r.actor_id) for r in actor_refs}
-        # Cache the env/git/run-ledger probes once - they're invariant
-        # across the merged refs and re-reading would only cost cycles.
-        _ci_env_detected = _detect_ci_env_id() is not None
-        _ci_actor_id = _detect_ci_actor_id() if _ci_env_detected else None
-        _git_email = _read_git_user_email()
-        _run_ledger_actor = _read_run_ledger_actor()
-        merged: list[ActorRef] = list(actor_refs)
-        for ref in mcp_receipt_actor_refs:
-            key = (ref.actor_kind, ref.actor_id)
-            if key in existing_pairs:
-                continue
-            existing_pairs.add(key)
-            tier = classify_actor_trust_tier(
-                actor_id=ref.actor_id,
-                actor_kind=ref.actor_kind,
-                ci_env_detected=_ci_env_detected,
-                ci_actor_id=_ci_actor_id,
-                git_email=_git_email,
-                run_ledger_actor=_run_ledger_actor,
-                corroborated_tool_ids=corroborated_tool_ids,
-                corroborated_actor_ids=corroborated_actor_ids,
-            )
-            merged.append(dataclasses.replace(ref, trust_tier=tier))
-        actor_refs = tuple(merged)
+    actor_refs = _merge_mcp_receipt_actor_refs(
+        actor_refs,
+        mcp_receipt_actor_refs,
+        corroborated_tool_ids=corroborated_tool_ids,
+        corroborated_actor_ids=corroborated_actor_ids,
+    )
 
     # W199 - assemble the unified artifacts tuple from every artifact
     # source. Order is stable for deterministic content hashing:
@@ -3880,64 +4039,24 @@ def collect_change_evidence(
     all_artifacts.extend(test_impact_artifacts)
     all_artifacts.extend(mcp_receipt_artifacts)
 
-    # W199 - merge policy_decisions from rules + audit-trail sources.
-    # W267 - extend with caller-supplied extras (constitution / permits /
-    # leases scanners). Order is stable: rules first (W192), audit-trail
-    # second (W195), extras last so a future producer adding more rows
-    # appends rather than shifting the existing tail.
-    all_policy_decisions: list[Mapping[str, Any]] = []
-    all_policy_decisions.extend(rules_decisions)
-    all_policy_decisions.extend(audit_trail_decisions)
-    for idx, entry in enumerate(extra_policy_decisions):
-        if not isinstance(entry, Mapping):
-            warnings.append(f"extra_policy_decisions[{idx}]: expected dict, got {type(entry).__name__}; skipped")
-            continue
-        if not entry.get("rule_id"):
-            warnings.append(f"extra_policy_decisions[{idx}]: missing rule_id; skipped")
-            continue
-        if not entry.get("decision"):
-            warnings.append(f"extra_policy_decisions[{idx}]: missing decision; skipped")
-            continue
-        all_policy_decisions.append(entry)
+    # W199 / W267 / W293 - merge policy-decision producers, preserve
+    # source ordering, and always stamp provenance on legacy rows.
+    all_policy_decisions = _merge_policy_decisions(
+        rules_decisions=rules_decisions,
+        audit_trail_decisions=audit_trail_decisions,
+        extra_policy_decisions=extra_policy_decisions,
+        warnings=warnings,
+    )
 
-    # W293 — Pattern-2 always-emit at the collector: every policy_decisions
-    # row gets a ``provenance`` key. Producer-stamped values (constitution
-    # / permit / lease / rule / audit-trail / github_review) are preserved
-    # verbatim; legacy rows that arrived without provenance get
-    # ``"unknown"`` so the wire field is ALWAYS present.
-    _pd_unknown = provenance_label("unknown")
-    _stamped_policy_decisions: list[Mapping[str, Any]] = []
-    for row in all_policy_decisions:
-        if isinstance(row, Mapping) and not row.get("provenance"):
-            stamped = dict(row)
-            stamped["provenance"] = _pd_unknown
-            _stamped_policy_decisions.append(stamped)
-        else:
-            _stamped_policy_decisions.append(row)
-    all_policy_decisions = _stamped_policy_decisions
-
-    # W293 — Pattern-2 always-emit for approvals. ``pr-bundle
-    # add-approval`` (CLI ingestion site) and the W247b github-reviews
-    # parser already stamp the source-appropriate provenance label;
-    # legacy approval dicts (or future shapes that forget the stamp)
-    # land with ``"unknown"`` here so the wire shape is uniform.
-    _appr_unknown = provenance_label("unknown")
-    _stamped_approvals: list[Mapping[str, Any]] = []
-    for row in bundle_approvals:
-        if isinstance(row, Mapping) and not row.get("provenance"):
-            stamped = dict(row)
-            stamped["provenance"] = _appr_unknown
-            _stamped_approvals.append(stamped)
-        else:
-            _stamped_approvals.append(row)
-    bundle_approvals = tuple(_stamped_approvals)
+    # W293 - approvals follow the same always-stamped provenance rule.
+    bundle_approvals = _stamp_approval_provenance(bundle.approvals)
 
     # W193 - merge bundle tests_required / tests_run with the
     # test-impact-derived extras. Dedup tests_required by string while
     # preserving order; tests_run are kept as-is (each entry is a
     # distinct run record).
     if extra_tests_required:
-        merged_required: list[str] = list(bundle_tests_required)
+        merged_required: list[str] = list(bundle.tests_required)
         seen_tests: set[str] = set(merged_required)
         for t in extra_tests_required:
             if t in seen_tests:
@@ -3946,11 +4065,11 @@ def collect_change_evidence(
             merged_required.append(t)
         final_tests_required: tuple[str, ...] = tuple(merged_required)
     else:
-        final_tests_required = bundle_tests_required
+        final_tests_required = bundle.tests_required
     if extra_tests_run:
-        final_tests_run: tuple[Mapping[str, Any], ...] = tuple(bundle_tests_run) + tuple(extra_tests_run)
+        final_tests_run: tuple[Mapping[str, Any], ...] = tuple(bundle.tests_run) + tuple(extra_tests_run)
     else:
-        final_tests_run = bundle_tests_run
+        final_tests_run = bundle.tests_run
 
     packet_kwargs: dict[str, Any] = dict(
         evidence_id=evidence_id,
@@ -3959,21 +4078,21 @@ def collect_change_evidence(
         commit_sha=final_commit_sha,
         diff_hash=final_diff_hash,
         run_ids=final_run_ids,
-        agent_id=bundle_agent_id,
-        human_actor=bundle_human_actor,
+        agent_id=bundle.agent_id,
+        human_actor=bundle.human_actor,
         mode=final_mode,
         started_at=final_started_at,
         completed_at=final_completed_at,
-        verdict=bundle_verdict,
-        risk_level=bundle_risk_level,
-        context_refs=bundle_context_refs,
-        changed_subjects=bundle_subjects,
+        verdict=bundle.verdict,
+        risk_level=bundle.risk_level,
+        context_refs=bundle.context_refs,
+        changed_subjects=bundle.subjects,
         findings=tuple(findings),
         policy_decisions=tuple(all_policy_decisions),
         tests_required=final_tests_required,
         tests_run=final_tests_run,
         approvals=bundle_approvals,
-        accepted_risks=bundle_accepted_risks,
+        accepted_risks=bundle.accepted_risks,
         artifacts=tuple(all_artifacts),
         actor_refs=actor_refs,
         authority_refs=authority_refs,
@@ -3994,18 +4113,18 @@ def collect_change_evidence(
         # ``_W210_OMIT_WHEN_DEFAULT_FIELDS`` so packets whose event
         # stream lacks classifiable entries stay byte-identical to
         # pre-W1234 packets.
-        context_read_at=change_scope_context_read_at,
-        edits_started_at=change_scope_edits_started_at,
-        edits_completed_at=change_scope_edits_completed_at,
-        evidence_stale=evidence_stale,
-        stale_reasons=stale_reasons,
+        context_read_at=change_scope.context_read_at,
+        edits_started_at=change_scope.edits_started_at,
+        edits_completed_at=change_scope.edits_completed_at,
+        evidence_stale=change_scope.evidence_stale,
+        stale_reasons=change_scope.stale_reasons,
         # W1253 - packet-stamped config hashes (from RunMeta.extra at
         # run-start time via W1255-IMPL). None when the caller didn't
         # surface them; the W210 omit-when-default rule then keeps
         # canonical JSON byte-stable for pre-W1253 packets.
-        rules_config_hash=_stamped_rules_config_hash,
-        constitution_hash=_stamped_constitution_hash,
-        control_map_hash=_stamped_control_map_hash,
+        rules_config_hash=change_scope.rules_config_hash,
+        constitution_hash=change_scope.constitution_hash,
+        control_map_hash=change_scope.control_map_hash,
     )
     if final_schema_version is not None:
         packet_kwargs["schema_version"] = final_schema_version
@@ -4036,6 +4155,5 @@ def _nested(envelope: Mapping[str, Any], path: tuple[str, ...]) -> Any | None:
 
 __all__ = [
     "collect_change_evidence",
-    "resolve_risk_level_with_lineage",
     "RISK_LEVEL_LINEAGE_SOURCES",
 ]

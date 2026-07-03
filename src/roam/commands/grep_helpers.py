@@ -102,6 +102,15 @@ def _run_ripgrep(patterns, root, globs, fixed, ci, wb, timeout):
         cmd.extend(["-e", p])
     for g in globs:
         cmd.extend(["-g", g])
+    # Explicit search path. Without a trailing PATH argument ripgrep
+    # reads from *stdin* whenever stdin is not a TTY (Stop-hook /
+    # subprocess / any non-interactive caller), silently searching
+    # nothing instead of the filesystem. ``cwd`` is already ``root``
+    # (see _run_and_parse), so ``"."`` scopes the search to the repo
+    # tree in BOTH interactive and non-interactive contexts. The
+    # leading ``./`` ripgrep prefixes onto each path is stripped in
+    # _run_and_parse so match paths stay repo-relative (unchanged).
+    cmd.append(".")
     return _run_and_parse(cmd, root, timeout)
 
 
@@ -142,10 +151,16 @@ def _run_and_parse(cmd, root, timeout):
         if len(parts) < 3:
             continue
         path, line_num, content = parts
+        norm_path = path.replace("\\", "/")
+        # Strip the leading ``./`` ripgrep adds when given an explicit
+        # ``.`` search path, so match paths stay repo-relative and keep
+        # joining against index ``files.path`` (git grep never adds it).
+        if norm_path.startswith("./"):
+            norm_path = norm_path[2:]
         try:
             matches.append(
                 {
-                    "path": path.replace("\\", "/"),
+                    "path": norm_path,
                     "line": int(line_num),
                     "content": content.rstrip("\r\n"),
                 }

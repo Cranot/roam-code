@@ -323,9 +323,36 @@ _PRE_FILTER_RE = re.compile(
 )
 
 
+# Derived views of the begin table: the @transaction.atomic decorator is
+# matched separately in _scan_body (it opens a whole-function scope rather
+# than an indent-bounded one), so split it out once at import time instead
+# of label-filtering all begin patterns on every line.
+_ATOMIC_LABEL = "@transaction.atomic"
+_ATOMIC_DECORATOR_RE: re.Pattern = next(pat for pat, label in _BEGIN_PATTERNS if label == _ATOMIC_LABEL)
+_BODY_BEGIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
+    (pat, label) for pat, label in _BEGIN_PATTERNS if label != _ATOMIC_LABEL
+)
+
+
 # ---------------------------------------------------------------------------
 # Per-symbol classifier
 # ---------------------------------------------------------------------------
+
+
+def _first_match(patterns: tuple[tuple[re.Pattern, str], ...], line: str) -> Optional[str]:
+    """Return the label of the first pattern matching ``line``, else None."""
+    for pat, label in patterns:
+        if pat.search(line):
+            return label
+    return None
+
+
+def _line_mutates(line: str) -> bool:
+    """True if ``line`` matches any mutation pattern (one hit is enough)."""
+    for pat in _MUTATION_LINE_PATTERNS:
+        if pat.search(line):
+            return True
+    return False
 
 
 def _strip_comment(line: str) -> str:
@@ -402,56 +429,40 @@ def _scan_body(body_lines: list[str], body_line_start: int) -> dict:
         if not _line_has_marker_token(line):
             continue
 
-        # Decorator on the symbol itself
-        for pat, label in _BEGIN_PATTERNS:
-            if label == "@transaction.atomic" and pat.search(line):
-                decorator_atomic = True
-                begin_markers.append({"line": line_no, "pattern": label})
-                # Treat decorator as a non-stack tx scope (depth always 1
-                # inside).  Push a sentinel so the rest of the body counts
-                # as inside.
-                tx_stack.append((-1, label))
-                break
+        # Decorator on the symbol itself. Treat it as a non-stack tx scope
+        # (depth always 1 inside): push a sentinel indent so the rest of
+        # the body counts as inside.
+        if _ATOMIC_DECORATOR_RE.search(line):
+            decorator_atomic = True
+            begin_markers.append({"line": line_no, "pattern": _ATOMIC_LABEL})
+            tx_stack.append((-1, _ATOMIC_LABEL))
 
         # Begin markers
-        for pat, label in _BEGIN_PATTERNS:
-            if label == "@transaction.atomic":
-                continue  # handled above
-            if pat.search(line):
-                begin_markers.append({"line": line_no, "pattern": label})
-                tx_stack.append((indent, label))
-                break
+        begin_hit = _first_match(_BODY_BEGIN_PATTERNS, line)
+        if begin_hit:
+            begin_markers.append({"line": line_no, "pattern": begin_hit})
+            tx_stack.append((indent, begin_hit))
 
         # Commit markers — only one per line, prefer the most-specific
-        commit_hit = None
-        for pat, label in _COMMIT_PATTERNS:
-            if pat.search(line):
-                commit_hit = label
-                break
+        commit_hit = _first_match(_COMMIT_PATTERNS, line)
         if commit_hit:
             commit_markers.append({"line": line_no, "pattern": commit_hit})
             if tx_stack:
                 tx_stack.pop()
 
         # Rollback markers
-        rollback_hit = None
-        for pat, label in _ROLLBACK_PATTERNS:
-            if pat.search(line):
-                rollback_hit = label
-                break
+        rollback_hit = _first_match(_ROLLBACK_PATTERNS, line)
         if rollback_hit:
             rollback_markers.append({"line": line_no, "pattern": rollback_hit})
             if tx_stack:
                 tx_stack.pop()
 
-        # Mutation markers
-        for pat in _MUTATION_LINE_PATTERNS:
-            if pat.search(line):
-                if tx_stack:
-                    mutations_inside += 1
-                else:
-                    mutations_outside += 1
-                break  # one mutation per line max
+        # Mutation markers — one mutation per line max
+        if _line_mutates(line):
+            if tx_stack:
+                mutations_inside += 1
+            else:
+                mutations_outside += 1
 
     return {
         "begin_markers": begin_markers,

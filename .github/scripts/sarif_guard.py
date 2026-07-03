@@ -21,10 +21,7 @@ from pathlib import Path
 
 
 _SARIF_VERSION = "2.1.0"
-_SARIF_SCHEMA = (
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
-    "main/sarif-2.1/schema/sarif-schema-2.1.0.json"
-)
+_SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 
 
 def _json_size_bytes(data: dict) -> int:
@@ -123,10 +120,7 @@ def _prune_unused_rules(run: dict):
     if not used:
         driver["rules"] = []
         return
-    driver["rules"] = [
-        r for r in rules
-        if isinstance(r, dict) and r.get("id") in used
-    ]
+    driver["rules"] = [r for r in rules if isinstance(r, dict) and r.get("id") in used]
 
 
 def _drop_results_from_tail(doc: dict, n: int) -> int:
@@ -225,14 +219,13 @@ def apply_guardrails(doc: dict, max_runs: int, max_results: int, max_bytes: int)
     dropped_runs, dropped_results_runs = _apply_run_cap(doc, max_runs)
     dropped_results_cap = _apply_result_cap_per_run(doc, max_results)
     dropped_results_size, bytes_before, bytes_after, oversized = _apply_size_cap(
-        doc, max_bytes,
+        doc,
+        max_bytes,
     )
 
     results_after = _count_results(doc)
     runs_after = len(doc.get("runs", [])) if isinstance(doc.get("runs"), list) else 0
-    dropped_total = (
-        dropped_results_runs + dropped_results_cap + dropped_results_size
-    )
+    dropped_total = dropped_results_runs + dropped_results_cap + dropped_results_size
 
     return {
         "runs_before": runs_before,
@@ -256,26 +249,38 @@ def _parse_args() -> argparse.Namespace:
         description="Merge SARIF files and apply upload guardrails.",
     )
     parser.add_argument(
-        "--output", required=True, help="Path to write merged SARIF JSON.",
+        "--output",
+        required=True,
+        help="Path to write merged SARIF JSON.",
     )
     parser.add_argument(
-        "--summary-out", required=False, default="",
+        "--summary-out",
+        required=False,
+        default="",
         help="Optional path to write guardrail summary JSON.",
     )
     parser.add_argument(
-        "--max-runs", type=int, default=20,
+        "--max-runs",
+        type=int,
+        default=20,
         help="Maximum SARIF runs to keep (default: 20).",
     )
     parser.add_argument(
-        "--max-results", type=int, default=25000,
+        "--max-results",
+        type=int,
+        default=25000,
         help="Maximum SARIF results per run (default: 25000).",
     )
     parser.add_argument(
-        "--max-bytes", type=int, default=10000000,
+        "--max-bytes",
+        type=int,
+        default=10000000,
         help="Maximum SARIF JSON bytes (default: 10000000).",
     )
     parser.add_argument(
-        "sarif_files", nargs="+", help="Input SARIF files to merge.",
+        "sarif_files",
+        nargs="+",
+        help="Input SARIF files to merge.",
     )
     return parser.parse_args()
 

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -172,6 +174,16 @@ def get_diff_text(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _DiffParseState:
+    """Mutable parse state kept across diff lines."""
+
+    files: dict[str, dict] = field(default_factory=dict)
+    current_file: str | None = None
+    current_new_line: int = 0
+    pending_new_file: bool = False
+
+
 def parse_added(diff_text: str) -> dict:
     """Parse a unified-diff into a structure the checkers can consume.
 
@@ -188,53 +200,105 @@ def parse_added(diff_text: str) -> dict:
           }
         }
     """
-    files: dict[str, dict] = {}
-    current_file: str | None = None
-    current_new_line = 0
-    pending_new_file = False
-
+    state = _DiffParseState()
     for raw in diff_text.splitlines():
-        if raw.startswith("diff --git "):
-            current_file = None
-            current_new_line = 0
-            pending_new_file = False
-            # Try to parse the b/ path right away — handles renames where
-            # there's no "+++ b/" line later.
-            m = re.match(r"diff --git a/(.+?) b/(.+)$", raw)
-            if m:
-                current_file = m.group(2).replace("\\", "/")
-                files.setdefault(current_file, _new_file_entry())
-            continue
-        if raw.startswith("new file mode"):
-            pending_new_file = True
-            if current_file:
-                files.setdefault(current_file, _new_file_entry())
-                files[current_file]["added_full_file"] = True
-            continue
-        if raw.startswith("+++ b/"):
-            current_file = raw[6:].replace("\\", "/")
-            files.setdefault(current_file, _new_file_entry())
-            if pending_new_file:
-                files[current_file]["added_full_file"] = True
-            continue
-        if raw.startswith("@@"):
-            m = re.search(r"\+(\d+)(?:,\d+)?", raw)
-            current_new_line = int(m.group(1)) if m else 0
-            continue
-        if raw.startswith("+") and not raw.startswith("+++"):
-            if current_file is None:
-                continue
-            entry = files.setdefault(current_file, _new_file_entry())
-            text = raw[1:]
-            entry["added_lines"].append((current_new_line, text))
-            if _is_import_line(text):
-                entry["added_imports"].append(text.strip())
-            current_new_line += 1
-        elif raw.startswith(" "):
-            current_new_line += 1
+        kind, payload = _classify_diff_line(raw)
+        if kind == "diff_git":
+            _handle_diff_git(state, payload)
+        elif kind == "new_file_mode":
+            _handle_new_file_mode(state)
+        elif kind == "plus_plus":
+            _handle_plus_plus(state, payload)
+        elif kind == "hunk":
+            _handle_hunk(state, payload)
+        elif kind == "added":
+            _handle_added_line(state, payload)
+        elif kind == "context":
+            _handle_context_line(state)
         # deletions don't advance new-line counter
+    return {"files": state.files}
 
-    return {"files": files}
+
+def _classify_diff_line(raw: str) -> tuple[str, str]:
+    """Return (kind, payload) for a single diff line.
+
+    Payload is the file path for ``diff_git`` / ``plus_plus``, the hunk
+    start line number as a string for ``hunk``, the line text without the
+    leading ``+`` for ``added``, and empty otherwise.
+    """
+    if raw.startswith("diff --git "):
+        return "diff_git", raw
+    if raw.startswith("new file mode"):
+        return "new_file_mode", ""
+    if raw.startswith("+++ b/"):
+        return "plus_plus", raw[6:]
+    if raw.startswith("@@"):
+        return "hunk", raw
+    if raw.startswith("+") and not raw.startswith("+++"):
+        return "added", raw[1:]
+    if raw.startswith(" "):
+        return "context", ""
+    return "other", ""
+
+
+def _handle_diff_git(state: _DiffParseState, raw: str) -> None:
+    """Start tracking a new file from a ``diff --git`` header.
+
+    Parses the ``b/`` path eagerly so renames without a later ``+++ b/``
+    line still get recorded.
+    """
+    state.current_file = None
+    state.current_new_line = 0
+    state.pending_new_file = False
+    m = re.match(r"diff --git a/(.+?) b/(.+)$", raw)
+    if not m:
+        return
+    state.current_file = m.group(2).replace("\\", "/")
+    state.files.setdefault(state.current_file, _new_file_entry())
+
+
+def _handle_new_file_mode(state: _DiffParseState) -> None:
+    """Remember that the current file is a newly-created file."""
+    state.pending_new_file = True
+    if state.current_file is None:
+        return
+    entry = _ensure_entry(state, state.current_file)
+    entry["added_full_file"] = True
+
+
+def _handle_plus_plus(state: _DiffParseState, path_raw: str) -> None:
+    """Switch to the file named after ``+++ b/`` and apply pending new-file state."""
+    state.current_file = path_raw.replace("\\", "/")
+    entry = _ensure_entry(state, state.current_file)
+    if state.pending_new_file:
+        entry["added_full_file"] = True
+
+
+def _handle_hunk(state: _DiffParseState, raw: str) -> None:
+    """Update the new-file line counter from a hunk header."""
+    m = re.search(r"\+(\d+)(?:,\d+)?", raw)
+    state.current_new_line = int(m.group(1)) if m else 0
+
+
+def _handle_added_line(state: _DiffParseState, text: str) -> None:
+    """Record one added line and detect imports."""
+    if state.current_file is None:
+        return
+    entry = state.files.setdefault(state.current_file, _new_file_entry())
+    entry["added_lines"].append((state.current_new_line, text))
+    if _is_import_line(text):
+        entry["added_imports"].append(text.strip())
+    state.current_new_line += 1
+
+
+def _handle_context_line(state: _DiffParseState) -> None:
+    """Advance the new-file line counter for unchanged context lines."""
+    state.current_new_line += 1
+
+
+def _ensure_entry(state: _DiffParseState, path: str) -> dict:
+    """Return the file entry for *path*, creating it if necessary."""
+    return state.files.setdefault(path, _new_file_entry())
 
 
 def _new_file_entry() -> dict:
@@ -426,51 +490,64 @@ def _check_import_law(law: Law, parsed: dict) -> list[Violation]:
         return []
 
     violations: list[Violation] = []
+    for source_path, import_line in _iter_imports_that_can_break_boundary_law(parsed, from_dir):
+        violation = _violation_when_import_breaks_allowed_bucket(law, source_path, import_line, from_dir, to_dir)
+        if violation:
+            violations.append(violation)
+    return violations
+
+
+def _iter_imports_that_can_break_boundary_law(parsed: dict, from_dir: str) -> Iterator[tuple[str, str]]:
+    """Yield added imports from files governed by the import-boundary law."""
     for path, entry in parsed.get("files", {}).items():
         norm = path.replace("\\", "/")
         if not norm.startswith(from_dir + "/"):
             continue
-        for imp in entry["added_imports"]:
-            target = _resolve_import_target(imp)
-            if not target:
-                continue
-            # Skip stdlib / 3rd-party imports — the law only applies to
-            # internal cross-directory traffic. We use a small built-in
-            # stdlib list because we don't want to depend on
-            # ``sys.stdlib_module_names`` (only available on 3.10+).
-            top_module = target.replace("\\", "/").split("/", 1)[0]
-            if top_module in _STDLIB_MODULES:
-                continue
-            # Cross-bucket internal import — only flag if it goes to a
-            # different top-bucket than the law's allowed ``to_dir``.
-            target_bucket = _path_bucket(target)
-            if not target_bucket:
-                continue
-            if target_bucket == from_dir:
-                # same-bucket internal — allowed
-                continue
-            if to_dir and target_bucket == to_dir:
-                # canonical target — allowed
-                continue
-            # Anything else is a cross-bucket import that violates the law.
-            violations.append(
-                Violation(
-                    law_id=law.id,
-                    kind="import",
-                    severity=law.severity,
-                    confidence=law.confidence,
-                    message=(f"{norm} imports from {target_bucket}/ — law requires imports from {to_dir}/"),
-                    file=norm,
-                    line=0,
-                    evidence={
-                        "import_line": imp,
-                        "from_dir": from_dir,
-                        "to_dir": to_dir,
-                        "actual_target_dir": target_bucket,
-                    },
-                )
-            )
-    return violations
+        for import_line in entry["added_imports"]:
+            yield norm, import_line
+
+
+def _violation_when_import_breaks_allowed_bucket(
+    law: Law,
+    source_path: str,
+    import_line: str,
+    from_dir: str,
+    to_dir: str,
+) -> Violation | None:
+    """Return a violation only for new internal imports outside the law bucket."""
+    target = _resolve_import_target(import_line)
+    if not target:
+        return None
+
+    # Skip stdlib / 3rd-party imports: the law only applies to internal
+    # cross-directory traffic.
+    top_module = target.replace("\\", "/").split("/", 1)[0]
+    if top_module in _STDLIB_MODULES:
+        return None
+
+    target_bucket = _path_bucket(target)
+    if not target_bucket:
+        return None
+    if target_bucket == from_dir:
+        return None
+    if to_dir and target_bucket == to_dir:
+        return None
+
+    return Violation(
+        law_id=law.id,
+        kind="import",
+        severity=law.severity,
+        confidence=law.confidence,
+        message=(f"{source_path} imports from {target_bucket}/ — law requires imports from {to_dir}/"),
+        file=source_path,
+        line=0,
+        evidence={
+            "import_line": import_line,
+            "from_dir": from_dir,
+            "to_dir": to_dir,
+            "actual_target_dir": target_bucket,
+        },
+    )
 
 
 def _resolve_import_target(import_line: str) -> str:
@@ -482,22 +559,16 @@ def _resolve_import_target(import_line: str) -> str:
     coarse-bucket comparisons.
     """
     stripped = import_line.strip()
-    # Python: from X import Y
-    m = re.match(r"^from\s+([\w\.]+)\s+import", stripped)
-    if m:
-        return m.group(1).replace(".", "/")
-    # Python: import X
-    m = re.match(r"^import\s+([\w\.]+)", stripped)
-    if m:
-        return m.group(1).replace(".", "/")
-    # JS ES module
-    m = re.match(r"^import\s+.*from\s+['\"]([^'\"]+)['\"]", stripped)
-    if m:
-        return m.group(1).lstrip("./")
-    # CommonJS
-    m = re.match(r"^.*require\(['\"]([^'\"]+)['\"]\)", stripped)
-    if m:
-        return m.group(1).lstrip("./")
+    import_patterns = (
+        (r"^from\s+([\w\.]+)\s+import", lambda target: target.replace(".", "/")),
+        (r"^import\s+([\w\.]+)", lambda target: target.replace(".", "/")),
+        (r"^import\s+.*from\s+['\"]([^'\"]+)['\"]", lambda target: target.lstrip("./")),
+        (r"^.*require\(['\"]([^'\"]+)['\"]\)", lambda target: target.lstrip("./")),
+    )
+    for pattern, normalize in import_patterns:
+        m = re.match(pattern, stripped)
+        if m:
+            return normalize(m.group(1))
     return ""
 
 

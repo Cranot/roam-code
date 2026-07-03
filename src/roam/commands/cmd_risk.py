@@ -257,24 +257,20 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
         # chains track every legitimate call/reference edge.
         callees = batched_in(
             conn,
-            "SELECT e.target_id, s.name FROM edges e "
+            "SELECT e.source_id, e.target_id, s.name FROM edges e "
             "JOIN symbols s ON e.target_id = s.id "
             "WHERE e.source_id IN ({ph}) "
             f"AND {call_or_ref_in_clause('e.kind')}",
             frontier,
         )
         next_frontier = []
-        for callee_id, callee_name in callees:
+        for source_id, callee_id, callee_name in callees:
             if callee_id in visited:
                 continue
             visited.add(callee_id)
             id_to_name[callee_id] = callee_name
             # Record first parent only (BFS guarantees shortest path)
-            if callee_id not in parent:
-                # find which frontier node led here
-                for fid in frontier:
-                    parent[callee_id] = fid
-                    break
+            parent.setdefault(callee_id, source_id)
 
             w, m = _match_domain(callee_name, domains)
             if w <= 1:

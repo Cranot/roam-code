@@ -4,29 +4,73 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const MARKER = '<!-- roam-code-analysis -->';
 const MAX_COMMENT_CHARS = 65000;
 const MAX_JSON_PER_COMMAND = 12000;
+const BUILD_COMMENT_CHILD_FLAG = 'ROAM_PR_COMMENT_BUILD_CHILD';
 
-function _loadResults(resultsDir) {
-  const results = {};
+function _resultFilesIn(resultsDir) {
   if (!resultsDir || !fs.existsSync(resultsDir)) {
-    return results;
+    return [];
   }
 
-  for (const file of fs.readdirSync(resultsDir)) {
-    if (!file.endsWith('.json')) continue;
-    try {
-      const raw = fs.readFileSync(path.join(resultsDir, file), 'utf8');
-      const data = JSON.parse(raw);
-      const cmd = file.replace('.json', '');
-      results[cmd] = data;
-    } catch (_e) {
-      // Skip malformed JSON.
-    }
+  return fs.readdirSync(resultsDir).filter(file => file.endsWith('.json'));
+}
+
+function _commandNameForResultFile(file) {
+  return file.replace(/\.json$/, '');
+}
+
+function _isSkippableResultError(err) {
+  const code = err && typeof err === 'object' ? err.code : '';
+  return err instanceof SyntaxError || ['ENOENT', 'EISDIR', 'EACCES'].includes(code);
+}
+
+function _skipOrRethrowResultError(err) {
+  if (_isSkippableResultError(err)) {
+    return null;
   }
-  return results;
+  throw err;
+}
+
+function _parseResultEntry(file, raw) {
+  return [_commandNameForResultFile(file), JSON.parse(raw)];
+}
+
+function _resultsFromEntries(entries) {
+  return Object.fromEntries(entries.filter(entry => entry !== null));
+}
+
+async function _loadResults(resultsDir) {
+  const files = _resultFilesIn(resultsDir);
+
+  const reads = await Promise.all(
+    files.map(async file => {
+      try {
+        return {
+          file,
+          raw: await fs.promises.readFile(path.join(resultsDir, file), 'utf8'),
+        };
+      } catch (err) {
+        return { file, err };
+      }
+    }),
+  );
+
+  const entries = reads.map(({ file, raw, err }) => {
+    if (err) {
+      return _skipOrRethrowResultError(err);
+    }
+    try {
+      return _parseResultEntry(file, raw);
+    } catch (parseErr) {
+      return _skipOrRethrowResultError(parseErr);
+    }
+  });
+
+  return _resultsFromEntries(entries);
 }
 
 function _severityLabel(score) {
@@ -43,8 +87,7 @@ function clampComment(text, maxChars = MAX_COMMENT_CHARS) {
   return text.slice(0, headLen) + suffix;
 }
 
-function buildComment(env = process.env) {
-  const resultsDir = env.RESULTS_DIR || '';
+function _formatComment(env = process.env, results = {}) {
   const healthScore = env.HEALTH_SCORE || '';
   const gateExpr = env.GATE_EXPR || '';
   const gatePassed = env.GATE_PASSED || '';
@@ -55,8 +98,6 @@ function buildComment(env = process.env) {
   const sarifCategory = env.SARIF_CATEGORY || '';
   const sarifTruncated = env.SARIF_TRUNCATED || 'false';
   const sarifResults = env.SARIF_RESULTS || '';
-
-  const results = _loadResults(resultsDir);
 
   const lines = [MARKER, '## roam-code Analysis', ''];
 
@@ -146,6 +187,57 @@ function buildComment(env = process.env) {
   return clampComment(lines.join('\n'));
 }
 
+async function buildCommentAsync(env = process.env) {
+  const results = await _loadResults(env.RESULTS_DIR || '');
+  return _formatComment(env, results);
+}
+
+function _envForAsyncCommentChild(env = process.env) {
+  const overrides = Object.fromEntries(
+    Object.entries(env || {})
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  );
+  const childEnv = { ...process.env, ...overrides };
+  childEnv[BUILD_COMMENT_CHILD_FLAG] = '1';
+  return childEnv;
+}
+
+function _childCommentSource(scriptPath) {
+  return `
+const mod = require(${JSON.stringify(scriptPath)});
+mod.buildCommentAsync(process.env)
+  .then(body => process.stdout.write(body))
+  .catch(err => {
+    const message = err && err.stack ? err.stack : String(err);
+    process.stderr.write(message);
+    process.exit(1);
+  });
+`;
+}
+
+function buildComment(env = process.env) {
+  if (env && env[BUILD_COMMENT_CHILD_FLAG] === '1') {
+    throw new Error('buildComment cannot be called recursively from its async loader child');
+  }
+
+  const result = spawnSync(
+    process.execPath,
+    ['-e', _childCommentSource(__filename)],
+    {
+      env: _envForAsyncCommentChild(env),
+      encoding: 'utf8',
+      maxBuffer: MAX_COMMENT_CHARS + MAX_JSON_PER_COMMAND,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const stderr = (result.stderr || '').trim();
+    throw new Error(stderr || `buildComment child exited with status ${result.status}`);
+  }
+  return result.stdout;
+}
+
 function selectStickyComments(comments = []) {
   const sticky = comments.filter(c => c.body && c.body.includes(MARKER));
   if (sticky.length === 0) {
@@ -208,7 +300,7 @@ async function upsertStickyComment({ github, context, core, body }) {
     core.info(`Created new PR comment #${data && data.id ? data.id : ''}`.trim());
   }
 
-  for (const dup of duplicates) {
+  await Promise.all(duplicates.map(async (dup) => {
     try {
       await github.rest.issues.deleteComment({
         owner,
@@ -219,11 +311,11 @@ async function upsertStickyComment({ github, context, core, body }) {
     } catch (err) {
       core.warning(`Could not remove duplicate sticky comment #${dup.id}: ${err.message}`);
     }
-  }
+  }));
 }
 
 async function handler({ github, context, core }) {
-  const body = buildComment(process.env);
+  const body = await buildCommentAsync(process.env);
   await upsertStickyComment({ github, context, core, body });
 }
 
@@ -231,6 +323,7 @@ module.exports = handler;
 module.exports.handler = handler;
 module.exports.MARKER = MARKER;
 module.exports.buildComment = buildComment;
+module.exports.buildCommentAsync = buildCommentAsync;
 module.exports.clampComment = clampComment;
 module.exports.selectStickyComments = selectStickyComments;
 module.exports.upsertStickyComment = upsertStickyComment;

@@ -94,7 +94,13 @@ class Law:
     rule: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a plain-dict representation suitable for YAML / JSON."""
+        """Return a plain-dict representation suitable for YAML / JSON.
+
+        Public on purpose: the YAML serializer
+        (:func:`roam.laws.serializer.dump_laws_yaml`) and the ``roam laws``
+        JSON envelopes (``cmd_laws.py``) call this on untyped locals, so
+        the reference graph can't link the call sites to this method.
+        """
         return asdict(self)
 
 
@@ -112,6 +118,12 @@ class Violation:
     evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a plain-dict representation suitable for JSON / SARIF.
+
+        Public on purpose: ``roam laws check`` (``cmd_laws.py``) calls this
+        to build its JSON envelope and SARIF output; the untyped call sites
+        keep it invisible to the reference graph.
+        """
         return asdict(self)
 
 
@@ -218,9 +230,7 @@ def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
 
     laws: list[Law] = []
     by_kind = result.get("by_kind", {}) or {}
-    outliers_by_kind: dict[str, list[dict]] = {}
-    for o in result.get("outliers", []) or []:
-        outliers_by_kind.setdefault(o.get("kind", ""), []).append(o)
+    outliers_by_kind = _outliers_by_kind(result)
 
     for kind, info in sorted(by_kind.items()):
         total = info.get("total", 0)
@@ -256,6 +266,14 @@ def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     return laws
 
 
+def _outliers_by_kind(result: dict) -> dict[str, list[dict]]:
+    """Group the conventions helper's outlier rows by symbol kind."""
+    grouped: dict[str, list[dict]] = {}
+    for o in result.get("outliers", []) or []:
+        grouped.setdefault(o.get("kind", ""), []).append(o)
+    return grouped
+
+
 def _naming_examples(conn, kind: str, style: str, *, limit: int = 3) -> list[str]:
     """Pull a few conforming names so ``laws explain`` has something
     concrete to show. We pick the most-imported / oldest symbols (any
@@ -271,6 +289,11 @@ def _naming_examples(conn, kind: str, style: str, *, limit: int = 3) -> list[str
         from roam.commands.cmd_conventions import classify_case
     except ImportError:
         return [r["name"] for r in rows[:limit]]
+    return _first_names_matching_style(rows, style, classify_case, limit)
+
+
+def _first_names_matching_style(rows, style: str, classify_case, limit: int) -> list[str]:
+    """Return the first *limit* row names whose case style matches *style*."""
     examples: list[str] = []
     for r in rows:
         n = r["name"] if hasattr(r, "keys") else r[0]
@@ -317,15 +340,7 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     except sqlite3.Error:
         return []
 
-    # source_bucket -> target_bucket -> count
-    counts: dict[str, dict[str, int]] = {}
-    for r in rows:
-        src_bucket = _import_bucket(r["src_path"])
-        tgt_bucket = _import_bucket(r["tgt_path"])
-        if not src_bucket or not tgt_bucket or src_bucket == tgt_bucket:
-            continue
-        counts.setdefault(src_bucket, {})
-        counts[src_bucket][tgt_bucket] = counts[src_bucket].get(tgt_bucket, 0) + 1
+    counts = _count_cross_bucket_imports(rows)
 
     for src_bucket, tgt_counts in sorted(counts.items()):
         total = sum(tgt_counts.values())
@@ -362,6 +377,23 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
         )
         laws.append(law)
     return laws
+
+
+def _count_cross_bucket_imports(rows) -> dict[str, dict[str, int]]:
+    """Bucket import edges by directory: source_bucket -> target_bucket -> count.
+
+    Same-bucket and unbucketable edges are skipped — only cross-directory
+    imports carry layering signal.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for r in rows:
+        src_bucket = _import_bucket(r["src_path"])
+        tgt_bucket = _import_bucket(r["tgt_path"])
+        if not src_bucket or not tgt_bucket or src_bucket == tgt_bucket:
+            continue
+        counts.setdefault(src_bucket, {})
+        counts[src_bucket][tgt_bucket] = counts[src_bucket].get(tgt_bucket, 0) + 1
+    return counts
 
 
 def _import_bucket(path: str | None) -> str:
@@ -446,61 +478,18 @@ def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
 
     laws: list[Law] = []
 
-    # Cache the set of test file basenames so the per-symbol check is O(1).
-    try:
-        test_files = {
-            (r["path"] or "").replace("\\", "/")
-            for r in conn.execute("SELECT path FROM files").fetchall()
-            if is_test_file(r["path"])
-        }
-    except Exception as _exc:  # noqa: BLE001 -- DB query + per-path is_test_file classification; mining is best-effort, a probe failure yields no laws
-        return []
-    if not test_files:
+    test_basenames = _test_basenames_for_matching_signal(conn, is_test_file)
+    if not test_basenames:
         # No tests -> nothing to mine.
         return []
-    test_basenames = {p.rsplit("/", 1)[-1].lower() for p in test_files}
 
     for kind in ("function", "class"):
-        try:
-            rows = conn.execute(
-                """
-                SELECT s.name AS name, f.path AS path
-                FROM symbols s
-                JOIN files f ON s.file_id = f.id
-                WHERE s.kind = ?
-                  AND COALESCE(s.visibility, 'public') = 'public'
-                  AND COALESCE(s.is_exported, 1) = 1
-                """,
-                (kind,),
-            ).fetchall()
-        except sqlite3.Error:
-            continue
-
-        # Only count source-side symbols (skip those that are themselves
-        # in test files — they bias the coverage upward).
-        public_names: list[tuple[str, str]] = []
-        for r in rows:
-            name = r["name"] or ""
-            path = (r["path"] or "").replace("\\", "/")
-            if not name or name.startswith("_"):
-                continue
-            if is_test_file(path):
-                continue
-            public_names.append((name, path))
+        public_names = _public_source_symbols_for_testing_signal(conn, kind, is_test_file)
 
         if len(public_names) < min_sample:
             continue
 
-        covered = 0
-        missing_examples: list[str] = []
-        for name, path in public_names:
-            if _has_matching_test(name, test_basenames):
-                covered += 1
-            elif len(missing_examples) < 5:
-                missing_examples.append(f"{name} ({path})")
-
-        total = len(public_names)
-        pct = round(100 * covered / total, 1) if total else 0
+        covered, total, pct, missing_examples = _testing_coverage_for_law_signal(public_names, test_basenames)
         if pct < min_pct:
             continue
 
@@ -529,6 +518,64 @@ def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
         )
         laws.append(law)
     return laws
+
+
+def _test_basenames_for_matching_signal(conn, is_test_file) -> set[str]:
+    """Cache test basenames so coverage checks preserve source-symbol focus."""
+    try:
+        rows = conn.execute("SELECT path FROM files").fetchall()
+    except sqlite3.Error:
+        return set()
+
+    test_files = {(r["path"] or "").replace("\\", "/") for r in rows if is_test_file(r["path"])}
+    return {p.rsplit("/", 1)[-1].lower() for p in test_files}
+
+
+def _public_source_symbols_for_testing_signal(conn, kind: str, is_test_file) -> list[tuple[str, str]]:
+    """Keep the testing-law denominator limited to public source symbols."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT s.name AS name, f.path AS path
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            WHERE s.kind = ?
+              AND COALESCE(s.visibility, 'public') = 'public'
+              AND COALESCE(s.is_exported, 1) = 1
+            """,
+            (kind,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+
+    public_names: list[tuple[str, str]] = []
+    for r in rows:
+        name = r["name"] or ""
+        path = (r["path"] or "").replace("\\", "/")
+        if not name or name.startswith("_"):
+            continue
+        if is_test_file(path):
+            continue
+        public_names.append((name, path))
+    return public_names
+
+
+def _testing_coverage_for_law_signal(
+    public_names: list[tuple[str, str]],
+    test_basenames: set[str],
+) -> tuple[int, int, float, list[str]]:
+    """Summarize coverage evidence without changing law-emission policy."""
+    covered = 0
+    missing_examples: list[str] = []
+    for name, path in public_names:
+        if _has_matching_test(name, test_basenames):
+            covered += 1
+        elif len(missing_examples) < 5:
+            missing_examples.append(f"{name} ({path})")
+
+    total = len(public_names)
+    pct = round(100 * covered / total, 1) if total else 0
+    return covered, total, pct, missing_examples
 
 
 def _has_matching_test(name: str, test_basenames: set[str]) -> bool:

@@ -45,13 +45,7 @@ MAX_FILE_LINES = [500]
 
 
 def _rule_header(name: str, description: str, severity: str = "info") -> str:
-    return (
-        f'name: "{name}"\n'
-        f'description: "{description}"\n'
-        f"severity: {severity}\n"
-        "type: symbol_match\n\n"
-        "match:\n"
-    )
+    return f'name: "{name}"\ndescription: "{description}"\nseverity: {severity}\ntype: symbol_match\n\nmatch:\n'
 
 
 def _symbol_lines_rule(language: str, ext: str, scope: str, limit: int) -> tuple[str, str]:

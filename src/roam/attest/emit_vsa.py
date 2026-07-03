@@ -135,7 +135,109 @@ def _sign_one(
     )
 
 
+# ---------- shared identity + hash wire-up ----------
+
+
+def _git_commit_sha_or_none(root: Path) -> str | None:
+    """W509/W520 fallback — resolve commit identity via ``git rev-parse
+    HEAD`` when the caller's envelope/subject lacks it. Crash-safe: if
+    ``git`` is unavailable / not a repo, return ``None`` so the emit path
+    still completes (sha1 will simply be absent — same as before the
+    fallback for non-git workspaces).
+
+    The import stays function-local so the lookup resolves at call time
+    (tests monkeypatch ``roam.attest.cga._git_commit_sha``).
+    """
+    from roam.attest.cga import _git_commit_sha
+
+    try:
+        return _git_commit_sha(root)
+    except (subprocess.SubprocessError, OSError):  # pragma: no cover — defensive
+        # Intentional: _git_commit_sha already returns None on these (no git /
+        # not a repo / timeout, see cga.py); swallow keeps emit fail-soft (W509/W520).
+        return None
+
+
+def _gather_hash_kwargs_or_empty(root: Path) -> dict[str, Any]:
+    """W1279 — lift packet-side hashes from the active run's meta.json
+    (when ROAM_RUN_ID is set) and recompute the on-disk hashes so the
+    collector's W1253 drift detector can fire. Missing run / missing
+    meta gracefully degrades to ``packet_config_hashes=None``; no
+    exception is propagated up to abort the VSA emit.
+    """
+    try:
+        from roam.evidence.config_hashes_producer import gather_hash_kwargs
+
+        run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
+        return gather_hash_kwargs(root, run_id)
+    except Exception:  # noqa: BLE001 - never break VSA emit on hash wire-up
+        return {}
+
+
 # ---------- pr-bundle emit --slsa-l3 ----------
+
+
+def _emit_run_ledger_root(root: Path, out_dir: Path, result: dict[str, Any]) -> Path | None:
+    """Best-effort run-ledger root attestation (ROAM_RUN_ID drives it).
+
+    Owns the whole stage-3 fault domain: every failure lands as a
+    ``skipped_reasons`` entry on *result*, never an exception. Returns
+    the written statement path, or ``None`` when nothing was written
+    (so the signing stage knows to skip this target).
+
+    Whitespace-only ROAM_RUN_ID normalises to None so a malformed env
+    var ("   ") cannot reach ``read_run_meta`` and silently surface as
+    a misleading "run-ledger HMAC chain not signed" reason (Pattern-2
+    silent fallback). Matches the ``.strip() or None`` discipline in
+    :func:`_gather_hash_kwargs_or_empty`.
+    """
+    run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
+    if not run_id:
+        result["skipped_reasons"].append("ROAM_RUN_ID not set; run-ledger root attestation skipped")
+        return None
+    try:
+        run_stmt = build_run_ledger_root_statement(root, run_id)
+    except Exception as exc:
+        run_stmt = None
+        result["skipped_reasons"].append(f"run-ledger root build failed: {exc}")
+    if run_stmt is None:
+        result["skipped_reasons"].append("run-ledger HMAC chain not signed (no final_signature on meta.json)")
+        return None
+    run_path = out_dir / f"run-ledger-root-{run_id}.json"
+    try:
+        atomic_write_text(run_path, serialize_statement(run_stmt) + "\n")
+        result["run_ledger_root_path"] = str(run_path)
+    except Exception as exc:
+        result["skipped_reasons"].append(f"run-ledger root write failed: {exc}")
+        return None
+    return run_path
+
+
+def _sign_pr_bundle_outputs(
+    result: dict[str, Any],
+    *,
+    vsa_path: Path,
+    run_path: Path | None,
+    sign_key: str | None,
+    sign_keyless: bool,
+) -> None:
+    """Cosign-sign the VSA + (if written) run-ledger root, appending
+    per-target entries to ``result["signatures"]`` and flipping
+    ``result["signed"]`` when any target signs.
+    """
+    for label, target in (("vsa", vsa_path), ("run_ledger_root", run_path)):
+        if target is None:
+            continue
+        sig_entry = _sign_one(
+            target,
+            key_path=sign_key,
+            keyless=sign_keyless,
+            target_label=label,
+            include_target_label=True,
+        )
+        result["signatures"].append(sig_entry)
+        if sig_entry.get("signed"):
+            result["signed"] = True
 
 
 def emit_pr_bundle_slsa_l3(
@@ -166,35 +268,12 @@ def emit_pr_bundle_slsa_l3(
     #
     # W509: the bundle envelope's ``commit_sha`` field is populated by
     # ``pr-bundle init`` (auto-collect path) but is typically absent on
-    # ``--no-auto-collect`` runs that hand-craft a minimal bundle. The
-    # cga path resolves commit identity directly from
-    # ``git rev-parse HEAD`` (see ``roam.attest.cga._git_commit_sha``).
-    # Without an equivalent fallback here, the resulting VSA drops
+    # ``--no-auto-collect`` runs that hand-craft a minimal bundle.
+    # Without the git fallback the resulting VSA drops
     # ``subject[0].digest.sha1``, breaking the SRC-L3 "commit-anchored
-    # provenance" claim downstream verifiers depend on. Crash-safe: if
-    # ``git`` is unavailable / not a repo, fall through with ``None`` so
-    # the rest of the emit path still completes (sha1 will simply be
-    # absent — same as before the fallback for non-git workspaces).
-    commit_sha = envelope.get("commit_sha")
-    if not commit_sha:
-        from roam.attest.cga import _git_commit_sha
-
-        try:
-            commit_sha = _git_commit_sha(root)
-        except (subprocess.SubprocessError, OSError):  # pragma: no cover — defensive
-            commit_sha = None
-    # W1279 — lift packet-side hashes from the active run's meta.json
-    # (when ROAM_RUN_ID is set) and recompute the on-disk hashes so the
-    # collector's W1253 drift detector can fire. Missing run / missing
-    # meta gracefully degrades to ``packet_config_hashes=None``; no
-    # exception is propagated up to abort the VSA emit.
-    try:
-        from roam.evidence.config_hashes_producer import gather_hash_kwargs
-
-        _vsa_run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
-        _hash_kwargs = gather_hash_kwargs(root, _vsa_run_id)
-    except Exception:  # noqa: BLE001 - never break VSA emit on hash wire-up
-        _hash_kwargs = {}
+    # provenance" claim downstream verifiers depend on.
+    commit_sha = envelope.get("commit_sha") or _git_commit_sha_or_none(root)
+    _hash_kwargs = _gather_hash_kwargs_or_empty(root)
 
     try:
         change_evidence, warnings = collect_change_evidence(
@@ -224,53 +303,81 @@ def emit_pr_bundle_slsa_l3(
         return result
 
     # 3. Run-ledger root statement (best-effort; ROAM_RUN_ID drives it).
-    # Normalise whitespace-only values to None so a malformed env var
-    # ("   ") cannot reach ``read_run_meta`` and silently surface as a
-    # misleading "run-ledger HMAC chain not signed" reason (Pattern-2
-    # silent fallback). Matches the ``.strip() or None`` discipline
-    # used on the W1279 hash-kwargs path above.
-    _run_id_raw = os.environ.get("ROAM_RUN_ID", "")
-    run_id = _run_id_raw.strip() or None
-    run_path: Path | None = None
-    if run_id:
-        try:
-            run_stmt = build_run_ledger_root_statement(root, run_id)
-        except Exception as exc:
-            run_stmt = None
-            result["skipped_reasons"].append(f"run-ledger root build failed: {exc}")
-        if run_stmt is None:
-            result["skipped_reasons"].append("run-ledger HMAC chain not signed (no final_signature on meta.json)")
-        else:
-            run_path = out_dir / f"run-ledger-root-{run_id}.json"
-            try:
-                atomic_write_text(run_path, serialize_statement(run_stmt) + "\n")
-                result["run_ledger_root_path"] = str(run_path)
-            except Exception as exc:
-                run_path = None
-                result["skipped_reasons"].append(f"run-ledger root write failed: {exc}")
-    else:
-        result["skipped_reasons"].append("ROAM_RUN_ID not set; run-ledger root attestation skipped")
+    run_path = _emit_run_ledger_root(root, out_dir, result)
 
     # 4. Optional cosign signing of both statements.
     if sign:
-        for label, target in (("vsa", vsa_path), ("run_ledger_root", run_path)):
-            if target is None:
-                continue
-            sig_entry = _sign_one(
-                target,
-                key_path=sign_key,
-                keyless=sign_keyless,
-                target_label=label,
-                include_target_label=True,
-            )
-            result["signatures"].append(sig_entry)
-            if sig_entry.get("signed"):
-                result["signed"] = True
+        _sign_pr_bundle_outputs(
+            result,
+            vsa_path=vsa_path,
+            run_path=run_path,
+            sign_key=sign_key,
+            sign_keyless=sign_keyless,
+        )
 
     return result
 
 
 # ---------- cga emit --also-vsa ----------
+
+
+def _resolve_cga_subject_identity(
+    statement: dict,
+    project_root: Path,
+) -> tuple[str | None, str | None]:
+    """Pull commit-anchored identity from the parent CGA subject.
+
+    CGA statements produced by ``roam cga emit`` include
+    ``git_commit_sha1`` resolved at build time, but direct API callers
+    can hand-craft a subject without it. Downstream verifiers depend on
+    commit-anchored provenance, so we normalise ``"unknown"`` to None
+    and fall back to ``git rev-parse HEAD`` before giving up.
+    """
+    subject_list = statement.get("subject") or [{}]
+    subject0 = subject_list[0] if subject_list else {}
+    digest = subject0.get("digest") or {}
+    commit_sha = digest.get("git_commit_sha1")
+    if commit_sha == "unknown":
+        commit_sha = None
+    repo_id = subject0.get("name") or None
+
+    # W520: parallel to the W509 fallback in ``emit_pr_bundle_slsa_l3``.
+    if not commit_sha:
+        commit_sha = _git_commit_sha_or_none(project_root)
+
+    return repo_id, commit_sha
+
+
+def _write_vsa_sibling(
+    change_evidence: Any,
+    written_path: Path,
+    statement: dict,
+) -> Path:
+    """Build and write the VSA statement next to the parent CGA.
+
+    The sibling shares the CGA's ``indexed_at`` timestamp so both
+    attestations describe the same emission event, and its filename
+    strips the ``.intoto.json`` suffix rather than nesting ``.vsa``
+    inside the ``.intoto`` stem.
+    """
+    # ``written_path`` is e.g. ``.roam/attestations/abc123.intoto.json``;
+    # strip the ``.intoto.json`` (two suffixes) so the sibling is
+    # ``abc123.vsa.json`` rather than ``abc123.intoto.vsa.json``.
+    # Path.with_suffix only strips one suffix at a time.
+    if written_path.name.endswith(".intoto.json"):
+        stem = written_path.name[: -len(".intoto.json")]
+        vsa_path = written_path.with_name(f"{stem}.vsa.json")
+    else:
+        vsa_path = written_path.with_name(f"{written_path.stem}.vsa.json")
+
+    # One clock for both attestations of the same emission event: the
+    # sibling's timeVerified pins to the CGA predicate's indexed_at.
+    # Independent now() calls straddle second boundaries on slow
+    # runners (W805-KKKKK axis C).
+    _cga_indexed_at = (statement.get("predicate") or {}).get("indexed_at")
+    vsa_statement = build_vsa_statement(change_evidence, time_verified=_cga_indexed_at)
+    atomic_write_text(vsa_path, serialize_statement(vsa_statement) + "\n")
+    return vsa_path
 
 
 def emit_cga_vsa_sibling(
@@ -313,45 +420,9 @@ def emit_cga_vsa_sibling(
         )
         return result
 
-    # 2. Pull identity off the CGA subject so the VSA's resourceUri /
-    # subject digest line up with the parent attestation.
-    subject_list = statement.get("subject") or [{}]
-    subject0 = subject_list[0] if subject_list else {}
-    digest = subject0.get("digest") or {}
-    commit_sha = digest.get("git_commit_sha1")
-    if commit_sha == "unknown":
-        commit_sha = None
-    repo_id = subject0.get("name") or None
-
-    # W520: parallel to the W509 fallback in ``emit_pr_bundle_slsa_l3``.
-    # The CGA subject is normally built by ``roam cga emit`` and includes
-    # ``git_commit_sha1`` resolved via ``_git_commit_sha`` at build time,
-    # but direct API callers (or hand-crafted statements that bypass the
-    # CLI) can produce a subject without it. Without this fallback the
-    # sibling VSA drops ``subject[0].digest.sha1`` and breaks downstream
-    # verifiers that depend on commit-anchored provenance. Crash-safe: if
-    # git is unavailable / not a repo, fall through with ``None`` so the
-    # rest of the emit path still completes.
-    if not commit_sha:
-        from roam.attest.cga import _git_commit_sha
-
-        try:
-            commit_sha = _git_commit_sha(project_root)
-        except (subprocess.SubprocessError, OSError):  # pragma: no cover — defensive
-            commit_sha = None
-
-    # W1279 — same producer-side hash wire-up as the pr-bundle path.
-    # ``project_root`` is the working directory the parent CGA was
-    # written under; reuse it for the on-disk hash computation. The
-    # run-id source is the same env var; missing -> packet_config_hashes
-    # is None and no drift flag is set.
-    try:
-        from roam.evidence.config_hashes_producer import gather_hash_kwargs
-
-        _vsa_run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
-        _hash_kwargs = gather_hash_kwargs(project_root, _vsa_run_id)
-    except Exception:  # noqa: BLE001 - never break VSA emit on hash wire-up
-        _hash_kwargs = {}
+    # 2. Identity + hash wire-up.
+    repo_id, commit_sha = _resolve_cga_subject_identity(statement, project_root)
+    _hash_kwargs = _gather_hash_kwargs_or_empty(project_root)
 
     # 3. Build the ChangeEvidence packet from the CGA we just emitted.
     try:
@@ -369,23 +440,8 @@ def emit_cga_vsa_sibling(
         result["collector_warnings"] = list(warnings)
 
     # 4. Build + write the SLSA VSA statement next to the CGA.
-    # ``written_path`` is e.g. ``.roam/attestations/abc123.intoto.json``;
-    # strip the ``.intoto.json`` (two suffixes) so the sibling is
-    # ``abc123.vsa.json`` rather than ``abc123.intoto.vsa.json``.
-    # Path.with_suffix only strips one suffix at a time.
-    if written_path.name.endswith(".intoto.json"):
-        stem = written_path.name[: -len(".intoto.json")]
-        vsa_path = written_path.with_name(f"{stem}.vsa.json")
-    else:
-        vsa_path = written_path.with_name(f"{written_path.stem}.vsa.json")
     try:
-        # One clock for both attestations of the same emission event: the
-        # sibling's timeVerified pins to the CGA predicate's indexed_at.
-        # Independent now() calls straddle second boundaries on slow
-        # runners (W805-KKKKK axis C).
-        _cga_indexed_at = (statement.get("predicate") or {}).get("indexed_at")
-        vsa_statement = build_vsa_statement(change_evidence, time_verified=_cga_indexed_at)
-        atomic_write_text(vsa_path, serialize_statement(vsa_statement) + "\n")
+        vsa_path = _write_vsa_sibling(change_evidence, written_path, statement)
         result["vsa_path"] = str(vsa_path)
     except Exception as exc:
         result["skipped_reasons"].append(f"VSA emit failed: {exc}")

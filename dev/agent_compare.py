@@ -21,15 +21,9 @@ import os
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-    query,
-)
+from functools import lru_cache
+from importlib import import_module
+from typing import Any
 
 VANILLA_SYSTEM = "You are a helpful coding assistant. Be terse and accurate."
 
@@ -93,6 +87,19 @@ ROAM_BASH_SYSTEM = (
 )
 
 
+@lru_cache(maxsize=1)
+def _claude_agent_sdk() -> Any:
+    try:
+        return import_module("claude_agent_sdk")
+    except ModuleNotFoundError as exc:
+        if exc.name != "claude_agent_sdk":
+            raise
+        raise RuntimeError(
+            "claude_agent_sdk is required to run dev/agent_compare.py. "
+            "Install claude-agent-sdk into dev/.venv-agent before running the harness."
+        ) from exc
+
+
 @dataclass
 class AgentRun:
     name: str
@@ -108,8 +115,9 @@ class AgentRun:
     cache_read_tokens: int = 0
 
 
-def _vanilla_options() -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
+def _vanilla_options() -> Any:
+    sdk = _claude_agent_sdk()
+    return sdk.ClaudeAgentOptions(
         system_prompt=VANILLA_SYSTEM,
         permission_mode="bypassPermissions",
         model="claude-sonnet-4-6",
@@ -117,8 +125,9 @@ def _vanilla_options() -> ClaudeAgentOptions:
     )
 
 
-def _wired_options() -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
+def _wired_options() -> Any:
+    sdk = _claude_agent_sdk()
+    return sdk.ClaudeAgentOptions(
         mcp_servers={
             "roam-code": {
                 "type": "stdio",
@@ -134,8 +143,9 @@ def _wired_options() -> ClaudeAgentOptions:
     )
 
 
-def _roam_agent_options() -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
+def _roam_agent_options() -> Any:
+    sdk = _claude_agent_sdk()
+    return sdk.ClaudeAgentOptions(
         mcp_servers={
             "roam-code": {
                 "type": "stdio",
@@ -151,8 +161,9 @@ def _roam_agent_options() -> ClaudeAgentOptions:
     )
 
 
-def _roam_bash_options() -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
+def _roam_bash_options() -> Any:
+    sdk = _claude_agent_sdk()
+    return sdk.ClaudeAgentOptions(
         system_prompt=ROAM_BASH_SYSTEM,
         permission_mode="bypassPermissions",
         model="claude-sonnet-4-6",
@@ -160,18 +171,19 @@ def _roam_bash_options() -> ClaudeAgentOptions:
     )
 
 
-async def run_agent(name: str, options: ClaudeAgentOptions, prompt: str) -> AgentRun:
+async def run_agent(name: str, options: Any, prompt: str) -> AgentRun:
+    sdk = _claude_agent_sdk()
     run = AgentRun(name=name)
     t0 = time.monotonic()
     try:
-        async for msg in query(prompt=prompt, options=options):
-            if isinstance(msg, AssistantMessage):
+        async for msg in sdk.query(prompt=prompt, options=options):
+            if isinstance(msg, sdk.AssistantMessage):
                 for block in msg.content:
-                    if isinstance(block, TextBlock):
+                    if isinstance(block, sdk.TextBlock):
                         run.text_output += block.text
-                    elif isinstance(block, ToolUseBlock):
+                    elif isinstance(block, sdk.ToolUseBlock):
                         run.tool_counts[block.name] += 1
-            elif isinstance(msg, ResultMessage):
+            elif isinstance(msg, sdk.ResultMessage):
                 run.total_cost += msg.total_cost_usd or 0.0
                 run.total_turns += msg.num_turns
                 run.is_error = bool(msg.is_error)

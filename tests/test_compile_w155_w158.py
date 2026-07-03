@@ -63,6 +63,29 @@ def test_w155_neg_persist_wal_mode(tmp_path):
         conn.close()
 
 
+def test_w155_neg_persist_canonical_rephrase_reuses_miss(tmp_path):
+    # A formatting-only rephrase (case, trailing punctuation, whitespace
+    # collapse) canonicalizes to the same key, so a persisted miss is reused
+    # instead of re-running the regex and re-writing the row.
+    (tmp_path / ".roam").mkdir()
+    M._probe_neg_persist_put("regex_probe", "Where is foo defined?", str(tmp_path))
+    assert M._probe_neg_persist_get("regex_probe", "where is foo defined", str(tmp_path)) is True
+    assert M._probe_neg_persist_get("regex_probe", "  WHERE   is foo defined  ", str(tmp_path)) is True
+    # A genuinely different task still misses (negative control).
+    assert M._probe_neg_persist_get("regex_probe", "what does foo do", str(tmp_path)) is False
+
+
+def test_w126_neg_inmem_canonical_rephrase_reuses_miss():
+    label = "regex_probe_inmem_canon"
+    try:
+        M._probe_neg_record(label, "Who calls handleSave?")
+        assert M._probe_neg_cached_miss(label, "who calls handleSave") is True
+        assert M._probe_neg_cached_miss(label, "WHO calls handleSave!") is True
+        assert M._probe_neg_cached_miss(label, "what does handleSave do") is False
+    finally:
+        M._PROBE_NEGATIVE_CACHE.pop(M._probe_neg_cache_key(label, "Who calls handleSave?"), None)
+
+
 def test_w156_caller_body_embed_when_few_callers(tmp_path, monkeypatch):
     """When _probe_callers gets <=3 callers, embed their source bodies."""
     # Set up a tiny project
@@ -95,6 +118,30 @@ def test_w156_caller_body_embed_when_few_callers(tmp_path, monkeypatch):
     assert "src/caller_b.py" in facts["caller_bodies"]
     assert "def use_a" in facts["caller_bodies"]["src/caller_a.py"]
     assert "caller_bodies_definition" in facts
+
+
+def test_w156_caller_body_embed_skips_forbidden_index_locations(tmp_path, monkeypatch):
+    """`roam uses` caller locations are index-derived, so guard before read."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "internal" / "planning").mkdir(parents=True)
+    (tmp_path / "src" / "caller.py").write_text("def public_use():\n    return my_func()\n")
+    (tmp_path / "internal" / "planning" / "secret.py").write_text("def private_use():\n    return 'do not embed'\n")
+
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: {"_": "stub"})
+    monkeypatch.setattr(
+        M,
+        "_flatten_consumers",
+        lambda d: [
+            "internal/planning/secret.py:1",
+            "src/caller.py:1",
+        ],
+    )
+
+    facts = M._probe_callers(["my_func"], str(tmp_path))
+    assert "callers" in facts
+    assert "internal/planning/secret.py:1" in facts["callers"]
+    assert facts["caller_bodies"] == {"src/caller.py": "def public_use():\n    return my_func()"}
+    assert "do not embed" not in str(facts)
 
 
 def test_w156_no_body_embed_when_too_many_callers(tmp_path, monkeypatch):

@@ -801,7 +801,10 @@ class TestCoreToolsMembership:
         from roam.mcp_server import _PRESETS
 
         for name, tools in _PRESETS.items():
-            if name in {"core", "full", "compliance"}:
+            # compile-curated, like compliance, is a focused subset (the
+            # compile-code wire --mcp pre-approved surface) -- batch tools
+            # are not part of that curated set.
+            if name in {"core", "full", "compliance", "compile-curated"}:
                 continue
             assert "roam_batch_search" in tools, f"{name} missing roam_batch_search"
             assert "roam_batch_get" in tools, f"{name} missing roam_batch_get"

@@ -175,6 +175,11 @@ def render_per_mode_summary(
         rc = _to_float(r.get("regen_count", "")) or 0.0
         regen_by_session[(mode, sid)] = regen_by_session.get((mode, sid), 0.0) + rc
 
+    # Pre-compute per-mode regen lists once; summary loop then uses O(1) lookups.
+    regen_by_mode: dict[str, list[float]] = defaultdict(list)
+    for (mode, _sid), count in regen_by_session.items():
+        regen_by_mode[mode].append(count)
+
     # We don't have explicit "turns per session" in mode-usage; use total_tokens
     # as a proxy *only* if no other signal — but here we treat token totals
     # as the comparable per-session quantity and report median.
@@ -187,7 +192,7 @@ def render_per_mode_summary(
         cost_totals = [v["cost"] for v in sess_map.values()]
         median_tokens = _median_or_zero(token_totals)
         mean_cost = _mean_or_zero(cost_totals)
-        mode_regens = [v for (m, _), v in regen_by_session.items() if m == mode]
+        mode_regens = regen_by_mode.get(mode, [])
         mean_regen = _mean_or_zero(mode_regens)
         rows_html.append(
             f"<tr><td>{html.escape(mode)}</td>"

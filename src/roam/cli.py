@@ -743,7 +743,12 @@ def _ensure_plugin_commands_loaded() -> None:
             if cmd_name in _COMMANDS:
                 continue
             _COMMANDS[cmd_name] = target
-    except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior
+    except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior (ROAM_DEBUG re-raises)
+        # Per-plugin discovery errors are already recorded on the registry
+        # (visible via `roam plugins doctor`); this catch only guards the
+        # rare import/aggregation failure. Surface it under ROAM_DEBUG.
+        if os.environ.get("ROAM_DEBUG"):
+            raise
         return
 
 
@@ -785,7 +790,11 @@ def _recipe_hint_for_bad_command(bad: str) -> str | None:
         from roam.ask.classifier import classify
 
         matches = classify(bad)
-    except Exception:  # noqa: BLE001 — command suggestions must never break unknown-command errors
+    except Exception as exc:  # noqa: BLE001 — best-effort recipe hints must never break the unknown-command error path; classifier is optional and may fail to import or score.
+        # Log (not pass) so the silent skip stays observable when tracing why suggestions disappeared.
+        import logging
+
+        logging.getLogger(__name__).debug("recipe hint skipped for unknown command %r: %s", bad, exc)
         return None
 
     if matches and matches[0][1] >= 0.5:
@@ -1177,7 +1186,7 @@ def _mode_gate_dependencies():
         from roam.modes import check_command_allowed
 
         return find_project_root, check_command_allowed
-    except ImportError:
+    except ImportError:  # mode substrate is optional; absent import means gating fails open (no policy)
         return None
 
 
@@ -1191,7 +1200,11 @@ def _mode_gate_decision(canonical: str):
         repo_root = find_project_root()
         allowed, reason = check_command_allowed(repo_root, canonical)
         return repo_root, allowed, reason
-    except Exception:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
+    except Exception as exc:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
+        # Log (not pass) so the silent fail-open stays observable when tracing why a command was allowed despite enforcement.
+        import logging
+
+        logging.getLogger(__name__).debug("mode-gate decision skipped for command %r: %s", canonical, exc)
         return None
 
 
@@ -1220,8 +1233,11 @@ def _log_mode_override(canonical: str, active_name: str, repo_root) -> None:
             target=canonical,
             repo_root=repo_root,
         )
-    except Exception:  # noqa: BLE001 — audit logging must never block the override
-        pass
+    except Exception as exc:  # noqa: BLE001 — audit logging must never block the override
+        # Log (not pass) so the silent fail-open stays observable when tracing a missing mode-override audit row.
+        import logging
+
+        logging.getLogger(__name__).debug("mode-override audit log skipped for command %r: %s", canonical, exc)
 
 
 def _allow_mode_override(canonical: str, repo_root) -> None:

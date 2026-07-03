@@ -264,56 +264,68 @@ class RubyExtractor(LanguageExtractor):
 
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
-            ntype = child.type
-            if ntype == "call":
-                self._extract_call(child, source, refs, scope_name)
-            elif ntype == "constant":
-                # Standalone constant reference (e.g. using a class name)
-                name = self.node_text(child, source)
-                refs.append(
-                    self._make_reference(
-                        target_name=name,
-                        kind="reference",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    )
-                )
-            elif ntype == "scope_resolution":
-                # SomeModule::SomeClass
-                name_node = child.child_by_field_name("name")
-                if name_node:
-                    name = self.node_text(name_node, source)
-                    refs.append(
-                        self._make_reference(
-                            target_name=name,
-                            kind="reference",
-                            line=child.start_point[0] + 1,
-                            source_name=scope_name,
-                        )
-                    )
-            else:
-                new_scope = scope_name
-                if ntype == "module":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        mname = self.node_text(n, source)
-                        new_scope = f"{scope_name}::{mname}" if scope_name else mname
-                elif ntype == "class":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        cname = self.node_text(n, source)
-                        new_scope = f"{scope_name}::{cname}" if scope_name else cname
-                elif ntype == "method":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        fname = self.node_text(n, source)
-                        new_scope = f"{scope_name}#{fname}" if scope_name else fname
-                elif ntype == "singleton_method":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        fname = self.node_text(n, source)
-                        new_scope = f"{scope_name}.{fname}" if scope_name else fname
-                self._walk_refs(child, source, refs, new_scope)
+            self._collect_refs_for_child(child, source, refs, scope_name)
+
+    def _collect_refs_for_child(self, child, source, refs, scope_name):
+        """Dispatch one child to the right reference or scope handler."""
+        ntype = child.type
+        if ntype == "call":
+            self._extract_call(child, source, refs, scope_name)
+        elif ntype == "constant":
+            self._append_constant_ref(child, source, refs, scope_name)
+        elif ntype == "scope_resolution":
+            self._append_scope_resolution_ref(child, source, refs, scope_name)
+        else:
+            new_scope = self._derive_child_scope(child, source, scope_name)
+            self._walk_refs(child, source, refs, new_scope)
+
+    def _append_constant_ref(self, node, source, refs, scope_name):
+        """Record a standalone constant reference."""
+        name = self.node_text(node, source)
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+
+    def _append_scope_resolution_ref(self, node, source, refs, scope_name):
+        """Record a SomeModule::SomeClass style reference."""
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return
+        name = self.node_text(name_node, source)
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+
+    def _derive_child_scope(self, child, source, scope_name):
+        """Compute the Ruby qualified name to use when recursing into a child."""
+        ntype = child.type
+        if ntype == "module":
+            return self._scoped_name(child, source, scope_name, "::")
+        if ntype == "class":
+            return self._scoped_name(child, source, scope_name, "::")
+        if ntype == "method":
+            return self._scoped_name(child, source, scope_name, "#")
+        if ntype == "singleton_method":
+            return self._scoped_name(child, source, scope_name, ".")
+        return scope_name
+
+    def _scoped_name(self, node, source, scope_name, separator):
+        """Build a qualified name from an optional parent scope and a node name."""
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return scope_name
+        local_name = self.node_text(name_node, source)
+        return f"{scope_name}{separator}{local_name}" if scope_name else local_name
 
     def _extract_call(self, node, source, refs, scope_name):
         """Extract method calls, require/require_relative, include/extend."""

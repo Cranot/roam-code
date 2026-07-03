@@ -41,6 +41,7 @@ import subprocess
 import sys
 from collections import Counter
 from datetime import datetime
+from functools import lru_cache
 from typing import Optional
 
 import click
@@ -93,6 +94,17 @@ def _truncate(s: str, width: int = 60) -> str:
     return s[: width - 3] + "..."
 
 
+@lru_cache(maxsize=1)
+def _registered_command_names() -> frozenset[str]:
+    """Read command names without importing the Click CLI entry point."""
+    try:
+        from roam.surface_counts import cli_commands
+
+        return frozenset(cli_commands().keys())
+    except (ImportError, KeyError, OSError, RuntimeError, SyntaxError, TypeError, ValueError):
+        return frozenset()
+
+
 def _reconstruct_command(event: dict) -> Optional[list[str]]:
     """Build a ``roam <action> [target]`` argv from a logged event.
 
@@ -106,12 +118,10 @@ def _reconstruct_command(event: dict) -> Optional[list[str]]:
     best-effort approximation, not a perfect rerun. The drift report
     surfaces this when verdicts differ.
     """
-    from roam.cli import _COMMANDS  # local import to avoid CLI import cost
-
     action = (event.get("action") or "").strip()
     if not action:
         return None
-    if action not in _COMMANDS:
+    if action not in _registered_command_names():
         return None
     argv = ["roam", action]
     target = (event.get("target") or "").strip()

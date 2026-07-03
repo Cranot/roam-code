@@ -96,6 +96,49 @@ def _inline_match(line_text: str, command: str, task_id: str) -> bool:
     return False
 
 
+def _simple_yaml_field_from_line(line: str) -> tuple[str, str] | None:
+    """Parse one simple ``key: value`` scalar line for the no-PyYAML path."""
+    if ":" not in line:
+        return None
+    key, _, value = line.partition(":")
+    return key.strip(), value.strip().strip('"').strip("'")
+
+
+def _collect_rooted_rows_when_pyyaml_is_unavailable(text: str, root_key: str) -> list[dict[str, str]]:
+    """Collect row dicts under ``root_key`` while keeping PyYAML optional."""
+    rows: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_root_block = False
+    root_marker = f"{root_key}:"
+
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == root_marker or stripped.startswith(root_marker):
+            in_root_block = True
+            continue
+        if not in_root_block:
+            continue
+
+        field_line = stripped
+        if stripped.startswith("- "):
+            if current:
+                rows.append(current)
+            current = {}
+            field_line = stripped[2:].strip()
+
+        if current is not None:
+            field = _simple_yaml_field_from_line(field_line)
+            if field is not None:
+                key, value = field
+                current[key] = value
+
+    if current:
+        rows.append(current)
+    return rows
+
+
 def _parse_simple_ignore_findings_yaml(text: str) -> dict:
     """Minimal YAML parser for .roamignore-findings — no PyYAML required.
 
@@ -112,33 +155,7 @@ def _parse_simple_ignore_findings_yaml(text: str) -> dict:
     needs real PyYAML. Returns ``{}`` on shapes we can't recognise so
     callers fall through to a clean empty-rules state.
     """
-    rules: list[dict] = []
-    current: dict | None = None
-    in_rules_block = False
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped == "rules:" or stripped.startswith("rules:"):
-            in_rules_block = True
-            continue
-        if not in_rules_block:
-            continue
-        if stripped.startswith("- "):
-            if current:
-                rules.append(current)
-            current = {}
-            stripped = stripped[2:].strip()
-            # First key on the same line as `-` is the common shape.
-            if ":" in stripped:
-                k, _, v = stripped.partition(":")
-                current[k.strip()] = v.strip().strip('"').strip("'")
-        elif current is not None and ":" in stripped:
-            k, _, v = stripped.partition(":")
-            current[k.strip()] = v.strip().strip('"').strip("'")
-    if current:
-        rules.append(current)
+    rules = _collect_rooted_rows_when_pyyaml_is_unavailable(text, "rules")
     return {"rules": rules} if rules else {}
 
 

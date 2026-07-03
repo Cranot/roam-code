@@ -36,6 +36,7 @@ modes including ``migration``. If a repo's constitution omits
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -312,9 +313,6 @@ class ModePolicy:
     allowed_commands: frozenset[str] = field(default_factory=frozenset)
     source: str = "default"  # "default" | "constitution" | "env" | "file"
 
-    def allows(self, command: str) -> bool:
-        return _bare_command_name(command) in self.allowed_commands
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -335,7 +333,11 @@ def _materialise_from_constitution(
     """
     try:
         from roam.constitution.loader import load_constitution
-    except ImportError:
+    except ImportError as exc:
+        print(
+            f"[modes.policy] optional constitution loader unavailable: {exc}",
+            file=sys.stderr,
+        )
         return None
 
     try:
@@ -444,25 +446,19 @@ def resolve_mode(
     to the next source so a typo can never lock an agent out — but we
     record the resolved source on the returned policy.
     """
+    resolved = DEFAULT_MODE
     resolved_source = "default"
-    resolved: Optional[str] = None
-
-    if mode_name and mode_name in VALID_MODES:
-        resolved = mode_name
-        resolved_source = "explicit"
-    if resolved is None:
-        env_val = os.environ.get(ENV_VAR, "").strip()
-        if env_val in VALID_MODES:
-            resolved = env_val
-            resolved_source = "env"
-    if resolved is None:
-        file_val = get_active_mode(repo_root)
-        if file_val in VALID_MODES:
-            resolved = file_val
-            resolved_source = "file"
-    if resolved is None:
-        resolved = DEFAULT_MODE
-        resolved_source = "default"
+    mode_sources = (
+        ("explicit", lambda: mode_name),
+        ("env", lambda: os.environ.get(ENV_VAR, "").strip()),
+        ("file", lambda: get_active_mode(repo_root)),
+    )
+    for source, load_mode in mode_sources:
+        candidate = load_mode()
+        if candidate in VALID_MODES:
+            resolved = candidate
+            resolved_source = source
+            break
 
     policies = list_modes(repo_root)
     base = policies.get(resolved) or ModePolicy(

@@ -42,6 +42,10 @@ docstrings present or added in this module.
 
 from __future__ import annotations
 
+import os
+import subprocess
+from collections import Counter
+
 import click
 
 from roam.capability import roam_capability
@@ -60,6 +64,70 @@ def _bounded_list_preview(items: list, cap: int) -> tuple[list, bool]:
     """
     preview = [{"path": i["path"], "symbol_count": i["symbol_count"]} for i in items[:cap]]
     return preview, len(items) > cap
+
+
+def _deps_git_literal_pathspec_env() -> dict[str, str]:
+    """Protect the target path from git pathspec glob/magic expansion."""
+    env = dict(os.environ)
+    env["GIT_LITERAL_PATHSPECS"] = "1"
+    return env
+
+
+def _git_shas_for_deps_temporal_signal(target: str, limit: int = 200) -> list[str]:
+    """Find commits for the target while preserving deps' empty-list degrade."""
+    try:
+        proc = subprocess.run(
+            ["git", "log", f"--max-count={limit}", "--format=%H", "--", target],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            env=_deps_git_literal_pathspec_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [sha.strip() for sha in proc.stdout.splitlines() if sha.strip()]
+
+
+def _git_changed_paths_for_deps_temporal_signal(shas: list[str], limit: int = 200) -> list[str]:
+    """Read the sampled commit paths without making git history mandatory."""
+    if not shas:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "show", "--name-only", "--pretty=format:__commit__"] + shas[:limit],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    return proc.stdout.splitlines()
+
+
+def _rank_deps_paths_by_temporal_coupling(target: str, limit: int = 200) -> list[tuple[str, int]]:
+    """Preserve temporal-coupling signal without risking the deps envelope."""
+    changed_paths = _git_changed_paths_for_deps_temporal_signal(
+        _git_shas_for_deps_temporal_signal(target, limit=limit),
+        limit=limit,
+    )
+    counts: Counter[str] = Counter()
+    for raw_path in changed_paths:
+        changed_path = raw_path.strip()
+        if not changed_path or changed_path == "__commit__":
+            continue
+        if changed_path == target or changed_path.endswith("/" + target):
+            continue
+        counts[changed_path] += 1
+    return counts.most_common(20)
+
+
+def _deps_multi_temporal_coupling_pairs(target: str) -> list[dict]:
+    """Adapt ranked co-change tuples to the stable deps --multi envelope."""
+    return [{"file": filename, "count": count} for filename, count in _rank_deps_paths_by_temporal_coupling(target)]
 
 
 @roam_capability(
@@ -276,51 +344,11 @@ def deps(ctx, path, full, multi):
         # no .git dir, fall through with an empty list — never raise.
         cochange_pairs: list[dict] = []
         if multi:
-
-            def _compute_cochange_pairs():
-                import subprocess as _sp
-                from collections import Counter as _Counter
-
-                _target = frow["path"]
-                try:
-                    _shaproc = _sp.run(
-                        ["git", "log", "--max-count=200", "--format=%H", "--", _target],
-                        capture_output=True,
-                        text=True,
-                        timeout=5.0,
-                    )
-                except (OSError, _sp.TimeoutExpired):
-                    return []
-                if _shaproc.returncode != 0:
-                    return []
-                _shas = [s.strip() for s in _shaproc.stdout.splitlines() if s.strip()]
-                if not _shas:
-                    return []
-                try:
-                    _showproc = _sp.run(
-                        ["git", "show", "--name-only", "--pretty=format:__commit__", *_shas[:200]],
-                        capture_output=True,
-                        text=True,
-                        timeout=10.0,
-                    )
-                except (OSError, _sp.TimeoutExpired):
-                    return []
-                if _showproc.returncode != 0:
-                    return []
-                _counts: _Counter[str] = _Counter()
-                for _line in _showproc.stdout.splitlines():
-                    _line = _line.strip()
-                    if not _line or _line == "__commit__":
-                        continue
-                    if _line == _target or _line.endswith("/" + _target):
-                        continue
-                    _counts[_line] += 1
-                return [{"file": _fn, "count": _ct} for _fn, _ct in _counts.most_common(20)]
-
             cochange_pairs = (
                 _run_check_db(
                     "compute_cochange_pairs",
-                    _compute_cochange_pairs,
+                    _deps_multi_temporal_coupling_pairs,
+                    frow["path"],
                     default=[],
                 )
                 or []

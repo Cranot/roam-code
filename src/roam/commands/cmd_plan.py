@@ -21,7 +21,7 @@ from roam.commands.cmd_affected_tests import (
     _resolve_file_symbols,
 )
 from roam.commands.resolve import ensure_index, find_symbol
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -333,21 +333,32 @@ def _build_modification_points(conn, file_paths):
     safe_points = []
     touch_carefully = []
 
+    file_rows = batched_in(
+        conn,
+        "SELECT id, path FROM files WHERE path IN ({ph})",
+        file_paths,
+    )
+    file_id_to_path = {row["id"]: row["path"] for row in file_rows}
+    if not file_id_to_path:
+        return safe_points, touch_carefully
+
+    symbol_rows = batched_in(
+        conn,
+        """SELECT s.id, s.name, s.kind, s.line_start, f.path AS file_path,
+                  (SELECT COUNT(*) FROM edges WHERE target_id = s.id) AS in_degree
+           FROM symbols s
+           JOIN files f ON s.file_id = f.id
+           WHERE s.file_id IN ({ph})
+           ORDER BY s.file_id, s.line_start""",
+        file_id_to_path.keys(),
+    )
+
+    symbols_by_path: dict[str, list] = {}
+    for sym in symbol_rows:
+        symbols_by_path.setdefault(sym["file_path"], []).append(sym)
+
     for fp in file_paths:
-        frow = conn.execute("SELECT id FROM files WHERE path = ?", (fp,)).fetchone()
-        if not frow:
-            continue
-
-        syms = conn.execute(
-            """SELECT s.id, s.name, s.kind, s.line_start,
-                      (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as in_degree
-               FROM symbols s
-               WHERE s.file_id = ?
-               ORDER BY s.line_start""",
-            (frow["id"],),
-        ).fetchall()
-
-        for sym in syms:
+        for sym in symbols_by_path.get(fp, []):
             entry = {
                 "name": sym["name"],
                 "kind": sym["kind"],
@@ -452,10 +463,18 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                 resolution_tier,
                 resolved_target,
             )
-        for path, fid in file_map.items():
-            file_paths.add(path)
-            syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
-            sym_ids.update(s["id"] for s in syms)
+        file_paths.update(file_map.keys())
+        # Batch the symbol fetch across ALL staged file_ids in one IN-clause
+        # query rather than one query per file (the prior per-file loop scaled
+        # subprocess-free but issued N round-trips for N staged files).
+        from roam.db.connection import batched_in
+
+        rows = batched_in(
+            conn,
+            "SELECT id FROM symbols WHERE file_id IN ({ph})",
+            list(file_map.values()),
+        )
+        sym_ids.update(r["id"] for r in rows)
         label = f"staged changes ({len(file_map)} files)"
 
     # --symbol option

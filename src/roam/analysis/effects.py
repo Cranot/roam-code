@@ -7,8 +7,11 @@ inherit the transitive effects of their callees.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Effect taxonomy
@@ -553,6 +556,53 @@ def classify_file_effects(
 # ---------------------------------------------------------------------------
 
 
+def _preserve_scc_member_consistency_after_closure(
+    all_effects: dict[int, set[str]],
+    scc_to_nodes: dict[int, list[int]],
+    scc_effect_set: dict[int, set[str]],
+) -> None:
+    """Apply finalized SCC closures once propagation reads are complete."""
+    for scc_id, scc_effects in scc_effect_set.items():
+        if not scc_effects:
+            continue
+        finalized_effects = scc_effects.copy()
+        for node in scc_to_nodes.get(scc_id, ()):
+            all_effects[node] = finalized_effects
+
+
+def _propagate_scc_closure_after_callees_are_finalized(
+    condensation,
+    topological_sccs: list[int],
+    all_effects: dict[int, set[str]],
+) -> None:
+    """Compute SCC closure in callee-first order, then sync members once."""
+    scc_to_nodes: dict[int, list[int]] = defaultdict(list)
+    for orig, scc_id in condensation.graph.get("mapping", {}).items():
+        scc_to_nodes[scc_id].append(orig)
+
+    scc_effect_set: dict[int, set[str]] = {}
+    for scc_id in reversed(topological_sccs):
+        scc_nodes = scc_to_nodes.get(scc_id, ())
+
+        scc_effects: set[str] = set()
+        for n in scc_nodes:
+            eff = all_effects.get(n)
+            if eff:
+                scc_effects.update(eff)
+        for succ_scc in condensation.successors(scc_id):
+            succ_eff = scc_effect_set.get(succ_scc)
+            if succ_eff:
+                scc_effects.update(succ_eff)
+
+        scc_effect_set[scc_id] = scc_effects
+
+    _preserve_scc_member_consistency_after_closure(
+        all_effects,
+        scc_to_nodes,
+        scc_effect_set,
+    )
+
+
 def propagate_effects(
     G,
     direct_effects: dict[int, set[str]],
@@ -582,46 +632,11 @@ def propagate_effects(
     # Try topological order on condensation (handles cycles)
     try:
         condensation = nx.condensation(G)
-        # node_mapping: condensation node -> set of original nodes
-        members = condensation.graph.get("mapping", {})
-        # Reverse: original -> condensation
-        orig_to_scc: dict[int, int] = {}
-        for orig, scc_id in members.items():
-            orig_to_scc[orig] = scc_id
-
-        # Group original nodes by their SCC ONCE (O(N)). The previous
-        # implementation rebuilt this list with a full `orig_to_scc.items()`
-        # scan on every SCC iteration AND every successor edge, making the
-        # pass O(SCCs*N + edges*N) — ~100s on a 36K-symbol graph. With the
-        # reverse map + a per-SCC effect memo this is O(N + condensation edges).
-        scc_to_nodes: dict[int, list[int]] = defaultdict(list)
-        for orig, scc_id in orig_to_scc.items():
-            scc_to_nodes[scc_id].append(orig)
-
-        # Process in reverse topological order (callees finalized first), so a
-        # caller SCC can read each callee SCC's completed effect set in O(1).
-        scc_effect_set: dict[int, set[str]] = {}
-        for scc_id in reversed(list(nx.topological_sort(condensation))):
-            scc_nodes = scc_to_nodes.get(scc_id, ())
-
-            # Within an SCC, all nodes share the same effects: union of their
-            # direct effects plus every successor (callee) SCC's effects.
-            scc_effects: set[str] = set()
-            for n in scc_nodes:
-                eff = all_effects.get(n)
-                if eff:
-                    scc_effects.update(eff)
-            for succ_scc in condensation.successors(scc_id):
-                succ_eff = scc_effect_set.get(succ_scc)
-                if succ_eff:
-                    scc_effects.update(succ_eff)
-
-            scc_effect_set[scc_id] = scc_effects
-
-            # Apply to all nodes in this SCC
-            if scc_effects:
-                for n in scc_nodes:
-                    all_effects[n] = scc_effects.copy()
+        _propagate_scc_closure_after_callees_are_finalized(
+            condensation,
+            list(nx.topological_sort(condensation)),
+            all_effects,
+        )
 
     except nx.NetworkXException:
         # Fallback: simple iterative propagation
@@ -708,7 +723,12 @@ def _source_and_tree(root, rel_path, language, source_cache, parse_file):
     try:
         with open(full_path, "rb") as f:
             source = f.read()
-    except OSError:
+    except OSError as exc:
+        # Intentional skip: an unreadable file (deleted mid-index, permission
+        # denied, broken symlink) has no effects to classify, and the caller
+        # does `if st is None: continue`. Surface it so the swallow isn't
+        # silent — mirrors parser.py's unreadable-file handling.
+        log.warning("effects: skipping unreadable file %s: %s", rel_path, exc)
         return None
     tree, _parsed_source, _lang = parse_file(full_path, language)
     return source, tree

@@ -31,6 +31,16 @@ from roam.security.taint_engine import load_rules
 #    qualified_only=true; ..."
 _W489_A_LINT_REGEX = re.compile(r"rule '([^']+)': bare (\w+) '([^']+)'")
 
+# The W479 warning emits the singular form (``kind[:-1]`` in
+# ``taint_engine._warn_bare_entries_under_qualified_only``); map it back
+# to the canonical registry plural for consumers. Kept as a flat table
+# (not a nested ternary) so it adds no control-flow nesting here.
+_KIND_SINGULAR_TO_PLURAL = {
+    "source": "sources",
+    "sink": "sinks",
+    "sanitizer": "sanitizers",
+}
+
 
 def capture_qualified_only_lint(
     rules_path: Path,
@@ -60,15 +70,9 @@ def capture_qualified_only_lint(
             rule_id, kind_singular, name = match.groups()
             # The warning uses singular ("source"/"sink"/"sanitizer");
             # canonicalise to the registry kind plural for consumers.
-            kind = (
-                "sources"
-                if kind_singular == "source"
-                else "sinks"
-                if kind_singular == "sink"
-                else "sanitizers"
-                if kind_singular == "sanitizer"
-                else kind_singular
-            )
+            # Unknown singulars pass through unchanged (defence: never
+            # invent a plural if the upstream vocabulary grows).
+            kind = _KIND_SINGULAR_TO_PLURAL.get(kind_singular, kind_singular)
             violations.append(
                 {
                     "rule_id": rule_id,

@@ -18,6 +18,7 @@ import sys
 # the legacy bare ``'inherits'`` literal to ``('inherits', 'implements',
 # 'uses_trait')`` without losing the canonical kind that python_lang.py
 # emits for Django models (the W156/W39.3 bridge contract still holds).
+from roam.db.connection import batched_in
 from roam.db.edge_kinds import inheritance_in_clause
 
 # Django model + field vocabulary. Lives here because Django post-processing
@@ -85,6 +86,37 @@ _DJANGO_REL_KIND = {
 }
 
 
+def _load_class_graph(conn, columns: str) -> tuple[dict, dict]:
+    """Load class symbols and their cross-file inheritance parent map.
+
+    Returns ``(class_by_id, parent_ids)`` where ``parent_ids[child_id]``
+    is the set of parent symbol IDs. Shared by the inheritance and
+    custom-field resolvers, which walk the same graph shape.
+
+    W543-followup-C: unions all three canonical inheritance kinds via the
+    shared ``inheritance_in_clause`` helper (imported at module top).
+    python_lang.py emits ``'inherits'`` for Django models (the W156/W39.3
+    bridge contract is unchanged — the canonical writer is still
+    ``'inherits'``), but reading via the helper means a future plugin
+    extractor that emits ``'implements'`` / ``'uses_trait'`` for
+    Django-shaped class hierarchies will still flow through the
+    post-resolvers.
+    """
+    class_rows = conn.execute(f"SELECT {columns} FROM symbols WHERE kind = 'class'").fetchall()
+    class_by_id = {r["id"]: dict(r) for r in class_rows}
+    if not class_by_id:
+        return {}, {}
+
+    inherits_rows = conn.execute(
+        f"SELECT source_id, target_id FROM edges WHERE {inheritance_in_clause('kind')}"
+    ).fetchall()
+    parent_ids = {}
+    for r in inherits_rows:
+        if r["source_id"] in class_by_id:
+            parent_ids.setdefault(r["source_id"], set()).add(r["target_id"])
+    return class_by_id, parent_ids
+
+
 def resolve_django_inheritance(conn) -> int:
     """Resolve transitive Django model inheritance across all indexed files.
 
@@ -94,43 +126,14 @@ def resolve_django_inheritance(conn) -> int:
 
     Returns the number of symbols updated.
     """
-    # 1. Load class symbols: {id: name, qualified_name, framework_type}
-    class_rows = conn.execute(
-        "SELECT id, name, qualified_name, framework_type FROM symbols WHERE kind = 'class'"
-    ).fetchall()
-    if not class_rows:
+    class_by_id, parent_ids = _load_class_graph(conn, "id, name, qualified_name, framework_type")
+    if not class_by_id:
         return 0
 
-    # Build lookup maps
-    class_by_id = {r["id"]: dict(r) for r in class_rows}
-    # Map name -> set of symbol IDs (multiple classes can share a name)
-    ids_by_name = {}
-    for r in class_rows:
-        ids_by_name.setdefault(r["name"], set()).add(r["id"])
-
-    # 2. Load inherits edges: source_id inherits from target_id.
-    # W543-followup-C: union all three canonical inheritance kinds via the
-    # shared helper (imported at module top). python_lang.py emits
-    # ``'inherits'`` for Django models (the W156/W39.3 bridge contract is
-    # unchanged — the canonical writer is still ``'inherits'``), but
-    # reading via the helper means a future plugin extractor that emits
-    # ``'implements'`` / ``'uses_trait'`` for Django-shaped class
-    # hierarchies will still flow through the post-resolver.
-    inherits_rows = conn.execute(
-        f"SELECT source_id, target_id FROM edges WHERE {inheritance_in_clause('kind')}"
-    ).fetchall()
-
-    # parent_ids[child_id] = set of parent symbol IDs
-    parent_ids = {}
-    for r in inherits_rows:
-        src, tgt = r["source_id"], r["target_id"]
-        if src in class_by_id:
-            parent_ids.setdefault(src, set()).add(tgt)
-
-    # 3. Already-tagged: symbols with framework_type='django_model' (fast-path)
+    # 1. Already-tagged: symbols with framework_type='django_model' (fast-path)
     already_tagged = {sid for sid, info in class_by_id.items() if info["framework_type"] == "django_model"}
 
-    # 4. Transitive resolution with memoization
+    # 2. Transitive resolution with memoization
     resolved = {}  # symbol_id -> bool
 
     def _is_django_model(sid, visited):
@@ -157,7 +160,7 @@ def resolve_django_inheritance(conn) -> int:
         resolved[sid] = False
         return False
 
-    # 5. Walk all class symbols
+    # 3. Walk all class symbols
     to_update = []
     for sid in class_by_id:
         if sid in already_tagged:
@@ -165,53 +168,25 @@ def resolve_django_inheritance(conn) -> int:
         if _is_django_model(sid, set()):
             to_update.append(sid)
 
-    # 6. Batch update
+    # 4. Batch update
     if to_update:
         with conn:
-            for sid in to_update:
-                conn.execute(
-                    "UPDATE symbols SET framework_type = 'django_model' WHERE id = ?",
-                    (sid,),
-                )
+            conn.executemany(
+                "UPDATE symbols SET framework_type = 'django_model' WHERE id = ?",
+                [(sid,) for sid in to_update],
+            )
 
     return len(to_update)
 
 
-def resolve_django_custom_fields(conn) -> int:
-    """Resolve custom Django field types across all indexed files.
+def _build_custom_field_map(class_by_id: dict, parent_ids: dict) -> dict:
+    """Map custom field class names to their nearest Django base field type.
 
-    Queries inherits edges to find classes inheriting from Django field
-    types, builds a cross-file custom field map, then updates property
-    symbols that use these custom fields.
-
-    Returns the number of symbols updated.
+    Walks the inheritance graph with cycle detection, honouring the
+    python_lang.py fast-path tag (framework_type='django_field' +
+    field_base_type). Classes that ARE canonical Django field types are
+    excluded from the returned map.
     """
-    # 1. Load class symbols (include framework_type and field_base_type for fast-path seeding)
-    class_rows = conn.execute(
-        "SELECT id, name, qualified_name, framework_type, field_base_type FROM symbols WHERE kind = 'class'"
-    ).fetchall()
-    if not class_rows:
-        return 0
-
-    class_by_id = {r["id"]: dict(r) for r in class_rows}
-    ids_by_name = {}
-    for r in class_rows:
-        ids_by_name.setdefault(r["name"], set()).add(r["id"])
-
-    # 2. Load inherits edges. W543-followup-C: same migration as
-    # resolve_django_inheritance above — union all three canonical
-    # inheritance kinds so plugin-emitted ``'implements'`` /
-    # ``'uses_trait'`` rows reach the custom-field resolver too.
-    inherits_rows = conn.execute(
-        f"SELECT source_id, target_id FROM edges WHERE {inheritance_in_clause('kind')}"
-    ).fetchall()
-    parent_ids = {}
-    for r in inherits_rows:
-        src, tgt = r["source_id"], r["target_id"]
-        if src in class_by_id:
-            parent_ids.setdefault(src, set()).add(tgt)
-
-    # 3. Resolve custom field types: find classes whose ancestor is a Django field type
     resolved = {}  # symbol_id -> base_field_type or None
 
     def _resolve_field_base(sid, visited):
@@ -243,74 +218,161 @@ def resolve_django_custom_fields(conn) -> int:
         resolved[sid] = None
         return None
 
-    # Build name -> base_field_type map
     custom_field_map = {}
     for sid, info in class_by_id.items():
         base = _resolve_field_base(sid, set())
         if base is not None and info["name"] not in _DJANGO_FIELD_TYPES:
             custom_field_map[info["name"]] = base
+    return custom_field_map
 
+
+def _target_model_name_for_edge(prop, base_type: str) -> str | None:
+    """Extract the short target model name from a relationship property.
+
+    Returns None unless the property is a relationship field and its
+    field_metadata names a target_model.
+    """
+    if base_type not in _DJANGO_RELATIONSHIP_FIELDS or not prop["field_metadata"]:
+        return None
+    try:
+        meta = json.loads(prop["field_metadata"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    target_model = meta.get("target_model")
+    if not target_model:
+        return None
+    return target_model.split(".")[-1] or None
+
+
+def _relationship_edge(prop, base_type: str, target_name: str, class_ids_by_name: dict[str, int]) -> dict | None:
+    """Build a django_fk/o2o/m2m edge dict for a relationship custom field.
+
+    Returns None unless the property belongs to a parent class symbol and
+    ``target_name`` resolves to a class ID in the pre-loaded map.
+    """
+    parent_id = prop.get("parent_id")
+    if not parent_id:
+        return None
+    edge_kind = _DJANGO_REL_KIND.get(base_type)
+    if not edge_kind:
+        return None
+    target_id = class_ids_by_name.get(target_name)
+    if not target_id:
+        return None
+    return {
+        "source_id": parent_id,
+        "target_id": target_id,
+        "kind": edge_kind,
+        "line": prop["line_start"],
+        "source_file_id": prop["file_id"],
+    }
+
+
+def _load_existing_relationship_keys_to_preserve_idempotency(conn) -> set[tuple[int, int, str]]:
+    rows = conn.execute(
+        "SELECT source_id, target_id, kind FROM edges WHERE kind IN ('django_fk', 'django_o2o', 'django_m2m')"
+    ).fetchall()
+    return {(row["source_id"], row["target_id"], row["kind"]) for row in rows}
+
+
+def _relationship_type_from_field_aliases(prop) -> str | None:
+    ft = prop["field_type"] or ""
+    if ft in _DJANGO_RELATIONSHIP_FIELDS:
+        return ft
+    fbt = prop["field_base_type"] or ""
+    if fbt in _DJANGO_RELATIONSHIP_FIELDS:
+        return fbt
+    return None
+
+
+def _normalized_relationship_target_name(prop) -> str | None:
+    try:
+        meta = json.loads(prop["field_metadata"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    target_model = meta.get("target_model")
+    if not target_model:
+        return None
+
+    target_name = target_model.split(".")[-1]
+    if target_name == "self":
+        target_name = prop["parent_name"]
+    return target_name or None
+
+
+def _load_class_ids_for_relationship_targets(conn, target_names) -> dict[str, int]:
+    names = sorted({name for name in target_names if name})
+    rows = batched_in(
+        conn,
+        "SELECT id, name FROM symbols WHERE kind = 'class' AND name IN ({ph}) ORDER BY id",
+        names,
+    )
+    class_ids_by_name = {}
+    for row in rows:
+        class_ids_by_name.setdefault(row["name"], row["id"])
+    return class_ids_by_name
+
+
+def resolve_django_custom_fields(conn) -> int:
+    """Resolve custom Django field types across all indexed files.
+
+    Queries inherits edges to find classes inheriting from Django field
+    types, builds a cross-file custom field map, then updates property
+    symbols that use these custom fields.
+
+    Returns the number of symbols updated.
+    """
+    # 1. Load class graph (framework_type + field_base_type feed the fast-path seeding)
+    class_by_id, parent_ids = _load_class_graph(conn, "id, name, qualified_name, framework_type, field_base_type")
+    if not class_by_id:
+        return 0
+
+    # 2. Resolve custom field types: classes whose ancestor is a Django field type
+    custom_field_map = _build_custom_field_map(class_by_id, parent_ids)
     if not custom_field_map:
         return 0
 
-    # 4. Find property symbols with call_function matching custom fields
+    # 3. Find property symbols with call_function matching custom fields
     props = conn.execute(
-        "SELECT id, call_function, field_metadata, file_id, line_start "
+        "SELECT id, parent_id, call_function, field_metadata, file_id, line_start "
         "FROM symbols WHERE call_function IS NOT NULL AND kind = 'property'"
     ).fetchall()
 
     updates = []
-    new_edges = []
+    edge_candidates = []
+    target_names = set()
     for prop in props:
         call_name = prop["call_function"]
         if call_name not in custom_field_map:
             continue
-
         base_type = custom_field_map[call_name]
-        update = {
-            "id": prop["id"],
-            "field_type": call_name,
-            "field_base_type": base_type,
-        }
-        updates.append(update)
+        updates.append(
+            {
+                "id": prop["id"],
+                "field_type": call_name,
+                "field_base_type": base_type,
+            }
+        )
+        target_name = _target_model_name_for_edge(prop, base_type)
+        if target_name:
+            target_names.add(target_name)
+            edge_candidates.append((prop, base_type, target_name))
 
-        # For relationship custom fields, create edges
-        if base_type in _DJANGO_RELATIONSHIP_FIELDS and prop["field_metadata"]:
-            try:
-                meta = json.loads(prop["field_metadata"])
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-            target_model = meta.get("target_model")
-            if target_model:
-                # Find the parent class symbol (the model this property belongs to)
-                parent_row = conn.execute("SELECT parent_id FROM symbols WHERE id = ?", (prop["id"],)).fetchone()
-                if parent_row and parent_row["parent_id"]:
-                    edge_kind = _DJANGO_REL_KIND.get(base_type)
-                    if edge_kind:
-                        # Find target symbol by name
-                        target_sym = conn.execute(
-                            "SELECT id FROM symbols WHERE name = ? AND kind = 'class' LIMIT 1",
-                            (target_model.split(".")[-1],),
-                        ).fetchone()
-                        if target_sym:
-                            new_edges.append(
-                                {
-                                    "source_id": parent_row["parent_id"],
-                                    "target_id": target_sym["id"],
-                                    "kind": edge_kind,
-                                    "line": prop["line_start"],
-                                    "source_file_id": prop["file_id"],
-                                }
-                            )
+    class_ids_by_name = _load_class_ids_for_relationship_targets(conn, target_names)
 
-    # 5. Batch update
+    new_edges = []
+    for prop, base_type, target_name in edge_candidates:
+        edge = _relationship_edge(prop, base_type, target_name, class_ids_by_name)
+        if edge is not None:
+            new_edges.append(edge)
+
+    # 4. Batch update
     if updates:
         with conn:
-            for u in updates:
-                conn.execute(
-                    "UPDATE symbols SET field_type = ?, field_base_type = ? WHERE id = ?",
-                    (u["field_type"], u["field_base_type"], u["id"]),
-                )
+            conn.executemany(
+                "UPDATE symbols SET field_type = ?, field_base_type = ? WHERE id = ?",
+                [(u["field_type"], u["field_base_type"], u["id"]) for u in updates],
+            )
 
     if new_edges:
         with conn:
@@ -332,11 +394,7 @@ def resolve_django_relationships(conn) -> int:
     Returns the number of new edges created.
     """
     # 1. Load existing relationship edges to avoid duplicates
-    existing = set()
-    for row in conn.execute(
-        "SELECT source_id, target_id, kind FROM edges WHERE kind IN ('django_fk', 'django_o2o', 'django_m2m')"
-    ).fetchall():
-        existing.add((row["source_id"], row["target_id"], row["kind"]))
+    existing = _load_existing_relationship_keys_to_preserve_idempotency(conn)
 
     # 2. Find properties with field_metadata containing target_model
     props = conn.execute(
@@ -348,50 +406,33 @@ def resolve_django_relationships(conn) -> int:
         "AND s.parent_id IS NOT NULL"
     ).fetchall()
 
-    new_edges = []
+    edge_candidates = []
+    target_names = set()
     for prop in props:
         # Determine the base relationship type
-        ft = prop["field_type"] or ""
-        fbt = prop["field_base_type"] or ""
-        rel_type = None
-        if ft in _DJANGO_RELATIONSHIP_FIELDS:
-            rel_type = ft
-        elif fbt in _DJANGO_RELATIONSHIP_FIELDS:
-            rel_type = fbt
+        rel_type = _relationship_type_from_field_aliases(prop)
         if not rel_type:
             continue
 
-        try:
-            meta = json.loads(prop["field_metadata"])
-        except (json.JSONDecodeError, TypeError):
-            continue
-        target_model = meta.get("target_model")
-        if not target_model:
-            continue
-
-        # Strip app prefix: "core.Currency" -> "Currency"
-        target_name = target_model.split(".")[-1]
-
-        # Handle "self" references
-        if target_name == "self":
-            target_name = prop["parent_name"]
+        target_name = _normalized_relationship_target_name(prop)
         if not target_name:
             continue
 
-        edge_kind = _DJANGO_REL_KIND.get(rel_type)
-        if not edge_kind:
+        if rel_type not in _DJANGO_REL_KIND:
             continue
+        edge_kind = _DJANGO_REL_KIND[rel_type]
 
-        # Find target class symbol
-        target_sym = conn.execute(
-            "SELECT id FROM symbols WHERE name = ? AND kind = 'class' LIMIT 1",
-            (target_name,),
-        ).fetchone()
-        if not target_sym:
+        target_names.add(target_name)
+        edge_candidates.append((prop, target_name, edge_kind))
+
+    class_ids_by_name = _load_class_ids_for_relationship_targets(conn, target_names)
+
+    new_edges = []
+    for prop, target_name, edge_kind in edge_candidates:
+        if target_name not in class_ids_by_name:
             continue
-
+        target_id = class_ids_by_name[target_name]
         source_id = prop["parent_id"]
-        target_id = target_sym["id"]
         edge_key = (source_id, target_id, edge_kind)
         if edge_key in existing:
             continue

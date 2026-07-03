@@ -73,13 +73,6 @@ class Classification:
     confidence: str  # "high" | "medium" | "low"
     reasoning: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "label": self.label,
-            "confidence": self.confidence,
-            "reasoning": self.reasoning,
-        }
-
 
 @dataclass
 class ClassifyOptions:
@@ -88,6 +81,14 @@ class ClassifyOptions:
     max_tokens: int = 250
     temperature: float = 0.0
     skip_sanitized: bool = True
+
+
+def _classification_to_dict(classification: Classification) -> dict[str, Any]:
+    return {
+        "label": classification.label,
+        "confidence": classification.confidence,
+        "reasoning": classification.reasoning,
+    }
 
 
 def _build_user_prompt(finding: dict[str, Any]) -> str:
@@ -234,6 +235,6 @@ async def classify_findings(
         copy = dict(f)
         cls = await classify_finding(f, ctx, options=options)
         if cls is not None:
-            copy["classification"] = cls.to_dict()
+            copy["classification"] = _classification_to_dict(cls)
         out.append(copy)
     return out

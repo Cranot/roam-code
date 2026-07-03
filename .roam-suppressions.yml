@@ -104,3 +104,13 @@ suppressions:
     line: 120
     reason: test name intentionally mirrors framework-detection case-insensitive coverage
     status: safe
+  - rule: dead
+    file: src/roam/laws/miner.py
+    line: 96
+    reason: Law.to_dict is called on untyped locals (serializer.py dump_laws_yaml, cmd_laws.py envelopes) so the reference graph cannot link the call sites; public on purpose
+    status: safe
+  - rule: dead
+    file: src/roam/laws/miner.py
+    line: 120
+    reason: Violation.to_dict is called on untyped locals (cmd_laws.py JSON envelope + SARIF output) so the reference graph cannot link the call sites; public on purpose
+    status: safe

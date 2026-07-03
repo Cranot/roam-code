@@ -65,6 +65,7 @@ def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
 
     entries = _entry_points(G)
     results: list[dict] = []
+    reachability_updates: list[tuple[int, str, int, int]] = []
 
     for row in rows:
         vuln_id = row["id"]
@@ -96,21 +97,25 @@ def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
 
             result["blast_radius"] = _blast_radius(G, symbol_id)
 
-            # Update the DB record
-            conn.execute(
-                "UPDATE vulnerabilities SET reachable=?, shortest_path=?, hop_count=? WHERE id=?",
+            reachability_updates.append(
                 (
                     result["reachable"],
                     json.dumps(result["path_names"]),
                     result["hop_count"],
                     vuln_id,
-                ),
+                )
             )
         else:
             # No matched symbol -- cannot determine reachability
             result["reachable"] = 0
 
         results.append(result)
+
+    if reachability_updates:
+        conn.executemany(
+            "UPDATE vulnerabilities SET reachable=?, shortest_path=?, hop_count=? WHERE id=?",
+            reachability_updates,
+        )
 
     return results
 

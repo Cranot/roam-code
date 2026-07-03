@@ -38,6 +38,7 @@ import json as _json
 import math
 import sqlite3
 import subprocess
+from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -225,6 +226,58 @@ def _percentile(sorted_values, pct):
         return sorted_values[lo]
     frac = k - lo
     return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac
+
+
+BetweennessPercentiles = namedtuple("BetweennessPercentiles", ["values", "population"])
+
+
+def _betweenness_percentiles(conn, percentiles=(70, 90)):
+    """Percentile thresholds of positive betweenness via exact points.
+
+    Mirrors ``_percentile``'s linear interpolation but avoids fetching and
+    sorting the full positive-betweenness population on every health run.
+    COUNT the population, derive the lo/hi indices the interpolation formula
+    needs, then SELECT only those rows positionally in ONE batched
+    ``ROW_NUMBER()`` window query. Returns a ``BetweennessPercentiles`` whose
+    ``values`` list aligns with ``percentiles`` (floats; 0 when the population
+    is empty) and whose ``population`` is the positive-betweenness row count.
+    The window query scans the positive-betweenness rows exactly once but
+    materializes only the handful of rows the interpolation needs — both the
+    per-index partial rescans of the previous ``LIMIT 1 OFFSET`` loop and the
+    full-population fetch + Python sort are eliminated.
+    """
+    n = conn.execute("SELECT COUNT(*) FROM graph_metrics WHERE betweenness > 0").fetchone()[0]
+    if n == 0:
+        return BetweennessPercentiles([0 for _ in percentiles], 0)
+    # Map each percentile to its (lo, hi, frac) triplet and collect the
+    # unique row indices we actually need to fetch.
+    specs: list[tuple[int, int, float]] = []
+    needed: set[int] = set()
+    for pct in percentiles:
+        k = (n - 1) * (pct / 100.0)
+        lo = int(k)
+        hi = min(lo + 1, n - 1)
+        specs.append((lo, hi, k - lo))
+        needed.add(lo)
+        needed.add(hi)
+    placeholders = ",".join("?" for _ in needed)
+    vals: dict[int, float] = dict(
+        conn.execute(
+            "SELECT rn, betweenness FROM ("
+            "  SELECT betweenness,"
+            "         ROW_NUMBER() OVER (ORDER BY betweenness) - 1 AS rn"
+            "  FROM graph_metrics WHERE betweenness > 0"
+            f") WHERE rn IN ({placeholders})",
+            sorted(needed),
+        ).fetchall()
+    )
+    out: list[float] = []
+    for lo, hi, frac in specs:
+        if lo == hi:
+            out.append(vals[lo])
+        else:
+            out.append(vals[lo] + (vals[hi] - vals[lo]) * frac)
+    return BetweennessPercentiles(out, n)
 
 
 def _unique_dirs(file_paths):
@@ -1487,21 +1540,25 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 )
 
         # --- Bottlenecks (percentile-based severity) ---
-        # Fetch all non-zero betweenness values to compute percentile thresholds.
         # Raw betweenness is unnormalized (shortest-path counts), so absolute
         # thresholds don't scale across codebase sizes. Percentiles do.
+        # Compute p70/p90 from the exact interpolation points: COUNT the
+        # positive-betweenness population, then SELECT only the lo/hi rows each
+        # percentile's linear-interpolation formula needs via ORDER BY +
+        # LIMIT/OFFSET. Avoids fetching + sorting the full population on every
+        # health run (see ``_betweenness_percentiles``).
         # W607-M: per-phase substrate guard for betweenness queries.
         try:
-            all_bw = sorted(
-                r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
-            )
             bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
+            _bw_pcts = _betweenness_percentiles(conn)
+            bn_p70, bn_p90 = _bw_pcts.values
+            bw_population = _bw_pcts.population
         except Exception as exc:
             _w607m_warnings_out.append(f"health_bottlenecks_failed:{type(exc).__name__}:{exc}")
-            all_bw = []
+            bn_p70 = 0
+            bn_p90 = 0
+            bw_population = 0
             bw_rows = []
-        bn_p70 = _percentile(all_bw, 70)
-        bn_p90 = _percentile(all_bw, 90)
 
         bn_items = []
         for r in bw_rows:
@@ -2345,7 +2402,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     "p70": round(bn_p70, 1),
                     "p90": round(bn_p90, 1),
                     "utility_multiplier": _BN_UTIL_MULT,
-                    "population": len(all_bw),
+                    "population": bw_population,
                 },
                 bottlenecks=[{**b, "severity": b["severity"], "category": b["category"]} for b in bn_items],
                 layer_violations=[

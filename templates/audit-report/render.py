@@ -38,6 +38,7 @@ TEMPLATE_PATH = HERE / "audit-report.md.tmpl"
 
 # ---------------------------------------------------------------- helpers ---
 
+
 def _run_roam(repo: Path, args: list[str]) -> dict:
     """Invoke ``roam --json <args>`` in --repo and return parsed JSON.
 
@@ -46,9 +47,7 @@ def _run_roam(repo: Path, args: list[str]) -> dict:
     """
     cmd = ["roam", "--json", *args]
     try:
-        proc = subprocess.run(
-            cmd, cwd=str(repo), capture_output=True, text=True, check=False
-        )
+        proc = subprocess.run(cmd, cwd=str(repo), capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
         return {"_error": f"roam not on PATH: {exc}"}
     # Exit code 5 == gate failure but JSON still produced.
@@ -105,6 +104,7 @@ def _detect_roam_version() -> str:
 
 # --------------------------------------------------- per-section renderers ---
 
+
 def _render_overview(describe: dict) -> str:
     if "_error" in describe:
         return f"_describe command failed: {describe['_error']}_\n"
@@ -138,10 +138,7 @@ def _render_skeleton(map_data: dict, health: dict) -> str:
 
     entry_points = map_data.get("entry_points") or []
     if entry_points:
-        ep_paths = [
-            f"`{e.get('path', '?')}`" if isinstance(e, dict) else f"`{e}`"
-            for e in entry_points[:6]
-        ]
+        ep_paths = [f"`{e.get('path', '?')}`" if isinstance(e, dict) else f"`{e}`" for e in entry_points[:6]]
         parts.append(f"- **Entry points (top 6):** {', '.join(ep_paths)}")
 
     top_symbols = map_data.get("top_symbols") or []
@@ -191,10 +188,7 @@ def _render_health(health: dict) -> str:
         rows = ["| Category | CRITICAL | WARNING | INFO |", "|---|---|---|---|"]
         for cat, sev in sorted(cat_severity.items()):
             if isinstance(sev, dict):
-                rows.append(
-                    f"| {cat} | {sev.get('CRITICAL', 0)} | "
-                    f"{sev.get('WARNING', 0)} | {sev.get('INFO', 0)} |"
-                )
+                rows.append(f"| {cat} | {sev.get('CRITICAL', 0)} | {sev.get('WARNING', 0)} | {sev.get('INFO', 0)} |")
             else:
                 rows.append(f"| {cat} | {sev} | — | — |")
         parts.append("\n".join(rows))
@@ -339,6 +333,7 @@ def _render_agent_prompt(describe: dict) -> str:
 
 # -------------------------------------------------------------------- main ---
 
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     p.add_argument("--client", required=True, help="Client name (appears in title)")
@@ -411,10 +406,7 @@ def main() -> int:
         rendered = rendered.replace(placeholder, value)
 
     if args.include_raw:
-        rendered += (
-            "\n\n# Appendix C — Raw audit JSON\n\n"
-            "```json\n" + json.dumps(audit, indent=2) + "\n```\n"
-        )
+        rendered += "\n\n# Appendix C — Raw audit JSON\n\n```json\n" + json.dumps(audit, indent=2) + "\n```\n"
 
     if args.output:
         Path(args.output).write_text(rendered, encoding="utf-8")

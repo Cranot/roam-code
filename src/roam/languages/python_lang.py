@@ -788,8 +788,28 @@ class PythonExtractor(LanguageExtractor):
                                 source_name=scope_name,
                             )
                         )
+        elif node.type == "generic_type":
+            # A subscripted generic: List[Item], Optional["Fwd"], Literal["x"].
+            # First child is the base (identifier/attribute); the rest is the
+            # `type_parameter` bracket. For PEP 586 ``Literal[...]`` the bracket
+            # holds VALUES, not type names — recursing into it via the ``string``
+            # branch above mints phantom forward-reference ``type_ref`` edges for
+            # any arg that happens to be a valid identifier (e.g. the ``"symbol"``
+            # in ``Literal["symbol", "file", ...]`` binds to a real ``symbol``
+            # symbol, closing a false import cycle). Walk only the base so
+            # ``Literal`` itself still resolves, then stop. This conserves both
+            # forward-reference recall (Optional["Fwd"] still resolves) and
+            # Literal-value precision (Literal args no longer leak as types).
+            base = node.children[0] if node.children else None
+            base_name = self.node_text(base, source).rsplit(".", 1)[-1] if base is not None else ""
+            if base_name == "Literal":
+                if base is not None:
+                    self._walk_type_node(base, source, refs, scope_name)
+                return
+            for child in node.children:
+                self._walk_type_node(child, source, refs, scope_name)
         else:
-            # Recurse into generic types like List[Item], Optional[str], etc.
+            # Recurse into other composite type nodes (union_type, tuple, etc.)
             for child in node.children:
                 self._walk_type_node(child, source, refs, scope_name)
 

@@ -145,12 +145,14 @@ def _candidate_embedding_rows(
         return []
     # The canonical schema is shared with ``roam.search.index_embeddings``:
     #   symbol_embeddings(symbol_id INTEGER PRIMARY KEY, vector TEXT, dims INTEGER, provider TEXT, ...)
-    placeholders = ",".join("?" * len(candidate_ids))
+    from roam.db.connection import batched_in
+
     try:
-        rows = conn.execute(
-            f"SELECT symbol_id, vector, dims FROM symbol_embeddings WHERE symbol_id IN ({placeholders})",
+        rows = batched_in(
+            conn,
+            "SELECT symbol_id, vector, dims FROM symbol_embeddings WHERE symbol_id IN ({ph})",
             list(candidate_ids),
-        ).fetchall()
+        )
     except sqlite3.OperationalError:
         return []
     return [(int(row[0]), row[1], int(row[2] or 0)) for row in rows]

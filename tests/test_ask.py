@@ -12,7 +12,7 @@ from click.testing import CliRunner
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, by_name
-from roam.ask.runner import extract_recipe_symbol, fill_args, fill_followups, run_recipe
+from roam.ask.runner import expand_followups, extract_recipe_symbol, fill_args, fill_followups, run_recipe
 from roam.cli import cli
 from roam.commands.cmd_ask import _compact_step_result
 from tests.conftest import make_src_project as _make_project
@@ -271,6 +271,21 @@ class TestFillArgs:
             "UserSession",
         )
         assert out == ["roam safe-delete UserSession", "roam retrieve delete UserSession safely"]
+
+    def test_expand_followups_extracts_symbol_and_file_from_query(self):
+        # expand_followups consolidates extract_recipe_symbol +
+        # extract_recipe_file + fill_followups into one runner entry point.
+        # "auth" is a bare lowercase word (no underscore) so it is NOT a symbol;
+        # exactly one identifier (handle_login) + one file (auth.py) are extracted.
+        out = expand_followups(
+            ("roam preflight {symbol}", "roam coupling {file}"),
+            "preflight handle_login against auth.py",
+        )
+        assert out == ["roam preflight handle_login", "roam coupling auth.py"]
+
+    def test_expand_followups_no_identifier_falls_back_to_query(self):
+        out = expand_followups(("roam context {symbol}",), "trace the login flow")
+        assert out == ["roam context trace the login flow"]
 
 
 class TestRunRecipe:

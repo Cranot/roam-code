@@ -863,7 +863,7 @@ def _fts_suggestions(conn: sqlite3.Connection, name: str, limit: int = 3) -> lis
             display = r["qualified_name"] or r["name"]
             if display not in suggestions:
                 suggestions.append(display)
-    except Exception as _fts_exc:  # noqa: BLE001 — defensive
+    except sqlite3.Error as _fts_exc:
         # FTS5 not available, try LIKE fallback
         from roam.observability import log_swallowed
 
@@ -880,7 +880,7 @@ def _fts_suggestions(conn: sqlite3.Connection, name: str, limit: int = 3) -> lis
                 display = r["qualified_name"] or r["name"]
                 if display not in suggestions:
                     suggestions.append(display)
-        except Exception as _like_exc:  # noqa: BLE001 — defensive
+        except sqlite3.Error as _like_exc:
             log_swallowed("cmd_verify_imports:like_suggestions_fallback", _like_exc)
 
     return suggestions
@@ -922,6 +922,111 @@ def _get_edge_imports(conn: sqlite3.Connection, file_path: str | None) -> list[d
         ).fetchall()
 
     return [dict(r) for r in rows]
+
+
+def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bool) -> dict:
+    """Build the per-import scan row used by text/JSON/SARIF consumers."""
+    return {
+        "file": file_path,
+        "line": line_num,
+        "name": name,
+        "status": "resolved" if resolved else "unresolved",
+        "suggestions": [],
+    }
+
+
+def _js_directory_import_resolves(conn: sqlite3.Connection, probe: str) -> bool:
+    """True when a JS path specifier resolves to an indexed directory."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM files WHERE path LIKE ? LIMIT 1",
+            (f"%/{probe}/%",),
+        ).fetchone()
+        is not None
+    )
+
+
+def _js_alias_import_resolves(
+    conn: sqlite3.Connection,
+    name: str,
+    aliases: dict[str, list[str]],
+    *,
+    symbol_names: set[str] | None,
+    symbol_qnames: set[str] | None,
+    file_index: _FilePathIndex | None,
+) -> bool:
+    """Resolve a JS/TS import through tsconfig/jsconfig path aliases."""
+    for target in _rewrite_js_alias(name, aliases):
+        probe = target.split("/")[-1].rsplit(".", 1)[0] or target
+        if _check_name_exists(
+            conn,
+            probe,
+            symbol_names=symbol_names,
+            symbol_qnames=symbol_qnames,
+            file_index=file_index,
+        ):
+            return True
+        if _js_directory_import_resolves(conn, probe):
+            return True
+    return False
+
+
+def _probe_name_for_import(name: str, js_deps: frozenset[str] | None) -> str:
+    """Return the symbol/file probe name for one extracted import string."""
+    if js_deps is not None and "/" in name:
+        return name.split("/")[-1].rsplit(".", 1)[0] or name
+    return name
+
+
+def _scan_import_entry(
+    conn: sqlite3.Connection,
+    file_path: str,
+    line_num: int,
+    name: str,
+    *,
+    is_py: bool,
+    js_deps: frozenset[str] | None,
+    js_aliases: dict[str, list[str]],
+    symbol_names: set[str] | None,
+    symbol_qnames: set[str] | None,
+    file_index: _FilePathIndex | None,
+    declared_deps: frozenset[str] | None,
+) -> dict:
+    """Validate one extracted import name and return its scan row."""
+    if is_py and _is_stdlib_module(name):
+        return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    if js_deps is not None and (_is_node_builtin(name) or _js_module_is_declared(name, js_deps)):
+        return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    if js_aliases and _js_alias_import_resolves(
+        conn,
+        name,
+        js_aliases,
+        symbol_names=symbol_names,
+        symbol_qnames=symbol_qnames,
+        file_index=file_index,
+    ):
+        return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    probe_name = _probe_name_for_import(name, js_deps)
+    if declared_deps and is_py and name.split(".")[0].lower() in declared_deps:
+        return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    resolved = _check_name_exists(
+        conn,
+        probe_name,
+        symbol_names=symbol_names,
+        symbol_qnames=symbol_qnames,
+        file_index=file_index,
+    )
+    if not resolved and js_deps is not None and "/" in name:
+        resolved = _js_directory_import_resolves(conn, probe_name)
+
+    entry = _import_scan_entry(file_path, line_num, name, resolved=resolved)
+    if not resolved:
+        entry["suggestions"] = _fts_suggestions(conn, name)
+    return entry
 
 
 def _scan_file_imports(
@@ -998,125 +1103,21 @@ def _scan_file_imports(
                         continue
                     seen.add(key)
 
-                    # Skip Python stdlib modules — they are never in the index
-                    if _is_python_file(language, file_path) and _is_stdlib_module(name):
-                        results.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "name": name,
-                                "status": "resolved",
-                                "suggestions": [],
-                            }
+                    results.append(
+                        _scan_import_entry(
+                            conn,
+                            file_path,
+                            line_num,
+                            name,
+                            is_py=is_py,
+                            js_deps=js_deps,
+                            js_aliases=js_aliases,
+                            symbol_names=symbol_names,
+                            symbol_qnames=symbol_qnames,
+                            file_index=file_index,
+                            declared_deps=declared_deps,
                         )
-                        continue
-
-                    # JS-family: Node built-ins and bare package specifiers
-                    # resolve via the builtin set / package.json; relative
-                    # specifiers fall through to the file-index probe.
-                    if js_deps is not None and (_is_node_builtin(name) or _js_module_is_declared(name, js_deps)):
-                        results.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "name": name,
-                                "status": "resolved",
-                                "suggestions": [],
-                            }
-                        )
-                        continue
-                    # tsconfig/jsconfig path aliases (`@/utils/format` ->
-                    # `./src/utils/format`): rewrite through every mapping and
-                    # treat the result like a relative path — probe the last
-                    # segment, then the directory fallback. First hit resolves.
-                    if js_aliases:
-                        alias_hit = False
-                        for target in _rewrite_js_alias(name, js_aliases):
-                            probe = target.split("/")[-1].rsplit(".", 1)[0] or target
-                            if _check_name_exists(
-                                conn,
-                                probe,
-                                symbol_names=symbol_names,
-                                symbol_qnames=symbol_qnames,
-                                file_index=file_index,
-                            ):
-                                alias_hit = True
-                                break
-                            if (
-                                conn.execute(
-                                    "SELECT 1 FROM files WHERE path LIKE ? LIMIT 1",
-                                    (f"%/{probe}/%",),
-                                ).fetchone()
-                                is not None
-                            ):
-                                alias_hit = True
-                                break
-                        if alias_hit:
-                            results.append(
-                                {
-                                    "file": file_path,
-                                    "line": line_num,
-                                    "name": name,
-                                    "status": "resolved",
-                                    "suggestions": [],
-                                }
-                            )
-                            continue
-
-                    if js_deps is not None and "/" in name:
-                        # Deep or relative specifier: probe the last segment
-                        # (strip a Vue/TS extension) against the file index.
-                        name_for_probe = name.split("/")[-1].rsplit(".", 1)[0] or name
-                    else:
-                        name_for_probe = name
-
-                    # Skip DECLARED third-party dependencies — they are not in
-                    # the index (we index the repo, not site-packages), so the
-                    # symbol probe can only false-positive on them.
-                    if (
-                        declared_deps
-                        and _is_python_file(language, file_path)
-                        and name.split(".")[0].lower() in declared_deps
-                    ):
-                        results.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "name": name,
-                                "status": "resolved",
-                                "suggestions": [],
-                            }
-                        )
-                        continue
-
-                    resolved = _check_name_exists(
-                        conn,
-                        name_for_probe,
-                        symbol_names=symbol_names,
-                        symbol_qnames=symbol_qnames,
-                        file_index=file_index,
                     )
-                    if not resolved and js_deps is not None and "/" in name:
-                        # JS alias/relative DIRECTORY import (`@/utils/core`
-                        # -> src/utils/core/index.js): the file index matches
-                        # file stems only, so probe for a directory segment.
-                        resolved = (
-                            conn.execute(
-                                "SELECT 1 FROM files WHERE path LIKE ? LIMIT 1",
-                                (f"%/{name_for_probe}/%",),
-                            ).fetchone()
-                            is not None
-                        )
-                    entry: dict = {
-                        "file": file_path,
-                        "line": line_num,
-                        "name": name,
-                        "status": "resolved" if resolved else "unresolved",
-                        "suggestions": [],
-                    }
-                    if not resolved:
-                        entry["suggestions"] = _fts_suggestions(conn, name)
-                    results.append(entry)
     except (OSError, UnicodeDecodeError) as _exc:
         from roam.observability import log_swallowed
 

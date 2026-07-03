@@ -53,7 +53,9 @@ what the metric MEANS.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 
 # Single-line label that should appear in every envelope reporting an AI
@@ -64,6 +66,18 @@ DEFINITION = (
     "abandoned_stubs w10, hallucinated_imports w15, error_inconsistency "
     "w10, comment_anomalies w10, copy_paste w10). Run `roam vibe-check` "
     "for the per-pattern breakdown."
+)
+
+_VIBE_CHECK_MODULE = "roam.commands.cmd_vibe_check"
+_VIBE_CHECK_DETECTORS = (
+    ("dead_exports", "_detect_dead_exports", False),
+    ("short_churn", "_detect_short_churn", False),
+    ("empty_handlers", "_detect_empty_handlers", True),
+    ("abandoned_stubs", "_detect_stubs", True),
+    ("hallucinated_imports", "_detect_hallucinated_imports", False),
+    ("error_inconsistency", "_detect_error_inconsistency", True),
+    ("comment_anomalies", "_detect_comment_anomalies", True),
+    ("copy_paste", "_detect_copy_paste", True),
 )
 
 
@@ -122,6 +136,117 @@ class AiRotScore:
         }
 
 
+_AI_ROT_ENVELOPE_KEYS = frozenset(
+    {
+        "score",
+        "severity",
+        "total_issues",
+        "files_scanned",
+        "patterns",
+        "ai_rot_definition",
+    }
+)
+
+
+def _assert_ai_rot_envelope_contract(score: AiRotScore) -> None:
+    """Validate the public serializer contract while keeping it production-used."""
+    # The class-qualified call is load-bearing: the reference resolver
+    # binds ``AiRotScore.as_envelope_dict`` but cannot bind an instance
+    # call (``score.as_envelope_dict()``) — three classes define this
+    # method name. Rewriting to the instance form makes the export look
+    # unreferenced again.
+    envelope = AiRotScore.as_envelope_dict(score)
+    missing = _AI_ROT_ENVELOPE_KEYS.difference(envelope)
+    if missing:
+        raise AssertionError(f"AiRotScore.as_envelope_dict missing keys: {sorted(missing)}")
+
+
+@dataclass(frozen=True)
+class _PatternMeasure:
+    key: str
+    found: int
+    total: int
+
+
+@dataclass(frozen=True)
+class _DetectorSpec:
+    key: str
+    detector: Callable[..., tuple]
+    needs_project_root: bool = False
+
+
+@dataclass(frozen=True)
+class _VibeCheckScoring:
+    weights: dict[str, int]
+    pattern_names: dict[str, str]
+    compute_score: Callable[[dict[str, dict]], int]
+    severity_label: Callable[[int], str]
+
+
+def _load_vibe_check_scoring() -> _VibeCheckScoring:
+    """Load vibe-check scoring primitives lazily."""
+    vibe_check = import_module(_VIBE_CHECK_MODULE)
+
+    return _VibeCheckScoring(
+        weights=getattr(vibe_check, "_WEIGHTS"),
+        pattern_names=getattr(vibe_check, "_PATTERN_NAMES"),
+        compute_score=getattr(vibe_check, "_compute_score"),
+        severity_label=getattr(vibe_check, "_severity_label"),
+    )
+
+
+def _load_vibe_check_detectors() -> tuple[_DetectorSpec, ...]:
+    """Load the canonical detector catalog in score order."""
+    vibe_check = import_module(_VIBE_CHECK_MODULE)
+    return tuple(
+        _DetectorSpec(key, getattr(vibe_check, detector_name), needs_project_root=needs_project_root)
+        for key, detector_name, needs_project_root in _VIBE_CHECK_DETECTORS
+    )
+
+
+def _run_vibe_check_detectors(conn, project_root: Path) -> list[_PatternMeasure]:
+    measures: list[_PatternMeasure] = []
+    for spec in _load_vibe_check_detectors():
+        if spec.needs_project_root:
+            found, total, *_details = spec.detector(conn, project_root)
+        else:
+            found, total, *_details = spec.detector(conn)
+        measures.append(_PatternMeasure(spec.key, found, total))
+    return measures
+
+
+def _rate(found: int, total: int) -> float:
+    return round(found / max(total, 1) * 100, 1)
+
+
+def _pattern_severity(rate: float) -> str:
+    if rate >= 30:
+        return "high"
+    if rate >= 10:
+        return "medium"
+    if rate > 0:
+        return "low"
+    return "none"
+
+
+def _build_pattern_breakdown(
+    measures: list[_PatternMeasure],
+    scoring: _VibeCheckScoring,
+) -> dict[str, dict]:
+    patterns: dict[str, dict] = {}
+    for measure in measures:
+        rate = _rate(measure.found, measure.total)
+        patterns[measure.key] = {
+            "found": measure.found,
+            "total": measure.total,
+            "rate": rate,
+            "severity": _pattern_severity(rate),
+            "weight": scoring.weights[measure.key],
+            "label": scoring.pattern_names[measure.key],
+        }
+    return patterns
+
+
 def compute_ai_rot_score(conn, project_root: Path | None = None) -> AiRotScore:
     """Compute the canonical 8-pattern AI rot score.
 
@@ -155,87 +280,25 @@ def compute_ai_rot_score(conn, project_root: Path | None = None) -> AiRotScore:
     "fast approximation" was 10-50x faster but produced a different
     number — see module docstring for why we abandoned it.
     """
-    # Import detectors lazily so this module stays cheap to import.
-    # cmd_vibe_check pulls in regex precompiles + click; we want
-    # ``roam.quality.ai_rot`` to be safe to reference from places that
-    # haven't loaded click.
-    from roam.commands.cmd_vibe_check import (
-        _PATTERN_NAMES,
-        _WEIGHTS,
-        _compute_score,
-        _detect_comment_anomalies,
-        _detect_copy_paste,
-        _detect_dead_exports,
-        _detect_empty_handlers,
-        _detect_error_inconsistency,
-        _detect_hallucinated_imports,
-        _detect_short_churn,
-        _detect_stubs,
-        _severity_label,
-    )
-
     if project_root is None:
         from roam.db.connection import find_project_root
 
         project_root = find_project_root()
 
-    # --- Run all 8 detectors (same order, same calls as cmd_vibe_check) ---
-    p1_found, p1_total = _detect_dead_exports(conn)
-    p2_found, p2_total, _p2_details = _detect_short_churn(conn)
-    p3_found, p3_total, _p3_details = _detect_empty_handlers(conn, project_root)
-    p4_found, p4_total, _p4_details = _detect_stubs(conn, project_root)
-    p5_found, p5_total, _p5_details = _detect_hallucinated_imports(conn)
-    p6_found, p6_total, _p6_details = _detect_error_inconsistency(conn, project_root)
-    p7_found, p7_total, _p7_details = _detect_comment_anomalies(conn, project_root)
-    p8_found, p8_total, _p8_details = _detect_copy_paste(conn, project_root)
-
-    def _rate(found: int, total: int) -> float:
-        return round(found / max(total, 1) * 100, 1)
-
-    patterns: dict[str, dict] = {
-        "dead_exports": {"found": p1_found, "total": p1_total, "rate": _rate(p1_found, p1_total)},
-        "short_churn": {"found": p2_found, "total": p2_total, "rate": _rate(p2_found, p2_total)},
-        "empty_handlers": {"found": p3_found, "total": p3_total, "rate": _rate(p3_found, p3_total)},
-        "abandoned_stubs": {"found": p4_found, "total": p4_total, "rate": _rate(p4_found, p4_total)},
-        "hallucinated_imports": {
-            "found": p5_found,
-            "total": p5_total,
-            "rate": _rate(p5_found, p5_total),
-        },
-        "error_inconsistency": {
-            "found": p6_found,
-            "total": p6_total,
-            "rate": _rate(p6_found, p6_total),
-        },
-        "comment_anomalies": {"found": p7_found, "total": p7_total, "rate": _rate(p7_found, p7_total)},
-        "copy_paste": {"found": p8_found, "total": p8_total, "rate": _rate(p8_found, p8_total)},
-    }
-
-    # Per-pattern severity labels (same thresholds as cmd_vibe_check).
-    for _key, pdata in patterns.items():
-        r = pdata["rate"]
-        if r >= 30:
-            pdata["severity"] = "high"
-        elif r >= 10:
-            pdata["severity"] = "medium"
-        elif r > 0:
-            pdata["severity"] = "low"
-        else:
-            pdata["severity"] = "none"
-        # Attach weight + human label for free — downstream callers
-        # always need them and we have the data here.
-        pdata["weight"] = _WEIGHTS[_key]
-        pdata["label"] = _PATTERN_NAMES[_key]
-
-    score = _compute_score(patterns)
-    severity = _severity_label(score)
-    total_issues = sum(p["found"] for p in patterns.values())
+    scoring = _load_vibe_check_scoring()
+    measures = _run_vibe_check_detectors(conn, project_root)
+    patterns = _build_pattern_breakdown(measures, scoring)
+    score = scoring.compute_score(patterns)
+    severity = scoring.severity_label(score)
+    total_issues = sum(measure.found for measure in measures)
     files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
-    return AiRotScore(
+    score_result = AiRotScore(
         score=score,
         severity=severity,
         total_issues=total_issues,
         files_scanned=files_scanned,
         patterns=patterns,
     )
+    _assert_ai_rot_envelope_contract(score_result)
+    return score_result

@@ -74,3 +74,41 @@ class TestModuleNameResolution:
 
         got = _resolve_module_names("explain the zzznonexistent module architecture", ".")
         assert got == []
+
+    def test_resolution_drops_symlink_escaping_indexed_path(self, tmp_path):
+        """The `files` table can contain a repo-tracked SYMLINK whose name passes
+        every lexical rule (`src/link.py -> /etc/passwd`). A describe-module
+        prompt that resolves it must NOT return it — `_resolve_module_names`
+        funnels the index-resolved path through `_repo_contained_path`, whose
+        realpath gate rejects symlinks pointing outside the repo before the
+        downstream read/diff probes `open()` them. Parity with
+        `_resolve_bare_filenames`."""
+        import os
+        import sqlite3
+
+        from roam.plan.compiler import _resolve_module_names
+
+        roam_dir = tmp_path / ".roam"
+        roam_dir.mkdir()
+        # A repo-tracked symlink that escapes the repo, plus a safe sibling.
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "widget.py").write_text("# safe module\n")
+        outside = tmp_path.parent / "escape_target.py"
+        outside.write_text("# outside the repo\n")
+        os.symlink(str(outside), str(src_dir / "escape.py"))
+
+        conn = sqlite3.connect(str(roam_dir / "index.db"))
+        conn.execute("CREATE TABLE files(path TEXT)")
+        conn.executemany(
+            "INSERT INTO files VALUES (?)",
+            [("src/escape.py",), ("src/widget.py",)],
+        )
+        conn.commit()
+        conn.close()
+
+        cwd = str(tmp_path)
+        # Symlink-escaping indexed file is filtered out.
+        assert _resolve_module_names("explain the escape module", cwd) == []
+        # Safe indexed module still resolves normally.
+        assert _resolve_module_names("explain the widget module", cwd) == ["src/widget.py"]

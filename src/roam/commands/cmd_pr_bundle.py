@@ -191,6 +191,14 @@ def _resolve_actor_kind(actor: dict) -> str:
     return _resolve_actor_kind_impl(actor)
 
 
+def _repo_root_or_none_to_keep_actor_defaults_available() -> Path | None:
+    """Resolve repo root for actor defaults without hiding code defects."""
+    try:
+        return find_project_root()
+    except OSError:
+        return None
+
+
 def _mode_blocks_emit(repo_root: Path) -> tuple[bool, str, str | None]:
     """Return ``(blocked, active_mode_name, upgrade_to)``.
 
@@ -416,12 +424,130 @@ def _merge_dict_list(target: list, additions: list, key_fields: tuple[str, ...])
     return added
 
 
+def _harvest_affected_symbols(bundle: dict, envelope: dict) -> int:
+    """Normalize + merge ``envelope["affected_symbols"]`` into the bundle.
+
+    Accepts a mixed list of strings (treated as bare names) and dicts
+    (``name`` / ``symbol`` aliases). Returns the number of records added.
+    """
+    payload = envelope.get("affected_symbols")
+    if not isinstance(payload, list):
+        return 0
+    normalized: list = []
+    for s in payload:
+        if isinstance(s, str):
+            normalized.append({"name": s, "kind": "", "file": "", "blast_radius": 0})
+        elif isinstance(s, dict):
+            normalized.append(
+                {
+                    "name": s.get("name") or s.get("symbol") or "",
+                    "kind": s.get("kind", ""),
+                    "file": s.get("file", ""),
+                    "blast_radius": s.get("blast_radius", 0),
+                }
+            )
+    return _merge_dict_list(bundle["affected_symbols"], normalized, ("name", "file"))
+
+
+def _harvest_risks(bundle: dict, envelope: dict, cmd: object) -> int:
+    """Normalize + merge envelope risks into the bundle.
+
+    Risks may live at top-level ``risks`` OR under
+    ``agent_contract.risks``. Each entry is a string (description) or a
+    dict (``id`` / ``severity`` / ``description`` / ``message`` /
+    ``detail``). A source command is stamped when the entry lacks one.
+    Returns the number of records added.
+    """
+    risks_payload = envelope.get("risks")
+    if not isinstance(risks_payload, list):
+        contract = envelope.get("agent_contract")
+        if isinstance(contract, dict):
+            risks_payload = contract.get("risks")
+    if not isinstance(risks_payload, list):
+        return 0
+    source_cmd = f"roam {cmd}" if isinstance(cmd, str) else ""
+    normalized: list = []
+    for r in risks_payload:
+        if isinstance(r, str):
+            normalized.append({"id": "", "severity": "M", "description": r, "source_command": source_cmd})
+        elif isinstance(r, dict):
+            normalized.append(
+                {
+                    "id": r.get("id", ""),
+                    "severity": r.get("severity", "M"),
+                    "description": r.get("description") or r.get("message") or r.get("detail", ""),
+                    "source_command": r.get("source_command", source_cmd),
+                }
+            )
+    return _merge_dict_list(bundle["risks"], normalized, ("description",))
+
+
+def _harvest_tests_required(bundle: dict, envelope: dict, cmd: object) -> int:
+    """Normalize + merge ``envelope["tests_required"]`` into the bundle.
+
+    Accepts a mixed list of strings (test-file paths) and dicts
+    (``test_file`` / ``path`` / ``file`` aliases). Returns the number of
+    records added.
+    """
+    payload = envelope.get("tests_required")
+    if not isinstance(payload, list):
+        return 0
+    normalized: list = []
+    for t in payload:
+        if isinstance(t, str):
+            normalized.append({"test_file": t, "reason": f"required by roam {cmd}"})
+        elif isinstance(t, dict):
+            normalized.append(
+                {
+                    "test_file": t.get("test_file") or t.get("path") or t.get("file", ""),
+                    "reason": t.get("reason", ""),
+                }
+            )
+    return _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
+
+
+def _harvest_tests_from_next_commands(bundle: dict, envelope: dict, cmd: object) -> int:
+    """Lift test-file hints from ``summary.next_commands`` into tests_required.
+
+    Best-effort: only ``next_commands`` strings that look like test files
+    (contain "test", a Python/JS/TS extension, and a path separator)
+    contribute. Returns the number of records added.
+    """
+    summary = envelope.get("summary")
+    if not isinstance(summary, dict):
+        return 0
+    nc = summary.get("next_commands")
+    if not isinstance(nc, list):
+        return 0
+    normalized: list = []
+    for entry in nc:
+        if not isinstance(entry, str):
+            continue
+        if "test" in entry.lower() and (".py" in entry or ".js" in entry or ".ts" in entry):
+            # Crude: pull the test file path token.
+            for tok in entry.split():
+                if "test" in tok.lower() and ("/" in tok or "\\" in tok):
+                    normalized.append(
+                        {
+                            "test_file": tok,
+                            "reason": f"suggested by roam {cmd}",
+                        }
+                    )
+                    break
+    if not normalized:
+        return 0
+    return _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
+
+
 def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
     """Fold a single roam envelope's findings into `bundle` (in-place).
 
     Returns a small ``{section: count_added}`` map describing what was
     pulled in. Best-effort: missing / malformed fields are silently
     ignored. Never raises.
+
+    Each section (affected_symbols / risks / tests_required / next-command
+    test hints) lives in its own helper so this stays a thin coordinator.
     """
     counts = {
         "commands_run": 0,
@@ -439,87 +565,10 @@ def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
         if _merge_str_list(bundle["context_read"]["commands_run"], [cmd_str]):
             counts["commands_run"] += 1
 
-    # 1. affected_symbols -- some envelopes have a top-level list of dicts.
-    payload_syms = envelope.get("affected_symbols")
-    if isinstance(payload_syms, list):
-        normalized = []
-        for s in payload_syms:
-            if isinstance(s, str):
-                normalized.append({"name": s, "kind": "", "file": "", "blast_radius": 0})
-            elif isinstance(s, dict):
-                normalized.append(
-                    {
-                        "name": s.get("name") or s.get("symbol") or "",
-                        "kind": s.get("kind", ""),
-                        "file": s.get("file", ""),
-                        "blast_radius": s.get("blast_radius", 0),
-                    }
-                )
-        counts["affected_symbols"] += _merge_dict_list(bundle["affected_symbols"], normalized, ("name", "file"))
-
-    # 2. risks -- agent_contract.risks OR top-level risks.
-    risks_payload = envelope.get("risks")
-    if not isinstance(risks_payload, list):
-        contract = envelope.get("agent_contract")
-        if isinstance(contract, dict):
-            risks_payload = contract.get("risks")
-    if isinstance(risks_payload, list):
-        source_cmd = f"roam {cmd}" if isinstance(cmd, str) else ""
-        normalized = []
-        for r in risks_payload:
-            if isinstance(r, str):
-                normalized.append({"id": "", "severity": "M", "description": r, "source_command": source_cmd})
-            elif isinstance(r, dict):
-                normalized.append(
-                    {
-                        "id": r.get("id", ""),
-                        "severity": r.get("severity", "M"),
-                        "description": r.get("description") or r.get("message") or r.get("detail", ""),
-                        "source_command": r.get("source_command", source_cmd),
-                    }
-                )
-        counts["risks"] += _merge_dict_list(bundle["risks"], normalized, ("description",))
-
-    # 3. tests_required -- from agent_contract.next_commands OR explicit field.
-    tests_payload = envelope.get("tests_required")
-    if isinstance(tests_payload, list):
-        normalized = []
-        for t in tests_payload:
-            if isinstance(t, str):
-                normalized.append({"test_file": t, "reason": f"required by roam {cmd}"})
-            elif isinstance(t, dict):
-                normalized.append(
-                    {
-                        "test_file": t.get("test_file") or t.get("path") or t.get("file", ""),
-                        "reason": t.get("reason", ""),
-                    }
-                )
-        counts["tests_required"] += _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
-
-    # 4. summary.next_commands may include "run pytest tests/X.py" hints we
-    # can lift as tests_required. Best-effort: only entries that look like
-    # test files (contain "test" in the path).
-    summary = envelope.get("summary")
-    if isinstance(summary, dict):
-        nc = summary.get("next_commands")
-        if isinstance(nc, list):
-            normalized = []
-            for entry in nc:
-                if not isinstance(entry, str):
-                    continue
-                if "test" in entry.lower() and (".py" in entry or ".js" in entry or ".ts" in entry):
-                    # Crude: pull the test file path token.
-                    for tok in entry.split():
-                        if "test" in tok.lower() and ("/" in tok or "\\" in tok):
-                            normalized.append(
-                                {
-                                    "test_file": tok,
-                                    "reason": f"suggested by roam {cmd}",
-                                }
-                            )
-                            break
-            if normalized:
-                counts["tests_required"] += _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
+    counts["affected_symbols"] += _harvest_affected_symbols(bundle, envelope)
+    counts["risks"] += _harvest_risks(bundle, envelope, cmd)
+    counts["tests_required"] += _harvest_tests_required(bundle, envelope, cmd)
+    counts["tests_required"] += _harvest_tests_from_next_commands(bundle, envelope, cmd)
 
     return counts
 
@@ -983,6 +1032,15 @@ _PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL: dict[str, str] = {
     "L": "low",
 }
 
+# Hoisted rank lookup for the closed projection vocabulary above. Every
+# level `_pr_bundle_risk_level` ranks comes from this 3-value enum (plus
+# the "low" unknown-label floor), so the ``risk_rank()`` call is invariant
+# over the table and binds once at module load instead of per bucket per
+# invocation (the helper has 10 callers).
+_PR_BUNDLE_LEVEL_RANK: dict[str, int] = {
+    level: risk_rank(level) for level in _PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL.values()
+}
+
 
 def _pr_bundle_risk_level(
     *,
@@ -1042,7 +1100,7 @@ def _pr_bundle_risk_level(
                 if warnings_out is not None:
                     warnings_out.append(f"pr_bundle_unknown_risk_severity:{sev_key}")
                 level = "low"
-            r = risk_rank(level)
+            r = _PR_BUNDLE_LEVEL_RANK[level]
             if r > worst_rank:
                 worst_rank = r
                 worst_level = level
@@ -1051,7 +1109,7 @@ def _pr_bundle_risk_level(
     # since bundle init). Floor to ``high`` — the W15.3 signal is the
     # bundle's strongest dynamic finding.
     if causal_diff_high_severity_count and causal_diff_high_severity_count > 0:
-        r = risk_rank("high")
+        r = _PR_BUNDLE_LEVEL_RANK["high"]
         if r > worst_rank:
             worst_rank = r
             worst_level = "high"
@@ -1060,7 +1118,7 @@ def _pr_bundle_risk_level(
     # the resolution is degraded (Pattern 2: silent_success on degraded
     # resolution discipline).
     if unresolved_affected_symbols_count and unresolved_affected_symbols_count > 0:
-        r = risk_rank("medium")
+        r = _PR_BUNDLE_LEVEL_RANK["medium"]
         if r > worst_rank:
             worst_rank = r
             worst_level = "medium"
@@ -1068,7 +1126,7 @@ def _pr_bundle_risk_level(
     # Signal 4: structurally-incomplete bundle. Floor to ``medium`` —
     # an incomplete bundle is insufficient assurance.
     if state and state != "complete":
-        r = risk_rank("medium")
+        r = _PR_BUNDLE_LEVEL_RANK["medium"]
         if r > worst_rank:
             worst_rank = r
             worst_level = "medium"
@@ -1812,10 +1870,7 @@ def _build_envelope(
     # threads the CLI-flag-aware actor in via the ``actor`` kwarg so
     # ``--agent-id`` / ``--human-actor`` win over env + git config.
     if actor is None:
-        try:
-            repo_root = find_project_root()
-        except Exception:  # noqa: BLE001 -- defensive: a non-roam tree leaves repo_root unset
-            repo_root = None
+        repo_root = _repo_root_or_none_to_keep_actor_defaults_available()
         actor = _resolve_actor_block(
             agent_id_override=None,
             human_actor_override=None,
@@ -1918,7 +1973,10 @@ def _build_envelope(
             commit_sha_top = persisted_commit_sha
     try:
         ws_root = find_project_root()
-    except Exception:  # noqa: BLE001 -- defensive: a non-roam tree leaves ws_root unset
+    except OSError:  # filesystem resolution failed (missing cwd, permission denied, symlink loop)
+        # Defensive: a non-roam or unreadable tree leaves ws_root unset so emit
+        # can still proceed. Bug-class exceptions (NameError/TypeError/...) are
+        # intentionally NOT caught; they must propagate per the narrow-or-reraise rule.
         ws_root = None
     try:
         from roam.evidence.env_refs import build_environment_refs
@@ -1928,7 +1986,9 @@ def _build_envelope(
             workspace_root=str(ws_root) if ws_root else None,
         )
         environment_refs_out: list[dict] = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in env_refs_tuple]
-    except Exception:  # noqa: BLE001 -- best-effort: never block emit on env-ref construction
+    except (ImportError, OSError):
+        # Defensive: only expected failures are the lazy import or OS-level
+        # environment probing. Everything else propagates (narrow-or-reraise).
         environment_refs_out = []
 
     # W268 - materialise authority producers (permits + leases) on the
@@ -1946,23 +2006,20 @@ def _build_envelope(
     # ``bundle_warnings`` list and stamped on the envelope so an auditor
     # reviewing the bundle can see which permits were dropped and why.
     bundle_warnings: list[str] = []
-    try:
-        permits_out: list[dict] = _load_permits_from_disk(
-            ws_root,
-            warnings_out=bundle_warnings,
-        )
-    except Exception:  # noqa: BLE001 -- best-effort permit load; malformed permit state degrades to []
-        permits_out = []
-    try:
-        # W425: thread the bundle_warnings bucket so malformed /
-        # schema-invalid lease files surface alongside the permit
-        # warnings already collected above.
-        leases_out: list[dict] = _load_leases_from_disk(
-            ws_root,
-            warnings_out=bundle_warnings,
-        )
-    except Exception:  # noqa: BLE001 -- best-effort lease load; malformed lease state degrades to []
-        leases_out = []
+    # The permit reader owns recoverable disk/schema degradation and reports it
+    # through bundle_warnings. Let programmer errors propagate instead of
+    # emitting a bundle that silently drops authority evidence.
+    permits_out: list[dict] = _load_permits_from_disk(
+        ws_root,
+        warnings_out=bundle_warnings,
+    )
+    # The lease reader owns recoverable disk/schema degradation and reports it
+    # through bundle_warnings. Let programmer errors propagate instead of
+    # emitting a bundle that silently drops authority evidence.
+    leases_out: list[dict] = _load_leases_from_disk(
+        ws_root,
+        warnings_out=bundle_warnings,
+    )
 
     return json_envelope(
         command_label,

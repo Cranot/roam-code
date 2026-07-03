@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init  # noqa: E402
 
 from roam.permits.store import (  # noqa: E402
+    PermitRequest,
     issue_permit,
     list_permits,
     load_permits_from_disk,
@@ -70,11 +71,13 @@ def _issue_one(repo_root: Path, *, scope: str = "w593-scope", issued_to: str = "
     """Issue + persist one permit; return its permit_id."""
     record, _path = issue_permit(
         repo_root,
-        scope=scope,
-        expires_at="2099-01-01T00:00:00Z",
-        issued_to=issued_to,
-        issued_by="human:w593-operator",
-        reason="w593 sibling-silent-fail test",
+        PermitRequest(
+            scope=scope,
+            expires_at="2099-01-01T00:00:00Z",
+            issued_to=issued_to,
+            issued_by="human:w593-operator",
+            reason="w593 sibling-silent-fail test",
+        ),
     )
     return record.permit_id
 

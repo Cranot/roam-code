@@ -2699,13 +2699,15 @@ class TestStaleRefsLlmEnricherIntegration:
         assert result["targets"][0]["hint"]["target"] == "docs/intro.md"
 
     def test_enricher_graceful_when_sample_raises(self, monkeypatch):
+        """Expected sampling errors (transport/network) are caught and the
+        enricher returns the envelope without hints."""
         import asyncio
 
         from roam.mcp_server import _enrich_stale_refs_with_llm_hints
 
         monkeypatch.setenv("ROAM_AI_ENABLED", "1")
         envelope = self._make_envelope()
-        ctx = self._make_stub_ctx(raise_exc=RuntimeError("net error"))
+        ctx = self._make_stub_ctx(raise_exc=ConnectionError("net error"))
         result = asyncio.run(_enrich_stale_refs_with_llm_hints(envelope, ctx))
         assert "hint" not in result["targets"][0]
 
@@ -2744,19 +2746,36 @@ class TestStaleRefsLlmEnricherIntegration:
         assert summary["llm_prompt_chars"] > 0
 
     def test_enricher_records_latency_on_failure(self, monkeypatch):
-        """1C.3: even when sample() raises, latency is still recorded."""
+        """1C.3: even when sample() raises an expected sampling error, latency
+        is still recorded and the failure is surfaced as a skip reason."""
         import asyncio
 
         from roam.mcp_server import _enrich_stale_refs_with_llm_hints
 
         monkeypatch.setenv("ROAM_AI_ENABLED", "1")
         envelope = self._make_envelope()
-        ctx = self._make_stub_ctx(raise_exc=RuntimeError("net error"))
+        ctx = self._make_stub_ctx(raise_exc=ConnectionError("net error"))
         result = asyncio.run(_enrich_stale_refs_with_llm_hints(envelope, ctx))
         summary = result["summary"]
         # Latency lands even though no hints landed.
         assert "llm_latency_ms" in summary
         assert summary["llm_skip_reason"].startswith("sampling raised:")
+
+    def test_enricher_reraises_unexpected_errors(self, monkeypatch):
+        """Unexpected programming errors must not be swallowed silently."""
+        import asyncio
+
+        from roam.mcp_server import _enrich_stale_refs_with_llm_hints
+
+        monkeypatch.setenv("ROAM_AI_ENABLED", "1")
+        envelope = self._make_envelope()
+        ctx = self._make_stub_ctx(raise_exc=RuntimeError("internal bug"))
+        try:
+            asyncio.run(_enrich_stale_refs_with_llm_hints(envelope, ctx))
+        except RuntimeError as exc:
+            assert "internal bug" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError to propagate")
 
     def test_enricher_uses_ranked_candidates(self, monkeypatch):
         """1C.1: when the LLM returns a ranked list we pick the first valid one."""
@@ -3235,11 +3254,11 @@ class TestStaleRefsLlmSkipReason:
 
         class _RaisingCtx:
             async def sample(self, *a, **kw):
-                raise RuntimeError("net down")
+                raise ConnectionError("net down")
 
         result = asyncio.run(_enrich_stale_refs_with_llm_hints(envelope, _RaisingCtx()))
         assert "sampling raised" in result["summary"]["llm_skip_reason"]
-        assert "RuntimeError" in result["summary"]["llm_skip_reason"]
+        assert "ConnectionError" in result["summary"]["llm_skip_reason"]
 
     def test_skip_reason_when_response_unparseable(self, monkeypatch):
         import asyncio

@@ -135,13 +135,16 @@ def tokenize(text: str | None) -> list[str]:
     # Split on non-alphanumeric first (preserve case for camelCase detection)
     raw = _RE_NON_ALNUM.split(text)
     tokens = []
+    split_camel_case = _RE_CAMEL_SPLIT.sub
+    split_acronym_boundary = _RE_UPPER_SPLIT.sub
+    boundary_replacement = r"\1 \2"
     for tok in raw:
         if not tok:
             continue
         # camelCase / PascalCase split (before lowercasing)
-        parts = _RE_CAMEL_SPLIT.sub(r"\1 \2", tok)
+        parts = split_camel_case(boundary_replacement, tok)
         # Also split on transitions like "XMLParser" -> "XML Parser"
-        parts = _RE_UPPER_SPLIT.sub(r"\1 \2", parts)
+        parts = split_acronym_boundary(boundary_replacement, parts)
         for part in parts.split():
             part = part.lower()
             if part in _STOPWORDS or len(part) < 2:
@@ -290,14 +293,16 @@ def tfidf_search(conn, query: str, top_k: int = 10) -> list[dict]:
     top = scores[:top_k]
 
     # Fetch metadata for top results
+    from roam.db.connection import batched_in
+
     sym_ids = [sid for _, sid in top]
-    ph = ",".join("?" for _ in sym_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, f.path as file_path, s.kind, s.line_start, s.line_end "
-        f"FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({ph})",
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, f.path as file_path, s.kind, s.line_start, s.line_end "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
         sym_ids,
-    ).fetchall()
+    )
 
     meta = {r["id"]: r for r in rows}
 

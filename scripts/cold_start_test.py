@@ -48,6 +48,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -100,6 +101,43 @@ DEFAULT_STEP_TIMEOUT_S = 300
 DEFAULT_CLONE_TIMEOUT_S = 600
 
 
+@dataclass(frozen=True)
+class EnvelopeMeta:
+    started_at: str
+    finished_at: str
+    dry_run: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "timestamp": _now_iso(),
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "dry_run": self.dry_run,
+        }
+
+
+@dataclass(frozen=True)
+class TimeoutConfig:
+    """Bundled per-run timeouts threaded from CLI args into ``test_one_repo``.
+
+    Keeps the two cohesive timeout values as one parameter object instead of
+    a scalar pair, so ``test_one_repo`` stays a thin 3-arg orchestrator.
+    """
+
+    clone_timeout: int
+    step_timeout: int
+
+
+@dataclass(frozen=True)
+class SummaryStats:
+    """Bundled cold-start outcome counts for summary construction."""
+
+    total: int
+    passed: int
+    failed: int
+    dry_run: bool = False
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -107,10 +145,7 @@ def _now_iso() -> str:
 def build_envelope(
     summary: dict,
     per_repo: list[dict],
-    started_at: str,
-    finished_at: str,
-    *,
-    dry_run: bool = False,
+    meta: EnvelopeMeta,
 ) -> dict:
     return {
         "schema": SCHEMA_NAME,
@@ -119,35 +154,24 @@ def build_envelope(
         "project": "roam-code",
         "summary": summary,
         "per_repo": per_repo,
-        "_meta": {
-            "timestamp": _now_iso(),
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "dry_run": dry_run,
-        },
+        "_meta": meta.as_dict(),
     }
 
 
-def build_summary(
-    total: int,
-    passed: int,
-    failed: int,
-    *,
-    dry_run: bool = False,
-) -> dict:
-    if dry_run:
-        verdict = f"Dry-run validated {total} cold-start repos"
-    elif total == 0:
+def build_summary(stats: SummaryStats) -> dict:
+    if stats.dry_run:
+        verdict = f"Dry-run validated {stats.total} cold-start repos"
+    elif stats.total == 0:
         verdict = "No repos selected — nothing to test"
     else:
-        verdict = f"{passed} of {total} cold-start repos passed"
+        verdict = f"{stats.passed} of {stats.total} cold-start repos passed"
 
     return {
         "verdict": verdict,
-        "total": total,
-        "passed": passed,
-        "failed": failed,
-        "partial_success": failed > 0,
+        "total": stats.total,
+        "passed": stats.passed,
+        "failed": stats.failed,
+        "partial_success": stats.failed > 0,
         "verdict_definition": (
             "passed_repos = repos where all of init/understand/health/brief exit 0 within --step-timeout"
         ),
@@ -159,6 +183,13 @@ def _truncate_text(s: str, limit: int = STDERR_TRUNCATE_CHARS) -> str:
         return s
     cut = limit - len("...[truncated]\n")
     return "...[truncated]\n" + s[-cut:]
+
+
+def _coerce_stderr_text(raw: object) -> str:
+    """Normalize TimeoutExpired.stderr (None | bytes | str) to str."""
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw) if raw else ""
 
 
 def _run(
@@ -191,13 +222,8 @@ def _run(
     except subprocess.TimeoutExpired as exc:
         result["timed_out"] = True
         result["exit_code"] = -1
-        stderr_raw = getattr(exc, "stderr", None) or b""
-        if isinstance(stderr_raw, bytes):
-            try:
-                stderr_raw = stderr_raw.decode("utf-8", errors="replace")
-            except Exception:
-                stderr_raw = ""
-        result["stderr_tail"] = _truncate_text(stderr_raw + f"\n[timeout after {timeout}s]")
+        stderr_text = _coerce_stderr_text(getattr(exc, "stderr", None))
+        result["stderr_tail"] = _truncate_text(stderr_text + f"\n[timeout after {timeout}s]")
         result["error"] = f"timeout after {timeout}s"
     except FileNotFoundError as exc:
         result["exit_code"] = -2
@@ -289,12 +315,10 @@ def _failed_step_name(
 def test_one_repo(
     repo: dict,
     workspace: Path,
-    *,
-    clone_timeout: int,
-    step_timeout: int,
+    timeouts: TimeoutConfig,
 ) -> dict:
     started = _now_iso()
-    checkout, clone_step = _clone_repo(repo, workspace, clone_timeout=clone_timeout)
+    checkout, clone_step = _clone_repo(repo, workspace, clone_timeout=timeouts.clone_timeout)
     if clone_step.get("exit_code") not in (0, None):
         return {
             "name": repo["name"],
@@ -306,7 +330,7 @@ def test_one_repo(
             "started_at": started,
             "finished_at": _now_iso(),
         }
-    steps = _run_first_contact(checkout, step_timeout=step_timeout)
+    steps = _run_first_contact(checkout, step_timeout=timeouts.step_timeout)
     return {
         "name": repo["name"],
         "url": repo["url"],
@@ -500,77 +524,108 @@ def _load_repos(path: Path | None) -> list[dict[str, str]]:
     ]
 
 
+def _prepare_workspace(args: argparse.Namespace) -> tuple[Path, bool]:
+    """Return the workspace path and whether this run owns it."""
+    if args.workspace:
+        workspace = args.workspace
+        workspace.mkdir(parents=True, exist_ok=True)
+        return workspace, False
+    tmp = tempfile.mkdtemp(prefix="roam-coldtest-")
+    return Path(tmp), True
+
+
+def _run_real_test_loop(
+    repos: list[dict[str, str]],
+    workspace: Path,
+    owns_workspace: bool,
+    timeouts: TimeoutConfig,
+) -> list[dict]:
+    """Run the cold-start sequence for every repo and clean up owned tempdirs."""
+    try:
+        return [test_one_repo(repo, workspace, timeouts) for repo in repos]
+    finally:
+        if owns_workspace and workspace.exists():
+            shutil.rmtree(workspace, ignore_errors=True)
+
+
+def _emit_envelope(envelope: dict, json_mode: bool) -> None:
+    """Write the JSON or human-readable envelope to stdout."""
+    if json_mode:
+        sys.stdout.write(json.dumps(envelope, indent=2) + "\n")
+    else:
+        sys.stdout.write(render_text(envelope))
+
+
+def _build_dry_run_envelope(
+    repos: list[dict[str, str]],
+    started_at: str,
+) -> dict:
+    """Build the dry-run envelope without cloning or invoking roam."""
+    per_repo = [dry_run_one_repo(repo) for repo in repos]
+    summary = build_summary(
+        SummaryStats(
+            total=len(repos),
+            passed=len(repos),
+            failed=0,
+            dry_run=True,
+        )
+    )
+    return build_envelope(
+        summary,
+        per_repo,
+        EnvelopeMeta(
+            started_at=started_at,
+            finished_at=_now_iso(),
+            dry_run=True,
+        ),
+    )
+
+
+def _build_final_envelope(
+    per_repo: list[dict],
+    started_at: str,
+) -> dict:
+    """Build the real-run envelope from completed repo results."""
+    passed = sum(1 for entry in per_repo if entry["verdict"] == "PASS")
+    failed = len(per_repo) - passed
+    summary = build_summary(
+        SummaryStats(
+            total=len(per_repo),
+            passed=passed,
+            failed=failed,
+            dry_run=False,
+        )
+    )
+    return build_envelope(
+        summary,
+        per_repo,
+        EnvelopeMeta(
+            started_at=started_at,
+            finished_at=_now_iso(),
+            dry_run=False,
+        ),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repos = _load_repos(args.repos_file)
     started_at = _now_iso()
 
     if args.dry_run:
-        per_repo = [dry_run_one_repo(repo) for repo in repos]
-        summary = build_summary(
-            total=len(repos),
-            passed=len(repos),
-            failed=0,
-            dry_run=True,
-        )
-        envelope = build_envelope(
-            summary,
-            per_repo,
-            started_at=started_at,
-            finished_at=_now_iso(),
-            dry_run=True,
-        )
-        if args.json:
-            sys.stdout.write(json.dumps(envelope, indent=2) + "\n")
-        else:
-            sys.stdout.write(render_text(envelope))
-        return 0
-
-    if args.workspace:
-        workspace = args.workspace
-        workspace.mkdir(parents=True, exist_ok=True)
-        owns_workspace = False
+        envelope = _build_dry_run_envelope(repos, started_at)
     else:
-        tmp = tempfile.mkdtemp(prefix="roam-coldtest-")
-        workspace = Path(tmp)
-        owns_workspace = True
+        workspace, owns_workspace = _prepare_workspace(args)
+        timeouts = TimeoutConfig(
+            clone_timeout=args.clone_timeout,
+            step_timeout=args.step_timeout,
+        )
+        per_repo = _run_real_test_loop(repos, workspace, owns_workspace, timeouts)
+        envelope = _build_final_envelope(per_repo, started_at)
 
-    per_repo: list[dict] = []
-    try:
-        for repo in repos:
-            entry = test_one_repo(
-                repo,
-                workspace,
-                clone_timeout=args.clone_timeout,
-                step_timeout=args.step_timeout,
-            )
-            per_repo.append(entry)
-    finally:
-        if owns_workspace and workspace.exists():
-            shutil.rmtree(workspace, ignore_errors=True)
+    _emit_envelope(envelope, args.json)
 
-    passed = sum(1 for entry in per_repo if entry["verdict"] == "PASS")
-    failed = len(per_repo) - passed
-    summary = build_summary(
-        total=len(per_repo),
-        passed=passed,
-        failed=failed,
-        dry_run=False,
-    )
-    envelope = build_envelope(
-        summary,
-        per_repo,
-        started_at=started_at,
-        finished_at=_now_iso(),
-        dry_run=False,
-    )
-
-    if args.json:
-        sys.stdout.write(json.dumps(envelope, indent=2) + "\n")
-    else:
-        sys.stdout.write(render_text(envelope))
-
-    return 0 if failed == 0 else 1
+    return 0 if envelope["summary"]["failed"] == 0 else 1
 
 
 if __name__ == "__main__":

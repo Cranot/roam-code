@@ -107,10 +107,9 @@ class TestTier1PathBased:
 # -----------------------------------------------------------------------
 
 
-class TestTier2FilenameBased:
-    """Tier 2: filename and extension patterns."""
+class TestTier2BuildFilenames:
+    """Tier 2: build tool filename patterns."""
 
-    # Build tool files
     def test_makefile(self):
         assert classify_file("Makefile") == "build"
 
@@ -126,7 +125,10 @@ class TestTier2FilenameBased:
     def test_cmakelists(self):
         assert classify_file("CMakeLists.txt") == "build"
 
-    # Docs filenames
+
+class TestTier2DocsFilenames:
+    """Tier 2: docs filename patterns."""
+
     def test_readme(self):
         assert classify_file("README.md") == "docs"
 
@@ -136,7 +138,10 @@ class TestTier2FilenameBased:
     def test_changelog(self):
         assert classify_file("CHANGELOG.md") == "docs"
 
-    # Config filenames
+
+class TestTier2ConfigFilenames:
+    """Tier 2: config filename and extension patterns."""
+
     def test_gitignore(self):
         assert classify_file(".gitignore") == "config"
 
@@ -149,14 +154,16 @@ class TestTier2FilenameBased:
     def test_cargo_toml(self):
         assert classify_file("Cargo.toml") == "config"
 
-    # Config by extension
     def test_yaml_config(self):
         assert classify_file("settings.yaml") == "config"
 
     def test_ini_config(self):
         assert classify_file("app.ini") == "config"
 
-    # Test filename patterns
+
+class TestTier2TestFilenames:
+    """Tier 2: test filename patterns."""
+
     def test_python_test_prefix(self):
         assert classify_file("test_foo.py") == "test"
 
@@ -181,7 +188,10 @@ class TestTier2FilenameBased:
     def test_conftest(self):
         assert classify_file("conftest.py") == "test"
 
-    # Generated filename patterns
+
+class TestTier2GeneratedFilenames:
+    """Tier 2: generated filename patterns."""
+
     def test_pb_go(self):
         assert classify_file("service.pb.go") == "generated"
 
@@ -197,14 +207,20 @@ class TestTier2FilenameBased:
     def test_generated_ext(self):
         assert classify_file("schema.generated.ts") == "generated"
 
-    # CI filename patterns
+
+class TestTier2CiFilenames:
+    """Tier 2: CI filename patterns."""
+
     def test_travis_yml(self):
         assert classify_file(".travis.yml") == "ci"
 
     def test_gitlab_ci_file(self):
         assert classify_file(".gitlab-ci.yml") == "ci"
 
-    # Data extensions
+
+class TestTier2DataExtensions:
+    """Tier 2: data extension patterns."""
+
     def test_png(self):
         assert classify_file("logo.png") == "data"
 
@@ -214,18 +230,19 @@ class TestTier2FilenameBased:
     def test_wasm(self):
         assert classify_file("module.wasm") == "data"
 
-    # Lock files as config
+
+class TestTier2MiscFilenames:
+    """Tier 2: remaining filename and source fallback patterns."""
+
     def test_lock_file(self):
         assert classify_file("Gemfile.lock") == "config"
 
     def test_package_lock(self):
         assert classify_file("package-lock.json") == "config"
 
-    # Doc extensions
     def test_rst_file(self):
         assert classify_file("guide.rst") == "docs"
 
-    # Source fallback
     def test_plain_python_source(self):
         assert classify_file("src/main.py") == "source"
 

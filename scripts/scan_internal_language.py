@@ -23,16 +23,34 @@ Exit codes:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
 
-# scripts/ is not an importable package (no __init__.py, so it stays out of
-# the wheel). Put this script's own directory on sys.path so the sibling
-# single-source catalogue imports cleanly under a bare `python scripts/...`.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from internal_language_patterns import scan_text, should_scan  # noqa: E402
+def _load_patterns_module():
+    """Load the sibling ``internal_language_patterns.py`` by absolute path.
+
+    ``scripts/`` is intentionally not a package (no ``__init__.py``) so it
+    stays out of the wheel. Loading the catalogue by path keeps the git hook
+    stdlib-only and avoids an orphan top-level import that static analysis
+    cannot resolve.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_path = os.path.join(script_dir, "internal_language_patterns.py")
+    spec = importlib.util.spec_from_file_location("internal_language_patterns", module_path)
+    if spec is None or spec.loader is None:
+        sys.stderr.write(f"ERROR: could not load pattern catalogue from {module_path}\n")
+        sys.exit(1)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_patterns = _load_patterns_module()
+scan_text = _patterns.scan_text
+should_scan = _patterns.should_scan
 
 
 def _repo_root() -> str:

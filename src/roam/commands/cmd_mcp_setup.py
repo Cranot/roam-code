@@ -180,13 +180,15 @@ def _write_config(target: Path, json_config: dict) -> dict[str, Any]:
 @click.argument("platform", type=click.Choice(sorted(_CONFIGS.keys())), required=False)
 @click.option(
     "--preset",
-    type=click.Choice(["core", "review", "refactor", "debug", "architecture", "compliance", "full"]),
+    type=click.Choice(["core", "review", "refactor", "debug", "architecture", "compliance", "compile-curated", "full"]),
     default=None,
     help=(
         "Pre-fill the generated config with ``ROAM_MCP_PRESET=<preset>``. "
         "Default = no env var (uses 'core'). The 'compliance' preset "
         "exposes 13 tools focused on AI-governance evidence workflows: "
-        "preflight, taint, SBOM, and code-graph attest emit/verify."
+        "preflight, taint, SBOM, and code-graph attest emit/verify. The "
+        "'compile-curated' preset exposes EXACTLY the 8 graph tools "
+        "compile-code pre-approves for its `wire --mcp` agent surface."
     ),
 )
 @click.option(

@@ -189,6 +189,85 @@ def test_w575_likely_files_explicit_path_still_skips_cache(monkeypatch, tmp_repo
     assert _symbol_resolution_cache_lookup("what does src/foo.py do", tmp_repo) is None
 
 
+@pytest.mark.parametrize(
+    ("procedure", "task"),
+    [
+        ("session_meta", "ultrathink: continue"),
+        ("self_contained_task", "You are validating the payload. Output JSON only."),
+        ("top_n_ranking", "top 5 most-imported files"),
+        ("symbol_defined_where", "where is compile_plan defined"),
+    ],
+)
+def test_w575_task_text_no_repo_procedures_skip_semantic_fallback(monkeypatch, tmp_repo, procedure, task):
+    """Classifier-owned task-text procedures already own the answer probe.
+
+    With no explicit path present, they must not consult the symbol-resolution
+    cache or fall through to ``roam search-semantic`` just to invent likely
+    files.
+    """
+    M._RUN_ROAM_CACHE.clear()
+
+    def fail_cache_lookup(*args, **kwargs):
+        raise AssertionError("symbol-resolution cache should be skipped")
+
+    def fail_run_roam(*args, **kwargs):
+        raise AssertionError("search-semantic fallback should be skipped")
+
+    monkeypatch.setattr(M, "_symbol_resolution_cache_lookup", fail_cache_lookup)
+    monkeypatch.setattr(M, "_run_roam", fail_run_roam)
+
+    files, invoked = _likely_files_from_search(task, cwd=tmp_repo, procedure=procedure)
+
+    assert files == []
+    assert invoked is False
+
+
+def test_w575_task_text_no_repo_procedures_still_honor_explicit_paths(monkeypatch, tmp_repo):
+    """The no-repo skip happens after explicit path extraction."""
+    M._RUN_ROAM_CACHE.clear()
+
+    def fail_cache_lookup(*args, **kwargs):
+        raise AssertionError("symbol-resolution cache should be skipped")
+
+    def fail_run_roam(*args, **kwargs):
+        raise AssertionError("search-semantic fallback should be skipped")
+
+    monkeypatch.setattr(M, "_symbol_resolution_cache_lookup", fail_cache_lookup)
+    monkeypatch.setattr(M, "_run_roam", fail_run_roam)
+
+    files, invoked = _likely_files_from_search(
+        "where is compile_plan defined in src/roam/plan/compiler.py",
+        cwd=tmp_repo,
+        procedure="symbol_defined_where",
+    )
+
+    assert files == ["src/roam/plan/compiler.py"]
+    assert invoked is False
+
+
+def test_w575_compile_plan_symbol_defined_where_skips_semantic_after_classify(monkeypatch, tmp_repo):
+    """``compile_plan`` passes the classifier winner into likely-file search."""
+    M._RUN_ROAM_CACHE.clear()
+    clear_plan_cache()
+
+    monkeypatch.setattr(M, "_plan_cache_lookup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(M, "_plan_cache_store", lambda *args, **kwargs: None)
+
+    def fail_cache_lookup(*args, **kwargs):
+        raise AssertionError("symbol-resolution cache should be skipped")
+
+    def fail_run_roam(*args, **kwargs):
+        raise AssertionError("search-semantic fallback should be skipped")
+
+    monkeypatch.setattr(M, "_symbol_resolution_cache_lookup", fail_cache_lookup)
+    monkeypatch.setattr(M, "_run_roam", fail_run_roam)
+
+    plan = compile_plan("where is compile_plan defined", cwd=tmp_repo)
+
+    assert plan.procedure == "symbol_defined_where"
+    assert plan.likely_files == []
+
+
 # ---- (d) compile_plan integration ----
 
 

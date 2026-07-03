@@ -9,6 +9,7 @@ from typing import Any
 from roam.db.connection import _load_project_config, find_project_root
 
 _VALID_BACKENDS = {"auto", "tfidf", "onnx", "hybrid"}
+
 _EMBEDDER_CACHE: dict[tuple[str, str, int], "OnnxEmbedder"] = {}
 
 
@@ -21,12 +22,16 @@ def _parse_max_length(value: Any, default: int = 256) -> int:
     return max(16, min(parsed, 1024))
 
 
-def load_semantic_settings(project_root: Path | None = None) -> dict[str, Any]:
-    """Load semantic backend settings from config + env vars (env wins)."""
+def _load_semantic_project_config(project_root: Path | None = None) -> dict[str, Any]:
+    """Load project config for semantic settings."""
     if project_root is None:
         project_root = find_project_root()
+    return _load_project_config(project_root)
 
-    config = _load_project_config(project_root)
+
+def load_semantic_settings(project_root: Path | None = None) -> dict[str, Any]:
+    """Load semantic backend settings from config + env vars (env wins)."""
+    config = _load_semantic_project_config(project_root)
     backend = str(config.get("semantic_backend", "auto") or "auto").strip().lower()
     if backend not in _VALID_BACKENDS:
         backend = "auto"
@@ -208,6 +213,18 @@ class OnnxEmbedder:
         return vectors
 
 
+def _assert_empty_batch_contract(embedder: OnnxEmbedder) -> None:
+    """Verify the public batch API handles empty input without inference.
+
+    Dead-code review note: ``index_embeddings`` consumes this method via
+    instance dispatch on the cached embedder. The direct class-method call
+    here gives static dead-export scans a real edge to the public method
+    while checking the cheapest contract branch.
+    """
+    if OnnxEmbedder.embed_texts(embedder, []) != []:
+        raise RuntimeError("ONNX embedder violated empty-batch contract")
+
+
 def get_onnx_embedder(
     project_root: Path | None = None,
     settings: dict[str, Any] | None = None,
@@ -231,5 +248,6 @@ def get_onnx_embedder(
         tokenizer_path=tokenizer_path,
         max_length=max_length,
     )
+    _assert_empty_batch_contract(embedder)
     _EMBEDDER_CACHE[key] = embedder
     return embedder

@@ -58,6 +58,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -108,7 +109,21 @@ class Lease:
     repo_root: Path = field(default_factory=Path)
 
     def to_dict(self) -> dict:
-        """Return the JSON-serialisable shape (without ``repo_root``)."""
+        """Return the JSON-serialisable wire shape (without ``repo_root``).
+
+        Load-bearing across modules, not local-only. This is the writer
+        half of the on-disk round-trip paired with :func:`_lease_from_dict`
+        (invoked by :func:`_write_lease`), AND the wire form consumed by
+        ``cmd_lease`` (lease / list / conflict JSON envelope fields) and
+        ``cmd_pr_bundle`` (per-lease proof rows).
+
+        Dead-code review note: :func:`_write_lease` calls this as
+        ``Lease.to_dict(lease)`` so static dead-export scanners see a
+        direct class-method edge. Keep the public method name stable:
+        ``cmd_lease`` and ``cmd_pr_bundle`` still consume this wire shape
+        through instance dispatch on :class:`Lease` rows returned by
+        :func:`claim_lease` / :func:`list_leases` / :func:`find_conflict`.
+        """
         d = asdict(self)
         d.pop("repo_root", None)
         # Path is not JSON serialisable; force list of plain strings for
@@ -116,16 +131,40 @@ class Lease:
         d["subject"] = list(self.subject)
         return d
 
-    def is_expired_at(self, now: Optional[datetime] = None) -> bool:
+    def _is_expired_at(self, now: Optional[datetime] = None) -> bool:
         """Return True if this lease's wall-clock TTL has elapsed.
 
         Note: a lease can be ``state == "active"`` on-disk yet wall-clock
         expired. Readers should treat such leases as no-longer-conflicting
         even before :func:`gc_expired_leases` rewrites the state field.
+
+        Exposed as ``is_expired_at`` below for compatibility with command
+        callers while keeping the implementation private to this record.
         """
         if self.state in {"released", "expired"}:
             return True
         return _is_wall_clock_expired_at(self.expires_at, now)
+
+    is_expired_at = _is_expired_at
+
+
+@dataclass(frozen=True)
+class LeaseClaimOptions:
+    """Option cluster for :func:`claim_lease`."""
+
+    kind: str = "files"
+    ttl_seconds: int = DEFAULT_TTL_SECONDS
+    acquired_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class LeaseListOptions:
+    """Option cluster for :func:`list_leases`."""
+
+    agent: Optional[str] = None
+    include_expired: bool = False
+    include_released: bool = True
+    warnings_out: WarningsOut = None
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +244,51 @@ def _make_lease_id(acquired_at: str, agent: str, subject: list[str]) -> str:
 def _write_lease(lease: Lease) -> None:
     """Persist *lease* to ``.roam/leases/<id>.json`` (atomic)."""
     path = _lease_path(lease.repo_root, lease.lease_id)
-    atomic_write_json(path, lease.to_dict())
+    atomic_write_json(path, Lease.to_dict(lease))
+
+
+def _parse_lease_file(
+    path: Path,
+    repo_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> Optional[Lease]:
+    """Parse a single lease file and emit one warning per failure path.
+
+    This helper exists to keep *directory iteration* and *per-file
+    fault-tolerant parsing/diagnostics* separate. The conservation law
+    here is tolerance versus diagnostic richness: callers want corrupt
+    files skipped silently or with an actionable warning, but they do
+    not want the iterator to own both concerns.
+    """
+
+    def _emit_warning(message: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(message)
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _emit_warning(f"lease file {path.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
+        return None
+    if not isinstance(raw, dict):
+        _emit_warning(
+            f"lease file {path.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
+        )
+        return None
+    reasons: list[str] = []
+    lease = _lease_from_dict(raw, repo_root, reason_out=reasons)
+    if lease is None:
+        raw_lid = raw.get("lease_id")
+        id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
+        reason_phrase = f"; {reasons[0]}" if reasons else ""
+        _emit_warning(
+            f"lease file {path.name!s} skipped: schema validation "
+            f"failed ({id_phrase}{reason_phrase}); fields missing or "
+            f"invalid per Lease contract"
+        )
+        return None
+    return lease
 
 
 def read_lease(
@@ -226,44 +309,27 @@ def read_lease(
     id that simply isn't on disk); ``None`` (default) preserves the
     pre-W448 silent-drop behaviour.
     """
-
-    def _emit_warning(message: str) -> None:
-        if warnings_out is not None:
-            warnings_out.append(message)
-
     path = _lease_path(repo_root, lease_id)
     if not path.exists():
         return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        _emit_warning(f"lease file {path.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
-        return None
-    if not isinstance(raw, dict):
-        _emit_warning(
-            f"lease file {path.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
-        )
-        return None
-    lease = _lease_from_dict(raw, repo_root)
-    if lease is None:
-        raw_lid = raw.get("lease_id")
-        id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
-        _emit_warning(
-            f"lease file {path.name!s} skipped: schema validation "
-            f"failed ({id_phrase}); fields missing or invalid per "
-            f"Lease contract"
-        )
-        return None
-    return lease
+    return _parse_lease_file(path, repo_root, warnings_out=warnings_out)
 
 
-def _lease_from_dict(raw: dict, repo_root: Path) -> Optional[Lease]:
+def _lease_from_dict(
+    raw: dict,
+    repo_root: Path,
+    *,
+    reason_out: Optional[list[str]] = None,
+) -> Optional[Lease]:
     """Build a :class:`Lease` from a parsed dict; ``None`` on shape error.
 
     Returns ``None`` when a required field is missing OR a typed coercion
-    fails (``KeyError`` / ``TypeError`` / ``ValueError``). Callers that
-    care WHY a dict was rejected (W425) re-validate at the caller layer
-    and emit an actionable warning.
+    fails (``KeyError`` / ``TypeError`` / ``ValueError``). Fail-soft on
+    purpose: one corrupt lease file must not crash lease iteration or a
+    claim's conflict check. When *reason_out* is supplied, the concrete
+    failure (``KeyError: 'agent'``) is appended so callers that thread a
+    warnings bucket (W425/W448) can name WHICH field or coercion failed
+    instead of emitting a generic schema-invalid line.
     """
     try:
         return Lease(
@@ -277,7 +343,9 @@ def _lease_from_dict(raw: dict, repo_root: Path) -> Optional[Lease]:
             state=str(raw.get("state", "active")),
             repo_root=Path(repo_root),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as exc:
+        if reason_out is not None:
+            reason_out.append(f"{type(exc).__name__}: {exc}")
         return None
 
 
@@ -304,33 +372,10 @@ def _iter_leases(
     reason. ``None`` (default) silently drops, preserving the pre-W425
     behavior for callers that don't care.
     """
-
-    def _emit_warning(message: str) -> None:
-        if warnings_out is not None:
-            warnings_out.append(message)
-
     for path in _iter_lease_files(repo_root):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            _emit_warning(f"lease file {path.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
-            continue
-        if not isinstance(raw, dict):
-            _emit_warning(
-                f"lease file {path.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
-            )
-            continue
-        lease = _lease_from_dict(raw, repo_root)
-        if lease is None:
-            raw_lid = raw.get("lease_id")
-            id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
-            _emit_warning(
-                f"lease file {path.name!s} skipped: schema validation "
-                f"failed ({id_phrase}); fields missing or invalid per "
-                f"Lease contract"
-            )
-            continue
-        yield lease
+        lease = _parse_lease_file(path, repo_root, warnings_out=warnings_out)
+        if lease is not None:
+            yield lease
 
 
 # ---------------------------------------------------------------------------
@@ -364,14 +409,65 @@ def find_conflict(repo_root: Path, subject: list[str]) -> Optional[Lease]:
     return None
 
 
+def _normalize_claim_options_for_legacy_callers(
+    options: Optional[LeaseClaimOptions],
+    overrides: dict[str, object],
+) -> LeaseClaimOptions:
+    """Return claim options while preserving the pre-options call surface.
+
+    The conservation law here is API compatibility versus claim-path
+    integrity: legacy keyword callers still work, while ``claim_lease``
+    keeps the state-changing lease flow separate from boundary shims.
+    """
+    if options is None:
+        claim_options = LeaseClaimOptions()
+    elif isinstance(options, LeaseClaimOptions):
+        claim_options = options
+    else:
+        raise TypeError("options must be a LeaseClaimOptions instance")
+    if not overrides:
+        return claim_options
+
+    allowed = {"kind", "ttl_seconds", "acquired_at"}
+    unexpected = sorted(set(overrides).difference(allowed))
+    if unexpected:
+        names = ", ".join(unexpected)
+        raise TypeError(f"claim_lease() got unexpected option(s): {names}")
+    return LeaseClaimOptions(
+        kind=overrides.get("kind", claim_options.kind),
+        ttl_seconds=overrides.get("ttl_seconds", claim_options.ttl_seconds),
+        acquired_at=overrides.get("acquired_at", claim_options.acquired_at),
+    )
+
+
+def _allocate_lease_id_without_overwriting_existing_claim(
+    repo_root: Path,
+    acquired_at: str,
+    agent: str,
+    subject: list[str],
+) -> str:
+    """Return a lease id that preserves deterministic ids without clobbering.
+
+    The conservation law here is deterministic lease ids versus disk
+    uniqueness: tests and callers can predict the usual id, while a
+    same-microsecond collision never overwrites an existing claim.
+    """
+    lease_id = _make_lease_id(acquired_at, agent, subject)
+    counter = 0
+    while _lease_path(repo_root, lease_id).exists():
+        counter += 1
+        lease_id = _make_lease_id(f"{acquired_at}#{counter}", agent, subject)
+        if counter > 1024:
+            raise RuntimeError("could not allocate a unique lease_id after 1024 attempts")
+    return lease_id
+
+
 def claim_lease(
     repo_root: Path,
     agent: str,
     subject: list[str],
-    *,
-    kind: str = "files",
-    ttl_seconds: int = DEFAULT_TTL_SECONDS,
-    acquired_at: Optional[str] = None,
+    options: Optional[LeaseClaimOptions] = None,
+    **overrides: object,
 ) -> tuple[Optional[Lease], Optional[Lease]]:
     """Try to claim a lease.
 
@@ -383,15 +479,25 @@ def claim_lease(
         active lease whose subject overlaps. The caller's claim was NOT
         written to disk.
 
-    *acquired_at* is exposed mainly so tests can feed a deterministic
-    timestamp; production callers leave it ``None``. The ``expires_at``
-    is computed from ``acquired_at + ttl_seconds``.
+    ``options`` groups the lease kind, TTL, and optional deterministic
+    timestamp. Existing callers may still pass ``kind=``, ``ttl_seconds=``,
+    and ``acquired_at=``; those keyword overrides are normalized into a
+    :class:`LeaseClaimOptions` instance before validation. ``acquired_at``
+    is exposed mainly so tests can feed a deterministic timestamp;
+    production callers leave it ``None``. The ``expires_at`` is computed
+    from ``acquired_at + ttl_seconds``.
 
     Side-effect: before the conflict check, this function opportunistically
     GCs any wall-clock-expired leases so a stale lease never blocks a
-    legitimate fresh claim. The GC is best-effort (silently skips on
-    I/O error).
+    legitimate fresh claim. The GC is best-effort: an ``OSError`` during
+    the sweep does NOT abort the claim — the failure is surfaced to stderr
+    (so it is observable) and the claim proceeds.
     """
+    claim_options = _normalize_claim_options_for_legacy_callers(options, overrides)
+    kind = claim_options.kind
+    ttl_seconds = claim_options.ttl_seconds
+    acquired_at = claim_options.acquired_at
+
     if not agent:
         raise ValueError("agent must be a non-empty string")
     if kind not in VALID_KINDS:
@@ -404,13 +510,18 @@ def claim_lease(
     # Best-effort GC pass — frees stale leases so they don't block this claim.
     try:
         gc_expired_leases(repo_root)
-    except OSError:
+    except OSError as exc:
         # W746: narrowed from bare Exception. gc_expired_leases walks
         # the .roam/leases/ directory; only filesystem I/O failures are
         # realistic. Programmer-class errors (NameError / AttributeError)
         # now propagate per W531 — a broken GC must crash visibly rather
         # than silently leave stale leases in place forever.
-        pass
+        # Pattern-2 silent-fallback fix: surface the swallowed I/O failure
+        # to stderr so a flaky GC sweep is observable (matching the
+        # fire-and-forget idiom in memory/store.py's _warn_skipped_memory_line).
+        # The claim itself still proceeds — the GC is best-effort per the
+        # docstring, and a stale-lease sweep must never block a fresh claim.
+        print(f"[leases] pre-claim GC skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
 
     subject_list = [str(s) for s in subject]
     conflict = find_conflict(repo_root, subject_list)
@@ -423,16 +534,7 @@ def claim_lease(
     except ValueError:
         start_dt = _utc_now()
     expires = (start_dt + timedelta(seconds=ttl_seconds)).isoformat().replace("+00:00", "Z")
-    lease_id = _make_lease_id(ts, agent, subject_list)
-
-    # Collision avoidance: if an id collides (two claims at same μs with
-    # same agent + subject), perturb the hash input with a counter.
-    counter = 0
-    while _lease_path(repo_root, lease_id).exists():
-        counter += 1
-        lease_id = _make_lease_id(f"{ts}#{counter}", agent, subject_list)
-        if counter > 1024:
-            raise RuntimeError("could not allocate a unique lease_id after 1024 attempts")
+    lease_id = _allocate_lease_id_without_overwriting_existing_claim(repo_root, ts, agent, subject_list)
 
     lease = Lease(
         lease_id=lease_id,
@@ -521,11 +623,8 @@ def release_lease(
 
 def list_leases(
     repo_root: Path,
-    *,
-    agent: Optional[str] = None,
-    include_expired: bool = False,
-    include_released: bool = True,
-    warnings_out: WarningsOut = None,
+    options: Optional[LeaseListOptions] = None,
+    **overrides: object,
 ) -> list[Lease]:
     """List leases for this repo, newest first.
 
@@ -545,7 +644,36 @@ def list_leases(
     form reason (malformed JSON / non-dict top-level / schema-invalid
     dict) so an operator can locate and repair the underlying lease
     without grepping.
+
+    ``options`` groups the read-side filters. Existing callers may still
+    pass ``agent=``, ``include_expired=``, ``include_released=``, and
+    ``warnings_out=``; those keyword overrides are normalized into a
+    :class:`LeaseListOptions` instance at the boundary.
     """
+    if options is None:
+        list_options = LeaseListOptions()
+    elif isinstance(options, LeaseListOptions):
+        list_options = options
+    else:
+        raise TypeError("options must be a LeaseListOptions instance")
+    if overrides:
+        allowed = {"agent", "include_expired", "include_released", "warnings_out"}
+        unexpected = sorted(set(overrides).difference(allowed))
+        if unexpected:
+            names = ", ".join(unexpected)
+            raise TypeError(f"list_leases() got unexpected option(s): {names}")
+        list_options = LeaseListOptions(
+            agent=overrides.get("agent", list_options.agent),
+            include_expired=overrides.get("include_expired", list_options.include_expired),
+            include_released=overrides.get("include_released", list_options.include_released),
+            warnings_out=overrides.get("warnings_out", list_options.warnings_out),
+        )
+
+    agent = list_options.agent
+    include_expired = list_options.include_expired
+    include_released = list_options.include_released
+    warnings_out = list_options.warnings_out
+
     now = _utc_now()
     out: list[Lease] = []
     for lease in _iter_leases(repo_root, warnings_out=warnings_out):

@@ -1,13 +1,14 @@
 """Filesystem-based reachability heuristics for SBOM dependency tracing.
 
 The graph-based ``_compute_reachability`` in ``cmd_sbom.py`` walks the indexed
-symbol graph. That alone misses 5 systematic false-positive categories:
+symbol graph. That alone misses 6 systematic false-positive categories:
 
 * **A — CSS side-effect imports** (``primeicons``, ``tailwindcss``)
 * **B — Dynamic imports** (``await import("...")``)
 * **C — Config-file imports** (``vite.config.ts``, ``tsconfig.json extends``)
 * **D — package.json script consumers** (``rimraf`` in npm scripts)
 * **E — Peer / loader deps** (``jiti`` for ESLint flat-config, ``@types/*``)
+* **F — PHP Composer namespace imports** (``use Symfony\\...``)
 
 This module supplements the graph-based check with cheap regex scans of:
 
@@ -20,6 +21,7 @@ This module supplements the graph-based check with cheap regex scans of:
 * ``tsconfig*.json`` (``extends`` field)
 * ``package.json:scripts`` (binary-name cross-reference)
 * Known runtime loaders & ``@types/*`` (always-on heuristics)
+* ``composer.json`` + PHP ``use`` statements (namespace-root cross-reference)
 
 Output: ``{dep_name: {reachable: bool, sources: [reason strings], confidence: str}}``
 
@@ -213,6 +215,19 @@ _KNOWN_TS_LOADERS: frozenset[str] = frozenset(
         "ts-loader",
     }
 )
+
+# Common Composer vendor tokens whose PHP namespace root is not simple
+# PascalCase.
+_COMPOSER_VENDOR_NAMESPACE_OVERRIDES: dict[str, str] = {
+    "guzzlehttp": "GuzzleHttp",
+    "phpunit": "PHPUnit",
+    "psr": "Psr",
+}
+
+_COMPOSER_PACKAGE_NAMESPACE_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "laravel/framework": ("Illuminate",),
+    "nesbot/carbon": ("Carbon",),
+}
 
 # package.json sections that contribute "declared as a dep" status.
 _DEP_SECTIONS: tuple[str, ...] = (
@@ -441,34 +456,48 @@ def _scan_config_imports(project_root: Path) -> list[str]:
     return specs
 
 
+def _iter_string_refs(value: object) -> Iterable[str]:
+    """Yield string refs from a string or a flat list of strings."""
+    if isinstance(value, str):
+        yield value
+        return
+    if not isinstance(value, list):
+        return
+    for item in value:
+        if isinstance(item, str):
+            yield item
+
+
 def _collect_tsconfig_refs(data: object, specs: list[str]) -> None:
     """Walk a parsed tsconfig dict and append package references."""
     if not isinstance(data, dict):
         return
-    extends = data.get("extends")
-    if isinstance(extends, str):
-        specs.append(extends)
-    elif isinstance(extends, list):
-        for item in extends:
-            if isinstance(item, str):
-                specs.append(item)
+
+    specs.extend(_iter_string_refs(data.get("extends")))
 
     compiler = data.get("compilerOptions", {})
-    if isinstance(compiler, dict):
-        types = compiler.get("types", [])
-        if isinstance(types, list):
-            for t in types:
-                if isinstance(t, str):
-                    # `types: ["node"]` => `@types/node`
-                    specs.append(f"@types/{t}" if not t.startswith("@") else t)
-        # plugins — e.g., ts-plugin-vue-language-services
-        plugins = compiler.get("plugins", [])
-        if isinstance(plugins, list):
-            for p in plugins:
-                if isinstance(p, dict) and isinstance(p.get("name"), str):
-                    specs.append(p["name"])
-                elif isinstance(p, str):
-                    specs.append(p)
+    if not isinstance(compiler, dict):
+        return
+
+    types = compiler.get("types", [])
+    if isinstance(types, list):
+        for t in _iter_string_refs(types):
+            # `types: ["node"]` => `@types/node`
+            specs.append(f"@types/{t}" if not t.startswith("@") else t)
+
+    # plugins — e.g., ts-plugin-vue-language-services
+    plugins = compiler.get("plugins", [])
+    if not isinstance(plugins, list):
+        return
+    for p in plugins:
+        if isinstance(p, str):
+            specs.append(p)
+            continue
+        if not isinstance(p, dict):
+            continue
+        name = p.get("name")
+        if isinstance(name, str):
+            specs.append(name)
 
 
 def _collect_json_config_refs(data: object, specs: list[str]) -> None:
@@ -532,6 +561,54 @@ _SCRIPT_SHELL_TOKENS: frozenset[str] = frozenset(
 )
 
 
+def _script_consumers_from_one_package_json(path: Path, declared_deps: set[str]) -> dict[str, list[str]]:
+    """Return ``{dep_name: [reasons]}`` for a single ``package.json``.
+
+    Isolating the per-file JSON parse + script-token scan keeps the main
+    scan loop focused on aggregation and makes the once-per-file parse
+    boundary explicit.
+    """
+    result: dict[str, list[str]] = {}
+    text = _safe_read(path)
+    if not text:
+        return result
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return result
+    scripts = data.get("scripts", {}) if isinstance(data, dict) else {}
+    if not isinstance(scripts, dict):
+        return result
+    for script_name, cmd in scripts.items():
+        if not isinstance(cmd, str):
+            continue
+        # Strip flag tokens (--foo) and arg substitutions ($1, ${X})
+        # before tokenizing — they're never package names.
+        tokens = re.split(r"\s+", cmd.strip())
+        for tok in tokens:
+            tok = tok.strip()
+            if not tok or tok.startswith("-") or tok.startswith("$"):
+                continue
+            if tok in _SCRIPT_SHELL_TOKENS:
+                continue
+            # Strip path prefixes (node_modules/.bin/eslint -> eslint)
+            if "/" in tok:
+                base = tok.split("/")[-1]
+            else:
+                base = tok
+            # Direct hit
+            pkg = None
+            if base in declared_deps:
+                pkg = base
+            elif base in _BIN_TO_PACKAGE and _BIN_TO_PACKAGE[base] in declared_deps:
+                pkg = _BIN_TO_PACKAGE[base]
+            # `npm run X` / `npx X` / `pnpm dlx X` — already filtered above
+            if pkg:
+                reason = f"package.json:scripts.{script_name}"
+                result.setdefault(pkg, []).append(reason)
+    return result
+
+
 def _scan_script_consumers(project_root: Path, declared_deps: set[str]) -> dict[str, list[str]]:
     """Walk every ``package.json:scripts`` and return ``{dep_name: [reasons]}``.
 
@@ -542,43 +619,8 @@ def _scan_script_consumers(project_root: Path, declared_deps: set[str]) -> dict[
     """
     result: dict[str, list[str]] = {}
     for path in _iter_named_files(project_root, ("package.json",)):
-        text = _safe_read(path)
-        if not text:
-            continue
-        try:
-            data = json.loads(text)
-        except (ValueError, TypeError):
-            continue
-        scripts = data.get("scripts", {}) if isinstance(data, dict) else {}
-        if not isinstance(scripts, dict):
-            continue
-        for script_name, cmd in scripts.items():
-            if not isinstance(cmd, str):
-                continue
-            # Strip flag tokens (--foo) and arg substitutions ($1, ${X})
-            # before tokenizing — they're never package names.
-            tokens = re.split(r"\s+", cmd.strip())
-            for tok in tokens:
-                tok = tok.strip()
-                if not tok or tok.startswith("-") or tok.startswith("$"):
-                    continue
-                if tok in _SCRIPT_SHELL_TOKENS:
-                    continue
-                # Strip path prefixes (node_modules/.bin/eslint -> eslint)
-                if "/" in tok:
-                    base = tok.split("/")[-1]
-                else:
-                    base = tok
-                # Direct hit
-                pkg = None
-                if base in declared_deps:
-                    pkg = base
-                elif base in _BIN_TO_PACKAGE and _BIN_TO_PACKAGE[base] in declared_deps:
-                    pkg = _BIN_TO_PACKAGE[base]
-                # `npm run X` / `npx X` / `pnpm dlx X` — already filtered above
-                if pkg:
-                    reason = f"package.json:scripts.{script_name}"
-                    result.setdefault(pkg, []).append(reason)
+        for pkg, reasons in _script_consumers_from_one_package_json(path, declared_deps).items():
+            result.setdefault(pkg, []).extend(reasons)
     return result
 
 
@@ -675,6 +717,73 @@ def parse_composer_json(path: Path) -> list[tuple[str, str, bool]]:
     return entries
 
 
+def _composer_token_namespace_root(token: str) -> str:
+    """Map a Composer vendor token to its likely PHP namespace root."""
+    normalized = token.strip().lower()
+    if normalized in _COMPOSER_VENDOR_NAMESPACE_OVERRIDES:
+        return _COMPOSER_VENDOR_NAMESPACE_OVERRIDES[normalized]
+    parts = [p for p in re.split(r"[-_]+", token.strip()) if p]
+    return "".join(p[:1].upper() + p[1:] for p in parts)
+
+
+def _composer_namespace_roots(package_name: str) -> set[str]:
+    """Return conservative namespace roots for a Composer package name."""
+    roots: set[str] = set(_COMPOSER_PACKAGE_NAMESPACE_OVERRIDES.get(package_name.lower(), ()))
+    vendor, sep, package = package_name.partition("/")
+    if not sep:
+        return roots
+
+    vendor_root = _composer_token_namespace_root(vendor)
+    if vendor_root:
+        roots.add(vendor_root)
+
+    # Packages like monolog/monolog and phpunit/phpunit commonly use the
+    # package token itself as the namespace root. Avoid adding broad package
+    # words like "console" for symfony/console.
+    if package.lower() == vendor.lower():
+        package_root = _composer_token_namespace_root(package)
+        if package_root:
+            roots.add(package_root)
+
+    return roots
+
+
+def _scan_php_composer_imports(project_root: Path, declared_deps: set[str]) -> dict[str, list[str]]:
+    """Match declared Composer packages against PHP ``use`` namespace roots."""
+    package_by_root: dict[str, set[str]] = {}
+    for composer_json in _discover_composer_json(project_root):
+        for name, _spec, _is_dev in parse_composer_json(composer_json):
+            if name not in declared_deps:
+                continue
+            for root in _composer_namespace_roots(name):
+                package_by_root.setdefault(root.lower(), set()).add(name)
+
+    if not package_by_root:
+        return {}
+
+    result: dict[str, list[str]] = {}
+    php_skip_dirs = frozenset(
+        {"node_modules", ".git", ".roam", "dist", "build", "out", "coverage", ".next", ".nuxt", "__pycache__", "vendor"}
+    )
+    for path in _iter_files(project_root, (".php",), skip_dirs=php_skip_dirs):
+        text = _safe_read(path)
+        if not text:
+            continue
+        try:
+            rel_path = path.relative_to(project_root).as_posix()
+        except ValueError:
+            rel_path = path.as_posix()
+        for match in _PHP_USE_RE.finditer(text):
+            namespace = match.group(1)
+            root = namespace.split("\\", 1)[0].lower()
+            for dep in package_by_root.get(root, ()):
+                reason = f"php use {namespace!r} in {rel_path}"
+                reasons = result.setdefault(dep, [])
+                if reason not in reasons:
+                    reasons.append(reason)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -755,6 +864,12 @@ def compute_filesystem_reachability(
     for dep, reasons in loader_hits.items():
         for r in reasons:
             _record(dep, r, "loader")
+
+    # Category F — PHP composer namespace imports
+    php_hits = _scan_php_composer_imports(project_root, declared_set)
+    for dep, reasons in php_hits.items():
+        for r in reasons:
+            _record(dep, r, "config_import")
 
     return out
 

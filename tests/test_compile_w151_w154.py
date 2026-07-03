@@ -79,6 +79,25 @@ def test_w152_probe_pos_persist_table_uses_wal(tmp_path):
         conn.close()
 
 
+def test_probe_cache_key_context_ctx_roundtrip(tmp_path):
+    """The `_ctx` variants accept a ProbeCacheKeyContext and round-trip exactly
+    like the positional wrappers — and a context built via
+    ProbeCacheContext.key_for(label) reads back what the positional put stored
+    (same key fields, just bundled)."""
+    (tmp_path / ".roam").mkdir()
+    label = "owner_probe"
+    task = "who owns the auth module"
+    named_paths = ["src/auth.py"]
+    result = {"owner_probe": "alice@example.com"}
+    key_ctx = M.ProbeCacheKeyContext(label, task, named_paths, str(tmp_path), "head-abc")
+    M._probe_pos_persist_put_ctx(key_ctx, result)
+    assert M._probe_pos_persist_get_ctx(key_ctx) == result
+    # Positional wrapper and key_for() must derive the identical row key.
+    compile_ctx = M.ProbeCacheContext("proc", task, named_paths, str(tmp_path), "head-abc", {})
+    assert M._probe_pos_persist_get_ctx(compile_ctx.key_for(label)) == result
+    assert M._probe_pos_persist_get(label, task, named_paths, str(tmp_path), "head-abc") == result
+
+
 def test_w152_probe_pos_persist_cap_eviction(tmp_path):
     (tmp_path / ".roam").mkdir()
     orig_cap = M._PROBE_POS_PERSIST_CAP

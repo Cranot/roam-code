@@ -248,6 +248,55 @@ def _track_in_flight():
             _in_flight -= 1
 
 
+def _rate_limited_result(name: str) -> dict:
+    record_tool_outcome(name, "rate_limited")
+    return busy_envelope(name)
+
+
+def _run_sync_with_guard(name: str, fn, per_tool: threading.BoundedSemaphore | None, args: tuple, kwargs: dict):
+    with _track_in_flight():
+        try:
+            result = fn(*args, **kwargs)
+            record_tool_outcome(name, "success")
+            return result
+        except _EXPECTED_GUARD_ERRORS:
+            record_tool_outcome(name, "error")
+            raise
+        finally:
+            _release(per_tool)
+
+
+def _wrap_async_with_guard(name: str, fn):
+    @functools.wraps(fn)
+    async def async_wrapper(*args, **kwargs):
+        acquired, per_tool = _try_acquire(name)
+        if not acquired:
+            return _rate_limited_result(name)
+        with _track_in_flight():
+            try:
+                result = await fn(*args, **kwargs)
+                record_tool_outcome(name, "success")
+                return result
+            except _EXPECTED_GUARD_ERRORS:
+                record_tool_outcome(name, "error")
+                raise
+            finally:
+                _release(per_tool)
+
+    return async_wrapper
+
+
+def _wrap_sync_with_guard(name: str, fn):
+    @functools.wraps(fn)
+    def sync_wrapper(*args, **kwargs):
+        acquired, per_tool = _try_acquire(name)
+        if not acquired:
+            return _rate_limited_result(name)
+        return _run_sync_with_guard(name, fn, per_tool, args, kwargs)
+
+    return sync_wrapper
+
+
 def wrap_with_guard(name: str, fn):
     """Wrap a tool callable with the backpressure guard.
 
@@ -257,41 +306,5 @@ def wrap_with_guard(name: str, fn):
     envelope without invoking ``fn`` at all.
     """
     if inspect.iscoroutinefunction(fn):
-
-        @functools.wraps(fn)
-        async def async_wrapper(*args, **kwargs):
-            acquired, per_tool = _try_acquire(name)
-            if not acquired:
-                record_tool_outcome(name, "rate_limited")
-                return busy_envelope(name)
-            with _track_in_flight():
-                try:
-                    result = await fn(*args, **kwargs)
-                    record_tool_outcome(name, "success")
-                    return result
-                except _EXPECTED_GUARD_ERRORS:
-                    record_tool_outcome(name, "error")
-                    raise
-                finally:
-                    _release(per_tool)
-
-        return async_wrapper
-
-    @functools.wraps(fn)
-    def sync_wrapper(*args, **kwargs):
-        acquired, per_tool = _try_acquire(name)
-        if not acquired:
-            record_tool_outcome(name, "rate_limited")
-            return busy_envelope(name)
-        with _track_in_flight():
-            try:
-                result = fn(*args, **kwargs)
-                record_tool_outcome(name, "success")
-                return result
-            except _EXPECTED_GUARD_ERRORS:
-                record_tool_outcome(name, "error")
-                raise
-            finally:
-                _release(per_tool)
-
-    return sync_wrapper
+        return _wrap_async_with_guard(name, fn)
+    return _wrap_sync_with_guard(name, fn)

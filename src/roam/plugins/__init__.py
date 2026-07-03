@@ -36,9 +36,11 @@ and the additional hooks it exposes (``register_framework_detector``,
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from importlib import metadata as importlib_metadata
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from .registry import (
     DetectorSpec,
@@ -48,7 +50,7 @@ from .registry import (
     RoamPluginContext,
     _registry_state,
     get_framework_profile,
-    get_framework_profiles,
+    get_framework_profiles as _registry_get_framework_profiles,
 )
 
 # Backward-compatible alias — existing plugins import this name.
@@ -57,6 +59,8 @@ PluginAPI = RoamPluginContext
 # Legacy module-level CommandTarget type alias kept for callers (catalog
 # helpers, cli loader) that imported it directly.
 CommandTarget = tuple[str, str]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -80,11 +84,16 @@ __all__ = [
     "get_plugin_language_extractors",
     "get_plugin_language_grammar_aliases",
     "get_plugins",
-    "load_plugins",
 ]
 
 
+# discover_plugins() is the canonical public loader for this substrate.
 _discovered = False
+
+
+def _plugin_snapshot() -> list[RoamPlugin]:
+    """Return a defensive copy of the registry's plugin list."""
+    return list(_registry_state().plugins)
 
 
 def _register_target(target: Any, source_label: str, ctx: RoamPluginContext) -> None:
@@ -152,6 +161,26 @@ def _entry_points_for_group(group: str):
     return result
 
 
+def _entry_point_metadata_for_info(ep: Any) -> tuple[str, str]:
+    """Return best-effort metadata used by ``roam plugins info``."""
+    version = "unknown"
+    description = ""
+    try:
+        dist = ep.dist  # type: ignore[attr-defined]
+        if dist is not None:
+            version = dist.version
+            description = (dist.metadata.get("Summary") or "").strip()
+    except (AttributeError, KeyError) as exc:
+        # Missing entry-point distribution metadata is expected for
+        # path-installed plugins, so keep doctor output clean.
+        _LOGGER.debug(
+            "plugin metadata lookup skipped for entry point %r: %s",
+            ep.name,
+            exc,
+        )
+    return version, description
+
+
 def _discover_entry_points(ctx: RoamPluginContext) -> None:
     """Load plugins declared via Python entry points (production channel)."""
     state = _registry_state()
@@ -172,21 +201,7 @@ def _discover_entry_points(ctx: RoamPluginContext) -> None:
         # without re-importing every plugin. Distribution lookup is
         # best-effort — entry points loaded from path-installed modules
         # may not carry a distribution.
-        version = "unknown"
-        description = ""
-        try:
-            dist = ep.dist  # type: ignore[attr-defined]
-            if dist is not None:
-                version = dist.version
-                description = (dist.metadata.get("Summary") or "").strip()
-        except (AttributeError, KeyError):
-            # W746: narrowed from bare Exception. The realistic failures
-            # for an entry-point dist lookup are: ``ep.dist`` not present
-            # on path-installed entry points (AttributeError) and missing
-            # metadata fields (KeyError on ``.get`` of an exotic Message
-            # subclass). Programmer-class errors elsewhere in the loop
-            # now propagate per W531.
-            pass
+        version, description = _entry_point_metadata_for_info(ep)
 
         state.current_plugin_meta = (ep.name, version, description)
         try:
@@ -207,38 +222,19 @@ def discover_plugins() -> list[RoamPlugin]:
     """
     global _discovered
     if _discovered:
-        return list(_registry_state().plugins)
+        return _plugin_snapshot()
     _discovered = True
 
     ctx = RoamPluginContext()
     _discover_env_modules(ctx)
     _discover_entry_points(ctx)
-    return list(_registry_state().plugins)
-
-
-def load_plugins(ctx: RoamPluginContext | None = None) -> list[RoamPlugin]:
-    """Explicit alias for :func:`discover_plugins`.
-
-    The optional ``ctx`` argument lets callers (tests, mostly) supply a
-    pre-built context. Production callers should use
-    :func:`discover_plugins` — it builds its own context.
-    """
-    if ctx is None:
-        return discover_plugins()
-
-    global _discovered
-    if _discovered:
-        return list(_registry_state().plugins)
-    _discovered = True
-    _discover_env_modules(ctx)
-    _discover_entry_points(ctx)
-    return list(_registry_state().plugins)
+    return _plugin_snapshot()
 
 
 def get_plugins() -> list[RoamPlugin]:
     """Return the list of registered plugins (auto-discovers on first call)."""
     discover_plugins()
-    return list(_registry_state().plugins)
+    return _plugin_snapshot()
 
 
 def get_plugin_commands() -> dict[str, CommandTarget]:
@@ -280,7 +276,19 @@ def get_plugin_framework_profiles() -> dict[str, FrameworkProfile]:
     detector-only API. Returns an empty dict on a clean install.
     """
     discover_plugins()
-    return dict(_registry_state().framework_profiles)
+    return dict(_registry_get_framework_profiles())
+
+
+def _discovered_framework_profile_map() -> Mapping[str, Any]:
+    """Return discovered framework profiles as a read-only mapping."""
+    return MappingProxyType(get_plugin_framework_profiles())
+
+
+# Preserve the package-level re-export without shadowing the registry helper.
+def __getattr__(name: str) -> Any:
+    if name == "get_framework_profiles":
+        return _discovered_framework_profile_map
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_plugin_bridges() -> list:
@@ -314,6 +322,10 @@ def _reset_plugin_state_for_tests() -> None:
         for bridge in state.bridges:
             try:
                 bridge_registry._BRIDGES.remove(bridge)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                _LOGGER.debug(
+                    "plugin bridge reset skipped for unregistered bridge %r: %s",
+                    bridge,
+                    exc,
+                )
     state.reset()

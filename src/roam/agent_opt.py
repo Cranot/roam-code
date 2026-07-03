@@ -975,16 +975,11 @@ def iter_tool_descriptions(scope: str = "full") -> dict[str, str]:
 
 def known_command_names() -> set[str]:
     """Every registered CLI command name (for next_command resolution)."""
-    from roam.cli import _COMMANDS
+    import roam.cli as _cli
 
-    names = set(_COMMANDS.keys())
-    try:
-        from roam.cli import _DEPRECATED_COMMANDS
-
-        names |= set(_DEPRECATED_COMMANDS.keys())
-    except ImportError:
-        pass
-    return names
+    # _DEPRECATED_COMMANDS ships with roam.cli; getattr degrades to
+    # _COMMANDS-only if a future roam.cli removes it (no silent swallow).
+    return set(_cli._COMMANDS) | set(getattr(_cli, "_DEPRECATED_COMMANDS", {}))
 
 
 # A small, read-only, no-required-arg corpus. Kept short so a default

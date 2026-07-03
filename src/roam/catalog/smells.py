@@ -36,9 +36,10 @@ import functools
 import logging
 import re
 import sqlite3
-from collections import Counter
-from collections.abc import Callable
+from collections import Counter, defaultdict
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from itertools import groupby
 
 from roam.catalog._shared import find_indexed_source_root as _find_indexed_source_root
 from roam.catalog._shared import is_test_path as _is_test_path
@@ -48,6 +49,7 @@ from roam.catalog.clones_cross_layer import detect_cross_layer_clones
 from roam.catalog.parallel_hierarchy import detect_parallel_hierarchy
 from roam.catalog.registry import all_detectors, detector, freeze_registry
 from roam.catalog.type_switch import detect_type_switch
+from roam.db.connection import batched_in
 from roam.db.findings import (
     CONFIDENCE_HEURISTIC,
     CONFIDENCE_STATIC_ANALYSIS,
@@ -56,6 +58,10 @@ from roam.db.findings import (
 from roam.output._severity import severity_rank
 
 log = logging.getLogger(__name__)
+
+_PARAM_OPENERS = frozenset(("(", "[", "<", "{"))
+_PARAM_CLOSERS = frozenset((")", "]", ">", "}"))
+_IGNORED_PARAM_NAMES = frozenset(("", "self", "cls"))
 
 
 # W1037: pin the OBSERVABLE module surface. New detectors are
@@ -127,38 +133,57 @@ __all__ = [
 # at the consolidation layer.
 
 
+def _signature_param_body(signature: str | None) -> str:
+    """Return the balanced text inside the first parameter list."""
+    if not signature:
+        return ""
+    start = signature.find("(")
+    if start == -1:
+        return ""
+    depth = 0
+    for idx, ch in enumerate(signature[start:], start=start):
+        if ch in _PARAM_OPENERS:
+            depth = depth + 1
+        elif ch in _PARAM_CLOSERS:
+            if depth == 0:
+                continue
+            depth = depth - 1
+            if depth == 0:
+                return signature[start + 1 : idx].strip()
+    return ""
+
+
+def _iter_top_level_param_parts(params_str: str) -> Iterator[str]:
+    """Yield comma-delimited parameter parts without splitting nested commas."""
+    depth = 0
+    part_start = 0
+    for idx, ch in enumerate(params_str):
+        if ch in _PARAM_OPENERS:
+            depth = depth + 1
+        elif ch in _PARAM_CLOSERS and depth > 0:
+            depth = depth - 1
+        elif ch == "," and depth == 0:
+            yield params_str[part_start:idx].strip()
+            part_start = idx + 1
+    tail = params_str[part_start:].strip()
+    if tail:
+        yield tail
+
+
+def _signature_param_name(param: str) -> str:
+    return param.split(":", 1)[0].split("=", 1)[0].strip().lower()
+
+
 def _parse_param_count(signature: str | None) -> int:
     """Count parameters from a signature string, excluding self/cls."""
-    if not signature:
-        return 0
-    # Extract content between first pair of parentheses
-    m = re.search(r"\(([^)]*)\)", signature)
-    if not m:
-        return 0
-    params_str = m.group(1).strip()
+    params_str = _signature_param_body(signature)
     if not params_str:
         return 0
-    # Split by comma, handling nested generics/brackets
-    depth = 0
-    parts: list[str] = []
-    current: list[str] = []
-    for ch in params_str:
-        if ch in ("(", "[", "<", "{"):
-            depth += 1
-            current.append(ch)
-        elif ch in (")", "]", ">", "}"):
-            depth -= 1
-            current.append(ch)
-        elif ch == "," and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(ch)
-    if current:
-        parts.append("".join(current).strip())
-    # Filter out self/cls and empty parts
-    filtered = [p for p in parts if p and p.split(":")[0].split("=")[0].strip().lower() not in ("self", "cls", "")]
-    return len(filtered)
+    return sum(
+        1
+        for param in _iter_top_level_param_parts(params_str)
+        if _signature_param_name(param) not in _IGNORED_PARAM_NAMES
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -340,21 +365,37 @@ def detect_long_params(conn: sqlite3.Connection) -> list[dict]:
 def detect_large_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 500 LOC AND > 20 methods."""
     rows = conn.execute(
-        "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, f.path as file_path "
+        "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, s.file_id, "
+        "f.path as file_path "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind = 'class' "
         "AND (s.line_end - s.line_start) > 500"
     ).fetchall()
+    # Bulk-fetch method spans for the candidate classes' files ONCE,
+    # replacing the per-class ``SELECT COUNT(*)`` N+1 query (which also
+    # re-derived file_id via a subquery per row). The per-class line-range
+    # containment runs in Python below; a method with a NULL line_start /
+    # line_end is excluded, mirroring the old SQL's falsy NULL comparison.
+    from collections import defaultdict
+
+    methods_by_file: dict[int, list[tuple[int | None, int | None]]] = defaultdict(list)
+    candidate_file_ids = sorted({r["file_id"] for r in rows})
+    if candidate_file_ids:
+        for m in batched_in(
+            conn,
+            "SELECT file_id, line_start, line_end FROM symbols WHERE file_id IN ({ph}) AND kind = 'method'",
+            candidate_file_ids,
+        ):
+            methods_by_file[m["file_id"]].append((m["line_start"], m["line_end"]))
     results = []
     for r in rows:
-        method_count = conn.execute(
-            "SELECT COUNT(*) FROM symbols "
-            "WHERE file_id = (SELECT file_id FROM symbols WHERE id = ?) "
-            "AND kind = 'method' "
-            "AND line_start >= ? AND line_end <= ?",
-            (r["id"], r["line_start"] or 0, r["line_end"] or 0),
-        ).fetchone()[0]
+        ls, le = r["line_start"] or 0, r["line_end"] or 0
+        method_count = sum(
+            1
+            for (m_ls, m_le) in methods_by_file.get(r["file_id"], [])
+            if m_ls is not None and m_le is not None and m_ls >= ls and m_le <= le
+        )
         if method_count > 20:
             loc_str = _loc(r["file_path"], r["line_start"])
             line_count = (r["line_end"] or 0) - (r["line_start"] or 0)
@@ -487,9 +528,10 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     from collections import defaultdict
 
     edges_by_source: dict[int, list[tuple[int, int]]] = defaultdict(list)
-    for e in conn.execute(
+    edge_rows = conn.execute(
         "SELECT e.source_id, e.target_id, t.file_id as target_file_id FROM edges e JOIN symbols t ON e.target_id = t.id"
-    ).fetchall():
+    ).fetchall()
+    for e in edge_rows:
         edges_by_source[e["source_id"]].append((e["target_id"], e["target_file_id"]))
     results = []
     for r in rows:
@@ -576,6 +618,127 @@ _SHOTGUN_MIN_CALLER_FILES = 12
 _SHOTGUN_MIN_COHERENCE = 0.15
 
 
+def _load_shotgun_callers_by_target(conn: sqlite3.Connection) -> dict[int, list[tuple[int | None, str]]]:
+    """Bucket incoming caller files once so scatter decisions avoid N+1 SQL."""
+    caller_rows = conn.execute(
+        "SELECT e.target_id AS tid, "
+        "COALESCE(e.source_file_id, ss.file_id) AS cf, "
+        "cf2.path AS cpath "
+        "FROM edges e "
+        "JOIN symbols ss ON e.source_id = ss.id "
+        "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id) "
+        "ORDER BY e.target_id"
+    ).fetchall()
+    return {
+        tid: [(row["cf"], row["cpath"]) for row in rows]
+        for tid, rows in groupby(caller_rows, key=lambda row: row["tid"])
+    }
+
+
+def _load_shotgun_cochange_evidence(conn: sqlite3.Connection) -> tuple[dict[int, set[int]], bool]:
+    """Load the coherence evidence that separates reuse hubs from change ripples."""
+    cochange_adj: dict[int, set[int]] = defaultdict(set)
+    try:
+        cochange_rows = conn.execute(
+            "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange WHERE cochange_count >= 2"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}, False
+
+    for ca, cb, _cc in cochange_rows:
+        cochange_adj[ca].add(cb)
+        cochange_adj[cb].add(ca)
+    return dict(cochange_adj), bool(cochange_rows)
+
+
+def _can_symbol_change_ripple(row: sqlite3.Row) -> bool:
+    """Accept symbols whose wide caller scatter is not by-design surface area."""
+    if _is_test_path(row["file_path"]):
+        return False
+    dec = row["decorators"] or ""
+    if "@property" in dec or "@cached_property" in dec:
+        return False
+    line_start, line_end = row["line_start"], row["line_end"]
+    if line_start is not None and line_end is not None and (line_end - line_start) <= 2:
+        return False
+    return True
+
+
+def _caller_files_that_would_ripple(
+    row: sqlite3.Row,
+    callers_by_target: dict[int, list[tuple[int | None, str]]],
+) -> tuple[set[int], set[str]]:
+    """Return distinct non-test caller files where a target edit can ripple."""
+    caller_file_ids: set[int] = set()
+    caller_file_paths: set[str] = set()
+    for caller_file_id, caller_path in callers_by_target.get(row["id"], ()):
+        if caller_file_id is None:
+            continue
+        if caller_file_id == row["file_id"] or _is_test_path(caller_path):
+            continue
+        caller_file_ids.add(caller_file_id)
+        caller_file_paths.add(caller_path)
+    return caller_file_ids, caller_file_paths
+
+
+def _pairwise_cochange_coherence(
+    caller_file_ids: set[int],
+    cochange_adj: dict[int, set[int]],
+) -> float:
+    """Measure whether scattered callers evolve together as one change ripple."""
+    file_ids = sorted(caller_file_ids)
+    total_pairs = 0
+    coupled_pairs = 0
+    for left_idx, left_id in enumerate(file_ids):
+        adjacent = cochange_adj.get(left_id, ())
+        for right_id in file_ids[left_idx + 1 :]:
+            total_pairs += 1
+            if right_id in adjacent:
+                coupled_pairs += 1
+    return (coupled_pairs / total_pairs) if total_pairs else 0.0
+
+
+def _build_shotgun_surgery_finding(row: sqlite3.Row, scatter: int, coherence: float) -> dict:
+    """Render the one finding only after scatter and coherence both survive."""
+    loc_str = _loc(row["file_path"], row["line_start"])
+    return _finding(
+        "shotgun-surgery",
+        "warning",
+        row["name"],
+        row["kind"],
+        loc_str,
+        scatter,
+        _SHOTGUN_MIN_CALLER_FILES,
+        f"Shotgun surgery: referenced from {scatter} distinct non-test files "
+        f"that co-evolve ({coherence:.0%} pairwise co-change coherence); "
+        f"a change ripples across all of them",
+    )
+
+
+def _shotgun_surgery_finding_when_callers_cohere(
+    row: sqlite3.Row,
+    callers_by_target: dict[int, list[tuple[int | None, str]]],
+    cochange_adj: dict[int, set[int]],
+    cochange_present: bool,
+) -> dict | None:
+    """Keep scatter-only reuse hubs from masquerading as shotgun surgery."""
+    if not _can_symbol_change_ripple(row):
+        return None
+
+    caller_file_ids, caller_file_paths = _caller_files_that_would_ripple(row, callers_by_target)
+    scatter = len(caller_file_paths)
+    if scatter < _SHOTGUN_MIN_CALLER_FILES:
+        return None
+
+    coherence = 1.0  # default when the gate cannot apply (no git data)
+    if cochange_present:
+        coherence = _pairwise_cochange_coherence(caller_file_ids, cochange_adj)
+        if coherence < _SHOTGUN_MIN_COHERENCE:
+            return None
+
+    return _build_shotgun_surgery_finding(row, scatter, coherence)
+
+
 @detector("shotgun-surgery", confidence=CONFIDENCE_STRUCTURAL)
 def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
     """Symbols whose change ripples across many CO-EVOLVING caller files.
@@ -605,101 +768,20 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind IN ('function', 'method')"
     ).fetchall()
-    # Bulk-fetch every incoming edge ONCE and bucket by target_id, replacing
-    # the per-symbol ``WHERE e.target_id = ?`` N+1 query. Each bucket entry is
-    # a (caller_file_id, caller_file_path) pair; the per-symbol filtering +
-    # de-dup below reproduces the old ``SELECT DISTINCT`` semantics in Python.
-    from collections import defaultdict
-
-    callers_by_target: dict[int, list[tuple[int | None, str]]] = defaultdict(list)
-    for cr in conn.execute(
-        "SELECT e.target_id AS tid, "
-        "COALESCE(e.source_file_id, ss.file_id) AS cf, "
-        "cf2.path AS cpath "
-        "FROM edges e "
-        "JOIN symbols ss ON e.source_id = ss.id "
-        "JOIN files cf2 ON cf2.id = COALESCE(e.source_file_id, ss.file_id)"
-    ).fetchall():
-        callers_by_target[cr["tid"]].append((cr["cf"], cr["cpath"]))
-    # W1300: bulk-load the file co-change adjacency ONCE. ``git_cochange`` is
-    # a symmetric (file_id_a, file_id_b, cochange_count) table; require
-    # ``cochange_count >= 2`` so a single incidental shared commit does not
-    # register as coupling. ``cochange_present`` is False when the table is
-    # absent or empty -> the coherence gate degrades to scatter-only.
-    cochange_adj: dict[int, set[int]] = defaultdict(set)
-    cochange_present = False
-    try:
-        for ca, cb, cc in conn.execute(
-            "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange WHERE cochange_count >= 2"
-        ).fetchall():
-            cochange_present = True
-            cochange_adj[ca].add(cb)
-            cochange_adj[cb].add(ca)
-    except sqlite3.OperationalError:
-        cochange_present = False
-    results = []
-    for r in rows:
-        # (1) Skip test-role target files.
-        if _is_test_path(r["file_path"]):
-            continue
-        # (2) Skip @property / dataclass-field symbols and trivial 1-3 line
-        #     accessors — their high scatter is by-design surface, not the
-        #     ripple-on-change signal (mirrors W1280 feature-envy exclusions).
-        dec = r["decorators"] or ""
-        if "@property" in dec or "@cached_property" in dec:
-            continue
-        ls, le = r["line_start"], r["line_end"]
-        if ls is not None and le is not None and (le - ls) <= 2:
-            continue
-        # (3) Distinct non-test caller files (incoming edges), excluding the
-        #     symbol's own file. This is the file-SCATTER metric: how many
-        #     separate files a change to this symbol would ripple across.
-        #     Keep file ids alongside paths for the coherence step below.
-        caller_file_ids: set[int] = set()
-        caller_file_paths: set[str] = set()
-        for cf, cpath in callers_by_target.get(r["id"], []):
-            if cf is not None and cf != r["file_id"] and not _is_test_path(cpath):
-                caller_file_ids.add(cf)
-                caller_file_paths.add(cpath)
-        scatter = len(caller_file_paths)
-        if scatter < _SHOTGUN_MIN_CALLER_FILES:
-            continue
-        # (4) Coherence gate (W1300): the scattered caller files must form a
-        #     coherent change-cluster. Compute the fraction of caller-file
-        #     PAIRS that co-change with each other. A reuse hub's callers do
-        #     not co-evolve (low coherence); a genuine shotgun-surgery
-        #     symbol's callers share commits (high coherence). Degrades to
-        #     scatter-only when no git_cochange data exists.
-        coherence = 1.0  # default when the gate cannot apply (no git data)
-        if cochange_present:
-            cf_ids = sorted(caller_file_ids)
-            total_pairs = 0
-            coupled_pairs = 0
-            for ci in range(len(cf_ids)):
-                adj_i = cochange_adj.get(cf_ids[ci], ())
-                for cj in range(ci + 1, len(cf_ids)):
-                    total_pairs += 1
-                    if cf_ids[cj] in adj_i:
-                        coupled_pairs += 1
-            coherence = (coupled_pairs / total_pairs) if total_pairs else 0.0
-            if coherence < _SHOTGUN_MIN_COHERENCE:
-                continue
-        loc_str = _loc(r["file_path"], r["line_start"])
-        results.append(
-            _finding(
-                "shotgun-surgery",
-                "warning",
-                r["name"],
-                r["kind"],
-                loc_str,
-                scatter,
-                _SHOTGUN_MIN_CALLER_FILES,
-                f"Shotgun surgery: referenced from {scatter} distinct non-test files "
-                f"that co-evolve ({coherence:.0%} pairwise co-change coherence); "
-                f"a change ripples across all of them",
-            )
+    # Bulk-fetch every incoming edge and the file co-change graph once.
+    # Scatter and coherence are then evaluated per symbol in pure helpers.
+    callers_by_target = _load_shotgun_callers_by_target(conn)
+    cochange_adj, cochange_present = _load_shotgun_cochange_evidence(conn)
+    candidate_findings = (
+        _shotgun_surgery_finding_when_callers_cohere(
+            row,
+            callers_by_target,
+            cochange_adj,
+            cochange_present,
         )
-    return results
+        for row in rows
+    )
+    return [finding for finding in candidate_findings if finding is not None]
 
 
 # Tier: heuristic — groups by the sorted top-3 param NAMES across signatures.
@@ -722,37 +804,14 @@ def detect_data_clumps(conn: sqlite3.Connection) -> list[dict]:
 
     param_groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        sig = r["signature"]
-        m = re.search(r"\(([^)]*)\)", sig or "")
-        if not m:
-            continue
-        params_str = m.group(1).strip()
+        params_str = _signature_param_body(r["signature"])
         if not params_str:
             continue
-        # Simple split by comma (top-level only)
-        depth = 0
-        parts: list[str] = []
-        current: list[str] = []
-        for ch in params_str:
-            if ch in ("(", "[", "<", "{"):
-                depth += 1
-                current.append(ch)
-            elif ch in (")", "]", ">", "}"):
-                depth -= 1
-                current.append(ch)
-            elif ch == "," and depth == 0:
-                parts.append("".join(current).strip())
-                current = []
-            else:
-                current.append(ch)
-        if current:
-            parts.append("".join(current).strip())
-        # Extract just param names, skip self/cls
-        names = []
-        for p in parts:
-            name = p.split(":")[0].split("=")[0].strip().lower()
-            if name and name not in ("self", "cls", ""):
-                names.append(name)
+        names = [
+            name
+            for p in _iter_top_level_param_parts(params_str)
+            if (name := _signature_param_name(p)) not in _IGNORED_PARAM_NAMES
+        ]
         if len(names) >= 3:
             key = ",".join(sorted(names[:3]))
             param_groups[key].append(r)
@@ -1229,14 +1288,16 @@ def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
     from collections import defaultdict
 
     methods_by_file: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
-    for m in conn.execute("SELECT id, file_id, line_start, line_end FROM symbols WHERE kind = 'method'").fetchall():
+    method_rows = conn.execute("SELECT id, file_id, line_start, line_end FROM symbols WHERE kind = 'method'").fetchall()
+    for m in method_rows:
         methods_by_file[m["file_id"]].append((m["id"], m["line_start"], m["line_end"]))
     # Bulk-fetch every method->method edge ONCE, bucketed by source method id,
     # replacing the per-class ``source_id IN (...) AND target_id IN (...)``
     # query. Each entry maps a method source id to its method target ids.
     method_id_set = {m[0] for ms in methods_by_file.values() for m in ms}
     method_edges_by_source: dict[int, list[int]] = defaultdict(list)
-    for e in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
+    edge_rows = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
+    for e in edge_rows:
         sid, tid = e["source_id"], e["target_id"]
         if sid in method_id_set and tid in method_id_set:
             method_edges_by_source[sid].append(tid)
@@ -1709,47 +1770,14 @@ def _split_signature_params(signature: str) -> list[str]:
     Mirrors ``_parse_param_count``'s logic but returns the raw strings so
     each can be type-classified. Excludes self / cls.
     """
-    if not signature:
-        return []
-    m = re.search(r"\(([^)]*\))", signature) or re.search(r"\(([^)]*)\)", signature)
-    if not m:
-        return []
-    params_str = m.group(1).strip()
-    # Drop trailing ``)`` if the inner-search consumed it.
-    if params_str.endswith(")"):
-        params_str = params_str[:-1].strip()
+    params_str = _signature_param_body(signature)
     if not params_str:
         return []
-    # Re-extract with bracket-balanced split.
-    m2 = re.search(r"\((.*)\)", signature)
-    if m2:
-        params_str = m2.group(1).strip()
-    depth = 0
-    parts: list[str] = []
-    current: list[str] = []
-    for ch in params_str:
-        if ch in ("(", "[", "<", "{"):
-            depth += 1
-            current.append(ch)
-        elif ch in (")", "]", ">", "}"):
-            depth -= 1
-            current.append(ch)
-        elif ch == "," and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(ch)
-    if current:
-        parts.append("".join(current).strip())
-    out: list[str] = []
-    for p in parts:
-        if not p:
-            continue
-        name_part = p.split(":", 1)[0].split("=", 1)[0].strip().lower()
-        if name_part in ("self", "cls"):
-            continue
-        out.append(p)
-    return out
+    return [
+        param
+        for param in _iter_top_level_param_parts(params_str)
+        if _signature_param_name(param) not in _IGNORED_PARAM_NAMES
+    ]
 
 
 def _extract_param_annotation(param: str) -> str | None:
@@ -2122,6 +2150,23 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
 
     workspace = _find_indexed_source_root()
 
+    # Pre-fetch all enclosing-scope candidates for the candidate files in a
+    # single batched query instead of one query per file (N+1 avoidance).
+    file_ids = [f["id"] for f in files]
+    symbols_by_file: dict[int, list[sqlite3.Row]] = {}
+    if file_ids:
+        try:
+            all_scope_rows = batched_in(
+                conn,
+                "SELECT file_id, name, kind, line_start, line_end FROM symbols "
+                "WHERE file_id IN ({ph}) AND kind IN ('function', 'method')",
+                file_ids,
+            )
+        except sqlite3.OperationalError:
+            all_scope_rows = []
+        for r in all_scope_rows:
+            symbols_by_file.setdefault(r["file_id"], []).append(r)
+
     for f in files:
         file_id = f["id"]
         rel_path = f["path"]
@@ -2141,19 +2186,7 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
         if not predicates:
             continue
 
-        # Pre-fetch the enclosing-scope candidates for this file. One
-        # query per file is dramatically cheaper than one query per
-        # ``if`` header. Skip files with no function/method scopes
-        # (top-level scripts) -- they collapse to the ``<module>``
-        # bucket.
-        try:
-            scope_rows = conn.execute(
-                "SELECT name, kind, line_start, line_end FROM symbols "
-                "WHERE file_id = ? AND kind IN ('function', 'method')",
-                (file_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            scope_rows = []
+        scope_rows = symbols_by_file.get(file_id, [])
         scope_ranges: list[tuple[int, int, str, str, int]] = [
             (
                 int(r["line_start"] or 0),
@@ -2454,6 +2487,25 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
 
     workspace = _find_indexed_source_root()
 
+    # Pre-fetch enclosing-scope rows for ALL candidate files in one batched
+    # query (N+1 avoidance -- mirrors detect_duplicate_predicates). Each call
+    # site is attributed to the function/method it lives in; falls back to
+    # ``<module>`` for top-level calls.
+    file_ids = [f["id"] for f in files]
+    symbols_by_file: dict[int, list[sqlite3.Row]] = {}
+    if file_ids:
+        try:
+            all_scope_rows = batched_in(
+                conn,
+                "SELECT file_id, name, kind, line_start, line_end FROM symbols "
+                "WHERE file_id IN ({ph}) AND kind IN ('function', 'method')",
+                file_ids,
+            )
+        except sqlite3.OperationalError:
+            all_scope_rows = []
+        for r in all_scope_rows:
+            symbols_by_file.setdefault(r["file_id"], []).append(r)
+
     for f in files:
         file_id = f["id"]
         rel_path = f["path"]
@@ -2462,17 +2514,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
         if tree is None:
             continue
 
-        # Pre-fetch enclosing-scope rows so each call site is attributed to
-        # the function/method it lives in. Falls back to ``<module>`` for
-        # top-level calls.
-        try:
-            scope_rows = conn.execute(
-                "SELECT name, kind, line_start, line_end FROM symbols "
-                "WHERE file_id = ? AND kind IN ('function', 'method')",
-                (file_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            scope_rows = []
+        scope_rows = symbols_by_file.get(file_id, [])
         scope_ranges: list[tuple[int, int, str, str, int]] = [
             (
                 int(r["line_start"] or 0),
@@ -2601,6 +2643,117 @@ def _switch_discriminator(test: ast.AST) -> str | None:
     return None
 
 
+def _collect_switch_elif_tails(tree: ast.Module) -> set[int]:
+    """Return the ``id()`` of every ``If`` that is the orelse-tail of another
+    ``If`` -- those are ``elif`` continuations and must NOT be treated as
+    independent chain heads (each chain is processed once, at its head)."""
+    tails: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+            tails.add(id(node.orelse[0]))
+    return tails
+
+
+def _switch_chain_discriminators(head_if: ast.If) -> list[str | None]:
+    """Walk an ``if``/``elif`` chain from its head, returning the
+    discriminator of each arm in order (one entry per ``If`` in the chain)."""
+    chain_discs: list[str | None] = []
+    cur: ast.AST = head_if
+    while isinstance(cur, ast.If):
+        chain_discs.append(_switch_discriminator(cur.test))
+        if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
+            cur = cur.orelse[0]
+        else:
+            break
+    return chain_discs
+
+
+def _switch_finding(
+    scope_name: str,
+    scope_kind: str,
+    rel_path: str,
+    lineno: int,
+    discriminator: str,
+    count: int,
+    form_label: str,
+    unit: str,
+) -> dict:
+    """Build one switch-statement finding dict.
+
+    ``form_label`` / ``unit`` vary by shape (``"match"``/``"cases"`` for the
+    ``match`` form, ``"if/elif chain"``/``"arms"`` for the ``if``/``elif``
+    form); everything else is shared.
+    """
+    return _finding(
+        "switch-statement",
+        "info",
+        scope_name,
+        scope_kind,
+        _loc(rel_path, lineno),
+        count,
+        _SWITCH_STATEMENT_THRESHOLD,
+        (
+            f"Switch statement: {form_label} on `{discriminator}` "
+            f"with {count} {unit} in {scope_name} -- "
+            f"consider a dispatch table or strategy pattern"
+        ),
+    )
+
+
+def _switch_finding_for_node(
+    conn: sqlite3.Connection,
+    file_id: int,
+    rel_path: str,
+    node: ast.AST,
+    elif_tails: set[int],
+) -> dict | None:
+    """Return a switch-statement finding for ``node`` if it is a qualifying
+    ``match`` statement or ``if``/``elif`` chain head, else ``None``."""
+    # match-statement form.
+    if isinstance(node, ast.Match):
+        if not isinstance(node.subject, ast.Name):
+            return None
+        cases = len(node.cases)
+        if cases < _SWITCH_STATEMENT_THRESHOLD:
+            return None
+        scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
+        return _switch_finding(
+            scope_name,
+            scope_kind,
+            rel_path,
+            node.lineno,
+            node.subject.id,
+            cases,
+            "match",
+            "cases",
+        )
+
+    # if-elif chain form -- skip elif continuations.
+    if not isinstance(node, ast.If) or id(node) in elif_tails:
+        return None
+
+    chain_discs = _switch_chain_discriminators(node)
+    arms = len(chain_discs)
+    if arms < _SWITCH_STATEMENT_THRESHOLD:
+        return None
+    # Every arm must resolve to a single non-``None`` discriminator AND
+    # every arm must share that same variable name.
+    head = chain_discs[0]
+    if head is None or any(d != head for d in chain_discs):
+        return None
+    scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
+    return _switch_finding(
+        scope_name,
+        scope_kind,
+        rel_path,
+        node.lineno,
+        head,
+        arms,
+        "if/elif chain",
+        "arms",
+    )
+
+
 # Tier: structural — AST-shape predicate over ``Match`` / ``If``-``Elif``
 # chains. The discriminator-equality check is deterministic and the
 # threshold (>= 8 arms) filters short dispatch ladders; no name match,
@@ -2638,86 +2791,13 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
         tree = _read_and_parse(workspace, rel_path)
         if tree is None:
             continue
-
-        # Pre-collect every ``If`` node that is the orelse-tail of another
-        # ``If`` -- those are the ``elif`` continuations and must NOT be
-        # treated as independent chain heads. We process each chain
-        # exactly once at its head ``If``.
-        elif_nodes: set[int] = set()
+        # Each chain is processed once at its head; ``elif`` tails are
+        # skipped via ``elif_tails`` (see ``_switch_finding_for_node``).
+        elif_tails = _collect_switch_elif_tails(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
-                elif_nodes.add(id(node.orelse[0]))
-
-        for node in ast.walk(tree):
-            # match-statement form.
-            if isinstance(node, ast.Match):
-                if not isinstance(node.subject, ast.Name):
-                    continue
-                if len(node.cases) < _SWITCH_STATEMENT_THRESHOLD:
-                    continue
-                discriminator = node.subject.id
-                scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
-                results.append(
-                    _finding(
-                        "switch-statement",
-                        "info",
-                        scope_name,
-                        scope_kind,
-                        _loc(rel_path, node.lineno),
-                        len(node.cases),
-                        _SWITCH_STATEMENT_THRESHOLD,
-                        (
-                            f"Switch statement: match on `{discriminator}` "
-                            f"with {len(node.cases)} cases in {scope_name} -- "
-                            f"consider a dispatch table or strategy pattern"
-                        ),
-                    )
-                )
-                continue
-
-            # if-elif chain form. Skip when this ``If`` is itself the
-            # orelse-tail of an enclosing ``If`` (an ``elif`` continuation).
-            if not isinstance(node, ast.If):
-                continue
-            if id(node) in elif_nodes:
-                continue
-
-            # Walk the chain counting arms + their discriminators.
-            chain_discs: list[str | None] = []
-            cur = node
-            while isinstance(cur, ast.If):
-                chain_discs.append(_switch_discriminator(cur.test))
-                if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
-                    cur = cur.orelse[0]
-                else:
-                    break
-
-            arms = len(chain_discs)
-            if arms < _SWITCH_STATEMENT_THRESHOLD:
-                continue
-            # Every arm must resolve to a single non-``None`` discriminator
-            # AND every arm must share the same variable name.
-            head = chain_discs[0]
-            if head is None or any(d != head for d in chain_discs):
-                continue
-
-            scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
-            results.append(
-                _finding(
-                    "switch-statement",
-                    "info",
-                    scope_name,
-                    scope_kind,
-                    _loc(rel_path, node.lineno),
-                    arms,
-                    _SWITCH_STATEMENT_THRESHOLD,
-                    (
-                        f"Switch statement: if/elif chain on `{head}` with "
-                        f"{arms} arms in {scope_name} -- consider a dispatch "
-                        f"table or strategy pattern"
-                    ),
-                )
-            )
+            finding = _switch_finding_for_node(conn, file_id, rel_path, node, elif_tails)
+            if finding is not None:
+                results.append(finding)
     return results
 
 
@@ -3127,6 +3207,110 @@ def _block_re(open_delim: str, close_delim: str) -> re.Pattern[str]:
     return pat
 
 
+def _comment_density_syntax(lang: str) -> _CommentSyntax | None:
+    """Return comment syntax for ``lang`` and log unexpected omissions."""
+    syntax = _COMMENT_SYNTAX_BY_LANG.get(lang)
+    if syntax is None and lang not in _COMMENT_DENSITY_NO_SUPPORT:
+        log.debug(
+            "detect_comment_density: skipped unsupported language %r",
+            lang,
+        )
+    return syntax
+
+
+def _read_comment_density_source(workspace, rel_path: str) -> str | None:
+    try:
+        return (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError) as exc:
+        log.debug(
+            "detect_comment_density: skipped unreadable source %r under %r: %s",
+            rel_path,
+            workspace,
+            exc,
+        )
+        return None
+
+
+def _longest_comment_prefix(stripped: str, prefixes: tuple[str, ...]) -> str | None:
+    matched_prefix: str | None = None
+    for prefix in prefixes:
+        if stripped.startswith(prefix):
+            if matched_prefix is None or len(prefix) > len(matched_prefix):
+                matched_prefix = prefix
+    return matched_prefix
+
+
+def _line_comment_has_debt_marker(line: str, prefixes: tuple[str, ...]) -> bool:
+    stripped = line.lstrip()
+    matched_prefix = _longest_comment_prefix(stripped, prefixes)
+    if matched_prefix is None:
+        return False
+
+    # Strip the comment prefix so ``//TODO`` still has a word-boundary at
+    # the start of the comment body.
+    body = stripped[len(matched_prefix) :]
+    return _COMMENT_DENSITY_MARKER_RE.search(body) is not None
+
+
+def _line_comment_marker_count(lines: list[str], syntax: _CommentSyntax) -> int:
+    if not syntax.line:
+        return 0
+    return sum(1 for line in lines if _line_comment_has_debt_marker(line, syntax.line))
+
+
+def _block_comment_marker_count(source: str, syntax: _CommentSyntax) -> int:
+    marker_count = 0
+    for open_delim, close_delim in syntax.block:
+        pat = _block_re(open_delim, close_delim)
+        for block in pat.findall(source):
+            marker_count += len(_COMMENT_DENSITY_MARKER_RE.findall(block))
+    return marker_count
+
+
+def _comment_density_marker_count(source: str, syntax: _CommentSyntax) -> tuple[int, int] | None:
+    lines = source.splitlines()
+    total_lines = len(lines)
+    if total_lines == 0:
+        return None
+
+    marker_count = _line_comment_marker_count(lines, syntax)
+    marker_count += _block_comment_marker_count(source, syntax)
+    return marker_count, total_lines
+
+
+def _comment_density_rate(marker_count: int, total_lines: int) -> float | None:
+    if marker_count < _COMMENT_DENSITY_MIN_MARKERS:
+        return None
+
+    rate = marker_count / total_lines
+    if rate < _COMMENT_DENSITY_MIN_RATE:
+        return None
+    return rate
+
+
+def _comment_density_finding(
+    rel_path: str,
+    marker_count: int,
+    total_lines: int,
+    rate: float,
+) -> dict:
+    pct = round(rate * 100.0, 1)
+    return _finding(
+        "comment-density",
+        "info",
+        rel_path,
+        "file",
+        _loc(rel_path, None),
+        marker_count,
+        _COMMENT_DENSITY_MIN_MARKERS,
+        (
+            f"Comment density: {rel_path} has {marker_count} "
+            f"TODO/FIXME/XXX/HACK markers in {total_lines} lines "
+            f"({pct}% rate) -- review and resolve accumulated debt markers"
+        ),
+    )
+
+
 @detector("comment-density", confidence=CONFIDENCE_HEURISTIC)
 def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
     """Detect files where TODO/FIXME/XXX/HACK markers accumulate.
@@ -3169,93 +3353,29 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
     workspace = _find_indexed_source_root()
 
     for f in files:
-        lang = f["language"]
-        syntax = _COMMENT_SYNTAX_BY_LANG.get(lang)
+        syntax = _comment_density_syntax(f["language"])
         if syntax is None:
-            # W703: silent-fallback guard. Languages with a deliberate
-            # skip entry stay quiet; anything else logs at debug so an
-            # operator chasing missing findings can see WHICH language
-            # was passed through (Pattern 2).
-            if lang not in _COMMENT_DENSITY_NO_SUPPORT:
-                log.debug(
-                    "detect_comment_density: skipped unsupported language %r",
-                    lang,
-                )
             continue
 
         rel_path = f["path"]
-        try:
-            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
+        source = _read_comment_density_source(workspace, rel_path)
+        if source is None:
             continue
 
-        lines = source.splitlines()
-        total_lines = len(lines)
-        if total_lines == 0:
+        marker_data = _comment_density_marker_count(source, syntax)
+        if marker_data is None:
             continue
 
-        marker_count = 0
-        # ---- Line-comment pass (W605) -----------------------------------
-        # Match against any of the language's line prefixes. PHP wires
-        # both ``//`` and ``#``; one matching prefix per line is
-        # sufficient -- we count the LINE once, not once per prefix.
-        if syntax.line:
-            for ln in lines:
-                stripped = ln.lstrip()
-                # Pick the longest matching prefix so ``//`` doesn't
-                # mis-strip a future ``///`` doc-comment variant.
-                matched_prefix: str | None = None
-                for prefix in syntax.line:
-                    if stripped.startswith(prefix):
-                        if matched_prefix is None or len(prefix) > len(matched_prefix):
-                            matched_prefix = prefix
-                if matched_prefix is None:
-                    continue
-                # Strip the comment prefix before regex match so a token
-                # like ``//TODO`` (no whitespace) still hits the
-                # word-boundary at the START of the comment body.
-                body = stripped[len(matched_prefix) :]
-                if _COMMENT_DENSITY_MARKER_RE.search(body):
-                    marker_count += 1
-
-        # ---- Block-comment pass (W650 + W705) ---------------------------
-        # Iterate each ``(open, close)`` pair the language supports.
-        # Markers inside a block are counted by ``findall`` so a
-        # ``/** TODO: a; FIXME: b */`` block contributes 2 markers,
-        # while a single TODO that wraps over multiple physical lines
-        # inside one block contributes 1.
-        for open_delim, close_delim in syntax.block:
-            pat = _block_re(open_delim, close_delim)
-            for block in pat.findall(source):
-                marker_count += len(_COMMENT_DENSITY_MARKER_RE.findall(block))
-
-        if marker_count < _COMMENT_DENSITY_MIN_MARKERS:
-            continue
-        rate = marker_count / total_lines
-        if rate < _COMMENT_DENSITY_MIN_RATE:
+        marker_count, total_lines = marker_data
+        rate = _comment_density_rate(marker_count, total_lines)
+        if rate is None:
             continue
 
         # File-level finding: ``symbol_name`` is the file path so the
         # finding renders without needing an enclosing symbol; ``kind``
         # is ``file`` so cmd_smells maps the registry subject_kind to
         # ``file`` (NULL subject_id) rather than ``symbol``.
-        pct = round(rate * 100.0, 1)
-        results.append(
-            _finding(
-                "comment-density",
-                "info",
-                rel_path,
-                "file",
-                _loc(rel_path, None),
-                marker_count,
-                _COMMENT_DENSITY_MIN_MARKERS,
-                (
-                    f"Comment density: {rel_path} has {marker_count} "
-                    f"TODO/FIXME/XXX/HACK markers in {total_lines} lines "
-                    f"({pct}% rate) -- review and resolve accumulated debt markers"
-                ),
-            )
-        )
+        results.append(_comment_density_finding(rel_path, marker_count, total_lines, rate))
     return results
 
 

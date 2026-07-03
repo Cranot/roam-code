@@ -94,6 +94,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
 
+from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
 from roam.runs.ledger import latest_in_progress_run, log_event
 
@@ -125,6 +126,8 @@ _AUTHORITY_EVENT_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+_AUTO_LOG_EXPECTED_FAILURES: tuple[type[Exception], ...] = (OSError, TypeError, ValueError)
+
 
 def get_active_run_id(repo_root: Path) -> Optional[str]:
     """Resolve the currently-active run id, or ``None``.
@@ -140,14 +143,68 @@ def get_active_run_id(repo_root: Path) -> Optional[str]:
         return env_id
     try:
         meta = latest_in_progress_run(repo_root)
-    except Exception as exc:
+    except _AUTO_LOG_EXPECTED_FAILURES as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # disk-scan FAILURE produces the same ``None`` as a legitimate
-        # "no active run"; surface the lineage so a broken ledger
-        # directory isn't silently read as "auto-logging is off".
+        # known disk-scan / metadata-shape FAILURE produces the same
+        # ``None`` as a legitimate "no active run"; surface the lineage
+        # so a broken ledger directory isn't silently read as
+        # "auto-logging is off". Unexpected defects propagate instead of
+        # being conserved as ledger availability.
         log_swallowed("runs.helpers:get_active_run_id:latest_in_progress", exc)
         return None
     return meta.run_id if meta else None
+
+
+def _resolve_run_id(repo_root: Path) -> Optional[str]:
+    """Resolve the active run id as auto_log's own failure domain.
+
+    ``get_active_run_id`` already shields its disk scan, but auto_log's
+    never-raise contract demands a belt-and-braces shield here too;
+    isolating it keeps that shield out of auto_log's control flow.
+    """
+    try:
+        return get_active_run_id(repo_root)
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — same
+        # rationale: a resolution failure silently drops the ledger event.
+        log_swallowed("runs.helpers:auto_log:get_active_run_id", exc)
+        return None
+
+
+def _filter_authority_fields(
+    extra_event_fields: Optional[Mapping[str, Any]],
+) -> dict[str, str]:
+    """Enforce the W294 closed whitelist on caller-supplied event fields.
+
+    Non-string values and unknown keys are silently dropped: log_event's
+    signature accepts **event_fields so any string survives, but we
+    constrain the surface to what the W292 harvester reads.
+    """
+    safe: dict[str, str] = {}
+    if not isinstance(extra_event_fields, Mapping):
+        return safe
+    for k, v in extra_event_fields.items():
+        if k in _AUTHORITY_EVENT_FIELDS and isinstance(v, str) and v:
+            safe[k] = v
+    return safe
+
+
+def _resolve_repo_root_for_auto_log() -> Optional[Path]:
+    """Keep auto-log root lookup best-effort without hiding import/programmer bugs."""
+    try:
+        return find_project_root()
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
+        # auto_log is opportunistic, but a find_project_root() filesystem
+        # failure silently drops the event from the run ledger. Surface the
+        # lineage so a missing timeline entry has a discoverable cause.
+        log_swallowed("runs.helpers:auto_log:find_project_root", exc)
+        return None
+
+
+def _as_dict(value: Any) -> dict:
+    """Coerce an untrusted envelope sub-object to a dict (``{}`` if not)."""
+    return value if isinstance(value, dict) else {}
 
 
 def auto_log(
@@ -194,46 +251,16 @@ def auto_log(
     if not isinstance(envelope, dict):
         envelope = {}
     if repo_root is None:
-        try:
-            from roam.db.connection import find_project_root
-
-            repo_root = find_project_root()
-        except Exception as exc:
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
-            # auto_log is opportunistic, but a find_project_root() failure
-            # silently drops the event from the run ledger. Surface the
-            # lineage so a missing timeline entry has a discoverable cause.
-            log_swallowed("runs.helpers:auto_log:find_project_root", exc)
+        repo_root = _resolve_repo_root_for_auto_log()
+        if repo_root is None:
             return None
-    try:
-        run_id = get_active_run_id(repo_root)
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — same
-        # rationale: a resolution failure silently drops the ledger event.
-        log_swallowed("runs.helpers:auto_log:get_active_run_id", exc)
-        return None
+    run_id = _resolve_run_id(repo_root)
     if not run_id:
         return None
     try:
-        summary = envelope.get("summary") or {}
-        if not isinstance(summary, dict):
-            summary = {}
-        agent_contract = envelope.get("agent_contract") or {}
-        if not isinstance(agent_contract, dict):
-            agent_contract = {}
-
-        # W294 - merge whitelisted authority-shaped fields. Non-string
-        # values and unknown keys are silently dropped: log_event's
-        # signature accepts **event_fields so any string survives, but
-        # we constrain the surface to what the W292 harvester reads.
-        extra_fields_safe: dict[str, str] = {}
-        if isinstance(extra_event_fields, Mapping):
-            for k, v in extra_event_fields.items():
-                if k not in _AUTHORITY_EVENT_FIELDS:
-                    continue
-                if not isinstance(v, str) or not v:
-                    continue
-                extra_fields_safe[k] = v
+        summary = _as_dict(envelope.get("summary"))
+        agent_contract = _as_dict(envelope.get("agent_contract"))
+        extra_fields_safe = _filter_authority_fields(extra_event_fields)
 
         return log_event(
             repo_root,
@@ -249,7 +276,7 @@ def auto_log(
             },
             **extra_fields_safe,
         )
-    except Exception as exc:
+    except _AUTO_LOG_EXPECTED_FAILURES as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
         # auto-logging is OPPORTUNISTIC and must never crash the gate
         # command that called us, but a silent pass here means a gate

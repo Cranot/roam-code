@@ -154,6 +154,8 @@ _UNGUARDED_OK_MARKER = "unguarded-import: ok"
 # allowing all numpy imports everywhere.
 _KNOWN_PRE_EXISTING_OFFENDERS: frozenset[tuple[str, int, str]] = frozenset()
 
+OptionalImportOffender = tuple[str, int, str, str]
+
 
 def _src_roam_root() -> Path:
     """Locate src/roam/ relative to this test file."""
@@ -244,6 +246,75 @@ def _iter_python_sources(root: Path):
     return (p for p in root.rglob("*.py") if p.is_file())
 
 
+def _read_ast_or_skip_unscannable_file(path: Path) -> tuple[str, ast.AST] | None:
+    """Return source + AST, preserving full scan coverage on unreadable files."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        return text, ast.parse(text, filename=str(path))
+    except SyntaxError:
+        return None
+
+
+def _offender_if_optional_import_requires_guard(
+    rel_posix: str,
+    source_lines: list[str],
+    node: ast.stmt,
+) -> OptionalImportOffender | None:
+    """Return offender evidence when an optional import escapes the guard policy."""
+    mod = _references_optional_module(node)
+    if mod is None:
+        return None
+    if _line_has_ok_marker(source_lines, node.lineno):
+        return None
+    if (rel_posix, node.lineno, mod) in _KNOWN_PRE_EXISTING_OFFENDERS:
+        return None
+
+    line_index = node.lineno - 1
+    line_text = source_lines[line_index] if line_index < len(source_lines) else "<eof>"
+    return rel_posix, node.lineno, mod, line_text.strip()
+
+
+def _find_file_offenders_without_stopping_scan(path: Path, project_root: Path) -> list[OptionalImportOffender]:
+    """Find offenders in one file while keeping unscannable files non-fatal."""
+    parsed = _read_ast_or_skip_unscannable_file(path)
+    if parsed is None:
+        return []
+
+    text, tree = parsed
+    source_lines = text.splitlines()
+    rel_posix = path.relative_to(project_root).as_posix()
+    offenders: list[OptionalImportOffender] = []
+    for node in _collect_unguarded_imports_anywhere(tree):
+        offender = _offender_if_optional_import_requires_guard(rel_posix, source_lines, node)
+        if offender is not None:
+            offenders.append(offender)
+    return offenders
+
+
+def _collect_optional_import_offenders_under(root: Path) -> list[OptionalImportOffender]:
+    """Collect offender evidence across src/roam without failing open on one file."""
+    project_root = root.parent.parent
+    offenders: list[OptionalImportOffender] = []
+    for path in _iter_python_sources(root):
+        offenders.extend(_find_file_offenders_without_stopping_scan(path, project_root))
+    return offenders
+
+
+def _format_optional_imports_as_actionable_failure(offenders: list[OptionalImportOffender]) -> str:
+    """Format offender evidence so each fix is one grep away."""
+    lines = ["Unguarded optional-dependency imports detected:"]
+    for f, ln, mod, src in offenders:
+        lines.append(f"  {f}:{ln}: imports optional '{mod}' unguarded -> {src!r}")
+    lines.append(
+        "Fix: wrap in try/except ImportError and degrade gracefully, "
+        "or append '# unguarded-import: ok' if the import is genuinely required."
+    )
+    return "\n".join(lines)
+
+
 def test_no_remaining_unguarded_optional_imports_in_src():
     """Regression guard. Scan ``src/roam/`` for ANY import (module-level
     OR function-level) of a known-optional package that is NOT inside a
@@ -266,42 +337,9 @@ def test_no_remaining_unguarded_optional_imports_in_src():
     root = _src_roam_root()
     assert root.is_dir(), f"expected src/roam/ to exist at {root}"
 
-    offenders: list[tuple[str, int, str, str]] = []  # (file, lineno, module, line)
-
-    for path in _iter_python_sources(root):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        try:
-            tree = ast.parse(text, filename=str(path))
-        except SyntaxError:
-            continue
-
-        source_lines = text.splitlines()
-        for node in _collect_unguarded_imports_anywhere(tree):
-            mod = _references_optional_module(node)
-            if mod is None:
-                continue
-            if _line_has_ok_marker(source_lines, node.lineno):
-                continue
-            rel = path.relative_to(root.parent.parent)
-            # Normalise to POSIX for cross-platform allowlist keys.
-            rel_posix = rel.as_posix()
-            if (rel_posix, node.lineno, mod) in _KNOWN_PRE_EXISTING_OFFENDERS:
-                continue
-            line_text = source_lines[node.lineno - 1] if node.lineno - 1 < len(source_lines) else "<eof>"
-            offenders.append((rel_posix, node.lineno, mod, line_text.strip()))
-
+    offenders = _collect_optional_import_offenders_under(root)
     if offenders:
-        lines = ["Unguarded optional-dependency imports detected:"]
-        for f, ln, mod, src in offenders:
-            lines.append(f"  {f}:{ln}: imports optional '{mod}' unguarded -> {src!r}")
-        lines.append(
-            "Fix: wrap in try/except ImportError and degrade gracefully, "
-            "or append '# unguarded-import: ok' if the import is genuinely required."
-        )
-        pytest.fail("\n".join(lines))
+        pytest.fail(_format_optional_imports_as_actionable_failure(offenders))
 
 
 # ---------------------------------------------------------------------------

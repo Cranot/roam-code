@@ -8,13 +8,20 @@ Two surfaces:
    that the server knows takes a symbol or path. FastMCP 3.0.x doesn't
    expose this via decorator yet, so we patch the handler directly.
 
-2. **Direct tool** — :func:`complete_prefix` is also exposed as the
-   ``roam_complete`` tool so agents can call it explicitly without
-   relying on protocol-level completion (which not every MCP client
-   supports yet).
+2. **Direct tool** — the ``roam_complete`` MCP wrapper
+   (``mcp_server.py``) calls :func:`complete_paths` and
+   :func:`complete_commands` from this module, but routes *symbol*
+   completion through the CLI's strict left-anchored prefix matcher
+   (``cmd_complete._prefix_symbols``) instead of the FTS5-backed
+   :func:`complete_symbols` — the W3.1 parity fix: FTS5's camelCase
+   tokenizer would let ``use*`` match ``MyUseFoo``, breaking the
+   literal-prefix contract the tool promises.
 
-Both paths share the same prefix-lookup function so behaviour stays
-consistent.
+:func:`complete_prefix` is the library-level one-call aggregator over
+all three helpers (FTS5 semantics for symbols). The protocol completion
+handler uses it for single-kind completions, and it remains a stable
+public entry point for embedders and for MCP clients that lack
+protocol-level completion support.
 """
 
 from __future__ import annotations
@@ -22,10 +29,19 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from roam.observability import log_swallowed
+
+__all__ = [
+    "complete_symbols",
+    "complete_paths",
+    "complete_commands",
+    "complete_prefix",
+    "install_completion_handler",
+]
 
 # Argument-name conventions we'll auto-complete on. If a prompt or
 # resource template uses an arg with one of these names, we treat its
@@ -35,6 +51,18 @@ _PATH_ARG_NAMES = {"path", "file", "file_path"}
 _COMMAND_ARG_NAMES = {"command", "cmd"}
 
 _MAX_RESULTS = 30
+
+
+@lru_cache(maxsize=1)
+def _registered_command_names() -> tuple[str, ...]:
+    """Read command names without importing the Click CLI entry point."""
+    try:
+        from roam.surface_counts import cli_commands
+
+        return tuple(sorted(cli_commands().keys()))
+    except (ImportError, KeyError, OSError, RuntimeError, SyntaxError, TypeError, ValueError) as exc:
+        log_swallowed("completions:command_registry", exc)
+        return ()
 
 
 def _project_root_for(value: str | None) -> Path | None:
@@ -105,6 +133,62 @@ def _fts5_prefix_query(prefix: str) -> str:
     return " ".join(parts)
 
 
+def _symbol_rows_with_like_rescue(conn: Any, prefix: str, limit: int) -> list[Any]:
+    """Prefer FTS ranking while preserving completions on degraded indexes."""
+    match_expr = _fts5_prefix_query(prefix)
+    rows: list[Any] = []
+    if match_expr:
+        try:
+            cur = conn.execute(
+                """
+                SELECT s.name
+                FROM symbol_fts f
+                JOIN symbols s ON s.id = f.rowid
+                WHERE symbol_fts MATCH ?
+                ORDER BY bm25(symbol_fts) ASC
+                LIMIT ?
+                """,
+                (match_expr, limit * 3),
+            )
+            rows = cur.fetchall()
+        except sqlite3.Error:
+            # FTS5 table missing / malformed query - fall through to
+            # the LIKE fallback. Programmer errors propagate per W531.
+            rows = []
+    if rows:
+        return rows
+    try:
+        cur = conn.execute(
+            """
+            SELECT name FROM symbols
+            WHERE name LIKE ?
+            ORDER BY length(name) ASC
+            LIMIT ?
+            """,
+            (prefix + "%", limit * 3),
+        )
+        return cur.fetchall()
+    except sqlite3.Error:
+        # symbols table missing on a corrupt / pre-init DB.
+        # Programmer errors propagate per W531.
+        return []
+
+
+def _unique_symbol_names_preserving_rank(rows: list[Any], limit: int) -> list[str]:
+    """Bound duplicate-prone SQL rows without disturbing ranking."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        name = row[0] if not isinstance(row, str) else row
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None = None) -> list[str]:
     """Return up to *limit* symbol names matching ``prefix``."""
     if not prefix:
@@ -113,54 +197,8 @@ def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None
     if conn is None:
         return []
     try:
-        match_expr = _fts5_prefix_query(prefix)
-        rows: list[Any] = []
-        if match_expr:
-            try:
-                cur = conn.execute(
-                    """
-                    SELECT s.name
-                    FROM symbol_fts f
-                    JOIN symbols s ON s.id = f.rowid
-                    WHERE symbol_fts MATCH ?
-                    ORDER BY bm25(symbol_fts) ASC
-                    LIMIT ?
-                    """,
-                    (match_expr, limit * 3),
-                )
-                rows = cur.fetchall()
-            except sqlite3.Error:
-                # FTS5 table missing / malformed query — fall through to
-                # the LIKE fallback. Programmer errors propagate per W531.
-                rows = []
-        if not rows:
-            try:
-                cur = conn.execute(
-                    """
-                    SELECT name FROM symbols
-                    WHERE name LIKE ?
-                    ORDER BY length(name) ASC
-                    LIMIT ?
-                    """,
-                    (prefix + "%", limit * 3),
-                )
-                rows = cur.fetchall()
-            except sqlite3.Error:
-                # symbols table missing on a corrupt / pre-init DB.
-                # Programmer errors propagate per W531.
-                rows = []
-
-        seen: set[str] = set()
-        out: list[str] = []
-        for row in rows:
-            name = row[0] if not isinstance(row, str) else row
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            out.append(name)
-            if len(out) >= limit:
-                break
-        return out
+        rows = _symbol_rows_with_like_rescue(conn, prefix, limit)
+        return _unique_symbol_names_preserving_rank(rows, limit)
     finally:
         try:
             conn.close()
@@ -192,12 +230,8 @@ def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None =
 
 def complete_commands(prefix: str, *, limit: int = _MAX_RESULTS) -> list[str]:
     """Return roam CLI command names matching ``prefix``."""
-    try:
-        from roam.cli import _COMMANDS
-    except ImportError:
-        return []
     p = (prefix or "").lower()
-    out = sorted(name for name in _COMMANDS.keys() if name.lower().startswith(p))
+    out = [name for name in _registered_command_names() if name.lower().startswith(p)]
     return out[:limit]
 
 
@@ -208,7 +242,16 @@ def complete_prefix(
     limit: int = _MAX_RESULTS,
     root: str | None = None,
 ) -> dict[str, list[str]]:
-    """Public completion entry point used by ``roam_complete`` tool."""
+    """Aggregate prefix completions for one ``kind`` into a single dict.
+
+    Library-level public entry point, deliberately retained despite
+    having no in-tree production callers: embedders and MCP clients
+    without protocol-level completion support get one stable call
+    covering symbols/paths/commands. NOT wired into the
+    ``roam_complete`` MCP tool — since the W3.1 parity fix that
+    wrapper uses the CLI's strict prefix matcher for symbols, whereas
+    this aggregator keeps :func:`complete_symbols`'s FTS5 semantics.
+    """
     kind = (kind or "symbol").lower()
     if kind == "symbol":
         return {"symbols": complete_symbols(prefix, limit=limit, root=root)}
@@ -269,20 +312,20 @@ def install_completion_handler(fastmcp_server: Any) -> bool:
 
         values: list[str] = []
         if arg_name in _SYMBOL_ARG_NAMES:
-            values = complete_symbols(value)
+            values = complete_prefix(value, kind="symbol").get("symbols", [])
         elif arg_name in _PATH_ARG_NAMES:
-            values = complete_paths(value)
+            values = complete_prefix(value, kind="path").get("paths", [])
         elif arg_name in _COMMAND_ARG_NAMES:
-            values = complete_commands(value)
+            values = complete_prefix(value, kind="command").get("commands", [])
         elif isinstance(ref, ResourceTemplateReference):
             uri = getattr(ref, "uri", "") or ""
             if "symbol" in uri:
-                values = complete_symbols(value)
+                values = complete_prefix(value, kind="symbol").get("symbols", [])
             elif "file" in uri or "path" in uri:
-                values = complete_paths(value)
+                values = complete_prefix(value, kind="path").get("paths", [])
         elif isinstance(ref, PromptReference):
             # Best-effort fallback for unknown prompt args.
-            values = complete_symbols(value)[:10]
+            values = complete_prefix(value, kind="symbol").get("symbols", [])[:10]
 
         return CompleteResult(
             completion=Completion(

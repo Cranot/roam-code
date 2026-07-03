@@ -353,6 +353,144 @@ def _build_partition_descriptor(
     return descriptor, files_set
 
 
+def _edge_sample_preserves_dependency_direction(u_meta: dict, v_meta: dict) -> str:
+    """Format an edge sample without hiding source -> target direction."""
+    edge_parts = [u_meta.get("path", "?"), v_meta.get("path", "?")]
+    return " -> ".join(edge_parts)
+
+
+def _dependencies_preserve_handoff_direction(
+    G,
+    node_part: dict[int, int],
+    node_meta: dict[int, dict],
+    all_partition_files: list[set[str]],
+) -> list[dict]:
+    """Build cross-partition dependencies while preserving handoff direction."""
+    dep_counter: dict[tuple[int, int], list[str]] = defaultdict(list)
+    for u, v in G.edges:
+        pu = node_part.get(u)
+        pv = node_part.get(v)
+        if pu is None or pv is None or pu == pv:
+            continue
+        edge_desc = _edge_sample_preserves_dependency_direction(
+            node_meta.get(u, {}),
+            node_meta.get(v, {}),
+        )
+        dep_counter[(pu + 1, pv + 1)].append(edge_desc)
+
+    dependencies = []
+    for (from_id, to_id), edge_descs in sorted(dep_counter.items()):
+        shared = all_partition_files[from_id - 1] & all_partition_files[to_id - 1]
+        dependencies.append(
+            {
+                "from": from_id,
+                "to": to_id,
+                "edge_count": len(edge_descs),
+                "sample_edges": edge_descs[:5],
+                "shared_files": sorted(shared),
+            }
+        )
+    return dependencies
+
+
+def _derive_conflict_topology(
+    G,
+    node_part: dict[int, int],
+    node_meta: dict[int, dict],
+    all_partition_files: list[set[str]],
+) -> tuple[list[dict], list[dict]]:
+    """Derive cross-partition dependencies and shared-file conflict hotspots.
+
+    Walking the symbol graph once per edge builds the dependency topology;
+    a second pass over node -> partition membership surfaces files that
+    straddle partition boundaries. Returning both together keeps the two
+    conflict-relevant views co-located so callers do not re-derive them.
+    """
+    dependencies = _dependencies_preserve_handoff_direction(
+        G,
+        node_part,
+        node_meta,
+        all_partition_files,
+    )
+
+    # Files referenced by symbols in multiple partitions
+    file_partitions: dict[str, set[int]] = defaultdict(set)
+    for n, pidx in node_part.items():
+        meta = node_meta.get(n)
+        if meta:
+            file_partitions[meta["path"]].add(pidx + 1)
+
+    conflict_hotspots = []
+    for fpath, part_ids in sorted(file_partitions.items()):
+        if len(part_ids) >= 2:
+            conflict_hotspots.append(
+                {
+                    "file": fpath,
+                    "partition_count": len(part_ids),
+                    "partitions": sorted(part_ids),
+                }
+            )
+    conflict_hotspots.sort(key=lambda h: -h["partition_count"])
+    conflict_hotspots = conflict_hotspots[:20]  # cap
+
+    return dependencies, conflict_hotspots
+
+
+def _load_node_meta(conn: sqlite3.Connection, node_ids: list[int]) -> dict[int, dict]:
+    """Bulk-load symbol metadata needed by partition descriptors.
+
+    Joins symbols, files, graph_metrics and symbol_metrics once for the
+    whole partition set so downstream descriptor construction is O(1) per
+    symbol lookup instead of hitting the DB per node.
+    """
+    node_meta: dict[int, dict] = {}
+    if not node_ids:
+        return node_meta
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, s.qualified_name, f.path, f.language, "
+        "f.file_role, COALESCE(gm.pagerank, 0) AS pagerank, "
+        "COALESCE(sm.cognitive_complexity, 0) AS complexity "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+        "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+        "WHERE s.id IN ({ph})",
+        node_ids,
+    )
+    for r in rows:
+        node_meta[r["id"]] = {
+            "name": r["name"],
+            "kind": r["kind"],
+            "qualified_name": r["qualified_name"],
+            "path": r["path"].replace("\\", "/"),
+            "language": r["language"],
+            "file_role": r["file_role"],
+            "pagerank": r["pagerank"],
+            "complexity": r["complexity"],
+        }
+    return node_meta
+
+
+def _assign_agents_by_load(result_partitions: list[dict], n_agents: int) -> None:
+    """Assign each partition to the least-loaded worker by complexity.
+
+    Sorting partitions by descending complexity before round-robin
+    assignment keeps the max agent load low (a greedy load-balancing
+    heuristic). The ``agent`` key is written in-place on each partition.
+    """
+    sorted_parts = sorted(
+        range(len(result_partitions)),
+        key=lambda i: result_partitions[i]["complexity"],
+        reverse=True,
+    )
+    agent_loads = [0.0] * n_agents
+    for pi in sorted_parts:
+        min_agent = min(range(n_agents), key=lambda a: agent_loads[a])
+        result_partitions[pi]["agent"] = f"Worker-{min_agent + 1}"
+        agent_loads[min_agent] += result_partitions[pi]["complexity"]
+
+
 def compute_partition_manifest(
     conn: sqlite3.Connection,
     n_agents: int | None = None,
@@ -400,33 +538,9 @@ def compute_partition_manifest(
 
     # -- 2. Gather node metadata in bulk -------------------------------------
     all_node_ids = list(set().union(*(p["nodes"] for p in partitions)))
-    node_meta: dict[int, dict] = {}
-    if all_node_ids:
-        rows = batched_in(
-            conn,
-            "SELECT s.id, s.name, s.kind, s.qualified_name, f.path, f.language, "
-            "f.file_role, COALESCE(gm.pagerank, 0) AS pagerank, "
-            "COALESCE(sm.cognitive_complexity, 0) AS complexity "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
-            "WHERE s.id IN ({ph})",
-            all_node_ids,
-        )
-        for r in rows:
-            node_meta[r["id"]] = {
-                "name": r["name"],
-                "kind": r["kind"],
-                "qualified_name": r["qualified_name"],
-                "path": r["path"].replace("\\", "/"),
-                "language": r["language"],
-                "file_role": r["file_role"],
-                "pagerank": r["pagerank"],
-                "complexity": r["complexity"],
-            }
+    node_meta = _load_node_meta(conn, all_node_ids)
 
-    # -- 3. Build node → partition index -------------------------------------
+    # -- 3. Build node → partition index ---------------------------------------
     node_part: dict[int, int] = {}
     for idx, p in enumerate(partitions):
         for n in p["nodes"]:
@@ -463,72 +577,16 @@ def compute_partition_manifest(
         result_partitions.append(descriptor)
         all_partition_files.append(files_set)
 
-    # -- 6. Balance partitions by complexity → assign to agents ---------------
-    # Sort partitions by complexity descending, assign round-robin to balance
-    sorted_parts = sorted(
-        range(len(result_partitions)),
-        key=lambda i: result_partitions[i]["complexity"],
-        reverse=True,
-    )
-    agent_loads = [0.0] * n_agents
-    for pi in sorted_parts:
-        # Assign to the agent with the least load
-        min_agent = min(range(n_agents), key=lambda a: agent_loads[a])
-        result_partitions[pi]["agent"] = f"Worker-{min_agent + 1}"
-        agent_loads[min_agent] += result_partitions[pi]["complexity"]
+    # -- 6. Balance partitions by complexity → assign to agents ------------
+    _assign_agents_by_load(result_partitions, n_agents)
 
-    # -- 6b. Compute composite difficulty scores ------------------------------
+    # -- 6b. Compute composite difficulty scores ---------------------------
     compute_difficulty_score(result_partitions)
 
-    # -- 7. Cross-partition dependencies -------------------------------------
-    dep_counter: dict[tuple[int, int], list[str]] = defaultdict(list)
-    for u, v in G.edges:
-        pu = node_part.get(u)
-        pv = node_part.get(v)
-        if pu is not None and pv is not None and pu != pv:
-            u_meta = node_meta.get(u, {})
-            v_meta = node_meta.get(v, {})
-            u_file = u_meta.get("path", "?")
-            v_file = v_meta.get("path", "?")
-            edge_desc = f"{u_file} -> {v_file}"
-            dep_counter[(pu + 1, pv + 1)].append(edge_desc)
+    # -- 7. Cross-partition topology (dependencies + hotspots) -------------
+    dependencies, conflict_hotspots = _derive_conflict_topology(G, node_part, node_meta, all_partition_files)
 
-    dependencies = []
-    for (from_id, to_id), edge_descs in sorted(dep_counter.items()):
-        # Find shared files
-        shared = all_partition_files[from_id - 1] & all_partition_files[to_id - 1]
-        dependencies.append(
-            {
-                "from": from_id,
-                "to": to_id,
-                "edge_count": len(edge_descs),
-                "sample_edges": edge_descs[:5],
-                "shared_files": sorted(shared),
-            }
-        )
-
-    # -- 8. Conflict hotspots ------------------------------------------------
-    # Files referenced by symbols in multiple partitions
-    file_partitions: dict[str, set[int]] = defaultdict(set)
-    for n, pidx in node_part.items():
-        meta = node_meta.get(n)
-        if meta:
-            file_partitions[meta["path"]].add(pidx + 1)
-
-    conflict_hotspots = []
-    for fpath, part_ids in sorted(file_partitions.items()):
-        if len(part_ids) >= 2:
-            conflict_hotspots.append(
-                {
-                    "file": fpath,
-                    "partition_count": len(part_ids),
-                    "partitions": sorted(part_ids),
-                }
-            )
-    conflict_hotspots.sort(key=lambda h: -h["partition_count"])
-    conflict_hotspots = conflict_hotspots[:20]  # cap
-
-    # -- 9. Overall conflict probability -------------------------------------
+    # -- 8. Overall conflict probability -------------------------------------
     overall_cp = compute_conflict_probability(G, partitions)
 
     # -- 10. Merge order -----------------------------------------------------
@@ -1077,16 +1135,14 @@ def partition(ctx, n_agents, output_format):
             # Key files (top 3)
             if p["files"]:
                 top_files = p["files"][:3]
-                files_str = ", ".join(top_files)
-                if len(p["files"]) > 3:
-                    files_str += f" (+{len(p['files']) - 3} more)"
-                click.echo(f"  Key files: {files_str}")
+                more_files = f" (+{len(p['files']) - 3} more)" if len(p["files"]) > 3 else ""
+                click.echo(f"  Key files: {', '.join(top_files)}{more_files}")
             # Key symbols
             if p["key_symbols"]:
-                sym_strs = []
-                for s in p["key_symbols"][:3]:
-                    sym_strs.append(f"{s['kind']} {s['name']} (PageRank {s['pagerank']:.4f})")
-                click.echo(f"  Key symbols: {', '.join(sym_strs)}")
+                key_symbols = ", ".join(
+                    f"{s['kind']} {s['name']} (PageRank {s['pagerank']:.4f})" for s in p["key_symbols"][:3]
+                )
+                click.echo(f"  Key symbols: {key_symbols}")
             click.echo(f"  Conflict risk: {p['conflict_risk']} ({p['cross_partition_edges']} cross-partition edges)")
             click.echo()
 
@@ -1094,11 +1150,8 @@ def partition(ctx, n_agents, output_format):
         if manifest["dependencies"]:
             click.echo("CROSS-PARTITION DEPENDENCIES:")
             for dep in manifest["dependencies"]:
-                sample = ""
-                if dep["sample_edges"]:
-                    sample = f": {dep['sample_edges'][0]}"
-                    if len(dep["sample_edges"]) > 1:
-                        sample += ", ..."
+                sample_edges = dep["sample_edges"]
+                sample = f": {sample_edges[0]}{', ...' if len(sample_edges) > 1 else ''}" if sample_edges else ""
                 click.echo(f"  Partition {dep['from']} -> Partition {dep['to']} ({dep['edge_count']} edges{sample})")
             click.echo()
 

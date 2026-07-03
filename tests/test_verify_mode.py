@@ -97,17 +97,49 @@ def test_structural_checks_available_and_opt_in():
     assert "complexity" in sel and "cycles" in sel
 
 
-def test_tests_check_is_opt_in_only():
-    # the EXECUTABLE-signal check is available but never in the default set or
-    # auto (running tests is expensive — opt in via --checks/--all).
+def test_tests_check_auto_on_by_default_env_reversible(monkeypatch):
+    # the EXECUTABLE-signal check is available, NOT in the always-on default
+    # set, but auto-selected by default on a Python edit (the impacted-test run
+    # is the #1 signal a behavioral regression trips even when static is green).
+    # Reversible: ROAM_VERIFY_TESTS=0 takes it back out of auto.
     from roam.commands.cmd_verify import _ALL_CHECKS, _DEFAULT_CHECKS
 
     assert "tests" in _ALL_CHECKS
     assert "tests" not in _DEFAULT_CHECKS
+    monkeypatch.delenv("ROAM_VERIFY_TESTS", raising=False)
+    assert "tests" in auto_select_checks(["src/foo.py"])  # default ON
+    monkeypatch.setenv("ROAM_VERIFY_TESTS", "1")
+    assert "tests" in auto_select_checks(["src/foo.py"])
+    monkeypatch.setenv("ROAM_VERIFY_TESTS", "0")  # kill switch
     assert "tests" not in auto_select_checks(["src/foo.py"])
-    # --all and explicit --checks unlock it
+    # --all and explicit --checks unlock it regardless of the env default
     assert "tests" in resolve_selected_checks("all", False, {}, [])
     assert resolve_selected_checks("tests", False, {}, []) == ["tests"]
+
+
+def test_breaking_guardrail_auto_on_by_default_env_reversible(monkeypatch):
+    # the breaking-change guardrail is auto-selected by default on a Python edit
+    # and fully reversible via ROAM_VERIFY_BREAKING.
+    from roam.commands.cmd_verify import _ALL_CHECKS, _DEFAULT_CHECKS
+
+    assert "breaking" in _ALL_CHECKS and "breaking" not in _DEFAULT_CHECKS
+    monkeypatch.delenv("ROAM_VERIFY_BREAKING", raising=False)
+    assert "breaking" in auto_select_checks(["src/foo.py"])  # default ON
+    monkeypatch.setenv("ROAM_VERIFY_BREAKING", "0")
+    assert "breaking" not in auto_select_checks(["src/foo.py"])
+
+
+def test_taint_gate_opt_in_only(monkeypatch):
+    # taint is FP-prone: available + explicit/--all selectable, but auto only
+    # when ROAM_VERIFY_TAINT=1 (default OFF).
+    from roam.commands.cmd_verify import _ALL_CHECKS
+
+    assert "taint" in _ALL_CHECKS
+    monkeypatch.delenv("ROAM_VERIFY_TAINT", raising=False)
+    assert "taint" not in auto_select_checks(["src/foo.py"])  # default OFF
+    monkeypatch.setenv("ROAM_VERIFY_TAINT", "1")
+    assert "taint" in auto_select_checks(["src/foo.py"])
+    assert "taint" in resolve_selected_checks("all", False, {}, [])
 
 
 def test_pytest_failure_parsing():

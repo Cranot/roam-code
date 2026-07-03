@@ -75,9 +75,12 @@ def test_w149_telemetry_off_thread_writes_eventually(tmp_path):
 def test_w147_cap_enforced_lru(tmp_path):
     """Beyond the cap, oldest rows are evicted by ts."""
     (tmp_path / ".roam").mkdir()
-    # Lower cap for the test (don't write 4096 rows!)
-    orig_cap = M._RUN_ROAM_PERSIST_CAP
-    M._RUN_ROAM_PERSIST_CAP = 3
+    # Lower cap for the test (don't write 4096 rows!). The cap is read by
+    # _run_roam_persist_put, which lives in roam.plan.plan_cache — patch it there.
+    from roam.plan import plan_cache as PC
+
+    orig_cap = PC._RUN_ROAM_PERSIST_CAP
+    PC._RUN_ROAM_PERSIST_CAP = 3
     try:
         for i in range(5):
             M._run_roam_persist_put(["--json", "uses", f"sym{i}"], str(tmp_path), "h", {"i": i})
@@ -89,4 +92,4 @@ def test_w147_cap_enforced_lru(tmp_path):
         finally:
             conn.close()
     finally:
-        M._RUN_ROAM_PERSIST_CAP = orig_cap
+        PC._RUN_ROAM_PERSIST_CAP = orig_cap

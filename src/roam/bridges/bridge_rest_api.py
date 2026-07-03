@@ -173,17 +173,7 @@ class RestApiBridge(LanguageBridge):
         results: list[tuple[str, str]] = []
 
         # First pass: collect class-level route prefixes (Spring Boot pattern)
-        class_prefixes: dict[str, str] = {}
-        if mode == "server":
-            for sym in symbols:
-                kind = sym.get("kind", "")
-                if kind != "class":
-                    continue
-                sig = sym.get("signature", "") or ""
-                qname = sym.get("qualified_name", sym.get("name", ""))
-                for m in _JAVA_ROUTE_RE.finditer(sig):
-                    class_prefixes[qname] = m.group(1).rstrip("/")
-                    break
+        class_prefixes = self._spring_class_prefixes(symbols) if mode == "server" else {}
 
         for sym in symbols:
             name = sym.get("name", "")
@@ -208,17 +198,37 @@ class RestApiBridge(LanguageBridge):
                 urls.extend(m.group(1) for m in _RUBY_ROUTE_RE.finditer(text))
 
                 # Spring Boot: prepend class-level prefix to method routes
-                kind = sym.get("kind", "")
-                if kind == "method" and class_prefixes:
-                    parent = sym.get("parent", "")
-                    prefix = class_prefixes.get(parent, "")
-                    if prefix:
-                        urls = [prefix + u if not u.startswith(prefix) else u for u in urls]
+                urls = self._with_spring_class_prefix(urls, sym, class_prefixes)
 
             for url in urls:
                 results.append((url, qname))
 
         return results
+
+    def _spring_class_prefixes(self, symbols: list[dict]) -> dict[str, str]:
+        """Collect Spring Boot class-level route prefixes by qualified name."""
+        prefixes: dict[str, str] = {}
+        for sym in symbols:
+            if sym.get("kind", "") != "class":
+                continue
+
+            sig = sym.get("signature", "") or ""
+            qname = sym.get("qualified_name", sym.get("name", ""))
+            match = _JAVA_ROUTE_RE.search(sig)
+            if match:
+                prefixes[qname] = match.group(1).rstrip("/")
+        return prefixes
+
+    def _with_spring_class_prefix(self, urls: list[str], sym: dict, class_prefixes: dict[str, str]) -> list[str]:
+        """Prepend a Spring Boot class-level prefix to method route URLs."""
+        if sym.get("kind", "") != "method":
+            return urls
+
+        prefix = class_prefixes.get(sym.get("parent", ""), "")
+        if not prefix:
+            return urls
+
+        return [prefix + url if not url.startswith(prefix) else url for url in urls]
 
     def _urls_match(self, client_url: str, server_url: str) -> bool:
         """Check if a client URL matches a server route.

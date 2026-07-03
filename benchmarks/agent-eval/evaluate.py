@@ -11,13 +11,16 @@ Runs roam init + all analysis commands, collects scores into a structured JSON r
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
+from types import ModuleType
 
 
 # Agent CLI version + model signatures
@@ -47,6 +50,21 @@ AGENT_SIGNATURES = {
         "invoke": "gemini --yolo",
     },
 }
+
+
+@lru_cache(maxsize=1)
+def _load_scoring_module() -> ModuleType:
+    """Load sibling scoring helpers without creating a phantom top-level import."""
+    module_path = Path(__file__).with_name("scoring.py")
+    module_name = "_agent_eval_scoring"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load scoring helpers from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def get_agent_signature(agent: str) -> dict:
@@ -283,9 +301,8 @@ def evaluate_workspace(workspace: Path) -> dict:
     results["scores"] = extract_scores(results["roam"])
 
     # --- Composite AQS ---
-    from scoring import compute_aqs, format_aqs_report
-
-    aqs = compute_aqs(results)
+    scoring = _load_scoring_module()
+    aqs = scoring.compute_aqs(results)
     results["aqs"] = aqs
 
     return results
@@ -407,10 +424,9 @@ def main():
     # Print AQS
     aqs = results.get("aqs", {})
     if aqs:
-        from scoring import format_aqs_report
-
         print(f"\n=== AGENT QUALITY SCORE ===")
-        print(format_aqs_report(aqs))
+        scoring = _load_scoring_module()
+        print(scoring.format_aqs_report(aqs))
 
 
 if __name__ == "__main__":

@@ -28,12 +28,21 @@ import re
 from pathlib import Path
 
 from roam.eval.harness import load_tasks
+from roam.observability import log_swallowed
+from roam.retrieve.pipeline import run_retrieve
+
+__all__ = (
+    "FEATURE_NAMES",
+    "feature_names",
+    "is_available",
+    "score",
+    "train_from_bench",
+)
 
 # Pre-compiled alphanum-token regex used by ``_token_overlap``. Hoisted to
 # module scope so per-candidate scoring doesn't re-resolve the ``re`` name
 # (called twice per candidate in :func:`score`).
 _RE_ALNUM_TOKEN = re.compile(r"[a-z0-9]+")
-from roam.retrieve.pipeline import run_retrieve
 
 # Optional dependency: LightGBM. Used by ``train_from_bench`` (training)
 # and ``_load_model`` (inference). Hoisted to module scope so tests can
@@ -99,14 +108,23 @@ def _load_model():
     """
     try:
         import lightgbm as lgb  # type: ignore
-    except (ImportError, ValueError):
+    except (ImportError, ValueError) as exc:
+        # Fail-soft: lightgbm is an optional extra and sklearn/numpy ABI
+        # errors surface as ValueError here. Surface the swallowed cause
+        # (opt-in via ROAM_VERBOSE) so a real install failure is greppable
+        # instead of indistinguishable from "not installed".
+        log_swallowed(f"retrieve.learned_ranker:_load_model:import:{type(exc).__name__}", exc)
         return None
     path = _resolve_model_path()
     if not path.is_file():
         return None
     try:
         return lgb.Booster(model_file=str(path))
-    except lgb.basic.LightGBMError:
+    except lgb.basic.LightGBMError as exc:
+        # Fail-soft: a corrupt/incompatible model file falls back to the
+        # structural blend. Only LightGBMError is caught — unexpected
+        # errors (e.g. RuntimeError) propagate (see TestLearnedRankerFallback).
+        log_swallowed(f"retrieve.learned_ranker:_load_model:booster:{type(exc).__name__}", exc)
         return None
 
 
@@ -191,7 +209,7 @@ def score(candidates: list[dict], task: str) -> dict[int, float]:
 
 
 # ---------------------------------------------------------------------------
-# Training entry point — called by ``roam train-ranker`` (lands v12.3)
+# Public training helper for bench scripts or future CLI wiring.
 # ---------------------------------------------------------------------------
 
 

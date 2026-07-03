@@ -175,28 +175,42 @@ def _normalize_extension(ext: str) -> str:
     return ext
 
 
-class RoamPluginContext:
-    """The object passed to your plugin's ``register(ctx)`` callable.
+def _note_plugin_capability(capability: str) -> None:
+    """Record a capability against the most-recently-declared plugin.
 
-    Each ``register_*`` method wires one extension point into roam.
-    Calls are recorded against the currently-loading plugin so
-    ``roam plugins info <name>`` can list what each plugin
-    contributes.
-
-    Example::
-
-        def register(ctx: RoamPluginContext) -> None:
-            ctx.declare(
-                name="example",
-                version="0.1.0",
-                description="Reference roam plugin",
-            )
-            ctx.register_framework_detector(detect_example)
-            ctx.register_detector("my-task", "my-way", run_detector)
-            ctx.register_language_extractor(
-                "qml", QmlExtractorFactory, extensions=[".qml"]
-            )
+    If the plugin never called ``declare()`` we synthesise a
+    :class:`RoamPlugin` from the discovery scratchpad so plugins
+    that only register hooks still appear in ``roam plugins list``.
     """
+    state = _registry_state()
+    if not state.plugins or (state.current_source and state.plugins[-1].source != state.current_source):
+        # Either no declared plugin yet, or the current loading
+        # source has not declared one — synthesise from metadata.
+        meta = state.current_plugin_meta
+        if meta:
+            name, version, description = meta
+        else:
+            # Module-channel plugin with no entry-point metadata
+            # and no declare(): name after the loading source.
+            src = state.current_source or "anonymous"
+            name = src.split(":", 1)[-1] if ":" in src else src
+            version = "unknown"
+            description = ""
+        state.plugins.append(
+            RoamPlugin(
+                name=name,
+                version=version,
+                description=description,
+                source=state.current_source or "",
+            )
+        )
+    plugin = state.plugins[-1]
+    if capability not in plugin.capabilities:
+        plugin.capabilities.append(capability)
+
+
+class _RoamPluginCoreRegistration:
+    """Core plugin registration methods shared by RoamPluginContext."""
 
     # ---- declaration ----------------------------------------------------
 
@@ -257,7 +271,7 @@ class RoamPluginContext:
         if cmd in state.commands:
             raise ValueError(f"duplicate plugin command: {cmd}")
         state.commands[cmd] = (mod, attr)
-        self._note_capability("command")
+        _note_plugin_capability("command")
 
     # ---- detector registration ------------------------------------------
 
@@ -286,7 +300,7 @@ class RoamPluginContext:
 
         state = _registry_state()
         state.detectors.append((task, way, detect_fn))
-        self._note_capability("detector")
+        _note_plugin_capability("detector")
 
     # ---- language extractor registration --------------------------------
 
@@ -329,7 +343,11 @@ class RoamPluginContext:
             grammar = (grammar_alias or "").strip()
             if grammar:
                 state.language_grammar_aliases[lang] = grammar
-        self._note_capability("extractor")
+        _note_plugin_capability("extractor")
+
+
+class _RoamPluginExtensionRegistration:
+    """Framework, bridge, and capability methods shared by RoamPluginContext."""
 
     # ---- framework detector registration --------------------------------
 
@@ -356,7 +374,7 @@ class RoamPluginContext:
             raise TypeError("detect_fn must be callable")
         state = _registry_state()
         state.framework_detectors.append(detect_fn)
-        self._note_capability("framework_detection")
+        _note_plugin_capability("framework_detection")
 
     # ---- framework profile registration ---------------------------------
 
@@ -400,12 +418,12 @@ class RoamPluginContext:
 
         # Also wire the detector so legacy consumers
         # (autodetect_framework_profile) see the profile-registered
-        # framework. _note_capability is called inside
+        # framework. Capability recording is called inside
         # register_framework_detector — we additionally tag
         # "framework_profile" to make the richer registration visible
         # in ``roam plugins info``.
         self.register_framework_detector(profile.detect_fn)
-        self._note_capability("framework_profile")
+        _note_plugin_capability("framework_profile")
 
     # ---- bridge registration --------------------------------------------
 
@@ -422,43 +440,54 @@ class RoamPluginContext:
         register_language_bridge(bridge)
         state = _registry_state()
         state.bridges.append(bridge)
-        self._note_capability("bridge")
+        _note_plugin_capability("bridge")
 
-    # ---- internal -------------------------------------------------------
 
-    def _note_capability(self, capability: str) -> None:
-        """Record a capability against the most-recently-declared plugin.
+class RoamPluginContext(_RoamPluginCoreRegistration, _RoamPluginExtensionRegistration):
+    """The object passed to your plugin's ``register(ctx)`` callable.
 
-        If the plugin never called ``declare()`` we synthesise a
-        :class:`RoamPlugin` from the discovery scratchpad so plugins
-        that only register hooks still appear in
-        ``roam plugins list``.
-        """
-        state = _registry_state()
-        if not state.plugins or (state.current_source and state.plugins[-1].source != state.current_source):
-            # Either no declared plugin yet, or the current loading
-            # source has not declared one — synthesise from metadata.
-            meta = state.current_plugin_meta
-            if meta:
-                name, version, description = meta
-            else:
-                # Module-channel plugin with no entry-point metadata
-                # and no declare(): name after the loading source.
-                src = state.current_source or "anonymous"
-                name = src.split(":", 1)[-1] if ":" in src else src
-                version = "unknown"
-                description = ""
-            state.plugins.append(
-                RoamPlugin(
-                    name=name,
-                    version=version,
-                    description=description,
-                    source=state.current_source or "",
-                )
+    Each ``register_*`` method wires one extension point into roam.
+    Calls are recorded against the currently-loading plugin so
+    ``roam plugins info <name>`` can list what each plugin
+    contributes.
+
+    Example::
+
+        def register(ctx: RoamPluginContext) -> None:
+            ctx.declare(
+                name="example",
+                version="0.1.0",
+                description="Reference roam plugin",
             )
-        plugin = state.plugins[-1]
-        if capability not in plugin.capabilities:
-            plugin.capabilities.append(capability)
+            ctx.register_framework_detector(detect_example)
+            ctx.register_detector("my-task", "my-way", run_detector)
+            ctx.register_language_extractor(
+                "qml", QmlExtractorFactory, extensions=[".qml"]
+            )
+    """
+
+
+_PLUGIN_CONTEXT_PUBLIC_METHODS: Mapping[str, Callable[..., None]] = MappingProxyType(
+    {
+        "declare": RoamPluginContext.declare,
+        "register_command": RoamPluginContext.register_command,
+        "register_detector": RoamPluginContext.register_detector,
+        "register_language_extractor": RoamPluginContext.register_language_extractor,
+        "register_framework_detector": RoamPluginContext.register_framework_detector,
+        "register_framework_profile": RoamPluginContext.register_framework_profile,
+        "register_bridge": RoamPluginContext.register_bridge,
+    }
+)
+
+
+def _assert_plugin_context_contract() -> None:
+    """Validate the public plugin-author API surface without mutating state."""
+    for method_name, method in _PLUGIN_CONTEXT_PUBLIC_METHODS.items():
+        if not callable(method):
+            raise AssertionError(f"RoamPluginContext.{method_name} must remain callable")
+
+
+_assert_plugin_context_contract()
 
 
 # ---------------------------------------------------------------------------

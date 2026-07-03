@@ -851,6 +851,33 @@ def _bulk_fetch_accessor_edge_traces(conn, accessor_ids):
     return callees_by_accessor, sub_callee_names
 
 
+def _batch_sub_callee_names_to_preserve_trace_cost(conn, callees, model_method_names):
+    """Batch the ad-hoc trace fallback so correctness does not trade away
+    query-count invariance.
+
+    Direct callers of :func:`_trace_io_via_edges` still need relationship
+    methods discovered from each callee's outgoing edges. Collecting every
+    relevant callee id first preserves that behavior without issuing one
+    query per callee.
+    """
+    from roam.db.connection import batched_in
+
+    callee_ids = {
+        int(callee["id"]) for callee in callees if callee["kind"] == "method" and callee["name"] in model_method_names
+    }
+    sub_names_by_callee: dict[int, set[str]] = {callee_id: set() for callee_id in callee_ids}
+    if not callee_ids:
+        return sub_names_by_callee
+
+    for row in batched_in(
+        conn,
+        "SELECT e.source_id, t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id IN ({ph})",
+        list(callee_ids),
+    ):
+        sub_names_by_callee.setdefault(int(row["source_id"]), set()).add(row["name"])
+    return sub_names_by_callee
+
+
 def _trace_io_via_edges(
     conn, accessor_id, model_method_names, *, bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED
 ):
@@ -874,18 +901,15 @@ def _trace_io_via_edges(
         ).fetchall()
     else:
         callees = bulk_callees or []
+    if bulk_sub_names is _BULK_NOT_FETCHED:
+        sub_names_by_callee = _batch_sub_callee_names_to_preserve_trace_cost(conn, callees, model_method_names)
+    else:
+        sub_names_by_callee = bulk_sub_names or {}
 
     for callee in callees:
         name = callee["name"]
         if name in model_method_names and callee["kind"] == "method":
-            if bulk_sub_names is _BULK_NOT_FETCHED:
-                sub_callees = conn.execute(
-                    "SELECT t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id = ?",
-                    (callee["id"],),
-                ).fetchall()
-                sub_names = {r["name"] for r in sub_callees}
-            else:
-                sub_names = bulk_sub_names.get(int(callee["id"]), set())
+            sub_names = sub_names_by_callee.get(int(callee["id"]), set())
             rel_methods = sub_names & _RELATIONSHIP_METHODS
             if rel_methods:
                 io_chains.append((name, f"relationship ({', '.join(rel_methods)})"))
@@ -933,6 +957,8 @@ def _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
     this_method_calls = re.findall(r"\$this->(\w+)\(\)", snippet)
 
     methods_by_name = {m["name"]: m for m in model_methods}
+    candidate_ids: list[int] = []
+    accessed_by_id: dict[int, str] = {}
     for accessed in set(this_accesses + this_method_calls):
         if accessed in _THIS_ACCESS_SKIP_METHODS:
             continue
@@ -941,18 +967,31 @@ def _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
         method_sym = methods_by_name.get(accessed)
         if not method_sym:
             continue
-        m_sym_full = conn.execute(
-            "SELECT s.line_start, s.line_end FROM symbols s WHERE s.id = ?",
-            (method_sym["id"],),
-        ).fetchone()
-        if not m_sym_full:
-            continue
-        m_start = max(0, m_sym_full["line_start"] - 1)
-        m_end = m_sym_full["line_end"] or m_start + 15
-        method_snippet = "".join(lines[m_start:m_end])
-        io_type = _classify_method_body(method_snippet)
-        if io_type:
-            io_chains.append((accessed, io_type))
+        sym_id = int(method_sym["id"])
+        candidate_ids.append(sym_id)
+        accessed_by_id[sym_id] = accessed
+
+    if candidate_ids:
+        from roam.db.connection import batched_in
+
+        span_by_id: dict[int, sqlite3.Row] = {}
+        for row in batched_in(
+            conn,
+            "SELECT s.id, s.line_start, s.line_end FROM symbols s WHERE s.id IN ({ph})",
+            candidate_ids,
+        ):
+            span_by_id[int(row["id"])] = row
+
+        for sym_id, accessed in accessed_by_id.items():
+            m_sym_full = span_by_id.get(sym_id)
+            if not m_sym_full:
+                continue
+            m_start = max(0, m_sym_full["line_start"] - 1)
+            m_end = m_sym_full["line_end"] or m_start + 15
+            method_snippet = "".join(lines[m_start:m_end])
+            io_type = _classify_method_body(method_snippet)
+            if io_type:
+                io_chains.append((accessed, io_type))
     return io_chains
 
 

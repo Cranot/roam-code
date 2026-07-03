@@ -10,8 +10,11 @@ import re
 import sqlite3
 import subprocess
 from collections import defaultdict
+from collections.abc import Iterator
 from itertools import combinations
 from pathlib import Path
+
+from roam.db.connection import batched_in
 
 log = logging.getLogger(__name__)
 
@@ -418,34 +421,58 @@ def store_commits(conn: sqlite3.Connection, commits: list[dict]):
         fpath = row[1] if not isinstance(row, sqlite3.Row) else row["path"]
         path_to_id[fpath] = fid
 
+    # Batch insert all commits; already-present hashes are ignored.
+    commit_params = [(c["hash"], c["author"], c["timestamp"], c["message"]) for c in commits]
+    hashes = [c["hash"] for c in commits]
+
     with conn:
-        for commit in commits:
-            conn.execute(
+        if commit_params:
+            conn.executemany(
                 "INSERT OR IGNORE INTO git_commits (hash, author, timestamp, message) VALUES (?, ?, ?, ?)",
-                (commit["hash"], commit["author"], commit["timestamp"], commit["message"]),
+                commit_params,
             )
 
-            # Retrieve the commit ID (may have existed already)
-            row = conn.execute("SELECT id FROM git_commits WHERE hash = ?", (commit["hash"],)).fetchone()
-            if row is None:
-                continue
-            commit_id = row[0] if not isinstance(row, sqlite3.Row) else row["id"]
+        # Bulk lookup the row id for every requested hash.
+        hash_to_id = {}
+        if hashes:
+            for row in batched_in(
+                conn,
+                "SELECT id, hash FROM git_commits WHERE hash IN ({ph})",
+                hashes,
+            ):
+                rid = row[0] if not isinstance(row, sqlite3.Row) else row["id"]
+                hsh = row[1] if not isinstance(row, sqlite3.Row) else row["hash"]
+                hash_to_id[hsh] = rid
 
+        # Batch insert all file changes.
+        change_params = []
+        for commit in commits:
+            commit_id = hash_to_id.get(commit["hash"])
+            if commit_id is None:
+                continue
             for fc in commit["files"]:
                 file_id = path_to_id.get(fc["path"])
-                conn.execute(
-                    "INSERT INTO git_file_changes "
-                    "(commit_id, file_id, path, lines_added, lines_removed) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (commit_id, file_id, fc["path"], fc["lines_added"], fc["lines_removed"]),
+                change_params.append(
+                    (
+                        commit_id,
+                        file_id,
+                        fc["path"],
+                        fc["lines_added"],
+                        fc["lines_removed"],
+                    )
                 )
+        if change_params:
+            conn.executemany(
+                "INSERT INTO git_file_changes "
+                "(commit_id, file_id, path, lines_added, lines_removed) "
+                "VALUES (?, ?, ?, ?, ?)",
+                change_params,
+            )
 
 
 # ---------------------------------------------------------------------------
 # Co-change matrix
 # ---------------------------------------------------------------------------
-
-_COCHANGE_CHUNK = 500  # process commits in chunks to limit memory
 
 
 def compute_cochange(conn: sqlite3.Connection):
@@ -473,23 +500,12 @@ def compute_cochange(conn: sqlite3.Connection):
         for a, b in combinations(sorted(file_ids), 2):
             pair_counts[(a, b)] += 1
 
-    # Write in chunks
     with conn:
         conn.execute("DELETE FROM git_cochange")
-        batch: list[tuple[int, int, int]] = []
-        for (a, b), count in pair_counts.items():
-            batch.append((a, b, count))
-            if len(batch) >= _COCHANGE_CHUNK:
-                conn.executemany(
-                    "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
-                    batch,
-                )
-                batch.clear()
-        if batch:
-            conn.executemany(
-                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
-                batch,
-            )
+        conn.executemany(
+            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
+            _iter_cochange_rows_for_single_write(pair_counts),
+        )
 
     log.info("Computed co-change for %d file pairs", len(pair_counts))
 
@@ -498,6 +514,14 @@ def compute_cochange(conn: sqlite3.Connection):
 
     # --- Hypergraph: store full commit-level file sets ---
     _populate_hyperedges(conn, commit_files)
+
+
+def _iter_cochange_rows_for_single_write(
+    pair_counts: dict[tuple[int, int], int],
+) -> Iterator[tuple[int, int, int]]:
+    """Stream co-change rows so database writes stay one batched call."""
+    for (a, b), count in pair_counts.items():
+        yield a, b, count
 
 
 def _compute_cochange_entropy(
@@ -541,13 +565,38 @@ def _compute_cochange_entropy(
         updates.append((round(norm_entropy, 4), fid))
 
     with conn:
-        for entropy_val, fid in updates:
-            conn.execute(
-                "UPDATE file_stats SET cochange_entropy = ? WHERE file_id = ?",
-                (entropy_val, fid),
-            )
+        conn.executemany("UPDATE file_stats SET cochange_entropy = ? WHERE file_id = ?", updates)
 
     log.info("Computed co-change entropy for %d files", len(updates))
+
+
+def _iter_hyperedge_edges(
+    commit_files: dict[int, set[int]],
+) -> Iterator[tuple[int, int, int, str]]:
+    """Stream hyperedge rows so the database write stays one batched call."""
+    edge_id = 0
+    for commit_id, file_ids in commit_files.items():
+        n = len(file_ids)
+        if n < 2 or n > 100:
+            continue
+        sorted_ids = sorted(file_ids)
+        sig = hashlib.sha256("|".join(str(fid) for fid in sorted_ids).encode()).hexdigest()[:16]
+        edge_id += 1
+        yield edge_id, commit_id, n, sig
+
+
+def _iter_hyperedge_members(
+    commit_files: dict[int, set[int]],
+) -> Iterator[tuple[int, int, int]]:
+    """Stream hyperedge member rows aligned with ``_iter_hyperedge_edges``."""
+    edge_id = 0
+    for commit_id, file_ids in commit_files.items():
+        n = len(file_ids)
+        if n < 2 or n > 100:
+            continue
+        edge_id += 1
+        for ordinal, fid in enumerate(sorted(file_ids)):
+            yield edge_id, fid, ordinal
 
 
 def _populate_hyperedges(
@@ -560,52 +609,22 @@ def _populate_hyperedges(
     and N ``git_hyperedge_members`` rows.  A ``sig_hash`` (truncated SHA-256
     of sorted file IDs) enables O(1) pattern matching later.
     """
+    edge_count = sum(1 for file_ids in commit_files.values() if 2 <= len(file_ids) <= 100)
+
     with conn:
         conn.execute("DELETE FROM git_hyperedge_members")
         conn.execute("DELETE FROM git_hyperedges")
 
-        edge_batch: list[tuple] = []
-        member_batch: list[tuple] = []
-        edge_id = 0
+        conn.executemany(
+            "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) VALUES (?, ?, ?, ?)",
+            _iter_hyperedge_edges(commit_files),
+        )
+        conn.executemany(
+            "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) VALUES (?, ?, ?)",
+            _iter_hyperedge_members(commit_files),
+        )
 
-        for commit_id, file_ids in commit_files.items():
-            n = len(file_ids)
-            if n < 2 or n > 100:
-                continue
-
-            sorted_ids = sorted(file_ids)
-            sig = hashlib.sha256("|".join(str(fid) for fid in sorted_ids).encode()).hexdigest()[:16]
-
-            edge_id += 1
-            edge_batch.append((edge_id, commit_id, n, sig))
-
-            for ordinal, fid in enumerate(sorted_ids):
-                member_batch.append((edge_id, fid, ordinal))
-
-            if len(edge_batch) >= 500:
-                conn.executemany(
-                    "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) VALUES (?, ?, ?, ?)",
-                    edge_batch,
-                )
-                conn.executemany(
-                    "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) VALUES (?, ?, ?)",
-                    member_batch,
-                )
-                edge_batch.clear()
-                member_batch.clear()
-
-        if edge_batch:
-            conn.executemany(
-                "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) VALUES (?, ?, ?, ?)",
-                edge_batch,
-            )
-        if member_batch:
-            conn.executemany(
-                "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) VALUES (?, ?, ?)",
-                member_batch,
-            )
-
-    log.info("Stored %d hyperedges", edge_id)
+    log.info("Stored %d hyperedges", edge_count)
 
 
 # ---------------------------------------------------------------------------
@@ -633,19 +652,15 @@ def compute_file_stats(conn: sqlite3.Connection):
         """
     ).fetchall()
 
+    stat_rows = [(row[0], row[1], row[2] or 0, row[3], row[0]) for row in rows]
     with conn:
-        for row in rows:
-            fid = row[0]
-            commit_count = row[1]
-            total_churn = row[2] or 0
-            distinct_authors = row[3]
-            conn.execute(
-                "INSERT OR REPLACE INTO file_stats "
-                "(file_id, commit_count, total_churn, distinct_authors, complexity) "
-                "VALUES (?, ?, ?, ?, COALESCE("
-                "  (SELECT complexity FROM file_stats WHERE file_id = ?), 0))",
-                (fid, commit_count, total_churn, distinct_authors, fid),
-            )
+        conn.executemany(
+            "INSERT OR REPLACE INTO file_stats "
+            "(file_id, commit_count, total_churn, distinct_authors, complexity) "
+            "VALUES (?, ?, ?, ?, COALESCE("
+            "  (SELECT complexity FROM file_stats WHERE file_id = ?), 0))",
+            stat_rows,
+        )
 
     log.info("Computed file stats for %d files", len(rows))
 
@@ -675,20 +690,19 @@ def compute_complexity(conn: sqlite3.Connection, project_root: Path):
         if complexity is not None:
             updates.append((complexity, fid))
 
-    with conn:
-        for complexity, fid in updates:
-            conn.execute(
-                "UPDATE file_stats SET complexity = ? WHERE file_id = ?",
-                (complexity, fid),
-            )
-            # If the row doesn't exist yet, create it
-            if conn.execute("SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)).fetchone() is None:
-                conn.execute(
-                    "INSERT INTO file_stats (file_id, complexity) VALUES (?, ?)",
-                    (fid, complexity),
-                )
+    _persist_complexity_without_row_probes(conn, updates)
 
     log.info("Computed complexity for %d files", len(updates))
+
+
+def _persist_complexity_without_row_probes(conn: sqlite3.Connection, updates: list[tuple[float, int]]) -> None:
+    """Preserve existing file stats while avoiding per-file existence reads."""
+    with conn:
+        conn.executemany(
+            "INSERT INTO file_stats (complexity, file_id) VALUES (?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET complexity = excluded.complexity",
+            updates,
+        )
 
 
 def _measure_indent_complexity(path: Path) -> float | None:

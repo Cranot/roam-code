@@ -651,16 +651,9 @@ def ws_understand_command(ctx) -> None:
     """Full workspace overview: repos, stats, cross-repo connections."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace(ctx, "ws-understand")
-
     from roam.workspace.aggregator import aggregate_understand
-    from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import open_workspace_db
 
-    repo_infos = get_repo_paths(config, ws_root)
-
-    with open_workspace_db(ws_root, readonly=True) as ws_conn:
-        data = aggregate_understand(ws_conn, repo_infos)
+    config, data = _read_consistent_workspace_view(ctx, "ws-understand", aggregate_understand)
 
     if json_mode:
         click.echo(
@@ -777,16 +770,9 @@ def ws_context_cmd(ctx, symbol: str) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace(ctx, "ws-context")
-
     from roam.workspace.aggregator import cross_repo_context
-    from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import open_workspace_db
 
-    repo_infos = get_repo_paths(config, ws_root)
-
-    with open_workspace_db(ws_root, readonly=True) as ws_conn:
-        data = cross_repo_context(ws_conn, symbol, repo_infos)
+    _config, data = _read_consistent_workspace_view(ctx, "ws-context", cross_repo_context, symbol)
 
     if json_mode:
         found_repos = [f["repo"] for f in data["found_in"]]
@@ -854,16 +840,9 @@ def ws_trace(ctx, source: str, target: str) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace(ctx, "ws-trace")
-
     from roam.workspace.aggregator import cross_repo_trace
-    from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import open_workspace_db
 
-    repo_infos = get_repo_paths(config, ws_root)
-
-    with open_workspace_db(ws_root, readonly=True) as ws_conn:
-        data = cross_repo_trace(ws_conn, source, target, repo_infos)
+    _config, data = _read_consistent_workspace_view(ctx, "ws-trace", cross_repo_trace, source, target)
 
     if json_mode:
         click.echo(
@@ -910,6 +889,21 @@ def ws_trace(ctx, source: str, target: str) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _read_consistent_workspace_view(ctx, command_name: str, aggregate_fn, *aggregate_args):
+    """Run a workspace aggregator through the shared readonly setup."""
+    ws_root, config = _require_workspace(ctx, command_name)
+
+    from roam.workspace.config import get_repo_paths
+    from roam.workspace.db import open_workspace_db
+
+    repo_infos = get_repo_paths(config, ws_root)
+
+    with open_workspace_db(ws_root, readonly=True) as ws_conn:
+        data = aggregate_fn(ws_conn, *aggregate_args, repo_infos)
+
+    return config, data
 
 
 def _require_workspace(ctx=None, command_name: str = "ws"):

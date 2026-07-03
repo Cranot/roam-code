@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import struct
+from collections.abc import Iterator
+from dataclasses import dataclass
 
 from .base import LanguageExtractor
 
@@ -625,6 +627,38 @@ _VFP_BUILTINS = frozenset(
 # Note: FORM is NOT here — DO FORM is handled separately by _RE_DO_FORM
 _DO_KEYWORDS = frozenset({"CASE", "WHILE"})
 
+_PROPERTY_ASSIGNMENT_NON_NAMES = frozenset(
+    {
+        "IF",
+        "DO",
+        "FOR",
+        "SET",
+        "LOCAL",
+        "PRIVATE",
+        "PUBLIC",
+        "STORE",
+        "RETURN",
+        "ENDFOR",
+        "ENDIF",
+        "ENDDO",
+        "ELSE",
+        "OTHERWISE",
+        "CASE",
+    }
+)
+
+
+@dataclass
+class _PrgSymbolState:
+    parser_state: str = "TOP_LEVEL"
+    current_class: str | None = None
+    current_class_start: int | None = None
+    current_class_base: str | None = None
+    current_func: str | None = None
+    current_func_start: int | None = None
+    current_func_kind: str | None = None
+    has_top_level_routine: bool = False
+
 
 # -- SCX/SCT binary parsing -------------------------------------------
 # .SCX = DBF (dBASE) format with field descriptors for form elements
@@ -813,6 +847,38 @@ def _parse_scx_records(scx_bytes: bytes, sct_bytes: bytes) -> list[dict]:
     return records
 
 
+def _load_scx_records(source: bytes, file_path: str) -> list[dict] | None:
+    """Unpack and parse a packed .scx/.sct blob.
+
+    Returns the parsed records, or None if the binary cannot be parsed.
+    Centralizes the parse+exception handling so callers share one failure mode.
+    """
+    try:
+        scx_bytes, sct_bytes = _unpack_scx_sct(source)
+        return _parse_scx_records(scx_bytes, sct_bytes)
+    except Exception as exc:
+        log.debug("SCX parse error for %s: %s", file_path, exc)
+        return None
+
+
+def _iter_scx_controls(records: list[dict]) -> Iterator[tuple[str, int, str, list[dict]]]:
+    """Yield control-level method context for non-deleted SCX records.
+
+    Yields tuples of (control_path, record_num, classloc, procedures).
+    Keeps the record-filtering, control-path construction, and procedure
+    extraction in one place so symbols and references derive identical scopes.
+    """
+    for rec in records:
+        if rec["deleted"] or rec["platform"].strip() == "COMMENT":
+            continue
+        objname = rec["objname"]
+        parent = rec["parent"]
+        control_path = f"{parent}.{objname}" if parent else objname
+        methods_text = rec["methods"]
+        procs = _extract_procedures(methods_text) if methods_text else []
+        yield control_path, rec["record_num"], rec["classloc"], procs
+
+
 def _extract_procedures(methods_text: str) -> list[dict]:
     """Split PROCEDURE/FUNCTION blocks from a Methods field.
 
@@ -884,194 +950,300 @@ class FoxProExtractor(LanguageExtractor):
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
         if file_path.lower().endswith(".scx"):
             return self._extract_scx_symbols(source, file_path)
+        return self._extract_prg_symbols(source, file_path)
+
+    def _extract_prg_symbols(self, source: bytes, file_path: str) -> list[dict]:
         lines, line_map = _preprocess(source)
         symbols: list[dict] = []
-        state = "TOP_LEVEL"
-        current_class: str | None = None
-        current_class_start: int | None = None
-        current_class_base: str | None = None
-        current_func: str | None = None
-        current_func_start: int | None = None
-        current_func_kind: str | None = None
-        has_top_level_routine = False
-
-        def _close_func_at(end_line: int):
-            nonlocal current_func, current_func_start, current_func_kind
-            if current_func and current_func_start is not None:
-                # Map to roam standard kinds: "function" or "method"
-                kind = "method" if (current_class is not None) else "function"
-                qn = current_func
-                parent = None
-                if current_class:
-                    qn = f"{current_class}.{current_func}"
-                    parent = current_class
-                sig_keyword = (current_func_kind or "FUNCTION").upper()
-                symbols.append(
-                    self._make_symbol(
-                        name=current_func,
-                        kind=kind,
-                        line_start=current_func_start,
-                        line_end=end_line,
-                        qualified_name=qn,
-                        signature=f"{sig_keyword} {current_func}",
-                        visibility="public",
-                        is_exported=True,
-                        parent_name=parent,
-                    )
-                )
-            current_func = None
-            current_func_start = None
-            current_func_kind = None
+        state = _PrgSymbolState()
 
         for idx, line in enumerate(lines):
             orig = line_map.get(idx, idx + 1)
             stripped = line.strip()
             if not stripped:
                 continue
+            self._consume_prg_symbol_line(stripped, orig, state, symbols)
 
-            # ENDDEFINE
-            if _RE_ENDDEFINE.match(stripped):
-                _close_func_at(orig)
-                if current_class and current_class_start is not None:
-                    symbols.append(
-                        self._make_symbol(
-                            name=current_class,
-                            kind="class",
-                            line_start=current_class_start,
-                            line_end=orig,
-                            signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
-                            visibility="public",
-                            is_exported=True,
-                        )
-                    )
-                current_class = None
-                current_class_start = None
-                current_class_base = None
-                state = "TOP_LEVEL"
-                continue
-
-            # ENDFUNC / ENDPROC
-            if _RE_ENDFUNC.match(stripped):
-                _close_func_at(orig)
-                if current_class:
-                    state = "IN_CLASS"
-                else:
-                    state = "TOP_LEVEL"
-                continue
-
-            # DEFINE CLASS
-            m = _RE_CLASS.match(stripped)
-            if m:
-                _close_func_at(orig - 1)
-                current_class = m.group(1)
-                current_class_base = m.group(2)
-                current_class_start = orig
-                state = "IN_CLASS"
-                has_top_level_routine = True
-                continue
-
-            # FUNCTION / PROCEDURE
-            m = _RE_FUNC.match(stripped)
-            if m:
-                # Close any open function (VFP allows implicit end)
-                _close_func_at(orig - 1)
-                current_func = m.group(2)
-                current_func_start = orig
-                current_func_kind = m.group(1).upper()
-                has_top_level_routine = True
-                if current_class:
-                    state = "IN_METHOD"
-                continue
-
-            # #DEFINE constant
-            m = _RE_DEFINE_CONST.match(stripped)
-            if m:
-                symbols.append(
-                    self._make_symbol(
-                        name=m.group(1),
-                        kind="constant",
-                        line_start=orig,
-                        line_end=orig,
-                        signature=f"#DEFINE {m.group(1)} {m.group(2).strip()[:60]}",
-                        visibility="public",
-                        is_exported=True,
-                    )
-                )
-                continue
-
-            # Property assignment inside class body (not inside a method)
-            if state == "IN_CLASS" and current_func is None:
-                m = _RE_PROPERTY.match(stripped)
-                if m:
-                    prop_name = m.group(1)
-                    # Skip keywords that look like assignments
-                    if prop_name.upper() not in (
-                        "IF",
-                        "DO",
-                        "FOR",
-                        "SET",
-                        "LOCAL",
-                        "PRIVATE",
-                        "PUBLIC",
-                        "STORE",
-                        "RETURN",
-                        "ENDFOR",
-                        "ENDIF",
-                        "ENDDO",
-                        "ELSE",
-                        "OTHERWISE",
-                        "CASE",
-                    ):
-                        symbols.append(
-                            self._make_symbol(
-                                name=prop_name,
-                                kind="property",
-                                line_start=orig,
-                                line_end=orig,
-                                qualified_name=f"{current_class}.{prop_name}" if current_class else prop_name,
-                                signature=f"{prop_name} = {m.group(2).strip()[:40]}",
-                                visibility="public",
-                                is_exported=True,
-                                parent_name=current_class,
-                            )
-                        )
-
-        # Close any still-open function
-        if current_func:
-            _close_func_at(line_map.get(len(lines) - 1, len(lines)))
-
-        # Close any still-open class (missing ENDDEFINE)
-        if current_class and current_class_start is not None:
-            symbols.append(
-                self._make_symbol(
-                    name=current_class,
-                    kind="class",
-                    line_start=current_class_start,
-                    line_end=line_map.get(len(lines) - 1, len(lines)),
-                    signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
-                    visibility="public",
-                    is_exported=True,
-                )
-            )
-
-        # Implicit file function: if .prg has no top-level routines,
-        # treat the entire file as a single function named after the file
-        if not has_top_level_routine and lines:
-            stem = os.path.splitext(os.path.basename(file_path))[0]
-            last_line = line_map.get(len(lines) - 1, len(lines))
-            symbols.append(
-                self._make_symbol(
-                    name=stem,
-                    kind="function",
-                    line_start=1,
-                    line_end=last_line,
-                    signature=f"DO {stem}",
-                    visibility="public",
-                    is_exported=True,
-                )
-            )
-
+        self._finish_prg_symbols(symbols, state, line_map, len(lines), file_path)
         return symbols
+
+    def _consume_prg_symbol_line(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> None:
+        (
+            self._handle_prg_enddefine(stripped, line_no, state, symbols)
+            or self._handle_prg_endfunc(stripped, line_no, state, symbols)
+            or self._handle_prg_class(stripped, line_no, state, symbols)
+            or self._handle_prg_routine(stripped, line_no, state, symbols)
+            or self._handle_prg_constant(stripped, line_no, symbols)
+            or self._handle_prg_property(stripped, line_no, state, symbols)
+        )
+
+    def _close_prg_func_at(
+        self,
+        symbols: list[dict],
+        state: _PrgSymbolState,
+        end_line: int,
+    ) -> None:
+        if state.current_func and state.current_func_start is not None:
+            symbols.append(
+                self._make_prg_routine_symbol(
+                    name=state.current_func,
+                    line_start=state.current_func_start,
+                    line_end=end_line,
+                    class_name=state.current_class,
+                    routine_keyword=state.current_func_kind,
+                )
+            )
+        state.current_func = None
+        state.current_func_start = None
+        state.current_func_kind = None
+
+    def _close_prg_class_at(
+        self,
+        symbols: list[dict],
+        state: _PrgSymbolState,
+        end_line: int,
+    ) -> None:
+        if state.current_class and state.current_class_start is not None:
+            symbols.append(
+                self._make_prg_class_symbol(
+                    name=state.current_class,
+                    line_start=state.current_class_start,
+                    line_end=end_line,
+                    base_name=state.current_class_base,
+                )
+            )
+        state.current_class = None
+        state.current_class_start = None
+        state.current_class_base = None
+
+    def _handle_prg_enddefine(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> bool:
+        if not _RE_ENDDEFINE.match(stripped):
+            return False
+        self._close_prg_func_at(symbols, state, line_no)
+        self._close_prg_class_at(symbols, state, line_no)
+        state.parser_state = "TOP_LEVEL"
+        return True
+
+    def _handle_prg_endfunc(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> bool:
+        if not _RE_ENDFUNC.match(stripped):
+            return False
+        self._close_prg_func_at(symbols, state, line_no)
+        state.parser_state = "IN_CLASS" if state.current_class else "TOP_LEVEL"
+        return True
+
+    def _handle_prg_class(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> bool:
+        m = _RE_CLASS.match(stripped)
+        if not m:
+            return False
+        self._close_prg_func_at(symbols, state, line_no - 1)
+        state.current_class = m.group(1)
+        state.current_class_base = m.group(2)
+        state.current_class_start = line_no
+        state.parser_state = "IN_CLASS"
+        state.has_top_level_routine = True
+        return True
+
+    def _handle_prg_routine(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> bool:
+        m = _RE_FUNC.match(stripped)
+        if not m:
+            return False
+        self._close_prg_func_at(symbols, state, line_no - 1)
+        state.current_func = m.group(2)
+        state.current_func_start = line_no
+        state.current_func_kind = m.group(1).upper()
+        state.has_top_level_routine = True
+        if state.current_class:
+            state.parser_state = "IN_METHOD"
+        return True
+
+    def _handle_prg_constant(
+        self,
+        stripped: str,
+        line_no: int,
+        symbols: list[dict],
+    ) -> bool:
+        m = _RE_DEFINE_CONST.match(stripped)
+        if not m:
+            return False
+        symbols.append(
+            self._make_prg_constant_symbol(
+                name=m.group(1),
+                value=m.group(2),
+                line_start=line_no,
+            )
+        )
+        return True
+
+    def _handle_prg_property(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgSymbolState,
+        symbols: list[dict],
+    ) -> bool:
+        if state.parser_state != "IN_CLASS" or state.current_func is not None:
+            return False
+        m = _RE_PROPERTY.match(stripped)
+        if not m:
+            return False
+        prop_name = m.group(1)
+        if prop_name.upper() in _PROPERTY_ASSIGNMENT_NON_NAMES:
+            return False
+        symbols.append(
+            self._make_prg_property_symbol(
+                name=prop_name,
+                value=m.group(2),
+                line_start=line_no,
+                class_name=state.current_class,
+            )
+        )
+        return True
+
+    def _finish_prg_symbols(
+        self,
+        symbols: list[dict],
+        state: _PrgSymbolState,
+        line_map: dict[int, int],
+        line_count: int,
+        file_path: str,
+    ) -> None:
+        last_line = line_map.get(line_count - 1, line_count)
+        if state.current_func:
+            self._close_prg_func_at(symbols, state, last_line)
+        if state.current_class and state.current_class_start is not None:
+            self._close_prg_class_at(symbols, state, last_line)
+        if not state.has_top_level_routine and line_count > 0:
+            stem = os.path.splitext(os.path.basename(file_path))[0]
+            symbols.append(
+                self._make_prg_file_symbol(
+                    name=stem,
+                    line_end=last_line,
+                )
+            )
+
+    def _make_prg_routine_symbol(
+        self,
+        *,
+        name: str,
+        line_start: int,
+        line_end: int,
+        class_name: str | None,
+        routine_keyword: str | None,
+    ) -> dict:
+        kind = "method" if class_name else "function"
+        qualified_name = f"{class_name}.{name}" if class_name else name
+        return self._make_symbol(
+            name=name,
+            kind=kind,
+            line_start=line_start,
+            line_end=line_end,
+            qualified_name=qualified_name,
+            signature=f"{(routine_keyword or 'FUNCTION').upper()} {name}",
+            visibility="public",
+            is_exported=True,
+            parent_name=class_name,
+        )
+
+    def _make_prg_class_symbol(
+        self,
+        *,
+        name: str,
+        line_start: int,
+        line_end: int,
+        base_name: str | None,
+    ) -> dict:
+        return self._make_symbol(
+            name=name,
+            kind="class",
+            line_start=line_start,
+            line_end=line_end,
+            signature=f"DEFINE CLASS {name} AS {base_name or 'Custom'}",
+            visibility="public",
+            is_exported=True,
+        )
+
+    def _make_prg_constant_symbol(
+        self,
+        *,
+        name: str,
+        value: str,
+        line_start: int,
+    ) -> dict:
+        return self._make_symbol(
+            name=name,
+            kind="constant",
+            line_start=line_start,
+            line_end=line_start,
+            signature=f"#DEFINE {name} {value.strip()[:60]}",
+            visibility="public",
+            is_exported=True,
+        )
+
+    def _make_prg_property_symbol(
+        self,
+        *,
+        name: str,
+        value: str,
+        line_start: int,
+        class_name: str | None,
+    ) -> dict:
+        return self._make_symbol(
+            name=name,
+            kind="property",
+            line_start=line_start,
+            line_end=line_start,
+            qualified_name=f"{class_name}.{name}" if class_name else name,
+            signature=f"{name} = {value.strip()[:40]}",
+            visibility="public",
+            is_exported=True,
+            parent_name=class_name,
+        )
+
+    def _make_prg_file_symbol(
+        self,
+        *,
+        name: str,
+        line_end: int,
+    ) -> dict:
+        return self._make_symbol(
+            name=name,
+            kind="function",
+            line_start=1,
+            line_end=line_end,
+            signature=f"DO {name}",
+            visibility="public",
+            is_exported=True,
+        )
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         if file_path.lower().endswith(".scx"):
@@ -1335,11 +1507,8 @@ class FoxProExtractor(LanguageExtractor):
         Qualified names: FormName.ControlName.MethodName
         Synthetic line numbers: record_num * 1000 + proc_idx (stable, ordered)
         """
-        try:
-            scx_bytes, sct_bytes = _unpack_scx_sct(source)
-            records = _parse_scx_records(scx_bytes, sct_bytes)
-        except Exception as exc:
-            log.debug("SCX parse error for %s: %s", file_path, exc)
+        records = _load_scx_records(source, file_path)
+        if records is None:
             return []
 
         form_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -1358,24 +1527,7 @@ class FoxProExtractor(LanguageExtractor):
             )
         )
 
-        for rec in records:
-            if rec["deleted"] or rec["platform"].strip() == "COMMENT":
-                continue
-            methods_text = rec["methods"]
-            if not methods_text:
-                continue
-
-            objname = rec["objname"]
-            parent = rec["parent"]
-            record_num = rec["record_num"]
-
-            # Build control path for qualified names
-            if parent:
-                control_path = f"{parent}.{objname}"
-            else:
-                control_path = objname
-
-            procs = _extract_procedures(methods_text)
+        for control_path, record_num, _classloc, procs in _iter_scx_controls(records):
             for proc_idx, proc in enumerate(procs):
                 proc_name = proc["name"]
                 if not proc_name:
@@ -1501,29 +1653,15 @@ class FoxProExtractor(LanguageExtractor):
 
     def _extract_scx_references(self, source: bytes, file_path: str) -> list[dict]:
         """Extract references from VFP code inside .scx form controls."""
-        try:
-            scx_bytes, sct_bytes = _unpack_scx_sct(source)
-            records = _parse_scx_records(scx_bytes, sct_bytes)
-        except Exception as exc:
-            log.debug("SCX parse error for %s: %s", file_path, exc)
+        records = _load_scx_records(source, file_path)
+        if records is None:
             return []
 
         form_name = os.path.splitext(os.path.basename(file_path))[0]
         refs: list[dict] = []
 
-        for rec in records:
-            if rec["deleted"] or rec["platform"].strip() == "COMMENT":
-                continue
-
-            objname = rec["objname"]
-            parent = rec["parent"]
-            record_num = rec["record_num"]
-
-            # Build control path
-            control_path = f"{parent}.{objname}" if parent else objname
-
+        for control_path, record_num, classloc, procs in _iter_scx_controls(records):
             # Extract classloc references (class library imports) for all controls
-            classloc = rec["classloc"]
             if classloc:
                 lib_name = os.path.splitext(os.path.basename(classloc))[0]
                 refs.append(
@@ -1536,12 +1674,6 @@ class FoxProExtractor(LanguageExtractor):
                     )
                 )
 
-            # Extract references from procedures in this control's methods
-            methods_text = rec["methods"]
-            if not methods_text:
-                continue
-
-            procs = _extract_procedures(methods_text)
             for proc_idx, proc in enumerate(procs):
                 proc_name = proc["name"]
                 if not proc_name:

@@ -26,10 +26,10 @@ field for ``target_not_indexed`` cases. Field names match
 from __future__ import annotations
 
 import sqlite3
-from collections import deque
 from typing import Any
 
 from roam._glob_match import matches_glob as _matches_glob
+from roam.db.connection import batched_in
 
 # ---------------------------------------------------------------------------
 # Defaults — mirror W3.4 guardrails on cmd_impact._bounded_bfs.
@@ -111,6 +111,63 @@ def _resolve_file_id(conn, file_path: str) -> tuple[int | None, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def _batch_frontier_neighbors_to_avoid_n_plus_one(
+    conn,
+    frontier_ids: list[int],
+    *,
+    direction: str,
+) -> list[int]:
+    """Return one BFS frontier's neighbors with batched edge lookups."""
+    if not frontier_ids:
+        return []
+
+    if direction == "forward":
+        rows = batched_in(
+            conn,
+            "SELECT source_id, target_id FROM edges WHERE source_id IN ({ph})",
+            frontier_ids,
+        )
+    else:
+        rows = batched_in(
+            conn,
+            "SELECT target_id, source_id FROM edges WHERE target_id IN ({ph})",
+            frontier_ids,
+        )
+
+    neighbors_by_node: dict[int, list[int]] = {}
+    for row in rows:
+        neighbors_by_node.setdefault(row[0], []).append(row[1])
+
+    neighbors: list[int] = []
+    for node_id in frontier_ids:
+        neighbors.extend(neighbors_by_node.get(node_id, ()))
+    return neighbors
+
+
+def _expand_frontier_preserving_bounded_reachability(
+    conn,
+    frontier_ids: list[int],
+    visited: set[int],
+    *,
+    max_nodes: int,
+    direction: str,
+) -> tuple[list[int], bool]:
+    """Advance one BFS layer while conserving reachability/cap evidence."""
+    next_frontier: list[int] = []
+    for neighbor_id in _batch_frontier_neighbors_to_avoid_n_plus_one(
+        conn,
+        frontier_ids,
+        direction=direction,
+    ):
+        if neighbor_id in visited:
+            continue
+        if len(visited) >= max_nodes:
+            return next_frontier, True
+        visited.add(neighbor_id)
+        next_frontier.append(neighbor_id)
+    return next_frontier, False
+
+
 def _bfs_symbol_reachable(
     conn,
     start_ids: set[int],
@@ -145,30 +202,24 @@ def _bfs_symbol_reachable(
     if max_depth <= 0:
         return visited, True, False
 
-    sql_forward = "SELECT target_id FROM edges WHERE source_id = ?"
-    sql_backward = "SELECT source_id FROM edges WHERE target_id = ?"
-    sql = sql_forward if direction == "forward" else sql_backward
-
-    frontier = deque((sid, 0) for sid in start_ids)
+    frontier = list(start_ids)
     hit_depth_cap = False
     hit_node_cap = False
-    while frontier:
-        node, depth = frontier.popleft()
-        if depth >= max_depth:
-            # We don't expand past max_depth, but we may have queued
-            # leaves at the boundary. Mark and continue draining.
-            hit_depth_cap = True
-            continue
-        for row in conn.execute(sql, (node,)).fetchall():
-            nb = row[0]
-            if nb in visited:
-                continue
-            if len(visited) >= max_nodes:
-                hit_node_cap = True
-                break
-            visited.add(nb)
-            frontier.append((nb, depth + 1))
+    depth = 0
+    while frontier and depth < max_depth:
+        next_frontier, hit_node_cap = _expand_frontier_preserving_bounded_reachability(
+            conn,
+            frontier,
+            visited,
+            max_nodes=max_nodes,
+            direction=direction,
+        )
         if hit_node_cap:
+            break
+        depth += 1
+        frontier = next_frontier
+        if depth >= max_depth and frontier:
+            hit_depth_cap = True
             break
     return visited, hit_depth_cap, hit_node_cap
 
@@ -471,11 +522,11 @@ def check_tested_by(
 
     # Seed BFS with top-level symbols (parent_id IS NULL) from each test file.
     file_ids = [fid for fid, _ in test_files]
-    ph = ",".join("?" for _ in file_ids)
-    seeds = conn.execute(
-        f"SELECT id FROM symbols WHERE file_id IN ({ph}) AND parent_id IS NULL",
+    seeds = batched_in(
+        conn,
+        "SELECT id FROM symbols WHERE file_id IN ({ph}) AND parent_id IS NULL",
         file_ids,
-    ).fetchall()
+    )
     seed_ids = {r["id"] for r in seeds}
     if not seed_ids:
         return False, {

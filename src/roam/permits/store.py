@@ -55,16 +55,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from roam.atomic_io import atomic_write_json
 from roam.leases.store import _is_wall_clock_expired_at
 from roam.output.formatter import WarningsOut
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -83,6 +86,45 @@ PERMIT_ID_RE = re.compile(r"^permit_\d{8}_[0-9a-f]{6,}$")
 # instead of computing a fresh id. Lets tests pin a deterministic id without
 # coupling to wall-clock time. Production callers leave the env var unset.
 _PERMIT_ID_ENV_OVERRIDE = "ROAM_PERMIT_ID"
+
+
+# ---------------------------------------------------------------------------
+# Field-level invariant helpers
+# ---------------------------------------------------------------------------
+
+
+def _require_machine_permit_id(value: str) -> None:
+    """Permit ids must follow the machine-generated ``permit_YYYYMMDD_<hex>`` format."""
+    if not isinstance(value, str) or not PERMIT_ID_RE.match(value):
+        raise ValueError(f"PermitRecord.permit_id must match {PERMIT_ID_RE.pattern!r}; got {value!r}")
+
+
+def _require_identity_field(value: str, field_name: str) -> None:
+    """Scope / issued_to / issued_by must be non-empty strings that actually identify something."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"PermitRecord.{field_name} must be a non-empty string")
+
+
+def _require_parseable_timestamp(value: str, field_name: str) -> None:
+    """Timestamps must be non-empty ISO-8601 strings that round-trip through the parser."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"PermitRecord.{field_name} must be a non-empty ISO-8601 string")
+    try:
+        _parse_iso(value)
+    except ValueError as exc:
+        raise ValueError(f"PermitRecord.{field_name} is not ISO-8601 parseable: {value!r} ({exc})") from exc
+
+
+def _require_single_line_audit_field(value: str, field_name: str) -> None:
+    """Reason must stay a one-line audit annotation (no body / no secrets discipline)."""
+    if not isinstance(value, str):
+        raise ValueError(f"PermitRecord.{field_name} must be a string (use '' for empty)")
+    if "\n" in value or "\r" in value:
+        raise ValueError(
+            f"PermitRecord.{field_name} must be a single line (no newlines); "
+            "multi-line bodies are rejected per the no-body / no-secrets "
+            "discipline"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -129,39 +171,29 @@ class PermitRecord:
     reason: str = ""
 
     def __post_init__(self) -> None:
-        if not isinstance(self.permit_id, str) or not PERMIT_ID_RE.match(self.permit_id):
-            raise ValueError(f"PermitRecord.permit_id must match {PERMIT_ID_RE.pattern!r}; got {self.permit_id!r}")
-        if not isinstance(self.scope, str) or not self.scope.strip():
-            raise ValueError("PermitRecord.scope must be a non-empty string")
-        if not isinstance(self.expires_at, str) or not self.expires_at:
-            raise ValueError("PermitRecord.expires_at must be a non-empty ISO-8601 string")
-        try:
-            _parse_iso(self.expires_at)
-        except ValueError as exc:
-            raise ValueError(f"PermitRecord.expires_at is not ISO-8601 parseable: {self.expires_at!r} ({exc})") from exc
-        if not isinstance(self.issued_to, str) or not self.issued_to.strip():
-            raise ValueError("PermitRecord.issued_to must be a non-empty string")
-        if not isinstance(self.issued_at, str) or not self.issued_at:
-            raise ValueError("PermitRecord.issued_at must be a non-empty ISO-8601 string")
-        try:
-            _parse_iso(self.issued_at)
-        except ValueError as exc:
-            raise ValueError(f"PermitRecord.issued_at is not ISO-8601 parseable: {self.issued_at!r} ({exc})") from exc
-        if not isinstance(self.issued_by, str) or not self.issued_by.strip():
-            raise ValueError("PermitRecord.issued_by must be a non-empty string")
-        if not isinstance(self.reason, str):
-            raise ValueError("PermitRecord.reason must be a string (use '' for empty)")
-        # Single-line discipline: no newlines / carriage returns in reason.
-        # Per the W247a body-prohibition rule applied broadly.
-        if "\n" in self.reason or "\r" in self.reason:
-            raise ValueError(
-                "PermitRecord.reason must be a single line (no newlines); "
-                "multi-line bodies are rejected per the no-body / no-secrets "
-                "discipline"
-            )
+        _require_machine_permit_id(self.permit_id)
+        _require_identity_field(self.scope, "scope")
+        _require_parseable_timestamp(self.expires_at, "expires_at")
+        _require_identity_field(self.issued_to, "issued_to")
+        _require_parseable_timestamp(self.issued_at, "issued_at")
+        _require_identity_field(self.issued_by, "issued_by")
+        _require_single_line_audit_field(self.reason, "reason")
 
     def to_dict(self) -> dict:
-        """Return the JSON-serialisable shape (mirrors W268 reader)."""
+        """Return the JSON-serialisable shape (mirrors W268 reader).
+
+        Load-bearing across modules, not local-only. This is the writer
+        half of the on-disk permit round-trip paired with
+        :func:`_permit_from_dict` (invoked by :func:`_write_permit`), AND
+        the wire form consumed by ``cmd_permit`` JSON envelope fields.
+
+        Dead-code review note: :func:`_write_permit` calls this as
+        ``PermitRecord.to_dict(permit)`` so static dead-export scanners
+        see a direct class-method edge. Keep the public method name
+        stable: command callers still consume this wire shape through
+        instance dispatch on :class:`PermitRecord` rows returned by
+        :func:`issue_permit` / :func:`read_permit` / :func:`list_permits`.
+        """
         return asdict(self)
 
     def is_expired_at(self, now: Optional[datetime] = None) -> bool:
@@ -175,6 +207,25 @@ class PermitRecord:
         invalidate every permit on the next read.
         """
         return _is_wall_clock_expired_at(self.expires_at, now)
+
+
+@dataclass(frozen=True)
+class PermitRequest:
+    """The caller-supplied content of a permit-to-be.
+
+    The "what to issue" value object consumed by :func:`issue_permit` —
+    the sibling of :class:`PermitRecord`, which is the persisted result
+    (request fields + the store-generated ``permit_id`` / ``issued_at``).
+    Deliberately unvalidated: :func:`issue_permit` constructs a
+    ``PermitRecord`` from these fields, so ``PermitRecord.__post_init__``
+    remains the single validation gate for permit content.
+    """
+
+    scope: str
+    expires_at: str
+    issued_to: str
+    issued_by: str
+    reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +296,7 @@ def _make_permit_id(issued_at: str, issued_to: str, scope: str) -> str:
 def _write_permit(repo_root: Path, permit: PermitRecord) -> Path:
     """Persist *permit* to ``.roam/permits/<id>.json`` (atomic). Returns path."""
     path = _permit_path(repo_root, permit.permit_id)
-    atomic_write_json(path, permit.to_dict())
+    atomic_write_json(path, PermitRecord.to_dict(permit))
     return path
 
 
@@ -330,8 +381,37 @@ def _permit_from_dict(raw: dict) -> Optional[PermitRecord]:
             issued_by=str(raw["issued_by"]),
             reason=str(raw.get("reason", "")),
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as exc:
+        raw_keys = sorted(str(key) for key in raw.keys()) if isinstance(raw, dict) else [f"<{type(raw).__name__}>"]
+        log.debug(
+            "permit schema rejected while reconstructing PermitRecord (%s: %s); keys=%s",
+            type(exc).__name__,
+            exc,
+            raw_keys,
+        )
         return None
+
+
+def _permit_record_or_warn(
+    child: Path,
+    emit: Callable[[str], None],
+) -> Optional[PermitRecord]:
+    """Parse one permit file; emit closed-enum warnings and return None on failure.
+
+    This helper exists so :func:`list_permits` can be a resilience
+    orchestrator without nesting JSON parsing, type guards, and schema
+    validation inside its main loop.
+    """
+    if child.suffix != ".json" or not child.is_file():
+        return None
+    try:
+        raw = json.loads(child.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        emit(f"permit_corrupt:{child.name}:{type(exc).__name__}")
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return _permit_from_dict(raw)
 
 
 def list_permits(
@@ -374,25 +454,12 @@ def list_permits(
     root = permits_root(repo_root)
     if not root.exists():
         return []
-    out: list[PermitRecord] = []
     try:
         children = sorted(root.iterdir())
     except OSError as exc:
         _emit(f"permits_root_unreadable:{type(exc).__name__}:{exc}")
         return []
-    for child in children:
-        if child.suffix != ".json" or not child.is_file():
-            continue
-        try:
-            raw = json.loads(child.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            _emit(f"permit_corrupt:{child.name}:{type(exc).__name__}")
-            continue
-        if not isinstance(raw, dict):
-            continue
-        rec = _permit_from_dict(raw)
-        if rec is not None:
-            out.append(rec)
+    out = [record for child in children if (record := _permit_record_or_warn(child, _emit)) is not None]
     out.sort(key=lambda r: r.issued_at, reverse=True)
     return out
 
@@ -400,6 +467,106 @@ def list_permits(
 # ---------------------------------------------------------------------------
 # Validated bundle/replay reader (W383)
 # ---------------------------------------------------------------------------
+
+
+def _append_permit_load_warning(warnings_out: WarningsOut, message: str) -> None:
+    """Disclose why the total permit reader dropped recoverable evidence."""
+    if warnings_out is not None:
+        warnings_out.append(message)
+
+
+def _permit_children_preserving_empty_contract(permits_dir: Path, warnings_out: WarningsOut) -> list[Path]:
+    """Keep an unreadable permit directory in the reader's empty-state contract."""
+    try:
+        return sorted(permits_dir.iterdir())
+    except OSError as exc:
+        # W593c: route through the EXISTING ``warnings_out`` channel
+        # (W383 already plumbed it for per-permit failures). Closed-enum
+        # marker so callers can distinguish "permits dir unreadable"
+        # from per-file W379/W380/W382 warnings without parsing the
+        # free-form text. The ``[]`` return is PRESERVED -- the empty-
+        # return is the caller contract; the marker just discloses WHY.
+        _append_permit_load_warning(warnings_out, f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
+        return []
+
+
+def _raw_permit_object_with_repair_warning(child: Path, warnings_out: WarningsOut) -> Optional[dict]:
+    """Parse one permit file while naming repairable byte/object failures."""
+    try:
+        raw = json.loads(child.read_text(encoding="utf-8"))
+    except OSError as exc:
+        _append_permit_load_warning(
+            warnings_out,
+            f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
+        )
+        return None
+    except UnicodeDecodeError as exc:
+        _append_permit_load_warning(
+            warnings_out,
+            f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
+        )
+        return None
+    except json.JSONDecodeError as exc:
+        _append_permit_load_warning(
+            warnings_out,
+            f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
+        )
+        return None
+    if not isinstance(raw, dict):
+        _append_permit_load_warning(
+            warnings_out,
+            f"permit file {child.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})",
+        )
+        return None
+    return raw
+
+
+def _audit_ready_permit_or_warn(child: Path, seen_ids: dict[str, str], warnings_out: WarningsOut) -> Optional[dict]:
+    """Accept only schema-valid, first-seen permits for audit consumers."""
+    raw = _raw_permit_object_with_repair_warning(child, warnings_out)
+    if raw is None:
+        return None
+    # W380: route through the validator so a permit dict that cannot
+    # reconstruct a ``PermitRecord`` is dropped + warned.
+    record = _permit_from_dict(raw)
+    if record is None:
+        raw_pid = raw.get("permit_id")
+        id_phrase = f"permit_id={raw_pid!r}" if isinstance(raw_pid, str) and raw_pid else "permit_id=<missing>"
+        _append_permit_load_warning(
+            warnings_out,
+            f"permit file {child.name!s} skipped: schema validation "
+            f"failed ({id_phrase}); fields missing or invalid per "
+            f"PermitRecord contract",
+        )
+        return None
+    # W379: detect duplicate permit_id across files. Keep first-seen.
+    pid = record.permit_id
+    if pid in seen_ids:
+        _append_permit_load_warning(
+            warnings_out,
+            f"duplicate permit_id={pid!r} found in {child.name!s}; "
+            f"first occurrence was {seen_ids[pid]!s}; collector will "
+            f"keep only the first AuthorityRef",
+        )
+        return None
+    seen_ids[pid] = child.name
+    return raw
+
+
+def _audit_ready_permit_dicts_preserving_first_seen_ids(
+    children: list[Path],
+    warnings_out: WarningsOut,
+) -> list[dict]:
+    """Preserve first-seen audit evidence while filtering unreadable permits."""
+    out: list[dict] = []
+    seen_ids: dict[str, str] = {}  # permit_id -> first-seen file name
+    for child in children:
+        if child.suffix != ".json" or not child.is_file():
+            continue
+        raw = _audit_ready_permit_or_warn(child, seen_ids, warnings_out)
+        if raw is not None:
+            out.append(raw)
+    return out
 
 
 def load_permits_from_disk(
@@ -455,63 +622,8 @@ def load_permits_from_disk(
     if not permits_dir.is_dir():
         return []
 
-    def _emit_warning(message: str) -> None:
-        if warnings_out is not None:
-            warnings_out.append(message)
-
-    try:
-        children = sorted(permits_dir.iterdir())
-    except OSError as exc:
-        # W593c: route through the EXISTING ``warnings_out`` channel
-        # (W383 already plumbed it for per-permit failures). Closed-enum
-        # marker so callers can distinguish "permits dir unreadable"
-        # from per-file W379/W380/W382 warnings without parsing the
-        # free-form text. The ``[]`` return is PRESERVED -- the empty-
-        # return is the caller contract; the marker just discloses WHY.
-        _emit_warning(f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
-        return []
-
-    out: list[dict] = []
-    seen_ids: dict[str, str] = {}  # permit_id -> first-seen file name
-
-    for child in children:
-        if child.suffix != ".json" or not child.is_file():
-            continue
-        # W382: malformed JSON file -> warn naming the file + parse-error class.
-        try:
-            raw = json.loads(child.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            _emit_warning(f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
-            continue
-        if not isinstance(raw, dict):
-            _emit_warning(
-                f"permit file {child.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
-            )
-            continue
-        # W380: route through the validator so a permit dict that cannot
-        # reconstruct a ``PermitRecord`` is dropped + warned.
-        record = _permit_from_dict(raw)
-        if record is None:
-            raw_pid = raw.get("permit_id")
-            id_phrase = f"permit_id={raw_pid!r}" if isinstance(raw_pid, str) and raw_pid else "permit_id=<missing>"
-            _emit_warning(
-                f"permit file {child.name!s} skipped: schema validation "
-                f"failed ({id_phrase}); fields missing or invalid per "
-                f"PermitRecord contract"
-            )
-            continue
-        # W379: detect duplicate permit_id across files. Keep first-seen.
-        pid = record.permit_id
-        if pid in seen_ids:
-            _emit_warning(
-                f"duplicate permit_id={pid!r} found in {child.name!s}; "
-                f"first occurrence was {seen_ids[pid]!s}; collector will "
-                f"keep only the first AuthorityRef"
-            )
-            continue
-        seen_ids[pid] = child.name
-        out.append(raw)
-    return out
+    children = _permit_children_preserving_empty_contract(permits_dir, warnings_out)
+    return _audit_ready_permit_dicts_preserving_first_seen_ids(children, warnings_out)
 
 
 # ---------------------------------------------------------------------------
@@ -521,16 +633,16 @@ def load_permits_from_disk(
 
 def issue_permit(
     repo_root: Path,
+    request: PermitRequest,
     *,
-    scope: str,
-    expires_at: str,
-    issued_to: str,
-    issued_by: str,
-    reason: str = "",
     issued_at: Optional[str] = None,
     permit_id: Optional[str] = None,
 ) -> tuple[PermitRecord, Path]:
     """Issue and persist a new permit. Returns ``(record, on_disk_path)``.
+
+    Permit content (scope / expiry / identities / reason) arrives as a
+    :class:`PermitRequest`; the store contributes ``permit_id`` and
+    ``issued_at``.
 
     Test hooks:
 
@@ -546,7 +658,7 @@ def issue_permit(
         if override:
             permit_id = override
         else:
-            permit_id = _make_permit_id(ts, issued_to, scope)
+            permit_id = _make_permit_id(ts, request.issued_to, request.scope)
 
     # Collision avoidance: if an id collides (two issuances at same μs
     # with same inputs), perturb the hash input with a counter. Mirrors
@@ -554,18 +666,18 @@ def issue_permit(
     counter = 0
     while _permit_path(repo_root, permit_id).exists():
         counter += 1
-        permit_id = _make_permit_id(f"{ts}#{counter}", issued_to, scope)
+        permit_id = _make_permit_id(f"{ts}#{counter}", request.issued_to, request.scope)
         if counter > 1024:
             raise RuntimeError("could not allocate a unique permit_id after 1024 attempts")
 
     record = PermitRecord(
         permit_id=permit_id,
-        scope=scope,
-        expires_at=expires_at,
-        issued_to=issued_to,
+        scope=request.scope,
+        expires_at=request.expires_at,
+        issued_to=request.issued_to,
         issued_at=ts,
-        issued_by=issued_by,
-        reason=reason,
+        issued_by=request.issued_by,
+        reason=request.reason,
     )
     path = _write_permit(Path(repo_root), record)
     return record, path

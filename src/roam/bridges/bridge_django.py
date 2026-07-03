@@ -18,6 +18,7 @@ field resolution that runs after the per-file extraction phase.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
@@ -80,6 +81,28 @@ _INCLUDE_RE = re.compile(
 _DRF_ROUTER_RE = re.compile(r"(?:\w+)\.register\(\s*r?['\"]([^'\"]*)['\"],\s*(\w+)")
 
 
+@dataclass(frozen=True)
+class _IncludeResolutionContext:
+    """Inherited state while resolving nested Django include() calls."""
+
+    source_qname: str
+    namespace: str | None
+    url_prefix: str
+    target_files: dict[str, list[dict]]
+    symbol_index: dict[str, str]
+    depth: int = 0
+
+    def descend(self, namespace: str | None, url_prefix: str) -> _IncludeResolutionContext:
+        return _IncludeResolutionContext(
+            source_qname=self.source_qname,
+            namespace=namespace,
+            url_prefix=url_prefix,
+            target_files=self.target_files,
+            symbol_index=self.symbol_index,
+            depth=self.depth + 1,
+        )
+
+
 def _build_model_index(
     target_files: dict[str, list[dict]],
 ) -> dict[str, tuple[str, bool]]:
@@ -133,6 +156,222 @@ def _find_url_file(
         if normalised == suffix or normalised.endswith("/" + suffix):
             return file_key
     return None
+
+
+class _DjangoUrlResolver:
+    """Resolve Django URL-config relationships (path()/re_path()/include()).
+
+    Extracted from ``DjangoBridge`` to shrink the large-class surface: the
+    URL routing mechanism is the largest self-contained group in the bridge
+    — these methods only call each other and use the bridge name (a constant)
+    for edge tagging, so they carry no state that belongs on the bridge.
+    """
+
+    def __init__(self, bridge_name: str) -> None:
+        self._bridge_name = bridge_name
+
+    def resolve_urls(
+        self,
+        source_path: str,
+        source_symbols: list[dict],
+        target_files: dict[str, list[dict]],
+        symbol_index: dict[str, str],
+    ) -> list[dict]:
+        edges: list[dict] = []
+        path_lower = source_path.lower()
+        if "urls" not in path_lower and "url" not in path_lower:
+            return edges
+
+        for sym in source_symbols:
+            sig = sym.get("signature", "") or ""
+            qname = sym.get("qualified_name", sym.get("name", ""))
+
+            # Match path()/re_path()/url() calls
+            for m in _URL_PATH_RE.finditer(sig):
+                url_pattern = m.group(1)
+                view_ref = m.group(2)
+                edge = self._make_url_edge(qname, view_ref, url_pattern, symbol_index)
+                if edge:
+                    edges.append(edge)
+
+            # Match Class.as_view() references
+            for m in _AS_VIEW_RE.finditer(sig):
+                view_class = m.group(1)
+                edge = self._make_url_edge(qname, view_class, "", symbol_index)
+                if edge:
+                    edges.append(edge)
+
+            # Match include() patterns and resolve recursively
+            for m in _INCLUDE_RE.finditer(sig):
+                module_path = m.group(1)
+                namespace = m.group(2)  # May be None
+                # Extract URL prefix from the parent path()/url() wrapping
+                prefix_m = _URL_PATH_RE.search(sig)
+                url_prefix = prefix_m.group(1) if prefix_m else ""
+                include_edges = self._resolve_include(
+                    module_path,
+                    _IncludeResolutionContext(
+                        source_qname=qname,
+                        namespace=namespace,
+                        url_prefix=url_prefix,
+                        target_files=target_files,
+                        symbol_index=symbol_index,
+                    ),
+                )
+                edges.extend(include_edges)
+
+        return edges
+
+    def _resolve_include(
+        self,
+        module_path: str,
+        context: _IncludeResolutionContext,
+    ) -> list[dict]:
+        """Recursively resolve include() patterns to routes_to edges."""
+        if context.depth >= 5:
+            return []
+
+        url_file = _find_url_file(module_path, context.target_files)
+        if url_file is None:
+            return []
+
+        return self._resolve_included_url_symbols_preserving_context(
+            context.target_files[url_file],
+            context,
+        )
+
+    def _resolve_included_url_symbols_preserving_context(
+        self,
+        included_symbols: list[dict],
+        context: _IncludeResolutionContext,
+    ) -> list[dict]:
+        """Resolve included URL symbols while preserving inherited route context."""
+        edges: list[dict] = []
+        confidence = 0.95 if context.depth == 0 else 0.85
+
+        for sym in included_symbols:
+            sig = sym.get("signature", "") or ""
+            edges.extend(
+                self._route_edges_visible_through_include_context(
+                    sig,
+                    context,
+                    confidence,
+                )
+            )
+            edges.extend(
+                self._nested_includes_with_inherited_context(
+                    sig,
+                    context,
+                )
+            )
+
+        return edges
+
+    def _route_edges_visible_through_include_context(
+        self,
+        sig: str,
+        context: _IncludeResolutionContext,
+        confidence: float,
+    ) -> list[dict]:
+        """Build route edges whose URL pattern inherits the include prefix."""
+        edges: list[dict] = []
+
+        for m in _URL_PATH_RE.finditer(sig):
+            child_pattern = m.group(1)
+            view_ref = m.group(2)
+            view_name = view_ref.rsplit(".", 1)[-1]
+            edge = self._make_include_context_route_edge(
+                view_name,
+                context.url_prefix + child_pattern,
+                context,
+                confidence,
+            )
+            if edge:
+                edges.append(edge)
+
+        for m in _AS_VIEW_RE.finditer(sig):
+            view_class = m.group(1)
+            edge = self._make_include_context_route_edge(
+                view_class,
+                context.url_prefix,
+                context,
+                confidence,
+            )
+            if edge:
+                edges.append(edge)
+
+        return edges
+
+    def _make_include_context_route_edge(
+        self,
+        view_name: str,
+        url_pattern: str,
+        context: _IncludeResolutionContext,
+        confidence: float,
+    ) -> dict | None:
+        """Attach inherited include context to a resolved route target."""
+        target_qname = context.symbol_index.get(view_name)
+        if target_qname is None:
+            return None
+
+        edge: dict = {
+            "source": context.source_qname,
+            "target": target_qname,
+            "kind": "x-lang",
+            "bridge": self._bridge_name,
+            "mechanism": "routes_to",
+            "confidence": confidence,
+            "url_pattern": url_pattern,
+        }
+        if context.namespace:
+            edge["namespace"] = context.namespace
+        return edge
+
+    def _nested_includes_with_inherited_context(
+        self,
+        sig: str,
+        context: _IncludeResolutionContext,
+    ) -> list[dict]:
+        """Recurse into nested includes without losing prefix or namespace context."""
+        edges: list[dict] = []
+        nested_prefix_m = _URL_PATH_RE.search(sig)
+        nested_prefix = context.url_prefix + (nested_prefix_m.group(1) if nested_prefix_m else "")
+
+        for m in _INCLUDE_RE.finditer(sig):
+            nested_module = m.group(1)
+            nested_ns = m.group(2) or context.namespace
+            edges.extend(
+                self._resolve_include(
+                    nested_module,
+                    context.descend(nested_ns, nested_prefix),
+                )
+            )
+
+        return edges
+
+    def _make_url_edge(
+        self,
+        source_qname: str,
+        view_ref: str,
+        url_pattern: str,
+        symbol_index: dict[str, str],
+    ) -> dict | None:
+        # Extract the final name from dotted ref (e.g. views.BookView -> BookView)
+        view_name = view_ref.rsplit(".", 1)[-1] if "." in view_ref else view_ref
+        target_qname = symbol_index.get(view_name)
+        if target_qname is None:
+            return None
+        edge: dict = {
+            "source": source_qname,
+            "target": target_qname,
+            "kind": "x-lang",
+            "bridge": self._bridge_name,
+            "mechanism": "routes_to",
+            "confidence": 0.85,
+        }
+        if url_pattern:
+            edge["url_pattern"] = url_pattern
+        return edge
 
 
 class DjangoBridge(LanguageBridge):
@@ -193,7 +432,8 @@ class DjangoBridge(LanguageBridge):
         edges.extend(self._resolve_meta_model(source_path, source_symbols, model_index))
         edges.extend(self._resolve_signals(source_symbols, model_index))
         edges.extend(self._resolve_celery(source_symbols))
-        edges.extend(self._resolve_urls(source_path, source_symbols, target_files, symbol_index))
+        url_resolver = _DjangoUrlResolver(self.name)
+        edges.extend(url_resolver.resolve_urls(source_path, source_symbols, target_files, symbol_index))
         edges.extend(self._resolve_drf_routers(source_path, source_symbols, target_files, symbol_index))
 
         return edges
@@ -210,37 +450,33 @@ class DjangoBridge(LanguageBridge):
     ) -> list[dict]:
         edges: list[dict] = []
         for sym in source_symbols:
-            if sym.get("kind") != "class":
-                continue
-            sig = sym.get("signature", "") or ""
-            qname = sym.get("qualified_name", sym.get("name", ""))
-
-            # @admin.register(Model) decorator
-            for m in _ADMIN_REGISTER_RE.finditer(sig):
-                model_name = m.group(1)
-                edge = self._make_admin_edge(qname, model_name, model_index)
-                if edge:
-                    edges.append(edge)
-
-            # admin.site.register(Model, ...) in signature
-            for m in _ADMIN_SITE_REGISTER_RE.finditer(sig):
-                model_name = m.group(1)
-                edge = self._make_admin_edge(qname, model_name, model_index)
-                if edge:
-                    edges.append(edge)
-
-        # Also scan non-class symbols for admin.site.register calls
-        for sym in source_symbols:
             if sym.get("kind") == "class":
-                continue
-            sig = sym.get("signature", "") or ""
-            qname = sym.get("qualified_name", sym.get("name", ""))
-            for m in _ADMIN_SITE_REGISTER_RE.finditer(sig):
-                model_name = m.group(1)
-                edge = self._make_admin_edge(qname, model_name, model_index)
+                edges.extend(self._admin_edges_preserving_symbol_kind(sym, model_index))
+
+        for sym in source_symbols:
+            if sym.get("kind") != "class":
+                edges.extend(self._admin_edges_preserving_symbol_kind(sym, model_index))
+
+        return edges
+
+    def _admin_edges_preserving_symbol_kind(
+        self,
+        sym: dict,
+        model_index: dict[str, tuple[str, bool]],
+    ) -> list[dict]:
+        """Return only admin registration edges valid for this symbol kind."""
+        sig = sym.get("signature", "") or ""
+        qname = sym.get("qualified_name", sym.get("name", ""))
+        registration_patterns = (_ADMIN_SITE_REGISTER_RE,)
+        if sym.get("kind") == "class":
+            registration_patterns = (_ADMIN_REGISTER_RE, _ADMIN_SITE_REGISTER_RE)
+
+        edges: list[dict] = []
+        for pattern in registration_patterns:
+            for match in pattern.finditer(sig):
+                edge = self._make_admin_edge(qname, match.group(1), model_index)
                 if edge:
                     edges.append(edge)
-
         return edges
 
     def _make_admin_edge(
@@ -349,31 +585,37 @@ class DjangoBridge(LanguageBridge):
         # Look for children of the class or of Class.Meta
         meta_qname = f"{class_qname}.Meta"
         for prefix in (meta_qname, class_qname):
-            children = child_map.get(prefix, [])
-            for child in children:
-                if child.get("name") == "model" and child.get("kind") == "property":
-                    # default_value often holds the model class name
-                    val = child.get("default_value", "") or ""
-                    if val:
-                        return val
-                    # signature may hold it
-                    child_sig = child.get("signature", "") or ""
-                    if child_sig:
-                        # Extract simple identifier
-                        m = re.match(r"(\w+)", child_sig)
-                        if m:
-                            return m.group(1)
+            for child in child_map.get(prefix, []):
+                name = self._model_name_from_meta_child(child)
+                if name:
+                    return name
 
         # Fallback: check for meta_model references among source symbols
         for sym in source_symbols:
-            ref_kind = sym.get("kind", "")
-            if ref_kind == "meta_model":
-                ref_qname = sym.get("qualified_name", "")
-                if ref_qname.startswith(class_qname):
-                    target = sym.get("name", "")
-                    if target:
-                        return target
+            if sym.get("kind", "") != "meta_model":
+                continue
+            if not sym.get("qualified_name", "").startswith(class_qname):
+                continue
+            target = sym.get("name", "")
+            if target:
+                return target
 
+        return None
+
+    def _model_name_from_meta_child(self, child: dict) -> str | None:
+        """Extract the model class name from a Meta 'model' property child."""
+        if child.get("name") != "model" or child.get("kind") != "property":
+            return None
+        # default_value often holds the model class name
+        val = child.get("default_value", "") or ""
+        if val:
+            return val
+        # signature may hold it; extract simple identifier
+        child_sig = child.get("signature", "") or ""
+        if child_sig:
+            m = re.match(r"(\w+)", child_sig)
+            if m:
+                return m.group(1)
         return None
 
     # ------------------------------------------------------------------
@@ -457,171 +699,6 @@ class DjangoBridge(LanguageBridge):
                 )
 
         return edges
-
-    # ------------------------------------------------------------------
-    # URL routing mechanism
-    # ------------------------------------------------------------------
-
-    def _resolve_urls(
-        self,
-        source_path: str,
-        source_symbols: list[dict],
-        target_files: dict[str, list[dict]],
-        symbol_index: dict[str, str],
-    ) -> list[dict]:
-        edges: list[dict] = []
-        path_lower = source_path.lower()
-        if "urls" not in path_lower and "url" not in path_lower:
-            return edges
-
-        for sym in source_symbols:
-            sig = sym.get("signature", "") or ""
-            qname = sym.get("qualified_name", sym.get("name", ""))
-
-            # Match path()/re_path()/url() calls
-            for m in _URL_PATH_RE.finditer(sig):
-                url_pattern = m.group(1)
-                view_ref = m.group(2)
-                edge = self._make_url_edge(qname, view_ref, url_pattern, symbol_index)
-                if edge:
-                    edges.append(edge)
-
-            # Match Class.as_view() references
-            for m in _AS_VIEW_RE.finditer(sig):
-                view_class = m.group(1)
-                edge = self._make_url_edge(qname, view_class, "", symbol_index)
-                if edge:
-                    edges.append(edge)
-
-            # Match include() patterns and resolve recursively
-            for m in _INCLUDE_RE.finditer(sig):
-                module_path = m.group(1)
-                namespace = m.group(2)  # May be None
-                # Extract URL prefix from the parent path()/url() wrapping
-                prefix_m = _URL_PATH_RE.search(sig)
-                url_prefix = prefix_m.group(1) if prefix_m else ""
-                include_edges = self._resolve_include(
-                    qname,
-                    module_path,
-                    namespace,
-                    url_prefix,
-                    target_files,
-                    symbol_index,
-                    depth=0,
-                )
-                edges.extend(include_edges)
-
-        return edges
-
-    def _resolve_include(
-        self,
-        source_qname: str,
-        module_path: str,
-        namespace: str | None,
-        url_prefix: str,
-        target_files: dict[str, list[dict]],
-        symbol_index: dict[str, str],
-        depth: int,
-    ) -> list[dict]:
-        """Recursively resolve include() patterns to routes_to edges."""
-        if depth >= 5:
-            return []
-
-        url_file = _find_url_file(module_path, target_files)
-        if url_file is None:
-            return []
-
-        edges: list[dict] = []
-        included_symbols = target_files[url_file]
-        confidence = 0.95 if depth == 0 else 0.85
-
-        for sym in included_symbols:
-            sig = sym.get("signature", "") or ""
-
-            # Match path()/re_path()/url() in included file
-            for m in _URL_PATH_RE.finditer(sig):
-                child_pattern = m.group(1)
-                view_ref = m.group(2)
-                full_pattern = url_prefix + child_pattern
-                view_name = view_ref.rsplit(".", 1)[-1] if "." in view_ref else view_ref
-                target_qname = symbol_index.get(view_name)
-                if target_qname is None:
-                    continue
-                edge: dict = {
-                    "source": source_qname,
-                    "target": target_qname,
-                    "kind": "x-lang",
-                    "bridge": self.name,
-                    "mechanism": "routes_to",
-                    "confidence": confidence,
-                    "url_pattern": full_pattern,
-                }
-                if namespace:
-                    edge["namespace"] = namespace
-                edges.append(edge)
-
-            # Match Class.as_view() in included file
-            for m in _AS_VIEW_RE.finditer(sig):
-                view_class = m.group(1)
-                target_qname = symbol_index.get(view_class)
-                if target_qname is None:
-                    continue
-                edge = {
-                    "source": source_qname,
-                    "target": target_qname,
-                    "kind": "x-lang",
-                    "bridge": self.name,
-                    "mechanism": "routes_to",
-                    "confidence": confidence,
-                    "url_pattern": url_prefix,
-                }
-                if namespace:
-                    edge["namespace"] = namespace
-                edges.append(edge)
-
-            # Nested include() - recurse
-            for m in _INCLUDE_RE.finditer(sig):
-                nested_module = m.group(1)
-                nested_ns = m.group(2) or namespace
-                nested_prefix_m = _URL_PATH_RE.search(sig)
-                nested_prefix = url_prefix + (nested_prefix_m.group(1) if nested_prefix_m else "")
-                edges.extend(
-                    self._resolve_include(
-                        source_qname,
-                        nested_module,
-                        nested_ns,
-                        nested_prefix,
-                        target_files,
-                        symbol_index,
-                        depth + 1,
-                    )
-                )
-
-        return edges
-
-    def _make_url_edge(
-        self,
-        source_qname: str,
-        view_ref: str,
-        url_pattern: str,
-        symbol_index: dict[str, str],
-    ) -> dict | None:
-        # Extract the final name from dotted ref (e.g. views.BookView -> BookView)
-        view_name = view_ref.rsplit(".", 1)[-1] if "." in view_ref else view_ref
-        target_qname = symbol_index.get(view_name)
-        if target_qname is None:
-            return None
-        edge: dict = {
-            "source": source_qname,
-            "target": target_qname,
-            "kind": "x-lang",
-            "bridge": self.name,
-            "mechanism": "routes_to",
-            "confidence": 0.85,
-        }
-        if url_pattern:
-            edge["url_pattern"] = url_pattern
-        return edge
 
     # ------------------------------------------------------------------
     # DRF router mechanism

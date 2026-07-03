@@ -7,7 +7,6 @@ import sqlite3
 from collections import Counter, defaultdict
 
 import networkx as nx
-from networkx.algorithms.community.quality import NotAPartition
 
 from roam.graph.stats import gini_coefficient as _gini_coefficient
 
@@ -62,107 +61,18 @@ def _classify_cluster_pattern(size_pct: float, conductance: float) -> str:
 
 
 def _fast_cluster_quality(G: nx.DiGraph, cluster_map: dict[int, int]) -> dict:
-    """Output-identical, single-pass replacement for ``clusters.cluster_quality``.
+    """Single-pass, output-identical wrapper around ``clusters._compute_cluster_quality``.
 
-    ``clusters.cluster_quality`` computes per-cluster conductance by
-    re-iterating ``undirected.edges()`` ONCE PER CLUSTER -- O(clusters x
-    edges). On roam-code that is ~10.6k clusters x ~49k edges, ~520M
-    pure-Python set-membership iterations, costing ~25s+ in a single
-    ``compute_fingerprint`` call (the ``_modularity_only`` docstring in
-    ``graph/simulate.py`` documents the same cost and worked around it by
-    skipping conductance entirely -- but ``fingerprint`` USES the
-    conductance values, so it must compute them, just faster).
-
-    This helper accumulates ``cut`` and ``vol`` per cluster in a single
-    O(edges) pass. The result is byte-identical to ``cluster_quality``:
-
-      * ``modularity`` -- same ``nx.community.modularity`` call, same
-        community list-of-sets, same ``round(q, 4)``, same NotAPartition
-        fallback and edgeless-graph guard.
-      * ``per_cluster`` -- conductance phi(S) = cut(S, S_bar) /
-        min(vol(S), vol(S_bar)), same ``round(.., 4)``, same
-        ``len(members) < 2 -> 0.0`` short-circuit.
-
-    Conductance identities exploited:
-      * vol(S)     = sum over edges of [u in S] + [v in S]
-      * vol(S_bar) = 2 * |edges| - vol(S)   (each edge contributes exactly
-        two endpoints; the in/out split is exhaustive -- this holds even
-        when an endpoint maps to no cluster, matching the old loop's
-        ``u in members`` test being False for every cluster).
-      * cut(S)     = count of edges with exactly one endpoint in S; an
-        edge whose endpoints fall in clusters cu != cv is a cut for BOTH.
+    ``clusters.cluster_quality`` previously computed per-cluster conductance by
+    re-iterating ``undirected.edges()`` once per cluster -- O(clusters x edges).
+    On roam-code that was ~10.6k clusters x ~49k edges, ~520M pure-Python
+    set-membership iterations, costing ~25s+ in a single ``compute_fingerprint``
+    call. The canonical implementation now uses the same single-pass accumulator
+    as this helper, so both call sites share one correct-and-fast routine.
     """
-    if not cluster_map or len(G) == 0:
-        return {"modularity": 0.0, "per_cluster": {}, "mean_conductance": 0.0}
+    from roam.graph.clusters import _compute_cluster_quality
 
-    undirected = G.to_undirected()
-    node_set = set(undirected.nodes())
-
-    # `groups` (the real cluster assignment) drives per-cluster conductance below.
-    groups: dict[int, set] = defaultdict(set)
-    for node_id, cid in cluster_map.items():
-        groups[cid].add(node_id)
-
-    # Modularity needs a PARTITION of every node in `undirected`; the cluster map
-    # routinely omits nodes (isolated symbols / post-clustering additions), which
-    # raised NotAPartition and the bare except floored Q to 0.0 — making a
-    # strongly-modular graph report "no community structure". Repair the partition
-    # with a singleton per uncovered in-graph node (mirrors cluster_quality so
-    # `_fast_cluster_quality` stays byte-identical to it).
-    partition_groups: dict[int, set] = defaultdict(set)
-    for node_id, cid in cluster_map.items():
-        if node_id in node_set:
-            partition_groups[cid].add(node_id)
-    covered_nodes: set = set()
-    for members in partition_groups.values():
-        covered_nodes |= members
-    modularity_communities = list(partition_groups.values()) + [{n} for n in node_set - covered_nodes]
-
-    try:
-        q = (
-            nx.community.modularity(undirected, modularity_communities)
-            if modularity_communities and undirected.number_of_edges() > 0
-            else 0.0
-        )
-    except NotAPartition:
-        q = 0.0
-
-    # Single O(edges) pass: accumulate per-cluster volume + cut.
-    m_edges = undirected.number_of_edges()
-    vol_in: dict[int, int] = defaultdict(int)
-    cut_count: dict[int, int] = defaultdict(int)
-    for u, v in undirected.edges():
-        cu = cluster_map.get(u)
-        cv = cluster_map.get(v)
-        if cu is not None:
-            vol_in[cu] += 1
-        if cv is not None:
-            vol_in[cv] += 1
-        if cu != cv:
-            if cu is not None:
-                cut_count[cu] += 1
-            if cv is not None:
-                cut_count[cv] += 1
-
-    per_cluster: dict[int, float] = {}
-    for cid, members in groups.items():
-        if len(members) < 2:
-            per_cluster[cid] = 0.0
-            continue
-        vol_s = vol_in.get(cid, 0)
-        vol_sbar = 2 * m_edges - vol_s
-        min_vol = min(vol_s, vol_sbar)
-        cut = cut_count.get(cid, 0)
-        per_cluster[cid] = round(cut / min_vol, 4) if min_vol > 0 else 0.0
-
-    conductances = list(per_cluster.values())
-    mean_cond = round(sum(conductances) / len(conductances), 4) if conductances else 0.0
-
-    return {
-        "modularity": round(q, 4),
-        "per_cluster": per_cluster,
-        "mean_conductance": mean_cond,
-    }
+    return _compute_cluster_quality(G, cluster_map)
 
 
 def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
@@ -208,10 +118,9 @@ def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
     fiedler = algebraic_connectivity(G)
 
     # -- Clusters & modularity --
-    # Use the single-pass _fast_cluster_quality (output-identical to
-    # clusters.cluster_quality) — the canonical helper re-scans every
-    # edge once per cluster, which on a 10k-cluster graph dominated the
-    # whole command runtime. See _fast_cluster_quality docstring.
+    # Both ``_fast_cluster_quality`` and ``clusters.cluster_quality`` now
+    # delegate to the shared ``clusters._compute_cluster_quality`` helper,
+    # so the single-pass correct algorithm lives in one place.
     cluster_map = detect_clusters(G)
     quality = _fast_cluster_quality(G, cluster_map)
     modularity = quality["modularity"]

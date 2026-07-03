@@ -8,6 +8,16 @@ from pathlib import Path
 
 from roam.workspace.config import get_workspace_db_path
 
+__all__ = [
+    "WORKSPACE_SCHEMA_SQL",
+    "get_workspace_connection",
+    "ensure_workspace_schema",
+    "open_workspace_db",
+    "upsert_repo",
+    "get_cross_edges",
+    "clear_cross_edges",
+]
+
 WORKSPACE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ws_repos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

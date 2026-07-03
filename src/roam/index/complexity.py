@@ -694,7 +694,10 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             body_node = None
             try:
                 body_node = node.child_by_field_name("body")
-            except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
+            except (AttributeError, TypeError):
+                # tree-sitter node API varies by grammar/binding: an alternate
+                # binding may lack ``child_by_field_name`` (AttributeError) or
+                # differ in signature (TypeError). Genuine bugs propagate.
                 body_node = None
             if body_node is None:
                 # Fallback for grammars that don't expose ``body`` as a
@@ -907,6 +910,52 @@ def _augmented_assign_target(node, source: bytes) -> str:
     return ""
 
 
+def _extract_identifier_var(node, source: bytes) -> set[str]:
+    """Extract a bare identifier loop variable (Python, Go, etc.)."""
+    return {source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")}
+
+
+def _extract_php_variable_name_var(node, source: bytes) -> set[str]:
+    """Extract a PHP variable_name loop variable, stripping the leading ``$``."""
+    name_node = None
+    try:
+        name_node = node.child_by_field_name("name")
+    except (AttributeError, TypeError):
+        # tree-sitter node API varies by grammar/binding (missing method
+        # or differing signature); fall back to child scan. Genuine bugs
+        # propagate.
+        name_node = None
+    if name_node is None:
+        for sub in node.children:
+            if sub.type == "name":
+                name_node = sub
+                break
+    if name_node is not None:
+        return {source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")}
+    raw = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    return {raw.lstrip("$")}
+
+
+def _extract_pattern_list_vars(node, source: bytes) -> set[str]:
+    """Extract identifiers from a pattern_list / tuple_pattern / pair node."""
+    result: set[str] = set()
+    for sub in node.children:
+        if sub.type == "identifier":
+            result.add(source[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace"))
+    return result
+
+
+def _extract_js_var_declarator_vars(node, source: bytes) -> set[str]:
+    """Extract identifiers from JS variable_declaration / lexical_declaration nodes."""
+    result: set[str] = set()
+    for sub in node.children:
+        if sub.type == "variable_declarator":
+            for ssub in sub.children:
+                if ssub.type == "identifier":
+                    result.add(source[ssub.start_byte : ssub.end_byte].decode("utf-8", errors="replace"))
+    return result
+
+
 def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
     """Extract loop variable names from a for/foreach loop node.
 
@@ -919,37 +968,17 @@ def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
     for child in loop_node.children:
         # Python: for x in ..., Go: for i, v := range ...
         if child.type in ("identifier",):
-            result.add(source[child.start_byte : child.end_byte].decode("utf-8", errors="replace"))
+            result.update(_extract_identifier_var(child, source))
         # PHP: foreach ($templates as $t) — the iter var is a
         # variable_name whose `name` field is the bare identifier.
         elif child.type == "variable_name":
-            name_node = None
-            try:
-                name_node = child.child_by_field_name("name")
-            except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to child scan
-                name_node = None
-            if name_node is None:
-                for sub in child.children:
-                    if sub.type == "name":
-                        name_node = sub
-                        break
-            if name_node is not None:
-                result.add(source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace"))
-            else:
-                raw = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
-                result.add(raw.lstrip("$"))
+            result.update(_extract_php_variable_name_var(child, source))
         # Python pattern_list / tuple: for x, y in ...
         elif child.type in ("pattern_list", "tuple_pattern", "pair"):
-            for sub in child.children:
-                if sub.type == "identifier":
-                    result.add(source[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace"))
+            result.update(_extract_pattern_list_vars(child, source))
         # JS: for (const x of ...) / for (let x in ...)
         elif child.type in ("variable_declaration", "lexical_declaration"):
-            for sub in child.children:
-                if sub.type == "variable_declarator":
-                    for ssub in sub.children:
-                        if ssub.type == "identifier":
-                            result.add(source[ssub.start_byte : ssub.end_byte].decode("utf-8", errors="replace"))
+            result.update(_extract_js_var_declarator_vars(child, source))
         # Stop at the body — we only want the loop header vars
         if child.type in ("block", "statement_block", "compound_statement"):
             break
@@ -1107,7 +1136,10 @@ def _if_condition_node(if_node):
     let_condition."""
     try:
         cond = if_node.child_by_field_name("condition")
-    except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to named-child scan
+    except (AttributeError, TypeError):
+        # tree-sitter node API varies by grammar/binding (missing method or
+        # differing signature); fall back to named-child scan. Genuine bugs
+        # propagate.
         cond = None
     if cond is None:
         # Fallback: first named child that's not an "if" keyword.
@@ -1132,12 +1164,18 @@ def _if_consequence_nodes(if_node):
     """Return the then-branch body node(s) of an ``if`` statement."""
     try:
         body = if_node.child_by_field_name("consequence")
-    except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
+    except (AttributeError, TypeError):
+        # tree-sitter node API varies by grammar/binding (missing method or
+        # differing signature); fall back to block-child scan. Genuine bugs
+        # propagate.
         body = None
     if body is None:
         try:
             body = if_node.child_by_field_name("body")
-        except Exception:  # noqa: BLE001 -- resilience: tree-sitter node API varies by grammar; fall back to block-child scan
+        except (AttributeError, TypeError):
+            # tree-sitter node API varies by grammar/binding (missing method or
+            # differing signature); fall back to block-child scan. Genuine bugs
+            # propagate.
             body = None
     if body is not None:
         return [body]

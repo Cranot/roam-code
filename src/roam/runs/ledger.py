@@ -50,6 +50,25 @@ VALID_STATUSES = {"in_progress", "completed", "failed", "abandoned"}
 # Run ids look like ``run_YYYYMMDD_<short-hash>``. Hash is 6+ hex chars.
 RUN_ID_RE = re.compile(r"^run_\d{8}_[0-9a-f]{6,}$")
 
+__all__ = [
+    "EVENTS_FILE",
+    "META_FILE",
+    "RUNS_DIR_NAME",
+    "RUNS_SUBDIR",
+    "RUN_ID_RE",
+    "RunMeta",
+    "VALID_STATUSES",
+    "end_run",
+    "latest_in_progress_run",
+    "list_runs",
+    "log_event",
+    "read_run_events",
+    "read_run_meta",
+    "run_dir",
+    "runs_root",
+    "start_run",
+]
+
 
 # ---------------------------------------------------------------------------
 # Dataclass
@@ -96,6 +115,12 @@ class RunMeta:
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        """Return the stable wire shape for ``meta.json`` and CLI JSON.
+
+        This is intentionally public: run/replay commands use it to expose
+        the same shape that the ledger persists. ``extra`` fields flatten
+        into the top level, and unset optional fields are omitted.
+        """
         d = asdict(self)
         # Flatten ``extra`` into the top level so the on-disk shape stays
         # the documented one. Known fields take precedence.
@@ -196,6 +221,9 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
     guaranteed to exist after the call; ``events.jsonl`` is touched
     empty so callers can rely on its presence.
 
+    See reference: ``src/roam/commands/cmd_runs.py`` exposes this as the
+    programmatic backing API for ``roam runs start``.
+
     W14.2 Synergy 4: the run's active mode (from
     :func:`roam.modes.policy.get_active_mode`) is stamped into
     ``meta.json``. When no ``.roam/active_mode`` file exists the
@@ -238,51 +266,42 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
         from roam.runs.signing import ensure_ledger_key
 
         ensure_ledger_key(Path(repo_root))
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
         # run still proceeds (signing is best-effort) but a silent pass
         # here masks the cause of every later unsigned event. Surface the
         # lineage; verify_chain will still flag the unsigned events.
+        # Narrowed to (OSError, ValueError) because those are the only
+        # expected operational failures from ensure_ledger_key; programming
+        # errors must propagate.
         log_swallowed("runs.ledger:start_run:ensure_ledger_key", exc)
 
-    # W14.2 Synergy 4 — resolve active mode at start time. Best-effort:
-    # mode subsystem failures must NEVER abort run creation.
+    # W14.2 Synergy 4 — resolve active mode at start time. Best-effort
+    # only at the optional active-mode file boundary; import/programmer
+    # errors in the mode subsystem must propagate.
+    from roam.modes.policy import get_active_mode
+
     active_mode: Optional[str] = None
     try:
-        from roam.modes.policy import get_active_mode
-
         active_mode = get_active_mode(Path(repo_root))
-    except Exception as exc:
+    except (OSError, UnicodeError) as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # mode-subsystem FAILURE produces the same ``None`` as a
+        # mode-file read/decode FAILURE produces the same ``None`` as a
         # legitimately-unset mode; surface the lineage so the two are
-        # distinguishable (the run's meta.mode stays None either way).
+        # distinguishable while allowing real mode-subsystem bugs to fail.
         log_swallowed("runs.ledger:start_run:get_active_mode", exc)
         active_mode = None
 
     # W1255 — stamp the three canonical config-file hashes into the
     # run's meta.extra so the collector can lift them onto the
     # ChangeEvidence W210 fields (``rules_config_hash`` /
-    # ``constitution_hash`` / ``control_map_hash``). Missing files
-    # produce the empty string (insufficient-data discipline per
-    # W1234). Best-effort: a hashing failure must NEVER abort run
-    # creation - we fall back to an empty dict and the collector treats
-    # the fields as unstamped (the W210 omit-when-default discipline
-    # keeps the wire shape byte-identical to pre-W1255 packets).
-    config_hashes: dict[str, str] = {}
-    try:
-        from roam.evidence.config_hashes import stamp_all
+    # ``constitution_hash`` / ``control_map_hash``). ``stamp_all`` owns
+    # the expected file-boundary degradation: missing or unreadable files
+    # produce empty strings. Unexpected contract/programmer failures must
+    # propagate so they do not masquerade as "no config files present".
+    from roam.evidence.config_hashes import stamp_all
 
-        config_hashes = stamp_all(Path(repo_root))
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # silent {} here means the W210 rules_config_hash /
-        # constitution_hash / control_map_hash fields are unstamped, so
-        # the collector cannot detect config drift at audit time.
-        # Surface the lineage so a hashing bug doesn't masquerade as
-        # "no config files present".
-        log_swallowed("runs.ledger:start_run:stamp_all", exc)
-        config_hashes = {}
+    config_hashes = stamp_all(Path(repo_root))
 
     meta = RunMeta(
         run_id=run_id,
@@ -336,19 +355,37 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
     event.setdefault("ts", _utc_now_iso())
     event["seq"] = seq
 
-    # R20 phase 4 — rolling HMAC over (prev_sig || canonical_event_json).
-    # Import lazily so a corrupt signing module never blocks the rest of
-    # the ledger from working (signing is additive, not mandatory).
-    try:
-        from roam.runs.signing import (
-            SEED_SIGNATURE,
-            compute_event_signature,
-            ensure_ledger_key,
-        )
+    prev_sig = _last_event_signature(events_path)
+    signature = _sign_event(repo_root, prev_sig, event)
+    if signature is not None:
+        event["signature"] = signature
 
-        key = ensure_ledger_key(Path(repo_root))
-        prev_sig = _last_event_signature(events_path) or SEED_SIGNATURE
-        event["signature"] = compute_event_signature(prev_sig, event, key)
+    line = json.dumps(event, ensure_ascii=False, sort_keys=True)
+    with events_path.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    return seq
+
+
+def _sign_event(
+    repo_root: Path,
+    prev_signature: Optional[str],
+    event: dict,
+) -> Optional[str]:
+    """Best-effort rolling-HMAC signature for *event*, or ``None``.
+
+    Adapter around ``roam.runs.signing`` — the seed constant, key
+    materialisation, and chain math live there; this is the ledger's one
+    touch-point (R20 phase 4: HMAC over prev_sig || canonical_event_json).
+    *event* must NOT yet carry a ``signature`` field — the signature is
+    computed over the event as passed.
+
+    Import lazily so a corrupt signing module never blocks the rest of the
+    ledger from working (signing is additive, not mandatory).
+    """
+    try:
+        from roam.runs.signing import sign_event
+
+        return sign_event(repo_root, prev_signature, event)
     except Exception as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
         # missing key or filesystem error must not prevent the event from
@@ -357,11 +394,7 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
         # ``tampered``; surface the lineage so the unsigned event has a
         # discoverable cause rather than a silent gap.
         log_swallowed("runs.ledger:log_event:sign", exc)
-
-    line = json.dumps(event, ensure_ascii=False, sort_keys=True)
-    with events_path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-    return seq
+        return None
 
 
 def _last_event_signature(events_path: Path) -> Optional[str]:
@@ -412,6 +445,9 @@ def end_run(
     on an already-ended run overwrites the status (so an agent can flip
     a run from ``completed`` to ``failed`` if a post-hoc check turns
     things red). The ``started_at`` field is preserved.
+
+    See reference: ``src/roam/commands/cmd_runs.py:runs_end`` exposes this
+    as the programmatic backing API for ``roam runs end``.
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid status {status!r}; expected one of {sorted(VALID_STATUSES)}")
@@ -430,12 +466,14 @@ def end_run(
         events_path = _events_path(repo_root, run_id)
         meta.event_count = _count_events(events_path)
         meta.final_signature = _read_final_signature(events_path)
-    except Exception as exc:
+    except (OSError, UnicodeError) as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
-        # reading the ledger failed, so the integrity-fingerprint fields
-        # stay blank rather than crashing the close. Surface the lineage
-        # so a missing final_signature has a discoverable cause instead
-        # of looking like a legacy/unsigned run.
+        # close-run availability may trade off against fingerprint
+        # completeness only at the ledger byte boundary. Filesystem/read
+        # and text-decode failures leave the integrity-fingerprint fields
+        # blank, but programming errors must still propagate. Surface the
+        # lineage so a missing final_signature has a discoverable cause
+        # instead of looking like a legacy/unsigned run.
         log_swallowed("runs.ledger:end_run:final_signature", exc)
 
     _write_meta(repo_root, meta)
@@ -464,7 +502,10 @@ def _write_meta(repo_root: Path, meta: RunMeta) -> None:
     from roam.atomic_io import atomic_write_json
 
     path = _meta_path(repo_root, meta.run_id)
-    atomic_write_json(path, meta.to_dict(), indent=2, sort_keys=True)
+    # Use the class-qualified form so roam's static call graph records this
+    # serializer edge; ``meta.to_dict()`` is equivalent at runtime but loses
+    # the target type for dead-export analysis.
+    atomic_write_json(path, RunMeta.to_dict(meta), indent=2, sort_keys=True)
 
 
 def _count_events(events_path: Path) -> int:
@@ -568,6 +609,29 @@ def read_run_meta(
     return meta
 
 
+def _decode_event_line_without_stopping_stream(
+    line: str,
+    *,
+    file_token: str,
+    line_no: int,
+    warnings_out: WarningsOut,
+) -> Optional[dict]:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        raw = json.loads(stripped)
+    except json.JSONDecodeError:
+        if warnings_out is not None:
+            warnings_out.append(f"run_event_corrupt:{file_token}:{line_no}:JSONDecodeError")
+        return None
+    if not isinstance(raw, dict):
+        if warnings_out is not None:
+            warnings_out.append(f"run_event_corrupt:{file_token}:{line_no}:NotAJsonObject")
+        return None
+    return raw
+
+
 def read_run_events(
     repo_root: Path,
     run_id: str,
@@ -620,18 +684,31 @@ def read_run_events(
         return
     with fh:
         for line_no, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
-                _emit(f"run_event_corrupt:{file_token}:{line_no}:JSONDecodeError")
-                continue
-            if not isinstance(raw, dict):
-                _emit(f"run_event_corrupt:{file_token}:{line_no}:NotAJsonObject")
-                continue
-            yield raw
+            raw = _decode_event_line_without_stopping_stream(
+                line,
+                file_token=file_token,
+                line_no=line_no,
+                warnings_out=warnings_out,
+            )
+            if raw is not None:
+                yield raw
+
+
+def _belongs_to_requested_run_listing_slice(
+    meta: RunMeta,
+    *,
+    agent: Optional[str],
+    since: Optional[str],
+    status: Optional[str],
+) -> bool:
+    """Keep listing filters exact while discovery remains tolerant."""
+    if agent is not None and meta.agent != agent:
+        return False
+    if status is not None and meta.status != status:
+        return False
+    if since is not None and meta.started_at < since:
+        return False
+    return True
 
 
 def list_runs(
@@ -660,11 +737,12 @@ def list_runs(
         meta = read_run_meta(repo_root, child.name)
         if meta is None:
             continue
-        if agent is not None and meta.agent != agent:
-            continue
-        if status is not None and meta.status != status:
-            continue
-        if since is not None and meta.started_at < since:
+        if not _belongs_to_requested_run_listing_slice(
+            meta,
+            agent=agent,
+            since=since,
+            status=status,
+        ):
             continue
         metas.append(meta)
     # Newest first -- ``started_at`` is an ISO timestamp so lexical sort

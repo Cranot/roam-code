@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from .base import LanguageExtractor
+from .base import _SalesforceMarkupExtractor
 
 # Controller/extensions attribute patterns
 _CONTROLLER_RE = re.compile(r'controller\s*=\s*"([^"]+)"', re.IGNORECASE)
@@ -54,8 +54,15 @@ _VF_BUILTINS = frozenset(
 )
 
 
-class VisualforceExtractor(LanguageExtractor):
+class VisualforceExtractor(_SalesforceMarkupExtractor):
     """Visualforce page/component extractor using HTML grammar."""
+
+    _CONTROLLER_RE = _CONTROLLER_RE
+    _EXTENSIONS_RE = _EXTENSIONS_RE
+    _INCLUDE_RE = _INCLUDE_RE
+    _MERGE_FIELD_RE = _MERGE_FIELD_RE
+    _MERGE_FIELD_IDENT_RE = _IDENT_RE
+    _MERGE_FIELD_BUILTINS = _VF_BUILTINS
 
     @property
     def language_name(self) -> str:
@@ -90,62 +97,3 @@ class VisualforceExtractor(LanguageExtractor):
         )
 
         return symbols
-
-    def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
-        refs = []
-        text = source.decode("utf-8", errors="replace")
-
-        # Controller references
-        for m in _CONTROLLER_RE.finditer(text):
-            line = text[: m.start()].count("\n") + 1
-            refs.append(
-                self._make_reference(
-                    target_name=m.group(1),
-                    kind="controller",
-                    line=line,
-                )
-            )
-
-        # Extension references (comma-separated)
-        for m in _EXTENSIONS_RE.finditer(text):
-            line = text[: m.start()].count("\n") + 1
-            for ext_name in m.group(1).split(","):
-                ext_name = ext_name.strip()
-                if ext_name:
-                    refs.append(
-                        self._make_reference(
-                            target_name=ext_name,
-                            kind="controller",
-                            line=line,
-                        )
-                    )
-
-        # Include/component references
-        for m in _INCLUDE_RE.finditer(text):
-            line = text[: m.start()].count("\n") + 1
-            refs.append(
-                self._make_reference(
-                    target_name=m.group(2),
-                    kind="include",
-                    line=line,
-                )
-            )
-
-        # Merge field references — extract identifiers from {!...} expressions
-        seen = set()
-        for m in _MERGE_FIELD_RE.finditer(text):
-            expr = m.group(1)
-            line = text[: m.start()].count("\n") + 1
-            for ident_m in _IDENT_RE.finditer(expr):
-                name = ident_m.group(1)
-                if name not in _VF_BUILTINS and name not in seen:
-                    seen.add(name)
-                    refs.append(
-                        self._make_reference(
-                            target_name=name,
-                            kind="merge_field",
-                            line=line,
-                        )
-                    )
-
-        return refs

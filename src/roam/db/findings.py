@@ -243,6 +243,16 @@ class FindingRecord:
     suppressions_json: str = "[]"
 
 
+@dataclass(frozen=True)
+class FindingQuery:
+    """Grouped filters for querying the findings registry."""
+
+    detector: Optional[str] = None
+    subject_kind: Optional[str] = None
+    subject_id: Optional[int] = None
+    limit: int = 1000
+
+
 def emit_finding(conn: sqlite3.Connection, record: FindingRecord) -> int:
     """Insert (or upsert on ``finding_id_str``) a finding row.
 
@@ -309,13 +319,25 @@ def get_finding(conn: sqlite3.Connection, finding_id_str: str) -> Optional[dict[
     return _row_to_dict(row)
 
 
+def _query_from_filter_kwargs(filters: dict[str, Any]) -> FindingQuery:
+    """Build a ``FindingQuery`` from legacy ``list_findings`` kwargs."""
+    allowed = {"detector", "subject_kind", "subject_id", "limit"}
+    unknown = sorted(set(filters) - allowed)
+    if unknown:
+        name = unknown[0]
+        raise TypeError(f"list_findings() got an unexpected keyword argument {name!r}")
+    return FindingQuery(
+        detector=filters.get("detector"),
+        subject_kind=filters.get("subject_kind"),
+        subject_id=filters.get("subject_id"),
+        limit=filters.get("limit", 1000),
+    )
+
+
 def list_findings(
     conn: sqlite3.Connection,
-    *,
-    detector: Optional[str] = None,
-    subject_kind: Optional[str] = None,
-    subject_id: Optional[int] = None,
-    limit: int = 1000,
+    query: Optional[FindingQuery] = None,
+    **filters: Any,
 ) -> list[dict[str, Any]]:
     """Query findings with optional filters.
 
@@ -324,19 +346,28 @@ def list_findings(
     layer to keep the response bounded — callers that need pagination
     should add an offset parameter in a follow-up wave.
     """
+    if query is not None and not isinstance(query, FindingQuery):
+        raise TypeError("list_findings() query must be a FindingQuery")
+    if query is not None and filters:
+        raise TypeError("list_findings() accepts either query or filter kwargs, not both")
+    return _list_findings_by_query(conn, query or _query_from_filter_kwargs(filters))
+
+
+def _list_findings_by_query(conn: sqlite3.Connection, query: FindingQuery) -> list[dict[str, Any]]:
+    """Execute a grouped findings query."""
     clauses: list[str] = []
     params: list[Any] = []
-    if detector is not None:
+    if query.detector is not None:
         clauses.append("source_detector = ?")
-        params.append(detector)
-    if subject_kind is not None:
+        params.append(query.detector)
+    if query.subject_kind is not None:
         clauses.append("subject_kind = ?")
-        params.append(subject_kind)
-    if subject_id is not None:
+        params.append(query.subject_kind)
+    if query.subject_id is not None:
         clauses.append("subject_id = ?")
-        params.append(subject_id)
+        params.append(query.subject_id)
     where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    params.append(int(limit))
+    params.append(int(query.limit))
     rows = conn.execute(
         "SELECT id, finding_id_str, subject_kind, subject_id, claim, "
         "evidence_json, confidence, source_detector, source_version, "

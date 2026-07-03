@@ -10,6 +10,16 @@ import math
 from collections import Counter
 from statistics import median
 
+# Public surface consumed by cmd_trends / cmd_forecast.
+# ``cusum`` is intentionally omitted; it is an internal helper for ``forecast``.
+__all__ = [
+    "forecast",
+    "mann_kendall_test",
+    "modified_z_score",
+    "theil_sen_slope",
+    "western_electric_rules",
+]
+
 
 def _mad(values: list[float | int]) -> float:
     """Median Absolute Deviation -- robust scale estimator."""
@@ -166,6 +176,211 @@ def mann_kendall_test(values: list[float | int]) -> dict | None:
     }
 
 
+def _we_rule1_point_beyond_3sigma(z: list[float]) -> list[dict]:
+    """Rule 1: any single point beyond 3 sigma from center."""
+    violations: list[dict] = []
+    for i in range(len(z)):
+        if abs(z[i]) > 3.0:
+            violations.append(
+                {
+                    "rule": 1,
+                    "description": "single point > 3 sigma from center",
+                    "indices": [i],
+                    "metric_value": round(abs(z[i]), 4),
+                }
+            )
+    return violations
+
+
+def _we_rule2_two_of_three_beyond_2sigma(z: list[float]) -> list[dict]:
+    """Rule 2: 2 of 3 consecutive points beyond 2 sigma on same side."""
+    violations: list[dict] = []
+    for i in range(len(z) - 2):
+        window = z[i : i + 3]
+        above = [j for j, v in enumerate(window) if v > 2.0]
+        below = [j for j, v in enumerate(window) if v < -2.0]
+        if len(above) >= 2:
+            violations.append(
+                {
+                    "rule": 2,
+                    "description": "2 of 3 points > 2 sigma (same side, above)",
+                    "indices": [i + j for j in above],
+                    "metric_value": round(max(window), 4),
+                }
+            )
+        if len(below) >= 2:
+            violations.append(
+                {
+                    "rule": 2,
+                    "description": "2 of 3 points > 2 sigma (same side, below)",
+                    "indices": [i + j for j in below],
+                    "metric_value": round(min(window), 4),
+                }
+            )
+    return violations
+
+
+def _we_rule3_four_of_five_beyond_1sigma(z: list[float]) -> list[dict]:
+    """Rule 3: 4 of 5 consecutive points beyond 1 sigma on same side."""
+    violations: list[dict] = []
+    for i in range(len(z) - 4):
+        window = z[i : i + 5]
+        above = [j for j, v in enumerate(window) if v > 1.0]
+        below = [j for j, v in enumerate(window) if v < -1.0]
+        if len(above) >= 4:
+            violations.append(
+                {
+                    "rule": 3,
+                    "description": "4 of 5 points > 1 sigma (same side, above)",
+                    "indices": [i + j for j in above],
+                    "metric_value": round(max(window), 4),
+                }
+            )
+        if len(below) >= 4:
+            violations.append(
+                {
+                    "rule": 3,
+                    "description": "4 of 5 points > 1 sigma (same side, below)",
+                    "indices": [i + j for j in below],
+                    "metric_value": round(min(window), 4),
+                }
+            )
+    return violations
+
+
+def _we_rule4_same_side_run(z: list[float]) -> list[dict]:
+    """Rule 4: 8+ consecutive points on the same side of center."""
+    violations: list[dict] = []
+    n = len(z)
+    run_start = 0
+    for i in range(1, n):
+        same_side = (z[i] > 0 and z[run_start] > 0) or (z[i] < 0 and z[run_start] < 0)
+        if not same_side or z[i] == 0.0:
+            if i - run_start >= 8:
+                indices = list(range(run_start, i))
+                violations.append(
+                    {
+                        "rule": 4,
+                        "description": f"{len(indices)} consecutive points on same side of center",
+                        "indices": indices,
+                        "metric_value": len(indices),
+                    }
+                )
+            run_start = i
+    # Check final run
+    if n - run_start >= 8:
+        indices = list(range(run_start, n))
+        violations.append(
+            {
+                "rule": 4,
+                "description": f"{len(indices)} consecutive points on same side of center",
+                "indices": indices,
+                "metric_value": len(indices),
+            }
+        )
+    return violations
+
+
+def _we_rule5_monotonic_run(values: list[float | int]) -> list[dict]:
+    """Rule 5: 6+ consecutive increasing or decreasing points (trend).
+
+    No-ops for n < 6: the loop bounds and the >= 6 threshold can never both
+    hold, so the outer ``if n >= 6`` guard of the original is redundant here.
+    """
+    violations: list[dict] = []
+    n = len(values)
+    inc_start = 0
+    dec_start = 0
+    for i in range(1, n):
+        if values[i] <= values[i - 1]:
+            if i - inc_start >= 6:
+                indices = list(range(inc_start, i))
+                violations.append(
+                    {
+                        "rule": 5,
+                        "description": f"{len(indices)} consecutive increasing points",
+                        "indices": indices,
+                        "metric_value": len(indices),
+                    }
+                )
+            inc_start = i
+        if values[i] >= values[i - 1]:
+            if i - dec_start >= 6:
+                indices = list(range(dec_start, i))
+                violations.append(
+                    {
+                        "rule": 5,
+                        "description": f"{len(indices)} consecutive decreasing points",
+                        "indices": indices,
+                        "metric_value": len(indices),
+                    }
+                )
+            dec_start = i
+    # Check final runs
+    if n - inc_start >= 6:
+        indices = list(range(inc_start, n))
+        violations.append(
+            {
+                "rule": 5,
+                "description": f"{len(indices)} consecutive increasing points",
+                "indices": indices,
+                "metric_value": len(indices),
+            }
+        )
+    if n - dec_start >= 6:
+        indices = list(range(dec_start, n))
+        violations.append(
+            {
+                "rule": 5,
+                "description": f"{len(indices)} consecutive decreasing points",
+                "indices": indices,
+                "metric_value": len(indices),
+            }
+        )
+    return violations
+
+
+def _we_rule6_alternating_run(values: list[float | int]) -> list[dict]:
+    """Rule 6: 14+ consecutive alternating up/down points (oscillation).
+
+    No-ops for n < 14 by the same bound+threshold argument as Rule 5.
+    """
+    violations: list[dict] = []
+    n = len(values)
+    alt_start = 1  # alternation is defined from index 1 onward
+    for i in range(2, n):
+        prev_dir = values[i - 1] - values[i - 2]
+        curr_dir = values[i] - values[i - 1]
+        # Alternation continues if direction changed, or curr is zero
+        alternating = (prev_dir > 0 and curr_dir < 0) or (prev_dir < 0 and curr_dir > 0)
+        if not alternating:
+            run_len = i - alt_start + 1
+            if run_len >= 14:
+                indices = list(range(alt_start - 1, i))
+                violations.append(
+                    {
+                        "rule": 6,
+                        "description": f"{len(indices)} consecutive alternating points",
+                        "indices": indices,
+                        "metric_value": len(indices),
+                    }
+                )
+            alt_start = i
+    # Check final run
+    run_len = n - alt_start + 1
+    if run_len >= 14:
+        indices = list(range(alt_start - 1, n))
+        violations.append(
+            {
+                "rule": 6,
+                "description": f"{len(indices)} consecutive alternating points",
+                "indices": indices,
+                "metric_value": len(indices),
+            }
+        )
+    return violations
+
+
 def western_electric_rules(values: list[float | int]) -> list[dict]:
     """Detect anomalous patterns using Western Electric rules.
 
@@ -196,184 +411,17 @@ def western_electric_rules(values: list[float | int]) -> list[dict]:
     # Scale MAD to be consistent with std-dev for normal data
     sigma_scaled = sigma / 0.6745
 
-    violations: list[dict] = []
-
     # Standardized residuals
     z = [(v - med) / sigma_scaled for v in values]
 
-    # Rule 1: single point beyond 3 sigma
-    for i in range(n):
-        if abs(z[i]) > 3.0:
-            violations.append(
-                {
-                    "rule": 1,
-                    "description": "single point > 3 sigma from center",
-                    "indices": [i],
-                    "metric_value": round(abs(z[i]), 4),
-                }
-            )
-
-    # Rule 2: 2 of 3 consecutive points beyond 2 sigma on same side
-    for i in range(n - 2):
-        window = z[i : i + 3]
-        above = [j for j, v in enumerate(window) if v > 2.0]
-        below = [j for j, v in enumerate(window) if v < -2.0]
-        if len(above) >= 2:
-            violations.append(
-                {
-                    "rule": 2,
-                    "description": "2 of 3 points > 2 sigma (same side, above)",
-                    "indices": [i + j for j in above],
-                    "metric_value": round(max(window), 4),
-                }
-            )
-        if len(below) >= 2:
-            violations.append(
-                {
-                    "rule": 2,
-                    "description": "2 of 3 points > 2 sigma (same side, below)",
-                    "indices": [i + j for j in below],
-                    "metric_value": round(min(window), 4),
-                }
-            )
-
-    # Rule 3: 4 of 5 consecutive points beyond 1 sigma on same side
-    for i in range(n - 4):
-        window = z[i : i + 5]
-        above = [j for j, v in enumerate(window) if v > 1.0]
-        below = [j for j, v in enumerate(window) if v < -1.0]
-        if len(above) >= 4:
-            violations.append(
-                {
-                    "rule": 3,
-                    "description": "4 of 5 points > 1 sigma (same side, above)",
-                    "indices": [i + j for j in above],
-                    "metric_value": round(max(window), 4),
-                }
-            )
-        if len(below) >= 4:
-            violations.append(
-                {
-                    "rule": 3,
-                    "description": "4 of 5 points > 1 sigma (same side, below)",
-                    "indices": [i + j for j in below],
-                    "metric_value": round(min(window), 4),
-                }
-            )
-
-    # Rule 4: 8+ consecutive points on same side of mean
-    run_start = 0
-    for i in range(1, n):
-        same_side = (z[i] > 0 and z[run_start] > 0) or (z[i] < 0 and z[run_start] < 0)
-        if not same_side or z[i] == 0.0:
-            if i - run_start >= 8:
-                indices = list(range(run_start, i))
-                violations.append(
-                    {
-                        "rule": 4,
-                        "description": f"{len(indices)} consecutive points on same side of center",
-                        "indices": indices,
-                        "metric_value": len(indices),
-                    }
-                )
-            run_start = i
-    # Check final run
-    if n - run_start >= 8:
-        indices = list(range(run_start, n))
-        violations.append(
-            {
-                "rule": 4,
-                "description": f"{len(indices)} consecutive points on same side of center",
-                "indices": indices,
-                "metric_value": len(indices),
-            }
-        )
-
-    # Rule 5: 6+ consecutive increasing or decreasing points
-    if n >= 6:
-        inc_start = 0
-        dec_start = 0
-        for i in range(1, n):
-            if values[i] <= values[i - 1]:
-                if i - inc_start >= 6:
-                    indices = list(range(inc_start, i))
-                    violations.append(
-                        {
-                            "rule": 5,
-                            "description": f"{len(indices)} consecutive increasing points",
-                            "indices": indices,
-                            "metric_value": len(indices),
-                        }
-                    )
-                inc_start = i
-            if values[i] >= values[i - 1]:
-                if i - dec_start >= 6:
-                    indices = list(range(dec_start, i))
-                    violations.append(
-                        {
-                            "rule": 5,
-                            "description": f"{len(indices)} consecutive decreasing points",
-                            "indices": indices,
-                            "metric_value": len(indices),
-                        }
-                    )
-                dec_start = i
-        # Check final runs
-        if n - inc_start >= 6:
-            indices = list(range(inc_start, n))
-            violations.append(
-                {
-                    "rule": 5,
-                    "description": f"{len(indices)} consecutive increasing points",
-                    "indices": indices,
-                    "metric_value": len(indices),
-                }
-            )
-        if n - dec_start >= 6:
-            indices = list(range(dec_start, n))
-            violations.append(
-                {
-                    "rule": 5,
-                    "description": f"{len(indices)} consecutive decreasing points",
-                    "indices": indices,
-                    "metric_value": len(indices),
-                }
-            )
-
-    # Rule 6: 14+ consecutive alternating up/down points (oscillation)
-    if n >= 14:
-        alt_start = 1  # alternation is defined from index 1 onward
-        for i in range(2, n):
-            prev_dir = values[i - 1] - values[i - 2]
-            curr_dir = values[i] - values[i - 1]
-            # Alternation continues if direction changed, or curr is zero
-            alternating = (prev_dir > 0 and curr_dir < 0) or (prev_dir < 0 and curr_dir > 0)
-            if not alternating:
-                run_len = i - alt_start + 1
-                if run_len >= 14:
-                    indices = list(range(alt_start - 1, i))
-                    violations.append(
-                        {
-                            "rule": 6,
-                            "description": f"{len(indices)} consecutive alternating points",
-                            "indices": indices,
-                            "metric_value": len(indices),
-                        }
-                    )
-                alt_start = i
-        # Check final run
-        run_len = n - alt_start + 1
-        if run_len >= 14:
-            indices = list(range(alt_start - 1, n))
-            violations.append(
-                {
-                    "rule": 6,
-                    "description": f"{len(indices)} consecutive alternating points",
-                    "indices": indices,
-                    "metric_value": len(indices),
-                }
-            )
-
+    # Apply each rule in order; output ordering follows the rule sequence.
+    violations: list[dict] = []
+    violations.extend(_we_rule1_point_beyond_3sigma(z))
+    violations.extend(_we_rule2_two_of_three_beyond_2sigma(z))
+    violations.extend(_we_rule3_four_of_five_beyond_1sigma(z))
+    violations.extend(_we_rule4_same_side_run(z))
+    violations.extend(_we_rule5_monotonic_run(values))
+    violations.extend(_we_rule6_alternating_run(values))
     return violations
 
 
@@ -444,13 +492,14 @@ def forecast(values: list[float | int], target: float) -> dict | None:
     Uses Theil-Sen slope for projection.
 
     Returns dict with: current, target, slope, steps_until (int or None if
-    direction is wrong or trend is stable), direction.
+    direction is wrong or trend is stable), direction, change_signals.
     Returns None if insufficient data or no trend.
     """
     trend = theil_sen_slope(values)
     if trend is None:
         return None
 
+    change_signals = cusum(values)
     slope = trend["slope"]
     if slope == 0.0 or trend["direction"] == "stable":
         return {
@@ -459,6 +508,7 @@ def forecast(values: list[float | int], target: float) -> dict | None:
             "slope": slope,
             "steps_until": None,
             "direction": "stable",
+            "change_signals": change_signals,
         }
 
     current = values[-1]
@@ -472,6 +522,7 @@ def forecast(values: list[float | int], target: float) -> dict | None:
             "slope": slope,
             "steps_until": None,
             "direction": trend["direction"],
+            "change_signals": change_signals,
         }
 
     if gap == 0:
@@ -481,6 +532,7 @@ def forecast(values: list[float | int], target: float) -> dict | None:
             "slope": slope,
             "steps_until": 0,
             "direction": trend["direction"],
+            "change_signals": change_signals,
         }
 
     steps = math.ceil(abs(gap / slope))
@@ -490,4 +542,5 @@ def forecast(values: list[float | int], target: float) -> dict | None:
         "slope": slope,
         "steps_until": steps,
         "direction": trend["direction"],
+        "change_signals": change_signals,
     }

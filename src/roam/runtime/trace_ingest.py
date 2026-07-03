@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from roam.output.formatter import WarningsOut
 
@@ -254,6 +255,176 @@ def _statement_type(statement: str) -> str | None:
     return token if token in allowed else None
 
 
+class _OtelSpanRollup(NamedTuple):
+    call_count: int
+    p50_latency_ms: float | None
+    p99_latency_ms: float | None
+    error_rate: float
+    file_path: str | None
+    db_system: str | None
+    db_operation: str | None
+    db_statement_type: str | None
+
+
+class _ZipkinSpanRollup(NamedTuple):
+    call_count: int
+    p50_latency_ms: float | None
+    p99_latency_ms: float | None
+    error_rate: float
+
+
+class _JaegerSpanRollup(NamedTuple):
+    call_count: int
+    p50_latency_ms: float | None
+    p99_latency_ms: float | None
+    error_rate: float
+
+
+def _fold_otel_attr_for_stable_rollup(
+    attr: dict,
+    db_systems: set[str],
+    db_operations: set[str],
+    db_stmt_types: set[str],
+    file_path: str | None,
+) -> str | None:
+    key = attr.get("key", "")
+    if file_path is None and key in ("code.filepath", "code.function.file"):
+        value = attr.get("value", {})
+        if isinstance(value, dict):
+            return value.get("stringValue", value.get("string_value"))
+        return file_path
+
+    val = _attr_value(attr)
+    if not val:
+        return file_path
+    if key == "db.system":
+        db_systems.add(val.lower())
+    elif key in {"db.operation", "db.sql.operation", "db.mongodb.operation"}:
+        db_operations.add(val.upper())
+    elif key in {"db.statement", "db.query.text", "db.sql.text"}:
+        statement_type = _statement_type(val)
+        if statement_type:
+            db_stmt_types.add(statement_type)
+    return file_path
+
+
+def _fold_otel_span_fields_for_stable_rollup(span: dict, durations_ms: list[float]) -> int:
+    start = int(span.get("startTimeUnixNano", 0))
+    end = int(span.get("endTimeUnixNano", 0))
+    if start and end:
+        durations_ms.append((end - start) / 1_000_000)
+
+    status = span.get("status") or {}
+    if isinstance(status, dict) and status.get("code") in _OTEL_ERROR_STATUS_CODES:
+        return 1
+    return 0
+
+
+def _summarize_otel_group_for_stable_upsert(spans: list[dict]) -> _OtelSpanRollup:
+    durations_ms: list[float] = []
+    error_count = 0
+    db_systems: set[str] = set()
+    db_operations: set[str] = set()
+    db_stmt_types: set[str] = set()
+    file_path: str | None = None
+
+    for span in spans:
+        error_count += _fold_otel_span_fields_for_stable_rollup(span, durations_ms)
+        attrs = span.get("attributes", [])
+        for attr in attrs:
+            file_path = _fold_otel_attr_for_stable_rollup(
+                attr,
+                db_systems,
+                db_operations,
+                db_stmt_types,
+                file_path,
+            )
+
+    call_count = len(spans)
+    db_statement_type = sorted(db_stmt_types)[0] if db_stmt_types else None
+    return _OtelSpanRollup(
+        call_count=call_count,
+        p50_latency_ms=_percentile(durations_ms, 50) if durations_ms else None,
+        p99_latency_ms=_percentile(durations_ms, 99) if durations_ms else None,
+        error_rate=error_count / call_count if call_count > 0 else 0.0,
+        file_path=file_path,
+        db_system=sorted(db_systems)[0] if db_systems else None,
+        db_operation=sorted(db_operations)[0] if db_operations else db_statement_type,
+        db_statement_type=db_statement_type,
+    )
+
+
+def _summarize_zipkin_group_for_stable_upsert(spans: list[dict]) -> _ZipkinSpanRollup:
+    """Roll up a list of Zipkin spans into per-operation metrics.
+
+    Separates the numeric aggregation (durations, error rate, percentiles)
+    from the Zipkin envelope parsing in ``ingest_zipkin_trace`` so each
+    layer has a single responsibility.
+    """
+    durations_ms: list[float] = []
+    error_count = 0
+    for span in spans:
+        duration_us = span.get("duration", 0)
+        durations_ms.append(duration_us / 1000.0)
+        tags = span.get("tags", {})
+        if tags.get("error"):
+            error_count += 1
+
+    call_count = len(spans)
+    return _ZipkinSpanRollup(
+        call_count=call_count,
+        p50_latency_ms=_percentile(durations_ms, 50) if durations_ms else None,
+        p99_latency_ms=_percentile(durations_ms, 99) if durations_ms else None,
+        error_rate=error_count / call_count if call_count > 0 else 0.0,
+    )
+
+
+def _summarize_jaeger_group_for_stable_upsert(spans: list[dict]) -> _JaegerSpanRollup:
+    """Roll up Jaeger spans once the operation boundary is known."""
+    durations_ms: list[float] = []
+    error_count = 0
+    for span in spans:
+        duration_us = span.get("duration", 0)
+        durations_ms.append(duration_us / 1000.0)
+        tags = span.get("tags", [])
+        for tag in tags:
+            if tag.get("key") == "error" and tag.get("value") is True:
+                error_count += 1
+                break
+
+    call_count = len(spans)
+    return _JaegerSpanRollup(
+        call_count=call_count,
+        p50_latency_ms=_percentile(durations_ms, 50) if durations_ms else None,
+        p99_latency_ms=_percentile(durations_ms, 99) if durations_ms else None,
+        error_rate=error_count / call_count if call_count > 0 else 0.0,
+    )
+
+
+def _group_jaeger_spans_for_operation_rollups(data: dict) -> dict[str, list[dict]]:
+    span_groups: dict[str, list[dict]] = {}
+    traces = data.get("data", [data]) if isinstance(data.get("data"), list) else [data]
+    for trace in traces:
+        spans = trace.get("spans", [])
+        for span in spans:
+            name = span.get("operationName", "unknown")
+            span_groups.setdefault(name, []).append(span)
+    return span_groups
+
+
+def _group_otel_spans_for_operation_rollups(data: dict) -> dict[str, list[dict]]:
+    span_groups: dict[str, list[dict]] = {}
+    resource_spans = data.get("resourceSpans", data.get("resource_spans", []))
+    for rs in resource_spans:
+        scope_spans = rs.get("scopeSpans", rs.get("scope_spans", []))
+        for ss in scope_spans:
+            spans = ss.get("spans", [])
+            for span in spans:
+                name = span.get("name", "unknown")
+                span_groups.setdefault(name, []).append(span)
+    return span_groups
+
+
 # ---------------------------------------------------------------------------
 # Ingesters
 # ---------------------------------------------------------------------------
@@ -400,92 +571,30 @@ def ingest_otel_trace(
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Collect spans grouped by operation name
-    span_groups: dict[str, list[dict]] = {}
-
     if not isinstance(data, dict) or ("resourceSpans" not in data and "resource_spans" not in data):
         _emit(f"trace_ingest_otel_corrupt:{trace_path}:WrongFormat")
         return []
 
-    resource_spans = data.get("resourceSpans", data.get("resource_spans", []))
-    for rs in resource_spans:
-        scope_spans = rs.get("scopeSpans", rs.get("scope_spans", []))
-        for ss in scope_spans:
-            spans = ss.get("spans", [])
-            for span in spans:
-                name = span.get("name", "unknown")
-                if name not in span_groups:
-                    span_groups[name] = []
-                span_groups[name].append(span)
-
+    span_groups = _group_otel_spans_for_operation_rollups(data)
     results = []
     for span_name, spans in span_groups.items():
-        # Compute latency stats from durations
-        durations_ms = []
-        error_count = 0
-        db_systems: set[str] = set()
-        db_operations: set[str] = set()
-        db_stmt_types: set[str] = set()
-        for span in spans:
-            start = int(span.get("startTimeUnixNano", 0))
-            end = int(span.get("endTimeUnixNano", 0))
-            if start and end:
-                durations_ms.append((end - start) / 1_000_000)
-            status = span.get("status") or {}
-            if isinstance(status, dict) and status.get("code") in _OTEL_ERROR_STATUS_CODES:
-                error_count += 1
-            attrs = span.get("attributes", [])
-            for attr in attrs:
-                key = attr.get("key", "")
-                val = _attr_value(attr)
-                if not val:
-                    continue
-                if key == "db.system":
-                    db_systems.add(val.lower())
-                elif key in {"db.operation", "db.sql.operation", "db.mongodb.operation"}:
-                    db_operations.add(val.upper())
-                elif key in {"db.statement", "db.query.text", "db.sql.text"}:
-                    st = _statement_type(val)
-                    if st:
-                        db_stmt_types.add(st)
+        rollup = _summarize_otel_group_for_stable_upsert(spans)
 
-        call_count = len(spans)
-        p50 = _percentile(durations_ms, 50) if durations_ms else None
-        p99 = _percentile(durations_ms, 99) if durations_ms else None
-        err_rate = error_count / call_count if call_count > 0 else 0.0
-
-        # Extract file path from span attributes if present
-        file_path = None
-        for span in spans:
-            attrs = span.get("attributes", [])
-            for attr in attrs:
-                key = attr.get("key", "")
-                if key in ("code.filepath", "code.function.file"):
-                    val = attr.get("value", {})
-                    file_path = val.get("stringValue", val.get("string_value"))
-                    break
-            if file_path:
-                break
-
-        db_system = sorted(db_systems)[0] if db_systems else None
-        db_statement_type = sorted(db_stmt_types)[0] if db_stmt_types else None
-        db_operation = sorted(db_operations)[0] if db_operations else db_statement_type
-
-        symbol_id = match_trace_to_symbol(conn, span_name, file_path)
+        symbol_id = match_trace_to_symbol(conn, span_name, rollup.file_path)
         result = _upsert_runtime_stat(
             conn,
             symbol_id,
             span_name,
-            file_path,
+            rollup.file_path,
             "otel",
-            call_count,
-            p50,
-            p99,
-            err_rate,
+            rollup.call_count,
+            rollup.p50_latency_ms,
+            rollup.p99_latency_ms,
+            rollup.error_rate,
             None,
-            otel_db_system=db_system,
-            otel_db_operation=db_operation,
-            otel_db_statement_type=db_statement_type,
+            otel_db_system=rollup.db_system,
+            otel_db_operation=rollup.db_operation,
+            otel_db_statement_type=rollup.db_statement_type,
         )
         results.append(result)
 
@@ -528,40 +637,15 @@ def ingest_jaeger_trace(
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Collect spans grouped by operation name
-    span_groups: dict[str, list[dict]] = {}
-
     if not isinstance(data, dict) or ("data" not in data and "spans" not in data):
         _emit(f"trace_ingest_jaeger_corrupt:{trace_path}:WrongFormat")
         return []
 
-    traces = data.get("data", [data]) if isinstance(data.get("data"), list) else [data]
-    for trace in traces:
-        spans = trace.get("spans", [])
-        for span in spans:
-            name = span.get("operationName", "unknown")
-            if name not in span_groups:
-                span_groups[name] = []
-            span_groups[name].append(span)
+    span_groups = _group_jaeger_spans_for_operation_rollups(data)
 
     results = []
     for span_name, spans in span_groups.items():
-        durations_ms = []
-        error_count = 0
-        for span in spans:
-            duration_us = span.get("duration", 0)
-            durations_ms.append(duration_us / 1000.0)
-            # Check tags for errors
-            tags = span.get("tags", [])
-            for tag in tags:
-                if tag.get("key") == "error" and tag.get("value") is True:
-                    error_count += 1
-                    break
-
-        call_count = len(spans)
-        p50 = _percentile(durations_ms, 50) if durations_ms else None
-        p99 = _percentile(durations_ms, 99) if durations_ms else None
-        err_rate = error_count / call_count if call_count > 0 else 0.0
+        rollup = _summarize_jaeger_group_for_stable_upsert(spans)
 
         file_path = None
         symbol_id = match_trace_to_symbol(conn, span_name, file_path)
@@ -571,10 +655,10 @@ def ingest_jaeger_trace(
             span_name,
             file_path,
             "jaeger",
-            call_count,
-            p50,
-            p99,
-            err_rate,
+            rollup.call_count,
+            rollup.p50_latency_ms,
+            rollup.p99_latency_ms,
+            rollup.error_rate,
             None,
         )
         results.append(result)
@@ -638,19 +722,7 @@ def ingest_zipkin_trace(
 
     results = []
     for span_name, spans in span_groups.items():
-        durations_ms = []
-        error_count = 0
-        for span in spans:
-            duration_us = span.get("duration", 0)
-            durations_ms.append(duration_us / 1000.0)
-            tags = span.get("tags", {})
-            if tags.get("error"):
-                error_count += 1
-
-        call_count = len(spans)
-        p50 = _percentile(durations_ms, 50) if durations_ms else None
-        p99 = _percentile(durations_ms, 99) if durations_ms else None
-        err_rate = error_count / call_count if call_count > 0 else 0.0
+        rollup = _summarize_zipkin_group_for_stable_upsert(spans)
 
         file_path = None
         symbol_id = match_trace_to_symbol(conn, span_name, file_path)
@@ -660,15 +732,75 @@ def ingest_zipkin_trace(
             span_name,
             file_path,
             "zipkin",
-            call_count,
-            p50,
-            p99,
-            err_rate,
+            rollup.call_count,
+            rollup.p50_latency_ms,
+            rollup.p99_latency_ms,
+            rollup.error_rate,
             None,
         )
         results.append(result)
 
     return results
+
+
+def _read_trace_json_for_auto_detection(trace_path: str) -> object:
+    """Read a trace file while preserving the detector's ValueError boundary."""
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError as exc:
+        raise ValueError(f"{trace_path}: trace file not found") from exc
+    except OSError as exc:
+        raise ValueError(f"{trace_path}: cannot read trace file: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{trace_path}: not a valid JSON document (line {exc.lineno}, column {exc.colno}): {exc.msg}"
+        ) from exc
+
+
+def _looks_like_otel_to_prefer_explicit_trace_schema(data: object) -> bool:
+    return isinstance(data, dict) and ("resourceSpans" in data or "resource_spans" in data)
+
+
+def _looks_like_jaeger_to_avoid_generic_misroute(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if "spans" in data:
+        return True
+
+    inner = data.get("data")
+    if not isinstance(inner, list) or not inner:
+        return False
+    return isinstance(inner[0], dict) and "spans" in inner[0]
+
+
+def _first_list_trace_entry_for_legacy_formats(data: object) -> dict | None:
+    if not isinstance(data, list) or not data:
+        return None
+    first = data[0]
+    return first if isinstance(first, dict) else None
+
+
+def _looks_like_zipkin_to_preserve_span_identity(data: object) -> bool:
+    first = _first_list_trace_entry_for_legacy_formats(data)
+    return first is not None and "traceId" in first and "id" in first
+
+
+def _looks_like_generic_to_preserve_legacy_contract(data: object) -> bool:
+    first = _first_list_trace_entry_for_legacy_formats(data)
+    return first is not None and "function" in first
+
+
+def _detect_format_that_preserves_specificity(data: object) -> str | None:
+    if _looks_like_otel_to_prefer_explicit_trace_schema(data):
+        return "otel"
+    if _looks_like_jaeger_to_avoid_generic_misroute(data):
+        return "jaeger"
+    if _looks_like_zipkin_to_preserve_span_identity(data):
+        return "zipkin"
+    if _looks_like_generic_to_preserve_legacy_contract(data):
+        return "generic"
+    return None
 
 
 def auto_detect_format(
@@ -707,39 +839,10 @@ def auto_detect_format(
         if warnings_out is not None:
             warnings_out.append(kind)
 
-    try:
-        with open(trace_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError as exc:
-        raise ValueError(f"{trace_path}: trace file not found") from exc
-    except OSError as exc:
-        raise ValueError(f"{trace_path}: cannot read trace file: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"{trace_path}: not a valid JSON document (line {exc.lineno}, column {exc.colno}): {exc.msg}"
-        ) from exc
-
-    if isinstance(data, dict):
-        if "resourceSpans" in data or "resource_spans" in data:
-            return "otel"
-        if "data" in data and isinstance(data.get("data"), list):
-            # Jaeger wraps traces in a "data" array
-            inner = data["data"]
-            if inner and isinstance(inner[0], dict) and "spans" in inner[0]:
-                return "jaeger"
-        if "spans" in data:
-            return "jaeger"
-
-    if isinstance(data, list):
-        if data:
-            first = data[0]
-            if isinstance(first, dict):
-                # Zipkin spans have traceId + id + kind
-                if "traceId" in first and "id" in first:
-                    return "zipkin"
-                # Generic format has "function" key
-                if "function" in first:
-                    return "generic"
+    data = _read_trace_json_for_auto_detection(trace_path)
+    detected = _detect_format_that_preserves_specificity(data)
+    if detected is not None:
+        return detected
 
     _emit(f"trace_ingest_auto_detect_fallback_generic:{trace_path}")
     return "generic"

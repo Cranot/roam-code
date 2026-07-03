@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 import re
@@ -244,24 +245,25 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
     # Track which lines belong to script blocks
     script_line_flags = [False] * len(lines)
 
+    # Precompute newline offsets once so each offset -> line-number lookup is a
+    # bisect rather than an O(offset) rescan of the prefix string. The count of
+    # newlines before character offset `pos` equals the number of newline
+    # offsets strictly less than `pos`, i.e. bisect_left(newline_offsets, pos).
+    newline_offsets = [i for i, ch in enumerate(text) if ch == "\n"]
+
     for match in script_pattern.finditer(text):
         attrs = match.group(1) or ""
         if 'lang="ts"' in attrs or "lang='ts'" in attrs or 'lang="tsx"' in attrs:
             effective_lang = "typescript"
 
         # Find the line range for the script content (excluding the tags)
-        block_start = text[: match.start()].count("\n")
-
-        # Find the opening tag end line and closing tag start line
         inner_text = match.group(0)
         opening_tag_end = inner_text.index(">") + 1
-        opening_lines = inner_text[:opening_tag_end].count("\n")
         closing_tag_start = inner_text.rfind("</script>")
-        closing_lines = inner_text[:closing_tag_start].count("\n")
 
         # +1 to skip the opening tag line, no +1 on end to exclude </script>
-        content_start = block_start + opening_lines + 1
-        content_end = block_start + closing_lines
+        content_start = bisect.bisect_left(newline_offsets, match.start() + opening_tag_end) + 1
+        content_end = bisect.bisect_left(newline_offsets, match.start() + closing_tag_start)
 
         for i in range(content_start, min(content_end, len(lines))):
             script_line_flags[i] = True
@@ -320,9 +322,13 @@ def parse_file(path: Path, language: str | None = None):
 
     try:
         tree = parser.parse(source)
-    except Exception as e:
+    except ValueError as e:
         parse_errors["parse_error"] += 1
         log.warning("Parse error in %s: %s", path, e)
+        return None, None, None
+    if tree is None:
+        parse_errors["parse_error"] += 1
+        log.warning("Parse error in %s: parser returned no tree", path)
         return None, None, None
 
     return tree, source, language

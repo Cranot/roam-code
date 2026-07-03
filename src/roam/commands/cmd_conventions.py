@@ -23,6 +23,7 @@ import json as _json
 import re
 import sqlite3
 from collections import Counter
+from collections.abc import Callable
 
 import click
 
@@ -162,6 +163,35 @@ def _resolve_convention_subject_id(
         return None
 
 
+def _emit_records_to_findings_registry(
+    conn: sqlite3.Connection,
+    records: list[dict],
+    source_detector: str,
+    source_version: str,
+    *,
+    build_finding: Callable[[dict, sqlite3.Connection], "FindingRecord | None"],
+) -> int:
+    """Shared registry-mirror loop for detector-specific records.
+
+    Encodes the uniform emission mechanics (local import, JSON evidence,
+    ``emit_finding`` call, count) while letting each detector supply the
+    domain-specific mapping from its raw record to a ``FindingRecord``.
+    Records whose builder returns ``None`` are skipped silently.
+    """
+    # Local import keeps the cost out of the read-only path — callers
+    # without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for rec in records:
+        finding = build_finding(rec, conn)
+        if finding is None:
+            continue
+        emit_finding(conn, finding)
+        written += 1
+    return written
+
+
 def _emit_conventions_findings(
     conn: sqlite3.Connection,
     outliers: list[dict],
@@ -182,10 +212,9 @@ def _emit_conventions_findings(
     not findings, and stay in the existing per-kind / per-(family,
     group) summary surfaces.
     """
-    from roam.db.findings import FindingRecord, emit_finding
+    from roam.db.findings import FindingRecord
 
-    written = 0
-    for o in outliers:
+    def _build_convention_finding(o: dict, _conn: sqlite3.Connection) -> FindingRecord | None:
         name = o.get("name") or ""
         kind = o.get("kind") or ""
         file_path = o.get("file") or ""
@@ -200,7 +229,7 @@ def _emit_conventions_findings(
         expected_style = o.get("expected_style") or "?"
         expected_source = o.get("expected_source")
 
-        subject_id = _resolve_convention_subject_id(conn, file_path, name, line_start_int)
+        subject_id = _resolve_convention_subject_id(_conn, file_path, name, line_start_int)
         finding_id = _conventions_finding_id(family, group, name, file_path, line_start_int)
         evidence = {
             "name": name,
@@ -219,21 +248,24 @@ def _emit_conventions_findings(
             f"expected {expected_style} for {family}/{group} at {location}"
         )
         confidence = _conventions_violation_confidence(expected_source)
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="symbol" if subject_id is not None else "file",
-                subject_id=subject_id,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=confidence,
-                source_detector="conventions",
-                source_version=source_version,
-            ),
+        return FindingRecord(
+            finding_id_str=finding_id,
+            subject_kind="symbol" if subject_id is not None else "file",
+            subject_id=subject_id,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=confidence,
+            source_detector="conventions",
+            source_version=source_version,
         )
-        written += 1
-    return written
+
+    return _emit_records_to_findings_registry(
+        conn,
+        outliers,
+        "conventions",
+        source_version,
+        build_finding=_build_convention_finding,
+    )
 
 
 # R22 — confidence classifier for convention-violation findings.

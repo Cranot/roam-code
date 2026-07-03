@@ -58,7 +58,7 @@ def _get_state(ctx: Any) -> dict[str, Any] | None:
             state = getter(_STATE_KEY)
             if isinstance(state, dict):
                 return state
-        except Exception as exc:  # noqa: BLE001 — Context API varies by FastMCP version; falls through to fallback store
+        except (AttributeError, NotImplementedError, TypeError) as exc:
             log_swallowed("session:_get_state.context_api", exc)
 
     sid = _get_session_id(ctx)

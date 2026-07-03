@@ -29,6 +29,7 @@ verify.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from roam.atomic_io import atomic_write_text
@@ -36,6 +37,16 @@ from roam.laws.miner import Law
 
 SCHEMA_VERSION = 1
 DEFAULT_LOCATIONS = ("roam-laws.yml", ".roam/laws.yml")
+_DIGITS_RE = r"\d(?:_?\d)*"
+_INT_LITERAL_RE = re.compile(rf"^[+-]?{_DIGITS_RE}$")
+_FLOAT_LITERAL_RE = re.compile(
+    rf"^[+-]?(?:"
+    rf"(?:{_DIGITS_RE}\.(?:{_DIGITS_RE})?|\.(?:{_DIGITS_RE}))(?:[eE][+-]?{_DIGITS_RE})?"
+    rf"|{_DIGITS_RE}[eE][+-]?{_DIGITS_RE}"
+    rf"|inf(?:inity)?|nan"
+    rf")$",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -165,67 +176,95 @@ def _fallback_parse(text: str) -> dict:
     stack: list[tuple[int, Any]] = [(0, root)]
 
     def container_for_indent(indent: int) -> Any:
-        while stack and stack[-1][0] >= indent:
+        while stack and stack[-1][0] > indent:
             stack.pop()
         if not stack:
             stack.append((0, root))
         return stack[-1][1]
 
-    for raw_line in text.splitlines():
+    raw_lines = text.splitlines()
+    for line_index, raw_line in enumerate(raw_lines):
         if not raw_line.strip() or raw_line.lstrip().startswith("#"):
             continue
         stripped = raw_line.lstrip()
         indent = len(raw_line) - len(stripped)
         parent = container_for_indent(indent)
-        if stripped.startswith("- "):
-            value_part = stripped[2:].rstrip()
-            if not isinstance(parent, list):
-                # Promote: previous key holds the list now.
-                continue
-            if not value_part:
-                # `-` opens a dict-item; subsequent lines fill it
-                new = {}
-                parent.append(new)
-                stack.append((indent + 2, new))
-            else:
-                parent.append(_unscalar(value_part))
-        elif stripped == "-":
-            if isinstance(parent, list):
-                new = {}
-                parent.append(new)
-                stack.append((indent + 2, new))
-        elif ":" in stripped:
-            key, _, rest = stripped.partition(":")
-            key = key.strip()
-            rest = rest.strip()
-            if rest == "":
-                # Container — could be dict or list; decide on next line.
-                # Default to dict; promote to list if a `-` line follows.
-                new_dict: dict[str, Any] = {}
-                parent[key] = new_dict  # type: ignore[index]
-                # Peek-ahead: we patch later if we see a list line.
-                stack.append((indent + 2, new_dict))
-            elif rest == "[]":
-                parent[key] = []  # type: ignore[index]
-            elif rest == "{}":
-                parent[key] = {}  # type: ignore[index]
-            else:
-                parent[key] = _unscalar(rest)  # type: ignore[index]
-
-    # Second pass: convert empty-dict containers that turn out to hold
-    # only `-` lines into lists. The fallback parse above sometimes
-    # leaves them as dicts; fix up here.
-    _patch_lists(root)
+        children_are_list = _fallback_child_container_should_be_list(raw_lines, line_index, indent)
+        _preserve_fallback_yaml_line(parent, stack, indent, stripped, children_are_list)
     return root
 
 
-def _patch_lists(node: Any) -> None:
-    if isinstance(node, dict):
-        for k, v in list(node.items()):
-            _patch_lists(v)
-    elif isinstance(node, list):
-        for v in node:
-            _patch_lists(v)
+def _fallback_child_container_should_be_list(raw_lines: list[str], line_index: int, indent: int) -> bool:
+    for raw_line in raw_lines[line_index + 1 :]:
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        stripped = raw_line.lstrip()
+        child_indent = len(raw_line) - len(stripped)
+        return child_indent > indent and stripped.startswith("-")
+    return False
+
+
+def _open_fallback_list_item_scope(parent: Any, stack: list[tuple[int, Any]], indent: int) -> None:
+    if not isinstance(parent, list):
+        return
+    new: dict[str, Any] = {}
+    parent.append(new)
+    stack.append((indent + 2, new))
+
+
+def _preserve_fallback_list_line(parent: Any, stack: list[tuple[int, Any]], indent: int, stripped: str) -> bool:
+    if stripped == "-":
+        _open_fallback_list_item_scope(parent, stack, indent)
+        return True
+    if not stripped.startswith("- "):
+        return False
+    if not isinstance(parent, list):
+        # Promote: previous key holds the list now.
+        return True
+    value_part = stripped[2:].rstrip()
+    if not value_part:
+        # `-` opens a dict-item; subsequent lines fill it.
+        _open_fallback_list_item_scope(parent, stack, indent)
+        return True
+    parent.append(_unscalar(value_part))
+    return True
+
+
+def _preserve_fallback_mapping_line(
+    parent: Any,
+    stack: list[tuple[int, Any]],
+    indent: int,
+    stripped: str,
+    children_are_list: bool,
+) -> None:
+    if ":" not in stripped:
+        return
+    key, _, rest = stripped.partition(":")
+    key = key.strip()
+    rest = rest.strip()
+    if rest == "":
+        # Container — choose list only for the list syntax emitted by _fallback_dump.
+        new_container: dict[str, Any] | list[Any] = [] if children_are_list else {}
+        parent[key] = new_container  # type: ignore[index]
+        stack.append((indent + 2, new_container))
+    elif rest == "[]":
+        parent[key] = []  # type: ignore[index]
+    elif rest == "{}":
+        parent[key] = {}  # type: ignore[index]
+    else:
+        parent[key] = _unscalar(rest)  # type: ignore[index]
+
+
+def _preserve_fallback_yaml_line(
+    parent: Any,
+    stack: list[tuple[int, Any]],
+    indent: int,
+    stripped: str,
+    children_are_list: bool,
+) -> None:
+    if _preserve_fallback_list_line(parent, stack, indent, stripped):
+        return
+    _preserve_fallback_mapping_line(parent, stack, indent, stripped, children_are_list)
 
 
 def _unscalar(s: str) -> Any:
@@ -238,14 +277,10 @@ def _unscalar(s: str) -> Any:
         return False
     if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
         return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    try:
+    if _INT_LITERAL_RE.match(s):
         return int(s)
-    except ValueError:
-        pass
-    try:
+    if _FLOAT_LITERAL_RE.match(s):
         return float(s)
-    except ValueError:
-        pass
     return s
 
 

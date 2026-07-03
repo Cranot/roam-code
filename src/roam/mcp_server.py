@@ -17,12 +17,14 @@ import contextlib
 import io
 import json
 import os
+import re
 import stat as _stat_mod
 import subprocess
 import sys
 import time as _time
 import warnings
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -45,6 +47,23 @@ except Exception as exc:
     _Context = None
     FastMCP = None
     _FASTMCP_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
+
+try:
+    from mcp.shared.exceptions import McpError as _McpError
+except ImportError:
+    # Older `mcp` packages may not expose McpError; the sampling error
+    # tuple will degrade to the transport/timeout classes below.
+    _McpError = None  # type: ignore[misc,assignment]
+
+# Exception types that MCP sampling is expected to raise on transient or
+# capability-missing failures. Caught and reported as llm_skip_reason.
+# All other exceptions propagate so programming bugs are not swallowed.
+_EXPECTED_SAMPLING_ERRORS: tuple[type[BaseException], ...] = ((_McpError,) if _McpError is not None else ()) + (
+    OSError,
+    TimeoutError,
+    asyncio.TimeoutError,
+)
+
 
 try:
     from mcp.types import ToolAnnotations as _ToolAnnotations
@@ -310,6 +329,23 @@ _PRESETS: dict[str, set[str]] = {
         "roam_attest",
         "roam_cga_emit",
         "roam_cga_verify",
+    },
+    # compile-code curated surface -- EXACTLY the tools compile-code's
+    # ``wire claude --mcp`` pre-approves (compile-code/cli.py
+    # ``CURATED_MCP_TOOLS``). Tightens the server-side surface from "core"
+    # (16) down to the curated graph tools so the visible MCP surface == the
+    # pre-approved allow-list (plus the always-on ``roam_expand_toolset``
+    # escape hatch). Like ``compliance``, a focused subset, not a core++
+    # superset. MUST stay in sync with compile-code ``CURATED_MCP_TOOLS``.
+    "compile-curated": {
+        "roam_impact",  # blast radius of a change
+        "roam_uses",  # reference lookup (replaces grep)
+        "roam_affected_tests",  # tests exercising a change
+        "roam_conventions",  # local conventions for a symbol/area
+        "roam_coupling",  # file/module coupling
+        "roam_search_semantic",  # semantic code search
+        "roam_critique",  # patch-vs-graph review on a mid-task pivot
+        "roam_breaking_changes",  # will this break callers, on demand
     },
     "full": set(),  # empty = all tools exposed
 }
@@ -2071,6 +2107,269 @@ def _tool_annotations(name: str) -> dict:
     return annotations
 
 
+def _resolve_task_mode(
+    name: str,
+    task_mode: Literal["required", "optional"] | None,
+    task_required: bool | None,
+    task_optional: bool | None,
+) -> Literal["required", "optional"] | None:
+    """Collapse the deprecated two-bool task shape onto the canonical enum.
+
+    ROADMAP A1 / W107: ``task_mode`` wins when both are supplied; warn so the
+    caller updates. ``stacklevel=3`` points the warning at the ``@_tool`` call
+    site (helper -> ``_tool`` -> caller).
+    """
+    if task_required is not None or task_optional is not None:
+        if task_mode is None:
+            if task_required:
+                task_mode = "required"
+            elif task_optional:
+                task_mode = "optional"
+        else:
+            import warnings as _w
+
+            _w.warn(
+                f"_tool({name!r}): task_mode={task_mode!r} overrides legacy "
+                f"task_required/task_optional kwargs — drop the legacy kwargs",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+    # Defensive: a tool can't be both required AND optional. With the enum,
+    # this is impossible by construction; with the legacy bools it required
+    # a separate test. Pin it here so a future re-introduction of the bool
+    # shape can't silently regress.
+    if task_required and task_optional:
+        raise ValueError(
+            f"_tool({name!r}): task_required and task_optional are disjoint — "
+            f'pick one (preferably task_mode="required" or "optional")'
+        )
+    return task_mode
+
+
+def _parse_tool_doc(doc: str) -> tuple[str, list[str]]:
+    """Extract the ``WHEN TO USE:`` line and up to 3 ``>>> roam`` examples."""
+    when_to_use = ""
+    examples: list[str] = []
+    if doc:
+        for line in doc.splitlines():
+            stripped = line.strip()
+            if stripped.upper().startswith("WHEN TO USE:"):
+                when_to_use = stripped.split(":", 1)[1].strip()
+                break
+        for line in doc.splitlines():
+            ls = line.strip()
+            if ls.startswith(">>>") and "roam" in ls:
+                examples.append(ls[3:].strip())
+            if len(examples) >= 3:
+                break
+    return when_to_use, examples
+
+
+def _build_registration_kwargs(
+    name: str,
+    effective_description: str,
+    output_schema: dict | None,
+    task_mode: Literal["required", "optional"] | None,
+) -> dict:
+    """Assemble the FastMCP ``mcp.tool(...)`` kwargs for one tool."""
+    kwargs: dict = {"name": name, "title": _tool_title(name)}
+    # ``effective_description`` was computed BEFORE the fastmcp-presence
+    # gate (W296). It carries the cold-start hint when the tool is gated
+    # by the cold-start guard, or the original description verbatim
+    # otherwise. Using it here keeps the catalog-visible description
+    # (``_TOOL_METADATA``) and the MCP-protocol description
+    # (this ``kwargs["description"]``) in lockstep.
+    if effective_description:
+        kwargs["description"] = effective_description
+    schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
+    # Wave C1 (W767): compat shim for Claude Code #41361 / #45839.
+    # ``ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA=1`` drops the declared
+    # schema entirely so the client's ``safeParse → return null``
+    # guard no longer silently bails. Wave A text-mirror still
+    # ships structured JSON in a ``TextContent`` block; agents that
+    # JSON-path-project still get the payload. Captured into
+    # ``_TOOL_METADATA[name]["output_schema_stripped"]`` so
+    # ``roam mcp doctor`` (Wave C2) can surface the runtime state.
+    # The ``output_schema_stripped`` sidecar on ``_TOOL_METADATA`` is
+    # populated above the ``if mcp is None`` gate in ``_tool`` so the
+    # catalog surface stays honest in fastmcp-less environments; here we
+    # only decide what rides on the wire.
+    if _COMPAT_STRIP_OUTPUT_SCHEMA:
+        kwargs["output_schema"] = None
+    else:
+        kwargs["output_schema"] = schema
+    kwargs["annotations"] = _tool_annotations(name)
+
+    # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical 3-way
+    # enum captured from the decorator kwarg. The legacy
+    # ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS`` sets are derived
+    # views of ``task_mode`` rebuilt at module-load finalization.
+    if task_mode is not None:
+        # Metadata fallback for clients even when FastMCP task extras are absent.
+        kwargs["meta"] = {"taskSupport": task_mode}
+        if _TaskConfig is not None:
+            kwargs["task"] = _TaskConfig(mode=task_mode)
+    return kwargs
+
+
+def _register_with_fallbacks(fn, kwargs: dict):
+    """Register ``fn`` with FastMCP, degrading kwargs for older versions.
+
+    Attempts, in order:
+    1) Full feature set
+    2) Drop task support when tasks extras aren't installed
+    3) Legacy FastMCP without output_schema/annotations/title/meta/task
+    """
+    attempts = [dict(kwargs)]
+    if "task" in kwargs:
+        no_task = dict(kwargs)
+        no_task.pop("task", None)
+        attempts.append(no_task)
+    legacy = dict(kwargs)
+    for key in ("output_schema", "annotations", "title", "meta", "task"):
+        legacy.pop(key, None)
+    attempts.append(legacy)
+
+    last_error: Exception | None = None
+    seen: set[tuple[str, ...]] = set()
+    for attempt in attempts:
+        signature = tuple(sorted(attempt.keys()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        try:
+            return mcp.tool(**attempt)(fn)
+        except (TypeError, ImportError, ValueError) as exc:
+            # ValueError covers the FastMCP 2.14+ guard that rejects
+            # a sync function with task config enabled (the legacy
+            # fallback attempt — which strips ``task`` — will retry
+            # without it and succeed).
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+    return fn
+
+
+def _should_register_tool(name: str) -> bool:
+    """Return whether ``name`` should be exposed on the active MCP surface."""
+    if name == _META_TOOL:
+        return True
+    if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
+        return False
+    return True
+
+
+def _build_tool_metadata(
+    name: str,
+    fn,
+    description: str,
+    *,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    task_mode: str | None,
+    version: str,
+) -> dict:
+    """Build the ``_TOOL_METADATA`` entry for one ``@_tool`` registration.
+
+    Plain Python state, populated UNCONDITIONALLY at decorator-top (before the
+    fastmcp-presence check) so ``roam_catalog`` and the version surface work
+    even in environments where fastmcp isn't installed (tests, CLI-only
+    installs) — metadata is orthogonal to whether the MCP transport can serve.
+    Extracted from ``_tool.decorator`` to keep the registration sequence flat
+    (W-brain-method); the field set and the derived ``task_required`` /
+    ``task_optional`` bools now live in one named, single-purpose place.
+    """
+    when_to_use_pre, examples_pre = _parse_tool_doc(fn.__doc__ or "")
+    return {
+        "name": name,
+        "title": _tool_title(name),
+        "description": description,
+        "when_to_use": when_to_use_pre,
+        "examples": examples_pre,
+        "core": name in _CORE_TOOLS,
+        # ROADMAP A1 / W108: ``read_only`` now flows from the decorator
+        # kwarg into ``_TOOL_METADATA`` directly. The module-level
+        # ``_NON_READ_ONLY_TOOLS`` is built as a derived view of the
+        # NEGATION of this flag after all ``@_tool`` decorators have run.
+        "read_only": read_only,
+        # ROADMAP A1 / W74: ``destructive`` now flows from the decorator
+        # kwarg into ``_TOOL_METADATA`` directly. The module-level
+        # ``_DESTRUCTIVE_TOOLS`` is built as a derived view of this flag
+        # after all ``@_tool`` decorators have run.
+        "destructive": destructive,
+        # ROADMAP A1 / W113: ``idempotent`` is a first-class axis stored in
+        # ``_TOOL_METADATA``. Independent from ``read_only`` (in current
+        # data they coincide — destructive tools are all non-idempotent —
+        # but the semantic distinction matters: a read-only tool can be
+        # non-idempotent when it returns a fresh UUID or timestamp on
+        # every call). The module-level ``_NON_IDEMPOTENT_TOOLS`` is
+        # built as a derived view of the NEGATION of this flag after all
+        # ``@_tool`` decorators have run.
+        "idempotent": idempotent,
+        # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical
+        # 3-way enum stored in ``_TOOL_METADATA``. The legacy boolean
+        # ``task_required`` / ``task_optional`` fields are DERIVED from it
+        # for back-compat with the W99/W105 derived-view tests and any
+        # downstream consumer that introspects ``_TOOL_METADATA``. The
+        # module-level ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS``
+        # sets are built as derived views of ``task_mode`` after all
+        # ``@_tool`` decorators have run.
+        "task_mode": task_mode,
+        "task_required": task_mode == "required",
+        "task_optional": task_mode == "optional",
+        # Version stamp — agents can compare against a cached value
+        # to detect schema drift without re-enumerating tools.
+        # Bump when the input or output schema for ``name`` changes.
+        "version": version,
+    }
+
+
+def _prepare_tool_body(
+    name: str,
+    fn,
+    description: str,
+    *,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    task_mode: str | None,
+    version: str,
+):
+    """Populate catalog metadata and apply wrappers shared by every surface.
+
+    This runs before the FastMCP-presence gate so CLI-only installs,
+    preset-filtered in-process callers, and registered MCP tools all get the
+    same metadata, cold-start guard, receipt wrapper, exception envelope, and
+    compat sidecars.
+    """
+    _TOOL_METADATA[name] = _build_tool_metadata(
+        name,
+        fn,
+        description,
+        read_only=read_only,
+        destructive=destructive,
+        idempotent=idempotent,
+        task_mode=task_mode,
+        version=version,
+    )
+
+    if _mcp_preflight is not None:
+        effective_description = _mcp_preflight.maybe_decorate_description(name, description or "")
+    else:
+        effective_description = description or ""
+    if effective_description:
+        _TOOL_METADATA[name]["description"] = effective_description
+
+    fn = _wrap_with_receipt(name, fn)
+    fn = _wrap_with_cold_start_guard(name, fn)
+    fn = _wrap_with_exception_envelope(name, fn)
+    _TOOL_METADATA[name]["output_schema_stripped"] = bool(_COMPAT_STRIP_OUTPUT_SCHEMA)
+    return fn, effective_description
+
+
 def _tool(
     name: str,
     description: str = "",
@@ -2131,157 +2430,19 @@ def _tool(
     """
 
     # ROADMAP A1 / W107: resolve the deprecated two-bool shape onto the new enum.
-    # ``task_mode`` wins when both are supplied; warn so the caller updates.
-    if task_required is not None or task_optional is not None:
-        if task_mode is None:
-            if task_required:
-                task_mode = "required"
-            elif task_optional:
-                task_mode = "optional"
-        else:
-            import warnings as _w
-
-            _w.warn(
-                f"_tool({name!r}): task_mode={task_mode!r} overrides legacy "
-                f"task_required/task_optional kwargs — drop the legacy kwargs",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-    # Defensive: a tool can't be both required AND optional. With the enum,
-    # this is impossible by construction; with the legacy bools it required
-    # a separate test. Pin it here so a future re-introduction of the bool
-    # shape can't silently regress.
-    if task_required and task_optional:
-        raise ValueError(
-            f"_tool({name!r}): task_required and task_optional are disjoint — "
-            f'pick one (preferably task_mode="required" or "optional")'
-        )
+    task_mode = _resolve_task_mode(name, task_mode, task_required, task_optional)
 
     def decorator(fn):
-        # A7: populate ``_TOOL_METADATA`` UNCONDITIONALLY — before the
-        # fastmcp-presence check — so ``roam_catalog`` and the version
-        # surface work even in environments where fastmcp isn't installed
-        # (tests, CLI-only installs). Metadata is plain Python state and
-        # is orthogonal to whether the MCP transport can actually serve.
-        when_to_use_pre = ""
-        examples_pre: list[str] = []
-        doc_pre = fn.__doc__ or ""
-        if doc_pre:
-            for line in doc_pre.splitlines():
-                stripped = line.strip()
-                if stripped.upper().startswith("WHEN TO USE:"):
-                    when_to_use_pre = stripped.split(":", 1)[1].strip()
-                    break
-            for line in doc_pre.splitlines():
-                ls = line.strip()
-                if ls.startswith(">>>") and "roam" in ls:
-                    examples_pre.append(ls[3:].strip())
-                if len(examples_pre) >= 3:
-                    break
-        _TOOL_METADATA[name] = {
-            "name": name,
-            "title": _tool_title(name),
-            "description": description,
-            "when_to_use": when_to_use_pre,
-            "examples": examples_pre,
-            "core": name in _CORE_TOOLS,
-            # ROADMAP A1 / W108: ``read_only`` now flows from the decorator
-            # kwarg into ``_TOOL_METADATA`` directly. The module-level
-            # ``_NON_READ_ONLY_TOOLS`` is built as a derived view of the
-            # NEGATION of this flag after all ``@_tool`` decorators have run.
-            "read_only": read_only,
-            # ROADMAP A1 / W74: ``destructive`` now flows from the decorator
-            # kwarg into ``_TOOL_METADATA`` directly. The module-level
-            # ``_DESTRUCTIVE_TOOLS`` is built as a derived view of this flag
-            # after all ``@_tool`` decorators have run.
-            "destructive": destructive,
-            # ROADMAP A1 / W113: ``idempotent`` is a first-class axis stored in
-            # ``_TOOL_METADATA``. Independent from ``read_only`` (in current
-            # data they coincide — destructive tools are all non-idempotent —
-            # but the semantic distinction matters: a read-only tool can be
-            # non-idempotent when it returns a fresh UUID or timestamp on
-            # every call). The module-level ``_NON_IDEMPOTENT_TOOLS`` is
-            # built as a derived view of the NEGATION of this flag after all
-            # ``@_tool`` decorators have run.
-            "idempotent": idempotent,
-            # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical
-            # 3-way enum stored in ``_TOOL_METADATA``. The legacy boolean
-            # ``task_required`` / ``task_optional`` fields are DERIVED from it
-            # for back-compat with the W99/W105 derived-view tests and any
-            # downstream consumer that introspects ``_TOOL_METADATA``. The
-            # module-level ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS``
-            # sets are built as derived views of ``task_mode`` after all
-            # ``@_tool`` decorators have run.
-            "task_mode": task_mode,
-            "task_required": task_mode == "required",
-            "task_optional": task_mode == "optional",
-            # Version stamp — agents can compare against a cached value
-            # to detect schema drift without re-enumerating tools.
-            # Bump when the input or output schema for ``name`` changes.
-            "version": version,
-        }
-
-        # W296: append the "Requires a built index -- run `roam init`
-        # first" hint to every tool description that the cold-start
-        # guard gates. Imperative voice per CLAUDE.md LAW 2 ("Run X" not
-        # "This command does X"). Idempotent: appending twice is a no-op.
-        # Done BEFORE the fastmcp-presence gate so ``_TOOL_METADATA``
-        # surfaces the hinted description even when fastmcp is absent
-        # (tests, CLI-only installs).
-        if _mcp_preflight is not None:
-            effective_description = _mcp_preflight.maybe_decorate_description(name, description or "")
-        else:
-            effective_description = description or ""
-        if effective_description:
-            _TOOL_METADATA[name]["description"] = effective_description
-
-        # W196: emit an ``McpDecisionReceipt`` per sensitive tool call.
-        # Wired BEFORE the fastmcp-presence gate so receipts also fire
-        # for in-process callers (tests, compound tools, CLI-only
-        # installs) - receipts are audit artefacts, independent of the
-        # MCP transport. Read-only / idempotent tools are passed through
-        # unchanged by ``_wrap_with_receipt`` so the overhead is zero
-        # on the high-volume benign tools.
-        fn = _wrap_with_receipt(name, fn)
-
-        # W296: cold-start short-circuit. Wired OUTSIDE the receipt
-        # wrapper (applied later, runs first on dispatch) so that when
-        # ``.roam/index.db`` is missing we return a structured
-        # ``index_not_built`` envelope INSTEAD of running the underlying
-        # CLI command (which auto-triggers a full index build that
-        # exceeds MCP call timeouts). No receipt is emitted on the
-        # short-circuit because nothing was actually decided. Tools in
-        # ``_NO_INDEX_NEEDED`` (init, reindex, doctor, catalog, ...) are
-        # pass-through unchanged. Per CLAUDE.md Pattern 1: silence /
-        # hang is the worst failure mode -- always emit a structured
-        # response the client can act on.
-        fn = _wrap_with_cold_start_guard(name, fn)
-
-        # Pattern-1 conformance — outermost-of-the-tool-body exception
-        # backstop. No other layer in this decorator stack converts a
-        # generic uncaught ``Exception`` raised inside the tool body
-        # (or the receipt / cold-start wrappers) into a structured
-        # envelope; without this a raising tool propagates as a
-        # protocol-level error that does not reliably reach the LLM
-        # context window. Applied here (before the ``if mcp is None``
-        # gate) so EVERY return path — fastmcp-absent, preset-filtered,
-        # and registered — inherits the backstop. Every existing
-        # per-tool / per-helper ``except`` block still runs first; this
-        # only catches what escapes all of them.
-        fn = _wrap_with_exception_envelope(name, fn)
-
-        # Wave C1 (W767): populate the ``output_schema_stripped`` sidecar
-        # on ``_TOOL_METADATA`` UNCONDITIONALLY — before the
-        # ``if mcp is None`` early-return — so the catalog surface
-        # reflects the runtime compat decision even in environments
-        # where fastmcp isn't installed (tests, CLI-only installs).
-        # The on-the-wire ``kwargs["output_schema"]`` strip below (inside
-        # the registered path) still honors ``_COMPAT_STRIP_OUTPUT_SCHEMA``;
-        # this populates the *audit* sidecar that ``roam mcp doctor``
-        # (Wave C2) consumes. Parity rule with ``_TOOL_METADATA``
-        # population at decorator-top: metadata is orthogonal to whether
-        # the MCP transport can actually serve.
-        _TOOL_METADATA[name]["output_schema_stripped"] = bool(_COMPAT_STRIP_OUTPUT_SCHEMA)
+        fn, effective_description = _prepare_tool_body(
+            name,
+            fn,
+            description,
+            read_only=read_only,
+            destructive=destructive,
+            idempotent=idempotent,
+            task_mode=task_mode,
+            version=version,
+        )
 
         if mcp is None:
             return fn
@@ -2310,13 +2471,12 @@ def _tool(
         # alias-wrapped with the merged signature attached.
         fn = _wrap_with_alias_normalization(name, fn)
 
-        # Meta-tool is always registered; others filtered by preset.
+        # Meta-tool is always registered; others are filtered by preset.
         # When filtered out, return the alias-wrapped + handle-off-wrapped
         # function so in-process callers still get the same safety net
         # as MCP clients.
-        if name != _META_TOOL:
-            if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
-                return fn
+        if not _should_register_tool(name):
+            return fn
         # Round 4 #14 / P: bound parallel tool invocations so the
         # FastMCP executor doesn't drop connections under burst load.
         # Over-capacity calls return a structured BUSY envelope with
@@ -2335,78 +2495,8 @@ def _tool(
         # so ``roam_catalog`` works even when fastmcp is absent. The
         # wrappers above (handle-off, guard, alias-normalization) only
         # affect dispatch behavior, not the catalog surface.
-        kwargs: dict = {"name": name, "title": _tool_title(name)}
-        # ``effective_description`` was computed BEFORE the fastmcp-presence
-        # gate above (W296). It carries the cold-start hint when the tool
-        # is gated by the cold-start guard, or the original description
-        # verbatim otherwise. Using it here keeps the catalog-visible
-        # description (``_TOOL_METADATA``) and the MCP-protocol description
-        # (this ``kwargs["description"]``) in lockstep.
-        if effective_description:
-            kwargs["description"] = effective_description
-        schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
-        # Wave C1 (W767): compat shim for Claude Code #41361 / #45839.
-        # ``ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA=1`` drops the declared
-        # schema entirely so the client's ``safeParse → return null``
-        # guard no longer silently bails. Wave A text-mirror still
-        # ships structured JSON in a ``TextContent`` block; agents that
-        # JSON-path-project still get the payload. Captured into
-        # ``_TOOL_METADATA[name]["output_schema_stripped"]`` so
-        # ``roam mcp doctor`` (Wave C2) can surface the runtime state.
-        # The ``output_schema_stripped`` sidecar on ``_TOOL_METADATA`` was
-        # already populated above the ``if mcp is None`` gate so the catalog
-        # surface stays honest in fastmcp-less environments; here we only
-        # decide what rides on the wire.
-        if _COMPAT_STRIP_OUTPUT_SCHEMA:
-            kwargs["output_schema"] = None
-        else:
-            kwargs["output_schema"] = schema
-        kwargs["annotations"] = _tool_annotations(name)
-
-        # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical 3-way
-        # enum captured from the decorator kwarg above. The legacy
-        # ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS`` sets are derived
-        # views of ``task_mode`` rebuilt at module-load finalization.
-        if task_mode is not None:
-            # Metadata fallback for clients even when FastMCP task extras are absent.
-            kwargs["meta"] = {"taskSupport": task_mode}
-            if _TaskConfig is not None:
-                kwargs["task"] = _TaskConfig(mode=task_mode)
-
-        # Register with compatibility fallbacks:
-        # 1) Full feature set
-        # 2) Drop task support when tasks extras aren't installed
-        # 3) Legacy FastMCP without output_schema/annotations/title/meta/task
-        attempts = [dict(kwargs)]
-        if "task" in kwargs:
-            no_task = dict(kwargs)
-            no_task.pop("task", None)
-            attempts.append(no_task)
-        legacy = dict(kwargs)
-        for key in ("output_schema", "annotations", "title", "meta", "task"):
-            legacy.pop(key, None)
-        attempts.append(legacy)
-
-        last_error: Exception | None = None
-        seen: set[tuple[str, ...]] = set()
-        for attempt in attempts:
-            signature = tuple(sorted(attempt.keys()))
-            if signature in seen:
-                continue
-            seen.add(signature)
-            try:
-                return mcp.tool(**attempt)(fn)
-            except (TypeError, ImportError, ValueError) as exc:
-                # ValueError covers the FastMCP 2.14+ guard that rejects
-                # a sync function with task config enabled (the legacy
-                # fallback attempt — which strips ``task`` — will retry
-                # without it and succeed).
-                last_error = exc
-                continue
-
-        if last_error is not None:
-            raise last_error
-        return fn
+        kwargs = _build_registration_kwargs(name, effective_description, output_schema, task_mode)
+        return _register_with_fallbacks(fn, kwargs)
 
     return decorator
 
@@ -4986,30 +5076,6 @@ def _run_roam_inprocess(args: list[str]) -> dict:
                 ),
             }
         )
-    except Exception as exc:
-        # Defensive: CliRunner may swallow StaleDbDirError into result.exception
-        # when catch_exceptions=True is set. Re-raise the inner attribute path
-        # only when the surrogate text is unmistakable.
-        if isinstance(exc, StaleDbDirError):  # pragma: no cover (covered by branch above)
-            return _structured_error(
-                {
-                    "error": str(exc),
-                    "error_code": "STALE_DB_DIR",
-                    "state": "stale_db_dir",
-                    "partial_success": True,
-                    "hint": (
-                        f"db_dir {exc.db_dir!r} (from {exc.source}) is not writable — "
-                        "edit the config or run `roam config db-dir --reset` to fall back to the project default."
-                    ),
-                }
-            )
-        return _structured_error(
-            {
-                "error": str(exc),
-                "error_code": "UNKNOWN",
-                "hint": "an unexpected error occurred.",
-            }
-        )
 
     output = result.output.strip() if result.output else ""
 
@@ -5372,6 +5438,39 @@ async def _confirm_force_reindex(ctx: _Context | None) -> bool | None:
         return False
     parsed = _coerce_yes_no(getattr(response, "data", None))
     return parsed if parsed is not None else False
+
+
+async def _force_reindex_stop_response(
+    force: bool,
+    confirm_force: bool,
+    ctx: _Context | None,
+) -> dict | None:
+    """Return a stop response when force reindex lacks confirmation."""
+    if not force or confirm_force:
+        return None
+
+    approved = await _confirm_force_reindex(ctx)
+    if approved is None:
+        return _structured_error(
+            {
+                "error": "force reindex requires confirmation but elicitation is unavailable.",
+                "error_code": "ELICITATION_REQUIRED",
+                "hint": "rerun with confirm_force=true or use a client with elicitation support.",
+                "command": "roam_reindex",
+            }
+        )
+    if approved:
+        return None
+    return {
+        "command": "index",
+        "summary": {
+            "verdict": "force reindex cancelled by user",
+            "cancelled": True,
+            "force": True,
+        },
+        "cancelled": True,
+        "force": True,
+    }
 
 
 # ===================================================================
@@ -5887,14 +5986,16 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
     Returns (details_dict, error_or_None).
     Uses the same lookup chain as find_symbol(): qualified -> name -> fuzzy.
     """
+    import sqlite3
+
     from roam.commands.resolve import find_symbol
     from roam.db.queries import CALLEES_OF, CALLERS_OF, METRICS_FOR_SYMBOL
     from roam.output.formatter import loc
 
     try:
         s = find_symbol(conn, sym)
-    except Exception as exc:
-        return None, str(exc)
+    except sqlite3.DatabaseError as exc:
+        return None, f"db error resolving {sym!r}: {exc}"
 
     if s is None:
         return None, f"symbol not found: {sym!r}"
@@ -5903,7 +6004,7 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
         metrics = conn.execute(METRICS_FOR_SYMBOL, (s["id"],)).fetchone()
         callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()
         callees = conn.execute(CALLEES_OF, (s["id"],)).fetchall()
-    except Exception as exc:
+    except sqlite3.DatabaseError as exc:
         return None, f"db error fetching details for {sym!r}: {exc}"
 
     details: dict = {
@@ -5977,8 +6078,10 @@ def batch_search(
     Returns: per-query result lists plus aggregate match count.
     Partial failures are collected in ``errors``; remaining queries still run.
     """
+    import sqlite3
+
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import open_db
+    from roam.db.connection import StaleDbDirError, open_db
 
     ensure_index()
 
@@ -6003,15 +6106,11 @@ def batch_search(
             "errors": {},
         }
 
-    # W103: outer try/except guards ONLY open_db() — a connection failure is
-    # legitimately fatal. Each per-query iteration has its own inner try/except
-    # so an unexpected raise from _batch_search_one (e.g., row-dict KeyError on
-    # a malformed FTS5 row, or future signature drift) is captured per-query
-    # and does not abort the rest of the batch.
     try:
         conn_ctx = open_db(readonly=True)
-    except Exception as exc:
-        # open_db itself failed — no DB → return structured fatal
+    except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
+        # Expected DB/config boundary failures get a structured MCP payload;
+        # programmer-class failures propagate instead of looking like no data.
         return {
             "command": "batch-search",
             "summary": {
@@ -6025,13 +6124,13 @@ def batch_search(
             "errors": {"_fatal": str(exc)},
         }
 
+    # W607: open_db() and the per-query loop are kept in separate blocks so a
+    # connection failure short-circuits with a _fatal payload while DB-level
+    # query errors stay isolated inside _batch_search_one's return value.
+    # Unexpected programming errors now propagate instead of being swallowed.
     with conn_ctx as conn:
         for q in queries_list:
-            try:
-                rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
-            except Exception as exc:  # noqa: BLE001 — surface any unexpected error per query
-                errors[q] = f"unexpected error: {exc}"
-                continue
+            rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
             if err:
                 errors[q] = err
             else:
@@ -6085,8 +6184,10 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     location. Unresolved symbols appear in ``errors``; resolved symbols
     appear in ``results``.
     """
+    import sqlite3
+
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import open_db
+    from roam.db.connection import StaleDbDirError, open_db
 
     ensure_index()
 
@@ -6107,13 +6208,20 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "errors": {},
         }
 
-    # W103: outer try/except guards ONLY open_db() — a connection failure is
-    # legitimately fatal. Each per-symbol iteration has its own inner try/except
-    # so an unexpected raise from _batch_get_one is captured per-symbol and
-    # does not abort the rest of the batch.
+    # W103: outer try/except guards ONLY the DB/config boundary. Per-symbol
+    # lookup/query database failures are tuple-form errors from _batch_get_one;
+    # programmer-class failures propagate instead of looking like no data.
     try:
-        conn_ctx = open_db(readonly=True)
-    except Exception as exc:
+        with open_db(readonly=True) as conn:
+            for sym in symbols_list:
+                details, err = _batch_get_one(conn, sym)
+                if err or details is None:
+                    errors[sym] = err or "not found"
+                else:
+                    results[sym] = details
+    except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
+        # Expected DB/config boundary failures get a structured MCP payload;
+        # programmer-class failures propagate instead of looking like no data.
         return {
             "command": "batch-get",
             "summary": {
@@ -6124,18 +6232,6 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "results": {},
             "errors": {"_fatal": str(exc)},
         }
-
-    with conn_ctx as conn:
-        for sym in symbols_list:
-            try:
-                details, err = _batch_get_one(conn, sym)
-            except Exception as exc:  # noqa: BLE001 — surface any unexpected error per symbol
-                errors[sym] = f"unexpected error: {exc}"
-                continue
-            if err or details is None:
-                errors[sym] = err or "not found"
-            else:
-                results[sym] = details
 
     resolved = len(results)
     verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
@@ -6258,28 +6354,9 @@ async def roam_reindex(
     Use `force=True` for a full rebuild. If `force=True` and `confirm_force=False`,
     the tool requests user confirmation via MCP elicitation when available.
     """
-    if force and not confirm_force:
-        approved = await _confirm_force_reindex(ctx)
-        if approved is None:
-            return _structured_error(
-                {
-                    "error": "force reindex requires confirmation but elicitation is unavailable.",
-                    "error_code": "ELICITATION_REQUIRED",
-                    "hint": "rerun with confirm_force=true or use a client with elicitation support.",
-                    "command": "roam_reindex",
-                }
-            )
-        if not approved:
-            return {
-                "command": "index",
-                "summary": {
-                    "verdict": "force reindex cancelled by user",
-                    "cancelled": True,
-                    "force": True,
-                },
-                "cancelled": True,
-                "force": True,
-            }
+    stop_response = await _force_reindex_stop_response(force, confirm_force, ctx)
+    if stop_response is not None:
+        return stop_response
 
     args = ["index"]
     if force:
@@ -6932,6 +7009,132 @@ _FETCH_HANDLE_DEFAULT_LIMIT = 20000
 _FETCH_HANDLE_MAX_LIMIT = 200000  # hard cap so an agent can't ask for 10MB
 
 
+def _try_real_jq(payload: object, expr: str) -> tuple[object, str | None] | None:
+    """Delegate to the optional ``jq`` library when it is installed.
+
+    Returns ``(result, None)`` on success, ``(None, error)`` on a jq-level
+    evaluation failure, or ``None`` when the library is not installed so the
+    caller can fall back to the built-in subset.
+    """
+    try:
+        import jq as _jq  # type: ignore[import-not-found]
+    except ImportError:
+        # Expected-missing: the `jq` library is an optional dependency. Its
+        # absence is the designed-for path. Narrow `except ImportError` so a
+        # real error inside the jq package still propagates.
+        return None
+
+    try:
+        return _jq.compile(expr).input(payload).first(), None
+    except (ValueError, StopIteration) as exc:
+        return None, f"jq evaluation failed: {exc}"
+
+
+# Token regex for the built-in jq subset: a field name, an integer index,
+# or a slice with optional endpoints. The literal '.' is a separator.
+_JQ_TOKEN_RE = re.compile(
+    r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)|"
+    r"\[(?P<idx>-?\d+)\]|"
+    r"\[(?P<a>-?\d*):(?P<b>-?\d*)\]|"
+    r"\."
+)
+
+
+def _token_from_match(match: re.Match[str]) -> tuple[str, object] | None:
+    """Convert one regex match into a jq token tuple.
+
+    Returns ``None`` for the literal '.' separator. Raises ``ValueError``
+    for unsupported token shapes so the tokenizer can report a clean error.
+    """
+    if match.group("field") is not None:
+        return "field", match.group("field")
+    if match.group("idx") is not None:
+        return "idx", int(match.group("idx"))
+    a_raw = match.group("a")
+    b_raw = match.group("b")
+    if a_raw is not None or b_raw is not None:
+        a = int(a_raw) if a_raw else None
+        b = int(b_raw) if b_raw else None
+        return "slice", (a, b)
+    return None
+
+
+def _tokenize_jq_subset(expr: str) -> tuple[list[tuple[str, object]], str | None]:
+    """Validate and tokenize a jq expression into the supported built-in subset.
+
+    Each token is a ``(kind, value)`` tuple where kind is one of
+    ``field``, ``idx``, or ``slice``. Returns ``(tokens, None)`` on success,
+    or ``([], error)`` for unsupported syntax so evaluation never touches the
+    payload.
+    """
+    if expr == ".":
+        return [], None
+    if not expr.startswith("."):
+        return [], (
+            f"unsupported jq expression {expr!r}: must start with '.' (try '.field' or '.list[0]'); "
+            "install the optional 'jq' Python package for full jq support."
+        )
+
+    rest = expr[1:]
+    pos = 0
+    tokens: list[tuple[str, object]] = []
+    while pos < len(rest):
+        m = _JQ_TOKEN_RE.match(rest, pos)
+        if not m or m.start() != pos:
+            return [], (
+                f"unsupported jq token at {expr[pos + 1 :]!r}: only '.field', '[N]', '[a:b]' subset is supported. "
+                "Install the optional 'jq' Python package for full jq support."
+            )
+        token = _token_from_match(m)
+        if token is not None:
+            tokens.append(token)
+        pos = m.end()
+    return tokens, None
+
+
+def _apply_jq_field(cur: object, val: object) -> tuple[object, str | None]:
+    """Project one object key access."""
+    if not isinstance(cur, dict):
+        return None, f"cannot apply .{val} to non-object (got {type(cur).__name__})"
+    if val not in cur:
+        return None, f"key {val!r} not found in object (available: {sorted(cur.keys())[:10]!r})"
+    return cur[val], None
+
+
+def _apply_jq_index(cur: object, val: object) -> tuple[object, str | None]:
+    """Project one array index access."""
+    if not isinstance(cur, list):
+        return None, f"cannot apply [{val}] to non-array (got {type(cur).__name__})"
+    try:
+        return cur[val], None  # type: ignore[index]
+    except IndexError:
+        return None, f"index {val} out of range for array of length {len(cur)}"
+
+
+def _apply_jq_slice(cur: object, a: int | None, b: int | None) -> tuple[object, str | None]:
+    """Project one array slice."""
+    if not isinstance(cur, list):
+        return None, f"cannot apply slice to non-array (got {type(cur).__name__})"
+    return cur[a:b], None  # type: ignore[index]
+
+
+def _apply_jq_token(cur: object, kind: str, val: object, expr: str) -> tuple[object, str | None]:
+    """Apply a single jq token to the current value.
+
+    Returns ``(next_value, None)`` or ``(None, error_message)``. This keeps
+    the main projection loop free of per-token type-checking and error
+    formatting.
+    """
+    if kind == "field":
+        return _apply_jq_field(cur, val)
+    if kind == "idx":
+        return _apply_jq_index(cur, val)
+    if kind == "slice":
+        a, b = val  # type: ignore[misc]
+        return _apply_jq_slice(cur, a, b)
+    return None, f"unsupported jq token kind {kind!r} in expression {expr!r}"
+
+
 def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None]:
     """Apply a jq-style projection expression to ``payload``.
 
@@ -6952,83 +7155,19 @@ def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None
     if not expr:
         return payload, None
 
-    # Prefer the real jq library when available — handles the full language.
-    try:
-        import jq as _jq  # type: ignore[import-not-found]
+    real_jq = _try_real_jq(payload, expr)
+    if real_jq is not None:
+        return real_jq
 
-        try:
-            return _jq.compile(expr).input(payload).first(), None
-        except Exception as exc:  # noqa: BLE001 — surface to caller
-            return None, f"jq evaluation failed: {exc}"
-    except ImportError:
-        # Expected-missing: the `jq` library is an optional dependency. Its
-        # absence is the designed-for path — fall through to the built-in
-        # minimal-jq-subset parser below. Narrow `except ImportError` (not
-        # bare `Exception`) so a real error inside the jq package still
-        # propagates. No swallow-log: this is routine, not a degradation.
-        pass
-
-    # --- minimal jq subset ------------------------------------------------
-    # Token stream: alternating ".field" and "[index|slice]" segments.
-    # Validate up-front so we can return a clean USAGE_ERROR before
-    # touching the payload.
-    import re as _re_jq
-
-    if expr == ".":
-        return payload, None
-    if not expr.startswith("."):
-        return None, (
-            f"unsupported jq expression {expr!r}: must start with '.' (try '.field' or '.list[0]'); "
-            "install the optional 'jq' Python package for full jq support."
-        )
-
-    # Strip the leading '.' so we can split into segments.
-    rest = expr[1:]
-    # Token regex: a field name, or a bracket expression (int, neg-int, slice).
-    token_re = _re_jq.compile(r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)|\[(?P<idx>-?\d+)\]|\[(?P<a>-?\d*):(?P<b>-?\d*)\]|\.")
-
-    pos = 0
-    tokens: list[tuple[str, object]] = []  # (kind, value)
-    while pos < len(rest):
-        m = token_re.match(rest, pos)
-        if not m or m.start() != pos:
-            return None, (
-                f"unsupported jq token at {expr[pos + 1 :]!r}: only '.field', '[N]', '[a:b]' subset is supported. "
-                "Install the optional 'jq' Python package for full jq support."
-            )
-        if m.group("field") is not None:
-            tokens.append(("field", m.group("field")))
-        elif m.group("idx") is not None:
-            tokens.append(("idx", int(m.group("idx"))))
-        elif m.group("a") is not None or m.group("b") is not None:
-            a_raw = m.group("a")
-            b_raw = m.group("b")
-            a = int(a_raw) if a_raw else None
-            b = int(b_raw) if b_raw else None
-            tokens.append(("slice", (a, b)))
-        # group "." (literal dot) is just a separator; no token emitted.
-        pos = m.end()
+    tokens, err = _tokenize_jq_subset(expr)
+    if err is not None:
+        return None, err
 
     cur: object = payload
     for kind, val in tokens:
-        if kind == "field":
-            if not isinstance(cur, dict):
-                return None, f"cannot apply .{val} to non-object (got {type(cur).__name__})"
-            if val not in cur:
-                return None, f"key {val!r} not found in object (available: {sorted(cur.keys())[:10]!r})"
-            cur = cur[val]
-        elif kind == "idx":
-            if not isinstance(cur, list):
-                return None, f"cannot apply [{val}] to non-array (got {type(cur).__name__})"
-            try:
-                cur = cur[val]  # type: ignore[index]
-            except IndexError:
-                return None, f"index {val} out of range for array of length {len(cur)}"
-        elif kind == "slice":
-            if not isinstance(cur, list):
-                return None, f"cannot apply slice to non-array (got {type(cur).__name__})"
-            a, b = val  # type: ignore[misc]
-            cur = cur[a:b]  # type: ignore[index]
+        cur, err = _apply_jq_token(cur, kind, val, expr)
+        if err is not None:
+            return None, err
     return cur, None
 
 
@@ -7293,6 +7432,14 @@ def fetch_handle(
 # ---------------------------------------------------------------------------
 
 
+_EXPECTED_COMPOUND_RUN_ERRORS = (
+    OSError,
+    subprocess.SubprocessError,
+    TimeoutError,
+    json.JSONDecodeError,
+)
+
+
 def _safe_run(args: list[str], root: str) -> dict:
     """Wrapper around _run_roam that converts exceptions into structured
     error dicts so a partial failure in one sub-command doesn't poison
@@ -7302,8 +7449,145 @@ def _safe_run(args: list[str], root: str) -> dict:
         if isinstance(out, dict):
             return out
         return {"error": f"unexpected return type: {type(out).__name__}"}
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}"}
+    except _EXPECTED_COMPOUND_RUN_ERRORS as exc:
+        log_swallowed("mcp_server:safe_run_compound_command", exc)
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _run_substrate(
+    recipe_name: str,
+    warnings_out: list[str],
+    phase: str,
+    fn: Callable,
+    *args,
+    default=None,
+    **kwargs,
+):
+    """Run one substrate helper, catching recoverable boundary exceptions.
+
+    On a clean call the result is returned as-is. On ``OSError`` or
+    ``RuntimeError`` append a structured
+    ``<recipe>_<phase>_failed:<exc_class>:<detail>`` marker to
+    *warnings_out* and return *default*. Logic errors propagate:
+    ``_safe_run`` already absorbs subcommand failures into error dicts,
+    so anything else reaching here is a wiring bug that must surface.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except (OSError, RuntimeError) as exc:
+        warnings_out.append(f"{recipe_name}_{phase}_failed:{type(exc).__name__}:{exc}")
+        return default
+
+
+def _compound_child_default(error_code: str) -> dict:
+    """Return the child-error shape used when a phase fails before JSON."""
+    return {"error": error_code}
+
+
+def _compound_phase_result_or_default(result: dict | None, error_code: str) -> dict:
+    """Keep a compound section present when a child phase returns nothing."""
+    return result or _compound_child_default(error_code)
+
+
+def _materialize_compound_sections_preserving_recipe_order(
+    section_factories: list[tuple[str, Callable[[], dict]]],
+) -> list[tuple[str, dict]]:
+    """Run child-section factories without hiding recipe-specific phases."""
+    return [(name, factory()) for name, factory in section_factories]
+
+
+def _bug_fix_sections_preserving_failure_provenance(
+    _run_check_ao: Callable,
+    symbol: str,
+    root: str,
+) -> list[tuple[str, dict]]:
+    """Assemble bug-fix sections without losing the W607-AO boundary."""
+    sections = []
+    for section_name in ("diagnose", "affected_tests", "diff", "context"):
+        if section_name == "diagnose":
+            phase_result = _compound_phase_result_or_default(
+                _run_check_ao(
+                    "diagnose",
+                    _safe_run,
+                    [_cr("diagnose"), symbol],
+                    root,
+                    default=_compound_child_default("diagnose_w607ao_default"),
+                ),
+                "diagnose_w607ao_default",
+            )
+        elif section_name == "affected_tests":
+            phase_result = _compound_phase_result_or_default(
+                _run_check_ao(
+                    "affected_tests",
+                    _safe_run,
+                    [_cr("affected-tests"), symbol],
+                    root,
+                    default=_compound_child_default("affected_tests_w607ao_default"),
+                ),
+                "affected_tests_w607ao_default",
+            )
+        elif section_name == "diff":
+            phase_result = _compound_phase_result_or_default(
+                _run_check_ao(
+                    "diff",
+                    _safe_run,
+                    [_cr("diff")],
+                    root,
+                    default=_compound_child_default("diff_w607ao_default"),
+                ),
+                "diff_w607ao_default",
+            )
+        else:
+            phase_result = _compound_phase_result_or_default(
+                _run_check_ao(
+                    "context",
+                    _safe_run,
+                    [_cr("context"), symbol],
+                    root,
+                    default=_compound_child_default("context_w607ao_default"),
+                ),
+                "context_w607ao_default",
+            )
+        sections.append((section_name, phase_result))
+    return sections
+
+
+def _finalize_compound_recipe(
+    envelope: dict | None,
+    command: str,
+    sections: list[tuple[str, dict]],
+    warnings_out: list[str],
+    situation: str,
+    target: str,
+) -> dict:
+    """Synthesize fallback envelope and merge substrate-CALL markers.
+
+    If *envelope* is ``None`` (the aggregator raised), build a minimal
+    envelope so the marker still rides home. Then thread any
+    substrate-CALL markers onto both ``summary.warnings_out`` and the
+    top-level ``warnings_out``, flipping ``partial_success`` when the
+    bucket is non-empty.
+    """
+    if envelope is None:
+        envelope = {
+            "command": command,
+            "summary": {
+                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
+                "partial_success": True,
+                "failed_subcommands": [name for name, _ in sections],
+                "sections": [],
+                "situation": situation,
+                "target": target,
+            },
+        }
+    if warnings_out:
+        summary = envelope.setdefault("summary", {})
+        existing_summary_wo = list(summary.get("warnings_out") or [])
+        summary["warnings_out"] = existing_summary_wo + list(warnings_out)
+        summary["partial_success"] = True
+        existing_top_wo = list(envelope.get("warnings_out") or [])
+        envelope["warnings_out"] = existing_top_wo + list(warnings_out)
+    return envelope
 
 
 # ---------------------------------------------------------------------------
@@ -7410,82 +7694,62 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
     context, complexity_report}. ``summary.verdict`` aggregates each
     sub-verdict.
     """
-    # W607-AR -- substrate-CALL marker plumbing for the for_new_feature
-    # compound recipe. FOURTH and FINAL compound-recipe W607 wave.
-    # Mirrors the canonical W607 template (sibling waves: W607-AG
-    # cmd_for_refactor, W607-AJ cmd_for_security_review, W607-AO
-    # cmd_for_bug_fix). With this landing the 4-compound family is
-    # complete.
-    #
-    # Each substrate boundary in the recipe (understand / complexity /
-    # search / context subcommand dispatch + the compound envelope
-    # assembly) is wrapped in ``_run_check_ar`` so a raise surfaces a
-    # structured
-    # ``for_new_feature_<phase>_failed:<exc_class>:<detail>`` marker on
-    # ``_w607ar_warnings_out`` -- the envelope still emits cleanly with
-    # whatever signal the remaining substrates produced.
-    #
-    # The accumulator is intentionally distinct from the pre-existing
-    # ``failed_subcommands`` data-shape channel (which
-    # _compound_envelope populates when a child returned a top-level
-    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AR bucket
-    # records when a helper raised BEFORE producing a payload at all
-    # (the CALL axis). Both feed the same envelope ``warnings_out``
-    # field on emission; ``partial_success`` flips when EITHER bucket
-    # is non-empty. Mirrors the W607-AG / W607-AJ / W607-AO bucket-merge
-    # discipline.
-    #
-    # NOTE on conditional substrates: ``search`` runs only when ``area``
-    # is non-empty, and ``context`` runs only when ``search`` returned
-    # matches. The W607-AR plumbing only wraps a substrate when the
-    # recipe actually invokes it -- absence of a marker on a
-    # conditional-skipped phase is NOT a regression; it's the recipe
-    # honouring its own input contract.
     _w607ar_warnings_out: list[str] = []
 
     def _run_check_ar(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AR marker emission.
+        """Run W607-AR substrate marker for ``for_new_feature_{phase}_failed``."""
+        return _run_substrate("for_new_feature", _w607ar_warnings_out, phase, fn, *args, default=default, **kwargs)
 
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a
-        ``for_new_feature_<phase>_failed:<exc_class>:<detail>`` marker
-        via ``_w607ar_warnings_out`` and return *default* -- the
-        envelope still emits cleanly with the remaining substrates.
-        """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607ar_warnings_out.append(f"for_new_feature_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
-
-    _understand_result = _run_check_ar(
-        "understand",
-        _safe_run,
-        [_cr("understand")],
-        root,
-        default={"error": "understand_w607ar_default"},
-    ) or {"error": "understand_w607ar_default"}
-    _complexity_result = _run_check_ar(
-        "complexity_report",
-        _safe_run,
-        [_cr("complexity"), "--limit", "10"],
-        root,
-        default={"error": "complexity_w607ar_default"},
-    ) or {"error": "complexity_w607ar_default"}
-
-    sections = [
-        ("understand", _understand_result),
-        ("complexity_report", _complexity_result),
-    ]
+    sections = _materialize_compound_sections_preserving_recipe_order(
+        [
+            (
+                "understand",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_ar(
+                        "understand",
+                        _safe_run,
+                        [_cr("understand")],
+                        root,
+                        default=_compound_child_default("understand_w607ar_default"),
+                    ),
+                    "understand_w607ar_default",
+                ),
+            ),
+            (
+                "complexity_report",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_ar(
+                        "complexity_report",
+                        _safe_run,
+                        [_cr("complexity"), "--limit", "10"],
+                        root,
+                        default=_compound_child_default("complexity_w607ar_default"),
+                    ),
+                    "complexity_w607ar_default",
+                ),
+            ),
+        ]
+    )
     if area:
-        _search_result = _run_check_ar(
-            "search",
-            _safe_run,
-            [_cr("search"), area],
-            root,
-            default={"error": "search_w607ar_default"},
-        ) or {"error": "search_w607ar_default"}
-        sections.append(("search", _search_result))
+        search_sections = _materialize_compound_sections_preserving_recipe_order(
+            [
+                (
+                    "search",
+                    lambda: _compound_phase_result_or_default(
+                        _run_check_ar(
+                            "search",
+                            _safe_run,
+                            [_cr("search"), area],
+                            root,
+                            default=_compound_child_default("search_w607ar_default"),
+                        ),
+                        "search_w607ar_default",
+                    ),
+                )
+            ]
+        )
+        sections.extend(search_sections)
+        _search_result = search_sections[0][1]
         # Only fetch context if search found a symbol — context for an
         # unmatched query is wasted tokens.
         matches = []
@@ -7495,14 +7759,26 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
             top = matches[0] if isinstance(matches, list) and matches else None
             anchor = top.get("qualified_name") or top.get("name") if isinstance(top, dict) else None
             if anchor:
-                _context_result = _run_check_ar(
-                    "context",
-                    _safe_run,
-                    [_cr("context"), anchor],
-                    root,
-                    default={"error": "context_w607ar_default"},
-                ) or {"error": "context_w607ar_default"}
-                sections.append(("context", _context_result))
+                sections.extend(
+                    _materialize_compound_sections_preserving_recipe_order(
+                        [
+                            (
+                                "context",
+                                lambda: _compound_phase_result_or_default(
+                                    _run_check_ar(
+                                        "context",
+                                        _safe_run,
+                                        [_cr("context"), anchor],
+                                        root,
+                                        default=_compound_child_default("context_w607ar_default"),
+                                    ),
+                                    "context_w607ar_default",
+                                ),
+                            )
+                        ]
+                    )
+                )
+
     envelope = _run_check_ar(
         "compound_envelope",
         _compound_envelope,
@@ -7512,38 +7788,14 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
         target=area,
         default=None,
     )
-    if envelope is None:
-        # Aggregator itself raised -- synthesise a minimal envelope so
-        # the marker still rides home rather than vanishing with the
-        # crash. Mirrors the W607-AG / W607-AJ / W607-AO compute_verdict
-        # default discipline.
-        envelope = {
-            "command": "for-new-feature",
-            "summary": {
-                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
-                "partial_success": True,
-                "failed_subcommands": [name for name, _ in sections],
-                "sections": [],
-                "situation": "new_feature",
-                "target": area,
-            },
-        }
-
-    # W607-AR -- thread substrate-CALL markers onto BOTH summary.warnings_out
-    # and the top-level envelope.warnings_out so consumers that read either
-    # surface see the disclosure channel. ``partial_success`` flips when the
-    # bucket is non-empty -- mirrors the W607-AG / W607-AJ / W607-AO
-    # bucket-merge pattern. Pre-existing data-shape channels
-    # (``failed_subcommands``) stay separable from W607-AR substrate-CALL
-    # markers; they coexist on the same envelope under disjoint keys.
-    if _w607ar_warnings_out:
-        summary = envelope.setdefault("summary", {})
-        existing_summary_wo = list(summary.get("warnings_out") or [])
-        summary["warnings_out"] = existing_summary_wo + list(_w607ar_warnings_out)
-        summary["partial_success"] = True
-        existing_top_wo = list(envelope.get("warnings_out") or [])
-        envelope["warnings_out"] = existing_top_wo + list(_w607ar_warnings_out)
-    return envelope
+    return _finalize_compound_recipe(
+        envelope,
+        "for-new-feature",
+        sections,
+        _w607ar_warnings_out,
+        situation="new_feature",
+        target=area,
+    )
 
 
 @_tool(
@@ -7576,82 +7828,16 @@ def for_bug_fix(symbol: str, root: str = ".", ctx: _Context | None = None) -> di
                 "command": "roam_for_bug_fix",
             }
         )
-    # W607-AO -- substrate-CALL marker plumbing for the for_bug_fix
-    # compound recipe. Mirrors the canonical W607 template (latest
-    # landed compound: W607-AJ for_security_review, W607-AG
-    # cmd_for_refactor). This is the THIRD compound-recipe W607 wave.
-    # Each substrate boundary in the recipe (diagnose / affected_tests /
-    # diff / context subcommand dispatch + the compound envelope
-    # assembly) is wrapped in ``_run_check_ao`` so a raise surfaces a
-    # structured
-    # ``for_bug_fix_<phase>_failed:<exc_class>:<detail>`` marker on
-    # ``_w607ao_warnings_out`` -- the envelope still emits cleanly with
-    # whatever signal the remaining substrates produced.
-    #
-    # The accumulator is intentionally distinct from the pre-existing
-    # ``failed_subcommands`` data-shape channel (which
-    # _compound_envelope populates when a child returned a top-level
-    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AO bucket
-    # records when a helper raised BEFORE producing a payload at all
-    # (the CALL axis). Both feed the same envelope ``warnings_out``
-    # field on emission; ``partial_success`` flips when EITHER bucket
-    # is non-empty. This mirrors the W607-AG / W607-AJ bucket-merge
-    # discipline.
     _w607ao_warnings_out: list[str] = []
 
     def _run_check_ao(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AO marker emission.
+        """Run W607-AO substrate marker for ``for_bug_fix_{phase}_failed``."""
+        return _run_substrate("for_bug_fix", _w607ao_warnings_out, phase, fn, *args, default=default, **kwargs)
 
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a
-        ``for_bug_fix_<phase>_failed:<exc_class>:<detail>`` marker via
-        ``_w607ao_warnings_out`` and return *default* -- the envelope
-        still emits cleanly with the remaining substrates.
-        """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607ao_warnings_out.append(f"for_bug_fix_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
-
-    _diagnose_result = _run_check_ao(
-        "diagnose",
-        _safe_run,
-        [_cr("diagnose"), symbol],
-        root,
-        default={"error": "diagnose_w607ao_default"},
-    ) or {"error": "diagnose_w607ao_default"}
-    _affected_tests_result = _run_check_ao(
-        "affected_tests",
-        _safe_run,
-        [_cr("affected-tests"), symbol],
-        root,
-        default={"error": "affected_tests_w607ao_default"},
-    ) or {"error": "affected_tests_w607ao_default"}
     # `roam diff` of the working tree shows what's recently been
     # touched in the area — context for whether this is a new
     # regression or a long-standing issue.
-    _diff_result = _run_check_ao(
-        "diff",
-        _safe_run,
-        [_cr("diff")],
-        root,
-        default={"error": "diff_w607ao_default"},
-    ) or {"error": "diff_w607ao_default"}
-    _context_result = _run_check_ao(
-        "context",
-        _safe_run,
-        [_cr("context"), symbol],
-        root,
-        default={"error": "context_w607ao_default"},
-    ) or {"error": "context_w607ao_default"}
-
-    sections = [
-        ("diagnose", _diagnose_result),
-        ("affected_tests", _affected_tests_result),
-        ("diff", _diff_result),
-        ("context", _context_result),
-    ]
+    sections = _bug_fix_sections_preserving_failure_provenance(_run_check_ao, symbol, root)
     envelope = _run_check_ao(
         "compound_envelope",
         _compound_envelope,
@@ -7661,43 +7847,14 @@ def for_bug_fix(symbol: str, root: str = ".", ctx: _Context | None = None) -> di
         target=symbol,
         default=None,
     )
-    if envelope is None:
-        # Aggregator itself raised -- synthesise a minimal envelope so
-        # the marker still rides home rather than vanishing with the
-        # crash. Mirrors the W607-AG / W607-AJ compute_verdict default
-        # discipline.
-        envelope = {
-            "command": "for-bug-fix",
-            "summary": {
-                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
-                "partial_success": True,
-                "failed_subcommands": [
-                    "diagnose",
-                    "affected_tests",
-                    "diff",
-                    "context",
-                ],
-                "sections": [],
-                "situation": "bug_fix",
-                "target": symbol,
-            },
-        }
-
-    # W607-AO -- thread substrate-CALL markers onto BOTH summary.warnings_out
-    # and the top-level envelope.warnings_out so consumers that read either
-    # surface see the disclosure channel. ``partial_success`` flips when the
-    # bucket is non-empty -- mirrors the W607-AG / W607-AJ bucket-merge
-    # pattern. Pre-existing data-shape channels (``failed_subcommands``)
-    # stay separable from W607-AO substrate-CALL markers; they coexist on
-    # the same envelope under disjoint keys.
-    if _w607ao_warnings_out:
-        summary = envelope.setdefault("summary", {})
-        existing_summary_wo = list(summary.get("warnings_out") or [])
-        summary["warnings_out"] = existing_summary_wo + list(_w607ao_warnings_out)
-        summary["partial_success"] = True
-        existing_top_wo = list(envelope.get("warnings_out") or [])
-        envelope["warnings_out"] = existing_top_wo + list(_w607ao_warnings_out)
-    return envelope
+    return _finalize_compound_recipe(
+        envelope,
+        "for-bug-fix",
+        sections,
+        _w607ao_warnings_out,
+        situation="bug_fix",
+        target=symbol,
+    )
 
 
 @_tool(
@@ -7731,86 +7888,73 @@ def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> d
                 "command": "roam_for_refactor",
             }
         )
-    # W607-AG -- substrate-CALL marker plumbing for the for_refactor
-    # compound recipe. Mirrors the canonical W607 template (latest
-    # landed: W607-AD cmd_attest, W607-AC cmd_pr_prep, W607-AA
-    # cmd_pr_analyze). cmd_for_refactor is the THIRD layer in the
-    # marker-composition stack: workflow (W607-AA pr_analyze) ->
-    # recipe (W607-AC pr_prep) -> THIS compound recipe (W607-AG).
-    #
-    # Each substrate boundary in the recipe (preflight / impact /
-    # complexity_report / clones subcommand dispatch + the compound
-    # envelope assembly) is wrapped in ``_run_check`` so a raise
-    # surfaces a structured
-    # ``for_refactor_<phase>_failed:<exc_class>:<detail>`` marker on
-    # ``_w607ag_warnings_out`` -- the envelope still emits cleanly with
-    # whatever signal the remaining substrates produced.
-    #
-    # The accumulator is intentionally distinct from the pre-existing
-    # ``failed_subcommands`` data-shape channel (which _compound_envelope
-    # populates when a child returned a top-level ``error`` key -- the
-    # OUTPUT-SHAPE axis). The W607-AG bucket records when a helper
-    # raised BEFORE producing a payload at all (the CALL axis). Both
-    # feed the same envelope ``warnings_out`` field on emission;
-    # ``partial_success`` flips when EITHER bucket is non-empty. This
-    # mirrors the W607-AC bucket-merge discipline.
     _w607ag_warnings_out: list[str] = []
 
     def _run_check(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AG marker emission.
-
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a
-        ``for_refactor_<phase>_failed:<exc_class>:<detail>`` marker via
-        ``_w607ag_warnings_out`` and return *default* -- the envelope
-        still emits cleanly with the remaining substrates.
-        """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607ag_warnings_out.append(f"for_refactor_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        """Run W607-AG substrate marker for ``for_refactor_{phase}_failed``."""
+        return _run_substrate("for_refactor", _w607ag_warnings_out, phase, fn, *args, default=default, **kwargs)
 
     # Fix B — go through ``_cr`` so the ``complexity-report`` typo can
     # never come back: any drift between this dict and the live CLI
     # surface raises ImportError at module load.
-    _preflight_result = _run_check(
-        "preflight",
-        _safe_run,
-        [_cr("preflight"), symbol],
-        root,
-        default={"error": "preflight_w607ag_default"},
-    ) or {"error": "preflight_w607ag_default"}
-    _impact_result = _run_check(
-        "impact",
-        _safe_run,
-        [_cr("impact"), symbol],
-        root,
-        default={"error": "impact_w607ag_default"},
-    ) or {"error": "impact_w607ag_default"}
-    _complexity_result = _run_check(
-        "complexity_report",
-        _safe_run,
-        [_cr("complexity"), "--limit", "5"],
-        root,
-        default={"error": "complexity_report_w607ag_default"},
-    ) or {"error": "complexity_report_w607ag_default"}
     # Cap at top-20 clone clusters; --top is the right flag (clones
     # uses --top, not --limit; CLI surface drift caught here).
-    _clones_result = _run_check(
-        "clones",
-        _safe_run,
-        [_cr("clones"), "--top", "20"],
-        root,
-        default={"error": "clones_w607ag_default"},
-    ) or {"error": "clones_w607ag_default"}
-
-    sections = [
-        ("preflight", _preflight_result),
-        ("impact", _impact_result),
-        ("complexity_report", _complexity_result),
-        ("clones", _clones_result),
-    ]
+    sections = _materialize_compound_sections_preserving_recipe_order(
+        [
+            (
+                "preflight",
+                lambda: _compound_phase_result_or_default(
+                    _run_check(
+                        "preflight",
+                        _safe_run,
+                        [_cr("preflight"), symbol],
+                        root,
+                        default=_compound_child_default("preflight_w607ag_default"),
+                    ),
+                    "preflight_w607ag_default",
+                ),
+            ),
+            (
+                "impact",
+                lambda: _compound_phase_result_or_default(
+                    _run_check(
+                        "impact",
+                        _safe_run,
+                        [_cr("impact"), symbol],
+                        root,
+                        default=_compound_child_default("impact_w607ag_default"),
+                    ),
+                    "impact_w607ag_default",
+                ),
+            ),
+            (
+                "complexity_report",
+                lambda: _compound_phase_result_or_default(
+                    _run_check(
+                        "complexity_report",
+                        _safe_run,
+                        [_cr("complexity"), "--limit", "5"],
+                        root,
+                        default=_compound_child_default("complexity_report_w607ag_default"),
+                    ),
+                    "complexity_report_w607ag_default",
+                ),
+            ),
+            (
+                "clones",
+                lambda: _compound_phase_result_or_default(
+                    _run_check(
+                        "clones",
+                        _safe_run,
+                        [_cr("clones"), "--top", "20"],
+                        root,
+                        default=_compound_child_default("clones_w607ag_default"),
+                    ),
+                    "clones_w607ag_default",
+                ),
+            ),
+        ]
+    )
     envelope = _run_check(
         "compound_envelope",
         _compound_envelope,
@@ -7820,42 +7964,14 @@ def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> d
         target=symbol,
         default=None,
     )
-    if envelope is None:
-        # Aggregator itself raised -- synthesise a minimal envelope so
-        # the marker still rides home rather than vanishing with the
-        # crash. Mirrors the W607-AC compute_verdict default discipline.
-        envelope = {
-            "command": "for-refactor",
-            "summary": {
-                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
-                "partial_success": True,
-                "failed_subcommands": [
-                    "preflight",
-                    "impact",
-                    "complexity_report",
-                    "clones",
-                ],
-                "sections": [],
-                "situation": "refactor",
-                "target": symbol,
-            },
-        }
-
-    # W607-AG -- thread substrate-CALL markers onto BOTH summary.warnings_out
-    # and the top-level envelope.warnings_out so consumers that read either
-    # surface see the disclosure channel. ``partial_success`` flips when the
-    # bucket is non-empty -- mirrors the W607-AC bucket-merge pattern.
-    # Pre-existing data-shape channels (``failed_subcommands``) stay
-    # separable from W607-AG substrate-CALL markers; they coexist on the
-    # same envelope under disjoint keys.
-    if _w607ag_warnings_out:
-        summary = envelope.setdefault("summary", {})
-        existing_summary_wo = list(summary.get("warnings_out") or [])
-        summary["warnings_out"] = existing_summary_wo + list(_w607ag_warnings_out)
-        summary["partial_success"] = True
-        existing_top_wo = list(envelope.get("warnings_out") or [])
-        envelope["warnings_out"] = existing_top_wo + list(_w607ag_warnings_out)
-    return envelope
+    return _finalize_compound_recipe(
+        envelope,
+        "for-refactor",
+        sections,
+        _w607ag_warnings_out,
+        situation="refactor",
+        target=symbol,
+    )
 
 
 @_tool(
@@ -7881,80 +7997,36 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
     Returns: compound envelope with sections {taint, vuln, critique,
     adversarial}.
     """
-    # W607-AJ -- substrate-CALL marker plumbing for the
-    # for_security_review compound recipe. Mirrors the canonical W607
-    # template (latest landed compound: W607-AG cmd_for_refactor). This
-    # is the SECOND compound-recipe W607 wave -- prior W607 waves
-    # targeted standalone Click commands, CLI-side helpers, or the
-    # for_refactor compound. Each substrate boundary in the recipe
-    # (taint / vulns / critique / adversarial subcommand dispatch + the
-    # compound envelope assembly) is wrapped in ``_run_check_aj`` so a
-    # raise surfaces a structured
-    # ``for_security_review_<phase>_failed:<exc_class>:<detail>``
-    # marker on ``_w607aj_warnings_out`` -- the envelope still emits
-    # cleanly with whatever signal the remaining substrates produced.
-    #
-    # The accumulator is intentionally distinct from the pre-existing
-    # ``failed_subcommands`` data-shape channel (which
-    # _compound_envelope populates when a child returned a top-level
-    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AJ bucket
-    # records when a helper raised BEFORE producing a payload at all
-    # (the CALL axis). Both feed the same envelope ``warnings_out``
-    # field on emission; ``partial_success`` flips when EITHER bucket
-    # is non-empty. This mirrors the W607-AG bucket-merge discipline.
-    _w607aj_warnings_out: list[str] = []
-
-    def _run_check_aj(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AJ marker emission.
-
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a
-        ``for_security_review_<phase>_failed:<exc_class>:<detail>``
-        marker via ``_w607aj_warnings_out`` and return *default* -- the
-        envelope still emits cleanly with the remaining substrates.
-        """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607aj_warnings_out.append(f"for_security_review_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+    # W607-AJ -- the child-command boundary is already ``_safe_run``:
+    # command failures become structured child ``error`` dictionaries and
+    # _compound_envelope marks the recipe partial. Let unexpected Python
+    # defects in this recipe or the aggregator propagate so they are not
+    # misreported as successful partial data.
 
     # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
     # ``vulns``) can never come back. ``vulns list`` is the
     # subcommand-style invocation the CLI expects.
-    _taint_result = _run_check_aj(
-        "taint",
-        _safe_run,
+    _taint_result = _safe_run(
         [_cr("taint")],
         root,
-        default={"error": "taint_w607aj_default"},
     ) or {"error": "taint_w607aj_default"}
-    _vulns_result = _run_check_aj(
-        "vulns",
-        _safe_run,
+    _vulns_result = _safe_run(
         [_cr("vulns"), "list"],
         root,
-        default={"error": "vulns_w607aj_default"},
     ) or {"error": "vulns_w607aj_default"}
     # ``critique`` reads the working-tree diff (and is a no-op if
     # nothing's staged); it pairs naturally here because the agent
     # is often reviewing a PR's worth of changes.
-    _critique_result = _run_check_aj(
-        "critique",
-        _safe_run,
+    _critique_result = _safe_run(
         [_cr("critique")],
         root,
-        default={"error": "critique_w607aj_default"},
     ) or {"error": "critique_w607aj_default"}
     adv_args = [_cr("adversarial")]
     if symbol:
         adv_args.append(symbol)
-    _adversarial_result = _run_check_aj(
-        "adversarial",
-        _safe_run,
+    _adversarial_result = _safe_run(
         adv_args,
         root,
-        default={"error": "adversarial_w607aj_default"},
     ) or {"error": "adversarial_w607aj_default"}
 
     sections = [
@@ -7963,50 +8035,12 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
         ("critique", _critique_result),
         ("adversarial", _adversarial_result),
     ]
-    envelope = _run_check_aj(
-        "compound_envelope",
-        _compound_envelope,
+    envelope = _compound_envelope(
         "for-security-review",
         sections,
         situation="security_review",
         target=symbol or "(full repo)",
-        default=None,
     )
-    if envelope is None:
-        # Aggregator itself raised -- synthesise a minimal envelope so
-        # the marker still rides home rather than vanishing with the
-        # crash. Mirrors the W607-AG compute_verdict default discipline.
-        envelope = {
-            "command": "for-security-review",
-            "summary": {
-                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
-                "partial_success": True,
-                "failed_subcommands": [
-                    "taint",
-                    "vulns",
-                    "critique",
-                    "adversarial",
-                ],
-                "sections": [],
-                "situation": "security_review",
-                "target": symbol or "(full repo)",
-            },
-        }
-
-    # W607-AJ -- thread substrate-CALL markers onto BOTH summary.warnings_out
-    # and the top-level envelope.warnings_out so consumers that read either
-    # surface see the disclosure channel. ``partial_success`` flips when the
-    # bucket is non-empty -- mirrors the W607-AG bucket-merge pattern.
-    # Pre-existing data-shape channels (``failed_subcommands``) stay
-    # separable from W607-AJ substrate-CALL markers; they coexist on the
-    # same envelope under disjoint keys.
-    if _w607aj_warnings_out:
-        summary = envelope.setdefault("summary", {})
-        existing_summary_wo = list(summary.get("warnings_out") or [])
-        summary["warnings_out"] = existing_summary_wo + list(_w607aj_warnings_out)
-        summary["partial_success"] = True
-        existing_top_wo = list(envelope.get("warnings_out") or [])
-        envelope["warnings_out"] = existing_top_wo + list(_w607aj_warnings_out)
     return envelope
 
 
@@ -8233,7 +8267,7 @@ def retrieve_context(
                 # Append symbol names as additional task tokens; the retrieve
                 # pipeline already extracts identifiers from the task string.
                 task = f"{task} {' '.join(recent)}".strip()
-    args = ["retrieve", task]
+    args = ["retrieve"]
     if budget:
         args.extend(["--budget", str(budget)])
     if k:
@@ -8246,6 +8280,11 @@ def retrieve_context(
             args.extend(["--seed-file", path])
     if dry_run:
         args.append("--dry-run")
+    # `--` halts Click option parsing so a leading-dash task ("-v trace the
+    # login flow") is treated as the positional task text instead of an
+    # unknown option (which would drop the retrieval). Mirrors the compiler
+    # trace probe's fix at compiler._probe_trace_for_task.
+    args.extend(["--", task])
     return _run_roam(args, root)
 
 
@@ -11815,7 +11854,10 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05, root: st
     Returns: ranked list of matching symbols with similarity scores,
     file paths, kinds, and line numbers.
     """
-    args = ["search-semantic", query, "--top", str(top), "--threshold", str(threshold)]
+    # Options first, then a `--` delimiter so an option-shaped query
+    # (e.g. one beginning with `--top` or `--help`) is parsed as the
+    # positional query rather than silently consumed as a flag.
+    args = ["search-semantic", "--top", str(top), "--threshold", str(threshold), "--", query]
     return _run_roam(args, root)
 
 
@@ -12166,6 +12208,137 @@ def _set_llm_skip_reason(envelope: dict, reason: str) -> dict:
     return envelope
 
 
+def _set_llm_sampling_failure(envelope: dict, started: float, reason: str) -> dict:
+    """Record latency and attach a skip reason when LLM sampling fails."""
+    elapsed_ms = int((_time.monotonic() - started) * 1000)
+    envelope = _set_llm_skip_reason(envelope, reason)
+    envelope.setdefault("summary", {})["llm_latency_ms"] = elapsed_ms
+    return envelope
+
+
+def _is_missing_sampling_capability(exc: ValueError) -> bool:
+    """Recognize the FastMCP sentinel for clients without sampling support."""
+    return str(exc) == "Client does not support sampling"
+
+
+def _index_repo_paths_for_llm_hints(repo_paths: list[str]) -> tuple[set[str], dict[str, list[str]]]:
+    """Build lookup tables that keep LLM hints grounded in repo paths."""
+    basename_to_paths: dict[str, list[str]] = {}
+    for path in repo_paths:
+        basename_to_paths.setdefault(path.rsplit("/", 1)[-1], []).append(path)
+    return set(repo_paths), basename_to_paths
+
+
+def _resolve_repo_grounded_llm_candidate(
+    candidate: str,
+    valid_paths: set[str],
+    basename_to_paths: dict[str, list[str]],
+) -> str | None:
+    """Return the repo path a candidate proves, or None for hallucinations."""
+    if not candidate or "://" in candidate or candidate.startswith("/"):
+        return None
+    if candidate in valid_paths:
+        return candidate
+    matches = basename_to_paths.get(candidate.rsplit("/", 1)[-1])
+    if not matches:
+        return None
+    return min(matches, key=len)
+
+
+def _validate_repo_grounded_llm_candidates(
+    candidates: list[str],
+    valid_paths: set[str],
+    basename_to_paths: dict[str, list[str]],
+) -> tuple[list[str], list[dict]]:
+    """Separate repo-real LLM candidates from rejected suggestions."""
+    accepted: list[str] = []
+    rejected: list[dict] = []
+    for raw_candidate in candidates:
+        resolved = _resolve_repo_grounded_llm_candidate(
+            raw_candidate,
+            valid_paths,
+            basename_to_paths,
+        )
+        if resolved is None:
+            rejected.append({"candidate": raw_candidate, "reason": "not in repo"})
+            continue
+        accepted.append(resolved)
+    return accepted, rejected
+
+
+def _diagnose_repo_grounded_llm_candidates(
+    candidates: list[str] | None,
+    valid_paths: set[str],
+    basename_to_paths: dict[str, list[str]],
+) -> tuple[dict, list[str]]:
+    """Explain why an LLM target did or did not earn a repo-grounded hint."""
+    if candidates is None:
+        return {
+            "skip_reason": "target not present in LLM response",
+            "candidates_returned": 0,
+        }, []
+
+    diagnostic: dict = {
+        "candidates_returned": len(candidates),
+        "candidates_raw": list(candidates),
+    }
+    if not candidates:
+        diagnostic["skip_reason"] = "LLM returned empty candidate list"
+        return diagnostic, []
+
+    accepted, rejected = _validate_repo_grounded_llm_candidates(
+        candidates,
+        valid_paths,
+        basename_to_paths,
+    )
+    diagnostic["candidates_validated"] = accepted
+    if rejected:
+        diagnostic["candidates_rejected"] = rejected
+    if not accepted:
+        diagnostic["skip_reason"] = "all candidates failed validation"
+    return diagnostic, accepted
+
+
+def _attach_repo_grounded_llm_hint(target: dict, accepted: list[str], diagnostic: dict) -> None:
+    """Attach the first proven path while preserving ranked alternatives."""
+    chosen = accepted[0]
+    target["hint"] = {
+        "target": chosen,
+        "confidence": "MEDIUM",
+        "reason": "LLM-suggested semantic match",
+        "source": "llm-sampling",
+    }
+    target["rename_hint"] = chosen
+    # Surface the runners-up so callers (CI / agents / verdict UI)
+    # can present alternatives without re-asking the LLM.
+    if len(accepted) > 1:
+        target["llm_alternates"] = accepted[1:]
+    diagnostic["chosen"] = chosen
+
+
+def _apply_repo_grounded_llm_hints(
+    unresolved: list[dict],
+    suggestions: dict[str, list[str]],
+    repo_paths: list[str],
+) -> tuple[int, dict[str, dict]]:
+    """Apply only LLM suggestions that resolve to repository-real paths."""
+    valid_paths, basename_to_paths = _index_repo_paths_for_llm_hints(repo_paths)
+    added = 0
+    per_target: dict[str, dict] = {}
+    for target in unresolved:
+        target_name = target["target"]
+        diagnostic, accepted = _diagnose_repo_grounded_llm_candidates(
+            suggestions.get(target_name),
+            valid_paths,
+            basename_to_paths,
+        )
+        if accepted:
+            _attach_repo_grounded_llm_hint(target, accepted, diagnostic)
+            added += 1
+        per_target[target_name] = diagnostic
+    return added, per_target
+
+
 async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None) -> dict:
     """Add LLM-suggested hints to NONE/LOW-confidence findings, in place.
 
@@ -12189,9 +12362,7 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
     to each target it could resolve. ``summary.llm_hints_added`` reports
     the count.
     """
-    import os as _os
-
-    if _os.environ.get("ROAM_AI_ENABLED", "").strip().lower() not in {"1", "true", "yes"}:
+    if os.environ.get("ROAM_AI_ENABLED", "").strip().lower() not in {"1", "true", "yes"}:
         return _set_llm_skip_reason(envelope, "ROAM_AI_ENABLED env var not set")
     if ctx is None or not callable(getattr(ctx, "sample", None)):
         return _set_llm_skip_reason(envelope, "MCP context lacks sample()")
@@ -12219,12 +12390,8 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
     if not unresolved:
         return _set_llm_skip_reason(envelope, "all findings already have HIGH/MEDIUM hints")
 
-    user_prompt = _build_llm_enrich_prompt(
-        [t["target"] for t in unresolved],
-        list(repo_paths),
-    )
-
-    import time as _time
+    repo_paths = list(repo_paths)
+    user_prompt = _build_llm_enrich_prompt([t["target"] for t in unresolved], repo_paths)
 
     started = _time.monotonic()
     try:
@@ -12234,11 +12401,12 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
             max_tokens=800,
             temperature=0.1,
         )
-    except Exception as exc:
-        elapsed_ms = int((_time.monotonic() - started) * 1000)
-        envelope = _set_llm_skip_reason(envelope, f"sampling raised: {type(exc).__name__}")
-        envelope.setdefault("summary", {})["llm_latency_ms"] = elapsed_ms
-        return envelope
+    except _EXPECTED_SAMPLING_ERRORS as exc:
+        return _set_llm_sampling_failure(envelope, started, f"sampling raised: {type(exc).__name__}")
+    except ValueError as exc:
+        if _is_missing_sampling_capability(exc):
+            return _set_llm_sampling_failure(envelope, started, "sampling raised: ValueError")
+        raise
     elapsed_ms = int((_time.monotonic() - started) * 1000)
 
     raw_text = ""
@@ -12259,79 +12427,7 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
     if not suggestions:
         return _set_llm_skip_reason(envelope, "LLM response unparseable")
 
-    # Cardinal rule: never attach a hint pointing at a path the repo
-    # doesn't actually contain. Build fast lookup sets — full paths AND
-    # basenames — so suggestions like ``"intro.md"`` resolve to
-    # ``docs/intro.md`` when that's the canonical location.
-    valid_paths = set(repo_paths)
-    basename_to_paths: dict[str, list[str]] = {}
-    for p in repo_paths:
-        basename_to_paths.setdefault(p.rsplit("/", 1)[-1], []).append(p)
-
-    def _validate_candidate(c: str) -> str | None:
-        """Return a repo-relative path the candidate resolves to, or None."""
-        if not c or "://" in c or c.startswith("/"):
-            return None
-        if c in valid_paths:
-            return c
-        matches = basename_to_paths.get(c.rsplit("/", 1)[-1])
-        if not matches:
-            return None
-        # Prefer the shortest matching path (usually canonical).
-        return min(matches, key=len)
-
-    added = 0
-    per_target: dict[str, dict] = {}
-    for tgt in unresolved:
-        target_name = tgt["target"]
-        candidates = suggestions.get(target_name)
-        if candidates is None:
-            per_target[target_name] = {
-                "skip_reason": "target not present in LLM response",
-                "candidates_returned": 0,
-            }
-            continue
-        per_target_entry: dict = {
-            "candidates_returned": len(candidates),
-            "candidates_raw": list(candidates),
-        }
-        if not candidates:
-            per_target_entry["skip_reason"] = "LLM returned empty candidate list"
-            per_target[target_name] = per_target_entry
-            continue
-
-        accepted: list[str] = []
-        rejection: list[dict] = []
-        for raw_candidate in candidates:
-            resolved = _validate_candidate(raw_candidate)
-            if resolved is None:
-                rejection.append({"candidate": raw_candidate, "reason": "not in repo"})
-                continue
-            accepted.append(resolved)
-        per_target_entry["candidates_validated"] = accepted
-        if rejection:
-            per_target_entry["candidates_rejected"] = rejection
-
-        if not accepted:
-            per_target_entry["skip_reason"] = "all candidates failed validation"
-            per_target[target_name] = per_target_entry
-            continue
-
-        chosen = accepted[0]
-        tgt["hint"] = {
-            "target": chosen,
-            "confidence": "MEDIUM",
-            "reason": "LLM-suggested semantic match",
-            "source": "llm-sampling",
-        }
-        tgt["rename_hint"] = chosen
-        # Surface the runners-up so callers (CI / agents / verdict UI)
-        # can present alternatives without re-asking the LLM.
-        if len(accepted) > 1:
-            tgt["llm_alternates"] = accepted[1:]
-        per_target_entry["chosen"] = chosen
-        per_target[target_name] = per_target_entry
-        added += 1
+    added, per_target = _apply_repo_grounded_llm_hints(unresolved, suggestions, repo_paths)
 
     summary["llm_hints_added"] = added
     summary["llm_per_target"] = per_target

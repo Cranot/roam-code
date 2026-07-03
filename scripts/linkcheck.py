@@ -110,27 +110,31 @@ def _scan_internal_links(pages: list[Path], page_ids: dict[Path, set[str]]) -> t
     return issues, external_to_check
 
 
-def _check_external_urls(urls: list[str]) -> list[str]:
-    """HEAD-probe each unique URL; return issue strings for failures."""
+def _probe_url(url: str) -> str | None:
+    """HEAD-probe one URL; return an issue string, or None if healthy."""
+    import urllib.request
+
     try:
-        import urllib.request
-    except ImportError:
-        print("urllib not available; skipping external check", file=sys.stderr)
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            if r.status >= 400:
+                return f"external: {url} returned {r.status}"
+    except Exception as e:
+        return f"external: {url} ({e.__class__.__name__})"
+    return None
+
+
+def _check_external_urls(urls: list[str]) -> list[str]:
+    """HEAD-probe unique URLs as one concurrent batch; return issue strings."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    unique = list(dict.fromkeys(urls))
+    if not unique:
         return []
-    issues: list[str] = []
-    seen: set[str] = set()
-    for url in urls:
-        if url in seen:
-            continue
-        seen.add(url)
-        try:
-            req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=10) as r:
-                if r.status >= 400:
-                    issues.append(f"external: {url} returned {r.status}")
-        except Exception as e:
-            issues.append(f"external: {url} ({e.__class__.__name__})")
-    return issues
+    # Bounded fan-out: wall-clock becomes max(latency) per batch, not sum(latency).
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = pool.map(_probe_url, unique)
+    return [issue for issue in results if issue is not None]
 
 
 def _render_report(pages: list[Path], issues: list[str], strict: bool) -> int:

@@ -18,7 +18,6 @@ Public API:
 * :func:`redact_secrets_in_string` -- scrub a single string value
 * :func:`redact_secrets` -- scrub an ``Any``-typed value, ride non-strings
   through untouched
-* :func:`scrub_actor_block` -- scrub every string field on an actor block
 
 Each scrubbing helper returns ``(scrubbed_value, had_secrets)``. The
 caller stamps ``"secret"`` into the envelope's ``redactions`` array when
@@ -29,7 +28,9 @@ absence). ``"secret"`` is one of the closed-enum REDACTION_REASONS at
 The legacy private names (``_redact_secrets``, ``_scrub_actor_block``,
 ``_SECRET_PATTERNS``) remain importable from ``cmd_pr_bundle`` as thin
 re-export aliases so existing test fixtures and any direct module-level
-access continue to work.
+access continue to work. ``scrub_actor_block`` remains importable for that
+compatibility path, but it is intentionally not part of this module's
+star-export surface.
 """
 
 from __future__ import annotations
@@ -43,7 +44,6 @@ __all__ = [
     "redact_secrets_in_string",
     "redact_secrets_in_string_with_counts",
     "redact_secrets",
-    "scrub_actor_block",
     "redact_secrets_in_value",
     "PROMPT_INJECTION_MARKERS",
     "scan_prompt_injection_markers",

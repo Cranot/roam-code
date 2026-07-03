@@ -760,6 +760,125 @@ def test_deps_markers_do_not_leak_foreign_prefixes(cli_runner, deps_project, mon
 # ---------------------------------------------------------------------------
 
 
+def _cmd_deps_ast_tree():
+    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_deps.py"
+    src = src_path.read_text(encoding="utf-8")
+    return ast.parse(src)
+
+
+def _run_check_db_calls(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run_check_db":
+            yield node
+
+
+def _run_check_db_calls_for_phase(tree, phase):
+    for node in _run_check_db_calls(tree):
+        if not node.args:
+            continue
+        phase_arg = node.args[0]
+        if isinstance(phase_arg, ast.Constant) and phase_arg.value == phase:
+            yield node
+
+
+def _keyword_named(node, name):
+    for kw in node.keywords:
+        if kw.arg == name:
+            return kw
+    return None
+
+
+def _assert_compute_verdict_floor_literal(tree):
+    literal_floor_found = False
+    for node in _run_check_db_calls_for_phase(tree, "compute_verdict"):
+        kw = _keyword_named(node, "default")
+        if kw is None:
+            continue
+        assert isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str), (
+            f"W978 discipline 1: compute_verdict floor must be a "
+            f"literal string ast.Constant, not "
+            f"{type(kw.value).__name__}; f-string floors "
+            f"re-interpolate the poisoned values that just raised"
+        )
+        assert kw.value.value == "deps analysis completed", (
+            f"W978 discipline 1: compute_verdict floor must be the "
+            f"canonical literal ``deps analysis completed``; "
+            f"got {kw.value.value!r}"
+        )
+        literal_floor_found = True
+    assert literal_floor_found, (
+        "W978 discipline 1: no _run_check_db('compute_verdict', ..., "
+        "default=<literal>) call found; the verdict floor must be a "
+        "literal string"
+    )
+
+
+def _assert_run_check_db_defaults_are_not_calls(tree):
+    for node in _run_check_db_calls(tree):
+        for kw in node.keywords:
+            if kw.arg == "default":
+                assert not isinstance(kw.value, ast.Call), (
+                    f"W978 discipline 2: _run_check_db default= MUST NOT "
+                    f"be an ast.Call (eager evaluation of expensive "
+                    f"default); got {ast.dump(kw.value)!r}"
+                )
+
+
+def _assert_run_check_db_does_not_dump_json(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_check_db":
+            helper_src = ast.unparse(node)
+            assert "json.dumps" not in helper_src, (
+                f"W978 discipline 3: _run_check_db must not call "
+                f"json.dumps (use plain f-string marker format); "
+                f"got body = {helper_src!r}"
+            )
+
+
+def _assert_w607db_phases_do_not_collide_with_w607v_phases():
+    w607db_phases = {
+        "compute_predicate",
+        "compute_verdict",
+        "serialize_envelope",
+    }
+    w607v_phases = {
+        "file_by_path",
+        "file_by_path_like",
+        "fetch_imports",
+        "fetch_sym_edges",
+        "fetch_imported_by",
+    }
+    overlap = w607db_phases & w607v_phases
+    assert not overlap, (
+        f"W978 discipline 4: W607-DB phase names collide with W607-V substrate-CALL phase names; overlap = {overlap!r}"
+    )
+
+
+def _assert_literal_predicate_floor_value(value):
+    assert isinstance(value, ast.Constant), (
+        f"W978 discipline 5/6/7: compute_predicate floor values "
+        f"must be concrete ast.Constant literals; got "
+        f"{type(value).__name__} = {ast.dump(value)!r}"
+    )
+
+
+def _assert_compute_predicate_floor_dicts_are_literals(tree):
+    floor_dicts_inspected = 0
+    for node in _run_check_db_calls_for_phase(tree, "compute_predicate"):
+        for kw in node.keywords:
+            if kw.arg != "default":
+                continue
+            assert isinstance(kw.value, ast.Dict), (
+                f"W978 discipline 6: compute_predicate floor must be a literal ast.Dict; got {type(kw.value).__name__}"
+            )
+            for v in kw.value.values:
+                _assert_literal_predicate_floor_value(v)
+            floor_dicts_inspected += 1
+    assert floor_dicts_inspected >= 1, (
+        f"expected at least 1 compute_predicate floor dict; found {floor_dicts_inspected}"
+    )
+
+
 def test_w607db_w978_seven_discipline_ast_audit():
     """AST audit: the W607-DB plumbing in cmd_deps honours all 7
     W978 first-hypothesis disciplines.
@@ -782,121 +901,13 @@ def test_w607db_w978_seven_discipline_ast_audit():
        closures use direct ``dict["key"]`` lookups, NOT
        ``dict.get(key, expensive_default)``.
     """
-    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_deps.py"
-    src = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(src)
+    tree = _cmd_deps_ast_tree()
 
-    # Discipline 1: f-string verdict floor MUST be a literal string.
-    literal_floor_found = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_db"):
-            continue
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_verdict"):
-            continue
-        for kw in node.keywords:
-            if kw.arg == "default":
-                assert isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str), (
-                    f"W978 discipline 1: compute_verdict floor must be a "
-                    f"literal string ast.Constant, not "
-                    f"{type(kw.value).__name__}; f-string floors "
-                    f"re-interpolate the poisoned values that just raised"
-                )
-                assert kw.value.value == "deps analysis completed", (
-                    f"W978 discipline 1: compute_verdict floor must be the "
-                    f"canonical literal ``deps analysis completed``; "
-                    f"got {kw.value.value!r}"
-                )
-                literal_floor_found = True
-    assert literal_floor_found, (
-        "W978 discipline 1: no _run_check_db('compute_verdict', ..., "
-        "default=<literal>) call found; the verdict floor must be a "
-        "literal string"
-    )
-
-    # Discipline 2: kwarg-default eagerness -- no ast.Call as default value.
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_db"):
-            continue
-        for kw in node.keywords:
-            if kw.arg == "default":
-                assert not isinstance(kw.value, ast.Call), (
-                    f"W978 discipline 2: _run_check_db default= MUST NOT "
-                    f"be an ast.Call (eager evaluation of expensive "
-                    f"default); got {ast.dump(kw.value)!r}"
-                )
-
-    # Discipline 3: json.dumps not used inside _run_check_db.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_check_db":
-            helper_src = ast.unparse(node)
-            assert "json.dumps" not in helper_src, (
-                f"W978 discipline 3: _run_check_db must not call "
-                f"json.dumps (use plain f-string marker format); "
-                f"got body = {helper_src!r}"
-            )
-
-    # Discipline 4: phase-name collision check.
-    w607db_phases = {
-        "compute_predicate",
-        "compute_verdict",
-        "serialize_envelope",
-    }
-    w607v_phases = {
-        "file_by_path",
-        "file_by_path_like",
-        "fetch_imports",
-        "fetch_sym_edges",
-        "fetch_imported_by",
-    }
-    overlap = w607db_phases & w607v_phases
-    assert not overlap, (
-        f"W978 discipline 4: W607-DB phase names collide with W607-V substrate-CALL phase names; overlap = {overlap!r}"
-    )
-
-    # Discipline 5 + 6 + 7: floor dicts in compute_predicate use
-    # CONSTANT default values (int / str), not call expressions.
-    floor_dicts_inspected = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_db"):
-            continue
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_predicate"):
-            continue
-        for kw in node.keywords:
-            if kw.arg != "default":
-                continue
-            assert isinstance(kw.value, ast.Dict), (
-                f"W978 discipline 6: compute_predicate floor must be a literal ast.Dict; got {type(kw.value).__name__}"
-            )
-            for v in kw.value.values:
-                if isinstance(v, ast.Call):
-                    # Only allow len() on a Name argument
-                    assert isinstance(v.func, ast.Name) and v.func.id == "len", (
-                        f"W978 discipline 5/7: compute_predicate floor "
-                        f"may only call ``len(name)`` as a default "
-                        f"computation; got {ast.dump(v)!r}"
-                    )
-                else:
-                    assert isinstance(v, ast.Constant), (
-                        f"W978 discipline 6: compute_predicate floor "
-                        f"values must be ast.Constant or len(name); "
-                        f"got {type(v).__name__} = {ast.dump(v)!r}"
-                    )
-            floor_dicts_inspected += 1
-    assert floor_dicts_inspected >= 1, (
-        f"expected at least 1 compute_predicate floor dict; found {floor_dicts_inspected}"
-    )
+    _assert_compute_verdict_floor_literal(tree)
+    _assert_run_check_db_defaults_are_not_calls(tree)
+    _assert_run_check_db_does_not_dump_json(tree)
+    _assert_w607db_phases_do_not_collide_with_w607v_phases()
+    _assert_compute_predicate_floor_dicts_are_literals(tree)
 
 
 # ---------------------------------------------------------------------------

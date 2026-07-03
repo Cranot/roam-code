@@ -170,59 +170,68 @@ class JavaScriptExtractor(LanguageExtractor):
 
     def _extract_class_members(self, body_node, source, symbols, class_name):
         for child in body_node.children:
-            if child.type in ("method_definition", "public_field_definition", "field_definition"):
-                name_node = child.child_by_field_name("name")
-                if name_node is None:
-                    continue
-                name = self.node_text(name_node, source)
-                qualified = f"{class_name}.{name}"
+            self._extract_single_class_member(child, source, symbols, class_name)
 
-                if child.type == "method_definition":
-                    params = child.child_by_field_name("parameters")
-                    sig = f"{name}({self._params_text(params, source)})"
+    def _extract_single_class_member(self, child, source, symbols, class_name):
+        if child.type not in ("method_definition", "public_field_definition", "field_definition"):
+            return
+        name_node = child.child_by_field_name("name")
+        if name_node is None:
+            return
+        name = self.node_text(name_node, source)
+        qualified = f"{class_name}.{name}"
 
-                    # Check for static/async/get/set
-                    prefixes = []
-                    for sub in child.children:
-                        if sub.type in ("static", "async", "get", "set") or self.node_text(sub, source) in (
-                            "static",
-                            "async",
-                            "get",
-                            "set",
-                        ):
-                            if sub == name_node:
-                                continue
-                            t = self.node_text(sub, source)
-                            if t in ("static", "async", "get", "set"):
-                                prefixes.append(t)
-                    if prefixes:
-                        sig = " ".join(prefixes) + " " + sig
+        if child.type == "method_definition":
+            self._extract_method_member(child, source, symbols, class_name, name, qualified)
+        else:
+            self._extract_property_member(child, source, symbols, class_name, name, qualified)
 
-                    kind = "constructor" if name == "constructor" else "method"
-                    symbols.append(
-                        self._make_symbol(
-                            name=name,
-                            kind=kind,
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=qualified,
-                            signature=sig,
-                            docstring=self.get_docstring(child, source),
-                            parent_name=class_name,
-                        )
-                    )
-                else:
-                    # Field/property
-                    symbols.append(
-                        self._make_symbol(
-                            name=name,
-                            kind="property",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=qualified,
-                            parent_name=class_name,
-                        )
-                    )
+    def _extract_method_member(self, child, source, symbols, class_name, name, qualified):
+        sig = self._build_method_signature(child, source, name)
+        kind = "constructor" if name == "constructor" else "method"
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=child.start_point[0] + 1,
+                line_end=child.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(child, source),
+                parent_name=class_name,
+            )
+        )
+
+    def _extract_property_member(self, child, source, symbols, class_name, name, qualified):
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="property",
+                line_start=child.start_point[0] + 1,
+                line_end=child.end_point[0] + 1,
+                qualified_name=qualified,
+                parent_name=class_name,
+            )
+        )
+
+    def _build_method_signature(self, child, source, name):
+        params = child.child_by_field_name("parameters")
+        sig = f"{name}({self._params_text(params, source)})"
+        prefixes = self._collect_method_prefixes(child, source)
+        if prefixes:
+            sig = " ".join(prefixes) + " " + sig
+        return sig
+
+    def _collect_method_prefixes(self, child, source):
+        prefixes = []
+        name_node = child.child_by_field_name("name")
+        for sub in child.children:
+            if sub == name_node:
+                continue
+            text = self.node_text(sub, source)
+            if sub.type in ("static", "async", "get", "set") or text in ("static", "async", "get", "set"):
+                prefixes.append(text)
+        return prefixes
 
     def _extract_variable_decl(self, node, source, file_path, symbols, parent_name, is_exported):
         """Extract const/let/var declarations, detecting function values."""
@@ -663,24 +672,39 @@ class JavaScriptExtractor(LanguageExtractor):
             return (target, "import")
         return None
 
+    def _named_import_names(self, node, source):
+        """Names bound by a named_imports node: ``import { a, b as c }``."""
+        names = []
+        for spec in node.children:
+            if spec.type != "import_specifier":
+                continue
+            name_node = spec.child_by_field_name("name")
+            if name_node:
+                names.append(self.node_text(name_node, source))
+        return names
+
+    def _namespace_import_names(self, node, source):
+        """Name bound by a namespace_import node: ``import * as ns``."""
+        return [self.node_text(ns_child, source) for ns_child in node.children if ns_child.type == "identifier"]
+
+    def _import_clause_names(self, clause, source):
+        """Dispatch each import_clause child to its grammar-specific extractor."""
+        names = []
+        for sub in clause.children:
+            if sub.type == "identifier":
+                names.append(self.node_text(sub, source))
+            elif sub.type == "named_imports":
+                names.extend(self._named_import_names(sub, source))
+            elif sub.type == "namespace_import":
+                names.extend(self._namespace_import_names(sub, source))
+        return names
+
     def _collect_import_names(self, node, source):
         """Collect imported symbol names from an import_clause."""
         names = []
         for child in node.children:
             if child.type == "import_clause":
-                for sub in child.children:
-                    if sub.type == "identifier":
-                        names.append(self.node_text(sub, source))
-                    elif sub.type == "named_imports":
-                        for spec in sub.children:
-                            if spec.type == "import_specifier":
-                                name_node = spec.child_by_field_name("name")
-                                if name_node:
-                                    names.append(self.node_text(name_node, source))
-                    elif sub.type == "namespace_import":
-                        for ns_child in sub.children:
-                            if ns_child.type == "identifier":
-                                names.append(self.node_text(ns_child, source))
+                names.extend(self._import_clause_names(child, source))
         return names
 
     _IDENT_RE = r"[A-Za-z_$][A-Za-z0-9_$]*"

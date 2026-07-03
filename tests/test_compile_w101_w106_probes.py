@@ -65,6 +65,100 @@ def test_w101_refactor_move_extracts_symbol_and_paths(monkeypatch):
     assert rm["callers_count"] == 1
 
 
+_CONSUMER_REPLY = {
+    "consumers": {
+        "call": [{"location": "x.py:1", "name": "caller1", "kind": "function", "scope": "production"}],
+        "import": [],
+    }
+}
+
+
+def test_w101_refactor_move_rejects_absolute_outside_repo_src(tmp_path, monkeypatch):
+    """Security: a task-controlled ABSOLUTE src_file (`/tmp/secret.py`) must NOT
+    be read into source_body — that would embed outside-repo content in the plan.
+
+    src_file comes straight off `_REFACTOR_MOVE_RE` (untrusted task text) and is
+    funneled through `_repo_contained_path` before `_embed_move_source_body`
+    reads it. An absolute source is contained to "" so nothing is read.
+    """
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "abs_secret.py"  # deliberately OUTSIDE the repo cwd
+    secret.write_text('def secret():\n    return "TOPSECRET-ABS"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    task = f"extract secret from {secret} to helpers.py"
+    result = _probe_refactor_move_for_task(task, cwd=str(repo))
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == ""  # contained — never opened
+    assert "source_body" not in rm
+    assert "TOPSECRET-ABS" not in repr(result)
+
+
+def test_w101_refactor_move_rejects_traversal_outside_repo_src(tmp_path, monkeypatch):
+    """Security: a `..`-traversal src_file (`../secret.py`) resolves OUTSIDE the
+    repo and must NOT be read into source_body."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "leaked.py"  # repo/../leaked.py lands here
+    secret.write_text('def secret():\n    return "TOPSECRET-DOTDOT"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    task = "extract secret from ../leaked.py to helpers.py"
+    result = _probe_refactor_move_for_task(task, cwd=str(repo))
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == ""  # contained — never opened
+    assert "source_body" not in rm
+    assert "TOPSECRET-DOTDOT" not in repr(result)
+
+
+def test_w101_refactor_move_embeds_inrepo_source_body(tmp_path, monkeypatch):
+    """Positive control: a legit IN-REPO src_file still embeds source_body, so
+    the containment fix does not regress the happy-path W163 embedding."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "origin.py").write_text('def my_func():\n    return "OK"\n')
+    monkeypatch.setattr(M, "_run_roam", lambda *a, **k: _CONSUMER_REPLY)
+
+    result = _probe_refactor_move_for_task("move my_func from origin.py to helpers.py", cwd=str(repo))
+    assert result is not None
+    rm = result["refactor_move"]
+    assert rm["source_file"] == "origin.py"
+    assert "source_body" in rm
+    assert "def my_func" in rm["source_body"]
+
+
+def test_w163_embed_move_source_body_self_rejects_escapes(tmp_path):
+    """Defense-in-depth: _embed_move_source_body resolves src_file under cwd and
+    rejects escapes BEFORE read_text(), so a caller that forgets the
+    `_repo_contained_path` funnel still cannot leak out-of-repo source."""
+    from roam.plan.compiler import _embed_move_source_body
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    abs_secret = tmp_path / "abs_secret.py"  # OUTSIDE the repo cwd
+    abs_secret.write_text('def secret():\n    return "TOPSECRET-FN"\n')
+    (tmp_path / "leaked.py").write_text('def secret():\n    return "TOPSECRET-TRAV"\n')
+
+    # Absolute out-of-repo path: rejected, nothing read.
+    assert _embed_move_source_body("secret", str(abs_secret), cwd=str(repo)) is None
+    # `..`-traversal out of the repo: rejected.
+    assert _embed_move_source_body("secret", "../leaked.py", cwd=str(repo)) is None
+
+    # Positive control: an in-repo source still embeds.
+    (repo / "origin.py").write_text('def my_func():\n    return "OK"\n')
+    body = _embed_move_source_body("my_func", "origin.py", cwd=str(repo))
+    assert body is not None and "def my_func" in body
+
+
 # ---- W102 API surface ----
 
 
@@ -188,3 +282,131 @@ def test_w106_reachability_handles_int_affected_symbols(monkeypatch):
     )
     assert out is not None
     assert out["reachability"]["affected_total"] in (5, 0)
+
+
+# ---- _embed_move_caller_imports dedup (repeated callers from one file) ----
+
+
+def test_embed_move_caller_imports_scans_each_file_once(tmp_path, monkeypatch):
+    """Repeated callers from the SAME file must trigger exactly one
+    filesystem scan, not one per caller row. Pins the dedup so a future
+    refactor cannot reintroduce per-row exists/stat/read_text reads."""
+    from roam.plan import compiler as M
+
+    caller = tmp_path / "uses_widget.py"
+    caller.write_text("from lib.widget import Widget\n\n\ndef go():\n    return Widget()\n")
+
+    # Five caller rows, all pointing at the same file (distinct lines).
+    callers = [{"location": f"uses_widget.py:{ln}"} for ln in (1, 5, 12, 30, 44)]
+
+    reads: list[str] = []
+    real_read_text = M.Path.read_text
+
+    def counting_read_text(self, *a, **k):
+        reads.append(str(self))
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(M.Path, "read_text", counting_read_text)
+
+    out = M._embed_move_caller_imports(callers, "Widget", str(tmp_path))
+
+    assert out == {"uses_widget.py": "from lib.widget import Widget"}
+    # The file is read exactly once despite five caller rows.
+    assert reads.count(str(caller)) == 1
+
+
+def test_embed_move_caller_imports_caps_at_eight_distinct_files(tmp_path):
+    """The 8-file cap counts DISTINCT files, so duplicate rows from the
+    first file do not consume cap slots that later distinct files need."""
+    from roam.plan import compiler as M
+
+    # First file appears 4 times; then 9 more distinct files. With per-row
+    # capping the later distinct files would be starved; with path-dedup the
+    # cap admits 8 distinct files.
+    callers = [{"location": "f0.py:1"}] * 4
+    for i in range(9):
+        name = f"f{i}.py"
+        (tmp_path / name).write_text(f"from pkg import Sym  # {name}\n")
+        callers.append({"location": f"{name}:1"})
+
+    out = M._embed_move_caller_imports(callers, "Sym", str(tmp_path))
+
+    # 8 DISTINCT files admitted (f0..f7); the duplicate f0.py rows did not
+    # eat slots, so exactly the cap's worth of distinct files are scanned.
+    assert len(out) == 8
+    assert "f8.py" not in out
+
+
+# ---- _embed_move_caller_imports W-TRUST: caller paths come from `roam uses`
+#      output, NOT the hardened _extract_file_paths pipeline, so they must be
+#      funneled through _repo_contained_path before reading. Mirrors the
+#      src_file W-TRUST trio above. ----
+
+
+def test_embed_move_caller_imports_rejects_absolute_outside_repo(tmp_path):
+    """Security: a caller location that is ABSOLUTE (`/abs/secret.py`) must NOT
+    be read. `Path(cwd) / "/abs/x"` collapses to `/abs/x`, bypassing the cwd
+    join — its import line would otherwise leak into the plan."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "abs_caller.py"  # deliberately OUTSIDE the repo cwd
+    secret.write_text("from prod.thing import Widget  # TOPSECRET-ABS-CALLER\n")
+
+    callers = [{"location": f"{secret}:1"}]
+    out = M._embed_move_caller_imports(callers, "Widget", str(repo))
+
+    assert out == {}
+    assert "TOPSECRET-ABS-CALLER" not in repr(out)
+
+
+def test_embed_move_caller_imports_rejects_internal_private_caller(tmp_path):
+    """Security: a caller under a forbidden path (`internal/**`, the roam-code
+    private folder) must NOT be read — its import line is private/internal
+    content and would leak into the plan."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    (repo / "internal" / "planning").mkdir(parents=True)
+    (repo / "internal" / "planning" / "secret_caller.py").write_text(
+        "from prod.thing import Widget  # TOPSECRET-INTERNAL-CALLER\n"
+    )
+
+    callers = [{"location": "internal/planning/secret_caller.py:1"}]
+    out = M._embed_move_caller_imports(callers, "Widget", str(repo))
+
+    assert out == {}
+    assert "TOPSECRET-INTERNAL-CALLER" not in repr(out)
+
+
+def test_embed_move_caller_imports_rejects_traversal_outside_repo(tmp_path):
+    """Security: a `..`-traversal caller (`../leaked.py`) resolves OUTSIDE the
+    repo and must NOT be read."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    secret = tmp_path / "leaked_caller.py"  # repo/../leaked_caller.py lands here
+    secret.write_text("from prod.thing import Widget  # TOPSECRET-DOTDOT-CALLER\n")
+
+    callers = [{"location": "../leaked_caller.py:1"}]
+    out = M._embed_move_caller_imports(callers, "Widget", str(repo))
+
+    assert out == {}
+    assert "TOPSECRET-DOTDOT-CALLER" not in repr(out)
+
+
+def test_embed_move_caller_imports_embeds_inrepo_caller(tmp_path):
+    """Positive control: a legit IN-REPO caller still embeds its import line, so
+    the containment fix does not regress the happy-path W164 embedding."""
+    from roam.plan import compiler as M
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "uses_widget.py").write_text("from lib.widget import Widget\n\n\ndef go():\n    return Widget()\n")
+
+    callers = [{"location": "uses_widget.py:1"}]
+    out = M._embed_move_caller_imports(callers, "Widget", str(repo))
+
+    assert out == {"uses_widget.py": "from lib.widget import Widget"}

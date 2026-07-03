@@ -52,18 +52,23 @@ def _load_yaml(path: Path) -> tuple[dict | None, str | None]:
         return None, f"file not found: {path}"
     try:
         import yaml
-
-        with path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
     except ImportError:
-        try:
-            from roam.rules.engine import _parse_simple_yaml
+        # PyYAML is optional; use the in-tree minimal parser. It returns None
+        # for expected read/parse failures, so check the return value instead
+        # of swallowing every exception type.
+        from roam.rules.engine import _parse_simple_yaml
 
-            data = _parse_simple_yaml(path) or {}
-        except Exception as exc:  # noqa: BLE001 — surfacing a user-facing error
-            return None, f"fallback YAML parser failed: {exc}"
-    except Exception as exc:  # noqa: BLE001 — yaml.YAMLError + OSError + ...
-        return None, f"YAML parse error: {exc}"
+        data = _parse_simple_yaml(path)
+        if data is None:
+            return None, "fallback YAML parser failed: malformed or unreadable YAML"
+    else:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except (OSError, UnicodeDecodeError) as exc:
+            return None, f"YAML read error: {exc}"
+        except yaml.YAMLError as exc:
+            return None, f"YAML parse error: {exc}"
 
     if not isinstance(data, dict):
         return None, "top-level YAML must be a mapping with a `rules:` key"

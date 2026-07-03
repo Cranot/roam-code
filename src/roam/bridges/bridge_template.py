@@ -106,31 +106,32 @@ class TemplateBridge(LanguageBridge):
 
             for render_template_name, context_vars, render_sym_name in render_info:
                 # Strategy 1: Template filename match
-                if self._template_names_match(template_basename, render_template_name):
+                if not self._template_names_match(template_basename, render_template_name):
+                    continue
+
+                edges.append(
+                    {
+                        "source": template_basename,
+                        "target": render_sym_name,
+                        "kind": "x-lang",
+                        "bridge": self.name,
+                        "mechanism": "template-render",
+                        "confidence": 0.9,
+                    }
+                )
+
+                # Strategy 2: Variable matching
+                for tvar in template_vars & context_vars:
                     edges.append(
                         {
-                            "source": template_basename,
+                            "source": f"{template_basename}:{tvar}",
                             "target": render_sym_name,
                             "kind": "x-lang",
                             "bridge": self.name,
-                            "mechanism": "template-render",
-                            "confidence": 0.9,
+                            "mechanism": "template-var",
+                            "confidence": 0.7,
                         }
                     )
-
-                    # Strategy 2: Variable matching
-                    for tvar in template_vars:
-                        if tvar in context_vars:
-                            edges.append(
-                                {
-                                    "source": f"{template_basename}:{tvar}",
-                                    "target": render_sym_name,
-                                    "kind": "x-lang",
-                                    "bridge": self.name,
-                                    "mechanism": "template-var",
-                                    "confidence": 0.7,
-                                }
-                            )
 
         # Strategy 3: Template includes -> other template files
         for include_name in template_includes:

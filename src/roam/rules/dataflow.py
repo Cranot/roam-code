@@ -21,7 +21,7 @@ from collections import Counter
 from pathlib import Path
 
 from roam._signature_utils import parse_param_names as _parse_param_names
-from roam.db.connection import find_project_root
+from roam.db.connection import batched_in, find_project_root
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
@@ -177,12 +177,14 @@ def _normalize_patterns(patterns: list[str] | tuple[str, ...] | str | None) -> s
 
 def _table_available(conn, *names: str) -> bool:
     """Cheap existence check on every table in ``names``."""
-    for name in names:
-        try:
-            conn.execute(f"SELECT 1 FROM {name} LIMIT 0")
-        except sqlite3.OperationalError:
-            return False
-    return True
+    if not names:
+        return True
+    rows = batched_in(
+        conn,
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ({ph})",
+        names,
+    )
+    return sum(row[0] for row in rows) == len(names)
 
 
 def _inter_source_to_sink_findings(conn, file_glob: str | None) -> list[dict]:
@@ -346,6 +348,169 @@ def _collect_inter_findings(
     return findings
 
 
+def _collect_intra_findings_for_symbol(
+    row: sqlite3.Row,
+    *,
+    target_patterns: set[str],
+    file_path: str,
+    symbol_name: str,
+    line_start: int,
+    body_lines: list[str],
+    source_patterns: tuple[str, ...],
+    sink_patterns: tuple[str, ...],
+) -> list[dict]:
+    """Collect intra-procedural findings for one function or method body."""
+    if not body_lines:
+        return []
+
+    body_text = "\n".join(body_lines)
+    token_counts = _token_counts(body_text)
+    findings: list[dict] = []
+
+    if "dead_assignment" in target_patterns:
+        seen_vars: set[str] = set()
+        assignments = _extract_assignments(body_lines, line_start + 1)
+        for var_name, var_line in assignments:
+            if var_name in seen_vars:
+                continue
+            seen_vars.add(var_name)
+            if token_counts.get(var_name, 0) <= 1:
+                findings.append(
+                    {
+                        "type": "dead_assignment",
+                        "symbol": symbol_name,
+                        "file": file_path,
+                        "line": var_line,
+                        "variable": var_name,
+                        "reason": (f"'{var_name}' is assigned but never read in {symbol_name}"),
+                    }
+                )
+
+    if "unused_param" in target_patterns:
+        params = _parse_param_names(row["signature"])
+        for name in params:
+            if name in _IGNORED_NAMES or name.startswith("_"):
+                continue
+            if token_counts.get(name, 0) <= 0:
+                findings.append(
+                    {
+                        "type": "unused_param",
+                        "symbol": symbol_name,
+                        "file": file_path,
+                        "line": line_start,
+                        "variable": name,
+                        "reason": (f"parameter '{name}' is never read in {symbol_name}"),
+                    }
+                )
+
+    if "source_to_sink" in target_patterns:
+        hit = _find_source_sink(
+            body_lines,
+            line_start + 1,
+            sources=source_patterns,
+            sinks=sink_patterns,
+        )
+        if hit is not None:
+            src_line, source, sink_line, sink = hit
+            findings.append(
+                {
+                    "type": "source_to_sink",
+                    "symbol": symbol_name,
+                    "file": file_path,
+                    "line": sink_line,
+                    "source_line": src_line,
+                    "source": source,
+                    "sink": sink,
+                    "reason": (f"possible source-to-sink flow in {symbol_name}: '{source}' -> '{sink}'"),
+                }
+            )
+
+    return findings
+
+
+def _body_context_when_scope_allows_dataflow(
+    row: sqlite3.Row,
+    *,
+    file_glob: str | None,
+    project_root: Path,
+    file_cache: dict[str, list[str]],
+) -> tuple[str, str, int, list[str]] | None:
+    """Return the scoped body slice for one symbol, or ``None`` when skipped."""
+    file_path = (row["file_path"] or "").replace("\\", "/")
+    if not file_path or _is_test_path(file_path):
+        return None
+    if not _match_glob(file_path, file_glob):
+        return None
+
+    lines = file_cache.get(file_path)
+    if lines is None:
+        lines = _read_file_lines(project_root, file_path)
+        file_cache[file_path] = lines
+    if not lines:
+        return None
+
+    line_start = max(int(row["line_start"] or 1), 1)
+    line_end = int(row["line_end"] or line_start)
+    if line_end < line_start:
+        line_end = line_start
+    if line_start > len(lines):
+        return None
+
+    body_lines = lines[line_start : min(line_end, len(lines))]
+    symbol_name = row["qualified_name"] or row["name"]
+    return file_path, symbol_name, line_start, body_lines
+
+
+def _sort_findings_for_stable_budget(findings: list[dict], max_matches: int) -> list[dict]:
+    findings.sort(key=lambda f: (f["file"], int(f.get("line") or 0), f["type"], f.get("symbol") or ""))
+    if max_matches > 0:
+        return findings[:max_matches]
+    return findings
+
+
+def _collect_intra_findings_until_budget(
+    rows: list[sqlite3.Row],
+    *,
+    target_patterns: set[str],
+    file_glob: str | None,
+    max_matches: int,
+    source_patterns: tuple[str, ...],
+    sink_patterns: tuple[str, ...],
+) -> list[dict]:
+    project_root = find_project_root()
+    file_cache: dict[str, list[str]] = {}
+    findings: list[dict] = []
+
+    for row in rows:
+        body_context = _body_context_when_scope_allows_dataflow(
+            row,
+            file_glob=file_glob,
+            project_root=project_root,
+            file_cache=file_cache,
+        )
+        if body_context is None:
+            continue
+
+        file_path, symbol_name, line_start, body_lines = body_context
+        findings.extend(
+            _collect_intra_findings_for_symbol(
+                row,
+                target_patterns=target_patterns,
+                file_path=file_path,
+                symbol_name=symbol_name,
+                line_start=line_start,
+                body_lines=body_lines,
+                source_patterns=source_patterns,
+                sink_patterns=sink_patterns,
+            )
+        )
+
+        if max_matches > 0 and len(findings) >= max_matches:
+            break
+
+    return findings
+
+
 def collect_dataflow_findings(
     conn,
     *,
@@ -374,10 +539,7 @@ def collect_dataflow_findings(
     # If only inter-procedural patterns requested, return early
     intra_patterns = target_patterns - _INTER_PATTERNS
     if not intra_patterns:
-        inter_findings.sort(key=lambda f: (f["file"], int(f.get("line") or 0), f["type"], f.get("symbol") or ""))
-        if max_matches > 0:
-            return inter_findings[:max_matches]
-        return inter_findings
+        return _sort_findings_for_stable_budget(inter_findings, max_matches)
 
     source_patterns = tuple(sources) if sources else _DEFAULT_SOURCES
     sink_patterns = tuple(sinks) if sinks else _DEFAULT_SINKS
@@ -403,105 +565,16 @@ def collect_dataflow_findings(
         """
     ).fetchall()
 
-    project_root = find_project_root()
-    file_cache: dict[str, list[str]] = {}
-    findings: list[dict] = []
-
-    for row in rows:
-        file_path = (row["file_path"] or "").replace("\\", "/")
-        if not file_path or _is_test_path(file_path):
-            continue
-        if not _match_glob(file_path, file_glob):
-            continue
-
-        lines = file_cache.get(file_path)
-        if lines is None:
-            lines = _read_file_lines(project_root, file_path)
-            file_cache[file_path] = lines
-        if not lines:
-            continue
-
-        line_start = int(row["line_start"] or 1)
-        line_end = int(row["line_end"] or line_start)
-        if line_start < 1:
-            line_start = 1
-        if line_end < line_start:
-            line_end = line_start
-        if line_start > len(lines):
-            continue
-
-        # Body slice (excluding declaration line).
-        body_lines = lines[line_start : min(line_end, len(lines))]
-        body_text = "\n".join(body_lines)
-        token_counts = _token_counts(body_text)
-
-        symbol_name = row["qualified_name"] or row["name"]
-
-        if "dead_assignment" in target_patterns and body_lines:
-            seen_vars: set[str] = set()
-            assignments = _extract_assignments(body_lines, line_start + 1)
-            for var_name, var_line in assignments:
-                if var_name in seen_vars:
-                    continue
-                seen_vars.add(var_name)
-                if token_counts.get(var_name, 0) <= 1:
-                    findings.append(
-                        {
-                            "type": "dead_assignment",
-                            "symbol": symbol_name,
-                            "file": file_path,
-                            "line": var_line,
-                            "variable": var_name,
-                            "reason": (f"'{var_name}' is assigned but never read in {symbol_name}"),
-                        }
-                    )
-
-        if "unused_param" in target_patterns and body_lines:
-            params = _parse_param_names(row["signature"])
-            for name in params:
-                if name in _IGNORED_NAMES or name.startswith("_"):
-                    continue
-                if token_counts.get(name, 0) <= 0:
-                    findings.append(
-                        {
-                            "type": "unused_param",
-                            "symbol": symbol_name,
-                            "file": file_path,
-                            "line": line_start,
-                            "variable": name,
-                            "reason": (f"parameter '{name}' is never read in {symbol_name}"),
-                        }
-                    )
-
-        if "source_to_sink" in target_patterns and body_lines:
-            hit = _find_source_sink(
-                body_lines,
-                line_start + 1,
-                sources=source_patterns,
-                sinks=sink_patterns,
-            )
-            if hit is not None:
-                src_line, source, sink_line, sink = hit
-                findings.append(
-                    {
-                        "type": "source_to_sink",
-                        "symbol": symbol_name,
-                        "file": file_path,
-                        "line": sink_line,
-                        "source_line": src_line,
-                        "source": source,
-                        "sink": sink,
-                        "reason": (f"possible source-to-sink flow in {symbol_name}: '{source}' -> '{sink}'"),
-                    }
-                )
-
-        if max_matches > 0 and len(findings) >= max_matches:
-            break
+    findings = _collect_intra_findings_until_budget(
+        rows,
+        target_patterns=intra_patterns,
+        file_glob=file_glob,
+        max_matches=max_matches,
+        source_patterns=source_patterns,
+        sink_patterns=sink_patterns,
+    )
 
     # Merge inter-procedural findings
     findings.extend(inter_findings)
 
-    findings.sort(key=lambda f: (f["file"], int(f.get("line") or 0), f["type"], f.get("symbol") or ""))
-    if max_matches > 0:
-        return findings[:max_matches]
-    return findings
+    return _sort_findings_for_stable_budget(findings, max_matches)

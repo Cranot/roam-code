@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 
 # ---------------------------------------------------------------------------
 # W167 — import-edge text verification
@@ -54,6 +55,89 @@ _RX_IMPORT_LINE = re.compile(
 
 # Capture token-like names within the body of an import line/block.
 _RX_NAME_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_IMPORT_NAME_SKIP_TOKENS = frozenset(
+    {
+        "as",
+        "from",
+        "import",
+        "use",
+        "using",
+        "require",
+        "require_relative",
+        "include",
+        "package",
+    }
+)
+
+
+def _scan_line_comment(text: str, start: int, n: int) -> tuple[str, int]:
+    """Consume a line comment starting at ``start`` and return its masked segment.
+
+    The segment preserves newlines so downstream line-based logic stays
+    intact.  Isolating this rule lets the main loop decide *whether* a
+    line comment starts without also encoding how to find its end.
+    """
+    j = text.find("\n", start)
+    if j == -1:
+        j = n
+    return " " * (j - start), j
+
+
+def _scan_block_comment(text: str, start: int, n: int) -> tuple[str, int]:
+    """Consume a ``/* ... */`` block comment and return its masked segment."""
+    j = text.find("*/", start + 2)
+    if j == -1:
+        j = n
+    else:
+        j += 2
+    return "".join(c if c == "\n" else " " for c in text[start:j]), j
+
+
+def _scan_triple_quoted_string(text: str, start: int, n: int, quote: str) -> tuple[str, int]:
+    """Consume a triple-quoted string and return its masked segment."""
+    triple = quote * 3
+    j = text.find(triple, start + 3)
+    if j == -1:
+        j = n
+    else:
+        j += 3
+    return "".join(c if c == "\n" else " " for c in text[start:j]), j
+
+
+def _scan_single_line_string(text: str, start: int, n: int, quote: str) -> tuple[str, int]:
+    """Consume a single-line string/char/template literal with escapes."""
+    j = start + 1
+    while j < n and text[j] != quote and text[j] != "\n":
+        if text[j] == "\\" and j + 1 < n:
+            j += 2
+        else:
+            j += 1
+    if j < n and text[j] == quote:
+        j += 1
+    return "".join(c if c == "\n" else " " for c in text[start:j]), j
+
+
+def _lexical_construct_at(text: str, i: int, n: int) -> tuple[str, str]:
+    """Return the lexical construct starting at ``i`` and its quote char.
+
+    Centralising the lookahead rules keeps the main masking loop a plain
+    dispatcher: it decides *that* a construct starts here, not *how* to
+    recognise it.
+    """
+    ch = text[i]
+    nxt = text[i + 1] if i + 1 < n else ""
+    nxt2 = text[i + 2] if i + 2 < n else ""
+    if ch == "#" or (ch == "/" and nxt == "/"):
+        return "line_comment", ""
+    if ch == "/" and nxt == "*":
+        return "block_comment", ""
+    if ch == '"' and nxt == '"' and nxt2 == '"':
+        return "triple_string", '"'
+    if ch == "'" and nxt == "'" and nxt2 == "'":
+        return "triple_string", "'"
+    if ch == '"' or ch == "'" or ch == "`":
+        return "single_string", ch
+    return "normal", ""
 
 
 def _mask_strings_and_comments(text: str) -> str:
@@ -81,68 +165,50 @@ def _mask_strings_and_comments(text: str) -> str:
     i = 0
     n = len(text)
     while i < n:
-        ch = text[i]
-        nxt = text[i + 1] if i + 1 < n else ""
-        nxt2 = text[i + 2] if i + 2 < n else ""
-        # ``#`` line comment (python / shell / ruby — and harmless in C++)
-        if ch == "#":
-            j = text.find("\n", i)
-            if j == -1:
-                j = n
-            out.append(" " * (j - i))
-            i = j
+        kind, quote = _lexical_construct_at(text, i, n)
+        if kind == "line_comment":
+            segment, i = _scan_line_comment(text, i, n)
+        elif kind == "block_comment":
+            segment, i = _scan_block_comment(text, i, n)
+        elif kind == "triple_string":
+            segment, i = _scan_triple_quoted_string(text, i, n, quote)
+        elif kind == "single_string":
+            segment, i = _scan_single_line_string(text, i, n, quote)
+        else:
+            out.append(text[i])
+            i += 1
             continue
-        # ``//`` line comment (c / c++ / java / js)
-        if ch == "/" and nxt == "/":
-            j = text.find("\n", i)
-            if j == -1:
-                j = n
-            out.append(" " * (j - i))
-            i = j
-            continue
-        # ``/* ... */`` block comment
-        if ch == "/" and nxt == "*":
-            j = text.find("*/", i + 2)
-            if j == -1:
-                j = n
-            else:
-                j += 2
-            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
-            i = j
-            continue
-        # String-prefix handling — ``r``/``b``/``rb``/``br`` (any case)
-        # may precede a string literal in Python. We don't blank the
-        # prefix letters (they're part of the source code), but we need
-        # to skip past them so the next iteration sees the quote.
-        # Triple-quoted ``"""..."""`` or ``'''...'''``
-        if (ch == '"' and nxt == '"' and nxt2 == '"') or (ch == "'" and nxt == "'" and nxt2 == "'"):
-            quote = ch * 3
-            j = text.find(quote, i + 3)
-            if j == -1:
-                j = n
-            else:
-                j += 3
-            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
-            i = j
-            continue
-        # Single-line ``"..."`` / ``'...'`` / ``\`...\```
-        if ch in "\"'`":
-            quote = ch
-            j = i + 1
-            while j < n and text[j] != quote and text[j] != "\n":
-                if text[j] == "\\" and j + 1 < n:
-                    j += 2
-                else:
-                    j += 1
-            if j < n and text[j] == quote:
-                j += 1
-            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
-            i = j
-            continue
-        # Normal code character — pass through
-        out.append(ch)
-        i += 1
+        out.append(segment)
     return "".join(out)
+
+
+def _import_block_span_for_phantom_guard(
+    masked: str,
+    match: re.Match[str],
+    text_len: int,
+    hoisted_find_in_masked: Callable[[str, int], int],
+) -> tuple[str, int]:
+    """Return the import span that balances broad scanning with phantom rejection."""
+    rest = match.group(1) or ""
+    line_end = hoisted_find_in_masked("\n", match.end())
+    if line_end == -1:
+        line_end = text_len
+
+    block_text = rest
+    cursor = match.end()
+    if "(" in rest and ")" not in rest:
+        close = hoisted_find_in_masked(")", cursor)
+        if close != -1:
+            block_text = masked[match.start(1) : close]
+            cursor = close + 1
+    elif "{" in rest and "}" not in rest:
+        close = hoisted_find_in_masked("}", cursor)
+        if close != -1:
+            block_text = masked[match.start(1) : close]
+            cursor = close + 1
+    else:
+        cursor = line_end
+    return block_text, cursor
 
 
 def _extract_imported_names(source_text: str) -> set[str]:
@@ -166,31 +232,20 @@ def _extract_imported_names(source_text: str) -> set[str]:
     names: set[str] = set()
     pos = 0
     text_len = len(masked)
+    hoisted_find_in_masked = masked.find
+    hoisted_name_token_findall = _RX_NAME_TOKEN.findall
     for match in _RX_IMPORT_LINE.finditer(masked):
         if match.start() < pos:
             continue  # inside a previously-scanned block
-        rest = match.group(1) or ""
         # Track an open ``(`` / ``{`` so we can pick up multi-line imports.
-        line_end = masked.find("\n", match.end())
-        if line_end == -1:
-            line_end = text_len
-        block_text = rest
-        cursor = match.end()
-        if "(" in rest and ")" not in rest:
-            close = masked.find(")", cursor)
-            if close != -1:
-                block_text = masked[match.start(1) : close]
-                cursor = close + 1
-        elif "{" in rest and "}" not in rest:
-            close = masked.find("}", cursor)
-            if close != -1:
-                block_text = masked[match.start(1) : close]
-                cursor = close + 1
-        else:
-            block_text = rest
-            cursor = line_end
-        for token in _RX_NAME_TOKEN.findall(block_text):
-            if token in {"as", "from", "import", "use", "using", "require", "require_relative", "include", "package"}:
+        block_text, cursor = _import_block_span_for_phantom_guard(
+            masked,
+            match,
+            text_len,
+            hoisted_find_in_masked,
+        )
+        for token in hoisted_name_token_findall(block_text):
+            if token in _IMPORT_NAME_SKIP_TOKENS:
                 continue
             names.add(token)
         pos = cursor
@@ -426,6 +481,140 @@ def _filter_symbols_for_import(
     return view
 
 
+def _source_context_for_target_disambiguation(
+    source_name: str,
+    source_file: str,
+    line: int | None,
+    kind: str,
+    symbols_by_name: dict[str, list[dict]],
+    file_symbols: dict[str, list[dict]],
+) -> tuple[dict, str] | None:
+    """Resolve the caller context that target disambiguation reuses."""
+    source_sym = _best_match(source_name, source_file, symbols_by_name)
+    if source_sym is None:
+        # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
+        # pick the closest symbol at or before the reference line.
+        # W742: for kind='import', _closest_symbol skips the syms[0]
+        # fallback so module-scope imports don't mis-attribute to
+        # whichever function happens to be first in the file.
+        source_sym = _closest_symbol(source_file, line, file_symbols, kind=kind)
+    if source_sym is None:
+        return None
+
+    # Extract parent context from source for same-file disambiguation
+    # e.g. MyStruct::some_method -> parent = "MyStruct"
+    source_parent = ""
+    src_qn = source_sym.get("qualified_name", "")
+    if "::" in src_qn:
+        source_parent = src_qn.rsplit("::", 1)[0]
+    elif "." in src_qn:
+        source_parent = src_qn.rsplit(".", 1)[0]
+    return source_sym, source_parent
+
+
+_SALESFORCE_NAME_KINDS = frozenset({"controller", "soql", "metadata_ref", "component_ref"})
+
+
+def _source_context_key_for_precise_reuse(ref: dict) -> tuple[str, str, int | None, str]:
+    """Name the source-context identity so precision and reuse stay coupled."""
+    return (
+        ref.get("source_name", ""),
+        ref.get("source_file", ""),
+        ref.get("line"),
+        ref.get("kind", "call"),
+    )
+
+
+def _precompute_contexts_for_precise_reuse(
+    references: list[dict],
+    symbols_by_name: dict[str, list[dict]],
+    file_symbols: dict[str, list[dict]],
+) -> dict[tuple[str, str, int | None, str], tuple[dict, str] | None]:
+    """Resolve each distinct caller context once without weakening line precision."""
+    hoisted_source_contexts: dict[
+        tuple[str, str, int | None, str],
+        tuple[dict, str] | None,
+    ] = {}
+    for ref in references:
+        if not ref.get("target_name"):
+            continue
+        key = _source_context_key_for_precise_reuse(ref)
+        if key in hoisted_source_contexts:
+            continue
+        source_name, source_file, line, kind = key
+        hoisted_source_contexts[key] = _source_context_for_target_disambiguation(
+            source_name,
+            source_file,
+            line,
+            kind,
+            symbols_by_name,
+            file_symbols,
+        )
+    return hoisted_source_contexts
+
+
+def _precompute_salesforce_targets_for_precise_reuse(
+    references: list[dict],
+    symbols_by_name: dict[str, list[dict]],
+    symbols_by_qualified: dict[str, list[dict]],
+    sf_file_priority: dict[str, int],
+) -> tuple[dict[str, dict | None], dict[tuple[str, str], dict | None]]:
+    """Resolve repeated Salesforce targets once while preserving target-kind precision."""
+    hoisted_salesforce_imports: dict[str, dict | None] = {}
+    hoisted_salesforce_names: dict[tuple[str, str], dict | None] = {}
+
+    for ref in references:
+        import_path = ref.get("import_path", "")
+        if import_path and import_path.startswith("@salesforce/") and import_path not in hoisted_salesforce_imports:
+            hoisted_salesforce_imports[import_path] = _resolve_salesforce_import(
+                import_path,
+                symbols_by_name,
+                symbols_by_qualified,
+            )
+
+        kind = ref.get("kind", "call")
+        if kind not in _SALESFORCE_NAME_KINDS:
+            continue
+        target_name = ref.get("target_name", "")
+        if not target_name:
+            continue
+        sf_key = (target_name, kind)
+        if sf_key in hoisted_salesforce_names:
+            continue
+        hoisted_salesforce_names[sf_key] = _resolve_salesforce_name(
+            target_name,
+            kind,
+            symbols_by_name,
+            sf_file_priority,
+        )
+
+    return hoisted_salesforce_imports, hoisted_salesforce_names
+
+
+def _precompute_imported_names_for_precise_reuse(
+    edges: list[dict],
+    project_root: str | None,
+) -> dict[str, set[str]]:
+    """Read each import-source file once and extract its imported names.
+
+    Trades memory (the per-file imported-name sets) for I/O time:
+    import edges sharing a source file reuse one read/parse instead of
+    calling ``_read_source_text`` / ``_extract_imported_names`` per edge.
+    """
+    imported_names_by_file: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.get("kind") != "import":
+            continue
+        src_path = edge.get("_source_path", "")
+        if not src_path or src_path in imported_names_by_file:
+            continue
+        text = _read_source_text(src_path, project_root)
+        if text is None:
+            continue
+        imported_names_by_file[src_path] = _extract_imported_names(text)
+    return imported_names_by_file
+
+
 def resolve_references(
     references: list[dict],
     symbols_by_name: dict[str, list[dict]],
@@ -495,8 +684,29 @@ def resolve_references(
     edges = []
     seen = set()
 
+    hoisted_source_contexts = _precompute_contexts_for_precise_reuse(
+        references,
+        symbols_by_name,
+        _file_symbols,
+    )
+
     # Pre-compute Salesforce canonical file preferences
     sf_file_priority = _build_sf_file_priority(symbols_by_name)
+    hoisted_salesforce_imports, hoisted_salesforce_names = _precompute_salesforce_targets_for_precise_reuse(
+        references,
+        symbols_by_name,
+        symbols_by_qualified,
+        sf_file_priority,
+    )
+
+    hoisted_standard_targets = _precompute_standard_targets_for_precise_reuse(
+        references,
+        hoisted_source_contexts,
+        symbols_by_name,
+        symbols_by_qualified,
+        symbols_by_name_lower,
+        import_map,
+    )
 
     for ref in references:
         source_name = ref.get("source_name", "")
@@ -508,57 +718,24 @@ def resolve_references(
         if not target_name:
             continue
 
-        # Find source symbol (the caller)
-        source_sym = _best_match(source_name, source_file, symbols_by_name)
-        if source_sym is None:
-            # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
-            # pick the closest symbol at or before the reference line.
-            # W742: for kind='import', _closest_symbol skips the syms[0]
-            # fallback so module-scope imports don't mis-attribute to
-            # whichever function happens to be first in the file.
-            source_sym = _closest_symbol(source_file, line, _file_symbols, kind=kind)
-        if source_sym is None:
+        source_context_key = _source_context_key_for_precise_reuse(ref)
+        source_context = hoisted_source_contexts[source_context_key]
+        if source_context is None:
             continue
-
-        # Extract parent context from source for same-file disambiguation
-        # e.g. MyStruct::some_method -> parent = "MyStruct"
-        source_parent = ""
-        src_qn = source_sym.get("qualified_name", "")
-        if "::" in src_qn:
-            source_parent = src_qn.rsplit("::", 1)[0]
-        elif "." in src_qn:
-            source_parent = src_qn.rsplit(".", 1)[0]
+        source_sym, source_parent = source_context
 
         # Salesforce resolution: handle @salesforce/ imports and controller refs
         import_path = ref.get("import_path", "")
         target_sym = None
         if import_path and import_path.startswith("@salesforce/"):
-            target_sym = _resolve_salesforce_import(
-                import_path,
-                symbols_by_name,
-                symbols_by_qualified,
-            )
-        elif kind in ("controller", "soql", "metadata_ref", "component_ref"):
-            target_sym = _resolve_salesforce_name(
-                target_name,
-                kind,
-                symbols_by_name,
-                sf_file_priority,
-            )
+            target_sym = hoisted_salesforce_imports.get(import_path)
+        elif kind in _SALESFORCE_NAME_KINDS:
+            target_sym = hoisted_salesforce_names.get((target_name, kind))
 
         # Standard resolution (skip if Salesforce already resolved)
         if target_sym is None:
-            target_sym = _resolve_standard(
-                target_name,
-                source_file,
-                source_parent,
-                kind,
-                symbols_by_name,
-                symbols_by_qualified,
-                symbols_by_name_lower,
-                import_map,
-                drop_counter=drop_stats,
-            )
+            std_key = (target_name, source_file, source_parent, kind)
+            target_sym = hoisted_standard_targets.get(std_key)
 
         if target_sym is None:
             continue
@@ -595,20 +772,9 @@ def resolve_references(
     # an import in the source file. This filters resolver fuzzy-match
     # false positives (e.g. ``import yaml`` resolving to a ``yaml`` local
     # variable in some test file when no real ``yaml`` module is indexed).
-    if edges:
-        imported_names_by_file: dict[str, set[str]] = {}
-        for edge in edges:
-            if edge.get("kind") != "import":
-                continue
-            src_path = edge.get("_source_path", "")
-            if not src_path or src_path in imported_names_by_file:
-                continue
-            text = _read_source_text(src_path, project_root)
-            if text is None:
-                continue
-            imported_names_by_file[src_path] = _extract_imported_names(text)
-        counter: dict[str, int] = drop_stats if drop_stats is not None else {}
-        edges = _verify_import_edges(edges, imported_names_by_file, counter)
+    imported_names_by_file = _precompute_imported_names_for_precise_reuse(edges, project_root)
+    counter: dict[str, int] = drop_stats if drop_stats is not None else {}
+    edges = _verify_import_edges(edges, imported_names_by_file, counter)
 
     return edges
 
@@ -743,6 +909,49 @@ def _resolve_standard(
         )
 
     return target_sym
+
+
+def _precompute_standard_targets_for_precise_reuse(
+    references: list[dict],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    symbols_by_name: dict[str, list[dict]],
+    symbols_by_qualified: dict[str, list[dict]],
+    symbols_by_name_lower: dict[str, list[dict]],
+    import_map: dict[tuple[str, str], str],
+) -> dict[tuple[str, str, str, str], dict | None]:
+    """Resolve each distinct standard target once while preserving context precision.
+
+    Trades memory (the resolution cache) for CPU time: repeated references
+    with the same target name and source context reuse one
+    ``_resolve_standard`` call instead of resolving per iteration.
+    """
+    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None] = {}
+    for ref in references:
+        target_name = ref.get("target_name", "")
+        if not target_name:
+            continue
+        source_context_key = _source_context_key_for_precise_reuse(ref)
+        source_context = hoisted_source_contexts.get(source_context_key)
+        if source_context is None:
+            continue
+        _source_sym, source_parent = source_context
+        source_file = ref.get("source_file", "")
+        kind = ref.get("kind", "call")
+        std_key = (target_name, source_file, source_parent, kind)
+        if std_key in hoisted_standard_targets:
+            continue
+        hoisted_standard_targets[std_key] = _resolve_standard(
+            target_name,
+            source_file,
+            source_parent,
+            kind,
+            symbols_by_name,
+            symbols_by_qualified,
+            symbols_by_name_lower,
+            import_map,
+            drop_counter=None,
+        )
+    return hoisted_standard_targets
 
 
 def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
@@ -1074,6 +1283,49 @@ def _build_sf_file_priority(symbols_by_name: dict) -> dict[str, int]:
     return priority
 
 
+def _resolve_apex_method_import_with_class_membership(
+    class_name: str,
+    method_name: str,
+    symbols_by_name: dict,
+    symbols_by_qualified: dict,
+) -> dict | None:
+    """Keep Apex method imports bound to the owning class."""
+    qn = f"{class_name}.{method_name}"
+    candidates = symbols_by_qualified.get(qn, [])
+    if candidates:
+        cls_candidates = [candidate for candidate in candidates if candidate.get("file_path", "").endswith(".cls")]
+        return cls_candidates[0] if cls_candidates else candidates[0]
+
+    for candidate in symbols_by_name.get(method_name, []):
+        if not candidate.get("file_path", "").endswith(".cls"):
+            continue
+        cqn = candidate.get("qualified_name", "")
+        if cqn.startswith(class_name + "."):
+            return candidate
+    return None
+
+
+def _resolve_apex_import_with_owning_class(
+    apex_ref: str,
+    symbols_by_name: dict,
+    symbols_by_qualified: dict,
+) -> dict | None:
+    """Preserve Apex owner precision across method and class imports."""
+    if "." in apex_ref:
+        class_name, method_name = apex_ref.rsplit(".", 1)
+        return _resolve_apex_method_import_with_class_membership(
+            class_name,
+            method_name,
+            symbols_by_name,
+            symbols_by_qualified,
+        )
+
+    for candidate in symbols_by_name.get(apex_ref, []):
+        if candidate.get("file_path", "").endswith(".cls") and candidate.get("kind") == "class":
+            return candidate
+    return None
+
+
 def _resolve_salesforce_import(
     import_path: str,
     symbols_by_name: dict,
@@ -1092,49 +1344,25 @@ def _resolve_salesforce_import(
 
     category = parts[1]  # apex, schema, label, messageChannel, etc.
 
-    if category == "apex" and len(parts) >= 3:
-        # @salesforce/apex/MyController.myMethod
-        apex_ref = parts[2]
-        if "." in apex_ref:
-            class_name, method_name = apex_ref.rsplit(".", 1)
-            # Try qualified name first: ClassName.methodName
-            qn = f"{class_name}.{method_name}"
-            candidates = symbols_by_qualified.get(qn, [])
-            if candidates:
-                # Prefer candidates from .cls files
-                cls_cands = [c for c in candidates if c.get("file_path", "").endswith(".cls")]
-                return cls_cands[0] if cls_cands else candidates[0]
-            # Try just the method name
-            method_cands = symbols_by_name.get(method_name, [])
-            for c in method_cands:
-                if c.get("file_path", "").endswith(".cls"):
-                    # Check if it belongs to the right class
-                    cqn = c.get("qualified_name", "")
-                    if cqn.startswith(class_name + "."):
-                        return c
-        else:
-            # Just class name: @salesforce/apex/MyController
-            candidates = symbols_by_name.get(apex_ref, [])
-            cls_cands = [c for c in candidates if c.get("file_path", "").endswith(".cls") and c.get("kind") == "class"]
-            if cls_cands:
-                return cls_cands[0]
-
-    elif category == "schema" and len(parts) >= 3:
+    if category == "apex":
+        return _resolve_apex_import_with_owning_class(
+            parts[2],
+            symbols_by_name,
+            symbols_by_qualified,
+        )
+    if category == "schema":
         # @salesforce/schema/Account.Name
         schema_ref = parts[2]
         candidates = symbols_by_qualified.get(schema_ref, [])
         if candidates:
             return candidates[0]
-        # Try simple name
         name = schema_ref.rsplit(".", 1)[-1] if "." in schema_ref else schema_ref
         candidates = symbols_by_name.get(name, [])
         if candidates:
             return candidates[0]
-
-    elif category == "label" and len(parts) >= 3:
+    if category == "label":
         # @salesforce/label/c.MyLabel
         label_ref = parts[2]
-        # Strip namespace prefix (e.g. "c.MyLabel" → "MyLabel")
         label_name = label_ref.split(".")[-1] if "." in label_ref else label_ref
         candidates = symbols_by_name.get(label_name, [])
         if candidates:

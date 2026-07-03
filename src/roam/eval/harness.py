@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,34 +38,50 @@ def load_tasks(path: Path | str) -> list[EvalTask]:
     ``task_id`` is auto-derived from the task text if absent. Blank
     lines and ``//`` comment lines are tolerated.
     """
-    p = Path(path)
-    out: list[EvalTask] = []
-    text = p.read_text(encoding="utf-8")
-    for ln, raw in enumerate(text.splitlines(), 1):
+    return list(_source_anchored_eval_tasks(Path(path)))
+
+
+def _source_anchored_eval_tasks(path: Path) -> Iterator[EvalTask]:
+    """Validate records with their path/line context still attached."""
+    for line_no, doc in _task_docs_with_source_context(path):
+        yield _validated_task_for_line(doc, path, line_no)
+
+
+def _task_docs_with_source_context(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
+    """Yield parseable task objects while preserving source locations."""
+    text = path.read_text(encoding="utf-8")
+    for line_no, raw in enumerate(text.splitlines(), 1):
         stripped = raw.strip()
-        if not stripped or stripped.startswith("//") or stripped.startswith("#"):
+        if not _task_line_has_payload(stripped):
             continue
         try:
             doc = json.loads(stripped)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{p}:{ln} not valid JSON: {exc}") from exc
-        task_text = (doc.get("task") or "").strip()
-        if not task_text:
-            raise ValueError(f"{p}:{ln} missing 'task' field")
-        expected = tuple(doc.get("expected_files") or ())
-        if not expected:
-            raise ValueError(f"{p}:{ln} 'expected_files' must be non-empty")
-        task_id = doc.get("task_id") or _slugify(task_text)
-        notes = doc.get("notes", "")
-        out.append(
-            EvalTask(
-                task_id=task_id,
-                task=task_text,
-                expected_files=tuple(_normalise_path(p) for p in expected),
-                notes=notes,
-            )
-        )
-    return out
+            raise ValueError(f"{path}:{line_no} not valid JSON: {exc}") from exc
+        yield line_no, doc
+
+
+def _task_line_has_payload(stripped: str) -> bool:
+    """Keep tolerant JSONL comments out of the parser path."""
+    return bool(stripped) and not stripped.startswith(("//", "#"))
+
+
+def _validated_task_for_line(doc: dict[str, Any], path: Path, line_no: int) -> EvalTask:
+    """Preserve line-specific integrity checks while loading tolerant JSONL."""
+    task_text = (doc.get("task") or "").strip()
+    if not task_text:
+        raise ValueError(f"{path}:{line_no} missing 'task' field")
+    expected = tuple(doc.get("expected_files") or ())
+    if not expected:
+        raise ValueError(f"{path}:{line_no} 'expected_files' must be non-empty")
+    task_id = doc.get("task_id") or _slugify(task_text)
+    notes = doc.get("notes", "")
+    return EvalTask(
+        task_id=task_id,
+        task=task_text,
+        expected_files=tuple(_normalise_path(p) for p in expected),
+        notes=notes,
+    )
 
 
 def evaluate_task(

@@ -460,12 +460,12 @@ def _async_query_boost(candidates: list[dict], task: str, *, conn=None) -> dict[
     if not sids:
         return {}
     out: dict[int, float] = {}
-    placeholders = ",".join("?" * len(sids))
     try:
-        rows = conn.execute(
-            f"SELECT id FROM symbols WHERE id IN ({placeholders}) AND is_async = 1",
+        rows = batched_in(
+            conn,
+            "SELECT id FROM symbols WHERE id IN ({ph}) AND is_async = 1",
             sids,
-        ).fetchall()
+        )
     except sqlite3.Error:
         return {}
     for r in rows:
@@ -529,12 +529,12 @@ def _recency_boost(conn: sqlite3.Connection, candidates: list[dict], task: str) 
     paths = [p for p in paths if p]
     if not paths:
         return {}
-    placeholders = ",".join("?" for _ in paths)
     try:
-        path_rows = conn.execute(
-            f"SELECT id, path FROM files WHERE path IN ({placeholders})",
+        path_rows = batched_in(
+            conn,
+            "SELECT id, path FROM files WHERE path IN ({ph})",
             paths,
-        ).fetchall()
+        )
     except sqlite3.OperationalError:
         return {}
     file_id_by_path = {r["path"]: int(r["id"]) for r in path_rows}
@@ -545,18 +545,18 @@ def _recency_boost(conn: sqlite3.Connection, candidates: list[dict], task: str) 
     # Latest commit timestamp per file. Single batched query — no
     # per-candidate fan-out. Files with no git history are absent
     # from the result and thus get no boost.
-    placeholders = ",".join("?" for _ in file_ids)
     try:
-        ts_rows = conn.execute(
-            f"""
+        ts_rows = batched_in(
+            conn,
+            """
             SELECT gfc.file_id, MAX(gc.timestamp) AS latest
             FROM git_file_changes gfc
             JOIN git_commits gc ON gfc.commit_id = gc.id
-            WHERE gfc.file_id IN ({placeholders})
+            WHERE gfc.file_id IN ({ph})
             GROUP BY gfc.file_id
             """,
             file_ids,
-        ).fetchall()
+        )
     except sqlite3.OperationalError:
         return {}
     if not ts_rows:
@@ -618,47 +618,91 @@ def _cmd_companion_boost(candidates: list[dict]) -> dict[int, float]:
     if fts_max <= 0:
         return {}
 
-    # Build {component: best_fts} for non-cmd candidates so we can
-    # later look up the strength of any cmd_FOO match.
-    component_strength: dict[str, float] = {}
-    cmd_candidates: list[tuple[int, str]] = []
-    for c in candidates:
-        path = (c.get("file_path") or c.get("file") or "").replace("\\", "/").lower()
-        if not path:
-            continue
-        sid = int(c.get("symbol_id") or 0)
-        if not sid:
-            continue
-        basename = path.rsplit("/", 1)[-1]
-        if basename.startswith("cmd_") and basename.endswith(".py"):
-            stem = basename[len("cmd_") : -len(".py")]
-            if stem:
-                cmd_candidates.append((sid, stem))
-            continue
-        fts = float(c.get("fts_score") or 0.0)
-        for piece in path.split("/"):
-            piece_clean = piece.replace(".py", "").replace(".js", "").replace(".ts", "")
-            for sub in piece_clean.replace("_", " ").replace("-", " ").split():
-                if len(sub) >= 4:
-                    if fts > component_strength.get(sub, 0.0):
-                        component_strength[sub] = fts
-
+    component_strength, cmd_candidates = _collect_cmd_companion_evidence(candidates)
     out: dict[int, float] = {}
     for sid, stem in cmd_candidates:
-        best_fts = 0.0
-        for other, strength in component_strength.items():
-            if (
-                other == stem
-                or (len(stem) >= 4 and other.startswith(stem))
-                or (len(other) >= 4 and stem.startswith(other))
-            ):
-                if strength > best_fts:
-                    best_fts = strength
+        best_fts = _strongest_evidence_for_cmd_wrapper(stem, component_strength)
         if best_fts <= 0:
             continue
         norm = best_fts / fts_max
         out[sid] = min(0.25, 0.05 + 0.20 * norm)
     return out
+
+
+def _collect_cmd_companion_evidence(candidates: list[dict]) -> tuple[dict[str, float], list[tuple[int, str]]]:
+    """Collect wrapper stems and non-wrapper token strengths separately.
+
+    This keeps the selectivity-vs-recall rule explicit: command wrappers
+    are boost targets, while non-command path tokens are the evidence
+    that a wrapper deserves the lift.
+    """
+    component_strength: dict[str, float] = {}
+    cmd_candidates: list[tuple[int, str]] = []
+    for c in candidates:
+        path = _path_for_cmd_companion_matching(c)
+        if not path:
+            continue
+        sid = int(c.get("symbol_id") or 0)
+        if not sid:
+            continue
+        stem = _cmd_boost_target_stem(path)
+        if stem:
+            cmd_candidates.append((sid, stem))
+            continue
+        _remember_tokens_that_can_lift_cmd_wrapper(
+            component_strength,
+            path,
+            float(c.get("fts_score") or 0.0),
+        )
+    return component_strength, cmd_candidates
+
+
+def _path_for_cmd_companion_matching(candidate: dict) -> str:
+    """Return the path form used by cmd-companion matching."""
+    return (candidate.get("file_path") or candidate.get("file") or "").replace("\\", "/").lower()
+
+
+def _cmd_boost_target_stem(path: str) -> str | None:
+    """Return the ``FOO`` part from ``cmd_FOO.py`` paths."""
+    basename = path.rsplit("/", 1)[-1]
+    if not basename.startswith("cmd_") or not basename.endswith(".py"):
+        return None
+    stem = basename[len("cmd_") : -len(".py")]
+    return stem or None
+
+
+def _remember_tokens_that_can_lift_cmd_wrapper(component_strength: dict[str, float], path: str, fts: float) -> None:
+    """Record the strongest FTS evidence for each companion token."""
+    for token in _tokens_that_can_justify_cmd_wrapper(path):
+        if fts > component_strength.get(token, 0.0):
+            component_strength[token] = fts
+
+
+def _tokens_that_can_justify_cmd_wrapper(path: str) -> Iterable[str]:
+    """Yield path tokens eligible to justify a cmd-wrapper boost."""
+    for piece in path.split("/"):
+        piece_clean = piece.replace(".py", "").replace(".js", "").replace(".ts", "")
+        for token in piece_clean.replace("_", " ").replace("-", " ").split():
+            if len(token) >= 4:
+                yield token
+
+
+def _strongest_evidence_for_cmd_wrapper(stem: str, component_strength: dict[str, float]) -> float:
+    """Return the strongest non-wrapper FTS score matching a command stem."""
+    best_fts = 0.0
+    for component, strength in component_strength.items():
+        if _component_can_justify_cmd_stem(stem, component) and strength > best_fts:
+            best_fts = strength
+    return best_fts
+
+
+def _component_can_justify_cmd_stem(stem: str, component: str) -> bool:
+    """Match exact names plus long-prefix variants without broad short stems."""
+    return (
+        component == stem
+        or (len(stem) >= 4 and component.startswith(stem))
+        or (len(component) >= 4 and stem.startswith(component))
+    )
 
 
 def _cochange_scores(

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 from roam.commands.resolve import find_symbol
+from roam.index.parser import detect_language
 from roam.observability import log_swallowed
-from roam.refactor.codegen import detect_language, generate_import
+from roam.refactor.codegen import generate_import
 
 
 def _read_file(path: str) -> list[str]:
@@ -63,6 +65,108 @@ def _module_name_from_path(path: str) -> str:
     base = os.path.basename(path)
     name, _ = os.path.splitext(base)
     return name
+
+
+def _plan_caller_import_rewrites_to_preserve_reachability(
+    referencing_files: list[str],
+    source_file: str,
+    sym_actual_name: str,
+    old_module: str,
+    new_module: str,
+) -> tuple[list[dict], list[str]]:
+    """Plan caller import rewrites so moved symbols remain reachable."""
+    files_modified = []
+    warnings = []
+    for ref_file in referencing_files:
+        if ref_file == source_file:
+            continue
+        ref_lines = _read_file(ref_file)
+        import_idx = _find_import_line(ref_lines, sym_actual_name)
+        if import_idx is None:
+            warnings.append(
+                f"caller {ref_file} references {sym_actual_name} but no import "
+                f"line was found to rewrite — manual review required"
+            )
+            continue
+        old_line = ref_lines[import_idx]
+        new_line = _rewrite_import(old_line, old_module, new_module)
+        if old_line != new_line:
+            files_modified.append(
+                {
+                    "path": ref_file,
+                    "action": "MODIFY",
+                    "changes": [
+                        {
+                            "type": "replace",
+                            "line_start": import_idx + 1,
+                            "line_end": import_idx + 1,
+                            "old_text": old_line,
+                            "new_text": new_line,
+                        }
+                    ],
+                }
+            )
+    return files_modified, warnings
+
+
+@dataclass(frozen=True)
+class _MoveApplyPlan:
+    """Precomputed state needed to apply a move mutation."""
+
+    source_file: str
+    source_lines: list[str]
+    start_idx: int
+    end_idx: int
+    target_file: str
+    target_lines: list[str]
+    symbol_lines: list[str]
+    sym: dict
+    old_module: str
+    new_module: str
+    referencing_files: list[str]
+
+
+@dataclass(frozen=True)
+class ExtractSymbolRequest:
+    """Input needed to extract lines into a new symbol."""
+
+    source_symbol: str
+    line_start: int
+    line_end: int
+    new_name: str
+
+
+def _normalize_extract_request(
+    request: ExtractSymbolRequest | str, request_args: tuple[object, ...], dry_run: bool
+) -> tuple[ExtractSymbolRequest, bool]:
+    """Support the request object while preserving the legacy call shape."""
+    if isinstance(request, ExtractSymbolRequest):
+        if request_args:
+            raise TypeError("ExtractSymbolRequest cannot be combined with positional extract arguments")
+        return request, dry_run
+
+    if not isinstance(request, str):
+        raise TypeError("extract_symbol() expects a source symbol name or ExtractSymbolRequest")
+    if len(request_args) not in (3, 4):
+        raise TypeError(
+            "extract_symbol() expects ExtractSymbolRequest or source_symbol, line_start, line_end, new_name"
+        )
+
+    line_start, line_end, new_name = request_args[:3]
+    if not isinstance(line_start, int) or isinstance(line_start, bool):
+        raise TypeError("line_start must be an integer")
+    if not isinstance(line_end, int) or isinstance(line_end, bool):
+        raise TypeError("line_end must be an integer")
+    if not isinstance(new_name, str):
+        raise TypeError("new_name must be a string")
+
+    if len(request_args) == 4:
+        positional_dry_run = request_args[3]
+        if not isinstance(positional_dry_run, bool):
+            raise TypeError("dry_run must be a boolean")
+        dry_run = positional_dry_run
+
+    return ExtractSymbolRequest(request, line_start, line_end, new_name), dry_run
 
 
 def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) -> dict:
@@ -181,38 +285,15 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
 
     # 3. Caller files: rewrite imports
     referencing_files = _find_files_referencing(conn, sym["id"])
-    for ref_file in referencing_files:
-        if ref_file == source_file:
-            continue
-        ref_lines = _read_file(ref_file)
-        import_idx = _find_import_line(ref_lines, sym_actual_name)
-        if import_idx is None:
-            # Caller references the symbol but no recognisable import line
-            # was found (wildcard import, dynamic resolution, alias rename).
-            # Surface this so the agent doesn't ship a half-rewritten move.
-            warnings.append(
-                f"caller {ref_file} references {sym_actual_name} but no import "
-                f"line was found to rewrite — manual review required"
-            )
-            continue
-        old_line = ref_lines[import_idx]
-        new_line = _rewrite_import(old_line, old_module, new_module)
-        if old_line != new_line:
-            files_modified.append(
-                {
-                    "path": ref_file,
-                    "action": "MODIFY",
-                    "changes": [
-                        {
-                            "type": "replace",
-                            "line_start": import_idx + 1,
-                            "line_end": import_idx + 1,
-                            "old_text": old_line,
-                            "new_text": new_line,
-                        }
-                    ],
-                }
-            )
+    ref_files_modified, ref_warnings = _plan_caller_import_rewrites_to_preserve_reachability(
+        referencing_files,
+        source_file,
+        sym_actual_name,
+        old_module,
+        new_module,
+    )
+    files_modified.extend(ref_files_modified)
+    warnings.extend(ref_warnings)
 
     result = {
         "operation": "move",
@@ -227,18 +308,19 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
     if not dry_run:
         try:
             _apply_move(
-                source_file,
-                source_lines,
-                start_idx,
-                end_idx,
-                target_file,
-                target_lines,
-                symbol_lines,
-                conn,
-                sym,
-                old_module,
-                new_module,
-                referencing_files,
+                _MoveApplyPlan(
+                    source_file=source_file,
+                    source_lines=source_lines,
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    target_file=target_file,
+                    target_lines=target_lines,
+                    symbol_lines=symbol_lines,
+                    sym=sym,
+                    old_module=old_module,
+                    new_module=new_module,
+                    referencing_files=referencing_files,
+                )
             )
         except OSError as e:
             # Rollback already performed inside _apply_move; surface a
@@ -253,20 +335,7 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
     return result
 
 
-def _apply_move(
-    source_file,
-    source_lines,
-    start_idx,
-    end_idx,
-    target_file,
-    target_lines,
-    symbol_lines,
-    conn,
-    sym,
-    old_module,
-    new_module,
-    referencing_files,
-):
+def _apply_move(plan: _MoveApplyPlan):
     """Actually write the move changes to disk.
 
     Rollback contract: if any write fails mid-way, restore every file
@@ -277,76 +346,114 @@ def _apply_move(
     Without this contract, a partial failure would leave duplicate
     definitions in the repo (target has the symbol; source still has it).
     """
-    # Snapshot the pre-apply state of every file we may touch so we
-    # can roll back on partial failure.
-    target_existed = os.path.isfile(target_file)
-    snapshots: dict[str, list[str]] = {}
-    if target_existed:
-        snapshots[target_file] = list(target_lines)
-    snapshots[source_file] = list(source_lines)
-
-    sym_name = sym["name"]
-    ref_snapshots: dict[str, list[str]] = {}
-    for ref_file in referencing_files:
-        if ref_file == source_file:
-            continue
-        if ref_file in snapshots:
-            continue
-        ref_lines = _read_file(ref_file)
-        ref_snapshots[ref_file] = ref_lines
-    snapshots.update(ref_snapshots)
+    target_existed = os.path.isfile(plan.target_file)
+    snapshots = _build_move_snapshots(plan, target_existed)
 
     written: list[str] = []
     try:
-        # Write symbol to target
-        new_target = list(target_lines)
-        if new_target:
-            new_target.append("")
-        new_target.extend(symbol_lines)
-        _write_file(target_file, new_target)
-        written.append(target_file)
-
-        # Remove from source
-        new_source = source_lines[:start_idx] + source_lines[end_idx:]
-        _write_file(source_file, new_source)
-        written.append(source_file)
-
-        # Rewrite caller imports
-        for ref_file in referencing_files:
-            if ref_file == source_file:
-                continue
-            ref_lines = _read_file(ref_file)
-            import_idx = _find_import_line(ref_lines, sym_name)
-            if import_idx is not None:
-                old_line = ref_lines[import_idx]
-                new_line = _rewrite_import(old_line, old_module, new_module)
-                if old_line != new_line:
-                    ref_lines[import_idx] = new_line
-                    _write_file(ref_file, ref_lines)
-                    written.append(ref_file)
+        written.append(_write_symbol_to_target(plan))
+        written.append(_remove_symbol_from_source(plan))
+        written.extend(_rewrite_caller_imports(plan))
     except OSError:
-        # Restore every file that we successfully wrote during this
-        # attempt, in reverse order. If the target file did not exist
-        # before the apply, remove it entirely so the repo has no
-        # leftover duplicate definition.
-        for path in reversed(written):
-            try:
-                if path == target_file and not target_existed:
-                    if os.path.isfile(path):
-                        os.remove(path)
-                    continue
-                original = snapshots.get(path)
-                if original is not None:
-                    _write_file(path, original)
-            except OSError as exc:
-                # Best-effort rollback: ignore secondary failures so the
-                # original error is what surfaces to the caller.
-                # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-                # failed rollback leaves the repo in a PARTIALLY-MODIFIED state;
-                # surface the lineage so the user knows which file was not
-                # restored, even though the primary OSError still propagates.
-                log_swallowed(f"refactor.transforms:apply_move:rollback:{path}", exc)
+        _rollback_move(written, snapshots, plan.target_file, target_existed)
         raise
+
+
+def _build_move_snapshots(plan: _MoveApplyPlan, target_existed: bool) -> dict[str, list[str]]:
+    """Snapshot the pre-apply state of every file the move may touch."""
+    snapshots: dict[str, list[str]] = {}
+    if target_existed:
+        snapshots[plan.target_file] = list(plan.target_lines)
+    snapshots[plan.source_file] = list(plan.source_lines)
+    for ref_file in plan.referencing_files:
+        if ref_file == plan.source_file:
+            continue
+        if ref_file in snapshots:
+            continue
+        snapshots[ref_file] = _read_file(ref_file)
+    return snapshots
+
+
+def _write_symbol_to_target(plan: _MoveApplyPlan) -> str:
+    """Place the moved definition at the end of the destination file."""
+    new_target = list(plan.target_lines)
+    if new_target:
+        new_target.append("")
+    new_target.extend(plan.symbol_lines)
+    _write_file(plan.target_file, new_target)
+    return plan.target_file
+
+
+def _remove_symbol_from_source(plan: _MoveApplyPlan) -> str:
+    """Remove the moved definition from the original source file."""
+    new_source = plan.source_lines[: plan.start_idx] + plan.source_lines[plan.end_idx :]
+    _write_file(plan.source_file, new_source)
+    return plan.source_file
+
+
+def _rewrite_caller_imports(plan: _MoveApplyPlan) -> list[str]:
+    """Update imports in referencing files so they resolve to the new module."""
+    sym_name = plan.sym["name"]
+    written: list[str] = []
+    for ref_file in plan.referencing_files:
+        if ref_file == plan.source_file:
+            continue
+        ref_lines = _read_file(ref_file)
+        import_idx = _find_import_line(ref_lines, sym_name)
+        if import_idx is None:
+            continue
+        old_line = ref_lines[import_idx]
+        new_line = _rewrite_import(old_line, plan.old_module, plan.new_module)
+        if old_line != new_line:
+            ref_lines[import_idx] = new_line
+            _write_file(ref_file, ref_lines)
+            written.append(ref_file)
+    return written
+
+
+def _restore_move_path_preserving_primary_failure(
+    path: str,
+    snapshots: dict[str, list[str]],
+    target_file: str,
+    target_existed: bool,
+) -> None:
+    """Undo one written path while the original apply error stays primary."""
+    if path == target_file and not target_existed:
+        if os.path.isfile(path):
+            os.remove(path)
+        return
+
+    original = snapshots.get(path)
+    if original is not None:
+        _write_file(path, original)
+
+
+def _rollback_move(
+    written: list[str],
+    snapshots: dict[str, list[str]],
+    target_file: str,
+    target_existed: bool,
+) -> None:
+    """Restore every file that was successfully written during a failed
+    apply, in reverse order. If the target file did not exist before the
+    apply, remove it entirely so the repo has no leftover duplicate
+    definition."""
+    for path in reversed(written):
+        try:
+            _restore_move_path_preserving_primary_failure(
+                path,
+                snapshots,
+                target_file,
+                target_existed,
+            )
+        except OSError as exc:
+            # Best-effort rollback: ignore secondary failures so the
+            # original error is what surfaces to the caller.
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+            # failed rollback leaves the repo in a PARTIALLY-MODIFIED state;
+            # surface the lineage so the user knows which file was not
+            # restored, even though the primary OSError still propagates.
+            log_swallowed(f"refactor.transforms:apply_move:rollback:{path}", exc)
 
 
 def _rename_resolve_target(conn, symbol_name: str, new_name: str) -> tuple[dict | None, dict | None]:
@@ -369,11 +476,17 @@ def _rename_resolve_target(conn, symbol_name: str, new_name: str) -> tuple[dict 
 
 
 def _rename_scan_lines(
-    lines: list[str], sym_actual_name: str, new_name: str, *, start: int = 0, end: int | None = None
+    lines: list[str], sym_actual_name: str, new_name: str, *, window: tuple[int, int] | None = None
 ) -> list[dict]:
-    """Walk lines in ``[start, end)`` and emit a replace-change dict for
-    each line containing ``sym_actual_name``. 1-based line numbers in the
-    output match the file's external numbering."""
+    """Walk lines in ``window`` (a half-open ``[start, end)`` pair, defaulting
+    to the whole file) and emit a replace-change dict for each line containing
+    ``sym_actual_name``. 1-based line numbers in the output match the file's
+    external numbering.
+
+    ``window`` bundles the optional line range as one parameter object (a
+    half-open pair) rather than separate ``start``/``end`` so the call surface
+    stays compact; ``None`` means scan the whole file."""
+    start, end = window if window is not None else (0, None)
     upper = len(lines) if end is None else min(len(lines), end)
     changes: list[dict] = []
     for i in range(max(0, start), upper):
@@ -442,7 +555,7 @@ def rename_symbol(conn, symbol_name: str, new_name: str, dry_run: bool = True) -
 
     # Definition file pass: rename inside the [line_start..line_end] slice.
     source_lines = _read_file(source_file)
-    def_changes = _rename_scan_lines(source_lines, sym_actual_name, new_name, start=line_start - 1, end=line_end)
+    def_changes = _rename_scan_lines(source_lines, sym_actual_name, new_name, window=(line_start - 1, line_end))
     if def_changes:
         files_modified.append({"path": source_file, "action": "MODIFY", "changes": def_changes})
 
@@ -614,7 +727,10 @@ def _apply_add_call(file_path, lines, changes):
 
 
 def extract_symbol(
-    conn, source_symbol: str, line_start: int, line_end: int, new_name: str, dry_run: bool = True
+    conn,
+    request: ExtractSymbolRequest | str,
+    *request_args: object,
+    dry_run: bool = True,
 ) -> dict:
     """Extract lines from a symbol into a new function.
 
@@ -628,17 +744,19 @@ def extract_symbol(
     ----------
     conn:
         SQLite connection to the roam index.
-    source_symbol:
-        Name of the containing symbol.
-    line_start:
-        Start line (1-based) to extract.
-    line_end:
-        End line (1-based, inclusive) to extract.
-    new_name:
-        Name for the new extracted function.
+    request:
+        ExtractSymbolRequest, or the legacy source symbol name.
+    request_args:
+        Legacy line_start, line_end, and new_name positional arguments.
     dry_run:
         If True, return planned changes without writing files.
     """
+    extract_request, dry_run = _normalize_extract_request(request, request_args, dry_run)
+    source_symbol = extract_request.source_symbol
+    line_start = extract_request.line_start
+    line_end = extract_request.line_end
+    new_name = extract_request.new_name
+
     sym = find_symbol(conn, source_symbol)
     if not sym:
         return {

@@ -278,6 +278,42 @@ def compute_event_signature(prev_signature: str, event: dict, key: bytes) -> str
     return hmac.new(key, body, hashlib.sha256).hexdigest()
 
 
+def sign_event(
+    repo_root: Path,
+    prev_signature: Optional[str],
+    event: dict,
+) -> Optional[str]:
+    """Best-effort rolling-HMAC signature for *event*, or ``None``.
+
+    This is the ledger's touch-point into the signing module (R20 phase 4).
+    It lives here because all of its collaborators — key materialisation,
+    seed constant, and signature computation — are local to this module,
+    avoiding the feature-envy pattern of a ledger-resident wrapper that
+    only reaches into signing.
+
+    *event* must NOT yet carry a ``signature`` field — the signature is
+    computed over the event as passed. ``prev_signature`` is the signature
+    of the preceding ledger event; ``None`` seeds the chain from
+    :data:`SEED_SIGNATURE`.
+
+    Import lazily so a corrupt signing module never blocks the rest of the
+    ledger from working (signing is additive, not mandatory).
+    """
+    try:
+        key = ensure_ledger_key(Path(repo_root))
+        seed = prev_signature or SEED_SIGNATURE
+        return compute_event_signature(seed, event, key)
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing key or filesystem error must not prevent the event from
+        # being recorded (append-only is the higher invariant). The event
+        # is still written unsigned and verify_chain flags it as
+        # ``tampered``; surface the lineage so the unsigned event has a
+        # discoverable cause rather than a silent gap.
+        log_swallowed("runs.signing:sign_event", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Chain verification
 # ---------------------------------------------------------------------------

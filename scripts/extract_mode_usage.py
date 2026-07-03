@@ -254,7 +254,7 @@ def parse_since(value: str) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
 
 
-def build_argparser() -> argparse.ArgumentParser:
+def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "Aggregate per-session token usage + latency from Claude project "
@@ -278,7 +278,7 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_argparser().parse_args(argv)
+    args = _build_argparser().parse_args(argv)
     n = run(args.projects_dir, args.modes_dir, args.out, args.since)
     print(f"wrote {n} rows to {args.out}", file=sys.stderr)
     return 0

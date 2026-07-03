@@ -116,3 +116,36 @@ class TestFileHistoryProbe:
 
     def test_probe_none_without_named_paths(self):
         assert _probe_file_history([], ".", task="what changed") is None
+
+    @pytest.mark.parametrize(
+        "magic",
+        [
+            "*",  # glob: would match every file without the literal guard
+            ":",  # bare magic prefix
+            ":/",  # top-of-tree magic
+            ":(glob)*.py",  # explicit glob magic
+        ],
+    )
+    def test_probe_treats_magic_pathspec_literally(self, tmp_path, magic):
+        """A magic pathspec target must NOT broaden the match to other files.
+
+        Without `--literal-pathspecs`, `git log -- '*'` reports the history of
+        every file. The literal guard makes the target a literal filename, so a
+        magic target finds no commits and the probe emits
+        `file_history_unavailable` instead of leaking other files' history.
+        """
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        # Two tracked files with real history the magic target must not surface.
+        for name in ("a.py", "b.py"):
+            (tmp_path / name).write_text("x = 1\n")
+            subprocess.run(["git", "add", name], cwd=tmp_path, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", f"add {name}"],
+                cwd=tmp_path,
+                check=True,
+            )
+        facts = _probe_file_history([magic], str(tmp_path), task=f"what changed in {magic} recently")
+        # The magic target names no literal file → unavailable, never the
+        # cross-file history a glob would have leaked.
+        assert facts and "file_history_unavailable" in facts
+        assert "file_recent_commits" not in facts

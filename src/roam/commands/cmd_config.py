@@ -370,7 +370,7 @@ _KNOWN_CONFIG_KEYS: dict[str, str] = {
 def _validate_config(root: Path, current: dict, json_mode: bool) -> None:
     """flag unknown keys / type mismatches in .roam/config.json."""
     issues: list[dict] = []
-    for key in current.keys():
+    for key in current:
         if key not in _KNOWN_CONFIG_KEYS:
             issues.append(
                 {

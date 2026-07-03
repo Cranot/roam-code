@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
@@ -127,10 +128,33 @@ class ProtobufBridge(LanguageBridge):
         # Get the proto file stem (e.g., "foo" from "foo.proto")
         proto_stem = os.path.basename(source_path).rsplit(".", 1)[0]
 
-        # Classify source symbols into messages, services, enums
-        messages = []
-        services = []
-        enums = []
+        # Classify source symbols into proto semantic kinds.
+        messages, services, enums = self._classify_proto_symbols(source_symbols)
+
+        # Find generated target files that correspond to this proto
+        generated_targets = self._find_generated_files(proto_stem, target_files)
+
+        # For each generated file, emit cross-language edges for every
+        # proto kind through the language-specific naming convention.
+        for tpath, tsymbols, lang in generated_targets:
+            target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
+            self._emit_edges_for_proto_kind(
+                messages, self._match_message, "proto-message", target_symbol_names, lang, edges
+            )
+            self._emit_edges_for_proto_kind(
+                services, self._match_service, "proto-service", target_symbol_names, lang, edges
+            )
+            self._emit_edges_for_proto_kind(enums, self._match_enum, "proto-enum", target_symbol_names, lang, edges)
+
+        return edges
+
+    def _classify_proto_symbols(self, source_symbols: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+        """Partition raw source symbols into proto semantic kinds.
+
+        Returns (messages, services, enums)."""
+        messages: list[dict] = []
+        services: list[dict] = []
+        enums: list[dict] = []
         for sym in source_symbols:
             kind = sym.get("kind", "")
             if kind in ("message", "class", "struct"):
@@ -139,66 +163,36 @@ class ProtobufBridge(LanguageBridge):
                 services.append(sym)
             elif kind == "enum":
                 enums.append(sym)
+        return messages, services, enums
 
-        # Find generated target files that correspond to this proto
-        generated_targets = self._find_generated_files(proto_stem, target_files)
+    def _emit_edges_for_proto_kind(
+        self,
+        symbols: list[dict],
+        matcher: Callable[[str, dict[str, str], str], list[str]],
+        mechanism: str,
+        target_symbol_names: dict[str, str],
+        lang: str,
+        edges: list[dict],
+    ) -> None:
+        """Bind one proto semantic kind to target symbols and emit edges.
 
-        # For each generated file, try to match symbols
-        for tpath, tsymbols, lang in generated_targets:
-            target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
-
-            # Match message symbols
-            for msg in messages:
-                msg_name = msg.get("name", "")
-                msg_qname = msg.get("qualified_name", msg_name)
-                matched = self._match_message(msg_name, target_symbol_names, lang)
-                for target_qname in matched:
-                    edges.append(
-                        {
-                            "source": msg_qname,
-                            "target": target_qname,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "proto-message",
-                            "target_lang": lang,
-                        }
-                    )
-
-            # Match service symbols
-            for svc in services:
-                svc_name = svc.get("name", "")
-                svc_qname = svc.get("qualified_name", svc_name)
-                matched = self._match_service(svc_name, target_symbol_names, lang)
-                for target_qname in matched:
-                    edges.append(
-                        {
-                            "source": svc_qname,
-                            "target": target_qname,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "proto-service",
-                            "target_lang": lang,
-                        }
-                    )
-
-            # Match enum symbols
-            for enum in enums:
-                enum_name = enum.get("name", "")
-                enum_qname = enum.get("qualified_name", enum_name)
-                matched = self._match_enum(enum_name, target_symbol_names, lang)
-                for target_qname in matched:
-                    edges.append(
-                        {
-                            "source": enum_qname,
-                            "target": target_qname,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "proto-enum",
-                            "target_lang": lang,
-                        }
-                    )
-
-        return edges
+        The supplied ``matcher`` encapsulates the target language's
+        generated naming convention; this helper only translates source
+        symbols into the uniform cross-language edge shape."""
+        for sym in symbols:
+            sym_name = sym.get("name", "")
+            sym_qname = sym.get("qualified_name", sym_name)
+            for target_qname in matcher(sym_name, target_symbol_names, lang):
+                edges.append(
+                    {
+                        "source": sym_qname,
+                        "target": target_qname,
+                        "kind": "x-lang",
+                        "bridge": self.name,
+                        "mechanism": mechanism,
+                        "target_lang": lang,
+                    }
+                )
 
     def _find_generated_files(
         self, proto_stem: str, target_files: dict[str, list[dict]]

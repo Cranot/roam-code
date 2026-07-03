@@ -339,6 +339,16 @@ class WebhookBridge:
                 # Keep daemon mode quiet unless the user asked for verbose logs.
                 return
 
+            def send_response(self, status: int) -> None:
+                # Explicit wrappers so these inherited stdlib methods resolve.
+                super().send_response(status)
+
+            def send_header(self, keyword: str, value: str) -> None:
+                super().send_header(keyword, value)
+
+            def end_headers(self) -> None:
+                super().end_headers()
+
             def _json(self, status: int, payload: dict) -> None:
                 body = json.dumps(payload, sort_keys=True).encode("utf-8")
                 self.send_response(status)

@@ -136,8 +136,18 @@ def _collect_blast_radius(conn, file_map):
     all_affected_files = set()
     sym_by_file = {}
 
+    # Bulk-fetch symbols for all changed files in one query (was N+1:
+    # one SELECT per changed file), then bucket by file_id.
+    syms_by_fid: dict = {}
+    for row in batched_in(
+        conn,
+        "SELECT id, name, kind, file_id FROM symbols WHERE file_id IN ({ph})",
+        list(file_map.values()),
+    ):
+        syms_by_fid.setdefault(row["file_id"], []).append(row)
+
     for path, fid in file_map.items():
-        syms = conn.execute("SELECT id, name, kind FROM symbols WHERE file_id = ?", (fid,)).fetchall()
+        syms = syms_by_fid.get(fid, [])
         sym_by_file[path] = syms
 
         for s in syms:
@@ -592,8 +602,37 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
 # ---------------------------------------------------------------------------
 
 
+def _attestation_render_model_for_format_parity(evidence):
+    """Project shared evidence facts once so text and markdown stay aligned."""
+    breaking = evidence.get("breaking_changes", {})
+    removed = breaking.get("removed", [])
+    signature_changed = breaking.get("signature_changed", [])
+    renamed = breaking.get("renamed", [])
+    effects = evidence.get("effects", [])
+
+    return {
+        "risk": evidence.get("risk"),
+        "blast": evidence.get("blast_radius", {}),
+        "removed": removed,
+        "signature_changed": signature_changed,
+        "renamed": renamed,
+        "removed_count": len(removed),
+        "signature_changed_count": len(signature_changed),
+        "renamed_count": len(renamed),
+        "total_breaking": len(removed) + len(signature_changed) + len(renamed),
+        "fitness": evidence.get("fitness", {}),
+        "budget": evidence.get("budget", {}),
+        "tests": evidence.get("tests", {}),
+        "effects": effects,
+        "effect_items": [
+            (effect, effect.get("direct_effects", []) + effect.get("transitive_effects", [])) for effect in effects
+        ],
+    }
+
+
 def _format_markdown(attestation, evidence, verdict):
     """Format attestation as GitHub/GitLab compatible markdown."""
+    model = _attestation_render_model_for_format_parity(evidence)
     lines = []
     lines.append("## Roam Attestation")
     lines.append("")
@@ -617,13 +656,13 @@ def _format_markdown(attestation, evidence, verdict):
     lines.append("")
 
     # Risk
-    risk = evidence.get("risk")
+    risk = model["risk"]
     if risk:
         lines.append(f"### Risk: {risk['level']} ({risk['score']}/100)")
         lines.append("")
 
     # Blast radius
-    br = evidence.get("blast_radius", {})
+    br = model["blast"]
     lines.append("### Blast Radius")
     lines.append("")
     lines.append("| Metric | Value |")
@@ -634,11 +673,10 @@ def _format_markdown(attestation, evidence, verdict):
     lines.append("")
 
     # Breaking changes
-    bc = evidence.get("breaking_changes", {})
-    removed = len(bc.get("removed", []))
-    sig_changed = len(bc.get("signature_changed", []))
-    renamed = len(bc.get("renamed", []))
-    total_bc = removed + sig_changed + renamed
+    removed = model["removed_count"]
+    sig_changed = model["signature_changed_count"]
+    renamed = model["renamed_count"]
+    total_bc = model["total_breaking"]
     if total_bc > 0:
         lines.append(f"### Breaking Changes ({total_bc})")
         lines.append("")
@@ -654,7 +692,7 @@ def _format_markdown(attestation, evidence, verdict):
         lines.append("")
 
     # Budget
-    bg = evidence.get("budget", {})
+    bg = model["budget"]
     if bg.get("rules_checked", 0) > 0:
         lines.append(f"### Budget ({bg['passed']} passed, {bg['failed']} failed, {bg['skipped']} skipped)")
         lines.append("")
@@ -665,7 +703,7 @@ def _format_markdown(attestation, evidence, verdict):
         lines.append("")
 
     # Tests
-    tests = evidence.get("tests", {})
+    tests = model["tests"]
     if tests.get("selected", 0) > 0:
         lines.append(f"### Affected Tests ({tests['selected']})")
         lines.append("")
@@ -678,12 +716,11 @@ def _format_markdown(attestation, evidence, verdict):
         lines.append("")
 
     # Effects
-    effects = evidence.get("effects", [])
-    if effects:
-        lines.append(f"### Effects ({len(effects)} symbols)")
+    effect_items = model["effect_items"]
+    if effect_items:
+        lines.append(f"### Effects ({len(effect_items)} symbols)")
         lines.append("")
-        for e in effects[:20]:
-            all_eff = e.get("direct_effects", []) + e.get("transitive_effects", [])
+        for e, all_eff in effect_items[:20]:
             lines.append(f"- {e['symbol']}: {', '.join(all_eff)}")
         lines.append("")
 
@@ -1379,13 +1416,6 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             attestation,
             evidence,
             verdict,
-            risk,
-            blast,
-            breaking,
-            fitness,
-            budget,
-            tests,
-            effects,
             output_file,
         )
 
@@ -1414,16 +1444,10 @@ def _emit_text(
     attestation,
     evidence,
     verdict,
-    risk,
-    blast,
-    breaking,
-    fitness,
-    budget,
-    tests,
-    effects,
     output_file,
 ):
     """Emit plain text attestation."""
+    model = _attestation_render_model_for_format_parity(evidence)
     lines = []
 
     # Verdict line
@@ -1436,11 +1460,13 @@ def _emit_text(
     lines.append("")
 
     # Risk
+    risk = model["risk"]
     if risk:
         lines.append(f"RISK: {risk['level']} ({risk['score']}/100)")
         lines.append("")
 
     # Blast radius
+    blast = model["blast"]
     lines.append("BLAST RADIUS:")
     lines.append(f"  Changed files:    {blast.get('changed_files', 0)}")
     lines.append(f"  Affected symbols: {blast.get('affected_symbols', 0)}")
@@ -1448,15 +1474,15 @@ def _emit_text(
     lines.append("")
 
     # Breaking changes
-    removed = len(breaking.get("removed", []))
-    sig_changed = len(breaking.get("signature_changed", []))
-    renamed = len(breaking.get("renamed", []))
-    total_bc = removed + sig_changed + renamed
+    removed = model["removed_count"]
+    sig_changed = model["signature_changed_count"]
+    renamed = model["renamed_count"]
+    total_bc = model["total_breaking"]
     if total_bc > 0:
         lines.append(f"BREAKING CHANGES ({total_bc}):")
         if removed:
             lines.append(f"  {removed} removed")
-            for r in breaking["removed"][:5]:
+            for r in model["removed"][:5]:
                 lines.append(f"    {abbrev_kind(r.get('kind', ''))} {r['name']}  {r.get('file', '')}")
         if sig_changed:
             lines.append(f"  {sig_changed} signature changed")
@@ -1468,6 +1494,7 @@ def _emit_text(
         lines.append("")
 
     # Budget
+    budget = model["budget"]
     if budget.get("rules_checked", 0) > 0:
         lines.append(f"BUDGET ({budget['passed']} pass, {budget['failed']} fail, {budget['skipped']} skip):")
         for r in budget.get("rules", []):
@@ -1480,6 +1507,7 @@ def _emit_text(
         lines.append("")
 
     # Fitness
+    fitness = model["fitness"]
     fitness_v = fitness.get("violations", [])
     if fitness_v:
         lines.append(f"FITNESS VIOLATIONS ({len(fitness_v)}):")
@@ -1488,6 +1516,7 @@ def _emit_text(
         lines.append("")
 
     # Affected tests
+    tests = model["tests"]
     if tests.get("selected", 0) > 0:
         lines.append(
             f"AFFECTED TESTS ({tests['selected']}: "
@@ -1504,10 +1533,10 @@ def _emit_text(
         lines.append("")
 
     # Effects
-    if effects:
-        lines.append(f"EFFECTS ({len(effects)} symbols):")
-        for e in effects[:15]:
-            all_eff = e.get("direct_effects", []) + e.get("transitive_effects", [])
+    effect_items = model["effect_items"]
+    if effect_items:
+        lines.append(f"EFFECTS ({len(effect_items)} symbols):")
+        for e, all_eff in effect_items[:15]:
             lines.append(f"  {e.get('symbol', '?')}: {', '.join(all_eff)}")
         lines.append("")
 

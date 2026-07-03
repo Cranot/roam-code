@@ -35,12 +35,14 @@ def _compute_health_score(
 
     tangle_r = 0.0
     if G is not None and symbols > 0:
+        from networkx.exception import NetworkXException
+
         try:
             cyc_ids = set()
             for scc in find_cycles_fn(G):
                 cyc_ids.update(scc)
             tangle_r = len(cyc_ids) / symbols * 100
-        except Exception as _exc:  # noqa: BLE001 — defensive
+        except (ImportError, NetworkXException) as _exc:
             from roam.observability import log_swallowed
 
             log_swallowed("metrics_history:nested", _exc)
@@ -76,6 +78,26 @@ def _compute_health_score(
     return max(0, min(100, int(100 * math.exp(log_score))))
 
 
+def _count_layer_violations_for_resilient_snapshots(G):
+    """Count optional layer violations without hiding non-layer bugs."""
+    if G is None:
+        return 0
+
+    from networkx.exception import NetworkXException
+    from roam.graph.layers import detect_layers, find_violations
+
+    try:
+        layer_map = detect_layers(G)
+        if not layer_map:
+            return 0
+        return len(find_violations(G, layer_map))
+    except NetworkXException as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history:layers", _exc)
+        return 0
+
+
 def collect_metrics(conn):
     """Query the DB for all health metrics and compute a health score.
 
@@ -87,7 +109,7 @@ def collect_metrics(conn):
     symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
     # Keep health math aligned with `roam health`.
-    from roam.commands.cmd_health import _is_utility_path, _percentile
+    from roam.commands.cmd_health import _betweenness_percentiles, _is_utility_path
 
     # Cycles
     try:
@@ -115,10 +137,7 @@ def collect_metrics(conn):
     god_components = len(god_items)
 
     # Bottlenecks (same query + thresholds as cmd_health.py)
-    all_bw = sorted(
-        r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
-    )
-    bn_p90 = _percentile(all_bw, 90)
+    bn_p90 = _betweenness_percentiles(conn, (90,)).values[0]
 
     bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
     _round = round
@@ -135,18 +154,7 @@ def collect_metrics(conn):
     dead_exports = len(dead_rows)
 
     # Layer violations
-    layer_violations = 0
-    if G is not None:
-        try:
-            from roam.graph.layers import detect_layers, find_violations
-
-            layer_map = detect_layers(G)
-            if layer_map:
-                layer_violations = len(find_violations(G, layer_map))
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            from roam.observability import log_swallowed
-
-            log_swallowed("metrics_history:nested", _exc)
+    layer_violations = _count_layer_violations_for_resilient_snapshots(G)
 
     health_score = _compute_health_score(
         conn,
@@ -163,6 +171,8 @@ def collect_metrics(conn):
     # Tangle ratio: percentage of symbols in cycles
     tangle_ratio = 0.0
     if G is not None and symbols > 0:
+        from networkx.exception import NetworkXException
+
         try:
             from roam.graph.cycles import find_cycles as _find_cycles
 
@@ -171,7 +181,7 @@ def collect_metrics(conn):
             for scc in cycle_list:
                 cycle_sym_ids.update(scc)
             tangle_ratio = round(len(cycle_sym_ids) / symbols * 100, 1)
-        except Exception as _exc:  # noqa: BLE001 — defensive
+        except (ImportError, NetworkXException) as _exc:
             from roam.observability import log_swallowed
 
             log_swallowed("metrics_history:nested", _exc)
@@ -182,7 +192,7 @@ def collect_metrics(conn):
         row = conn.execute("SELECT AVG(cognitive_complexity) FROM symbol_metrics").fetchone()
         if row and row[0] is not None:
             avg_complexity = round(row[0], 1)
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except sqlite3.Error as _exc:
         from roam.observability import log_swallowed
 
         log_swallowed("metrics_history", _exc)
@@ -195,7 +205,7 @@ def collect_metrics(conn):
         ).fetchone()
         if row:
             brain_methods = row[0]
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except sqlite3.Error as _exc:
         from roam.observability import log_swallowed
 
         log_swallowed("metrics_history", _exc)
@@ -205,12 +215,19 @@ def collect_metrics(conn):
     # historical decay series toward structural failure. None on a degenerate
     # graph (< 2 nodes) or eigensolver failure — stored as NULL, never a
     # misleading 0.0.
+    # Expected failure families only: module chain unavailable (ImportError),
+    # schema drift on an old index (sqlite3.Error), graph-algorithm failure
+    # (NetworkXException). Eigensolver/scipy failures never reach here — they
+    # degrade to a 0.0 sentinel inside spectral._compute_algebraic_connectivity.
+    # Logic errors (TypeError/AttributeError/...) propagate.
     spectral_gap_val = None
+    from networkx.exception import NetworkXException
+
     try:
         from roam.graph.spectral_forecast import compute_current_spectral_gap
 
         spectral_gap_val = compute_current_spectral_gap(conn)
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except (ImportError, sqlite3.Error, NetworkXException) as _exc:
         from roam.observability import log_swallowed
 
         log_swallowed("metrics_history", _exc)

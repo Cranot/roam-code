@@ -19,12 +19,9 @@ Low-confidence-verdict API:
 
 * :func:`verdict_prefix` — prepend ``"low confidence — "`` to a base
   verdict when the result is low-confidence. Used by ``roam retrieve``.
-* :func:`format_no_match` — emit a full ``"VERDICT: no confident X match"``
-  + closest-matches block. Used by ``roam ask``.
 
-Both helpers accept the same threshold parameter so commands can tune
-the floor independently. The default 0.15 was empirically validated
-in the v12.3 dogfood loop (see :mod:`roam.commands.cmd_ask`).
+The default 0.15 threshold was empirically validated in the v12.3
+dogfood loop (see :mod:`roam.commands.cmd_ask`).
 
 ----------------------------------------------------------------------
 
@@ -104,6 +101,18 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.15
 
 # Valid confidence levels (closed enumeration — agents can rely on this).
 CONFIDENCE_LEVELS: tuple[str, str, str] = ("high", "medium", "low")
+
+__all__ = [
+    "CONFIDENCE_LEVELS",
+    "DEFAULT_CONFIDENCE_THRESHOLD",
+    "confidence_distribution",
+    "confidence_level_rank",
+    "is_low_confidence",
+    "triple",
+    "verdict_prefix",
+    "verdict_with_high_count",
+    "wrap_findings",
+]
 
 
 # ---------------------------------------------------------------------------

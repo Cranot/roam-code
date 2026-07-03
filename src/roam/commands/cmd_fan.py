@@ -92,6 +92,80 @@ def _resolve_file_id(conn: sqlite3.Connection, file_path: str) -> int | None:
         return None
 
 
+def _parse_symbol_location(item: dict) -> tuple[str, str, int | None]:
+    """Split a symbol item's ``location`` into ``(file_path, name, line)``.
+
+    ``location`` is the ``<file>:<line>`` string the ranked items carry;
+    ``line`` parses to ``None`` when absent or malformed. Single-sourced so
+    the persist pre-pass and the emit loop key on byte-identical tuples.
+    """
+    symbol_name = item.get("name") or ""
+    location = item.get("location") or ""
+    file_path = location.split(":", 1)[0] if location else ""
+    line_start: int | None = None
+    if location and ":" in location:
+        try:
+            line_start = int(location.rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            line_start = None
+    return file_path, symbol_name, line_start
+
+
+def _batch_resolve_symbol_ids(
+    conn: sqlite3.Connection,
+    keys: list[tuple[str, str, int | None]],
+) -> dict[tuple[str, str, int | None], int]:
+    """Pre-resolve ``symbols.id`` for every ``(path, name, line)`` key.
+
+    Collapses the persist path's former per-item lookups — an exact
+    ``(path, name, line)`` match plus a nearest-line fallback query, i.e.
+    up to ``2*N`` round-trips for ``N`` flagged items — into a single
+    ``path IN (...)`` scan. Candidates are grouped by ``(path, name)`` in
+    memory so the nearest-line fallback runs Python-side with no second
+    round-trip. Returns a map keyed by the same tuples; misses are absent.
+    """
+    if not keys:
+        return {}
+    paths = {k[0] for k in keys if k[0]}
+    if not paths:
+        return {}
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT f.path, s.name, s.id, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE f.path IN ({ph})",
+            paths,
+        )
+    except sqlite3.OperationalError:
+        return {}
+
+    # Group candidates by (path, name); both the exact and the
+    # nearest-line match then resolve in memory.
+    by_pair: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    for path, name, sid, line_start in rows:
+        by_pair.setdefault((path, name), []).append((int(sid), int(line_start or 0)))
+
+    resolved: dict[tuple[str, str, int | None], int] = {}
+    for key in keys:
+        file_path, symbol_name, line_start = key
+        candidates = by_pair.get((file_path, symbol_name))
+        if not candidates:
+            continue
+        # Exact line first (matches the prior `s.line_start = ?` query);
+        # only attempted when a line is known, mirroring the old path
+        # where a NULL line never satisfied the equality and fell through.
+        if line_start is not None:
+            exact = next((sid for sid, ls in candidates if ls == line_start), None)
+            if exact is not None:
+                resolved[key] = exact
+                continue
+        # Nearest-line fallback (ABS distance to the known line, or 0).
+        target = line_start or 0
+        resolved[key] = min(candidates, key=lambda c: abs(c[1] - target))[0]
+    return resolved
+
+
 def _emit_fan_findings(
     conn: sqlite3.Connection,
     data: dict,
@@ -133,6 +207,18 @@ def _emit_fan_findings(
     subject_kind = "symbol" if mode == "symbol" else "file"
     caller_metric_definition = data.get("summary", {}).get("caller_metric_definition")
 
+    # Pre-resolve every flagged symbol's subject_id in ONE batched query
+    # (keyed by file/name/line, with an in-memory nearest-line fallback)
+    # instead of the prior two lookups per item inside the loop.
+    symbol_id_map: dict[tuple[str, str, int | None], int] = {}
+    if mode == "symbol":
+        symbol_keys = [
+            _parse_symbol_location(item)
+            for item in data.get("items", [])
+            if (item.get("flag") or "") in _FAN_FLAG_TO_KIND
+        ]
+        symbol_id_map = _batch_resolve_symbol_ids(conn, symbol_keys)
+
     written = 0
     for item in data.get("items", []):
         flag = item.get("flag") or ""
@@ -144,37 +230,12 @@ def _emit_fan_findings(
         confidence = _FAN_FLAG_TO_CONFIDENCE[flag]
 
         if mode == "symbol":
-            symbol_name = item.get("name") or ""
+            file_path, symbol_name, line_start = _parse_symbol_location(item)
             location = item.get("location") or ""
-            file_path = location.split(":", 1)[0] if location else ""
-            line_start: int | None = None
-            if location and ":" in location:
-                try:
-                    line_start = int(location.rsplit(":", 1)[1])
-                except (ValueError, IndexError):
-                    line_start = None
-            # Resolve subject_id back to symbols.id via (file, name, line).
-            subject_id: int | None = None
-            try:
-                row = conn.execute(
-                    "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
-                    "WHERE f.path = ? AND s.name = ? AND s.line_start = ? LIMIT 1",
-                    (file_path, symbol_name, line_start),
-                ).fetchone()
-                if row is not None:
-                    subject_id = int(row[0])
-                else:
-                    # Fallback: nearest-line match by (path, name) — handles
-                    # decorator / parser line-start drift the same way smells does.
-                    row = conn.execute(
-                        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
-                        "WHERE f.path = ? AND s.name = ? "
-                        "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) LIMIT 1",
-                        (file_path, symbol_name, line_start or 0),
-                    ).fetchone()
-                    subject_id = int(row[0]) if row is not None else None
-            except sqlite3.OperationalError:
-                subject_id = None
+            # subject_id was pre-resolved in one batched query above
+            # (exact (file, name, line) match, else nearest-line fallback,
+            # handling decorator / parser line-start drift like smells does).
+            subject_id: int | None = symbol_id_map.get((file_path, symbol_name, line_start))
 
             subject_key = f"{file_path}:{symbol_name}:{int(line_start or 0)}"
             evidence = {

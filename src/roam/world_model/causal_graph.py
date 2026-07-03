@@ -57,7 +57,7 @@ import re
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
@@ -307,6 +307,50 @@ def _global_names(all_text: str) -> set[str]:
         if n.isupper() or "_" in n or n.islower():
             names.add(n)
     return names
+
+
+def _group_rows_by_file(rows: Iterable) -> dict[str, list]:
+    """Group symbols by file so source reads are amortized across symbols."""
+    rows_by_file: dict[str, list] = {}
+    for r in rows:
+        rows_by_file.setdefault(r["file_path"], []).append(r)
+    return rows_by_file
+
+
+def _batch_read_source_files_for_symbol_slices(
+    repo_root: Path,
+    file_paths: Iterable[str],
+) -> dict[str, tuple[str, list[str]]]:
+    """Batch-read source texts once per file.
+
+    Returns a mapping from relative file path to ``(text, lines)``.
+    Missing or unreadable files map to ``("", [])`` with the failure
+    surfaced via :func:`log_swallowed` so callers don't mistake I/O
+    failure for a flow-free source file.
+    """
+    return {
+        file_path: _read_source_file_for_symbol_slicing(repo_root, file_path) for file_path in dict.fromkeys(file_paths)
+    }
+
+
+def _read_source_file_for_symbol_slicing(
+    repo_root: Path,
+    file_path: str,
+) -> tuple[str, list[str]]:
+    """Read one source file, preserving empty slices for missing content."""
+    p = repo_root / file_path
+    try:
+        if not p.exists():
+            return "", []
+        text = p.read_text(encoding="utf-8", errors="replace")
+        return text, text.splitlines(keepends=True)
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+        # unreadable file yields zero causal edges that look identical
+        # to a genuinely flow-free function. Surface the lineage
+        # (rate-limited per-scope; visible under ROAM_VERBOSE=1).
+        log_swallowed(f"world_model.causal_graph:file_read:{file_path}", exc)
+        return "", []
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +778,78 @@ def _scan_one(
     )
 
 
+def _params_for_symbol_row(row, body: str) -> list[str]:
+    """Extract parameters for a DB symbol row, falling back to the source body."""
+    params = _extract_params_from_signature(row["signature"])
+    if not params and body:
+        params = _extract_params_from_body(body)
+    return params
+
+
+def _surface_params_as_inputs(graph: CausalGraph, params: list[str]) -> None:
+    """Always surface known params as graph inputs, even when no edges emit."""
+    for p in params:
+        param_input = f"param:{p}"
+        if param_input not in graph.inputs:
+            graph.inputs.append(param_input)
+    graph.inputs.sort()
+
+
+def _scan_symbol_row(
+    row,
+    file_path: str,
+    all_lines: list[str],
+    file_globals: set[str],
+    side_effects_by_symbol_id: dict[int, SideEffectClassification],
+) -> CausalGraph:
+    """Build one symbol's causal graph from pre-read file lines."""
+    symbol_id = row["id"]
+    line_start = row["line_start"] or 1
+    line_end = row["line_end"] or line_start
+    body = "".join(all_lines[max(0, line_start - 1) : line_end]) if all_lines else ""
+    params = _params_for_symbol_row(row, body)
+
+    graph = _scan_one(
+        sym_name=row["qualified_name"] or row["name"],
+        file_path=file_path,
+        body_text=body,
+        params=params,
+        file_globals=file_globals,
+        sink_se=side_effects_by_symbol_id.get(symbol_id),
+        line_start=line_start,
+        symbol_id=symbol_id,
+        line_end=line_end,
+    )
+    _surface_params_as_inputs(graph, params)
+    return graph
+
+
+def _scan_file_rows(
+    file_path: str,
+    file_rows: list,
+    source_files: dict[str, tuple[str, list[str]]],
+    side_effects_by_symbol_id: dict[int, SideEffectClassification],
+) -> list[CausalGraph]:
+    """Build causal graphs for every symbol row in one source file."""
+    all_text, all_lines = source_files[file_path]
+    file_globals = _global_names(all_text) if all_text else set()
+    return [_scan_symbol_row(row, file_path, all_lines, file_globals, side_effects_by_symbol_id) for row in file_rows]
+
+
+def _scan_candidate_rows(
+    repo_root: Path,
+    rows: list,
+    side_effects_by_symbol_id: dict[int, SideEffectClassification],
+) -> list[CausalGraph]:
+    """Batch source reads by file, then scan all candidate symbol rows."""
+    rows_by_file = _group_rows_by_file(rows)
+    source_files = _batch_read_source_files_for_symbol_slices(repo_root, rows_by_file.keys())
+    out: list[CausalGraph] = []
+    for file_path, file_rows in rows_by_file.items():
+        out.extend(_scan_file_rows(file_path, file_rows, source_files, side_effects_by_symbol_id))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -797,7 +913,7 @@ def classify_causal_graph(
 
     try:
         repo_root = find_project_root()
-    except Exception as exc:
+    except OSError as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
         # missing project root downgrades per-symbol source slicing to a
         # CWD-relative read; surface the lineage so callers see the
@@ -812,66 +928,9 @@ def classify_causal_graph(
         )
         repo_root = Path(".")
 
-    # Group rows by file so we read each file once.
-    rows_by_file: dict[str, list] = {}
-    for r in rows:
-        rows_by_file.setdefault(r["file_path"], []).append(r)
-
-    out: list[CausalGraph] = []
-    for file_path, file_rows in rows_by_file.items():
-        try:
-            p = repo_root / file_path
-            if p.exists():
-                with open(p, "r", encoding="utf-8", errors="replace") as f:
-                    all_text = f.read()
-                all_lines = all_text.splitlines(keepends=True)
-            else:
-                all_text = ""
-                all_lines = []
-        except OSError as exc:
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
-            # unreadable file yields zero causal edges that look identical
-            # to a genuinely flow-free function. Surface the lineage
-            # (rate-limited per-scope; visible under ROAM_VERBOSE=1).
-            log_swallowed(f"world_model.causal_graph:file_read:{file_path}", exc)
-            all_text = ""
-            all_lines = []
-
-        file_globals = _global_names(all_text) if all_text else set()
-
-        for r in file_rows:
-            sid = r["id"]
-            ls = r["line_start"] or 1
-            le = r["line_end"] or ls
-            if all_lines:
-                body = "".join(all_lines[max(0, ls - 1) : le])
-            else:
-                body = ""
-
-            # Parameters — prefer signature column, fall back to body parse.
-            params = _extract_params_from_signature(r["signature"])
-            if not params and body:
-                params = _extract_params_from_body(body)
-
-            graph = _scan_one(
-                sym_name=r["qualified_name"] or r["name"],
-                file_path=file_path,
-                body_text=body,
-                params=params,
-                file_globals=file_globals,
-                sink_se=se_by_id.get(sid),
-                line_start=ls,
-                symbol_id=sid,
-                line_end=le,
-            )
-            # Always surface the parameters as inputs even if no edges
-            # were emitted — makes "pure function" envelopes informative.
-            for p in params:
-                if f"param:{p}" not in graph.inputs:
-                    graph.inputs.append(f"param:{p}")
-            graph.inputs.sort()
-            out.append(graph)
-    return out
+    # Batch-read every file once before scanning symbols - separates I/O
+    # from compute and avoids an open() call inside the per-symbol loop.
+    return _scan_candidate_rows(repo_root, rows, se_by_id)
 
 
 __all__ = [

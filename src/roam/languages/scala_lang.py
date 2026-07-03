@@ -467,6 +467,16 @@ class ScalaExtractor(LanguageExtractor):
 
     # ---- Reference extraction ----
 
+    _SCOPE_DEFINITION_TYPES = frozenset(
+        (
+            "class_definition",
+            "trait_definition",
+            "object_definition",
+            "function_definition",
+            "function_declaration",
+        )
+    )
+
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
             if child.type == "import_declaration":
@@ -476,24 +486,22 @@ class ScalaExtractor(LanguageExtractor):
             elif child.type == "instance_expression":
                 self._extract_new(child, source, refs, scope_name)
             else:
-                new_scope = scope_name
-                if child.type == "class_definition":
-                    n = self._get_identifier(child, source)
-                    if n:
-                        new_scope = f"{scope_name}.{n}" if scope_name else n
-                elif child.type == "trait_definition":
-                    n = self._get_identifier(child, source)
-                    if n:
-                        new_scope = f"{scope_name}.{n}" if scope_name else n
-                elif child.type == "object_definition":
-                    n = self._get_identifier(child, source)
-                    if n:
-                        new_scope = f"{scope_name}.{n}" if scope_name else n
-                elif child.type in ("function_definition", "function_declaration"):
-                    n = self._get_identifier(child, source)
-                    if n:
-                        new_scope = f"{scope_name}.{n}" if scope_name else n
+                new_scope = self._scope_for_definition(child, source, scope_name)
                 self._walk_refs(child, source, refs, new_scope)
+
+    def _scope_for_definition(self, node, source, scope_name):
+        """Return the scope introduced by a named definition, if any.
+
+        Definitions (class, trait, object, function) extend the current
+        namespace with their identifier so nested references report the
+        correct qualified source.
+        """
+        if node.type not in self._SCOPE_DEFINITION_TYPES:
+            return scope_name
+        name = self._get_identifier(node, source)
+        if not name:
+            return scope_name
+        return f"{scope_name}.{name}" if scope_name else name
 
     def _extract_import(self, node, source, refs, scope_name):
         """Extract import references.

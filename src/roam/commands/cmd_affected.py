@@ -34,6 +34,19 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 # ---------------------------------------------------------------------------
 
 
+def _load_frontier_dependents_in_one_query(conn, frontier_ids):
+    """Batch frontier edge lookup so BFS depth stays correct without N+1 I/O."""
+    rows = batched_in(
+        conn,
+        "SELECT e.target_id, e.source_id FROM edges e WHERE e.target_id IN ({ph})",
+        list(frontier_ids),
+    )
+    dependents_by_target = defaultdict(list)
+    for row in rows:
+        dependents_by_target[row["target_id"]].append(row["source_id"])
+    return dependents_by_target
+
+
 def _bfs_forward_with_depth(conn, start_sym_ids, max_depth=None):
     """Walk forward edges (dependents/reverse callers) via BFS.
 
@@ -44,38 +57,40 @@ def _bfs_forward_with_depth(conn, start_sym_ids, max_depth=None):
     dependent.  *via_file* is the file path of the first-hop symbol that
     led to this dependent.
     """
-    # Build file lookup for via labels
-    file_lookup = {}
-    for row in conn.execute("SELECT s.id, f.path FROM symbols s JOIN files f ON s.file_id = f.id").fetchall():
-        file_lookup[row["id"]] = row["path"]
+    # Build file lookup for via labels — one batched query, then iterate results.
+    file_rows = conn.execute("SELECT s.id, f.path FROM symbols s JOIN files f ON s.file_id = f.id").fetchall()
+    file_lookup = {row["id"]: row["path"] for row in file_rows}
 
     visited = {}  # symbol_id -> (hops, via_file)
-    queue = deque()  # (symbol_id, hops, via_file)
+    frontier = deque()  # (symbol_id, hops, via_file)
 
     for sid in start_sym_ids:
         visited[sid] = (0, None)
-        queue.append((sid, 0, None))
+        frontier.append((sid, 0, None))
 
-    while queue:
-        current_id, hops, via = queue.popleft()
-        if max_depth is not None and hops >= max_depth:
-            continue
+    while frontier:
+        expandable = [(sid, hops, via) for sid, hops, via in frontier if max_depth is None or hops < max_depth]
+        if not expandable:
+            break
 
-        # Find all symbols that reference/call current_id
-        # (edges where current_id is the target => source_id depends on it)
-        dependents = conn.execute(
-            "SELECT e.source_id FROM edges e WHERE e.target_id = ?",
-            (current_id,),
-        ).fetchall()
+        parent_by_id = {sid: (hops, via) for sid, hops, via in expandable}
+        dependents_by_target = _load_frontier_dependents_in_one_query(
+            conn,
+            parent_by_id,
+        )
+        next_frontier = deque()
 
-        for row in dependents:
-            dep_id = row["source_id"]
-            new_hops = hops + 1
-            new_via = via if via else file_lookup.get(dep_id)
+        for current_id, (hops, via) in parent_by_id.items():
+            # Edges where current_id is the target => source_id depends on it.
+            for dep_id in dependents_by_target.get(current_id, []):
+                new_hops = hops + 1
+                new_via = via if via else file_lookup.get(dep_id)
 
-            if dep_id not in visited or visited[dep_id][0] > new_hops:
-                visited[dep_id] = (new_hops, new_via)
-                queue.append((dep_id, new_hops, new_via))
+                if dep_id not in visited or visited[dep_id][0] > new_hops:
+                    visited[dep_id] = (new_hops, new_via)
+                    next_frontier.append((dep_id, new_hops, new_via))
+
+        frontier = next_frontier
 
     return visited
 
@@ -445,13 +460,17 @@ def _find_colocated_test_files(conn, source_paths):
         if d:
             dirs.add(d)
 
+    if not dirs:
+        return []
+
+    dir_prefixes = tuple(f"{d}/" for d in dirs)
+    source_path_set = {fp.replace("\\", "/") for fp in source_paths}
     colocated = []
-    for d in dirs:
-        pattern = f"{d}/%"
-        rows = conn.execute("SELECT path FROM files WHERE path LIKE ?", (pattern,)).fetchall()
-        for r in rows:
-            p = r["path"]
-            if is_test_file(p) and p not in source_paths:
-                colocated.append(p)
+    rows = conn.execute("SELECT path FROM files").fetchall()
+    for r in rows:
+        p = r["path"]
+        normalized = p.replace("\\", "/")
+        if normalized.startswith(dir_prefixes) and is_test_file(p) and normalized not in source_path_set:
+            colocated.append(p)
 
     return sorted(set(colocated))

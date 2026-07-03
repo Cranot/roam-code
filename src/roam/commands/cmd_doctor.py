@@ -13,6 +13,7 @@ to populate. See W1085 / W1144 for the audit + design rationale.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json as _json
 import re
 import shutil
@@ -139,33 +140,14 @@ def _check_python_version() -> dict:
     }
 
 
-def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
-    """Resolve an installed package version.
+def _pkg_version(pkg_name: str) -> str:
+    """Resolve an installed package version from distribution metadata."""
+    import importlib.metadata as _md
 
-    Tries ``importlib.metadata.version(pkg_name)`` first (works for any
-    pip-installed distribution); falls back to ``module.__version__`` if
-    the dunder is set (some older C-extension packages); else ``unknown``.
-
-    Several roam dependencies (tree-sitter, tree-sitter-language-pack)
-    don't expose ``__version__`` so the previous direct attribute read
-    yielded "unknown" even when the wheel was correctly installed —
-    obscuring the real version in ``roam doctor`` diagnostics.
-    """
     try:
-        import importlib.metadata as _md
-
         return _md.version(pkg_name)
     except _md.PackageNotFoundError:
-        pass
-    if module_name:
-        try:
-            import importlib
-
-            mod = importlib.import_module(module_name)
-            return getattr(mod, "__version__", "unknown")
-        except Exception as _exc:  # noqa: BLE001 -- importing arbitrary module runs its top-level code; any failure means version is unknown
-            return "unknown"
-    return "unknown"
+        return "unknown"
 
 
 def _check_tree_sitter() -> dict:
@@ -173,7 +155,7 @@ def _check_tree_sitter() -> dict:
     try:
         import tree_sitter  # noqa: F401
 
-        version = _pkg_version("tree-sitter", "tree_sitter")
+        version = _pkg_version("tree-sitter")
         return {
             "name": "tree-sitter",
             "passed": True,
@@ -192,7 +174,7 @@ def _check_tree_sitter_language_pack() -> dict:
     try:
         import tree_sitter_language_pack  # noqa: F401
 
-        version = _pkg_version("tree-sitter-language-pack", "tree_sitter_language_pack")
+        version = _pkg_version("tree-sitter-language-pack")
         return {
             "name": "tree-sitter-language-pack",
             "passed": True,
@@ -656,7 +638,7 @@ def _check_stale_math_signal_column() -> dict:
     """
     try:
         from roam.db.connection import db_exists, open_db
-    except Exception as exc:
+    except (ImportError, AttributeError) as exc:
         return {
             "name": "Stale math_signals column",
             "passed": False,
@@ -670,6 +652,8 @@ def _check_stale_math_signal_column() -> dict:
             "detail": "no index - stale-signal check skipped",
             "_state": "no_index",
         }
+
+    import sqlite3 as _sqlite3
 
     try:
         with open_db(readonly=True) as conn:
@@ -698,7 +682,7 @@ def _check_stale_math_signal_column() -> dict:
             row = conn.execute(
                 "SELECT COUNT(*), COALESCE(SUM(loop_eq_with_dependent_write), 0) FROM math_signals"
             ).fetchone()
-    except Exception as exc:
+    except _sqlite3.Error as exc:
         return {
             "name": "Stale math_signals column",
             "passed": False,
@@ -1532,6 +1516,42 @@ def _github_template_registry() -> list[tuple[str, str]]:
     ]
 
 
+_CiSetupDriftContract = tuple[
+    str,
+    Callable[[], str],
+    Callable[[str, dict[str, str]], str],
+    Callable[[], Path],
+]
+
+
+class _CiSetupDriftContractUnavailable(Exception):
+    """Raised when doctor cannot load ci-setup's drift comparison contract."""
+
+
+def _load_ci_setup_drift_contract() -> _CiSetupDriftContract:
+    """Load ci-setup's drift helpers without hiding import-time bugs."""
+    try:
+        from roam.commands import cmd_ci_setup
+    except ModuleNotFoundError as exc:
+        if exc.name == "roam.commands.cmd_ci_setup":
+            raise _CiSetupDriftContractUnavailable("roam.commands.cmd_ci_setup is unavailable") from exc
+        raise
+
+    required = ("_GITHUB_TEMPLATE", "_get_python_version", "_substitute_vars", "_templates_dir")
+    missing = [name for name in required if not hasattr(cmd_ci_setup, name)]
+    if missing:
+        raise _CiSetupDriftContractUnavailable(
+            "roam.commands.cmd_ci_setup missing drift helpers: " + ", ".join(missing)
+        )
+
+    return (
+        cmd_ci_setup._GITHUB_TEMPLATE,
+        cmd_ci_setup._get_python_version,
+        cmd_ci_setup._substitute_vars,
+        cmd_ci_setup._templates_dir,
+    )
+
+
 def _normalize_workflow_yaml(text: str) -> str:
     """Strip comments + trailing whitespace + collapse blank-line runs.
 
@@ -1617,17 +1637,17 @@ def _check_ci_workflow_drift() -> dict:
     on file exists) or re-emit after deleting the old file.
     """
     try:
-        from roam.commands.cmd_ci_setup import (
+        (
             _GITHUB_TEMPLATE,
             _get_python_version,
             _substitute_vars,
             _templates_dir,
-        )
-    except Exception as exc:
+        ) = _load_ci_setup_drift_contract()
+    except _CiSetupDriftContractUnavailable as exc:
         return {
             "name": "CI workflow drift",
             "passed": True,
-            "detail": f"ci-setup module import failed: {type(exc).__name__}: {exc}",
+            "detail": f"ci-setup drift contract unavailable: {exc}",
             "_state": "import_failed",
         }
 

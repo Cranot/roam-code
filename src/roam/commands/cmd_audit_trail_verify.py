@@ -172,6 +172,14 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     issues: list[dict] = []
     prev_hash = ""
 
+    # Hoist loop-invariant attribute/method lookups out of the hot line loop.
+    # _json.loads, hashlib.sha256, and the per-hasher hexdigest method are all
+    # resolved once; only the line-dependent arguments vary per iteration.
+    loads = _json.loads
+    json_decode_error = _json.JSONDecodeError
+    sha256 = hashlib.sha256
+    hexdigest = type(sha256(b"")).hexdigest
+
     if not path.exists():
         return records, [{"line": 0, "issue": f"audit trail not found: {path}"}]
 
@@ -181,8 +189,8 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
             if not line.strip():
                 continue
             try:
-                rec = _json.loads(line)
-            except _json.JSONDecodeError as exc:
+                rec = loads(line)
+            except json_decode_error as exc:
                 issues.append(
                     {
                         "line": line_no,
@@ -207,7 +215,7 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
                 )
 
             records.append(rec)
-            prev_hash = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            prev_hash = hexdigest(sha256(line.encode("utf-8")))
 
     return records, issues
 

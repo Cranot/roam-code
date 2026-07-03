@@ -24,6 +24,7 @@ import sqlite3
 from pathlib import Path
 
 from roam.config import get_retrieve_config, get_retrieve_weights
+from roam.db.connection import batched_in
 from roam.retrieve.rerank import structural_score
 from roam.retrieve.seeds import _fts5_query_for, extract_tokens, infer_seeds
 
@@ -32,6 +33,42 @@ from roam.retrieve.seeds import _fts5_query_for, extract_tokens, infer_seeds
 # `[retrieve] tokens_per_line` in `.roam/config.toml`.
 DEFAULT_TOKENS_PER_LINE = 4
 DEFAULT_FIRST_STAGE_TOKEN_CAP = 8
+
+
+def _retrieve_settings(
+    config_root: Path | None,
+    weight_overrides: dict[str, float] | None,
+) -> tuple[dict[str, float], int, int]:
+    cfg = get_retrieve_config(config_root)
+    config_weights = get_retrieve_weights(config_root)
+    if weight_overrides is None:
+        weights = config_weights
+    else:
+        # Merge: caller weights take priority; missing keys fall back to config.
+        weights = dict(config_weights)
+        weights.update(weight_overrides)
+    tokens_per_line = int(cfg.get("tokens_per_line", DEFAULT_TOKENS_PER_LINE))
+    token_cap = int(cfg.get("first_stage_token_cap", DEFAULT_FIRST_STAGE_TOKEN_CAP))
+    return weights, tokens_per_line, token_cap
+
+
+def _is_recoverable_index_error(exc: sqlite3.OperationalError) -> bool:
+    """True only for the missing-index faults the pipeline degrades for.
+
+    FTS5 or the search/adjacency tables may be absent on a fresh or
+    partially-initialized repo; in those cases the caller falls back to
+    LIKE search or skips expansion. Every other ``OperationalError``
+    (locked database, I/O error, malformed query, etc.) must propagate so
+    the real fault is visible.
+    """
+    msg = str(exc).lower()
+    return "no such module: fts5" in msg or "no such table: symbol_fts" in msg or "no such table: file_edges" in msg
+
+
+def _ensure_recoverable_index_error(exc: sqlite3.OperationalError) -> None:
+    """Re-raise the active ``OperationalError`` unless it is index-degraded."""
+    if not _is_recoverable_index_error(exc):
+        raise
 
 
 def run_retrieve(
@@ -57,17 +94,7 @@ def run_retrieve(
     harness to rotate vectors deterministically without rewriting
     config files).
     """
-    cfg = get_retrieve_config(config_root)
-    config_weights = get_retrieve_weights(config_root)
-    if weights is not None:
-        # Merge: caller weights take priority; missing keys fall back to config.
-        merged = dict(config_weights)
-        merged.update(weights)
-        weights = merged
-    else:
-        weights = config_weights
-    tokens_per_line = int(cfg.get("tokens_per_line", DEFAULT_TOKENS_PER_LINE))
-    token_cap = int(cfg.get("first_stage_token_cap", DEFAULT_FIRST_STAGE_TOKEN_CAP))
+    weights, tokens_per_line, token_cap = _retrieve_settings(config_root, weights)
 
     seeds = _resolve_seeds(conn, task, seed_files)
 
@@ -96,38 +123,8 @@ def run_retrieve(
         task=task,
     )
 
-    # v12.2: optional learned-ranker overlay. Robs the score from the
-    # structural blend when a model is available; otherwise no-op.
     if rerank == "learned":
-        try:
-            from roam.retrieve.learned_ranker import is_available
-            from roam.retrieve.learned_ranker import score as learned_score
-        except ImportError:
-            # ``lightgbm`` not installed — that's the documented opt-in
-            # extra. Fall back to structural ranking silently.
-            is_available = lambda: False  # noqa: E731
-            learned_score = None  # type: ignore[assignment]
-
-        if learned_score is not None and is_available():
-            try:
-                learned_scores = learned_score(scored, task)
-            except Exception as exc:
-                # Don't silently swallow runtime errors — they signal a
-                # real bug in the learned ranker we want surfaced. Log
-                # via the standard logger so CI captures it.
-                import logging
-
-                logging.getLogger(__name__).debug("learned ranker failed; falling back to structural: %s", exc)
-                learned_scores = None
-            if learned_scores:
-                # Replace the structural score with the learned model's
-                # score, but keep all justifications for transparency.
-                for c in scored:
-                    sid = int(c["symbol_id"])
-                    if sid in learned_scores:
-                        c["score"] = round(learned_scores[sid], 4)
-                        c.setdefault("justifications", {})["learned"] = round(learned_scores[sid], 4)
-                scored.sort(key=lambda x: -x["score"])
+        _replace_scores_only_when_learned_model_is_available(scored, task)
 
     selected, budget_used = _apply_budget(scored, budget=budget, k=k, tokens_per_line=tokens_per_line)
 
@@ -142,6 +139,29 @@ def run_retrieve(
         "k": k,
         "weights": weights,
     }
+
+
+def _replace_scores_only_when_learned_model_is_available(scored: list[dict], task: str) -> None:
+    """Overlay opt-in learned scores without hiding learned-ranker faults."""
+    from roam.retrieve import learned_ranker
+
+    if not learned_ranker.is_available():
+        return
+
+    learned_scores = learned_ranker.score(scored, task)
+    if not learned_scores:
+        return
+
+    # Replace the structural score with the learned model's score, but
+    # keep all justifications for transparency.
+    for candidate in scored:
+        sid = int(candidate["symbol_id"])
+        if sid not in learned_scores:
+            continue
+        score = round(learned_scores[sid], 4)
+        candidate["score"] = score
+        candidate.setdefault("justifications", {})["learned"] = score
+    scored.sort(key=lambda candidate: -candidate["score"])
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +287,9 @@ def _first_stage(
             """,
             (fts_query, top_n),
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        if not _is_recoverable_index_error(exc):
+            raise
         return _like_first_stage(conn, tokens, top_n=top_n)
 
     return [dict(r) for r in rows]
@@ -277,31 +299,221 @@ def _has_symbol_fts(conn: sqlite3.Connection) -> bool:
     try:
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
         return row is not None
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
+        if not _is_recoverable_index_error(exc):
+            raise
         return False
 
 
 def _like_first_stage(conn: sqlite3.Connection, tokens: list[str], *, top_n: int) -> list[dict]:
-    """Fallback when FTS5 is unavailable. LIKE search per token."""
-    accumulated: dict[int, dict] = {}
-    for token in tokens:
-        like = f"%{token}%"
-        try:
-            rows = conn.execute(
-                "SELECT s.id AS symbol_id, s.name, s.qualified_name, s.kind, "
-                "       s.line_start, s.line_end, f.path AS file_path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id "
-                "WHERE s.name LIKE ? OR s.qualified_name LIKE ? "
-                "LIMIT ?",
-                (like, like, top_n),
-            ).fetchall()
-        except sqlite3.OperationalError:
+    """Fallback when FTS5 is unavailable. LIKE search batched by token."""
+    if not tokens:
+        return []
+
+    token_rows, params = _batched_like_patterns_preserve_token_recall(tokens)
+    try:
+        rows = conn.execute(
+            f"""
+            WITH token_patterns(pattern) AS (VALUES {token_rows})
+            SELECT s.id AS symbol_id, s.name, s.qualified_name, s.kind,
+                   s.line_start, s.line_end, f.path AS file_path,
+                   COUNT(token_patterns.pattern) * 1.0 AS fts_score
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            JOIN token_patterns
+              ON s.name LIKE token_patterns.pattern
+              OR s.qualified_name LIKE token_patterns.pattern
+            GROUP BY s.id, s.name, s.qualified_name, s.kind,
+                     s.line_start, s.line_end, f.path
+            ORDER BY fts_score DESC, s.id
+            LIMIT ?
+            """,
+            [*params, top_n],
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        _ensure_recoverable_index_error(exc)
+        return []
+
+    return [dict(row) for row in rows]
+
+
+def _batched_like_patterns_preserve_token_recall(tokens: list[str]) -> tuple[str, list[str]]:
+    """Build one VALUES table so fallback recall does not require N queries."""
+    token_rows = ",".join("(?)" for _ in tokens)
+    return token_rows, [f"%{token}%" for token in tokens]
+
+
+def _strong_seed_paths(first_stage: list[dict], seed_top_n: int) -> dict[str, float]:
+    """Return path -> strongest fts_score for the top-N lexical seeds.
+
+    WHY: expansion seeded by low-score hits pulls in unrelated files;
+    restrict the seed set to high-confidence matches so neighbor
+    expansion trades recall for precision, not noise.
+    """
+    if not first_stage:
+        return {}
+    sorted_by_fts = sorted(first_stage, key=lambda c: -float(c.get("fts_score") or 0.0))
+    strong_seeds = sorted_by_fts[: max(seed_top_n, 1)]
+
+    seed_paths: dict[str, float] = {}
+    for c in strong_seeds:
+        path = c.get("file_path") or c.get("file") or ""
+        score = float(c.get("fts_score") or 0.0)
+        if not path:
             continue
-        for row in rows:
-            sid = int(row["symbol_id"])
-            entry = accumulated.setdefault(sid, dict(row))
-            entry["fts_score"] = entry.get("fts_score", 0.0) + 1.0
-    return list(accumulated.values())[:top_n]
+        if score > seed_paths.get(path, 0.0):
+            seed_paths[path] = score
+    return seed_paths
+
+
+def _resolve_file_ids(conn: sqlite3.Connection, paths: list[str]) -> dict[int, str]:
+    """Batch-resolve file paths to database IDs."""
+    if not paths:
+        return {}
+    placeholders = ",".join("?" for _ in paths)
+    try:
+        rows = conn.execute(
+            f"SELECT id, path FROM files WHERE path IN ({placeholders})",
+            paths,
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        _ensure_recoverable_index_error(exc)
+        return {}
+    return {int(r["id"]): r["path"] for r in rows}
+
+
+def _hub_file_ids(conn: sqlite3.Connection, file_ids: list[int], hub_threshold: int) -> set[int]:
+    """Return IDs of files whose total ``file_edges`` degree exceeds the threshold.
+
+    WHY: hub files connect to so many others that expanding through them
+    floods results with unrelated symbols; discard them to protect precision.
+    """
+    if not file_ids:
+        return set()
+    try:
+        degree_rows = batched_in(
+            conn,
+            """
+            SELECT fid, SUM(d) AS total FROM (
+                SELECT source_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE source_file_id IN ({ph}) GROUP BY source_file_id
+                UNION ALL
+                SELECT target_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE target_file_id IN ({ph}) GROUP BY target_file_id
+            ) GROUP BY fid
+            """,
+            file_ids,
+        )
+    except sqlite3.OperationalError as exc:
+        _ensure_recoverable_index_error(exc)
+        return set()
+    return {int(r["fid"]) for r in degree_rows if int(r["total"] or 0) > hub_threshold}
+
+
+def _neighbor_seed_map(
+    conn: sqlite3.Connection,
+    seed_ids: list[int],
+    file_id_to_path: dict[int, str],
+) -> dict[int, int]:
+    """Map neighbor file ID -> originating seed file ID via ``file_edges``.
+
+    WHY: discover files related to the seed set while avoiding
+    re-expansion back into the seed files themselves.
+    """
+    if not seed_ids:
+        return {}
+    placeholders = ",".join("?" for _ in seed_ids)
+    try:
+        neighbor_rows = conn.execute(
+            f"""
+            SELECT source_file_id AS seed_id, target_file_id AS neighbor_id
+            FROM file_edges WHERE source_file_id IN ({placeholders})
+            UNION
+            SELECT target_file_id AS seed_id, source_file_id AS neighbor_id
+            FROM file_edges WHERE target_file_id IN ({placeholders})
+            """,
+            seed_ids + seed_ids,
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        _ensure_recoverable_index_error(exc)
+        return {}
+
+    neighbor_to_seed: dict[int, int] = {}
+    for r in neighbor_rows:
+        nid = int(r["neighbor_id"])
+        sid = int(r["seed_id"])
+        if nid in file_id_to_path:
+            continue  # already a seed file — no need to expand to itself
+        neighbor_to_seed.setdefault(nid, sid)
+    return neighbor_to_seed
+
+
+def _without_hub_neighbors(
+    conn: sqlite3.Connection,
+    neighbor_to_seed: dict[int, int],
+    hub_threshold: int,
+) -> dict[int, int]:
+    """Drop neighbors that are hubs themselves.
+
+    WHY: even a non-hub seed may legitimately import a utility hub;
+    that hub is not the answer to the user's query, so reject it
+    symmetrically to the seed-side filter.
+    """
+    if not neighbor_to_seed:
+        return {}
+    nb_hub_ids = _hub_file_ids(conn, list(neighbor_to_seed), hub_threshold)
+    if not nb_hub_ids:
+        return neighbor_to_seed
+    return {nid: sid for nid, sid in neighbor_to_seed.items() if nid not in nb_hub_ids}
+
+
+def _build_expansion_symbols(
+    conn: sqlite3.Connection,
+    neighbor_to_seed: dict[int, int],
+    file_id_to_path: dict[int, str],
+    seed_paths: dict[str, float],
+    first_stage: list[dict],
+    max_neighbors_per_file: int,
+    expansion_cap: int,
+) -> list[dict]:
+    """Fetch symbols from neighbor files with per-file and total caps.
+
+    WHY: without caps a single related file could contribute dozens of
+    symbols and drown out the original lexical hits.
+    """
+    existing_symbol_ids = {int(c["symbol_id"]) for c in first_stage if c.get("symbol_id") is not None}
+    placeholders = ",".join("?" for _ in neighbor_to_seed)
+    sym_rows = conn.execute(
+        f"""
+        SELECT s.id AS symbol_id, s.name, s.qualified_name, s.kind,
+               s.line_start, s.line_end, f.id AS file_id, f.path AS file_path
+        FROM symbols s JOIN files f ON s.file_id = f.id
+        WHERE f.id IN ({placeholders})
+        ORDER BY f.id, s.line_start
+        """,
+        list(neighbor_to_seed.keys()),
+    ).fetchall()
+
+    expansion: list[dict] = []
+    per_file_count: dict[int, int] = {}
+    for row in sym_rows:
+        sid = int(row["symbol_id"])
+        if sid in existing_symbol_ids:
+            continue
+        fid = int(row["file_id"])
+        if per_file_count.get(fid, 0) >= max_neighbors_per_file:
+            continue
+        if len(expansion) >= expansion_cap:
+            break
+        seed_fid = neighbor_to_seed.get(fid)
+        seed_path = file_id_to_path.get(seed_fid, "") if seed_fid else ""
+        seed_score = seed_paths.get(seed_path, 0.0)
+        entry = dict(row)
+        entry["fts_score"] = seed_score * 0.05  # weak boost, not lexical hit
+        entry["expansion"] = True
+        expansion.append(entry)
+        per_file_count[fid] = per_file_count.get(fid, 0) + 1
+    return expansion
 
 
 def _expand_via_file_neighbors(
@@ -342,151 +554,36 @@ def _expand_via_file_neighbors(
 
     Returns the original ``first_stage`` plus expansion symbols.
     """
-    if not first_stage:
-        return first_stage
-
-    # Sort by fts_score descending and take only the top-N as seeds.
-    sorted_by_fts = sorted(first_stage, key=lambda c: -float(c.get("fts_score") or 0.0))
-    strong_seeds = sorted_by_fts[: max(seed_top_n, 1)]
-
-    seed_paths: dict[str, float] = {}
-    for c in strong_seeds:
-        path = c.get("file_path") or c.get("file") or ""
-        score = float(c.get("fts_score") or 0.0)
-        if not path:
-            continue
-        if score > seed_paths.get(path, 0.0):
-            seed_paths[path] = score
+    seed_paths = _strong_seed_paths(first_stage, seed_top_n)
     if not seed_paths:
         return first_stage
 
-    # Resolve seed paths to file ids in one batch.
-    placeholders = ",".join("?" for _ in seed_paths)
-    rows = conn.execute(
-        f"SELECT id, path FROM files WHERE path IN ({placeholders})",
-        list(seed_paths.keys()),
-    ).fetchall()
-    file_id_to_path: dict[int, str] = {int(r["id"]): r["path"] for r in rows}
+    file_id_to_path = _resolve_file_ids(conn, list(seed_paths))
     if not file_id_to_path:
         return first_stage
 
-    # Skip hub seeds — files with degree > hub_threshold pollute
-    # expansion with unrelated importers. Compute degree once across
-    # the seed set.
-    seed_ids = list(file_id_to_path)
-    placeholders = ",".join("?" for _ in seed_ids)
-    try:
-        degree_rows = conn.execute(
-            f"""
-            SELECT fid, SUM(d) AS total FROM (
-                SELECT source_file_id AS fid, COUNT(*) AS d FROM file_edges
-                WHERE source_file_id IN ({placeholders}) GROUP BY source_file_id
-                UNION ALL
-                SELECT target_file_id AS fid, COUNT(*) AS d FROM file_edges
-                WHERE target_file_id IN ({placeholders}) GROUP BY target_file_id
-            ) GROUP BY fid
-            """,
-            seed_ids + seed_ids,
-        ).fetchall()
-    except sqlite3.OperationalError:
-        degree_rows = []
-    hub_ids = {int(r["fid"]) for r in degree_rows if int(r["total"] or 0) > hub_threshold}
-    non_hub_seed_ids = [sid for sid in seed_ids if sid not in hub_ids]
+    hub_ids = _hub_file_ids(conn, list(file_id_to_path), hub_threshold)
+    non_hub_seed_ids = [sid for sid in file_id_to_path if sid not in hub_ids]
     if not non_hub_seed_ids:
         return first_stage
 
-    # Neighbour file ids via file_edges (both directions), only from
-    # non-hub seeds.
-    placeholders = ",".join("?" for _ in non_hub_seed_ids)
-    try:
-        neighbor_rows = conn.execute(
-            f"""
-            SELECT source_file_id AS seed_id, target_file_id AS neighbor_id
-            FROM file_edges WHERE source_file_id IN ({placeholders})
-            UNION
-            SELECT target_file_id AS seed_id, source_file_id AS neighbor_id
-            FROM file_edges WHERE target_file_id IN ({placeholders})
-            """,
-            non_hub_seed_ids + non_hub_seed_ids,
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return first_stage
-    if not neighbor_rows:
-        return first_stage
-
-    neighbor_to_seed: dict[int, int] = {}
-    for r in neighbor_rows:
-        nid = int(r["neighbor_id"])
-        sid = int(r["seed_id"])
-        if nid in file_id_to_path:
-            continue  # already a seed file — no need to expand to itself
-        neighbor_to_seed.setdefault(nid, sid)
-
+    neighbor_to_seed = _neighbor_seed_map(conn, non_hub_seed_ids, file_id_to_path)
     if not neighbor_to_seed:
         return first_stage
 
-    # v12.12 — reject hub *neighbours*. A non-hub seed (cmd_critique.py)
-    # legitimately imports utility hubs (output/formatter.py); the util
-    # is not the answer the user asked for, but the original implementation
-    # happily expanded to it. Symmetric to the seed-side filter so it
-    # closes dogfood #8 ("still leaks on hub seed files") without
-    # disturbing legitimate cross-module expansion.
-    neighbor_ids = list(neighbor_to_seed)
-    placeholders = ",".join("?" for _ in neighbor_ids)
-    try:
-        nb_degree_rows = conn.execute(
-            f"""
-            SELECT fid, SUM(d) AS total FROM (
-                SELECT source_file_id AS fid, COUNT(*) AS d FROM file_edges
-                WHERE source_file_id IN ({placeholders}) GROUP BY source_file_id
-                UNION ALL
-                SELECT target_file_id AS fid, COUNT(*) AS d FROM file_edges
-                WHERE target_file_id IN ({placeholders}) GROUP BY target_file_id
-            ) GROUP BY fid
-            """,
-            neighbor_ids + neighbor_ids,
-        ).fetchall()
-    except sqlite3.OperationalError:
-        nb_degree_rows = []
-    nb_hub_ids = {int(r["fid"]) for r in nb_degree_rows if int(r["total"] or 0) > hub_threshold}
-    if nb_hub_ids:
-        neighbor_to_seed = {nid: sid for nid, sid in neighbor_to_seed.items() if nid not in nb_hub_ids}
+    neighbor_to_seed = _without_hub_neighbors(conn, neighbor_to_seed, hub_threshold)
     if not neighbor_to_seed:
         return first_stage
 
-    existing_symbol_ids = {int(c["symbol_id"]) for c in first_stage if c.get("symbol_id") is not None}
-    expansion: list[dict] = []
-    placeholders = ",".join("?" for _ in neighbor_to_seed)
-    sym_rows = conn.execute(
-        f"""
-        SELECT s.id AS symbol_id, s.name, s.qualified_name, s.kind,
-               s.line_start, s.line_end, f.id AS file_id, f.path AS file_path
-        FROM symbols s JOIN files f ON s.file_id = f.id
-        WHERE f.id IN ({placeholders})
-        ORDER BY f.id, s.line_start
-        """,
-        list(neighbor_to_seed.keys()),
-    ).fetchall()
-
-    per_file_count: dict[int, int] = {}
-    for row in sym_rows:
-        sid = int(row["symbol_id"])
-        if sid in existing_symbol_ids:
-            continue
-        fid = int(row["file_id"])
-        if per_file_count.get(fid, 0) >= max_neighbors_per_file:
-            continue
-        if len(expansion) >= expansion_cap:
-            break
-        seed_fid = neighbor_to_seed.get(fid)
-        seed_path = file_id_to_path.get(seed_fid, "") if seed_fid else ""
-        seed_score = seed_paths.get(seed_path, 0.0)
-        entry = dict(row)
-        entry["fts_score"] = seed_score * 0.05  # weak boost, not lexical hit
-        entry["expansion"] = True
-        expansion.append(entry)
-        per_file_count[fid] = per_file_count.get(fid, 0) + 1
-
+    expansion = _build_expansion_symbols(
+        conn,
+        neighbor_to_seed,
+        file_id_to_path,
+        seed_paths,
+        first_stage,
+        max_neighbors_per_file,
+        expansion_cap,
+    )
     return first_stage + expansion
 
 

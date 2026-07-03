@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 
 
@@ -117,6 +118,124 @@ class LanguageExtractor(ABC):
             "line": line,
             "import_path": import_path,
         }
+
+    def _append_regex_refs(
+        self,
+        text: str,
+        refs: list[dict],
+        pattern,
+        kind: str,
+        *,
+        group: int = 1,
+    ) -> None:
+        """Append a reference for every regex match, computing line numbers from *text*."""
+        for match in pattern.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            refs.append(
+                self._make_reference(
+                    target_name=match.group(group),
+                    kind=kind,
+                    line=line,
+                )
+            )
+
+    def _append_regex_refs_split(
+        self,
+        text: str,
+        refs: list[dict],
+        pattern,
+        kind: str,
+        *,
+        group: int = 1,
+        sep: str = ",",
+    ) -> None:
+        """Append a reference for each comma-separated value captured by a regex match."""
+        for match in pattern.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            for part in match.group(group).split(sep):
+                part = part.strip()
+                if part:
+                    refs.append(
+                        self._make_reference(
+                            target_name=part,
+                            kind=kind,
+                            line=line,
+                        )
+                    )
+
+
+class _SalesforceMarkupExtractor(LanguageExtractor):
+    """Shared base for Salesforce markup extractors (Aura, Visualforce).
+
+    Subclasses declare which regex rules apply by setting the class-level
+    pattern attributes. This keeps the mechanical regex-to-reference loop in
+    one place while each language keeps its own pattern/kind semantics.
+    """
+
+    _CONTROLLER_RE: re.Pattern
+    _EXTENDS_RE: re.Pattern | None = None
+    _IMPLEMENTS_RE: re.Pattern | None = None
+    _EXTENSIONS_RE: re.Pattern | None = None
+    _INCLUDE_RE: re.Pattern | None = None
+    _CUSTOM_TAG_RE: re.Pattern | None = None
+    _CUSTOM_TAG_STANDARD_NS: frozenset[str] = frozenset()
+    _LABEL_REF_RE: re.Pattern | None = None
+    _MERGE_FIELD_RE: re.Pattern | None = None
+    _MERGE_FIELD_IDENT_RE: re.Pattern | None = None
+    _MERGE_FIELD_BUILTINS: frozenset[str] = frozenset()
+
+    def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
+        refs = []
+        text = source.decode("utf-8", errors="replace")
+
+        self._append_regex_refs(text, refs, self._CONTROLLER_RE, "controller")
+
+        if self._EXTENDS_RE is not None:
+            self._append_regex_refs(text, refs, self._EXTENDS_RE, "inherits")
+
+        if self._IMPLEMENTS_RE is not None:
+            self._append_regex_refs_split(text, refs, self._IMPLEMENTS_RE, "implements")
+
+        if self._EXTENSIONS_RE is not None:
+            self._append_regex_refs_split(text, refs, self._EXTENSIONS_RE, "controller")
+
+        if self._INCLUDE_RE is not None:
+            self._append_regex_refs(text, refs, self._INCLUDE_RE, "include", group=2)
+
+        if self._CUSTOM_TAG_RE is not None:
+            for match in self._CUSTOM_TAG_RE.finditer(text):
+                ns, comp = match.group(1), match.group(2)
+                if ns.lower() not in self._CUSTOM_TAG_STANDARD_NS:
+                    line = text[: match.start()].count("\n") + 1
+                    refs.append(
+                        self._make_reference(
+                            target_name=comp,
+                            kind="component_ref",
+                            line=line,
+                        )
+                    )
+
+        if self._LABEL_REF_RE is not None:
+            self._append_regex_refs(text, refs, self._LABEL_REF_RE, "label")
+
+        if self._MERGE_FIELD_RE is not None and self._MERGE_FIELD_IDENT_RE is not None:
+            seen = set()
+            for match in self._MERGE_FIELD_RE.finditer(text):
+                expr = match.group(1)
+                line = text[: match.start()].count("\n") + 1
+                for ident_match in self._MERGE_FIELD_IDENT_RE.finditer(expr):
+                    name = ident_match.group(1)
+                    if name not in self._MERGE_FIELD_BUILTINS and name not in seen:
+                        seen.add(name)
+                        refs.append(
+                            self._make_reference(
+                                target_name=name,
+                                kind="merge_field",
+                                line=line,
+                            )
+                        )
+
+        return refs
 
     def _walk_children(self, node, source: bytes, file_path: str, parent_name: str | None = None) -> list[dict]:
         """Helper to recursively walk tree and extract symbols. Override in subclass."""

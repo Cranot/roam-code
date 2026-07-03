@@ -55,6 +55,8 @@ def propagate_context(
         return {}
 
     scores: Dict[int, float] = {}
+    successors = G.successors
+    predecessors = G.predecessors
 
     # Seed nodes always score 1.0
     for s in seeds:
@@ -73,7 +75,7 @@ def propagate_context(
             continue
         next_depth = depth + 1
         callee_score = decay**next_depth
-        for neighbor in G.successors(node):
+        for neighbor in successors(node):
             if neighbor in seeds:
                 continue  # Seeds keep score 1.0
             if neighbor not in visited_callee or visited_callee[neighbor] > next_depth:
@@ -94,7 +96,7 @@ def propagate_context(
             continue
         next_depth = depth + 1
         caller_score = caller_decay**next_depth
-        for neighbor in G.predecessors(node):
+        for neighbor in predecessors(node):
             if neighbor in seeds:
                 continue
             if neighbor not in visited_caller or visited_caller[neighbor] > next_depth:

@@ -75,10 +75,7 @@ from tests._helpers.repo_root import repo_root
 #   guards, none of which bumped this baseline). This session AUDITED the drift
 #   and acted, NOT papered over it:
 #     * Deduped the 11 WAL guards into one helper `compiler._set_wal(conn)`
-#       (also kills an 11x clone). 127 -> 117. WAL is an optional throughput
-#       optimization; logging on every cache open over a non-WAL filesystem
-#       would be pure noise — the canonical "expected-signal guard left in
-#       place" the campaign sanctions, now in ONE audited location.
+#       (also kills an 11x clone). 127 -> 117.
 #     * The residual 117 are all genuine expected-signal / cleanup / optional-
 #       import guards: this session NARROWED 9 broad swallows to specific
 #       exceptions (OSError/ValueError/ImportError/subprocess.SubprocessError/
@@ -87,7 +84,13 @@ from tests._helpers.repo_root import repo_root
 #       close(), echo-failure handlers, optional-import probes) with
 #       `# noqa: BLE001` + rationale. cmd_bench's 3 are narrow/best-effort.
 #   Ratchet DOWN from here as the loud-fallback cleanup continues.
-SILENT_EXCEPT_BASELINE = 117
+#
+# 2026-07-03: ratcheted DOWN to 116. The single remaining WAL helper in
+#   `src/roam/plan/plan_cache.py::_set_wal` was converted from a silent
+#   `except sqlite3.OperationalError: pass` to `log_swallowed` lineage
+#   emission, preserving graceful degradation on non-WAL filesystems while
+#   making WAL setup failures observable under verbose mode.
+SILENT_EXCEPT_BASELINE = 116
 
 
 def _silent_except_sites() -> list[str]:

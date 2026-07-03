@@ -18,14 +18,126 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, format_signature, json_envelope, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_signature,
+    json_envelope,
+    resolution_disclosure,
+    to_json,
+)
+
+
+def _normalized_directory_for_index_lookup(directory):
+    return directory.replace("\\", "/").rstrip("/")
+
+
+def _directory_symbols_query(full):
+    exported_filter = "" if full else "AND s.is_exported = 1 "
+    return (
+        "SELECT s.*, f.path as file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE REPLACE(f.path, '\\', '/') LIKE ? "
+        f"{exported_filter}"
+        "ORDER BY f.path, s.line_start"
+    )
+
+
+def _symbols_preserving_resolution_tier(conn, directory, full):
+    query = _directory_symbols_query(full)
+    symbols = conn.execute(query, (f"{directory}/%",)).fetchall()
+    if symbols:
+        return symbols, "file"
+
+    symbols = conn.execute(query, (f"%{directory}/%",)).fetchall()
+    if symbols:
+        return symbols, "file_substring"
+
+    return symbols, "unresolved"
+
+
+def _group_symbols_by_file(symbols):
+    by_file = {}
+    for symbol in symbols:
+        by_file.setdefault(symbol["file_path"], []).append(symbol)
+    return by_file
+
+
+def _symbol_json_entry(symbol):
+    docstring = symbol["docstring"] or ""
+    return {
+        "name": symbol["name"],
+        "kind": symbol["kind"],
+        "signature": symbol["signature"] or "",
+        "line_start": symbol["line_start"],
+        "line_end": symbol["line_end"],
+        "docstring": docstring.strip().split("\n")[0][:80] if docstring else "",
+    }
+
+
+def _files_json_payload(by_file):
+    return {
+        file_path: [_symbol_json_entry(symbol) for symbol in by_file[file_path]] for file_path in sorted(by_file.keys())
+    }
+
+
+def _depth_within_returned_skeleton(symbol, parent_ids, parent_set):
+    if symbol["parent_id"] is None or symbol["parent_id"] not in parent_set:
+        return 0
+
+    level = 1
+    parent_id = symbol["parent_id"]
+    while parent_id in parent_ids and parent_ids[parent_id] is not None and parent_ids[parent_id] in parent_set:
+        level += 1
+        parent_id = parent_ids[parent_id]
+    return level
+
+
+def _line_span(symbol):
+    line_info = f"L{symbol['line_start']}"
+    if symbol["line_end"] and symbol["line_end"] != symbol["line_start"]:
+        line_info += f"-{symbol['line_end']}"
+    return line_info
+
+
+def _first_docstring_line(symbol):
+    if not symbol["docstring"]:
+        return ""
+
+    first_line = symbol["docstring"].strip().split("\n")[0].strip()
+    if len(first_line) > 50:
+        first_line = first_line[:47] + "..."
+    return f"  {first_line}"
+
+
+def _skeleton_symbol_text(symbol, level):
+    parts = [f"{abbrev_kind(symbol['kind']):<6s}", symbol["name"]]
+    signature = format_signature(symbol["signature"], max_len=40)
+    if signature:
+        parts.append(signature)
+    parts.append(_line_span(symbol))
+
+    prefix = "    " + "  " * level
+    return f"{prefix}{'  '.join(parts)}{_first_docstring_line(symbol)}"
+
+
+def _render_skeleton_symbol_lines(by_file, symbols):
+    parent_ids = {symbol["id"]: symbol["parent_id"] for symbol in symbols}
+    parent_set = {symbol["id"] for symbol in symbols}
+    lines = []
+
+    for file_path in sorted(by_file.keys()):
+        lines.append(f"  {file_path}")
+        for symbol in by_file[file_path]:
+            level = _depth_within_returned_skeleton(symbol, parent_ids, parent_set)
+            lines.append(_skeleton_symbol_text(symbol, level))
+        lines.append("")
+
+    return lines
 
 
 @roam_capability(
@@ -56,48 +168,13 @@ def sketch(ctx, directory, full):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    # Normalise path separators
-    directory = directory.replace("\\", "/").rstrip("/")
+    directory = _normalized_directory_for_index_lookup(directory)
 
     with open_db(readonly=True) as conn:
-        # Find files under directory
-        if full:
-            symbols = conn.execute(
-                "SELECT s.*, f.path as file_path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id "
-                "WHERE REPLACE(f.path, '\\', '/') LIKE ? "
-                "ORDER BY f.path, s.line_start",
-                (f"{directory}/%",),
-            ).fetchall()
-        else:
-            symbols = conn.execute(
-                "SELECT s.*, f.path as file_path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id "
-                "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
-                "ORDER BY f.path, s.line_start",
-                (f"{directory}/%",),
-            ).fetchall()
+        symbols, resolution_tier = _symbols_preserving_resolution_tier(conn, directory, full)
 
         if not symbols:
-            # Try partial match
-            if full:
-                symbols = conn.execute(
-                    "SELECT s.*, f.path as file_path "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id "
-                    "WHERE REPLACE(f.path, '\\', '/') LIKE ? "
-                    "ORDER BY f.path, s.line_start",
-                    (f"%{directory}/%",),
-                ).fetchall()
-            else:
-                symbols = conn.execute(
-                    "SELECT s.*, f.path as file_path "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id "
-                    "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
-                    "ORDER BY f.path, s.line_start",
-                    (f"%{directory}/%",),
-                ).fetchall()
-
-        if not symbols:
+            disclosure = resolution_disclosure("unresolved", target=directory)
             if json_mode:
                 click.echo(
                     to_json(
@@ -107,10 +184,13 @@ def sketch(ctx, directory, full):
                                 "verdict": f"no symbols found in {directory}/",
                                 "file_count": 0,
                                 "symbol_count": 0,
+                                "resolution": disclosure["resolution"],
+                                "partial_success": disclosure["partial_success"],
                             },
                             directory=directory,
                             files={},
                             symbol_count=0,
+                            resolution=disclosure,
                         )
                     )
                 )
@@ -120,26 +200,12 @@ def sketch(ctx, directory, full):
                 click.echo("Hint: use a path relative to the project root.")
             return
 
-        # Group by file
-        by_file = defaultdict(list)
-        for s in symbols:
-            by_file[s["file_path"]].append(s)
+        by_file = _group_symbols_by_file(symbols)
+        disclosure = resolution_disclosure(resolution_tier, target=directory)
+        verdict_suffix = " [file substring match]" if resolution_tier == "file_substring" else ""
 
         if json_mode:
-            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols"
-            result = {}
-            for fp in sorted(by_file.keys()):
-                result[fp] = [
-                    {
-                        "name": s["name"],
-                        "kind": s["kind"],
-                        "signature": s["signature"] or "",
-                        "line_start": s["line_start"],
-                        "line_end": s["line_end"],
-                        "docstring": (s["docstring"] or "").strip().split("\n")[0][:80] if s["docstring"] else "",
-                    }
-                    for s in by_file[fp]
-                ]
+            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
             click.echo(
                 to_json(
                     json_envelope(
@@ -148,63 +214,28 @@ def sketch(ctx, directory, full):
                             "verdict": _verdict,
                             "file_count": len(by_file),
                             "symbol_count": len(symbols),
+                            "resolution": disclosure["resolution"],
+                            "partial_success": disclosure["partial_success"],
                         },
                         directory=directory,
                         file_count=len(by_file),
                         symbol_count=len(symbols),
-                        files=result,
+                        files=_files_json_payload(by_file),
+                        resolution=disclosure,
                     )
                 )
             )
             return
 
-        # Count files and symbols
         file_count = len(by_file)
         sym_count = len(symbols)
         label = "symbols" if full else "exported symbols"
-        _verdict = f"{directory}/: {file_count} files, {sym_count} {label}"
+        _verdict = f"{directory}/: {file_count} files, {sym_count} {label}{verdict_suffix}"
         click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"{directory}/ ({file_count} files, {sym_count} {label})")
+        if resolution_tier == "file_substring":
+            click.echo("  Note: substring match on directory path; input was not an exact directory prefix.")
         click.echo()
 
-        # Build parent lookup for indentation
-        parent_ids = {s["id"]: s["parent_id"] for s in symbols}
-        parent_set = {s["id"] for s in symbols}
-
-        for file_path in sorted(by_file.keys()):
-            file_syms = by_file[file_path]
-            click.echo(f"  {file_path}")
-
-            for s in file_syms:
-                # Compute indentation level
-                level = 0
-                if s["parent_id"] is not None and s["parent_id"] in parent_set:
-                    level = 1
-                    pid = s["parent_id"]
-                    while pid in parent_ids and parent_ids[pid] is not None and parent_ids[pid] in parent_set:
-                        level += 1
-                        pid = parent_ids[pid]
-
-                prefix = "    " + "  " * level
-                kind = abbrev_kind(s["kind"])
-                sig = format_signature(s["signature"], max_len=40)
-                line_info = f"L{s['line_start']}"
-                if s["line_end"] and s["line_end"] != s["line_start"]:
-                    line_info += f"-{s['line_end']}"
-
-                # First line of docstring
-                doc_snippet = ""
-                if s["docstring"]:
-                    first_line = s["docstring"].strip().split("\n")[0].strip()
-                    if len(first_line) > 50:
-                        first_line = first_line[:47] + "..."
-                    doc_snippet = f"  {first_line}"
-
-                parts = [f"{kind:<6s}", s["name"]]
-                if sig:
-                    parts.append(sig)
-                parts.append(line_info)
-
-                click.echo(f"{prefix}{'  '.join(parts)}{doc_snippet}")
-
-            click.echo()
+        for line in _render_skeleton_symbol_lines(by_file, symbols):
+            click.echo(line)

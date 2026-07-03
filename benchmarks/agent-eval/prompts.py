@@ -4,6 +4,7 @@ Agent Evaluation Prompts — "Complete" group.
 5 full-project prompts across 5 languages/frameworks.
 Each prompt has 3 modes: vanilla, roam-cli, roam-mcp.
 """
+
 from __future__ import annotations
 
 TASKS = {
@@ -222,11 +223,13 @@ def get_all_combinations() -> list[dict]:
     combos = []
     for task_id, task in TASKS.items():
         for mode in modes:
-            combos.append({
-                "task_id": task_id,
-                "task_name": task["name"],
-                "language": task["language"],
-                "mode": mode,
-                "workspace_dir": f"{task_id}_{mode}",
-            })
+            combos.append(
+                {
+                    "task_id": task_id,
+                    "task_name": task["name"],
+                    "language": task["language"],
+                    "mode": mode,
+                    "workspace_dir": f"{task_id}_{mode}",
+                }
+            )
     return combos

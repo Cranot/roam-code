@@ -410,6 +410,115 @@ def test_fan_skips_local_hub_and_local_spreader(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Batched subject_id pre-resolution (one query keyed by file/name/line,
+# with an in-memory nearest-line fallback)
+# ---------------------------------------------------------------------------
+
+
+def _seed_symbol(conn, path, name, line_start):
+    """Insert a (file, symbol) pair and return the new symbols.id."""
+    fid_row = conn.execute(
+        "INSERT INTO files (path) VALUES (?) ON CONFLICT(path) DO UPDATE SET path=path RETURNING id",
+        (path,),
+    ).fetchone()
+    file_id = int(fid_row[0])
+    sid = conn.execute(
+        "INSERT INTO symbols (file_id, name, kind, line_start) VALUES (?, ?, 'function', ?)",
+        (file_id, name, line_start),
+    ).lastrowid
+    return int(sid)
+
+
+def test_fan_subject_id_resolves_exact_and_nearest_line(tmp_path):
+    """Batched pre-resolution links each finding to its symbols.id.
+
+    Two paths exercised in one persist call: an exact (path, name, line)
+    match, and a nearest-line fallback when the item's line drifts off the
+    real symbol's line_start (decorator / parser drift). Both must resolve
+    via the single batched query rather than the old two-lookup-per-item
+    path — proven by subject_id pointing at the seeded rows.
+    """
+    with _seed_for_emit_helper(tmp_path) as conn:
+        exact_id = _seed_symbol(conn, "src/a.py", "hubby", 10)
+        # Real symbol sits at line 42 but the ranked item reports line 40
+        # (off by a couple of lines) — only the nearest-line fallback links it.
+        drift_id = _seed_symbol(conn, "src/b.py", "spready", 42)
+        conn.commit()
+
+        items = [
+            {
+                "name": "hubby",
+                "kind": "function",
+                "fan_in": 12,
+                "fan_out": 2,
+                "total": 14,
+                "location": "src/a.py:10",
+                "fan_in_files": 5,
+                "fan_out_files": 1,
+                "flag": "hub",
+            },
+            {
+                "name": "spready",
+                "kind": "function",
+                "fan_in": 1,
+                "fan_out": 12,
+                "total": 13,
+                "location": "src/b.py:40",
+                "fan_in_files": 1,
+                "fan_out_files": 5,
+                "flag": "spreader",
+            },
+        ]
+        written = _emit_fan_findings(
+            conn,
+            {"summary": {"caller_metric_definition": "direct_in_degree"}, "items": items},
+            mode="symbol",
+            source_version=FAN_DETECTOR_VERSION,
+        )
+        assert written == 2
+        rows = conn.execute(
+            "SELECT subject_id, subject_kind, json_extract(evidence_json, '$.symbol_name') AS name "
+            "FROM findings WHERE source_detector = 'fan-symbol'"
+        ).fetchall()
+        by_name = {r["name"]: r for r in rows}
+        assert by_name["hubby"]["subject_kind"] == "symbol"
+        assert by_name["hubby"]["subject_id"] == exact_id
+        # Nearest-line fallback links the drifted item to the real symbol.
+        assert by_name["spready"]["subject_id"] == drift_id
+
+
+def test_fan_subject_id_none_when_symbol_absent(tmp_path):
+    """A flagged item with no matching symbol resolves subject_id to NULL.
+
+    The batched query simply omits the key; the row still persists (the
+    finding is real) but carries no subject linkage — never a wrong id.
+    """
+    with _seed_for_emit_helper(tmp_path) as conn:
+        items = [
+            {
+                "name": "ghost",
+                "kind": "function",
+                "fan_in": 12,
+                "fan_out": 2,
+                "total": 14,
+                "location": "src/missing.py:10",
+                "fan_in_files": 5,
+                "fan_out_files": 1,
+                "flag": "hub",
+            },
+        ]
+        written = _emit_fan_findings(
+            conn,
+            {"summary": {"caller_metric_definition": "direct_in_degree"}, "items": items},
+            mode="symbol",
+            source_version=FAN_DETECTOR_VERSION,
+        )
+        assert written == 1
+        row = conn.execute("SELECT subject_id FROM findings WHERE source_detector = 'fan-symbol'").fetchone()
+        assert row["subject_id"] is None
+
+
+# ---------------------------------------------------------------------------
 # Upsert determinism on rerun
 # ---------------------------------------------------------------------------
 

@@ -22,6 +22,426 @@ from roam.output.formatter import json_envelope, to_json
 _MAX_GRAPH_SYMBOLS = 10000
 
 
+def _empty_metrics_floor() -> dict:
+    """Metric floor used when a simulate substrate degrades."""
+    return {
+        "health_score": 0,
+        "cycles": 0,
+        "tangle_ratio": 0.0,
+        "layer_violations": 0,
+        "modularity": 0.0,
+        "fiedler": 0.0,
+        "propagation_cost": 0.0,
+        "god_components": 0,
+        "bottlenecks": 0,
+        "nodes": 0,
+        "edges": 0,
+    }
+
+
+def _simulation_topology_unchanged(G, G_sim) -> bool:
+    """Whether two graphs have identical node and edge topology.
+
+    Simulation metrics are topology-derived; move/extract/merge usually
+    change only ``file_path`` attributes. Reusing the baseline metrics for
+    unchanged topology avoids an expensive recompute without trusting the
+    operation name.
+    """
+    if G is None or G_sim is None:
+        return False
+    if G.number_of_nodes() != G_sim.number_of_nodes():
+        return False
+    if G.number_of_edges() != G_sim.number_of_edges():
+        return False
+    if G.nodes.keys() != G_sim.nodes.keys():
+        return False
+    return all(G_sim.has_edge(u, v) for u, v in G.edges())
+
+
+def _simulation_metric_diff(before: dict, after: dict, metric_delta_fn) -> tuple[dict, list[str]]:
+    """Compute metric deltas and human-readable regression warnings."""
+    deltas_local = metric_delta_fn(before, after)
+    warnings_local: list[str] = []
+    if after.get("cycles", 0) > before.get("cycles", 0):
+        warnings_local.append(f"new cycles introduced ({before.get('cycles', 0)} -> {after.get('cycles', 0)})")
+    if after.get("layer_violations", 0) > before.get("layer_violations", 0):
+        warnings_local.append(
+            f"new layer violations ({before.get('layer_violations', 0)} -> {after.get('layer_violations', 0)})"
+        )
+    if after.get("modularity", 0) < before.get("modularity", 0):
+        warnings_local.append(f"modularity decreased ({before.get('modularity', 0)} -> {after.get('modularity', 0)})")
+    return (deltas_local, warnings_local)
+
+
+def _simulation_verdict(before: dict, after: dict, deltas) -> tuple[str, int, int, int]:
+    """Compose the LAW 6 single-line health-delta verdict."""
+    health_before_local = before.get("health_score", 0)
+    health_after_local = after.get("health_score", 0)
+    health_delta_local = health_after_local - health_before_local
+
+    mod_delta = deltas.get("modularity", {}) if isinstance(deltas, dict) else {}
+    mod_str = ""
+    if isinstance(mod_delta, dict) and mod_delta:
+        md = mod_delta.get("delta", 0)
+        mod_str = f", modularity {md:+.2f}" if md != 0 else ", modularity unchanged"
+
+    cycle_delta = after.get("cycles", 0) - before.get("cycles", 0)
+    cycle_str = f", {cycle_delta} new cycles" if cycle_delta > 0 else ", 0 new cycles"
+
+    if health_delta_local > 0:
+        return (
+            f"health {health_delta_local:+d} ({health_before_local} -> {health_after_local}){mod_str}{cycle_str}",
+            health_delta_local,
+            health_before_local,
+            health_after_local,
+        )
+    if health_delta_local == 0:
+        return (
+            f"health unchanged at {health_before_local}{mod_str}{cycle_str}",
+            health_delta_local,
+            health_before_local,
+            health_after_local,
+        )
+    return (
+        f"health {health_delta_local:+d} ({health_before_local} -> {health_after_local}){mod_str}{cycle_str}",
+        health_delta_local,
+        health_before_local,
+        health_after_local,
+    )
+
+
+def _metric_direction_counts(deltas) -> tuple[int, int]:
+    """Count improved and degraded metric directions defensively."""
+    if not isinstance(deltas, dict):
+        return (0, 0)
+    improved_local = sum(1 for d in deltas.values() if isinstance(d, dict) and d.get("direction") == "improved")
+    degraded_local = sum(1 for d in deltas.values() if isinstance(d, dict) and d.get("direction") == "degraded")
+    return (improved_local, degraded_local)
+
+
+def _simulation_facts(verdict: str, improved: int, degraded: int) -> list[str]:
+    """Build the simulate agent-contract facts."""
+    return [
+        verdict,
+        f"{improved} improved metrics",
+        f"{degraded} degraded metrics",
+    ]
+
+
+def _simulation_next_commands(degraded: int, warnings: list[str]) -> list[str]:
+    """Build conditional simulate next commands."""
+    cmds = []
+    if degraded > 0:
+        cmds.append("roam preflight")
+    if warnings:
+        cmds.append("roam health")
+    return cmds
+
+
+def _emit_simulation_error(json_mode: bool, op_name: str, error: str, before: dict, warnings_out: list[str]) -> None:
+    """Emit the transform-resolution error path."""
+    if json_mode:
+        envelope_summary: dict = {
+            "verdict": error,
+            "operation": op_name,
+            "health_delta": 0,
+            "health_before": before.get("health_score", 0),
+            "health_after": before.get("health_score", 0),
+            "improved_metrics": 0,
+            "degraded_metrics": 0,
+        }
+        envelope_kwargs: dict = dict(
+            summary=envelope_summary,
+            operation={"operation": op_name, "error": error},
+            metrics={},
+            warnings=[error],
+        )
+        if warnings_out:
+            envelope_summary["partial_success"] = True
+            envelope_summary["warnings_out"] = list(warnings_out)
+            envelope_kwargs["warnings_out"] = list(warnings_out)
+        click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
+        return
+    click.echo(f"VERDICT: {error}")
+
+
+def _emit_simulation_json_output(
+    op_name: str,
+    op_result: dict,
+    deltas: dict,
+    warnings: list[str],
+    facts: list[str],
+    next_commands: list[str],
+    verdict: str,
+    health_delta: int,
+    health_before: int,
+    health_after: int,
+    improved: int,
+    degraded: int,
+    warnings_out: list[str],
+) -> None:
+    """Emit the successful JSON simulation envelope."""
+    envelope_summary: dict = {
+        "verdict": verdict,
+        "operation": op_name,
+        "health_delta": health_delta,
+        "health_before": health_before,
+        "health_after": health_after,
+        "improved_metrics": improved,
+        "degraded_metrics": degraded,
+    }
+    envelope_kwargs: dict = dict(
+        summary=envelope_summary,
+        operation=op_result,
+        metrics=deltas,
+        warnings=warnings,
+        agent_contract={
+            "facts": facts,
+            "risks": [],
+            "next_commands": next_commands,
+            "confidence": None,
+        },
+    )
+    if warnings_out:
+        envelope_summary["partial_success"] = True
+        envelope_summary["warnings_out"] = list(warnings_out)
+        envelope_kwargs["warnings_out"] = list(warnings_out)
+    click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
+
+
+def _simulation_operation_line(op_name: str, op_result) -> str:
+    """Format the text-mode operation line."""
+    op_line = op_result.get("operation", op_name).upper() if isinstance(op_result, dict) else op_name.upper()
+    sym = op_result.get("symbol", "") if isinstance(op_result, dict) else ""
+    from_f = op_result.get("from_file", "") if isinstance(op_result, dict) else ""
+    to_f = op_result.get("to_file", op_result.get("target_file", "")) if isinstance(op_result, dict) else ""
+    if sym and from_f and to_f:
+        return f"OPERATION: {op_line} {sym} from {from_f} to {to_f}"
+    if isinstance(op_result, dict) and op_result.get("removed"):
+        return f"OPERATION: {op_line} {', '.join(op_result['removed'])}"
+    if isinstance(op_result, dict) and op_result.get("merged_file"):
+        return f"OPERATION: {op_line} {op_result['merged_file']} into {to_f}"
+    return f"OPERATION: {op_line}"
+
+
+def _simulation_metric_delta_line(key: str, delta: dict) -> str:
+    """Format one text-mode metric delta row."""
+    label_map = {
+        "health_score": "Health score",
+        "cycles": "Cycles",
+        "tangle_ratio": "Tangle ratio",
+        "layer_violations": "Layer violations",
+        "modularity": "Modularity",
+        "fiedler": "Fiedler",
+        "propagation_cost": "Propagation cost",
+        "god_components": "God components",
+        "bottlenecks": "Bottlenecks",
+        "nodes": "Nodes",
+        "edges": "Edges",
+    }
+    label = label_map.get(key, key)
+    b_val = delta["before"]
+    a_val = delta["after"]
+    pct = delta["pct_change"]
+    direction = delta["direction"]
+
+    val_str = f"{b_val:.4f} -> {a_val:.4f}" if isinstance(b_val, float) else f"{b_val} -> {a_val}"
+    pct_str = "(no change)" if direction == "unchanged" else f"({pct:+.1f}%)"
+
+    dir_str = ""
+    if direction == "improved":
+        dir_str = "  IMPROVED"
+    elif direction == "degraded":
+        dir_str = "  DEGRADED"
+
+    return f"  {label:20s} {val_str:24s} {pct_str:14s}{dir_str}"
+
+
+def _emit_simulation_text_output(op_name: str, op_result, deltas, warnings: list[str], verdict: str) -> None:
+    """Emit the human-readable simulation output."""
+    click.echo(f"VERDICT: {verdict}")
+    click.echo("")
+    click.echo(_simulation_operation_line(op_name, op_result))
+    click.echo("")
+
+    click.echo("METRIC DELTAS:")
+    display_order = [
+        "health_score",
+        "cycles",
+        "tangle_ratio",
+        "layer_violations",
+        "modularity",
+        "fiedler",
+        "propagation_cost",
+        "god_components",
+        "bottlenecks",
+    ]
+    for key in display_order:
+        delta = deltas.get(key) if isinstance(deltas, dict) else None
+        if delta is not None:
+            click.echo(_simulation_metric_delta_line(key, delta))
+
+    if warnings:
+        click.echo("")
+        click.echo("WARNINGS:")
+        for warning in warnings:
+            click.echo(f"  - {warning}")
+
+
+def _warn_if_large_graph(conn, json_mode: bool) -> None:
+    """Warn text users before running simulation on a large graph."""
+    sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    if sym_count > _MAX_GRAPH_SYMBOLS and not json_mode:
+        click.echo(f"Warning: large graph ({sym_count} symbols) -- simulation may be slow.", err=True)
+
+
+def _simulate_baseline(_run_check_ef, conn, build_symbol_graph, compute_graph_metrics, empty_metrics_floor: dict):
+    """Load the baseline graph and metrics through the W607-EF wrapper."""
+
+    def _load_baseline_graph():
+        G_local = build_symbol_graph(conn)
+        before_local = compute_graph_metrics(G_local)
+        return (G_local, before_local)
+
+    baseline = _run_check_ef(
+        "load_baseline_graph",
+        _load_baseline_graph,
+        default=(None, dict(empty_metrics_floor)),
+    )
+    if baseline is None:
+        baseline = (None, dict(empty_metrics_floor))
+    G, before = baseline
+    if before is None:
+        before = dict(empty_metrics_floor)
+    return G, before
+
+
+def _simulate_transform(_run_check_ef, G, conn, clone_graph, op_args_fn):
+    """Clone the baseline graph and apply the requested counterfactual transform."""
+
+    def _apply_transforms():
+        if G is None:
+            return (None, {}, "baseline graph unavailable")
+        G_sim_local = clone_graph(G)
+        op_result_local, error_local = op_args_fn(G_sim_local, conn)
+        return (G_sim_local, op_result_local, error_local)
+
+    transformed = _run_check_ef(
+        "apply_transforms",
+        _apply_transforms,
+        default=(None, {}, "transform unavailable"),
+    )
+    if transformed is None:
+        transformed = (None, {}, "transform unavailable")
+    G_sim, op_result, error = transformed
+    if op_result is None:
+        op_result = {}
+    return G_sim, op_result, error
+
+
+def _simulate_after_metrics(_run_check_ef, G, G_sim, before: dict, compute_graph_metrics, empty_metrics_floor: dict):
+    """Compute post-transform metrics through the W607-EF wrapper."""
+
+    def _recompute_metrics():
+        if G_sim is None:
+            return dict(empty_metrics_floor)
+        if _simulation_topology_unchanged(G, G_sim):
+            return dict(before)
+        return compute_graph_metrics(G_sim)
+
+    after = _run_check_ef(
+        "recompute_metrics",
+        _recompute_metrics,
+        default=dict(empty_metrics_floor),
+    )
+    if after is None:
+        after = dict(empty_metrics_floor)
+    return after
+
+
+def _simulate_metric_deltas(_run_check_ef, before: dict, after: dict, metric_delta):
+    """Compute metric deltas and warning strings through the W607-EF wrapper."""
+
+    def _diff_metrics():
+        return _simulation_metric_diff(before, after, metric_delta)
+
+    diffed = _run_check_ef(
+        "diff_metrics",
+        _diff_metrics,
+        default=({}, []),
+    )
+    if diffed is None:
+        diffed = ({}, [])
+    deltas, warnings = diffed
+    if deltas is None:
+        deltas = {}
+    if warnings is None:
+        warnings = []
+    return deltas, warnings
+
+
+def _simulate_verdict_bundle(_run_check_ef, before: dict, after: dict, deltas):
+    """Compose the verdict bundle through the W607-EF wrapper."""
+
+    def _compose_verdict():
+        return _simulation_verdict(before, after, deltas)
+
+    verdict_bundle = _run_check_ef(
+        "compose_verdict",
+        _compose_verdict,
+        default=("health unchanged at 0, 0 new cycles", 0, 0, 0),
+    )
+    if verdict_bundle is None:
+        verdict_bundle = ("health unchanged at 0, 0 new cycles", 0, 0, 0)
+    verdict, health_delta, health_before, health_after = verdict_bundle
+    if not isinstance(verdict, str) or not verdict:
+        verdict = "health unchanged at 0, 0 new cycles"
+    return verdict, health_delta, health_before, health_after
+
+
+def _simulate_direction_counts(_run_check_ef, deltas) -> tuple[int, int]:
+    """Count improved/degraded directions through the W607-EF wrapper."""
+
+    def _count_directions():
+        return _metric_direction_counts(deltas)
+
+    counts = _run_check_ef(
+        "diff_metrics",
+        _count_directions,
+        default=(0, 0),
+    )
+    if counts is None:
+        counts = (0, 0)
+    return counts
+
+
+def _simulate_agent_contract_parts(_run_check_ef, verdict: str, improved: int, degraded: int, warnings: list[str]):
+    """Build agent contract fields through the W607-EF wrappers."""
+
+    def _compose_facts():
+        return _simulation_facts(verdict, improved, degraded)
+
+    facts = _run_check_ef(
+        "compose_facts",
+        _compose_facts,
+        default=[verdict],
+    )
+    if facts is None:
+        facts = [verdict]
+
+    def _compose_next_commands():
+        return _simulation_next_commands(degraded, warnings)
+
+    next_commands = _run_check_ef(
+        "compose_next_commands",
+        _compose_next_commands,
+        default=[],
+    )
+    if next_commands is None:
+        next_commands = []
+    return facts, next_commands
+
+
 def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     """Shared flow for all simulate subcommands.
 
@@ -107,324 +527,61 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     # zero-count baseline avoids re-introducing the 7919-CATASTROPHE
     # shape (CONSTRAINT 12 first-token executability) -- the verdict
     # emits the executable empty-state, not raw input values.
-    empty_metrics_floor: dict = {
-        "health_score": 0,
-        "cycles": 0,
-        "tangle_ratio": 0.0,
-        "layer_violations": 0,
-        "modularity": 0.0,
-        "fiedler": 0.0,
-        "propagation_cost": 0.0,
-        "god_components": 0,
-        "bottlenecks": 0,
-        "nodes": 0,
-        "edges": 0,
-    }
+    empty_metrics_floor: dict = _empty_metrics_floor()
 
     with open_db(readonly=True) as conn:
-        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        if sym_count > _MAX_GRAPH_SYMBOLS:
-            msg = f"Warning: large graph ({sym_count} symbols) -- simulation may be slow."
-            if not json_mode:
-                click.echo(msg, err=True)
-
-        # W607-EF: ``load_baseline_graph`` substrate -- baseline networkx
-        # graph build + pre-transform metric computation. A raise inside
-        # build_symbol_graph or the baseline metric pass degrades to the
-        # empty-floor metrics so the downstream substrates still produce
-        # a coherent envelope.
-        def _load_baseline_graph():
-            G_local = build_symbol_graph(conn)
-            before_local = compute_graph_metrics(G_local)
-            return (G_local, before_local)
-
-        baseline = _run_check_ef(
-            "load_baseline_graph",
-            _load_baseline_graph,
-            default=(None, dict(empty_metrics_floor)),
+        _warn_if_large_graph(conn, json_mode)
+        G, before = _simulate_baseline(
+            _run_check_ef,
+            conn,
+            build_symbol_graph,
+            compute_graph_metrics,
+            empty_metrics_floor,
         )
-        if baseline is None:
-            baseline = (None, dict(empty_metrics_floor))
-        G, before = baseline
-        if before is None:
-            before = dict(empty_metrics_floor)
-
-        # W607-EF: ``apply_transforms`` substrate -- clone_graph + the
-        # op_args_fn dispatch (move/extract/merge/delete). The
-        # counterfactual mutation runs on the cloned graph; a raise here
-        # degrades to (cloned-or-empty-graph, {}, "transform_unavailable").
-        def _apply_transforms():
-            if G is None:
-                # Baseline failed; nothing to clone. Emit an explicit
-                # resolution-state error string.
-                return (None, {}, "baseline graph unavailable")
-            G_sim_local = clone_graph(G)
-            op_result_local, error_local = op_args_fn(G_sim_local, conn)
-            return (G_sim_local, op_result_local, error_local)
-
-        transformed = _run_check_ef(
-            "apply_transforms",
-            _apply_transforms,
-            default=(None, {}, "transform unavailable"),
+        G_sim, op_result, error = _simulate_transform(
+            _run_check_ef,
+            G,
+            conn,
+            clone_graph,
+            op_args_fn,
         )
-        if transformed is None:
-            transformed = (None, {}, "transform unavailable")
-        G_sim, op_result, error = transformed
-        if op_result is None:
-            op_result = {}
 
         if error:
-            if json_mode:
-                envelope_summary: dict = {
-                    "verdict": error,
-                    "operation": op_name,
-                    "health_delta": 0,
-                    "health_before": before.get("health_score", 0),
-                    "health_after": before.get("health_score", 0),
-                    "improved_metrics": 0,
-                    "degraded_metrics": 0,
-                }
-                envelope_kwargs: dict = dict(
-                    summary=envelope_summary,
-                    operation={"operation": op_name, "error": error},
-                    metrics={},
-                    warnings=[error],
-                )
-                if _w607ef_warnings_out:
-                    envelope_summary["partial_success"] = True
-                    envelope_summary["warnings_out"] = list(_w607ef_warnings_out)
-                    envelope_kwargs["warnings_out"] = list(_w607ef_warnings_out)
-                click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
-                return
-            click.echo(f"VERDICT: {error}")
+            _emit_simulation_error(json_mode, op_name, error, before, _w607ef_warnings_out)
             return
 
-    # W607-EF: ``recompute_metrics`` substrate -- compute_graph_metrics on
-    # the counterfactual graph. A raise here degrades to the empty
-    # metrics floor so the downstream metric_delta still composes a
-    # zero-delta dict.
-    #
-    # PERF: every metric in ``compute_graph_metrics`` is derived purely
-    # from graph TOPOLOGY (node set + edge set) -- none reads the
-    # ``file_path`` node attribute. The move / extract / merge transforms
-    # only rewrite ``file_path``; they never add or remove a node or an
-    # edge. So when the counterfactual graph has an identical node set
-    # AND edge set, recomputing ``after`` would reproduce ``before``
-    # byte-for-byte. Reusing ``before`` in that case skips a full second
-    # ~50s metric pass (betweenness sampling + Louvain + modularity).
-    # ``delete`` genuinely removes nodes/edges, so its topology check
-    # fails and the recompute runs as before. The guard compares the
-    # graphs themselves rather than trusting the operation name, so a
-    # future topology-changing transform stays correct automatically.
-    def _topology_unchanged() -> bool:
-        if G is None or G_sim is None:
-            return False
-        if G.number_of_nodes() != G_sim.number_of_nodes():
-            return False
-        if G.number_of_edges() != G_sim.number_of_edges():
-            return False
-        if G.nodes.keys() != G_sim.nodes.keys():
-            return False
-        # Edge-set identity. Equal node-count + edge-count + node-set
-        # plus every G edge present in G_sim implies identical edge sets
-        # (no edge can have an endpoint outside the shared node set).
-        return all(G_sim.has_edge(u, v) for u, v in G.edges())
-
-    def _recompute_metrics():
-        if G_sim is None:
-            return dict(empty_metrics_floor)
-        if _topology_unchanged():
-            # Counterfactual graph is topologically identical to the
-            # baseline -- every metric is unchanged. Reuse ``before``.
-            return dict(before)
-        return compute_graph_metrics(G_sim)
-
-    after = _run_check_ef(
-        "recompute_metrics",
-        _recompute_metrics,
-        default=dict(empty_metrics_floor),
+    after = _simulate_after_metrics(_run_check_ef, G, G_sim, before, compute_graph_metrics, empty_metrics_floor)
+    deltas, warnings = _simulate_metric_deltas(_run_check_ef, before, after, metric_delta)
+    verdict, health_delta, health_before, health_after = _simulate_verdict_bundle(
+        _run_check_ef,
+        before,
+        after,
+        deltas,
     )
-    if after is None:
-        after = dict(empty_metrics_floor)
-
-    # W607-EF: ``diff_metrics`` substrate -- metric_delta(before, after)
-    # + warning derivation (cycles / layer-violations / modularity
-    # regressions). A raise degrades to an empty deltas dict + empty
-    # warnings list so the envelope still composes.
-    def _diff_metrics():
-        deltas_local = metric_delta(before, after)
-        warnings_local: list[str] = []
-        if after.get("cycles", 0) > before.get("cycles", 0):
-            warnings_local.append(f"new cycles introduced ({before.get('cycles', 0)} -> {after.get('cycles', 0)})")
-        if after.get("layer_violations", 0) > before.get("layer_violations", 0):
-            warnings_local.append(
-                f"new layer violations ({before.get('layer_violations', 0)} -> {after.get('layer_violations', 0)})"
-            )
-        if after.get("modularity", 0) < before.get("modularity", 0):
-            warnings_local.append(
-                f"modularity decreased ({before.get('modularity', 0)} -> {after.get('modularity', 0)})"
-            )
-        return (deltas_local, warnings_local)
-
-    diffed = _run_check_ef(
-        "diff_metrics",
-        _diff_metrics,
-        default=({}, []),
-    )
-    if diffed is None:
-        diffed = ({}, [])
-    deltas, warnings = diffed
-    if deltas is None:
-        deltas = {}
-    if warnings is None:
-        warnings = []
-
-    # W607-EF: ``compose_verdict`` substrate -- LAW 6 single-line
-    # health-delta verdict. A raise degrades to the literal zero-floor
-    # string with explicit empty counts -- the W811/W817 Pattern-2
-    # guard: never collapse to a SAFE/passed verdict on the degraded
-    # path. W978 #1: f-string verdict floor uses plain text, no Name
-    # references inside the literal.
-    def _compose_verdict():
-        health_before_local = before.get("health_score", 0)
-        health_after_local = after.get("health_score", 0)
-        health_delta_local = health_after_local - health_before_local
-
-        mod_delta = deltas.get("modularity", {}) if isinstance(deltas, dict) else {}
-        mod_str = ""
-        if isinstance(mod_delta, dict) and mod_delta:
-            md = mod_delta.get("delta", 0)
-            mod_str = f", modularity {md:+.2f}" if md != 0 else ", modularity unchanged"
-
-        cycle_delta = after.get("cycles", 0) - before.get("cycles", 0)
-        cycle_str = f", {cycle_delta} new cycles" if cycle_delta > 0 else ", 0 new cycles"
-
-        if health_delta_local > 0:
-            return (
-                f"health {health_delta_local:+d} ({health_before_local} -> {health_after_local}){mod_str}{cycle_str}",
-                health_delta_local,
-                health_before_local,
-                health_after_local,
-            )
-        if health_delta_local == 0:
-            return (
-                f"health unchanged at {health_before_local}{mod_str}{cycle_str}",
-                health_delta_local,
-                health_before_local,
-                health_after_local,
-            )
-        return (
-            f"health {health_delta_local:+d} ({health_before_local} -> {health_after_local}){mod_str}{cycle_str}",
-            health_delta_local,
-            health_before_local,
-            health_after_local,
-        )
-
-    verdict_bundle = _run_check_ef(
-        "compose_verdict",
-        _compose_verdict,
-        default=("health unchanged at 0, 0 new cycles", 0, 0, 0),
-    )
-    if verdict_bundle is None:
-        verdict_bundle = ("health unchanged at 0, 0 new cycles", 0, 0, 0)
-    verdict, health_delta, health_before, health_after = verdict_bundle
-    if not isinstance(verdict, str) or not verdict:
-        verdict = "health unchanged at 0, 0 new cycles"
-
-    # W607-EF: improved/degraded counters are computed defensively so a
-    # malformed delta dict doesn't crash the envelope path.
-    def _count_directions():
-        if not isinstance(deltas, dict):
-            return (0, 0)
-        improved_local = sum(1 for d in deltas.values() if isinstance(d, dict) and d.get("direction") == "improved")
-        degraded_local = sum(1 for d in deltas.values() if isinstance(d, dict) and d.get("direction") == "degraded")
-        return (improved_local, degraded_local)
-
-    counts = _run_check_ef(
-        "diff_metrics",
-        _count_directions,
-        default=(0, 0),
-    )
-    if counts is None:
-        counts = (0, 0)
-    improved, degraded = counts
-
-    # W607-EF: ``compose_facts`` substrate -- curated
-    # ``agent_contract.facts`` list. A raise degrades to a single
-    # verdict-only fact so LAW 6 verdict-first invariant holds.
-    def _compose_facts():
-        facts_local = [
-            verdict,
-            f"{improved} improved metrics",
-            f"{degraded} degraded metrics",
-        ]
-        return facts_local
-
-    facts = _run_check_ef(
-        "compose_facts",
-        _compose_facts,
-        default=[verdict],
-    )
-    if facts is None:
-        facts = [verdict]
-
-    # W607-EF: ``compose_next_commands`` substrate -- conditional
-    # advisory next-step suggestions. A raise degrades to an empty list
-    # so the agent_contract still composes.
-    def _compose_next_commands():
-        cmds = []
-        if degraded > 0:
-            cmds.append("roam preflight")
-        if warnings:
-            cmds.append("roam health")
-        return cmds
-
-    next_commands = _run_check_ef(
-        "compose_next_commands",
-        _compose_next_commands,
-        default=[],
-    )
-    if next_commands is None:
-        next_commands = []
+    improved, degraded = _simulate_direction_counts(_run_check_ef, deltas)
+    facts, next_commands = _simulate_agent_contract_parts(_run_check_ef, verdict, improved, degraded, warnings)
 
     if json_mode:
         # W607-EF: ``serialize_envelope`` substrate -- json_envelope
         # construction + click.echo emission. The wrap protects against
         # crashes inside the formatter call so the marker surfaces and
         # the function returns cleanly.
-        envelope_summary: dict = {
-            "verdict": verdict,
-            "operation": op_name,
-            "health_delta": health_delta,
-            "health_before": health_before,
-            "health_after": health_after,
-            "improved_metrics": improved,
-            "degraded_metrics": degraded,
-        }
-        envelope_kwargs: dict = dict(
-            summary=envelope_summary,
-            operation=op_result,
-            metrics=deltas,
-            warnings=warnings,
-            agent_contract={
-                "facts": facts,
-                "risks": [],
-                "next_commands": next_commands,
-                "confidence": None,
-            },
-        )
-        # W607-EF: mirror substrate markers into BOTH the top-level
-        # envelope ``warnings_out`` AND ``summary.warnings_out`` so MCP
-        # consumers see disclosure regardless of which surface they
-        # read. Flipping ``partial_success: True`` is the Pattern-2
-        # silent-fallback guard.
-        if _w607ef_warnings_out:
-            envelope_summary["partial_success"] = True
-            envelope_summary["warnings_out"] = list(_w607ef_warnings_out)
-            envelope_kwargs["warnings_out"] = list(_w607ef_warnings_out)
-
         def _serialize_envelope():
-            click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
+            _emit_simulation_json_output(
+                op_name,
+                op_result,
+                deltas,
+                warnings,
+                facts,
+                next_commands,
+                verdict,
+                health_delta,
+                health_before,
+                health_after,
+                improved,
+                degraded,
+                _w607ef_warnings_out,
+            )
 
         _run_check_ef("serialize_envelope", _serialize_envelope, default=None)
         return
@@ -434,83 +591,7 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     # malformed delta dict missing ``before`` / ``after``) degrades to a
     # verdict-only emission so the user still sees the LAW 6 floor.
     def _format_text_output():
-        click.echo(f"VERDICT: {verdict}")
-        click.echo("")
-
-        # Operation summary
-        op_line = op_result.get("operation", op_name).upper() if isinstance(op_result, dict) else op_name.upper()
-        sym = op_result.get("symbol", "") if isinstance(op_result, dict) else ""
-        from_f = op_result.get("from_file", "") if isinstance(op_result, dict) else ""
-        to_f = op_result.get("to_file", op_result.get("target_file", "")) if isinstance(op_result, dict) else ""
-        if sym and from_f and to_f:
-            click.echo(f"OPERATION: {op_line} {sym} from {from_f} to {to_f}")
-        elif isinstance(op_result, dict) and op_result.get("removed"):
-            click.echo(f"OPERATION: {op_line} {', '.join(op_result['removed'])}")
-        elif isinstance(op_result, dict) and op_result.get("merged_file"):
-            click.echo(f"OPERATION: {op_line} {op_result['merged_file']} into {to_f}")
-        else:
-            click.echo(f"OPERATION: {op_line}")
-        click.echo("")
-
-        # Metric deltas table
-        click.echo("METRIC DELTAS:")
-        label_map = {
-            "health_score": "Health score",
-            "cycles": "Cycles",
-            "tangle_ratio": "Tangle ratio",
-            "layer_violations": "Layer violations",
-            "modularity": "Modularity",
-            "fiedler": "Fiedler",
-            "propagation_cost": "Propagation cost",
-            "god_components": "God components",
-            "bottlenecks": "Bottlenecks",
-            "nodes": "Nodes",
-            "edges": "Edges",
-        }
-        display_order = [
-            "health_score",
-            "cycles",
-            "tangle_ratio",
-            "layer_violations",
-            "modularity",
-            "fiedler",
-            "propagation_cost",
-            "god_components",
-            "bottlenecks",
-        ]
-        for key in display_order:
-            d = deltas.get(key) if isinstance(deltas, dict) else None
-            if d is None:
-                continue
-            label = label_map.get(key, key)
-            b_val = d["before"]
-            a_val = d["after"]
-            pct = d["pct_change"]
-            direction = d["direction"]
-
-            if isinstance(b_val, float):
-                val_str = f"{b_val:.4f} -> {a_val:.4f}"
-            else:
-                val_str = f"{b_val} -> {a_val}"
-
-            if direction == "unchanged":
-                pct_str = "(no change)"
-            else:
-                pct_str = f"({pct:+.1f}%)"
-
-            dir_str = ""
-            if direction == "improved":
-                dir_str = "  IMPROVED"
-            elif direction == "degraded":
-                dir_str = "  DEGRADED"
-
-            click.echo(f"  {label:20s} {val_str:24s} {pct_str:14s}{dir_str}")
-
-        if warnings:
-            click.echo("")
-            click.echo("WARNINGS:")
-            for w in warnings:
-                click.echo(f"  - {w}")
+        _emit_simulation_text_output(op_name, op_result, deltas, warnings, verdict)
 
     _run_check_ef("format_text_output", _format_text_output, default=None)
     # Marker accumulator handles disclosure on the text path -- the

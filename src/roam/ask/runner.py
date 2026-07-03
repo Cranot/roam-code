@@ -109,6 +109,17 @@ def fill_followups(
     return [item.replace("{symbol}", subject).replace("{file}", fsub).replace("{task}", query) for item in followups]
 
 
+def expand_followups(followups: tuple[str, ...], query: str) -> list[str]:
+    """Substitute placeholders in *followups*, extracting symbol/file from *query*.
+
+    One-call entry point pairing :func:`extract_recipe_symbol` /
+    :func:`extract_recipe_file` with :func:`fill_followups`, so callers build
+    rendered follow-ups without orchestrating runner's three primitives
+    (the analogue of the extract→fill step ``run_recipe`` does for args).
+    """
+    return fill_followups(followups, query, extract_recipe_symbol(query), extract_recipe_file(query))
+
+
 def _arg_present(args: list[str], name: str) -> bool:
     return any(arg == name or arg.startswith(f"{name}=") for arg in args)
 

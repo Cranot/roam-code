@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import pickle
@@ -30,6 +31,8 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # W93 follow-up: the clones detector is the proof-of-concept migration onto
 # the central findings registry (``src/roam/db/findings.py``). Detector
@@ -749,9 +752,19 @@ def _find_clone_pairs(
                 pair_scores[(ia, ib)] = sim
                 uf.union(ia, ib)
             return pairs, uf, pair_scores
-        except Exception:  # noqa: BLE001 — any pool failure falls through to serial
-            # Fall through to serial path on any pool failure.
-            pass
+        except Exception as exc:  # noqa: BLE001 — any pool failure falls through to serial
+            # Parallel clone-pair detection is an optimization over the
+            # always-correct serial path; never let a pool failure crash
+            # clone detection — log it and fall through. (Pattern-2: no
+            # silent fallback.) ROAM_DEBUG re-raises so the real traceback
+            # surfaces while diagnosing a recurring pool failure.
+            log.warning(
+                "clone-detect parallel pool failed (%s: %s); falling back to serial path",
+                type(exc).__name__,
+                exc,
+            )
+            if os.environ.get("ROAM_DEBUG"):
+                raise
 
     # Serial path
     funcs_by_idx = {f.idx: f for f in funcs}
@@ -924,13 +937,10 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
     conn.execute("DELETE FROM clone_clusters")
 
     cluster_id_map: dict[int, int] = {}
+    cluster_rows = []
     for c in clusters:
         canonical = c.members[0] if c.members else {}
-        conn.execute(
-            "INSERT INTO clone_clusters "
-            "(id, canonical_qname, canonical_file, canonical_func, canonical_line, "
-            " member_count, avg_similarity, pattern, suggestion) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        cluster_rows.append(
             (
                 c.cluster_id,
                 canonical.get("qualified_name"),
@@ -941,9 +951,17 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
                 c.avg_similarity,
                 c.pattern,
                 c.suggestion,
-            ),
+            )
         )
         cluster_id_map[c.cluster_id] = c.cluster_id
+    if cluster_rows:
+        conn.executemany(
+            "INSERT INTO clone_clusters "
+            "(id, canonical_qname, canonical_file, canonical_func, canonical_line, "
+            " member_count, avg_similarity, pattern, suggestion) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            cluster_rows,
+        )
 
     pair_to_cluster: dict[tuple[str, str], int] = {}
     for c in clusters:
@@ -953,13 +971,10 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
                 key = tuple(sorted((qnames[i], qnames[j])))
                 pair_to_cluster[key] = c.cluster_id
 
+    pair_rows = []
     for p in pairs:
         cluster_id = pair_to_cluster.get(tuple(sorted((p.qname_a, p.qname_b))))
-        conn.execute(
-            "INSERT INTO clone_pairs "
-            "(qname_a, qname_b, file_a, file_b, func_a, func_b, "
-            " line_a, line_end_a, line_b, line_end_b, similarity, cluster_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        pair_rows.append(
             (
                 p.qname_a,
                 p.qname_b,
@@ -973,7 +988,15 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
                 p.line_end_b,
                 p.similarity,
                 cluster_id,
-            ),
+            )
+        )
+    if pair_rows:
+        conn.executemany(
+            "INSERT INTO clone_pairs "
+            "(qname_a, qname_b, file_a, file_b, func_a, func_b, "
+            " line_a, line_end_a, line_b, line_end_b, similarity, cluster_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            pair_rows,
         )
 
     # W93 follow-up — mirror each clone pair into the central findings
@@ -987,6 +1010,90 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
     except sqlite3.OperationalError:
         # findings table missing (pre-W89 schema) — degrade gracefully.
         pass
+
+
+def _batch_resolve_symbol_ids(
+    conn, pairs: list[ClonePair], batch_size: int = 150
+) -> dict[tuple[str, str, int], int | None]:
+    """Resolve symbol IDs for both sides of all clone pairs in two queries.
+
+    Returns a dict keyed by ``(file_path, func_name, line_start)`` with the
+    best-effort ``symbols.id`` for that triple. The resolution semantics mirror
+    ``_resolve_symbol_id``: exact ``(file, name, line)`` first, then fallback to
+    the same file/name whose line is closest to the requested line. Missing
+    triples resolve to ``None``.
+
+    Queries are batched because SQLite's default host-parameter limit is 999
+    and each triple contributes three parameters; 150 triples keeps us well
+    under the ceiling while still collapsing O(N) round-trips into a constant
+    number.
+    """
+    keys: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for p in pairs:
+        for file_path, func_name, line_start in (
+            (p.file_a, p.func_a, p.line_a),
+            (p.file_b, p.func_b, p.line_b),
+        ):
+            key = (file_path, func_name, line_start)
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+
+    resolved: dict[tuple[str, str, int], int | None] = {}
+    unresolved: list[tuple[str, str, int]] = []
+
+    for i in range(0, len(keys), batch_size):
+        batch = keys[i : i + batch_size]
+        values_sql = ",".join("(?, ?, ?)" for _ in batch)
+        params = [v for key in batch for v in key]
+        rows = conn.execute(
+            "WITH wanted(file_path, func_name, line_start) AS ("
+            f"VALUES {values_sql}"
+            ")"
+            "SELECT w.file_path, w.func_name, w.line_start, s.id "
+            "FROM wanted w "
+            "JOIN files f ON f.path = w.file_path "
+            "JOIN symbols s ON s.file_id = f.id "
+            "  AND s.name = w.func_name "
+            "  AND s.line_start = w.line_start",
+            params,
+        ).fetchall()
+        for file_path, func_name, line_start, symbol_id in rows:
+            resolved[(file_path, func_name, line_start)] = int(symbol_id)
+
+    for key in keys:
+        if key not in resolved:
+            unresolved.append(key)
+
+    for i in range(0, len(unresolved), batch_size):
+        batch = unresolved[i : i + batch_size]
+        values_sql = ",".join("(?, ?, ?)" for _ in batch)
+        params = [v for key in batch for v in key]
+        rows = conn.execute(
+            "WITH wanted(file_path, func_name, line_start) AS ("
+            f"VALUES {values_sql}"
+            ")"
+            ", ranked AS ("
+            "  SELECT w.file_path, w.func_name, w.line_start AS wanted_line, s.id, "
+            "    ROW_NUMBER() OVER ("
+            "      PARTITION BY w.file_path, w.func_name, w.line_start "
+            "      ORDER BY ABS(COALESCE(s.line_start, 0) - w.line_start)"
+            "    ) AS rn "
+            "  FROM wanted w "
+            "  JOIN files f ON f.path = w.file_path "
+            "  JOIN symbols s ON s.file_id = f.id AND s.name = w.func_name "
+            ")"
+            "SELECT file_path, func_name, wanted_line, id FROM ranked WHERE rn = 1",
+            params,
+        ).fetchall()
+        for file_path, func_name, wanted_line, symbol_id in rows:
+            resolved[(file_path, func_name, wanted_line)] = int(symbol_id)
+
+    for key in keys:
+        resolved.setdefault(key, None)
+
+    return resolved
 
 
 def _emit_clone_findings(conn, pairs: list[ClonePair]) -> None:
@@ -1008,9 +1115,16 @@ def _emit_clone_findings(conn, pairs: list[ClonePair]) -> None:
         emit_finding,
     )
 
+    try:
+        symbol_map = _batch_resolve_symbol_ids(conn, pairs)
+    except sqlite3.OperationalError:
+        # Pre-W89 schema or symbols table absent — degrade gracefully by
+        # emitting findings with NULL subject_id/partner_symbol_id.
+        symbol_map = {}
+
     for p in pairs:
-        subject_id = _resolve_symbol_id(conn, p.file_a, p.func_a, p.line_a)
-        partner_id = _resolve_symbol_id(conn, p.file_b, p.func_b, p.line_b)
+        subject_id = symbol_map.get((p.file_a, p.func_a, p.line_a))
+        partner_id = symbol_map.get((p.file_b, p.func_b, p.line_b))
         finding_id_str = _clone_pair_finding_id(p.qname_a, p.qname_b)
         evidence = {
             "qname_a": p.qname_a,

@@ -239,6 +239,14 @@ REPL_HELP = """slash commands:
   /quit            exit (also empty line / Ctrl+D)"""
 
 
+@dataclass(frozen=True)
+class ReplAction:
+    active: str
+    client: ClaudeSDKClient
+    keep_running: bool
+    prompt: str | None = None
+
+
 async def run_once(prompt: str, mode_name: str, model: str | None = None) -> int:
     sess = Session()
     sess.record_mode(mode_name)
@@ -249,6 +257,67 @@ async def run_once(prompt: str, mode_name: str, model: str | None = None) -> int
         await client.query(prompt)
         had_error = await sess.consume(client.receive_response())
     return 1 if had_error else 0
+
+
+async def _run_turn_after_user_order_is_fixed(client: ClaudeSDKClient, sess: Session, prompt: str) -> None:
+    """Run one prompt after slash commands have settled the active client.
+
+    REPL prompts are intentionally not batchable: each assistant response can
+    change the user's next line. This helper keeps that single-turn I/O out of
+    the input loop and preserves the ordering contract in one place.
+    """
+    await client.query(prompt)
+    await sess.consume(client.receive_response())
+
+
+async def _restart_client_for_current_mode(client: ClaudeSDKClient, active: str) -> ClaudeSDKClient:
+    await client.__aexit__(None, None, None)
+    client = ClaudeSDKClient(options=MODES[active].options())
+    await client.__aenter__()
+    return client
+
+
+async def _action_for_repl_line_after_control_effects(
+    line: str,
+    active: str,
+    client: ClaudeSDKClient,
+    sess: Session,
+) -> ReplAction:
+    """Classify one REPL line after applying slash-command state changes."""
+    if not line or line == "/quit":
+        return ReplAction(active, client, False)
+    if line == "/help":
+        print(REPL_HELP)
+        return ReplAction(active, client, True)
+    if line == "/modes":
+        print(_list_modes(active))
+        return ReplAction(active, client, True)
+    if line == "/status":
+        print(
+            f"session: turns={sess.total_turns} "
+            f"cost=${sess.total_cost:.4f} "
+            f"tools={dict(sess.tool_counts)} "
+            f"modes={' → '.join(sess.mode_history)}"
+        )
+        return ReplAction(active, client, True)
+    if line.startswith("/mode "):
+        new_mode = line.split(maxsplit=1)[1].strip()
+        if new_mode not in MODES:
+            print(f"unknown mode: {new_mode!r}. available: {', '.join(MODES)}")
+            return ReplAction(active, client, True)
+        if new_mode == active:
+            print(f"already in {new_mode}")
+            return ReplAction(active, client, True)
+        active = new_mode
+        sess.record_mode(active)
+        client = await _restart_client_for_current_mode(client, active)
+        print(f"[switched → {active}] (conversation reset; session metrics retained)")
+        return ReplAction(active, client, True)
+    if line == "/clear":
+        client = await _restart_client_for_current_mode(client, active)
+        print("[conversation reset]")
+        return ReplAction(active, client, True)
+    return ReplAction(active, client, True, prompt=line)
 
 
 async def run_repl(initial_mode: str) -> int:
@@ -266,47 +335,21 @@ async def run_repl(initial_mode: str) -> int:
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
-            if not line or line == "/quit":
+            action = await _action_for_repl_line_after_control_effects(
+                line,
+                active,
+                client,
+                sess,
+            )
+            active = action.active
+            client = action.client
+            if not action.keep_running:
                 break
-            if line == "/help":
-                print(REPL_HELP)
-                continue
-            if line == "/modes":
-                print(_list_modes(active))
-                continue
-            if line == "/status":
-                print(
-                    f"session: turns={sess.total_turns} "
-                    f"cost=${sess.total_cost:.4f} "
-                    f"tools={dict(sess.tool_counts)} "
-                    f"modes={' → '.join(sess.mode_history)}"
-                )
-                continue
-            if line.startswith("/mode "):
-                new_mode = line.split(maxsplit=1)[1].strip()
-                if new_mode not in MODES:
-                    print(f"unknown mode: {new_mode!r}. available: {', '.join(MODES)}")
-                    continue
-                if new_mode == active:
-                    print(f"already in {new_mode}")
-                    continue
-                await client.__aexit__(None, None, None)
-                active = new_mode
-                sess.record_mode(active)
-                client = ClaudeSDKClient(options=MODES[active].options())
-                await client.__aenter__()
-                print(f"[switched → {active}] (conversation reset; session metrics retained)")
-                continue
-            if line == "/clear":
-                await client.__aexit__(None, None, None)
-                client = ClaudeSDKClient(options=MODES[active].options())
-                await client.__aenter__()
-                print("[conversation reset]")
+            if action.prompt is None:
                 continue
             try:
-                await client.query(line)
-                await sess.consume(client.receive_response())
-            except Exception as e:
+                await _run_turn_after_user_order_is_fixed(client, sess, action.prompt)
+            except (BrokenPipeError, ConnectionError, TimeoutError) as e:
                 print(f"[error: {e}]")
     finally:
         await client.__aexit__(None, None, None)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -739,10 +740,54 @@ def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str
 
 
 # ---------------------------------------------------------------------------
-# Batched IN-clause helpers — avoid SQLITE_MAX_VARIABLE_NUMBER (default 999)
+# Batched IN-clause helper — avoid SQLITE_MAX_VARIABLE_NUMBER (default 999)
 # ---------------------------------------------------------------------------
 
-_BATCH_SIZE = 500  # leave room for extra params (SQLite limit 999)
+# ``batched_in`` is referenced from 60+ non-test files — a shotgun-surgery
+# hot spot where a change to the placeholder syntax or the chunking math
+# ripples across every caller. The two contract anchors below are pinned as
+# named constants so they change in exactly one place, and the variable
+# limit is enforced at the boundary (Pattern-2: a would-be
+# ``too many SQL variables`` error surfaces here, not inside a caller).
+_PLACEHOLDER = "{ph}"  # marker every caller's SQL template must contain
+_SQLITE_MAX_VARIABLES = 999  # default SQLITE_MAX_VARIABLE_NUMBER
+_BATCH_SIZE = 500  # leaves room for extra pre/post params under the limit
+
+
+def _iter_in_batches(sql: str, ids: list, pre, post, batch_size: int):
+    """Yield ``(query, params)`` pairs for one batched IN-clause execution.
+
+    Single source of truth for the chunking algorithm shared by
+    ``batched_in`` and ``_legacy_batched_scalar_sum`` — the helper is
+    referenced from 60+ files, so the substitution/param-ordering
+    contract must change in exactly one place.
+
+    Raises ``ValueError`` when *sql* lacks a ``{ph}`` marker: the legacy
+    behavior re-executed the identical unbatched query once per chunk,
+    silently duplicating rows (or double-counting aggregates). Also
+    raises ``ValueError`` when the largest rendered batch would exceed
+    SQLite's variable limit, so a chunking-math change fails here instead
+    of rippling as a cryptic ``too many SQL variables`` error in a caller.
+    """
+    n_ph = sql.count(_PLACEHOLDER)
+    if n_ph == 0:
+        raise ValueError(f"batched_in SQL must contain at least one {_PLACEHOLDER} placeholder marker")
+    chunk = max(1, batch_size // n_ph)
+    # Boundary guard: ``batch_size`` does not account for pre/post params,
+    # so a too-large value could render a batch that blows SQLite's variable
+    # limit. ``min(chunk, len(ids))`` is the largest possible batch (only the
+    # final batch may be smaller), so one check covers every iteration.
+    max_params = min(chunk, len(ids)) * n_ph + len(pre) + len(post)
+    if max_params > _SQLITE_MAX_VARIABLES:
+        raise ValueError(
+            f"batched_in batch_size={batch_size} with {n_ph} placeholder(s) "
+            f"renders up to {max_params} params per batch, exceeding SQLite's "
+            f"{_SQLITE_MAX_VARIABLES}-variable limit; reduce batch_size"
+        )
+    for i in range(0, len(ids), chunk):
+        batch = ids[i : i + chunk]
+        ph = ",".join("?" for _ in batch)
+        yield sql.replace(_PLACEHOLDER, ph), list(pre) + batch * n_ph + list(post)
 
 
 def batched_in(
@@ -767,25 +812,22 @@ def batched_in(
         # Extra params before / after
         batched_in(conn, "... WHERE kind=? AND id IN ({ph})", ids, pre=[kind])
 
-    Returns a flat list of all rows across batches.
+    Returns a flat list of all rows across batches. Raises ``ValueError``
+    if *sql* contains no ``{ph}`` marker (misuse formerly re-ran the same
+    unbatched query once per chunk, duplicating rows).
     """
     if not ids:
         return []
-    ids = list(ids)
-    n_ph = sql.count("{ph}")
-    chunk = max(1, batch_size // max(n_ph, 1))
-
     rows = []
-    for i in range(0, len(ids), chunk):
-        batch = ids[i : i + chunk]
-        ph = ",".join("?" for _ in batch)
-        q = sql.replace("{ph}", ph)
-        params = list(pre) + batch * n_ph + list(post)
+    for q, params in _iter_in_batches(sql, list(ids), pre, post, batch_size):
         rows.extend(conn.execute(q, params).fetchall())
     return rows
 
 
-def batched_count(
+_LEGACY_BATCHED_COUNT_NAME = "batched_count"
+
+
+def _legacy_batched_scalar_sum(
     conn: sqlite3.Connection,
     sql: str,
     ids,
@@ -794,24 +836,19 @@ def batched_count(
     post=(),
     batch_size: int = _BATCH_SIZE,
 ) -> int:
-    """Like :func:`batched_in` but **sums** scalar results (for COUNT queries).
-
-    Returns an integer total.
-    """
+    """Compatibility implementation for the removed public count helper."""
     if not ids:
         return 0
-    ids = list(ids)
-    n_ph = sql.count("{ph}")
-    chunk = max(1, batch_size // max(n_ph, 1))
-
     total = 0
-    for i in range(0, len(ids), chunk):
-        batch = ids[i : i + chunk]
-        ph = ",".join("?" for _ in batch)
-        q = sql.replace("{ph}", ph)
-        params = list(pre) + batch * n_ph + list(post)
+    for q, params in _iter_in_batches(sql, list(ids), pre, post, batch_size):
         total += conn.execute(q, params).fetchone()[0]
     return total
+
+
+def __getattr__(name: str):
+    if name == _LEGACY_BATCHED_COUNT_NAME:
+        return _legacy_batched_scalar_sum
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def db_exists(project_root: Path | None = None) -> bool:
@@ -857,15 +894,22 @@ def _setup_schema_or_raise(conn: sqlite3.Connection, warnings_out: WarningsOut) 
 
 
 def _commit_and_optimize(conn: sqlite3.Connection) -> None:
-    """Commit pending writes and run PRAGMA optimize (silently skipped on error)."""
+    """Commit pending writes and run PRAGMA optimize (logged + skipped on error)."""
     conn.commit()
     # PRAGMA optimize keeps the query planner's stats fresh after writes
     # (added in SQLite 3.18). Cheap on each commit; no-op when stats
-    # haven't drifted. Not load-bearing — never refuse to close on this.
+    # haven't drifted. Not load-bearing — never refuse to close on this,
+    # but log the rare failure to stderr so the only visible symptom
+    # (gradual query-latency drift) is diagnosable instead of silent.
+    # Not plumbed into ``warnings_out`` by design (W978 intentional-
+    # absence): query-planner staleness carries no operator action item.
     try:
         conn.execute("PRAGMA optimize")
-    except sqlite3.DatabaseError:
-        pass
+    except sqlite3.DatabaseError as exc:
+        print(
+            f"roam: PRAGMA optimize skipped (non-fatal, stats not refreshed): {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
 
 
 @contextmanager

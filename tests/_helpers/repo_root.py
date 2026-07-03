@@ -36,11 +36,14 @@ the resolved path must contain both ``.git`` (file or dir) and
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from functools import lru_cache
 from pathlib import Path
 
 __all__ = ["repo_root"]
+
+log = logging.getLogger(__name__)
 
 
 _MARKER_FILES = ("CLAUDE.md", "pyproject.toml")
@@ -57,7 +60,10 @@ def _git_toplevel(start: Path) -> Path | None:
     Uses ``-C <start>`` so the call works whether the current process
     cwd happens to be inside the repo or not. Stdout is the absolute
     path to the *main* working tree's root even when invoked from a
-    linked worktree (this is the property W572 relies on).
+    linked worktree (this is the property W572 relies on). Failures
+    (git absent, hung, or other OS error) are logged at ``DEBUG`` and
+    surfaced as ``None`` so the caller falls back to the marker walk
+    -- git is an optional resolution path, never a hard requirement.
     """
     try:
         proc = subprocess.run(
@@ -67,7 +73,8 @@ def _git_toplevel(start: Path) -> Path | None:
             check=False,
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        log.debug("git toplevel resolution failed (%s); falling back to marker walk", exc)
         return None
     if proc.returncode != 0:
         return None

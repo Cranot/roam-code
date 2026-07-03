@@ -2071,7 +2071,7 @@ def build_site_payload(tracker_path: Path | None = None) -> dict[str, object]:
             entry["mcp"] = str(mcp_tools)
             entry["cli_commands"] = f"{public} commands"
             break
-    except Exception:  # noqa: BLE001 — payload generation must not fail on parse error
+    except (ImportError, OSError, RuntimeError, SyntaxError, KeyError, TypeError, ValueError):
         # Do not fail payload generation if local surface-count parsing fails.
         pass
 

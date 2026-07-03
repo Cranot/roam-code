@@ -410,6 +410,60 @@ def write_manifest(conn: sqlite3.Connection, manifest: dict) -> int:
     return int(inserted) if inserted is not None else 0
 
 
+def _probe_optional_manifest_columns(
+    conn: sqlite3.Connection,
+) -> tuple[bool, bool] | None:
+    """Detect which optional manifest columns the DB has.
+
+    Returns ``(has_steps_status, has_component_versions)``, or ``None``
+    when the table is missing / unreadable. ``steps_status`` landed in
+    migration seq 52 and ``component_versions`` in seq 55, so older DBs
+    may not have either.
+    """
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(index_manifest)").fetchall()}
+    except sqlite3.DatabaseError:
+        return None
+    return ("steps_status" in cols, "component_versions" in cols)
+
+
+def _row_getter(row):
+    """Build a positional/name-tolerant accessor over a manifest row.
+
+    Resolves by column name when the row factory exposes one
+    (``sqlite3.Row``) and falls back to positional index for plain
+    tuples, so the index of each field stays stable regardless of which
+    optional columns are present.
+    """
+
+    def _at(idx, key):
+        try:
+            return row[key]
+        except (IndexError, KeyError, TypeError):
+            return row[idx]
+
+    return _at
+
+
+def _decode_json(raw, default):
+    """Decode a JSON manifest column, returning ``default`` on any failure."""
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _decode_json_dict(raw):
+    """Decode a JSON manifest column that must be a dict, else ``None``."""
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     """Return the most recent manifest row, with JSON columns decoded.
 
@@ -418,25 +472,16 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     rows written before that column existed come back with the field
     set to None (treated as "no per-step data recorded").
     """
-    # The ``steps_status`` column landed in migration seq 52 and
-    # ``component_versions`` in seq 55 — older DBs may not have either.
-    # Probe and select conditionally so this helper keeps working
-    # against pre-migration databases (absent columns come back as None).
-    select_steps = False
-    select_components = False
-    try:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(index_manifest)").fetchall()}
-        select_steps = "steps_status" in cols
-        select_components = "component_versions" in cols
-    except sqlite3.DatabaseError:
+    probed = _probe_optional_manifest_columns(conn)
+    if probed is None:
         return None
+    select_steps, select_components = probed
 
-    # Build the column list dynamically so the index of each field stays
-    # stable regardless of which optional columns are present. The
-    # downstream ``_at`` helper keys by name when the row factory exposes
-    # one (sqlite3.Row), so positional drift is only a concern when the
-    # row is a plain tuple.
-    extra_cols = ["steps_status"] if select_steps else []
+    # Build the column list dynamically so absent optional columns on
+    # pre-migration DBs don't break the SELECT (they come back as None).
+    extra_cols = []
+    if select_steps:
+        extra_cols.append("steps_status")
     if select_components:
         extra_cols.append("component_versions")
     extra_sql = ", " + ", ".join(extra_cols) if extra_cols else ""
@@ -457,58 +502,22 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     if row is None:
         return None
 
-    # Support both Row factories (sqlite3.Row vs tuple).
-    def _at(idx, key):
-        try:
-            return row[key]
-        except (IndexError, KeyError, TypeError):
-            return row[idx]
+    _at = _row_getter(row)
 
-    parser_versions_raw = _at(4, "parser_versions") or "{}"
-    grammar_versions_raw = _at(5, "grammar_versions")
-    enabled_extras_raw = _at(9, "enabled_extras") or "[]"
+    parser_versions = _decode_json(_at(4, "parser_versions") or "{}", {})
+    grammar_raw = _at(5, "grammar_versions")
+    grammar_versions = _decode_json(grammar_raw, None) if grammar_raw else None
+    enabled_extras = _decode_json(_at(9, "enabled_extras") or "[]", [])
 
-    try:
-        parser_versions = json.loads(parser_versions_raw)
-    except (TypeError, ValueError):
-        parser_versions = {}
-    try:
-        grammar_versions = json.loads(grammar_versions_raw) if grammar_versions_raw else None
-    except (TypeError, ValueError):
-        grammar_versions = None
-    try:
-        enabled_extras = json.loads(enabled_extras_raw)
-    except (TypeError, ValueError):
-        enabled_extras = []
-
-    # Trailing optional columns are appended in the same order as
-    # ``extra_cols`` above. When only one optional column is present,
-    # ``component_versions`` shifts to index 12 if ``steps_status`` was
-    # not selected. Key lookup via ``_at`` falls back to positional
-    # access on plain tuples — compute the per-field index accordingly.
-    steps_status: dict | None = None
-    component_versions: dict | None = None
+    # Trailing optional columns are appended after the 12 fixed fields, in
+    # the same order as ``extra_cols`` above. ``_at`` resolves them by name
+    # on Row factories and falls back to the tracked positional index on
+    # plain tuples (an absent earlier column shifts the later one's index).
+    optional: dict[str, dict | None] = {}
     next_optional_idx = 12
-    if select_steps:
-        steps_raw = _at(next_optional_idx, "steps_status")
+    for col in extra_cols:
+        optional[col] = _decode_json_dict(_at(next_optional_idx, col))
         next_optional_idx += 1
-        if steps_raw:
-            try:
-                decoded = json.loads(steps_raw)
-                if isinstance(decoded, dict):
-                    steps_status = decoded
-            except (TypeError, ValueError):
-                steps_status = None
-    if select_components:
-        components_raw = _at(next_optional_idx, "component_versions")
-        next_optional_idx += 1
-        if components_raw:
-            try:
-                decoded = json.loads(components_raw)
-                if isinstance(decoded, dict):
-                    component_versions = decoded
-            except (TypeError, ValueError):
-                component_versions = None
 
     return {
         "id": _at(0, "id"),
@@ -523,8 +532,8 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
         "enabled_extras": enabled_extras,
         "index_profile": _at(10, "index_profile"),
         "notes": _at(11, "notes"),
-        "steps_status": steps_status,
-        "component_versions": component_versions,
+        "steps_status": optional.get("steps_status"),
+        "component_versions": optional.get("component_versions"),
     }
 
 

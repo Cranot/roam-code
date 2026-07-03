@@ -10,6 +10,8 @@ memo.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 import re
 from typing import TYPE_CHECKING
 
@@ -54,7 +56,7 @@ def _mermaid_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
 def _dot_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
     """Return a DOT node definition."""
     nid = f"n{node_id}"
-    safe = label.replace('"', '\\"')
+    safe = _escape_dot_label(label)
     if is_file:
         return f'    {nid} [label="{safe}", shape=box, style=filled, fillcolor="#e0e0e0"];'
     if kind in _CLASS_KINDS:
@@ -62,6 +64,37 @@ def _dot_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
     if kind in _FUNC_KINDS:
         return f'    {nid} [label="{safe}", shape=ellipse, style=filled, fillcolor="#d0ffd0"];'
     return f'    {nid} [label="{safe}"];'
+
+
+def _escape_dot_label(text: str) -> str:
+    """Escape characters that break DOT label strings."""
+    return text.replace('"', '\\"')
+
+
+@dataclass(frozen=True)
+class _ReadableNodeSyntax:
+    sanitize_cluster_label: Callable[[str], str]
+    render_node: Callable[[int, str, str, bool], str]
+    cluster_open_template: str
+    cluster_label_template: str | None
+    cluster_close_line: str
+
+
+_MERMAID_READABLE_NODE_SYNTAX = _ReadableNodeSyntax(
+    sanitize_cluster_label=_escape_mermaid,
+    render_node=_mermaid_node,
+    cluster_open_template='    subgraph Cluster_{cid} ["{label}"]',
+    cluster_label_template=None,
+    cluster_close_line="    end",
+)
+
+_DOT_READABLE_NODE_SYNTAX = _ReadableNodeSyntax(
+    sanitize_cluster_label=_escape_dot_label,
+    render_node=_dot_node,
+    cluster_open_template="    subgraph cluster_{cid} {{",
+    cluster_label_template='        label="{label}";',
+    cluster_close_line="    }",
+)
 
 
 # -- Subgraph filtering -------------------------------------------------------
@@ -145,6 +178,104 @@ def _cycle_edges(G: nx.DiGraph) -> set[tuple[int, int]]:
     return edges
 
 
+@dataclass(frozen=True)
+class _ReadableDiagramClusters:
+    labels: dict[int, str]
+    groups: dict[int, list[int]]
+    ungrouped: list[int]
+
+
+def _diagram_node_label(data: dict[str, object], node_id: int, is_file_level: bool) -> str:
+    """Use file paths only when paths are the diagram's primary nodes."""
+    key = "path" if is_file_level else "name"
+    value = data.get(key)
+    return str(value) if value is not None else str(node_id)
+
+
+def _cluster_nodes_for_readable_symbol_diagram(
+    G: nx.DiGraph,
+    conn,
+    use_clusters: bool,
+    is_file_level: bool,
+) -> _ReadableDiagramClusters | None:
+    """Partition symbol nodes only when clusters improve diagram readability."""
+    if not use_clusters or is_file_level:
+        return None
+
+    clusters = detect_clusters(G)
+    relevant = {n: c for n, c in clusters.items() if n in G}
+    if not relevant:
+        return None
+
+    groups: dict[int, list[int]] = {}
+    ungrouped: list[int] = []
+    for n in G.nodes():
+        cid = relevant.get(n)
+        if cid is not None:
+            groups.setdefault(cid, []).append(n)
+        else:
+            ungrouped.append(n)
+
+    return _ReadableDiagramClusters(
+        labels=label_clusters(relevant, conn),
+        groups=groups,
+        ungrouped=ungrouped,
+    )
+
+
+def _append_node_lines_in_stable_order(
+    G: nx.DiGraph,
+    lines: list[str],
+    node_ids: Iterable[int],
+    is_file_level: bool,
+    syntax: _ReadableNodeSyntax,
+    prefix: str = "",
+) -> None:
+    """Preserve deterministic node order across both diagram syntaxes."""
+    for n in sorted(node_ids):
+        data = G.nodes[n]
+        node_label = _diagram_node_label(data, n, is_file_level)
+        kind = str(data.get("kind", ""))
+        lines.append(prefix + syntax.render_node(n, node_label, kind, is_file_level))
+
+
+def _emit_nodes_preserving_cluster_coverage(
+    G: nx.DiGraph,
+    lines: list[str],
+    cluster_partition: _ReadableDiagramClusters | None,
+    is_file_level: bool,
+    syntax: _ReadableNodeSyntax,
+) -> None:
+    """Preserve exact node coverage while syntax decides cluster formatting."""
+    if cluster_partition is None:
+        _append_node_lines_in_stable_order(G, lines, G.nodes(), is_file_level, syntax)
+        return
+
+    for cid, members in sorted(cluster_partition.groups.items()):
+        raw_label = cluster_partition.labels.get(cid, f"cluster-{cid}")
+        label = syntax.sanitize_cluster_label(raw_label)
+        lines.append(syntax.cluster_open_template.format(cid=cid, label=label))
+        if syntax.cluster_label_template is not None:
+            lines.append(syntax.cluster_label_template.format(cid=cid, label=label))
+        _append_node_lines_in_stable_order(
+            G,
+            lines,
+            members,
+            is_file_level,
+            syntax,
+            prefix="    ",
+        )
+        lines.append(syntax.cluster_close_line)
+
+    _append_node_lines_in_stable_order(
+        G,
+        lines,
+        cluster_partition.ungrouped,
+        is_file_level,
+        syntax,
+    )
+
+
 # -- Mermaid generation --------------------------------------------------------
 
 
@@ -165,44 +296,19 @@ def _generate_mermaid(
 
     cycle_e = _cycle_edges(G)
 
-    if use_clusters and not is_file_level:
-        clusters = detect_clusters(G)
-        # Only label if we have clusters for nodes in G
-        relevant = {n: c for n, c in clusters.items() if n in G}
-        if relevant:
-            cluster_labels = label_clusters(relevant, conn)
-            # Group nodes by cluster
-            groups: dict[int, list[int]] = {}
-            ungrouped: list[int] = []
-            for n in G.nodes():
-                cid = relevant.get(n)
-                if cid is not None:
-                    groups.setdefault(cid, []).append(n)
-                else:
-                    ungrouped.append(n)
-
-            for cid, members in sorted(groups.items()):
-                label = _escape_mermaid(cluster_labels.get(cid, f"cluster-{cid}"))
-                lines.append(f'    subgraph Cluster_{cid} ["{label}"]')
-                for n in sorted(members):
-                    data = G.nodes[n]
-                    if is_file_level:
-                        node_label = data.get("path", str(n))
-                    else:
-                        node_label = data.get("name", str(n))
-                    kind = data.get("kind", "")
-                    lines.append("    " + _mermaid_node(n, node_label, kind, is_file_level))
-                lines.append("    end")
-
-            for n in sorted(ungrouped):
-                data = G.nodes[n]
-                node_label = data.get("path" if is_file_level else "name", str(n))
-                kind = data.get("kind", "")
-                lines.append(_mermaid_node(n, node_label, kind, is_file_level))
-        else:
-            _emit_flat_nodes_mermaid(G, lines, is_file_level)
-    else:
-        _emit_flat_nodes_mermaid(G, lines, is_file_level)
+    cluster_partition = _cluster_nodes_for_readable_symbol_diagram(
+        G,
+        conn,
+        use_clusters,
+        is_file_level,
+    )
+    _emit_nodes_preserving_cluster_coverage(
+        G,
+        lines,
+        cluster_partition,
+        is_file_level,
+        _MERMAID_READABLE_NODE_SYNTAX,
+    )
 
     # Edges
     for u, v in sorted(G.edges()):
@@ -224,18 +330,6 @@ def _generate_mermaid(
     return "\n".join(lines)
 
 
-def _emit_flat_nodes_mermaid(G: nx.DiGraph, lines: list[str], is_file_level: bool) -> None:
-    """Emit all nodes without subgraph grouping."""
-    for n in sorted(G.nodes()):
-        data = G.nodes[n]
-        if is_file_level:
-            node_label = data.get("path", str(n))
-        else:
-            node_label = data.get("name", str(n))
-        kind = data.get("kind", "")
-        lines.append(_mermaid_node(n, node_label, kind, is_file_level))
-
-
 # -- DOT generation -----------------------------------------------------------
 
 
@@ -253,40 +347,19 @@ def _generate_dot(
 
     cycle_e = _cycle_edges(G)
 
-    if use_clusters and not is_file_level:
-        clusters = detect_clusters(G)
-        relevant = {n: c for n, c in clusters.items() if n in G}
-        if relevant:
-            cluster_labels = label_clusters(relevant, conn)
-            groups: dict[int, list[int]] = {}
-            ungrouped: list[int] = []
-            for n in G.nodes():
-                cid = relevant.get(n)
-                if cid is not None:
-                    groups.setdefault(cid, []).append(n)
-                else:
-                    ungrouped.append(n)
-
-            for cid, members in sorted(groups.items()):
-                label = cluster_labels.get(cid, f"cluster-{cid}").replace('"', '\\"')
-                lines.append(f"    subgraph cluster_{cid} {{")
-                lines.append(f'        label="{label}";')
-                for n in sorted(members):
-                    data = G.nodes[n]
-                    node_label = data.get("path" if is_file_level else "name", str(n))
-                    kind = data.get("kind", "")
-                    lines.append("    " + _dot_node(n, node_label, kind, is_file_level))
-                lines.append("    }")
-
-            for n in sorted(ungrouped):
-                data = G.nodes[n]
-                node_label = data.get("path" if is_file_level else "name", str(n))
-                kind = data.get("kind", "")
-                lines.append(_dot_node(n, node_label, kind, is_file_level))
-        else:
-            _emit_flat_nodes_dot(G, lines, is_file_level)
-    else:
-        _emit_flat_nodes_dot(G, lines, is_file_level)
+    cluster_partition = _cluster_nodes_for_readable_symbol_diagram(
+        G,
+        conn,
+        use_clusters,
+        is_file_level,
+    )
+    _emit_nodes_preserving_cluster_coverage(
+        G,
+        lines,
+        cluster_partition,
+        is_file_level,
+        _DOT_READABLE_NODE_SYNTAX,
+    )
 
     # Edges
     for u, v in sorted(G.edges()):
@@ -299,18 +372,6 @@ def _generate_dot(
 
     lines.append("}")
     return "\n".join(lines)
-
-
-def _emit_flat_nodes_dot(G: nx.DiGraph, lines: list[str], is_file_level: bool) -> None:
-    """Emit all DOT nodes without subgraph grouping."""
-    for n in sorted(G.nodes()):
-        data = G.nodes[n]
-        if is_file_level:
-            node_label = data.get("path", str(n))
-        else:
-            node_label = data.get("name", str(n))
-        kind = data.get("kind", "")
-        lines.append(_dot_node(n, node_label, kind, is_file_level))
 
 
 # -- CLI command ---------------------------------------------------------------

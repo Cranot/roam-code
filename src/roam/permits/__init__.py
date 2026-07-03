@@ -46,6 +46,7 @@ from __future__ import annotations
 from roam.permits.store import (
     PERMIT_ID_RE,
     PermitRecord,
+    PermitRequest,
     issue_permit,
     list_permits,
     permits_root,
@@ -55,6 +56,7 @@ from roam.permits.store import (
 __all__ = [
     "PERMIT_ID_RE",
     "PermitRecord",
+    "PermitRequest",
     "issue_permit",
     "list_permits",
     "permits_root",

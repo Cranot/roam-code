@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from collections import deque
 
 import click
 
@@ -27,6 +26,22 @@ from roam.output.formatter import (
 _MAX_HOPS = 10
 
 
+def _load_frontier_callers_without_node_queries(conn, frontier_ids):
+    """Return reverse callers grouped by target for one BFS frontier."""
+    rows = batched_in(
+        conn,
+        "SELECT e.target_id, e.source_id, s.name "
+        "FROM edges e "
+        "JOIN symbols s ON e.source_id = s.id "
+        "WHERE e.target_id IN ({ph})",
+        frontier_ids,
+    )
+    callers_by_target = {}
+    for row in rows:
+        callers_by_target.setdefault(row["target_id"], []).append(row)
+    return callers_by_target
+
+
 # ---------------------------------------------------------------------------
 # BFS reverse-edge walker
 # ---------------------------------------------------------------------------
@@ -43,33 +58,37 @@ def _bfs_reverse_callers(conn, start_ids):
     "via" label in transitive results).
     """
     visited = {}  # symbol_id -> (hops, via_name)
-    queue = deque()  # (symbol_id, hops, via_name)
+    frontier = []  # (symbol_id, hops, via_name)
 
     for sid in start_ids:
         visited[sid] = (0, None)
-        queue.append((sid, 0, None))
+        frontier.append((sid, 0, None))
 
-    while queue:
-        current_id, hops, via = queue.popleft()
-        if hops >= _MAX_HOPS:
-            continue
+    while frontier:
+        expandable = [(sid, hops, via) for sid, hops, via in frontier if hops < _MAX_HOPS]
+        if not expandable:
+            break
 
-        callers = conn.execute(
-            "SELECT e.source_id, s.name FROM edges e JOIN symbols s ON e.source_id = s.id WHERE e.target_id = ?",
-            (current_id,),
-        ).fetchall()
+        callers_by_target = _load_frontier_callers_without_node_queries(
+            conn,
+            [sid for sid, _hops, _via in expandable],
+        )
+        next_frontier = []
 
-        for row in callers:
-            caller_id = row["source_id"]
-            caller_name = row["name"]
-            new_hops = hops + 1
-            # The "via" label is the name of the node at hop 1 that started
-            # this path (i.e. the direct caller of the target).
-            new_via = via if via else caller_name
+        for current_id, hops, via in expandable:
+            for row in callers_by_target.get(current_id, []):
+                caller_id = row["source_id"]
+                caller_name = row["name"]
+                new_hops = hops + 1
+                # The "via" label is the name of the node at hop 1 that started
+                # this path (i.e. the direct caller of the target).
+                new_via = via if via else caller_name
 
-            if caller_id not in visited or visited[caller_id][0] > new_hops:
-                visited[caller_id] = (new_hops, new_via)
-                queue.append((caller_id, new_hops, new_via))
+                if caller_id not in visited or visited[caller_id][0] > new_hops:
+                    visited[caller_id] = (new_hops, new_via)
+                    next_frontier.append((caller_id, new_hops, new_via))
+
+        frontier = next_frontier
 
     return visited
 

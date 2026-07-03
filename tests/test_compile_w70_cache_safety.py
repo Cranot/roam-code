@@ -20,6 +20,9 @@ from roam.plan.compiler import (
     _HEAD_BY_CWD,
     _PLAN_CACHE,
     _RUN_ROAM_CACHE,
+    _dep_paths_from_mapping,
+    _dep_paths_from_sequence,
+    _dep_paths_from_value,
     _envelope_cache_lookup,
     _envelope_cache_store,
     _envelope_dep_files,
@@ -299,6 +302,46 @@ def test_w70_dep_files_extracts_from_prefetched_facts(tmp_path):
     assert "src/y.py" in deps, "structural_imports is answer-determining — keep it"
 
 
+def test_w70_dep_paths_from_value_each_branch(tmp_path):
+    """`_dep_paths_from_value` flattens str / list / dict prefetched-fact shapes.
+
+    Pins the contract of the three extracted generators so a new prefetched-fact
+    shape (or a refactor of the str/list/dict branches) can't silently drop a
+    dependency path. Location strings carry `path:line:col`; only the path is a dep.
+    """
+    # str branch: needs BOTH `.` and `/` (matches the historical loose heuristic).
+    assert _dep_paths_from_value("src/x.py") == ["src/x.py"]
+    assert _dep_paths_from_value("just-slash") == []
+    assert _dep_paths_from_value("has/d.ot") == ["has/d.ot"]
+
+    # list branch: dict items delegate to the mapping scan; bare strings yield as-is.
+    assert _dep_paths_from_value([{"path": "src/a.py"}]) == ["src/a.py"]
+    assert _dep_paths_from_value([{"path": "src/a.py:12:3"}]) == ["src/a.py"]
+    assert _dep_paths_from_value(["src/b.py"]) == ["src/b.py"]
+    # Order is preserved across dict + str items within one list.
+    assert _dep_paths_from_value([{"path": "z/1.py"}, "z/2.py", {"file": "z/3.py"}]) == [
+        "z/1.py",
+        "z/2.py",
+        "z/3.py",
+    ]
+    assert _dep_paths_from_value([]) == []
+
+    # dict branch: scans _DEP_REF_FIELDS; location prefix split; non-ref fields ignored.
+    assert _dep_paths_from_value({"path": "src/c.py:9"}) == ["src/c.py"]
+    assert _dep_paths_from_value({"content": "x"}) == []
+
+    # Non str/list/dict shapes degrade to no deps (never raise).
+    assert _dep_paths_from_value(None) == []
+    assert _dep_paths_from_value(42) == []
+
+    # The generators are lazy and reusable on their own.
+    assert list(_dep_paths_from_mapping({"path": "m/n.py"})) == ["m/n.py"]
+    assert list(_dep_paths_from_sequence([{"path": "s/t.py"}, "s/u.py"])) == [
+        "s/t.py",
+        "s/u.py",
+    ]
+
+
 # ---- Index-stamp invalidation (2026-06-11): re-index must bust the cache ----
 #
 # The poisoned-row scenario: envelope compiled while index.db lagged the
@@ -363,6 +406,38 @@ def test_freshness_helper_resolves_index_key_specially(tmp_path):
     assert fresh is True
     stale = _envelope_deps_are_fresh(str(repo), json.dumps({"__index_db__": mt - 1.0}))
     assert stale is False
+
+
+def test_stale_index_short_circuits_before_source_stats(tmp_path, monkeypatch):
+    """A stale index stamp must fail fast — without statting any source dep.
+
+    The index stamp is the single most decisive signal (a re-index busts every
+    row compiled before it) and costs one stat. Validating the whole dep set
+    first would stat up to 40 source files only to discover the index already
+    invalidated the row. This pins that ordering: a stale index returns False
+    after exactly one getmtime (the index), never touching the source paths.
+    """
+    repo = _setup_repo(tmp_path)
+    (repo / ".roam" / "index.db").write_text("")
+    idx_mt = round(os.path.getmtime(repo / ".roam" / "index.db"), 3)
+
+    statted: list[str] = []
+    real_getmtime = os.path.getmtime
+
+    def _spy(path):
+        statted.append(str(path))
+        return real_getmtime(path)
+
+    monkeypatch.setattr(os.path, "getmtime", _spy)
+
+    deps = {
+        "__index_db__": idx_mt - 1.0,  # stale → must fail fast
+        "src/a.py": 1.0,
+        "src/b.py": 2.0,
+    }
+    assert _envelope_deps_are_fresh(str(repo), json.dumps(deps)) is False
+    # Only the index was statted; the source deps were never reached.
+    assert statted == [str(repo / ".roam" / "index.db")]
 
 
 # ---- Generation sweep: re-index wipes ALL index-derived persist tables ----
@@ -456,3 +531,155 @@ def test_stale_index_discloses_files_newer_than_index(tmp_path):
     plan3 = compile_plan("what does src/a.py do", cwd=str(repo))
     env3, _ = compile_for_artifact(plan3, cwd=str(repo))
     assert (env3.get("plan") or {}).get("index_stale") is None, "fresh index must not flag"
+
+
+# ---- Secret / prompt redaction in the persistent envelope cache --------
+#
+# compile-envelope-cache.sqlite outlives the process. The raw plan.task
+# (the full prompt) and prefetched source bodies can both carry credentials,
+# so neither survives a cache write: the task is stripped (re-injected from
+# the live plan on lookup), source bodies are redacted in place.
+
+
+def _make_plan(task: str, repo_head: str = "head"):
+    from roam.plan.compiler import PlanV0
+
+    return PlanV0(
+        task=task,
+        procedure="freeform_explore",
+        likely_files=[],
+        required_checks=[],
+        forbidden_paths=[],
+        plan_quality=0.5,
+        model_calls_avoided=[],
+        recommended_first_command="roam ask",
+        repo_head=repo_head,
+    )
+
+
+def test_envelope_cache_strips_plan_task_from_persisted_row(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    secret_prompt = "deploy using token ghp_" + "a" * 36
+
+    class _MockPlan:
+        task = secret_prompt
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    _envelope_cache_store(
+        _MockPlan(),
+        {"plan": {"task": secret_prompt, "procedure": "freeform_explore"}},
+        "facts",
+        str(tmp_path),
+    )
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT envelope_json FROM env_cache").fetchone()
+    conn.close()
+    assert row is not None
+    stored = row[0]
+    # The full prompt (including the credential) must not survive the write.
+    assert "ghp_" not in stored
+    assert secret_prompt not in stored
+    assert '"task"' not in stored, "raw task key must be stripped from the persisted plan"
+
+
+def test_envelope_cache_redacts_source_bodies_in_persisted_row(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    leaked_pat = "ghp_" + "b" * 36
+
+    class _MockPlan:
+        task = "show me the auth module"
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    _envelope_cache_store(
+        _MockPlan(),
+        {
+            "plan": {"task": _MockPlan.task},
+            "prefetched_facts": {
+                "file_excerpt": {"path": "auth.py", "content": f"TOKEN = '{leaked_pat}'"},
+            },
+        },
+        "facts",
+        str(tmp_path),
+    )
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT envelope_json FROM env_cache").fetchone()
+    conn.close()
+    stored = row[0]
+    assert leaked_pat not in stored, "secret in a prefetched source body must be redacted"
+    assert "[REDACTED]" in stored
+
+
+def test_envelope_cache_store_does_not_mutate_inmemory_env(tmp_path):
+    (tmp_path / ".roam").mkdir()
+
+    class _MockPlan:
+        task = "prompt carrying ghp_" + "c" * 36
+        repo_head = "head"
+        procedure = "freeform_explore"
+        likely_files = []
+
+    env = {"plan": {"task": _MockPlan.task}}
+    _envelope_cache_store(_MockPlan(), env, "facts", str(tmp_path))
+    # The in-memory env handed to the store keeps its task intact — the
+    # caller's result is unaffected by the cache sanitization.
+    assert env["plan"]["task"] == _MockPlan.task
+
+
+def test_envelope_cache_lookup_reinjects_task(tmp_path):
+    (tmp_path / ".roam").mkdir()
+    plan = _make_plan("investigate latency, ghp_" + "d" * 36)
+    _envelope_cache_store(
+        plan,
+        {"plan": {"task": plan.task, "procedure": plan.procedure}},
+        "facts",
+        str(tmp_path),
+    )
+
+    cached = _envelope_cache_lookup(plan, str(tmp_path))
+    assert cached is not None
+    env, _label = cached
+    # Task re-injected from the live plan; the secret-laden prompt lives
+    # only in memory, so a cache hit is indistinguishable from a miss.
+    assert env["plan"]["task"] == plan.task
+
+
+def test_plan_cache_strips_task_on_store(tmp_path):
+    from roam.plan.compiler import _plan_cache_store
+
+    (tmp_path / ".roam").mkdir()
+    plan = _make_plan("rotate the ghp_" + "e" * 36 + " key")
+    _plan_cache_store(plan.task, str(tmp_path), plan)
+
+    db = tmp_path / ".roam" / "compile-envelope-cache.sqlite"
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT plan_json FROM plan_cache").fetchone()
+    conn.close()
+    assert row is not None
+    stored = row[0]
+    assert "ghp_" not in stored
+    assert plan.task not in stored
+    assert '"task"' not in stored, "raw task key must be stripped from the persisted plan"
+
+
+def test_plan_cache_lookup_reinjects_task(tmp_path, monkeypatch):
+    import roam.plan.compiler as _compiler
+    from roam.plan.compiler import _plan_cache_lookup, _plan_cache_store
+
+    (tmp_path / ".roam").mkdir()
+    monkeypatch.setattr(_compiler, "_memoized_head", lambda cwd: "deadbeef")
+    plan = _make_plan("who calls handleAuth ghp_" + "f" * 36, repo_head="deadbeef")
+    _plan_cache_store(plan.task, str(tmp_path), plan)
+
+    restored = _plan_cache_lookup(plan.task, str(tmp_path))
+    assert restored is not None
+    # task is a required PlanV0 field with no default; reconstruction only
+    # succeeds because lookup re-injects the live task.
+    assert restored.task == plan.task

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Regex to extract URL path from a source line
 _URL_RE = re.compile(r"""[('"`](/[a-zA-Z0-9/_\-{}.]+)[)'"`]""")
@@ -50,6 +51,17 @@ _PYTHON_ROUTE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_RouteRecordBuilder = Callable[[re.Match[str], str, int], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _BackendRouteLookup:
+    routes: list[dict[str, Any]]
+    exact_route_ids: dict[str, list[int]]
+    route_ids_by_length: dict[int, set[int]]
+    route_ids_by_segment: dict[tuple[int, str], set[int]]
+    route_ids_by_prefix: dict[str, set[int]]
+
 
 def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[str, Any]]:
     """Scan a frontend repo DB for API call sites.
@@ -74,88 +86,119 @@ def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[st
     conn = sqlite3.connect(str(repo_db_path), timeout=30)
     conn.row_factory = sqlite3.Row
 
-    results = []
     try:
-        # Find references to HTTP method calls
-        rows = conn.execute(
-            "SELECT e.source_id, e.target_id, e.line, e.kind, "
-            "  s.name AS source_name, s.file_id AS source_file_id, "
-            "  t.name AS target_name, "
-            "  f.path AS file_path "
-            "FROM edges e "
-            "JOIN symbols s ON s.id = e.source_id "
-            "JOIN symbols t ON t.id = e.target_id "
-            "JOIN files f ON f.id = s.file_id "
-            "WHERE LOWER(t.name) IN ({ph})".format(ph=",".join("?" for _ in _FRONTEND_CALL_NAMES)),
-            list(_FRONTEND_CALL_NAMES),
-        ).fetchall()
-
-        for row in rows:
-            method = row["target_name"].lower()
-            if method in ("fetch", "$fetch", "usefetch", "uselazyfetch", "request", "axios"):
-                http_method = None  # determined from context
-            else:
-                http_method = method.upper()
-
-            line_num = row["line"]
-            file_path = row["file_path"]
-
-            # Issue #19 guard: skip route-definition syntax that looks
-            # like a client call.
-            if _looks_like_route_definition(repo_root / file_path, line_num):
-                continue
-
-            # Read the source line to extract URL
-            url = _extract_url_from_source(repo_root / file_path, line_num)
-            if not url:
-                continue
-
-            # For fetch-like calls, try to infer method from context
-            if http_method is None:
-                http_method = _infer_method_from_context(repo_root / file_path, line_num)
-
-            results.append(
-                {
-                    "symbol_id": row["source_id"],
-                    "url_pattern": url,
-                    "http_method": http_method or "GET",
-                    "file_path": file_path,
-                    "line": line_num,
-                    "symbol_name": row["source_name"],
-                }
-            )
-
-        # Also scan for string literals that look like API paths in source
-        # This catches patterns like: api.get('/transactions/save')
-        file_rows = conn.execute(
-            "SELECT id, path FROM files WHERE language IN ('typescript', 'javascript', 'vue', 'tsx', 'jsx')"
-        ).fetchall()
-
-        seen_urls = {(r["file_path"], r["line"]) for r in results}
-        for file_row in file_rows:
-            fpath = repo_root / file_row["path"]
-            if not fpath.exists():
-                continue
-            calls = _scan_file_for_api_calls(fpath, file_row["path"])
-            for call in calls:
-                key = (call["file_path"], call["line"])
-                if key not in seen_urls:
-                    # Try to find the enclosing symbol
-                    sym = conn.execute(
-                        "SELECT id, name FROM symbols "
-                        "WHERE file_id=? AND line_start<=? AND "
-                        "(line_end>=? OR line_end IS NULL) "
-                        "ORDER BY line_start DESC LIMIT 1",
-                        (file_row["id"], call["line"], call["line"]),
-                    ).fetchone()
-                    call["symbol_id"] = sym["id"] if sym else 0
-                    call["symbol_name"] = sym["name"] if sym else ""
-                    results.append(call)
-                    seen_urls.add(key)
+        results = _scan_edge_calls(conn, repo_root)
+        _scan_regex_supplement(conn, repo_root, results)
     finally:
         conn.close()
 
     return results
+
+
+def _edge_row_to_call(row: sqlite3.Row, repo_root: Path) -> dict[str, Any] | None:
+    """Convert one HTTP-method edge row into an API-call dict, or None to skip."""
+    method = row["target_name"].lower()
+    if method in ("fetch", "$fetch", "usefetch", "uselazyfetch", "request", "axios"):
+        http_method = None  # determined from context
+    else:
+        http_method = method.upper()
+
+    line_num = row["line"]
+    file_path = row["file_path"]
+
+    # Issue #19 guard: skip route-definition syntax that looks
+    # like a client call.
+    if _looks_like_route_definition(repo_root / file_path, line_num):
+        return None
+
+    # Read the source line to extract URL
+    url = _extract_url_from_source(repo_root / file_path, line_num)
+    if not url:
+        return None
+
+    # For fetch-like calls, try to infer method from context
+    if http_method is None:
+        http_method = _infer_method_from_context(repo_root / file_path, line_num)
+
+    return {
+        "symbol_id": row["source_id"],
+        "url_pattern": url,
+        "http_method": http_method or "GET",
+        "file_path": file_path,
+        "line": line_num,
+        "symbol_name": row["source_name"],
+    }
+
+
+def _scan_edge_calls(conn: sqlite3.Connection, repo_root: Path) -> list[dict[str, Any]]:
+    """Find API calls via edges whose target is an HTTP-method-named symbol."""
+    rows = conn.execute(
+        "SELECT e.source_id, e.target_id, e.line, e.kind, "
+        "  s.name AS source_name, s.file_id AS source_file_id, "
+        "  t.name AS target_name, "
+        "  f.path AS file_path "
+        "FROM edges e "
+        "JOIN symbols s ON s.id = e.source_id "
+        "JOIN symbols t ON t.id = e.target_id "
+        "JOIN files f ON f.id = s.file_id "
+        "WHERE LOWER(t.name) IN ({ph})".format(ph=",".join("?" for _ in _FRONTEND_CALL_NAMES)),
+        list(_FRONTEND_CALL_NAMES),
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        call = _edge_row_to_call(row, repo_root)
+        if call is not None:
+            results.append(call)
+    return results
+
+
+def _scan_regex_supplement(conn: sqlite3.Connection, repo_root: Path, results: list[dict[str, Any]]) -> None:
+    """Regex-scan frontend files for API-path literals the edge scan missed.
+
+    Catches patterns like ``api.get('/transactions/save')``. Appends new
+    calls to *results* in place, deduplicating by (file_path, line).
+    """
+    file_rows = conn.execute(
+        "SELECT id, path FROM files WHERE language IN ('typescript', 'javascript', 'vue', 'tsx', 'jsx')"
+    ).fetchall()
+
+    seen_urls = {(r["file_path"], r["line"]) for r in results}
+    for file_row in file_rows:
+        fpath = repo_root / file_row["path"]
+        if not fpath.exists():
+            continue
+        _append_new_file_calls(conn, file_row, fpath, seen_urls, results)
+
+
+def _append_new_file_calls(
+    conn: sqlite3.Connection,
+    file_row: sqlite3.Row,
+    fpath: Path,
+    seen_urls: set[tuple[str, int]],
+    results: list[dict[str, Any]],
+) -> None:
+    """Append one file's regex-detected calls not already in *seen_urls*."""
+    for call in _scan_file_for_api_calls(fpath, file_row["path"]):
+        key = (call["file_path"], call["line"])
+        if key in seen_urls:
+            continue
+        sym = _enclosing_symbol(conn, file_row["id"], call["line"])
+        call["symbol_id"] = sym["id"] if sym else 0
+        call["symbol_name"] = sym["name"] if sym else ""
+        results.append(call)
+        seen_urls.add(key)
+
+
+def _enclosing_symbol(conn: sqlite3.Connection, file_id: int, line: int) -> sqlite3.Row | None:
+    """Find the innermost symbol containing *line* in the given file."""
+    return conn.execute(
+        "SELECT id, name FROM symbols "
+        "WHERE file_id=? AND line_start<=? AND "
+        "(line_end>=? OR line_end IS NULL) "
+        "ORDER BY line_start DESC LIMIT 1",
+        (file_id, line, line),
+    ).fetchone()
 
 
 def scan_backend_routes(repo_db_path: Path, repo_root: Path) -> list[dict[str, Any]]:
@@ -187,13 +230,7 @@ def scan_backend_routes(repo_db_path: Path, repo_root: Path) -> list[dict[str, A
             routes = _scan_file_for_routes(fpath, file_row["path"])
             for route in routes:
                 # Find the handler symbol
-                sym = conn.execute(
-                    "SELECT id, name FROM symbols "
-                    "WHERE file_id=? AND line_start<=? AND "
-                    "(line_end>=? OR line_end IS NULL) "
-                    "ORDER BY line_start DESC LIMIT 1",
-                    (file_row["id"], route["line"], route["line"]),
-                ).fetchone()
+                sym = _enclosing_symbol(conn, file_row["id"], route["line"])
                 route["symbol_id"] = sym["id"] if sym else 0
                 route["symbol_name"] = sym["name"] if sym else ""
                 results.append(route)
@@ -214,20 +251,12 @@ def match_api_endpoints(
     Returns a list of matched pairs: {frontend: {...}, backend: {...},
     url_pattern, http_method, score}
     """
-    # Build backend lookup: normalized_url -> list of routes
-    backend_by_url: dict[str, list[dict[str, Any]]] = {}
-    for route in backend_routes:
-        normalized = _normalize_url(route["url_pattern"])
-        backend_by_url.setdefault(normalized, []).append(route)
+    backend_lookup = _backend_route_lookup_for_locality(backend_routes)
 
     matches = []
     for call in frontend_calls:
         normalized = _normalize_url(call["url_pattern"])
-        candidates = backend_by_url.get(normalized, [])
-
-        if not candidates:
-            # Try prefix match for parameterized routes
-            candidates = _fuzzy_url_match(normalized, backend_by_url)
+        candidates = _route_candidates_without_backend_scan(normalized, backend_lookup)
 
         for candidate in candidates:
             # Method match (if both specify a method)
@@ -270,6 +299,51 @@ def match_api_endpoints(
     return sorted(seen.values(), key=lambda m: m["score"], reverse=True)
 
 
+def _call_keys_with_backend_evidence(matches: list[dict[str, Any]]) -> set[tuple[str, int]]:
+    """Return frontend call keys that already have at least one route match."""
+    matched_call_keys: set[tuple[str, int]] = set()
+    for match in matches:
+        frontend = match.get("frontend", {})
+        key = (frontend.get("file_path", ""), frontend.get("line", 0))
+        matched_call_keys.add(key)
+    return matched_call_keys
+
+
+def _reason_preserving_route_locality(
+    call: dict[str, Any],
+    normalized_url: str,
+    call_method: str,
+    backend_lookup: _BackendRouteLookup,
+) -> tuple[str, str]:
+    """Classify an unmatched call without scanning every backend route."""
+    path_candidates = _route_candidates_without_backend_scan(normalized_url, backend_lookup)
+    if path_candidates:
+        backend_methods = sorted(
+            {(r.get("http_method") or "").upper() for r in path_candidates if r.get("http_method")}
+        )
+        method_list = ", ".join(backend_methods) if backend_methods else "?"
+        return (
+            "method_mismatch",
+            f"backend route `{call['url_pattern']}` exists but accepts {method_list}, not {call_method or '?'}",
+        )
+
+    segs = _url_segments(normalized_url)
+    sample = _same_prefix_route_for_path_shape_mismatch(segs, backend_lookup)
+    if sample is not None:
+        prefix_key = "/" + segs[0]
+        return (
+            "path_variable_mismatch",
+            f"no backend route matches `{call['url_pattern']}` for method "
+            f"{call_method or '?'}; closest sibling under `{prefix_key}` "
+            f"is `{sample['url_pattern']}`",
+        )
+
+    return (
+        "unknown_path",
+        f"no backend route matches `{call['url_pattern']}` for method {call_method or '?'}",
+    )
+
+
 def find_unmatched_calls(
     frontend_calls: list[dict[str, Any]],
     backend_routes: list[dict[str, Any]],
@@ -296,25 +370,8 @@ def find_unmatched_calls(
     if not frontend_calls:
         return []
 
-    # Set of (file_path, line) for calls that DID match. A single call
-    # may match multiple backend routes; we only care that it matched
-    # at least one.
-    matched_call_keys: set[tuple[str, int]] = set()
-    for m in matches:
-        fe = m.get("frontend", {})
-        key = (fe.get("file_path", ""), fe.get("line", 0))
-        matched_call_keys.add(key)
-
-    # Build lookups for "why didn't this match" classification.
-    backend_normalized: dict[str, list[dict[str, Any]]] = {}
-    backend_prefixes: dict[str, list[dict[str, Any]]] = {}
-    for route in backend_routes:
-        norm = _normalize_url(route["url_pattern"])
-        backend_normalized.setdefault(norm, []).append(route)
-        # First non-empty path segment is the "prefix" we cluster on.
-        segs = [s for s in norm.split("/") if s]
-        if segs:
-            backend_prefixes.setdefault("/" + segs[0], []).append(route)
+    matched_call_keys = _call_keys_with_backend_evidence(matches)
+    backend_lookup = _backend_route_lookup_for_locality(backend_routes)
 
     unmatched: list[dict[str, Any]] = []
     for call in frontend_calls:
@@ -325,42 +382,12 @@ def find_unmatched_calls(
         normalized = _normalize_url(call["url_pattern"])
         call_method = (call.get("http_method") or "").upper()
 
-        # Classify reason. Order matters: method_mismatch is the
-        # most actionable, then path_variable_mismatch, then the
-        # default unknown_path.
-        path_candidates = list(backend_normalized.get(normalized, []))
-        if not path_candidates:
-            path_candidates.extend(_fuzzy_url_match(normalized, backend_normalized))
-
-        reason: str
-        reason_detail: str
-        if path_candidates:
-            # Path matches at least one backend route — must be method.
-            backend_methods = sorted(
-                {(r.get("http_method") or "").upper() for r in path_candidates if r.get("http_method")}
-            )
-            reason = "method_mismatch"
-            method_list = ", ".join(backend_methods) if backend_methods else "?"
-            reason_detail = (
-                f"backend route `{call['url_pattern']}` exists but accepts {method_list}, not {call_method or '?'}"
-            )
-        else:
-            # No exact / fuzzy URL match. Is there a sibling under the
-            # same top-level prefix? If so, it's a path-variable shape
-            # mismatch; otherwise the prefix itself is unknown.
-            segs = [s for s in normalized.split("/") if s]
-            prefix_key = ("/" + segs[0]) if segs else ""
-            if prefix_key and prefix_key in backend_prefixes:
-                reason = "path_variable_mismatch"
-                sample = backend_prefixes[prefix_key][0]
-                reason_detail = (
-                    f"no backend route matches `{call['url_pattern']}` for method "
-                    f"{call_method or '?'}; closest sibling under `{prefix_key}` "
-                    f"is `{sample['url_pattern']}`"
-                )
-            else:
-                reason = "unknown_path"
-                reason_detail = f"no backend route matches `{call['url_pattern']}` for method {call_method or '?'}"
+        reason, reason_detail = _reason_preserving_route_locality(
+            call,
+            normalized,
+            call_method,
+            backend_lookup,
+        )
 
         unmatched.append(
             {
@@ -457,6 +484,71 @@ _ROUTE_HANDLER_RECEIVERS = ("app", "router", "server", "fastify", "express")
 # Note: ``api`` is intentionally NOT here — ``api.get('/users')`` is the
 # canonical client-call shape. Server frameworks consistently use one of
 # the above receiver names.
+
+
+def _url_segments(normalized_url: str) -> list[str]:
+    return [segment for segment in normalized_url.split("/") if segment]
+
+
+def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> _BackendRouteLookup:
+    """Index route shape once so fuzzy matching stays local to set lookups."""
+    routes = list(backend_routes)
+    exact_route_ids: dict[str, list[int]] = {}
+    route_ids_by_length: dict[int, set[int]] = {}
+    route_ids_by_segment: dict[tuple[int, str], set[int]] = {}
+    route_ids_by_prefix: dict[str, set[int]] = {}
+
+    for route_id, route in enumerate(routes):
+        normalized = _normalize_url(route["url_pattern"])
+        segments = _url_segments(normalized)
+        exact_route_ids.setdefault(normalized, []).append(route_id)
+        route_ids_by_length.setdefault(len(segments), set()).add(route_id)
+        if segments:
+            route_ids_by_prefix.setdefault(segments[0], set()).add(route_id)
+        for position, segment in enumerate(segments):
+            route_ids_by_segment.setdefault((position, segment), set()).add(route_id)
+
+    return _BackendRouteLookup(
+        routes=routes,
+        exact_route_ids=exact_route_ids,
+        route_ids_by_length=route_ids_by_length,
+        route_ids_by_segment=route_ids_by_segment,
+        route_ids_by_prefix=route_ids_by_prefix,
+    )
+
+
+def _route_candidates_without_backend_scan(
+    normalized_url: str, backend_lookup: _BackendRouteLookup
+) -> list[dict[str, Any]]:
+    """Preserve fuzzy URL coverage without comparing against every route."""
+    exact_ids = backend_lookup.exact_route_ids.get(normalized_url, [])
+    if exact_ids:
+        return [backend_lookup.routes[route_id] for route_id in exact_ids]
+
+    segments = _url_segments(normalized_url)
+    candidate_ids = set(backend_lookup.route_ids_by_length.get(len(segments), set()))
+    for position, segment in enumerate(segments):
+        if segment == "[*]":
+            continue
+        segment_matches = backend_lookup.route_ids_by_segment.get((position, segment), set())
+        wildcard_matches = backend_lookup.route_ids_by_segment.get((position, "[*]"), set())
+        candidate_ids &= segment_matches | wildcard_matches
+        if not candidate_ids:
+            return []
+
+    return [backend_lookup.routes[route_id] for route_id in sorted(candidate_ids)]
+
+
+def _same_prefix_route_for_path_shape_mismatch(
+    segments: list[str], backend_lookup: _BackendRouteLookup
+) -> dict[str, Any] | None:
+    """Find a sibling route that explains path-shape mismatches without scanning."""
+    if not segments:
+        return None
+    route_ids = backend_lookup.route_ids_by_prefix.get(segments[0])
+    if not route_ids:
+        return None
+    return backend_lookup.routes[min(route_ids)]
 
 
 def _looks_like_route_definition(file_path: Path, line_num: int | None) -> bool:
@@ -576,6 +668,52 @@ def _scan_file_for_api_calls(file_path: Path, rel_path: str) -> list[dict[str, A
     return results
 
 
+def _route_record(url_pattern: str, http_method: str, rel_path: str, line_num: int) -> dict[str, Any]:
+    return {
+        "url_pattern": url_pattern,
+        "http_method": http_method,
+        "file_path": rel_path,
+        "line": line_num,
+    }
+
+
+def _backend_route_record(match: re.Match[str], rel_path: str, line_num: int) -> dict[str, Any]:
+    method_raw = match.group(1).lower()
+    if method_raw in ("resource", "apiresource"):
+        http_method = "RESOURCE"
+    elif method_raw in ("any", "match"):
+        http_method = "ANY"
+    else:
+        http_method = method_raw.upper()
+    return _route_record(match.group(2), http_method, rel_path, line_num)
+
+
+def _express_route_record(match: re.Match[str], rel_path: str, line_num: int) -> dict[str, Any]:
+    method_raw = match.group(1).lower()
+    http_method = "ANY" if method_raw == "all" else method_raw.upper()
+    return _route_record(match.group(2), http_method, rel_path, line_num)
+
+
+def _python_route_record(match: re.Match[str], rel_path: str, line_num: int) -> dict[str, Any]:
+    return _route_record(match.group(2), match.group(1).upper(), rel_path, line_num)
+
+
+_ROUTE_MATCHERS: tuple[tuple[re.Pattern[str], _RouteRecordBuilder], ...] = (
+    (_BACKEND_ROUTE_RE, _backend_route_record),
+    (_EXPRESS_ROUTE_RE, _express_route_record),
+    (_PYTHON_ROUTE_RE, _python_route_record),
+)
+
+
+def _route_record_from_line(line: str, rel_path: str, line_num: int) -> dict[str, Any] | None:
+    for route_re, record_builder in _ROUTE_MATCHERS:
+        match = route_re.search(line)
+        if match is None:
+            continue
+        return record_builder(match, rel_path, line_num)
+    return None
+
+
 def _scan_file_for_routes(file_path: Path, rel_path: str) -> list[dict[str, Any]]:
     """Scan a source file for route definition patterns."""
     results = []
@@ -585,53 +723,9 @@ def _scan_file_for_routes(file_path: Path, rel_path: str) -> list[dict[str, Any]
         return results
 
     for i, line in enumerate(lines, 1):
-        # Laravel Route::get/post/...
-        m = _BACKEND_ROUTE_RE.search(line)
-        if m:
-            method_raw = m.group(1).lower()
-            # resource/apiResource map to multiple methods
-            if method_raw in ("resource", "apiresource"):
-                http_method = "RESOURCE"
-            elif method_raw in ("any", "match"):
-                http_method = "ANY"
-            else:
-                http_method = method_raw.upper()
-            results.append(
-                {
-                    "url_pattern": m.group(2),
-                    "http_method": http_method,
-                    "file_path": rel_path,
-                    "line": i,
-                }
-            )
-            continue
-
-        # Express/Fastify
-        m = _EXPRESS_ROUTE_RE.search(line)
-        if m:
-            method_raw = m.group(1).lower()
-            http_method = "ANY" if method_raw == "all" else method_raw.upper()
-            results.append(
-                {
-                    "url_pattern": m.group(2),
-                    "http_method": http_method,
-                    "file_path": rel_path,
-                    "line": i,
-                }
-            )
-            continue
-
-        # FastAPI/Flask
-        m = _PYTHON_ROUTE_RE.search(line)
-        if m:
-            results.append(
-                {
-                    "url_pattern": m.group(2),
-                    "http_method": m.group(1).upper(),
-                    "file_path": rel_path,
-                    "line": i,
-                }
-            )
+        route = _route_record_from_line(line, rel_path, i)
+        if route is not None:
+            results.append(route)
 
     return results
 
@@ -652,24 +746,6 @@ def _normalize_url(url: str) -> str:
     # Strip trailing slash
     normalized = normalized.rstrip("/") or "/"
     return normalized.lower()
-
-
-def _fuzzy_url_match(normalized_url: str, backend_by_url: dict[str, list]) -> list[dict[str, Any]]:
-    """Try to match a frontend URL against backend routes with some fuzziness."""
-    # Try with/without /api prefix
-    candidates = []
-    for prefix in ("", "/api", "/api/v1"):
-        alt = prefix + normalized_url
-        alt = alt.rstrip("/") or "/"
-        if alt in backend_by_url:
-            candidates.extend(backend_by_url[alt])
-
-    # Also try the original URL as a backend route key
-    for backend_url, routes in backend_by_url.items():
-        if _urls_equivalent(normalized_url, backend_url):
-            candidates.extend(routes)
-
-    return candidates
 
 
 def _urls_equivalent(a: str, b: str) -> bool:

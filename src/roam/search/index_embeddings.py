@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import re
 import sqlite3
 from collections import Counter
-from typing import Any, TypeAlias
+from collections.abc import Iterator, Sequence
+from typing import Any, Callable, TypeAlias
 
 from roam.observability import log_swallowed
 from roam.search.framework_packs import packs_for_languages, search_pack_symbols
@@ -69,8 +71,8 @@ def _camel_split(text: str | None) -> str:
 def fts5_available(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None) -> bool:
     """Check if the symbol_fts virtual table exists and is usable.
 
-    When ``warnings_out`` is threaded in, an unexpected substrate
-    failure (corrupted ``sqlite_master`` row, locked DB) emits the
+    When ``warnings_out`` is threaded in, a SQLite substrate failure
+    (corrupted ``sqlite_master`` row, locked DB) emits the
     ``semantic_fts_check_failed:symbol_fts:<exc_class>:<detail>``
     marker before the silent ``return False`` so operators see WHY
     BM25-ranked search is missing. ``warnings_out=None`` preserves the
@@ -80,7 +82,7 @@ def fts5_available(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None
     try:
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
         return row is not None
-    except Exception as exc:
+    except sqlite3.Error as exc:
         if warnings_out is not None:
             warnings_out.append(f"semantic_fts_check_failed:symbol_fts:{type(exc).__name__}:{exc}")
         return False
@@ -266,33 +268,25 @@ def build_fts_index(
     # Insert with camelCase preprocessing for better tokenization. Docstring
     # is left as-is (no camel-split) — natural-language text doesn't benefit
     # from token splitting and porter stemming handles it correctly.
-    batch = []
-    for row in rows:
-        batch.append(
-            (
-                row["id"],
-                _camel_split(row["name"]),
-                _camel_split(row["qualified_name"]),
-                _camel_split(row["signature"]),
-                row["docstring"] or "",
-                row["kind"] or "",
-                row["file_path"] or "",
-            )
+    # Build the full parameter list first so the SQLite write happens as one
+    # executemany boundary instead of inside the per-row loop (N+1 I/O).
+    records = [
+        (
+            row["id"],
+            _camel_split(row["name"]),
+            _camel_split(row["qualified_name"]),
+            _camel_split(row["signature"]),
+            row["docstring"] or "",
+            row["kind"] or "",
+            row["file_path"] or "",
         )
-        if len(batch) >= 500:
-            conn.executemany(
-                "INSERT INTO symbol_fts(rowid, name, qualified_name, "
-                "signature, docstring, kind, file_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                batch,
-            )
-            batch.clear()
-
-    if batch:
-        conn.executemany(
-            "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, docstring, kind, file_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            batch,
-        )
+        for row in rows
+    ]
+    conn.executemany(
+        "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, docstring, kind, file_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        records,
+    )
 
     # Keep vector signals available even when FTS5 exists (hybrid #54).
     build_and_store_tfidf(conn)
@@ -325,6 +319,7 @@ _HYBRID_RANK_WEIGHT = 0.40
 _HYBRID_RRF_K = 60
 _HYBRID_MIN_CANDIDATES = 25
 _HYBRID_CANDIDATE_MULTIPLIER = 4
+_PACK_SEARCH_RECOVERABLE_ERRORS = (ImportError, OSError, RuntimeError, ValueError)
 
 _FTS5_SEARCH_SQL = f"""
     SELECT sf.rowid as symbol_id,
@@ -372,21 +367,16 @@ def search_fts(
     if not fts_query:
         return []
 
-    try:
-        rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
-    except Exception as exc:
-        if warnings_out is not None:
-            warnings_out.append(f"semantic_fts_query_failed:{fts_query}:{type(exc).__name__}:{exc}")
+    rows, exc = _run_fts_pass(conn, fts_query, top_k)
+    if rows is None:
         # FTS5 query syntax error — fall back to prefix match
-        try:
-            fts_query = _build_fts_query(query, prefix_only=True)
-            if fts_query:
-                rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
-            else:
-                return []
-        except Exception as exc2:
-            if warnings_out is not None:
-                warnings_out.append(f"semantic_fts_query_failed:{fts_query}:fallback:{type(exc2).__name__}:{exc2}")
+        _append_fts_failure(warnings_out, fts_query, exc)
+        fts_query = _build_fts_query(query, prefix_only=True)
+        if not fts_query:
+            return []
+        rows, exc = _run_fts_pass(conn, fts_query, top_k)
+        if rows is None:
+            _append_fts_failure(warnings_out, fts_query, exc, fallback=True)
             return []
 
     results = []
@@ -403,6 +393,45 @@ def search_fts(
             }
         )
     return results
+
+
+def _run_fts_pass(
+    conn: sqlite3.Connection,
+    fts_query: str,
+    top_k: int,
+) -> tuple[list | None, Exception | None]:
+    """Run one FTS5 MATCH pass; return ``(rows, exc)``.
+
+    ``rows`` is ``None`` when the pass failed (so the caller can
+    distinguish a broken query/substrate from a legitimate empty
+    result); ``exc`` carries the caught exception for the caller to
+    disclose via :func:`_append_fts_failure`, or ``None`` on success.
+    Splitting failure *detection* (here) from failure *disclosure*
+    (the helper) keeps this pass-executor to its three SQL inputs.
+    """
+    try:
+        return conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall(), None
+    except Exception as exc:
+        return None, exc
+
+
+def _append_fts_failure(
+    warnings_out: WarningsOut,
+    fts_query: str,
+    exc: Exception,
+    *,
+    fallback: bool = False,
+) -> None:
+    """Append a ``semantic_fts_query_failed`` marker for a failed FTS5 pass.
+
+    Owns the marker format + the ``fallback:`` segment so the
+    pass-executor (:func:`_run_fts_pass`) stays free of disclosure
+    plumbing. A ``None`` sink preserves the legacy silent fallback.
+    """
+    if warnings_out is None:
+        return
+    tag = "fallback:" if fallback else ""
+    warnings_out.append(f"semantic_fts_query_failed:{fts_query}:{tag}{type(exc).__name__}:{exc}")
 
 
 def _build_fts_query(query: str, prefix_only: bool = False) -> str:
@@ -590,19 +619,23 @@ def search_stored(
     if include_packs:
         try:
             pack_results = search_pack_symbols(query, top_k=candidate_k, packs=effective_packs)
-        except Exception as exc:
+        except _PACK_SEARCH_RECOVERABLE_ERRORS as exc:
             if warnings_out is not None:
                 warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")
             pack_results = []
         if pack_results:
-            semantic_results = sorted(
+            # Only the top candidate_k of the merged list is needed; nsmallest
+            # is O(n log candidate_k) and avoids fully sorting the combined
+            # list. The (-score, name, symbol_id) key keeps selection stable.
+            semantic_results = heapq.nsmallest(
+                candidate_k,
                 semantic_results + pack_results,
                 key=lambda r: (
                     -r.get("score", 0.0),
                     r.get("name", ""),
                     r.get("symbol_id", 0),
                 ),
-            )[:candidate_k]
+            )
 
     # Hybrid fusion when both signals exist.
     if lexical_results and semantic_results:
@@ -636,6 +669,14 @@ def ensure_tfidf_table(conn: sqlite3.Connection):
     conn.executescript(SCHEMA_SQL)
 
 
+def _stream_tfidf_records(
+    corpus: dict[int, dict[str, float]],
+) -> Iterator[tuple[int, str]]:
+    """Stream TF-IDF insert rows so persistence spends one SQLite write boundary."""
+    for sid, vec in corpus.items():
+        yield (sid, json.dumps(vec))
+
+
 def build_and_store_tfidf(conn: sqlite3.Connection):
     """Compute TF-IDF vectors for all symbols and store in symbol_tfidf.
 
@@ -650,23 +691,10 @@ def build_and_store_tfidf(conn: sqlite3.Connection):
         return
 
     conn.execute("DELETE FROM symbol_tfidf")
-
-    batch = []
-    for sid, vec in corpus.items():
-        terms_json = json.dumps(vec)
-        batch.append((sid, terms_json))
-        if len(batch) >= 500:
-            conn.executemany(
-                "INSERT OR REPLACE INTO symbol_tfidf (symbol_id, terms) VALUES (?, ?)",
-                batch,
-            )
-            batch.clear()
-
-    if batch:
-        conn.executemany(
-            "INSERT OR REPLACE INTO symbol_tfidf (symbol_id, terms) VALUES (?, ?)",
-            batch,
-        )
+    conn.executemany(
+        "INSERT OR REPLACE INTO symbol_tfidf (symbol_id, terms) VALUES (?, ?)",
+        _stream_tfidf_records(corpus),
+    )
 
 
 def _build_symbol_embedding_text(row) -> str:
@@ -679,6 +707,24 @@ def _build_symbol_embedding_text(row) -> str:
         row["docstring"] or "",
     ]
     return " \n ".join(p for p in parts if p)
+
+
+def _stream_onnx_embedding_records_for_single_write(
+    rows: Sequence[Any],
+    vectors: Sequence[Any],
+    count: int,
+    dims: int,
+    model_id: str,
+) -> Iterator[tuple[Any, str, int, str, str]]:
+    """Stream insert rows so ONNX persistence spends one SQLite write boundary."""
+    for idx in range(count):
+        yield (
+            rows[idx]["id"],
+            json.dumps(vectors[idx]),
+            dims,
+            "onnx",
+            model_id,
+        )
 
 
 def build_and_store_onnx_embeddings(conn: sqlite3.Connection, project_root: str | None = None) -> dict[str, Any]:
@@ -706,27 +752,13 @@ def build_and_store_onnx_embeddings(conn: sqlite3.Connection, project_root: str 
     model_id = getattr(embedder, "model_id", "onnx-model")
 
     conn.execute("DELETE FROM symbol_embeddings WHERE provider='onnx'")
-    batch = []
-    for idx in range(count):
-        sid = rows[idx]["id"]
-        vec = vectors[idx]
-        batch.append((sid, json.dumps(vec), dims, "onnx", model_id))
-        if len(batch) >= 250:
-            conn.executemany(
-                "INSERT OR REPLACE INTO symbol_embeddings "
-                "(symbol_id, vector, dims, provider, model_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                batch,
-            )
-            batch.clear()
-
-    if batch:
-        conn.executemany(
-            "INSERT OR REPLACE INTO symbol_embeddings "
-            "(symbol_id, vector, dims, provider, model_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            batch,
-        )
+    insert_sql = (
+        "INSERT OR REPLACE INTO symbol_embeddings (symbol_id, vector, dims, provider, model_id) VALUES (?, ?, ?, ?, ?)"
+    )
+    conn.executemany(
+        insert_sql,
+        _stream_onnx_embedding_records_for_single_write(rows, vectors, count, dims, model_id),
+    )
 
     return {
         "enabled": True,
@@ -776,6 +808,71 @@ def _cosine_dense(vec_a: list[float], vec_b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _score_vector_corpus(
+    query_vec: Any,
+    vectors: dict[int, Any],
+    similarity_fn: Callable[[Any, Any], float],
+) -> list[tuple[float, int]]:
+    """Score every stored vector against a query vector, keeping positive hits.
+
+    Extracted from the clone cluster across ONNX, TF-IDF stored, and
+    TF-IDF corpus search. Callers prepare the query vector and decide
+    which similarity function to use; this helper owns the invariant
+    "score every vector, filter > 0, preserve (score, symbol_id) pairs".
+    """
+    scores: list[tuple[float, int]] = []
+    for sid, vec in vectors.items():
+        sim = similarity_fn(query_vec, vec)
+        if sim > 0:
+            scores.append((sim, sid))
+    return scores
+
+
+def _symbol_results_preserving_score_order(
+    conn: sqlite3.Connection,
+    scores: list[tuple[float, int]],
+    top_k: int,
+) -> list[dict]:
+    """Attach symbol metadata without letting DB row order change ranking."""
+    if not scores:
+        return []
+
+    scores.sort(key=lambda x: -x[0])
+    top = scores[:top_k]
+    sym_ids = [sid for _, sid in top]
+    if not sym_ids:
+        return []
+
+    from roam.db.connection import batched_in
+
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, f.path as file_path, s.kind, s.line_start, s.line_end "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
+        sym_ids,
+    )
+    meta: dict[int, Any] = {row["id"]: row for row in rows}
+
+    results = []
+    for score, sid in top:
+        row = meta.get(sid)
+        if row is None:
+            continue
+        results.append(
+            {
+                "score": round(score, 4),
+                "symbol_id": sid,
+                "name": row["name"],
+                "file_path": row["file_path"],
+                "kind": row["kind"],
+                "line_start": row["line_start"],
+                "line_end": row["line_end"],
+            }
+        )
+    return results
+
+
 def _search_onnx_stored(
     conn,
     query: str,
@@ -809,50 +906,8 @@ def _search_onnx_stored(
     if not vectors:
         return []
 
-    scores: list[tuple[float, int]] = []
-    for sid, vec in vectors.items():
-        sim = _cosine_dense(query_vec, vec)
-        if sim > 0:
-            scores.append((sim, sid))
-    if not scores:
-        return []
-
-    scores.sort(key=lambda x: -x[0])
-    top = scores[:top_k]
-
-    sym_ids = [sid for _, sid in top]
-    batch_size = 500
-    meta: dict[int, dict] = {}
-    for i in range(0, len(sym_ids), batch_size):
-        batch = sym_ids[i : i + batch_size]
-        ph = ",".join("?" for _ in batch)
-        rows = conn.execute(
-            f"SELECT s.id, s.name, f.path as file_path, s.kind, "
-            f"s.line_start, s.line_end "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph})",
-            batch,
-        ).fetchall()
-        for row in rows:
-            meta[row["id"]] = row
-
-    results = []
-    for score, sid in top:
-        row = meta.get(sid)
-        if not row:
-            continue
-        results.append(
-            {
-                "score": round(score, 4),
-                "symbol_id": sid,
-                "name": row["name"],
-                "file_path": row["file_path"],
-                "kind": row["kind"],
-                "line_start": row["line_start"],
-                "line_end": row["line_end"],
-            }
-        )
-    return results
+    scores = _score_vector_corpus(query_vec, vectors, _cosine_dense)
+    return _symbol_results_preserving_score_order(conn, scores, top_k)
 
 
 def _merge_semantic_results(*branches: list[dict], top_k: int) -> list[dict]:
@@ -927,49 +982,5 @@ def _search_tfidf_stored(
     if not vectors:
         return []
 
-    scores: list[tuple[float, int]] = []
-    for sid, vec in vectors.items():
-        sim = cosine_similarity(query_vec, vec)
-        if sim > 0:
-            scores.append((sim, sid))
-
-    if not scores:
-        return []
-
-    scores.sort(key=lambda x: -x[0])
-    top = scores[:top_k]
-
-    sym_ids = [sid for _, sid in top]
-    batch_size = 500
-    meta: dict[int, dict] = {}
-    for i in range(0, len(sym_ids), batch_size):
-        batch = sym_ids[i : i + batch_size]
-        ph = ",".join("?" for _ in batch)
-        rows = conn.execute(
-            f"SELECT s.id, s.name, f.path as file_path, s.kind, "
-            f"s.line_start, s.line_end "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph})",
-            batch,
-        ).fetchall()
-        for r in rows:
-            meta[r["id"]] = r
-
-    results = []
-    for score, sid in top:
-        m = meta.get(sid)
-        if not m:
-            continue
-        results.append(
-            {
-                "score": round(score, 4),
-                "symbol_id": sid,
-                "name": m["name"],
-                "file_path": m["file_path"],
-                "kind": m["kind"],
-                "line_start": m["line_start"],
-                "line_end": m["line_end"],
-            }
-        )
-
-    return results
+    scores = _score_vector_corpus(query_vec, vectors, cosine_similarity)
+    return _symbol_results_preserving_score_order(conn, scores, top_k)

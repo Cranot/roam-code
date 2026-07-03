@@ -7,6 +7,7 @@ Usage:
     python run_eval.py --list             # list all expected workspaces and their status
     python run_eval.py --export-prompts   # export all prompts to prompts/ directory
 """
+
 from __future__ import annotations
 
 import argparse
@@ -121,12 +122,17 @@ def evaluate_all(force: bool = False):
                 try:
                     result = subprocess.run(
                         [
-                            sys.executable, str(BASE_DIR / "evaluate.py"),
+                            sys.executable,
+                            str(BASE_DIR / "evaluate.py"),
                             str(ws),
-                            "--agent", agent,
-                            "--mode", mode,
-                            "--task", task_id,
-                            "--output", str(rs),
+                            "--agent",
+                            agent,
+                            "--mode",
+                            mode,
+                            "--task",
+                            task_id,
+                            "--output",
+                            str(rs),
                         ],
                         timeout=600,
                     )
@@ -142,11 +148,15 @@ def evaluate_all(force: bool = False):
     # Generate report
     if any(RESULTS_DIR.glob("*.json")):
         print("\nGenerating comparison report...")
-        subprocess.run([
-            sys.executable, str(BASE_DIR / "compare.py"),
-            str(RESULTS_DIR),
-            "--html", str(RESULTS_DIR / "report.html"),
-        ])
+        subprocess.run(
+            [
+                sys.executable,
+                str(BASE_DIR / "compare.py"),
+                str(RESULTS_DIR),
+                "--html",
+                str(RESULTS_DIR / "report.html"),
+            ]
+        )
 
 
 def main():

@@ -57,6 +57,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Union
 
+from roam.observability import log_swallowed
+
 # Public surface kept intentionally small. Callers should NOT reach in to
 # the private helpers — they may grow os-specific flags (O_TMPFILE,
 # FILE_FLAG_WRITE_THROUGH) in future iterations.
@@ -78,8 +80,33 @@ def _cleanup_tmp(tmp_name: str) -> None:
     """
     try:
         os.unlink(tmp_name)
-    except OSError:
-        pass
+    except OSError as exc:
+        # Best-effort cleanup: we run inside the caller's except block,
+        # which already re-raises the original error, so re-raising this
+        # OSError would mask the real failure. Surface the miss via the
+        # opt-in swallow logger (silent unless ROAM_VERBOSE=1) instead of
+        # a bare ``pass``. See the docstring for the full OSError rationale.
+        log_swallowed("atomic_io._cleanup_tmp", exc)
+
+
+def _close_fd_safely(fd: int, *, origin: str) -> None:
+    """Best-effort close a raw OS file descriptor.
+
+    Centralised so both writers share the same fd-close policy inside
+    their ``except BaseException`` cleanup blocks (see
+    :func:`atomic_write_text` stage 2: ``fdopen`` raised, so the raw
+    ``fd`` is still open). ``OSError`` is the expected/tolerated failure
+    (the fd may already be closed, or an antivirus/indexer may hold it
+    briefly on Windows); any other exception class must propagate — we
+    are already inside an outer except block raising the original error,
+    so re-raising here would mask the real failure. Surface the miss via
+    the opt-in swallow logger (silent unless ``ROAM_VERBOSE=1``) instead
+    of a bare ``pass``. Mirrors :func:`_cleanup_tmp` for the close path.
+    """
+    try:
+        os.close(fd)
+    except OSError as exc:
+        log_swallowed(origin, exc)
 
 
 def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") -> None:
@@ -132,10 +159,7 @@ def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") 
         # OSError, etc.) — we don't want stray ``.tmp`` debris on disk
         # OR a leaked file descriptor.
         if not fdopen_succeeded:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            _close_fd_safely(fd, origin="atomic_io.atomic_write_text.fd_close")
         _cleanup_tmp(tmp_name)
         raise
 
@@ -163,10 +187,7 @@ def atomic_write_bytes(path: PathLike, content: bytes) -> None:
         os.replace(tmp_name, str(target))
     except BaseException:
         if not fdopen_succeeded:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            _close_fd_safely(fd, origin="atomic_io.atomic_write_bytes.fd_close")
         _cleanup_tmp(tmp_name)
         raise
 

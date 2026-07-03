@@ -117,6 +117,22 @@ class CyclesSummary:
         return out
 
 
+def _build_formatted_cycles(conn) -> list[dict]:
+    """Build and annotate formatted cycle records from the indexed graph."""
+    from roam.graph.builder import build_symbol_graph
+    from roam.graph.cycles import (
+        find_cycles,
+        format_cycles,
+        mark_actionable_cycles,
+    )
+
+    G = build_symbol_graph(conn)
+    raw = find_cycles(G)
+    formatted = format_cycles(raw, conn) if raw else []
+    mark_actionable_cycles(formatted)
+    return formatted
+
+
 def cycles_summary(conn) -> CyclesSummary:
     """Compute the canonical cycle summary on the indexed graph.
 
@@ -140,13 +156,6 @@ def cycles_summary(conn) -> CyclesSummary:
     """
     try:
         from networkx import NetworkXException
-
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.cycles import (
-            find_cycles,
-            format_cycles,
-            mark_actionable_cycles,
-        )
     except ImportError:
         # Defensive: if networkx / graph module isn't importable we
         # return all-zero rather than crashing the caller. Cycles is an
@@ -162,10 +171,15 @@ def cycles_summary(conn) -> CyclesSummary:
         )
 
     try:
-        G = build_symbol_graph(conn)
-        raw = find_cycles(G)
-        formatted = format_cycles(raw, conn) if raw else []
-        mark_actionable_cycles(formatted)
+        formatted = _build_formatted_cycles(conn)
+    except ImportError:
+        return CyclesSummary(
+            total=0,
+            actionable=0,
+            informational=0,
+            fallback_used=True,
+            fallback_reason="import_failed",
+        )
     except (sqlite3.Error, NetworkXException):
         return CyclesSummary(
             total=0,

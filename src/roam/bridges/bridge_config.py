@@ -19,6 +19,7 @@ _CONFIG_EXTS = frozenset({".env", ".yml", ".yaml", ".json", ".toml", ".ini", ".c
 
 # Code file extensions that read config
 _CODE_EXTS = frozenset({".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".rb"})
+_JS_LIKE_CODE_EXTS = frozenset({".js", ".ts", ".jsx", ".tsx"})
 
 # --- Config key extraction patterns ---
 
@@ -61,6 +62,38 @@ _GO_ENV_RE = re.compile(
 _JAVA_ENV_RE = re.compile(
     r"""System\s*\.\s*(?:getenv|getProperty)\s*\(\s*["'](\w+)["']""",
 )
+
+
+def _coalesce_alternative_key_capture(match: re.Match[str]) -> str | None:
+    return next((group for group in match.groups() if group), None)
+
+
+def _keys_from_alternative_read_pattern(pattern: re.Pattern[str], text: str) -> list[str]:
+    return [key for match in pattern.finditer(text) if (key := _coalesce_alternative_key_capture(match))]
+
+
+def _python_keys_from_config_read_syntax(text: str) -> list[str]:
+    keys = [match.group(1) for match in _PY_ENV_RE.finditer(text)]
+    keys.extend(_keys_from_alternative_read_pattern(_PY_CONFIG_RE, text))
+    return keys
+
+
+def _javascript_keys_from_config_read_syntax(text: str) -> list[str]:
+    keys = _keys_from_alternative_read_pattern(_JS_ENV_RE, text)
+    keys.extend(_keys_from_alternative_read_pattern(_JS_CONFIG_RE, text))
+    return keys
+
+
+def _config_keys_for_supported_read_syntax(text: str, ext: str) -> list[str]:
+    if ext == ".py":
+        return _python_keys_from_config_read_syntax(text)
+    if ext in _JS_LIKE_CODE_EXTS:
+        return _javascript_keys_from_config_read_syntax(text)
+    if ext == ".go":
+        return [match.group(1) for match in _GO_ENV_RE.finditer(text)]
+    if ext == ".java":
+        return [match.group(1) for match in _JAVA_ENV_RE.finditer(text)]
+    return []
 
 
 class ConfigBridge(LanguageBridge):
@@ -168,30 +201,7 @@ class ConfigBridge(LanguageBridge):
             doc = sym.get("docstring", "") or ""
             text = f"{sig} {doc}"
 
-            keys_found: list[str] = []
-
-            if ext == ".py":
-                keys_found.extend(m.group(1) for m in _PY_ENV_RE.finditer(text))
-                for m in _PY_CONFIG_RE.finditer(text):
-                    # Groups: [1] bracket, [2] .get(), [3] dotattr
-                    key = m.group(1) or m.group(2) or m.group(3)
-                    if key:
-                        keys_found.append(key)
-            elif ext in (".js", ".ts", ".jsx", ".tsx"):
-                for m in _JS_ENV_RE.finditer(text):
-                    key = m.group(1) or m.group(2)
-                    if key:
-                        keys_found.append(key)
-                for m in _JS_CONFIG_RE.finditer(text):
-                    key = m.group(1) or m.group(2) or m.group(3)
-                    if key:
-                        keys_found.append(key)
-            elif ext == ".go":
-                keys_found.extend(m.group(1) for m in _GO_ENV_RE.finditer(text))
-            elif ext == ".java":
-                keys_found.extend(m.group(1) for m in _JAVA_ENV_RE.finditer(text))
-
-            for key in keys_found:
+            for key in _config_keys_for_supported_read_syntax(text, ext):
                 results.append((key, qname))
 
         return results

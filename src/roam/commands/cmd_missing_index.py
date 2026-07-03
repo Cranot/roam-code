@@ -38,7 +38,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output._severity import severity_rank
 from roam.output.confidence import (
     confidence_distribution,
@@ -1320,6 +1320,21 @@ def _emit_missing_index_findings(
     # we're actually writing.
     from roam.db.findings import FindingRecord, emit_finding
 
+    # Resolve subject_ids in one batched query instead of N+1 per-finding
+    # lookups. Not every finding has a resolvable file (e.g. when path
+    # normalisation differs from what the indexer recorded), so the map is
+    # best-effort.
+    candidate_paths = {_parse_query_location(f.get("query_location") or "")[0] for f in findings_unfiltered}
+    candidate_paths.discard("")
+    path_to_id: dict[str, int] = {}
+    if candidate_paths:
+        for row in batched_in(
+            conn,
+            "SELECT id, path FROM files WHERE path IN ({ph})",
+            list(candidate_paths),
+        ):
+            path_to_id[row[1]] = int(row[0])
+
     for f in findings_unfiltered:
         detector_conf = f.get("confidence") or "medium"
         table = f.get("table")
@@ -1328,15 +1343,7 @@ def _emit_missing_index_findings(
         query_location = f.get("query_location") or ""
         file_path, line_no = _parse_query_location(query_location)
 
-        # Resolve subject_id to a files.id when the path matches an indexed
-        # file. Not every finding has a resolvable file (e.g. when the
-        # path normalisation differs from what the indexer recorded), so
-        # the lookup is best-effort.
-        subject_id: int | None = None
-        if file_path:
-            row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
-            if row is not None:
-                subject_id = int(row[0])
+        subject_id: int | None = path_to_id.get(file_path) if file_path else None
 
         finding_id = _missing_index_finding_id(table, columns, pattern_type, file_path, line_no)
 

@@ -16,7 +16,12 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  agent-review:
+  # Single-job workflow: `main` is the workflow entry job invoked by the
+  # `on: pull_request` trigger above (no intra-file `needs:` edge exists or
+  # is needed). Keep the visible job name `agent-review`; consumers may pin it
+  # as a required status check in branch protection.
+  main:
+    name: agent-review
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,6 +52,10 @@ jobs:
 
       - name: Run pr-analyze
         id: analyze
+        env:
+          # Untrusted input — never interpolate `${{ }}` into `run:` directly
+          # (a crafted PR title would inject into the shell script).
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           mkdir -p .roam-artifacts
           roam --json pr-analyze \
@@ -55,15 +64,14 @@ jobs:
             --with-reviewers \
             --audit-trail \
             --save-baseline \
-            --intent "${{ github.event.pull_request.title }}" \
+            --intent "$PR_TITLE" \
             > .roam-artifacts/pr-analysis.json
-          # Extract verdict + scores for the step output
+          # Export the verdict for the merge gate step below
           python -c "
           import json
           d = json.load(open('.roam-artifacts/pr-analysis.json'))
-          s = d.get('summary', {})
-          print(f'verdict={s.get(\"verdict\")}', file=open('analysis.env', 'w'))
-          " >> $GITHUB_OUTPUT
+          print('verdict=' + str(d.get('summary', {}).get('verdict')))
+          " >> "$GITHUB_OUTPUT"
         continue-on-error: true   # gate decision is enforced below, not here
 
       - name: Render PR comment
@@ -95,7 +103,13 @@ jobs:
 
       - name: Gate merge on BLOCK
         run: |
-          VERDICT=$(python -c "import json; print(json.load(open('.roam-artifacts/pr-analysis.json'))['summary']['verdict'])")
+          VERDICT="${{ steps.analyze.outputs.verdict }}"
+          # Fail closed: no verdict means pr-analyze itself failed
+          # (its continue-on-error defers the decision to this step).
+          if [ -z "$VERDICT" ] || [ "$VERDICT" = "None" ]; then
+            echo "::error::Roam Agent Review produced no verdict — see the 'Run pr-analyze' step logs."
+            exit 1
+          fi
           if [ "$VERDICT" = "BLOCK" ]; then
             echo "::error::Roam Agent Review verdict: BLOCK — see PR comment for findings."
             exit 1

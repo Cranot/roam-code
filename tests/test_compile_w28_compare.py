@@ -13,6 +13,8 @@ Mirrors the W11/W12/W13 test pattern in
 
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
 from roam.plan.compiler import (
@@ -119,3 +121,43 @@ def test_w28_probe_returns_compare_x_vs_y_result() -> None:
     assert "common_signature" in result
     assert "divergence_points" in result
     assert isinstance(result["divergence_points"], list)
+
+
+# ---- Shell-injection guard on copy-paste remediation ------------------
+#
+# Compare operands are extracted from free-form task text and are NOT
+# validated against a closed alphabet before they reach a remediation
+# envelope. A token like ``HEAD;cmd`` fails BOTH shape checks, so it lands
+# in the mixed/unrecognised branch — which interpolates the operands into a
+# copy-paste ``git diff {x}..{y}`` suggestion. Interpolated raw, the shell
+# treats ``;`` as a command separator and runs ``cmd..main`` as a separate
+# command (injection). The fix shell-quotes operands via ``shlex.quote``.
+# ``cwd=None`` forces the no-result fallback so the remediation is emitted.
+
+
+def test_w28_mixed_branch_shell_quotes_git_diff_operands() -> None:
+    """Unrecognised operands reach the mixed branch and appear in a
+    ``git diff {x}..{y}`` remediation — must be ``shlex.quote``d."""
+    out = _probe_compare_x_vs_y_for_task("compare HEAD;cmd vs main", cwd=None)
+    assert out is not None
+    msg = out["compare_x_vs_y_unavailable"]
+    # Positive: the quoted operand is wired into the command itself (not just
+    # the harmless ``(x!r, y!r)`` repr clause), i.e. ``git diff 'HEAD;cmd'``.
+    assert f"git diff {shlex.quote('HEAD;cmd')}" in msg, f"operand not shell-quoted in the git diff command: {msg!r}"
+    # Negative: the raw interpolation the vulnerable code emitted is gone.
+    # (Vulnerable form read ``git diff HEAD;cmd..main``.)
+    assert "git diff HEAD;cmd.." not in msg, f"raw operand interpolated into git diff: {msg!r}"
+
+
+def test_w28_file_branch_shell_quotes_semantic_diff_operands() -> None:
+    """File-shaped tokens still carry shell operators (``/`` alone makes a
+    token "look like a file"); the ``_compare_files`` remediation must also
+    ``shlex.quote`` them."""
+    out = _probe_compare_x_vs_y_for_task("compare a/b;rm.c and d/e;ls.c", cwd=None)
+    assert out is not None
+    msg = out["compare_x_vs_y_unavailable"]
+    assert f"semantic-diff {shlex.quote('a/b;rm.c')}" in msg, (
+        f"operand not shell-quoted in the semantic-diff command: {msg!r}"
+    )
+    # Vulnerable form read ``semantic-diff a/b;rm.c ...``.
+    assert "semantic-diff a/b;rm.c " not in msg, f"raw operand interpolated into semantic-diff: {msg!r}"

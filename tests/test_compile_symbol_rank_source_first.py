@@ -47,6 +47,55 @@ def test_build_hits_leads_with_source_definition() -> None:
     assert hits[0]["line"] == 7530
 
 
+def test_build_hits_strips_enrichment_for_forbidden_definition_path() -> None:
+    raw = [
+        {
+            "name": "_secret",
+            "location": "internal/private.py:7",
+            "kind": "function",
+            "references": ["src/public.py:9"],
+            "body_preview": "def _secret():\n    return TOKEN",
+        }
+    ]
+    hit = _build_symbol_definition_hits(raw, "_secret")[0]
+    assert hit["file"] == "internal/private.py"
+    assert "references" not in hit
+    assert "body_preview" not in hit
+
+
+def test_build_hits_strips_enrichment_for_unnormalizable_definition_path() -> None:
+    raw = [
+        {
+            "name": "_secret",
+            "location": "../private.py:7",
+            "kind": "function",
+            "references": ["src/public.py:9"],
+            "body_preview": "def _secret():\n    return TOKEN",
+        }
+    ]
+    hit = _build_symbol_definition_hits(raw, "_secret")[0]
+    assert hit["file"] == "../private.py"
+    assert "references" not in hit
+    assert "body_preview" not in hit
+
+
+def test_build_hits_strips_enrichment_when_location_keeps_line_suffix() -> None:
+    raw = [
+        {
+            "name": "package",
+            "location": "package.json:1",
+            "line": 1,
+            "kind": "file",
+            "references": ["src/public.py:9"],
+            "body_preview": '{"scripts": {"postinstall": "TOKEN"}}',
+        }
+    ]
+    hit = _build_symbol_definition_hits(raw, "package")[0]
+    assert hit["file"] == "package.json:1"
+    assert "references" not in hit
+    assert "body_preview" not in hit
+
+
 def test_source_ranked_above_test_even_when_both_exact() -> None:
     """Two exact-name matches (e.g. a test helper sharing the real name):
     the source path still wins the tie over the test path."""

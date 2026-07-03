@@ -36,6 +36,8 @@ would break the brief silently):
 * :func:`generate_agents_md`
 * :func:`render_agents_markdown`
 * :class:`AgentsMd`
+* :meth:`AgentsMd.section_names`
+* :class:`AgentsMdOptions`
 
 The remaining ``_section_*`` helpers stay module-private because no
 external caller consumes them today. Underscore-prefixed aliases are
@@ -46,13 +48,25 @@ cleanup).
 
 from __future__ import annotations
 
+import importlib
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from roam.observability import log_swallowed
+
+__all__ = [
+    "AgentsMd",
+    "AgentsMdOptions",
+    "generate_agents_md",
+    "render_agents_markdown",
+    "render_markdown",
+    "section_danger_zones",
+    "section_laws",
+    "section_stack",
+]
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -91,8 +105,8 @@ class AgentsMd:
     constitution_path: Optional[str] = None
     sources: dict[str, str] = field(default_factory=dict)
 
-    def section_names(self) -> list[str]:
-        """Names of sections that have content (used in the envelope)."""
+    def _section_names(self) -> list[str]:
+        """Names of sections that have content, in rendered order."""
         out: list[str] = ["Quick read"]
         if self.stack:
             out.append("Stack")
@@ -117,6 +131,10 @@ class AgentsMd:
         out.append("Where to look next")
         return out
 
+    def section_names(self) -> list[str]:
+        """Public section roster used by ``roam agents-md`` envelopes."""
+        return self._section_names()
+
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view used by ``roam agents-md --json``."""
         return {
@@ -136,8 +154,60 @@ class AgentsMd:
             "capability_summary": self.capability_summary,
             "constitution_path": self.constitution_path,
             "sources": self.sources,
-            "sections": self.section_names(),
+            "sections": self._section_names(),
         }
+
+
+@dataclass(frozen=True)
+class AgentsMdOptions:
+    """Generation toggles for :func:`generate_agents_md`."""
+
+    with_laws: bool = True
+    with_rules: bool = True
+    with_constitution: bool = True
+    top_n_danger: int = 10
+    top_n_laws: int = 8
+
+
+@dataclass(frozen=True)
+class _CurrentModePolicyState:
+    """Generator-owned mode-policy view for the Current mode section."""
+
+    name: str
+    source: str
+    allowed_commands: frozenset[str]
+    policies_allowed_commands: dict[str, frozenset[str]]
+    valid_modes: tuple[str, ...]
+
+
+def _agents_md_options(
+    options: AgentsMdOptions | None,
+    legacy_options: dict[str, Any],
+) -> AgentsMdOptions:
+    """Resolve dataclass options plus validated legacy keyword overrides."""
+    if options is None:
+        resolved = AgentsMdOptions()
+    elif isinstance(options, AgentsMdOptions):
+        resolved = options
+    else:
+        raise TypeError("options must be an AgentsMdOptions instance")
+
+    if not legacy_options:
+        return resolved
+
+    allowed = {f.name for f in fields(AgentsMdOptions)}
+    unknown = sorted(set(legacy_options) - allowed)
+    if unknown:
+        names = ", ".join(unknown)
+        raise TypeError(f"generate_agents_md() got unexpected option(s): {names}")
+
+    return AgentsMdOptions(
+        with_laws=legacy_options.get("with_laws", resolved.with_laws),
+        with_rules=legacy_options.get("with_rules", resolved.with_rules),
+        with_constitution=legacy_options.get("with_constitution", resolved.with_constitution),
+        top_n_danger=legacy_options.get("top_n_danger", resolved.top_n_danger),
+        top_n_laws=legacy_options.get("top_n_laws", resolved.top_n_laws),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -325,57 +395,77 @@ def section_danger_zones(conn, *, limit: int) -> list[dict[str, Any]]:
     return out[:limit]
 
 
-def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Optional[str]]:
-    """Pre-edit / after-edit / pre-PR check templates from the constitution.
+def _constitution_loader_or_none() -> Optional[Any]:
+    """Import the constitution loader module, returning None on failure.
 
-    Falls back to the loader's default-gate set so a repo that has not
-    yet run ``roam constitution init`` still gets sensible defaults
-    in its AGENTS.md.
+    AGENTS.md generation is best-effort: a partial install must not crash
+    the whole generator just because the constitution loader is missing.
+    Returns the module itself so callers reach its helpers at the point
+    of use instead of threading loose callables around.
     """
     try:
-        from roam.constitution.loader import (
-            _default_required_checks,
-            constitution_path,
-            load_constitution,
-        )
+        from roam.constitution import loader
+
+        return loader
     except Exception as exc:
         # Lazy import: defers the constitution loader until a caller needs
         # it. ImportError signals a partial install — surface the lineage.
         log_swallowed("agents_md.generator:section_gates:import", exc)
+        return None
+
+
+def _constitution_path_if_present(repo_root: Path, loader: Any) -> Optional[str]:
+    """Resolve the constitution file path only when the file exists.
+
+    Keeps the gates section honest about provenance: a loaded constitution
+    only gets a path attribution when the file is actually on disk.
+    """
+    try:
+        cp = loader.constitution_path(Path(repo_root))
+        return str(cp) if cp.exists() else None
+    except Exception as exc:
+        # Loud-fallback: a path-resolution failure drops the
+        # constitution_path attribution. Surface the lineage.
+        log_swallowed("agents_md.generator:section_gates:path", exc)
+        return None
+
+
+def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Optional[str]]:
+    """Pre-edit / after-edit / pre-PR check templates from the constitution.
+
+    Loads ``.roam/constitution.yml`` and falls back to the loader's
+    default-gate set so a repo that has not yet run
+    ``roam constitution init`` still gets sensible defaults in its
+    AGENTS.md. Every failure is logged (``section_gates:load`` /
+    ``:defaults``) so a missing or corrupt file is not silently misread
+    as "no gates configured" — loud-fallback per CLAUDE.md §"Make
+    fallback chains loud".
+    """
+    loader = _constitution_loader_or_none()
+    if loader is None:
         return [], [], [], None
 
-    path: Optional[str] = None
-    required: dict[str, list[str]] = {}
-
     try:
-        loaded = load_constitution(Path(repo_root))
+        loaded = loader.load_constitution(Path(repo_root))
     except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # load FAILURE falls through to default gates below, the same as
-        # a repo with no constitution.yml. Surface the lineage so a
+        # A load FAILURE falls through to default gates below, the same
+        # as a repo with no constitution.yml. Surface the lineage so a
         # corrupt constitution file isn't read as "no constitution".
         log_swallowed("agents_md.generator:section_gates:load", exc)
         loaded = None
 
     if loaded is not None and loaded.required_checks:
         required = loaded.required_checks
-        try:
-            cp = constitution_path(Path(repo_root))
-            if cp.exists():
-                path = str(cp)
-        except Exception as exc:
-            # Loud-fallback: a path-resolution failure drops the
-            # constitution_path attribution. Surface the lineage.
-            log_swallowed("agents_md.generator:section_gates:path", exc)
-            path = None
+        path = _constitution_path_if_present(repo_root, loader)
     else:
         try:
-            required = _default_required_checks()
+            required = loader._default_required_checks()
         except Exception as exc:
-            # Loud-fallback: the loader's own default-gate set failed —
-            # this should never happen, so surface it loudly.
+            # The loader's own default-gate set failed — this should
+            # never happen, so surface it loudly.
             log_swallowed("agents_md.generator:section_gates:defaults", exc)
             required = {}
+        path = None
 
     pre_edit = list(required.get("before_edit", []) or [])
     after_edit = list(required.get("after_edit", []) or [])
@@ -383,49 +473,12 @@ def _section_gates(repo_root: Path) -> tuple[list[str], list[str], list[str], Op
     return pre_edit, after_edit, before_pr, path
 
 
-def _section_current_mode(repo_root: Path) -> dict[str, Any]:
-    """Summarise the active agent-mode for the AGENTS.md "Current mode" section.
+def _allowed_highlights(allowed_commands: frozenset[str]) -> list[str]:
+    """Build a deterministic, prioritized preview of allowed commands.
 
-    Returns a dict with:
-      - ``name``: active mode name (e.g. ``safe_edit``)
-      - ``allowed_count``: number of commands the active mode allows
-      - ``allowed_highlights``: up to ~12 representative allowed commands
-      - ``blocked_examples``: up to ~6 commands blocked at this mode but
-        unlocked at the next-higher mode (lets readers see what the
-        upgrade buys them)
-      - ``upgrade_to``: name of the next-higher mode (or ``None`` if
-        already at ``autonomous_pr``)
-      - ``valid_modes``: full ordered list of valid modes (for the
-        switch-with hint line)
-
-    Best-effort: if the policy module can't be imported (partial
-    install) or anything raises, returns an empty dict.
+    Walks a hand-curated order first, then pads with the remaining sorted
+    allow-list so the output is stable and concise.
     """
-    try:
-        from roam.modes.policy import (
-            VALID_MODES,
-            list_modes,
-            resolve_mode,
-        )
-    except Exception as exc:
-        # Lazy import: defers the modes policy module until a caller needs
-        # it. ImportError signals a partial install — surface the lineage.
-        log_swallowed("agents_md.generator:section_current_mode:import", exc)
-        return {}
-    try:
-        active = resolve_mode(Path(repo_root))
-        policies = list_modes(Path(repo_root))
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # mode-resolution FAILURE produces the same empty Current-mode
-        # section as a partial install. Surface the lineage.
-        log_swallowed("agents_md.generator:section_current_mode:resolve", exc)
-        return {}
-
-    allowed = sorted(active.allowed_commands)
-    # Highlights: a stable, hand-curated front of the allow-list so the
-    # output is deterministic. The full count surfaces immediately
-    # after; we don't need to enumerate every command.
     preferred_order = (
         "search",
         "retrieve",
@@ -446,49 +499,124 @@ def _section_current_mode(repo_root: Path) -> dict[str, Any]:
     )
     highlights: list[str] = []
     for cmd in preferred_order:
-        if cmd in active.allowed_commands and cmd not in highlights:
+        if cmd in allowed_commands and cmd not in highlights:
             highlights.append(cmd)
         if len(highlights) >= 12:
-            break
-    # Pad with whatever else is allowed if we ran short.
-    if len(highlights) < 12:
-        for cmd in allowed:
-            if cmd in highlights:
-                continue
-            highlights.append(cmd)
-            if len(highlights) >= 12:
-                break
+            return highlights
 
-    # Find the next-higher mode + which commands IT unlocks.
+    # Pad with whatever else is allowed if we ran short.
+    allowed = sorted(allowed_commands)
+    for cmd in allowed:
+        if cmd in highlights:
+            continue
+        highlights.append(cmd)
+        if len(highlights) >= 12:
+            break
+    return highlights
+
+
+def _build_current_mode_policy_state(
+    active: Any,
+    policies: dict[str, Any],
+    valid_modes: tuple[str, ...],
+) -> _CurrentModePolicyState:
+    """Adapt raw mode-policy objects to the local section contract."""
+    return _CurrentModePolicyState(
+        name=active.name,
+        source=active.source,
+        allowed_commands=frozenset(active.allowed_commands),
+        policies_allowed_commands={
+            mode_name: frozenset(policy.allowed_commands) for mode_name, policy in policies.items()
+        },
+        valid_modes=tuple(valid_modes),
+    )
+
+
+def _upgrade_and_blocked(state: _CurrentModePolicyState) -> tuple[Optional[str], list[str]]:
+    """Find the next-higher mode and the commands it unlocks.
+
+    Best-effort: a missing upgrade-tier policy drops the blocked-examples
+    sub-section but still returns the upgrade target.
+    """
     upgrade_to: Optional[str] = None
     blocked_examples: list[str] = []
     try:
-        idx = VALID_MODES.index(active.name)
+        idx = state.valid_modes.index(state.name)
     except ValueError:
         idx = -1
-    if 0 <= idx < len(VALID_MODES) - 1:
-        upgrade_to = VALID_MODES[idx + 1]
-        try:
-            upgrade_allowed = policies[upgrade_to].allowed_commands
-            # Commands NEW at the upgrade tier (not allowed now).
-            new_at_upgrade = sorted(upgrade_allowed - active.allowed_commands)
-            blocked_examples = new_at_upgrade[:6]
-        except Exception as exc:
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-            # missing upgrade-tier policy drops the "blocked commands"
-            # sub-section. Surface the lineage so a policy-table gap is
-            # discoverable rather than read as "nothing is blocked".
-            log_swallowed("agents_md.generator:section_current_mode:blocked", exc)
-            blocked_examples = []
+    if not (0 <= idx < len(state.valid_modes) - 1):
+        return upgrade_to, blocked_examples
+
+    upgrade_to = state.valid_modes[idx + 1]
+    try:
+        upgrade_allowed = state.policies_allowed_commands[upgrade_to]
+        # Commands NEW at the upgrade tier (not allowed now).
+        new_at_upgrade = sorted(upgrade_allowed - state.allowed_commands)
+        blocked_examples = new_at_upgrade[:6]
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing upgrade-tier policy drops the "blocked commands"
+        # sub-section. Surface the lineage so a policy-table gap is
+        # discoverable rather than read as "nothing is blocked".
+        log_swallowed("agents_md.generator:section_current_mode:blocked", exc)
+        blocked_examples = []
+    return upgrade_to, blocked_examples
+
+
+def _collect_current_mode_policy_state_or_skip(
+    repo_root: Path,
+) -> Optional[_CurrentModePolicyState]:
+    """Collect mode-policy state while keeping AGENTS.md generation non-fatal."""
+    try:
+        from roam.modes.policy import VALID_MODES, list_modes, resolve_mode
+    except Exception as exc:
+        log_swallowed("agents_md.generator:section_current_mode:import", exc)
+        return None
+    try:
+        repo_path = Path(repo_root)
+        return _build_current_mode_policy_state(
+            resolve_mode(repo_path),
+            list_modes(repo_path),
+            VALID_MODES,
+        )
+    except Exception as exc:
+        log_swallowed("agents_md.generator:section_current_mode:resolve", exc)
+        return None
+
+
+def _section_current_mode(repo_root: Path) -> dict[str, Any]:
+    """Summarise the active agent-mode for the AGENTS.md "Current mode" section.
+
+    Returns a dict with:
+      - ``name``: active mode name (e.g. ``safe_edit``)
+      - ``allowed_count``: number of commands the active mode allows
+      - ``allowed_highlights``: up to ~12 representative allowed commands
+      - ``blocked_examples``: up to ~6 commands blocked at this mode but
+        unlocked at the next-higher mode (lets readers see what the
+        upgrade buys them)
+      - ``upgrade_to``: name of the next-higher mode (or ``None`` if
+        already at ``autonomous_pr``)
+      - ``valid_modes``: full ordered list of valid modes (for the
+        switch-with hint line)
+
+    Best-effort: if the policy module can't be imported (partial
+    install) or anything raises, returns an empty dict.
+    """
+    state = _collect_current_mode_policy_state_or_skip(repo_root)
+    if state is None:
+        return {}
+
+    highlights = _allowed_highlights(state.allowed_commands)
+    upgrade_to, blocked_examples = _upgrade_and_blocked(state)
 
     return {
-        "name": active.name,
-        "source": active.source,
-        "allowed_count": len(active.allowed_commands),
+        "name": state.name,
+        "source": state.source,
+        "allowed_count": len(state.allowed_commands),
         "allowed_highlights": highlights,
         "blocked_examples": blocked_examples,
         "upgrade_to": upgrade_to,
-        "valid_modes": list(VALID_MODES),
+        "valid_modes": list(state.valid_modes),
     }
 
 
@@ -610,39 +738,37 @@ def _section_rules_files(repo_root: Path) -> list[str]:
         return []
 
 
-def _section_capability_summary() -> dict[str, Any]:
-    """Capability roster size + MCP preset counts.
+# Modules whose ``@roam_capability`` decorators populate the registry.
+# Kept as a module constant so the list is defined once and the helper
+# below stays focused on orchestration.
+_CAPABILITY_REGISTRY_MODULES = [
+    "roam.commands.cmd_critique",
+    "roam.commands.cmd_preflight",
+    "roam.commands.cmd_understand",
+    "roam.commands.cmd_permit",
+    "roam.commands.cmd_postmortem",
+    "roam.commands.cmd_article_12_check",
+    "roam.commands.cmd_constitution",
+]
 
-    Imports a curated list of decorated modules to populate the
-    registry, mirroring :func:`cmd_capabilities._populate_registry`.
-    We swallow import errors so a partial install doesn't crash
-    AGENTS.md generation.
+
+def _load_registry_capabilities() -> Optional[tuple[list[Any], int]]:
+    """Import and populate the capability registry, returning counts.
+
+    Mirrors :func:`cmd_capabilities._populate_registry`. Each import
+    failure is logged but ignored so a partial install still produces
+    the counts that *are* available. Returns ``None`` when the registry
+    itself cannot be loaded or read.
     """
-    import importlib
-
     try:
         from roam.capability import REGISTRY
     except Exception as exc:
         # Lazy import: defers the capability registry until a caller needs
         # it. ImportError signals a partial install — surface the lineage.
         log_swallowed("agents_md.generator:section_capability:import", exc)
-        return {}
+        return None
 
-    # Mirrors cmd_capabilities._populate_registry; importing these modules
-    # populates `REGISTRY` so `registered_count` / `ai_safe_count` below are
-    # non-empty. The MCP `core` / `full` counts do NOT come from the
-    # registry (see the `mcp_preset_counts()` block below) -- the registry
-    # is a superset and has no reliable per-preset signal.
-    decorated_modules = [
-        "roam.commands.cmd_critique",
-        "roam.commands.cmd_preflight",
-        "roam.commands.cmd_understand",
-        "roam.commands.cmd_permit",
-        "roam.commands.cmd_postmortem",
-        "roam.commands.cmd_article_12_check",
-        "roam.commands.cmd_constitution",
-    ]
-    for mod in decorated_modules:
+    for mod in _CAPABILITY_REGISTRY_MODULES:
         try:
             importlib.import_module(mod)
         except Exception as exc:
@@ -660,18 +786,23 @@ def _section_capability_summary() -> dict[str, Any]:
         # registry-read failure produces the same empty Capability-roster
         # section as a registry that was never populated.
         log_swallowed("agents_md.generator:section_capability:registry_all", exc)
-        return {}
+        return None
 
     ai_safe = sum(1 for c in caps if c.ai_safe)
+    return caps, ai_safe
 
-    # MCP preset counts come from the canonical AST-only surface counter --
-    # the same source `roam surface --json` and `dev/build_readme_counts.py`
-    # use. The capability registry is NOT a valid source here: no
-    # `@roam_capability` ever sets `mcp_preset` to include `"full"`, and only
-    # a curated handful of modules are import-populated above, so a
-    # registry-derived count was structurally always wrong (`full: 0`,
-    # `core: ~9`). `mcp_preset_counts()` parses `_PRESETS` in mcp_server.py
-    # directly, so it reports the real `core: 57 / full: 227`.
+
+def _mcp_preset_counts() -> tuple[Optional[int], Optional[int]]:
+    """Return (core, full) MCP preset counts from the AST-only counter.
+
+    The capability registry is NOT a valid source here: no
+    ``@roam_capability`` ever sets ``mcp_preset`` to include ``"full"``,
+    and only a curated handful of modules are import-populated, so a
+    registry-derived count was structurally always wrong (``full: 0``,
+    ``core: ~9``). ``mcp_preset_counts()`` parses ``_PRESETS`` in
+    ``mcp_server.py`` directly, so it reports the real
+    ``core: 57 / full: 227``.
+    """
     core: Optional[int] = None
     full: Optional[int] = None
     try:
@@ -687,11 +818,16 @@ def _section_capability_summary() -> dict[str, Any]:
         log_swallowed("agents_md.generator:section_capability:mcp_preset_counts", exc)
         core = None
         full = None
+    return core, full
 
-    # Also try to surface the authoritative CLI command total (the
-    # surface counter parses the AST directly so it's robust to lazy
-    # imports). Empty result is acceptable -- the summary block stays
-    # informative without it.
+
+def _surface_counts() -> dict[str, Optional[int]]:
+    """Return CLI command count and MCP tool count from surface counters.
+
+    Both counts are optional enrichment: the summary block stays
+    informative without them. Empty result is acceptable; a FAILURE is
+    not, so each is logged loudly.
+    """
     cli_total: Optional[int] = None
     try:
         from roam.surface_counts import cli_surface_counts
@@ -715,13 +851,32 @@ def _section_capability_summary() -> dict[str, Any]:
         log_swallowed("agents_md.generator:section_capability:mcp_surface_counts", exc)
         mcp_total = None
 
+    return {"cli_command_count": cli_total, "mcp_tool_count": mcp_total}
+
+
+def _section_capability_summary() -> dict[str, Any]:
+    """Capability roster size + MCP preset counts.
+
+    Delegates each data source to a focused helper so the main flow
+    shows the happy path while each helper owns its own resilience
+    logic. We swallow import errors so a partial install doesn't crash
+    AGENTS.md generation.
+    """
+    registry = _load_registry_capabilities()
+    if registry is None:
+        return {}
+    caps, ai_safe = registry
+
+    core, full = _mcp_preset_counts()
+    surface = _surface_counts()
+
     return {
         "registered_count": len(caps),
         "ai_safe_count": ai_safe,
         "mcp_core_count": core,
         "mcp_full_count": full,
-        "cli_command_count": cli_total,
-        "mcp_tool_count": mcp_total,
+        "cli_command_count": surface["cli_command_count"],
+        "mcp_tool_count": surface["mcp_tool_count"],
     }
 
 
@@ -769,15 +924,108 @@ def _build_summary(
     )
 
 
+def _generated_at_timestamp() -> str:
+    """UTC timestamp format used by the generated dataclass."""
+    generated_at = datetime.now(timezone.utc)
+    generated_at = generated_at.replace(microsecond=0)
+    return generated_at.isoformat().replace("+00:00", "Z")
+
+
+def _add_source_if_content(
+    sources: dict[str, str],
+    key: str,
+    value: Any,
+    label: str,
+) -> None:
+    """Record a source only when the corresponding section has content."""
+    if value:
+        sources[key] = label
+
+
+def _populate_index_sections(
+    am: AgentsMd,
+    conn,
+    opts: AgentsMdOptions,
+    sources: dict[str, str],
+) -> None:
+    """Populate sections derived directly from the index database."""
+    am.stack = section_stack(conn)
+    _add_source_if_content(sources, "stack", am.stack, "db: files.language")
+
+    am.conventions = _section_conventions(conn)
+    _add_source_if_content(sources, "conventions", am.conventions, "roam.commands.conventions_helper")
+
+    am.danger_zones = section_danger_zones(conn, limit=opts.top_n_danger)
+    _add_source_if_content(
+        sources,
+        "danger_zones",
+        am.danger_zones,
+        "db: files + file_stats + graph_metrics.in_degree",
+    )
+
+    am.test_conventions = _section_test_conventions(conn)
+    _add_source_if_content(sources, "test_conventions", am.test_conventions, "db: files.file_role='test'")
+
+
+def _populate_gates_section(
+    am: AgentsMd,
+    repo_root: Path,
+    sources: dict[str, str],
+) -> None:
+    """Populate constitution-backed workflow gates."""
+    pre, after, prep, path = _section_gates(repo_root)
+    am.pre_edit_gates = pre
+    am.after_edit_gates = after
+    am.before_pr_gates = prep
+    am.constitution_path = path
+    if pre or after or prep:
+        sources["gates"] = "roam.constitution.loader" + ("" if path else " (defaults)")
+
+
+def _populate_agent_os_sections(
+    am: AgentsMd,
+    repo_root: Path,
+    conn,
+    opts: AgentsMdOptions,
+    sources: dict[str, str],
+) -> None:
+    """Populate gate, mode, law, and rule sections from Agent OS state."""
+    if opts.with_constitution:
+        _populate_gates_section(am, repo_root, sources)
+
+    # W14.2 Synergy 3 — current-mode section is always generated. It's
+    # cheap (single resolve_mode + list_modes call) and orthogonal to
+    # the constitution toggle: modes resolve from env / file / default
+    # even when the constitution loader yields nothing.
+    am.current_mode = _section_current_mode(repo_root)
+    _add_source_if_content(sources, "current_mode", am.current_mode, "roam.modes.policy.resolve_mode")
+
+    if opts.with_laws:
+        am.laws = section_laws(conn, top_n=opts.top_n_laws)
+        _add_source_if_content(sources, "laws", am.laws, "roam.laws.miner")
+
+    if opts.with_rules:
+        am.rules_files = _section_rules_files(repo_root)
+        _add_source_if_content(sources, "rules", am.rules_files, ".roam/rules/*.yml")
+
+
+def _populate_capability_and_summary(
+    am: AgentsMd,
+    repo_root: Path,
+    sources: dict[str, str],
+) -> None:
+    """Populate capability counts and the summary that depends on them."""
+    am.capability_summary = _section_capability_summary()
+    _add_source_if_content(sources, "capability", am.capability_summary, "roam.capability.REGISTRY")
+    am.summary = _build_summary(repo_root, am.stack, am.capability_summary)
+
+
 def generate_agents_md(
     repo_root: Path,
     conn,
     *,
-    with_laws: bool = True,
-    with_rules: bool = True,
-    with_constitution: bool = True,
-    top_n_danger: int = 10,
-    top_n_laws: int = 8,
+    options: AgentsMdOptions | None = None,
+    **legacy_options: Any,
 ) -> AgentsMd:
     """Synthesize an :class:`AgentsMd` from indexed-repo state.
 
@@ -787,15 +1035,20 @@ def generate_agents_md(
         Project root containing the SQLite index.
     conn
         Open readonly SQLite connection.
-    with_laws / with_rules / with_constitution
+    options
+        Generation toggles and row-count limits. Legacy keyword
+        overrides (``with_laws``, ``with_rules``, ``with_constitution``,
+        ``top_n_danger``, ``top_n_laws``) remain accepted for callers
+        that have not migrated yet.
+    options.with_laws / options.with_rules / options.with_constitution
         Toggle the corresponding sections. A False toggle still allows
         the loader to populate defaults (gates fall back to the
         constitution-loader defaults if no constitution file exists).
-    top_n_danger
+    options.top_n_danger
         Cap on the danger-zone table size. Defaults to 10 (matches the
         operational rule "show enough to be useful, not enough to
         overwhelm").
-    top_n_laws
+    options.top_n_laws
         Cap on the architectural-invariants section.
 
     Returns
@@ -803,59 +1056,14 @@ def generate_agents_md(
     AgentsMd
         Structured view; pass to :func:`render_agents_markdown` to get a string.
     """
+    opts = _agents_md_options(options, legacy_options)
     am = AgentsMd()
-    am.generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
+    am.generated_at = _generated_at_timestamp()
     sources_consulted: dict[str, str] = {}
 
-    am.stack = section_stack(conn)
-    if am.stack:
-        sources_consulted["stack"] = "db: files.language"
-
-    am.conventions = _section_conventions(conn)
-    if am.conventions:
-        sources_consulted["conventions"] = "roam.commands.conventions_helper"
-
-    am.danger_zones = section_danger_zones(conn, limit=top_n_danger)
-    if am.danger_zones:
-        sources_consulted["danger_zones"] = "db: files + file_stats + graph_metrics.in_degree"
-
-    am.test_conventions = _section_test_conventions(conn)
-    if am.test_conventions:
-        sources_consulted["test_conventions"] = "db: files.file_role='test'"
-
-    if with_constitution:
-        pre, after, prep, path = _section_gates(repo_root)
-        am.pre_edit_gates = pre
-        am.after_edit_gates = after
-        am.before_pr_gates = prep
-        am.constitution_path = path
-        if pre or after or prep:
-            sources_consulted["gates"] = "roam.constitution.loader" + ("" if path else " (defaults)")
-
-    # W14.2 Synergy 3 — current-mode section is always generated. It's
-    # cheap (single resolve_mode + list_modes call) and orthogonal to
-    # the constitution toggle: modes resolve from env / file / default
-    # even when the constitution loader yields nothing.
-    am.current_mode = _section_current_mode(repo_root)
-    if am.current_mode:
-        sources_consulted["current_mode"] = "roam.modes.policy.resolve_mode"
-
-    if with_laws:
-        am.laws = section_laws(conn, top_n=top_n_laws)
-        if am.laws:
-            sources_consulted["laws"] = "roam.laws.miner"
-
-    if with_rules:
-        am.rules_files = _section_rules_files(repo_root)
-        if am.rules_files:
-            sources_consulted["rules"] = ".roam/rules/*.yml"
-
-    am.capability_summary = _section_capability_summary()
-    if am.capability_summary:
-        sources_consulted["capability"] = "roam.capability.REGISTRY"
-
-    am.summary = _build_summary(repo_root, am.stack, am.capability_summary)
+    _populate_index_sections(am, conn, opts, sources_consulted)
+    _populate_agent_os_sections(am, repo_root, conn, opts, sources_consulted)
+    _populate_capability_and_summary(am, repo_root, sources_consulted)
     am.sources = sources_consulted
     return am
 
@@ -1126,22 +1334,23 @@ def _render_where_next(am: AgentsMd) -> list[str]:
     return lines
 
 
-def render_agents_markdown(am: AgentsMd) -> str:
-    """Render an :class:`AgentsMd` to GitHub-flavored Markdown."""
+def _render_quick_read(am: AgentsMd) -> list[str]:
+    """Render the title and Quick read section."""
+    return [
+        f"# {am.title}",
+        "",
+        f"> Auto-generated by `roam agents-md` at {am.generated_at}. Run `roam agents-md --refresh` to update.",
+        "",
+        "## Quick read",
+        "",
+        am.summary,
+        "",
+    ]
+
+
+def _render_workflow_context(am: AgentsMd) -> list[str]:
+    """Render gate-related sections in their required order."""
     lines: list[str] = []
-    lines.append(f"# {am.title}")
-    lines.append("")
-    lines.append(
-        f"> Auto-generated by `roam agents-md` at {am.generated_at}. Run `roam agents-md --refresh` to update."
-    )
-    lines.append("")
-    lines.append("## Quick read")
-    lines.append("")
-    lines.append(am.summary)
-    lines.append("")
-    lines.extend(_render_stack(am.stack))
-    lines.extend(_render_conventions(am.conventions))
-    lines.extend(_render_danger(am.danger_zones))
     lines.extend(
         _render_gates(
             am.pre_edit_gates,
@@ -1153,11 +1362,28 @@ def render_agents_markdown(am: AgentsMd) -> str:
     # W14.2 Synergy 3 — Current mode sits between workflow gates and
     # test conventions; modes are gate-related context.
     lines.extend(_render_current_mode(am.current_mode))
+    return lines
+
+
+def _render_detail_sections(am: AgentsMd) -> list[str]:
+    """Render the optional detail sections after Quick read."""
+    lines: list[str] = []
+    lines.extend(_render_stack(am.stack))
+    lines.extend(_render_conventions(am.conventions))
+    lines.extend(_render_danger(am.danger_zones))
+    lines.extend(_render_workflow_context(am))
     lines.extend(_render_test_conventions(am.test_conventions))
     lines.extend(_render_laws(am.laws))
     lines.extend(_render_rules(am.rules_files))
     lines.extend(_render_capability(am.capability_summary))
     lines.extend(_render_where_next(am))
+    return lines
+
+
+def render_agents_markdown(am: AgentsMd) -> str:
+    """Render an :class:`AgentsMd` to GitHub-flavored Markdown."""
+    lines = _render_quick_read(am)
+    lines.extend(_render_detail_sections(am))
     return "\n".join(lines).rstrip() + "\n"
 
 

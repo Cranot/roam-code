@@ -45,9 +45,12 @@ from __future__ import annotations
 import hashlib as _hashlib
 import json as _json
 import subprocess as _subprocess
+from collections.abc import Callable
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 import click
 from click.testing import CliRunner
@@ -58,6 +61,8 @@ from roam.exit_codes import EXIT_SUCCESS
 from roam.output.formatter import json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
+
+_T = TypeVar("_T")
 
 # ---------------------------------------------------------------------------
 # Tier definitions — single source of truth for what each tier means.
@@ -1662,6 +1667,296 @@ def _parse_gh_spec(spec: str) -> tuple[str, str, int | None]:
     return owner, repo, pr_num
 
 
+@dataclass(frozen=True)
+class _PrReplayProducerInputs:
+    active_run_id: str | None
+    pre_warnings: list[str]
+    rules_envelopes: list[dict]
+    audit_trail_envelope: dict | None
+    vuln_reach_envelopes: list[dict]
+    test_impact_envelopes: list[dict]
+    cga_envelopes: list[dict]
+    mcp_receipts_dir: str | None
+    extra_policy_decisions: list[dict]
+
+
+def _run_pr_replay_gatherer(
+    name: str,
+    warnings: list[str],
+    default: _T,
+    gather: Callable[[], _T],
+) -> _T:
+    try:
+        return gather()
+    except Exception as exc:  # noqa: BLE001 — gatherers are best-effort
+        warnings.append(f"{name} crashed: {exc}")
+        return default
+
+
+def _gather_pr_replay_producer_inputs(
+    *,
+    commit_range: str,
+    commits: list[dict],
+    pr_bundle_envelope: dict,
+) -> _PrReplayProducerInputs:
+    """Gather best-effort producer inputs for ``ChangeEvidence``."""
+    pre_warnings: list[str] = []
+    active_run_id = _active_run_id_for_replay()
+    rules_envelopes = _run_pr_replay_gatherer(
+        "_gather_rules_envelopes",
+        pre_warnings,
+        [],
+        lambda: _gather_rules_envelopes(active_run_id, pre_warnings),
+    )
+    audit_trail_envelope = _run_pr_replay_gatherer(
+        "_gather_audit_trail_envelope",
+        pre_warnings,
+        None,
+        lambda: _gather_audit_trail_envelope(active_run_id, pre_warnings),
+    )
+    vuln_reach_envelopes = _run_pr_replay_gatherer(
+        "_gather_vuln_reach_envelopes",
+        pre_warnings,
+        [],
+        lambda: _gather_vuln_reach_envelopes(commit_range, pre_warnings),
+    )
+    test_impact_envelopes = _run_pr_replay_gatherer(
+        "_gather_test_impact_envelopes",
+        pre_warnings,
+        [],
+        lambda: _gather_test_impact_envelopes(commit_range, pre_warnings),
+    )
+    cga_envelopes = _run_pr_replay_gatherer(
+        "_gather_cga_envelopes",
+        pre_warnings,
+        [],
+        lambda: _gather_cga_envelopes(active_run_id, pre_warnings),
+    )
+    mcp_receipts_dir = _run_pr_replay_gatherer(
+        "_gather_mcp_receipts_dir",
+        pre_warnings,
+        None,
+        lambda: _gather_mcp_receipts_dir(active_run_id, pre_warnings),
+    )
+
+    # W267 — three policy-decision gatherers. Each represents an
+    # authority decision recorded in the repo-local agent-OS substrate.
+    constitution_policy_decisions = _run_pr_replay_gatherer(
+        "_gather_constitution_policy_decisions",
+        pre_warnings,
+        [],
+        lambda: _gather_constitution_policy_decisions(pre_warnings),
+    )
+    permit_policy_decisions = _run_pr_replay_gatherer(
+        "_gather_permit_policy_decisions",
+        pre_warnings,
+        [],
+        lambda: _gather_permit_policy_decisions(pre_warnings),
+    )
+    lease_policy_decisions = _run_pr_replay_gatherer(
+        "_gather_lease_policy_decisions",
+        pre_warnings,
+        [],
+        lambda: _gather_lease_policy_decisions(pre_warnings),
+    )
+    extra_policy_decisions: list[dict] = []
+    extra_policy_decisions.extend(constitution_policy_decisions)
+    extra_policy_decisions.extend(permit_policy_decisions)
+    extra_policy_decisions.extend(lease_policy_decisions)
+
+    context_files = _run_pr_replay_gatherer(
+        "_gather_context_files",
+        pre_warnings,
+        [],
+        lambda: _gather_context_files(commit_range, commits, pre_warnings),
+    )
+    if context_files:
+        pr_bundle_envelope["context_files"] = context_files
+
+    return _PrReplayProducerInputs(
+        active_run_id=active_run_id,
+        pre_warnings=pre_warnings,
+        rules_envelopes=rules_envelopes,
+        audit_trail_envelope=audit_trail_envelope,
+        vuln_reach_envelopes=vuln_reach_envelopes,
+        test_impact_envelopes=test_impact_envelopes,
+        cga_envelopes=cga_envelopes,
+        mcp_receipts_dir=mcp_receipts_dir,
+        extra_policy_decisions=extra_policy_decisions,
+    )
+
+
+def _stamp_actor_block_on_envelope(pr_bundle_envelope: dict) -> None:
+    """W260: stamp the W189-shape actor block onto the synth envelope.
+
+    Resolves identity via the same priority chain ``pr-bundle emit`` uses
+    (CLI flag > env > git config > active run-ledger agent), through the
+    shared helper at ``roam.commands.actor_helpers``. Defense-in-depth: also
+    runs the W249 collector-side scrubber so any secret-shaped substring in
+    ``ROAM_AGENT_ID`` / ``ROAM_HUMAN_ACTOR`` is sanitised at the producer
+    boundary (idempotent with the collector's own second pass). Best-effort --
+    a producer must never abort the replay on actor-resolution failure; the
+    collector's audit-trail / run-event sources still populate ``actor_refs``.
+    """
+    try:
+        from roam.commands.actor_helpers import resolve_actor_block
+        from roam.db.connection import find_project_root
+        from roam.evidence.collector import _scrub_actor_block
+
+        try:
+            repo_root = find_project_root()
+        except Exception:  # noqa: BLE001 — best-effort actor capture
+            repo_root = None
+        actor_block = resolve_actor_block(
+            agent_id_override=None,
+            human_actor_override=None,
+            repo_root=repo_root,
+        )
+        scrubbed_actor, actor_had_secret = _scrub_actor_block(actor_block)
+        pr_bundle_envelope["actor"] = dict(scrubbed_actor or {})
+        if actor_had_secret:
+            existing = pr_bundle_envelope.get("redactions") or []
+            if "secret" not in existing:
+                existing = list(existing) + ["secret"]
+            pr_bundle_envelope["redactions"] = existing
+    except Exception as exc:  # noqa: BLE001 - actor block is best-effort
+        print(
+            f"[pr-replay] actor-block resolution failed: {exc}",
+            file=__import__("sys").stderr,
+        )
+
+
+def _stamp_authority_env_on_envelope(pr_bundle_envelope: dict, commit_range: str) -> tuple:
+    """W272: stamp W266/W268 producer-pattern fields on the synth envelope.
+
+    Writes ``permits[]`` (``.roam/permits/*.json``), ``leases[]``
+    (``.roam/leases/*.json``), and ``environment_refs[]`` (W266 helper) so
+    pr-replay has the same authority + environment parity as ``pr-bundle
+    emit``. Always-emit (Pattern 2): even empty directories leave the keys
+    present for a stable direct-envelope shape. Returns the W266-derived
+    ``environment_refs`` tuple so the caller can merge it into the packet
+    post-collector (the collector rebuilds env_refs from caller kwargs and
+    would otherwise drop the ``workspace`` ref). Best-effort: every reader
+    is independently guarded so the replay never aborts.
+    """
+    try:
+        # W422: ``cmd_pr_bundle._load_permits_from_disk`` is the deprecated
+        # thin wrapper; new code imports the canonical helper directly from
+        # ``roam.permits.store``. The lease wrapper has no canonical
+        # substrate-side reader yet (it bundles ``list_leases`` + dict
+        # projection) so we keep that import.
+        from roam.commands.cmd_pr_bundle import _load_leases_from_disk
+        from roam.db.connection import find_project_root
+        from roam.evidence.env_refs import build_environment_refs
+        from roam.permits.store import load_permits_from_disk
+
+        try:
+            w272_ws_root = find_project_root()
+        except Exception:  # noqa: BLE001 — best-effort authority/env capture
+            w272_ws_root = None
+        try:
+            w272_permits = load_permits_from_disk(w272_ws_root)
+        except Exception:  # noqa: BLE001 — best-effort authority/env capture
+            w272_permits = []
+        try:
+            w272_leases = _load_leases_from_disk(w272_ws_root)
+        except Exception:  # noqa: BLE001 — best-effort authority/env capture
+            w272_leases = []
+        try:
+            w272_env_refs_tuple = build_environment_refs(
+                commit_range=commit_range,
+                workspace_root=str(w272_ws_root) if w272_ws_root else None,
+            )
+            w272_env_refs_dicts = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in w272_env_refs_tuple]
+        except Exception:  # noqa: BLE001 — best-effort authority/env capture
+            w272_env_refs_tuple = ()
+            w272_env_refs_dicts = []
+        pr_bundle_envelope["permits"] = w272_permits
+        pr_bundle_envelope["leases"] = w272_leases
+        pr_bundle_envelope["environment_refs"] = w272_env_refs_dicts
+    except Exception as exc:  # noqa: BLE001 — W272 wiring is best-effort
+        print(
+            f"[pr-replay] W272 authority/env stamping failed: {exc}",
+            file=__import__("sys").stderr,
+        )
+        w272_env_refs_tuple = ()
+    return w272_env_refs_tuple
+
+
+def _stamp_q8_limitation_marker(pr_bundle_envelope: dict, gh_source_was_provided: bool) -> None:
+    """W261: stamp the Q8 (accept) ``producer_not_available`` limitation.
+
+    PR Replay has no approvals/accepted-risks harvester today. When nothing
+    populated ``approvals`` / ``accepted_risks`` AND no GitHub review source
+    was supplied, stamp the honest ``producer_not_available`` redaction reason
+    (the data source does not exist yet -- not "checked, found nothing").
+    Stays conditional for forward compatibility: a future approvals source
+    populating those keys must NOT trip the marker (Q8 would then score
+    ``complete`` and the limitation would be inaccurate).
+    """
+    _existing_approvals = pr_bundle_envelope.get("approvals") or []
+    _existing_accepted = pr_bundle_envelope.get("accepted_risks") or []
+    # W247b: when a GitHub review source WAS provided, "no approvals" means
+    # "checked, no approval on head commit" — not "producer unavailable."
+    if not _existing_approvals and not _existing_accepted and not gh_source_was_provided:
+        _q8_redactions = list(pr_bundle_envelope.get("redactions") or [])
+        if "producer_not_available" not in _q8_redactions:
+            _q8_redactions.append("producer_not_available")
+            pr_bundle_envelope["redactions"] = _q8_redactions
+
+
+def _gather_w1279_config_hash_kwargs(active_run_id: str | None, pre_warnings: list[str]) -> dict:
+    """W1279: gather the W1255-IMPL config-hash kwargs for the collector.
+
+    Lifts the three hashes from the active run's meta.json and recomputes them
+    on-disk so the collector's W1253 drift detector can fire. Best-effort:
+    missing run/meta degrades to an empty dict (no drift flag, no crash); on a
+    crash the failure is appended to ``pre_warnings`` so it surfaces in the
+    envelope rather than being silently swallowed.
+    """
+    try:
+        from roam.db.connection import find_project_root
+        from roam.evidence.config_hashes_producer import gather_hash_kwargs
+
+        try:
+            _repo_root_for_hashes = find_project_root()
+        except Exception:  # noqa: BLE001
+            _repo_root_for_hashes = Path(".")
+        return gather_hash_kwargs(_repo_root_for_hashes, active_run_id)
+    except Exception as exc:  # noqa: BLE001 - hash wire-up is best-effort
+        pre_warnings.append(f"_w1279_gather_hash_kwargs crashed: {exc}")
+        return {}
+
+
+def _merge_env_refs_into_packet(packet, env_refs_tuple: tuple):
+    """W272: merge producer-derived env_refs into the packet post-collector.
+
+    The collector rebuilds env_refs from caller kwargs and would otherwise drop
+    the ``workspace`` ref that ``build_environment_refs`` always emits. Dedupes
+    by ``(env_kind, env_id)`` so matching collector entries are not double-
+    counted; collector rows keep canonical precedence, ours append behind.
+    Returns ``packet`` unchanged when there is nothing to merge.
+    """
+    if not env_refs_tuple:
+        return packet
+    import dataclasses
+
+    seen: set[tuple[str, str]] = {(r.env_kind, r.env_id) for r in packet.environment_refs}
+    merged_env_refs = list(packet.environment_refs)
+    for r in env_refs_tuple:
+        key = (r.env_kind, r.env_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged_env_refs.append(r)
+    if len(merged_env_refs) != len(packet.environment_refs):
+        return dataclasses.replace(
+            packet,
+            environment_refs=tuple(merged_env_refs),
+        )
+    return packet
+
+
 def _collect_change_evidence(
     *,
     commit_range: str,
@@ -1798,206 +2093,24 @@ def _collect_change_evidence(
         "timestamps": {"completed_at": generated_at},
     }
 
-    # -- W260: stamp the W189-shape actor block onto the synth envelope.
-    # Without this, ``pr-replay`` synthesised an actor-free envelope and
-    # the only identity that reached ``ChangeEvidence.actor_refs`` came
-    # from ``_gather_audit_trail_envelope`` (W223). Consumers reading
-    # the envelope directly (not via the collector) saw NO actor block
-    # at all - even when ``ROAM_AGENT_ID`` was set. Resolves through the
-    # same priority chain ``pr-bundle emit`` uses (CLI flag > env > git
-    # config > active run-ledger agent), via the shared helper at
-    # ``roam.commands.actor_helpers``.
-    #
-    # Defense-in-depth: we also run the W249 collector-side scrubber
-    # here so any secret-shaped substring planted in ``ROAM_AGENT_ID`` /
-    # ``ROAM_HUMAN_ACTOR`` is sanitised at the producer boundary. The
-    # collector's own scrub runs a second pass on ingest - idempotent
-    # because ``[REDACTED]`` placeholders contain no patterns that match
-    # the secret regexes.
-    try:
-        from roam.commands.actor_helpers import resolve_actor_block
-        from roam.db.connection import find_project_root
-        from roam.evidence.collector import _scrub_actor_block
+    # W260: stamp the W189-shape actor block (best-effort; secret-scrubbed).
+    _stamp_actor_block_on_envelope(pr_bundle_envelope)
 
-        try:
-            repo_root = find_project_root()
-        except Exception:  # noqa: BLE001 — best-effort actor capture
-            repo_root = None
-        actor_block = resolve_actor_block(
-            agent_id_override=None,
-            human_actor_override=None,
-            repo_root=repo_root,
-        )
-        scrubbed_actor, actor_had_secret = _scrub_actor_block(actor_block)
-        pr_bundle_envelope["actor"] = dict(scrubbed_actor or {})
-        if actor_had_secret:
-            existing = pr_bundle_envelope.get("redactions") or []
-            if "secret" not in existing:
-                existing = list(existing) + ["secret"]
-            pr_bundle_envelope["redactions"] = existing
-    except Exception as exc:  # noqa: BLE001 - actor block is best-effort
-        # Producer must never abort the replay on actor-resolution
-        # failure; the collector's audit-trail / run-event sources still
-        # populate actor_refs on the packet.
-        print(
-            f"[pr-replay] actor-block resolution failed: {exc}",
-            file=__import__("sys").stderr,
-        )
+    # W272: stamp permits/leases/env_refs; capture env_refs for the post-
+    # collector merge (best-effort; always-emit keys for a stable shape).
+    w272_env_refs_tuple = _stamp_authority_env_on_envelope(pr_bundle_envelope, commit_range)
 
-    # -- W272 — stamp the W266 / W268 producer-pattern fields on the
-    # synth envelope so pr-replay has the same authority + environment
-    # parity that ``pr-bundle emit`` does. Three fields are written:
-    #
-    #   * ``permits[]``         — read from ``.roam/permits/*.json``;
-    #                             the collector's ``_build_authority_refs``
-    #                             reads each row and mints an
-    #                             ``AuthorityRef(authority_kind="permit", ...)``.
-    #   * ``leases[]``          — read from ``.roam/leases/*.json`` via
-    #                             ``roam.leases.list_leases``; collector
-    #                             mints ``AuthorityRef(authority_kind="lease", ...)``
-    #                             per row.
-    #   * ``environment_refs[]``— materialised via the W266 shared helper
-    #                             ``build_environment_refs``. The collector
-    #                             today does NOT read this key (it rebuilds
-    #                             its own env_refs from caller kwargs); the
-    #                             stamp is for parity with consumers that
-    #                             read the synth envelope directly. We
-    #                             additionally merge our env_refs into the
-    #                             packet's ``environment_refs`` AFTER the
-    #                             collector returns so the packet picks up
-    #                             the ``workspace`` ref (the collector's
-    #                             builder only emits ``workspace`` when
-    #                             ``caller_repo_id`` is set, which pr-replay
-    #                             does not provide).
-    #
-    # The W267 ``_gather_*_policy_decisions`` block below is independent:
-    # it emits **PolicyDecision** rows ("permit was issued") via
-    # ``extra_policy_decisions``. W272 emits **AuthorityRef** rows
-    # ("authority existed at change time") via the envelope arrays. Both
-    # perspectives are needed and tell different stories to a reviewer.
-    #
-    # All three readers are best-effort: a missing directory yields ``[]``
-    # (Pattern 2 always-emit) and a hostile import/IO failure is silently
-    # caught so the replay never aborts. The permits / leases readers are
-    # imported from ``cmd_pr_bundle`` so the on-disk schema stays single-
-    # sourced; if those helpers gain extra fields the producer-side wiring
-    # picks them up automatically.
-    try:
-        # W422: ``cmd_pr_bundle._load_permits_from_disk`` is the deprecated
-        # thin wrapper; new code imports the canonical helper directly from
-        # ``roam.permits.store``. The lease wrapper has no canonical
-        # substrate-side reader yet (it bundles ``list_leases`` + dict
-        # projection) so we keep that import.
-        from roam.commands.cmd_pr_bundle import _load_leases_from_disk
-        from roam.db.connection import find_project_root
-        from roam.evidence.env_refs import build_environment_refs
-        from roam.permits.store import load_permits_from_disk
-
-        try:
-            w272_ws_root = find_project_root()
-        except Exception:  # noqa: BLE001 — best-effort authority/env capture
-            w272_ws_root = None
-        try:
-            w272_permits = load_permits_from_disk(w272_ws_root)
-        except Exception:  # noqa: BLE001 — best-effort authority/env capture
-            w272_permits = []
-        try:
-            w272_leases = _load_leases_from_disk(w272_ws_root)
-        except Exception:  # noqa: BLE001 — best-effort authority/env capture
-            w272_leases = []
-        try:
-            w272_env_refs_tuple = build_environment_refs(
-                commit_range=commit_range,
-                workspace_root=str(w272_ws_root) if w272_ws_root else None,
-            )
-            w272_env_refs_dicts = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in w272_env_refs_tuple]
-        except Exception:  # noqa: BLE001 — best-effort authority/env capture
-            w272_env_refs_tuple = ()
-            w272_env_refs_dicts = []
-        # Always-emit (Pattern 2): even when the directories are empty
-        # the keys must be present so direct-envelope consumers can rely
-        # on a stable shape.
-        pr_bundle_envelope["permits"] = w272_permits
-        pr_bundle_envelope["leases"] = w272_leases
-        pr_bundle_envelope["environment_refs"] = w272_env_refs_dicts
-    except Exception as exc:  # noqa: BLE001 — W272 wiring is best-effort
-        print(
-            f"[pr-replay] W272 authority/env stamping failed: {exc}",
-            file=__import__("sys").stderr,
-        )
-        w272_env_refs_tuple = ()
-
-    # -- W223 — best-effort gathering of the W199 kwargs. Each gatherer
-    # appends to its own warnings bucket so producer-level issues never
-    # abort the replay; the collector merges them into its own list.
-    pre_warnings: list[str] = []
-    active_run_id = _active_run_id_for_replay()
-    try:
-        rules_envelopes = _gather_rules_envelopes(active_run_id, pre_warnings)
-    except Exception as exc:  # noqa: BLE001 — gatherer must be best-effort
-        pre_warnings.append(f"_gather_rules_envelopes crashed: {exc}")
-        rules_envelopes = []
-    try:
-        audit_trail_envelope = _gather_audit_trail_envelope(active_run_id, pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_audit_trail_envelope crashed: {exc}")
-        audit_trail_envelope = None
-    try:
-        vuln_reach_envelopes = _gather_vuln_reach_envelopes(commit_range, pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_vuln_reach_envelopes crashed: {exc}")
-        vuln_reach_envelopes = []
-    try:
-        test_impact_envelopes = _gather_test_impact_envelopes(commit_range, pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_test_impact_envelopes crashed: {exc}")
-        test_impact_envelopes = []
-    try:
-        cga_envelopes = _gather_cga_envelopes(active_run_id, pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_cga_envelopes crashed: {exc}")
-        cga_envelopes = []
-    try:
-        mcp_receipts_dir = _gather_mcp_receipts_dir(active_run_id, pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_mcp_receipts_dir crashed: {exc}")
-        mcp_receipts_dir = None
-    # W267 — three new policy-decision gatherers. Each represents an
-    # authority decision recorded in the repo-local agent-OS substrate
-    # (constitution gates / permits / leases). The collector concatenates
-    # the results with its existing rules + audit-trail decisions.
-    try:
-        constitution_policy_decisions = _gather_constitution_policy_decisions(pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_constitution_policy_decisions crashed: {exc}")
-        constitution_policy_decisions = []
-    try:
-        permit_policy_decisions = _gather_permit_policy_decisions(pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_permit_policy_decisions crashed: {exc}")
-        permit_policy_decisions = []
-    try:
-        lease_policy_decisions = _gather_lease_policy_decisions(pre_warnings)
-    except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(f"_gather_lease_policy_decisions crashed: {exc}")
-        lease_policy_decisions = []
-    extra_policy_decisions: list[dict] = []
-    extra_policy_decisions.extend(constitution_policy_decisions)
-    extra_policy_decisions.extend(permit_policy_decisions)
-    extra_policy_decisions.extend(lease_policy_decisions)
-    # W246 — context_refs from the changed-file surface. Stamped onto
-    # the synthetic pr-bundle envelope's ``context_files`` key per the
-    # W240 promote: the collector reads
-    # ``pr_bundle_envelope.get("context_files")`` and turns each entry
-    # into an ``EvidenceArtifact`` via
-    # ``_build_context_refs_from_context_files``.
-    try:
-        context_files = _gather_context_files(commit_range, commits, pre_warnings)
-    except Exception as exc:  # noqa: BLE001 — best-effort
-        pre_warnings.append(f"_gather_context_files crashed: {exc}")
-        context_files = []
-    if context_files:
-        pr_bundle_envelope["context_files"] = context_files
+    # -- W223/W267/W246 — best-effort producer inputs for the W199 kwargs.
+    # Each gatherer appends to ``pre_warnings`` so producer-level issues
+    # never abort the replay; the collector merges them into its own list.
+    producer_inputs = _gather_pr_replay_producer_inputs(
+        commit_range=commit_range,
+        commits=commits,
+        pr_bundle_envelope=pr_bundle_envelope,
+    )
+    pre_warnings = producer_inputs.pre_warnings
+    active_run_id = producer_inputs.active_run_id
+    extra_policy_decisions = list(producer_inputs.extra_policy_decisions)
 
     # -- W247b — GitHub review harvester. Runs BEFORE the W261 emitter so
     # an APPROVED-on-head review populates ``pr_bundle_envelope["approvals"]``
@@ -2020,75 +2133,23 @@ def _collect_change_evidence(
     if gh_policy_dicts:
         extra_policy_decisions.extend(gh_policy_dicts)
 
-    # W261 — Q8 (accept) limitation marker. PR Replay has no approvals /
-    # accepted-risks harvester: a real producer would need to read PR-
-    # review events from GitHub / GitLab / Bitbucket, or surface a
-    # ``roam accept-risk`` ledger entry, neither of which exists today.
-    # Rather than silently emitting empty ``approvals`` / ``accepted_risks``
-    # tuples (which makes Q8 score ``missing`` and falsely implies "we
-    # checked, found nothing"), we stamp an explicit redaction reason on
-    # the synth envelope. The ``producer_not_available`` reason
-    # (REDACTION_REASONS, added W261) is the honest vocabulary: the data
-    # source isn't masked or opted-out - it does not exist yet. Once a
-    # real harvester ships (option (a) in the W254 plan), this marker
-    # turns conditional: stamp only when both ``approvals`` and
-    # ``accepted_risks`` are still empty after the harvester ran.
-    #
-    # Q8 scoring on the resulting packet:
-    #   * complete  - approvals OR accepted_risks non-empty (preserved)
-    #   * partial   - neither, but redactions non-empty (this marker fires)
-    #   * missing   - neither AND no redactions (unreachable for pr-replay
-    #                 now that this marker is unconditional - which is the
-    #                 honest banner state today)
-    #
-    # The conditional check below stays for forward compatibility: if a
-    # future code path populates approvals on the synth envelope (e.g.
-    # ``roam pr-replay --approvals-from <file>``) the marker must NOT
-    # fire, because Q8 will score ``complete`` and the limitation is no
-    # longer accurate.
-    _existing_approvals = pr_bundle_envelope.get("approvals") or []
-    _existing_accepted = pr_bundle_envelope.get("accepted_risks") or []
-    # W247b: when a GitHub review source WAS provided, "no approvals" means
-    # "checked, no approval on head commit" — not "producer unavailable."
-    # Skip the redaction stamp so Q8 honestly scores ``missing`` instead of
-    # the misleading ``partial`` the marker would induce.
-    if not _existing_approvals and not _existing_accepted and not gh_source_was_provided:
-        _q8_redactions = list(pr_bundle_envelope.get("redactions") or [])
-        if "producer_not_available" not in _q8_redactions:
-            _q8_redactions.append("producer_not_available")
-            pr_bundle_envelope["redactions"] = _q8_redactions
+    # W261: stamp the Q8 ``producer_not_available`` limitation marker when no
+    # approvals source populated the envelope (best-effort; conditional).
+    _stamp_q8_limitation_marker(pr_bundle_envelope, gh_source_was_provided)
 
-    # -- W1279 — config-hash drift detection wire-up. Lift the three
-    # W1255-IMPL hashes from the active run's meta.json (packet-side)
-    # and recompute on-disk (current-side) so the collector's W1253
-    # drift detector can fire. Missing run / missing meta gracefully
-    # degrades to ``packet_config_hashes=None`` -> no drift flag, no
-    # crash. Repo-root resolution failure also degrades cleanly:
-    # ``gather_hash_kwargs`` swallows filesystem errors via
-    # ``current_hashes_or_none``.
-    try:
-        from roam.db.connection import find_project_root
-        from roam.evidence.config_hashes_producer import gather_hash_kwargs
-
-        try:
-            _repo_root_for_hashes = find_project_root()
-        except Exception:  # noqa: BLE001
-            _repo_root_for_hashes = Path(".")
-        _hash_kwargs = gather_hash_kwargs(_repo_root_for_hashes, active_run_id)
-    except Exception as exc:  # noqa: BLE001 - hash wire-up is best-effort
-        pre_warnings.append(f"_w1279_gather_hash_kwargs crashed: {exc}")
-        _hash_kwargs = {}
+    # W1279: config-hash drift kwargs (best-effort; crashes -> pre_warnings).
+    _hash_kwargs = _gather_w1279_config_hash_kwargs(active_run_id, pre_warnings)
 
     packet, warnings = collect_change_evidence(
         pr_bundle_envelope=pr_bundle_envelope,
         findings_envelopes=[findings_envelope],
         run_events=run_events,
-        audit_trail_envelope=audit_trail_envelope,
-        rules_envelopes=rules_envelopes,
-        vuln_reach_envelopes=vuln_reach_envelopes,
-        test_impact_envelopes=test_impact_envelopes,
-        cga_envelopes=cga_envelopes,
-        mcp_receipts_dir=mcp_receipts_dir,
+        audit_trail_envelope=producer_inputs.audit_trail_envelope,
+        rules_envelopes=producer_inputs.rules_envelopes,
+        vuln_reach_envelopes=producer_inputs.vuln_reach_envelopes,
+        test_impact_envelopes=producer_inputs.test_impact_envelopes,
+        cga_envelopes=producer_inputs.cga_envelopes,
+        mcp_receipts_dir=producer_inputs.mcp_receipts_dir,
         extra_policy_decisions=extra_policy_decisions,
         commit_sha=head_sha,
         git_range=commit_range,
@@ -2125,32 +2186,8 @@ def _collect_change_evidence(
             changed_subjects=tuple(commit_subjects) + tuple(packet.changed_subjects),
         )
 
-    # -- W272 — merge our W266-derived env_refs into the packet. The
-    # collector's ``_build_environment_refs`` does NOT read the synth
-    # envelope's ``environment_refs`` key; it rebuilds from caller kwargs
-    # (``caller_repo_id`` / ``caller_git_range`` / ``caller_commit_sha``).
-    # pr-replay supplies ``git_range`` but no ``repo_id``, so the
-    # collector-built tuple is missing the ``workspace`` ref that
-    # ``build_environment_refs`` always emits. Merge ours onto the packet
-    # post-collector, deduping by ``(env_kind, env_id)`` so we never
-    # double-count when the collector already produced a matching entry
-    # (e.g. ``branch_range`` is built by both). The collector's
-    # ``EnvironmentRef`` rows come first to preserve their canonical
-    # order; ours append in their own canonical order behind.
-    if w272_env_refs_tuple:
-        seen: set[tuple[str, str]] = {(r.env_kind, r.env_id) for r in packet.environment_refs}
-        merged_env_refs = list(packet.environment_refs)
-        for r in w272_env_refs_tuple:
-            key = (r.env_kind, r.env_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged_env_refs.append(r)
-        if len(merged_env_refs) != len(packet.environment_refs):
-            packet = dataclasses.replace(
-                packet,
-                environment_refs=tuple(merged_env_refs),
-            )
+    # W272: merge producer-derived env_refs (workspace ref) into the packet.
+    packet = _merge_env_refs_into_packet(packet, w272_env_refs_tuple)
 
     # Stable per-(range, generation moment) evidence_id — overrides the
     # collector-derived one so the value stays human-readable for tickets.

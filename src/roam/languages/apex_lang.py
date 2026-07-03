@@ -13,6 +13,7 @@ Extends JavaExtractor with Apex-specific concepts:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 from .java_lang import JavaExtractor
 
@@ -86,6 +87,25 @@ _TRIGGER_RE = re.compile(
 )
 
 
+def _line_for_offset(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def _iter_apex_syntax_gap_targets(text: str) -> Iterator[tuple[str, str, int]]:
+    """Yield references that Apex syntax exposes outside the Java grammar."""
+    for m in _SOQL_FROM_RE.finditer(text):
+        yield m.group(1), "soql", m.start()
+
+    for m in _LABEL_RE.finditer(text):
+        yield f"Label.{m.group(1)}", "label", m.start()
+
+    for pattern in (_GENERIC_TYPE_RE, _MAP_VALUE_TYPE_RE):
+        for m in pattern.finditer(text):
+            type_name = m.group(1)
+            if type_name not in _APEX_BUILTINS:
+                yield type_name, "type_ref", m.start()
+
+
 class ApexExtractor(JavaExtractor):
     """Apex extractor — extends Java with Salesforce-specific features."""
 
@@ -113,55 +133,14 @@ class ApexExtractor(JavaExtractor):
         refs = super().extract_references(tree, source, file_path)
         text = source.decode("utf-8", errors="replace")
 
-        # Extract SOQL object references
-        for m in _SOQL_FROM_RE.finditer(text):
-            obj_name = m.group(1)
-            line = text[: m.start()].count("\n") + 1
+        for target_name, kind, offset in _iter_apex_syntax_gap_targets(text):
             refs.append(
                 self._make_reference(
-                    target_name=obj_name,
-                    kind="soql",
-                    line=line,
+                    target_name=target_name,
+                    kind=kind,
+                    line=_line_for_offset(text, offset),
                 )
             )
-
-        # Extract System.Label references
-        for m in _LABEL_RE.finditer(text):
-            label_name = m.group(1)
-            line = text[: m.start()].count("\n") + 1
-            refs.append(
-                self._make_reference(
-                    target_name=f"Label.{label_name}",
-                    kind="label",
-                    line=line,
-                )
-            )
-
-        # Extract type references from generic types (List<Account>, Map<Id, Contact>, etc.)
-        for m in _GENERIC_TYPE_RE.finditer(text):
-            type_name = m.group(1)
-            if type_name not in _APEX_BUILTINS:
-                line = text[: m.start()].count("\n") + 1
-                refs.append(
-                    self._make_reference(
-                        target_name=type_name,
-                        kind="type_ref",
-                        line=line,
-                    )
-                )
-        # Also capture the value type in Map<K, V>
-        for m in _MAP_VALUE_TYPE_RE.finditer(text):
-            type_name = m.group(1)
-            if type_name not in _APEX_BUILTINS:
-                line = text[: m.start()].count("\n") + 1
-                refs.append(
-                    self._make_reference(
-                        target_name=type_name,
-                        kind="type_ref",
-                        line=line,
-                    )
-                )
-
         return refs
 
     def _extract_trigger(self, text: str, symbols: list):

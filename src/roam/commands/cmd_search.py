@@ -16,7 +16,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.output.formatter import (
     KIND_ABBREV,
     abbrev_kind,
@@ -243,6 +243,7 @@ def _enrich_top_results(conn, rows) -> dict:
     # above gives the callers; this gives the callees (what it calls), so the
     # agent has the full local call-graph without re-grepping.
     callee_locs: dict = {}
+    callee_seen: dict[int, set[str]] = {}
     try:
         for row in conn.execute(
             f"""SELECT e.source_id AS sid, ts.name AS callee_name,
@@ -257,11 +258,13 @@ def _enrich_top_results(conn, rows) -> dict:
             target_ids,
         ).fetchall():
             bucket = callee_locs.setdefault(row["sid"], [])
+            seen = callee_seen.setdefault(row["sid"], set())
             entry = (
                 f"{row['callee_name']} ({abbrev_kind(row['callee_kind'])}) {row['callee_path']}:{row['callee_line']}"
             )
-            if entry not in bucket and len(bucket) < 8:
+            if entry not in seen and len(bucket) < 8:
                 bucket.append(entry)
+                seen.add(entry)
     except Exception:  # noqa: BLE001 — enrichment is best-effort
         callee_locs = {}
     for r in rows:
@@ -412,8 +415,7 @@ def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[
             # Extract plain terms from the FTS5 query expression
             raw_terms = re.sub(r'["*(){}^]', "", fts_query).split()
             for field in _FTS_COLUMNS:
-                col = "file_path" if field == "file_path" else field
-                field_val = (sym_row[col] or "").lower()
+                field_val = (sym_row[field] or "").lower()
                 if not field_val:
                     continue
                 count = sum(field_val.count(term.lower()) for term in raw_terms if term)
@@ -424,6 +426,133 @@ def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[
             warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
 
     return explanation
+
+
+def _get_explain_data_batch(
+    conn,
+    symbol_ids,
+    pattern: str,
+    *,
+    warnings_out: list[str] | None = None,
+) -> dict[int, dict]:
+    """Build score explanations for many symbols using FTS5 functions.
+
+    Batched sibling of :func:`_get_explain_data`: the three per-row
+    substrates (BM25 composite score, per-field ``highlight()``, and the
+    symbol-field term-count lookup) are issued as ONE batched SELECT each
+    instead of three per row, collapsing ``--explain`` mode from ~3N
+    SELECTs to a constant 3 regardless of result-set size.
+
+    Returns ``{symbol_id: explanation_dict}`` keyed by every id in
+    ``symbol_ids``. Ids whose FTS5 row does not MATCH the query (or when
+    FTS5 is unavailable / the pattern yields no FTS query) keep the same
+    empty-shape dict the single-row helper returns, so the output is
+    byte-identical to looping ``_get_explain_data`` over the same ids.
+
+    W607-E: when ``warnings_out`` is threaded in, the three batched
+    substrate fallbacks disclose failures via the same
+    ``search_explain_<phase>_failed:<exc>:<detail>`` markers (phases:
+    ``bm25``, ``highlight``, ``term_counts``) the single-row helper emits.
+    Empty bucket / clean execution → no marker.
+    """
+    out: dict[int, dict] = {
+        sid: {
+            "bm25_score": None,
+            "matched_fields": [],
+            "highlights": {},
+            "term_counts": {},
+        }
+        for sid in symbol_ids
+    }
+
+    if not symbol_ids or not _fts5_available(conn):
+        return out
+
+    fts_query = _build_fts_query(pattern)
+    if not fts_query:
+        return out
+
+    # --- BM25 composite score (one batched SELECT) ---
+    try:
+        score_rows = batched_in(
+            conn,
+            "SELECT rowid, -bm25(symbol_fts, " + _BM25_WEIGHTS + ") as score "
+            "FROM symbol_fts WHERE rowid IN ({ph}) AND symbol_fts MATCH ?",
+            list(symbol_ids),
+            post=[fts_query],
+        )
+        for row in score_rows:
+            sid = row["rowid"]
+            if sid in out:
+                out[sid]["bm25_score"] = round(row["score"], 4)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_bm25_failed:{type(exc).__name__}:{exc}")
+
+    # --- Per-field highlights and match detection (one batched SELECT) ---
+    # FTS5 highlight() wraps matched terms with <<>> markers (ASCII-safe).
+    try:
+        hl_rows = batched_in(
+            conn,
+            "SELECT rowid, "
+            "highlight(symbol_fts, 0, '<<', '>>') as hl_name, "
+            "highlight(symbol_fts, 1, '<<', '>>') as hl_qualified_name, "
+            "highlight(symbol_fts, 2, '<<', '>>') as hl_signature, "
+            "highlight(symbol_fts, 3, '<<', '>>') as hl_kind, "
+            "highlight(symbol_fts, 4, '<<', '>>') as hl_file_path "
+            "FROM symbol_fts WHERE rowid IN ({ph}) AND symbol_fts MATCH ?",
+            list(symbol_ids),
+            post=[fts_query],
+        )
+        for row in hl_rows:
+            sid = row["rowid"]
+            if sid not in out:
+                continue
+            field_map = {
+                "name": row["hl_name"],
+                "qualified_name": row["hl_qualified_name"],
+                "signature": row["hl_signature"],
+                "kind": row["hl_kind"],
+                "file_path": row["hl_file_path"],
+            }
+            for field, value in field_map.items():
+                if value and "<<" in value:
+                    out[sid]["matched_fields"].append(field)
+                    out[sid]["highlights"][field] = value
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_highlight_failed:{type(exc).__name__}:{exc}")
+
+    # --- Per-field term counts (one batched SELECT) ---
+    # Count raw occurrences of each query term in the symbol's fields.
+    try:
+        sym_rows = batched_in(
+            conn,
+            "SELECT s.id, s.name, s.qualified_name, s.signature, s.kind, "
+            "f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.id IN ({ph})",
+            list(symbol_ids),
+        )
+        sym_by_id = {row["id"]: row for row in sym_rows}
+        # Extract plain terms from the FTS5 query expression.
+        raw_terms = re.sub(r'["*(){}^]', "", fts_query).split()
+        for sid in symbol_ids:
+            sym_row = sym_by_id.get(sid)
+            if not sym_row:
+                continue
+            for field in _FTS_COLUMNS:
+                field_val = (sym_row[field] or "").lower()
+                if not field_val:
+                    continue
+                count = sum(field_val.count(term.lower()) for term in raw_terms if term)
+                if count > 0:
+                    out[sid]["term_counts"][field] = count
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
+
+    return out
 
 
 def _format_explanation_text(expl: dict) -> list[str]:
@@ -861,17 +990,18 @@ def search_cmd(
         # Gather explanations if requested
         explanations: dict[int, dict] = {}
         if explain:
+            # W607-E: thread warnings_out into _get_explain_data_batch so
+            # the three inner ``except: pass`` substrate fallbacks surface
+            # ``search_explain_<phase>_failed:`` markers instead of silently
+            # dropping the disclosure. The batched helper issues ONE SELECT
+            # per substrate (BM25 / highlight / term-counts) across all
+            # result ids, collapsing explain mode from ~3N SELECTs to a
+            # constant 3 regardless of result-set size.
+            explanations = _get_explain_data_batch(conn, [r["id"] for r in rows], pattern, warnings_out=warnings_out)
+            # augment with the per-result PageRank so the user can see
+            # structural boost contribution alongside BM25.
             for r in rows:
-                # W607-E: thread warnings_out into _get_explain_data so
-                # the three inner ``except: pass`` substrate fallbacks
-                # surface ``search_explain_<phase>_failed:`` markers
-                # instead of silently dropping the disclosure.
-                expl = _get_explain_data(conn, r["id"], pattern, warnings_out=warnings_out)
-                # augment with the per-result PageRank so the
-                # user can see structural boost contribution alongside
-                # BM25.
-                expl["pagerank"] = round(r["pagerank"], 6) if r["pagerank"] else 0
-                explanations[r["id"]] = expl
+                explanations[r["id"]]["pagerank"] = round(r["pagerank"], 6) if r["pagerank"] else 0
 
         _search_verdict = f"{len(rows)} matches for '{pattern}'"
         if kind_filter:

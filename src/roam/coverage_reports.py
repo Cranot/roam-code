@@ -325,6 +325,18 @@ def ingest_coverage_reports(
         bucket["covered"].update(cov.get("covered", set()))
         bucket["covered"].intersection_update(bucket["coverable"])
 
+    # Bulk-fetch every matched file's symbols in one batched query rather than
+    # one SELECT per file inside the persist loop below. This decouples "which
+    # file am I on" from "fetch that file's symbols", trading a bounded memory
+    # footprint for O(1) round-trips instead of the N+1 per-file read.
+    symbols_by_file: dict[int, list] = {}
+    for sym in batched_in(
+        conn,
+        "SELECT id, file_id, line_start, line_end FROM symbols WHERE line_start IS NOT NULL AND file_id IN ({ph})",
+        list(file_cov_by_id.keys()),
+    ):
+        symbols_by_file.setdefault(int(sym["file_id"]), []).append(sym)
+
     if replace_existing:
         conn.execute("UPDATE file_stats SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL")
         conn.execute("UPDATE symbol_metrics SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL")
@@ -361,10 +373,7 @@ def ingest_coverage_reports(
 
         cov_sorted = sorted(coverable)
         covered_sorted = sorted(covered)
-        sym_rows = conn.execute(
-            "SELECT id, line_start, line_end FROM symbols WHERE file_id = ? AND line_start IS NOT NULL",
-            (fid,),
-        ).fetchall()
+        sym_rows = symbols_by_file.get(fid, [])
 
         for sym in sym_rows:
             start = _to_int(sym["line_start"]) or 0

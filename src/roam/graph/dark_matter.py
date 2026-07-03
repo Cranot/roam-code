@@ -160,6 +160,112 @@ def file_co_change_score(
     return min(1.0, cochanges / union)
 
 
+def _canonical_pairs(
+    candidates: list[int],
+    seeds: list[int],
+) -> set[tuple[int, int]]:
+    """Collapse a candidate×seed cross-product to canonical (min, max) keys.
+
+    WHY: ``file_co_change_score`` treats order as irrelevant and same-file
+    pairs as zero. The bulk fetch only needs one canonical key per distinct
+    unordered pair, so this shrinks the DB query surface before any SQL is
+    issued.
+    """
+    pairs: set[tuple[int, int]] = set()
+    for c in candidates:
+        for s in seeds:
+            if c == s:
+                continue
+            pairs.add((c, s) if c < s else (s, c))
+    return pairs
+
+
+def _load_cochange_map(
+    conn: sqlite3.Connection,
+    file_ids: set[int],
+) -> dict[tuple[int, int], float]:
+    """Bulk-fetch cochange counts for any pair among ``file_ids``.
+
+    WHY: one batched IN-query replaces ``O(C × S)`` per-pair lookups while
+    still returning a canonical-keyed map the scorer can use blindly.
+    """
+    cochange_map: dict[tuple[int, int], float] = {}
+    for row in batched_in(
+        conn,
+        "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange "
+        "WHERE file_id_a IN ({ph}) AND file_id_b IN ({ph})",
+        file_ids,
+    ):
+        fa, fb, cnt = int(row[0]), int(row[1]), row[2]
+        if not cnt:
+            continue
+        key = (fa, fb) if fa < fb else (fb, fa)
+        cochange_map[key] = float(cnt)
+    return cochange_map
+
+
+def _load_commit_map(
+    conn: sqlite3.Connection,
+    file_ids: set[int],
+) -> dict[int, int]:
+    """Bulk-fetch commit counts for ``file_ids``."""
+    commit_map: dict[int, int] = {}
+    for row in batched_in(
+        conn,
+        "SELECT file_id, commit_count FROM file_stats WHERE file_id IN ({ph})",
+        file_ids,
+    ):
+        commit_map[int(row[0])] = row[1] or 0
+    return commit_map
+
+
+def _pair_score(
+    c: int,
+    s: int,
+    cochange_map: dict[tuple[int, int], float],
+    commit_map: dict[int, int],
+) -> float | None:
+    """Score a single (candidate, seed) pair from prefetched maps.
+
+    WHY: isolates the per-pair guard logic (same-file skip, missing
+    cochange, degenerate union, cap) so the cross-product loop stays a
+    simple map lookup.
+    """
+    if c == s:
+        return None
+    key = (c, s) if c < s else (s, c)
+    cochanges = cochange_map.get(key)
+    if not cochanges:
+        return None
+    ca = float(commit_map.get(key[0], 0))
+    cb = float(commit_map.get(key[1], 0))
+    union = ca + cb - cochanges
+    if union <= 0:
+        return None
+    score = min(1.0, cochanges / union)
+    return score if score > 0 else None
+
+
+def _score_cross_product(
+    candidates: list[int],
+    seeds: list[int],
+    cochange_map: dict[tuple[int, int], float],
+    commit_map: dict[int, int],
+) -> dict[tuple[int, int], float]:
+    """Score every candidate×seed pair from prefetched maps.
+
+    WHY: turn the canonical-keyed DB results back into the original
+    candidate×seed scores without issuing any further SQL.
+    """
+    out: dict[tuple[int, int], float] = {}
+    for c in candidates:
+        for s in seeds:
+            score = _pair_score(c, s, cochange_map, commit_map)
+            if score is not None:
+                out[(c, s)] = score
+    return out
+
+
 def file_co_change_scores_bulk(
     conn: sqlite3.Connection,
     candidate_file_ids: Iterable[int],
@@ -193,71 +299,21 @@ def file_co_change_scores_bulk(
     if not cand_list or not seed_list:
         return {}
 
-    # Canonical (min, max) pairs we actually need a cochange row for.
-    # Skip same-file pairs — file_co_change_score short-circuits those.
-    canon_pairs: set[tuple[int, int]] = set()
-    for c in cand_list:
-        for s in seed_list:
-            if c == s:
-                continue
-            canon_pairs.add((c, s) if c < s else (s, c))
+    canon_pairs = _canonical_pairs(cand_list, seed_list)
     if not canon_pairs:
         return {}
 
-    # The union of every file id we may need a commit_count for.
     file_ids: set[int] = set()
     for a, b in canon_pairs:
         file_ids.add(a)
         file_ids.add(b)
 
-    # --- Bulk query 1: git_cochange rows. ----------------------------------
-    # git_cochange is canonically stored with file_id_a < file_id_b, so a
-    # double-IN over the same id set captures every needed row. batched_in
-    # keeps each IN-clause <= 400 ids.
-    cochange_map: dict[tuple[int, int], float] = {}
-    for row in batched_in(
-        conn,
-        "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange "
-        "WHERE file_id_a IN ({ph}) AND file_id_b IN ({ph})",
-        sorted(file_ids),
-    ):
-        fa, fb, cnt = int(row[0]), int(row[1]), row[2]
-        if not cnt:
-            continue
-        key = (fa, fb) if fa < fb else (fb, fa)
-        cochange_map[key] = float(cnt)
-
+    cochange_map = _load_cochange_map(conn, file_ids)
     if not cochange_map:
         return {}
 
-    # --- Bulk query 2: file_stats.commit_count. ----------------------------
-    commit_map: dict[int, int] = {}
-    for row in batched_in(
-        conn,
-        "SELECT file_id, commit_count FROM file_stats WHERE file_id IN ({ph})",
-        sorted(file_ids),
-    ):
-        commit_map[int(row[0])] = row[1] or 0
-
-    # --- In-memory scoring (replicates file_co_change_score 1:1). ----------
-    out: dict[tuple[int, int], float] = {}
-    for c in cand_list:
-        for s in seed_list:
-            if c == s:
-                continue
-            key = (c, s) if c < s else (s, c)
-            cochanges = cochange_map.get(key)
-            if not cochanges:
-                continue
-            ca = float(commit_map.get(key[0], 0))
-            cb = float(commit_map.get(key[1], 0))
-            union = ca + cb - cochanges
-            if union <= 0:
-                continue
-            score = min(1.0, cochanges / union)
-            if score > 0:
-                out[(c, s)] = score
-    return out
+    commit_map = _load_commit_map(conn, file_ids)
+    return _score_cross_product(cand_list, seed_list, cochange_map, commit_map)
 
 
 def co_change_scores_to_seed_set_bulk(

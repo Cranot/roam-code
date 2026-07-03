@@ -33,13 +33,13 @@ if grep -iE '^[[:space:]]*Co-Authored-By:' "$MSG_FILE" > /dev/null; then
 fi
 
 # Also reject explicit AI / Anthropic attribution patterns in the message body.
-if grep -iE '(anthropic\.com|noreply@anthropic|claude (opus|sonnet|haiku|code))' "$MSG_FILE" > /dev/null; then
+if grep -iE '(generated with|anthropic\.com|noreply@anthropic|claude\.ai|claude (opus|sonnet|haiku|code))' "$MSG_FILE" > /dev/null; then
     echo "ERROR: commit-msg hook (.githooks/commit-msg)" >&2
     echo "" >&2
     echo "  This repo does NOT accept AI attribution in commit messages." >&2
     echo "" >&2
     echo "  Offending line(s):" >&2
-    grep -iE '(anthropic\.com|noreply@anthropic|claude (opus|sonnet|haiku|code))' "$MSG_FILE" | sed 's/^/    /' >&2
+    grep -iE '(generated with|anthropic\.com|noreply@anthropic|claude\.ai|claude (opus|sonnet|haiku|code))' "$MSG_FILE" | sed 's/^/    /' >&2
     echo "" >&2
     echo "  Fix: remove the AI-attribution line from your commit message." >&2
     exit 1

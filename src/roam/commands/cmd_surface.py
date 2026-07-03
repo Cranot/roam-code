@@ -120,11 +120,14 @@ def _build_surface() -> dict:
         mcp_introspection_available = _FastMCP is not None
         if _FastMCP is None:
             mcp_introspection_error = _FASTMCP_IMPORT_ERROR or "FastMCP transport unavailable"
-    except Exception as exc:
-        # mcp_server module failed to import (e.g. transitive import error on
-        # a fresh install without [mcp] extras). The counts above are still
-        # correct because they're AST-derived; only the transport signal is
-        # left at the "unavailable" baseline.
+    except ImportError as exc:
+        # mcp_server failed to import because a dependency is missing (e.g.
+        # transitive import error on a fresh install without [mcp] extras).
+        # The counts above are still correct because they're AST-derived;
+        # only the transport signal is left at the "unavailable" baseline.
+        # Deliberately NOT ``except Exception``: a non-ImportError raised at
+        # mcp_server module scope is a bug in roam itself and must propagate,
+        # not be demoted to an "install fastmcp" note.
         mcp_introspection_error = f"{exc.__class__.__name__}: {exc}"
 
     from roam.cli import _deprecation_record

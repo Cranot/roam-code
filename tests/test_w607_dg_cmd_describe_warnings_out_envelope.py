@@ -585,43 +585,33 @@ def test_describe_markers_do_not_leak_foreign_prefixes(cli_runner, describe_proj
 # ---------------------------------------------------------------------------
 
 
-def test_w607dg_w978_seven_discipline_ast_audit():
-    """AST audit: the W607-DG plumbing in cmd_describe honours all 7
-    W978 first-hypothesis disciplines.
-
-    1. f-string verdict floor -- floor is the LITERAL string
-       ``"describe analysis completed"``, never an f-string.
-    2. kwarg-default eagerness -- ``default=`` arguments are
-       inexpensive literals / dicts of literals.
-    3. json.dumps(default=str) sentinel -- not used at the W607-DG
-       layer; markers carry ``str(exc)`` directly.
-    4. Phase-name collision -- W607-DG phase names do NOT collide
-       with W607-K substrate-CALL phase names.
-    5. len() at kwarg-bind -- ``len(output)`` is captured INSIDE the
-       compute_predicate closure, not at the wrap call-site.
-    6. Unguarded len()/if x on poisoned object -- predicate-floor
-       dicts carry concrete int / str defaults; downstream readers
-       never call ``len()`` on a sentinel.
-    7. dict.get(key, expensive_default) eager-eval -- the predicate
-       closures use direct ``dict["key"]`` lookups, NOT
-       ``dict.get(key, expensive_default)``.
-    """
+def _cmd_describe_ast_tree():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_describe.py"
     src = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(src)
+    return ast.parse(src)
 
-    # Discipline 1: f-string verdict floor MUST be a literal string.
-    literal_floor_count = 0
+
+def _is_run_check_dg_call(node):
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run_check_dg"
+
+
+def _iter_run_check_dg_calls(tree, phase=None):
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not _is_run_check_dg_call(node):
             continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_dg"):
+        if phase is None:
+            yield node
             continue
         if not node.args:
             continue
         phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_verdict"):
-            continue
+        if isinstance(phase_arg, ast.Constant) and phase_arg.value == phase:
+            yield node
+
+
+def _assert_w978_literal_verdict_floor(tree):
+    literal_floor_count = 0
+    for node in _iter_run_check_dg_calls(tree, phase="compute_verdict"):
         for kw in node.keywords:
             if kw.arg == "default":
                 assert isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str), (
@@ -645,13 +635,9 @@ def test_w607dg_w978_seven_discipline_ast_audit():
         f"{literal_floor_count}"
     )
 
-    # Discipline 2: kwarg-default eagerness -- no ast.Call as default
-    # value (allow None / Constant / Dict / List).
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_dg"):
-            continue
+
+def _assert_w978_default_eagerness(tree):
+    for node in _iter_run_check_dg_calls(tree):
         for kw in node.keywords:
             if kw.arg == "default":
                 assert not isinstance(kw.value, ast.Call), (
@@ -660,7 +646,8 @@ def test_w607dg_w978_seven_discipline_ast_audit():
                     f"default); got {ast.dump(kw.value)!r}"
                 )
 
-    # Discipline 3: json.dumps not used inside _run_check_dg.
+
+def _assert_w978_run_check_dg_avoids_json_dumps(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_run_check_dg":
             helper_src = ast.unparse(node)
@@ -670,7 +657,8 @@ def test_w607dg_w978_seven_discipline_ast_audit():
                 f"got body = {helper_src!r}"
             )
 
-    # Discipline 4: phase-name collision check.
+
+def _assert_w978_phase_names_do_not_collide():
     w607dg_phases = {
         "score_classify",
         "compute_predicate",
@@ -695,19 +683,10 @@ def test_w607dg_w978_seven_discipline_ast_audit():
         f"W978 discipline 4: W607-DG phase names collide with W607-K substrate-CALL phase names; overlap = {overlap!r}"
     )
 
-    # Discipline 5 + 6 + 7: floor dicts in compute_predicate use
-    # CONSTANT default values (int / str), not call expressions.
+
+def _assert_w978_compute_predicate_floors(tree):
     floor_dicts_inspected = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_dg"):
-            continue
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_predicate"):
-            continue
+    for node in _iter_run_check_dg_calls(tree, phase="compute_predicate"):
         for kw in node.keywords:
             if kw.arg != "default":
                 continue
@@ -736,6 +715,36 @@ def test_w607dg_w978_seven_discipline_ast_audit():
         f"(agent_prompt + main describe branches); "
         f"found {floor_dicts_inspected}"
     )
+
+
+def test_w607dg_w978_seven_discipline_ast_audit():
+    """AST audit: the W607-DG plumbing in cmd_describe honours all 7
+    W978 first-hypothesis disciplines.
+
+    1. f-string verdict floor -- floor is the LITERAL string
+       ``"describe analysis completed"``, never an f-string.
+    2. kwarg-default eagerness -- ``default=`` arguments are
+       inexpensive literals / dicts of literals.
+    3. json.dumps(default=str) sentinel -- not used at the W607-DG
+       layer; markers carry ``str(exc)`` directly.
+    4. Phase-name collision -- W607-DG phase names do NOT collide
+       with W607-K substrate-CALL phase names.
+    5. len() at kwarg-bind -- ``len(output)`` is captured INSIDE the
+       compute_predicate closure, not at the wrap call-site.
+    6. Unguarded len()/if x on poisoned object -- predicate-floor
+       dicts carry concrete int / str defaults; downstream readers
+       never call ``len()`` on a sentinel.
+    7. dict.get(key, expensive_default) eager-eval -- the predicate
+       closures use direct ``dict["key"]`` lookups, NOT
+       ``dict.get(key, expensive_default)``.
+    """
+    tree = _cmd_describe_ast_tree()
+
+    _assert_w978_literal_verdict_floor(tree)
+    _assert_w978_default_eagerness(tree)
+    _assert_w978_run_check_dg_avoids_json_dumps(tree)
+    _assert_w978_phase_names_do_not_collide()
+    _assert_w978_compute_predicate_floors(tree)
 
 
 # ---------------------------------------------------------------------------

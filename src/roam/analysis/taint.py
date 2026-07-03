@@ -310,15 +310,24 @@ def compute_intra_summary(
     param_names: list[str],
     sources: tuple[str, ...],
     sinks: tuple[str, ...],
+    *,
+    sym_name: str | None = None,
+    sym_qname: str | None = None,
 ) -> TaintSummary:
-    """Compute intra-procedural taint summary for a single symbol."""
-    # Fetch name for sanitizer detection
-    row = conn.execute(
-        "SELECT name, qualified_name FROM symbols WHERE id = ?",
-        (symbol_id,),
-    ).fetchone()
-    sym_name = row["name"] if row else ""
-    sym_qname = row["qualified_name"] if row else None
+    """Compute intra-procedural taint summary for a single symbol.
+
+    ``sym_name`` / ``sym_qname`` are used for sanitizer detection. Batch
+    callers that already hold the symbol row (``compute_all_summaries``)
+    pass them to skip the per-symbol DB fetch; when ``sym_name`` is
+    omitted, both are fetched from ``conn``.
+    """
+    if sym_name is None:
+        row = conn.execute(
+            "SELECT name, qualified_name FROM symbols WHERE id = ?",
+            (symbol_id,),
+        ).fetchone()
+        sym_name = row["name"] if row else ""
+        sym_qname = row["qualified_name"] if row else None
 
     is_sanitizer = _detect_sanitizer(sym_name, sym_qname)
 
@@ -423,23 +432,16 @@ def compute_all_summaries(
         # Body lines (after declaration line)
         body = all_lines[ls : min(le, len(all_lines))] if all_lines else []
 
-        param_names = _parse_param_names(signature)
-        is_sanitizer = _detect_sanitizer(sym_name, sym_qname)
-
-        if not body:
-            summaries[sym_id] = TaintSummary(symbol_id=sym_id, is_sanitizer=is_sanitizer)
-            continue
-
-        result = _track_variable_taint(body, param_names, src, snk, _SANITIZER_NAMES)
-
-        summaries[sym_id] = TaintSummary(
-            symbol_id=sym_id,
-            param_taints_return=result["param_taints_return"],
-            param_to_sink=result["param_to_sink"],
-            return_from_source=result["return_from_source"],
-            direct_sources=result["direct_sources"],
-            direct_sinks=result["direct_sinks"],
-            is_sanitizer=is_sanitizer,
+        summaries[sym_id] = compute_intra_summary(
+            conn,
+            sym_id,
+            body,
+            signature,
+            _parse_param_names(signature),
+            src,
+            snk,
+            sym_name=sym_name,
+            sym_qname=sym_qname,
         )
 
     return summaries

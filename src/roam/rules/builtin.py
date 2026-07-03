@@ -38,7 +38,12 @@ class BuiltinRule:
     _fn: Callable | None = field(default=None, repr=False)
 
     def evaluate(self, conn: sqlite3.Connection, G: nx.DiGraph | None) -> list[dict]:
-        """Run the check and return violations."""
+        """Run the check-rules dispatch adapter and return violations.
+
+        Public on purpose: ``roam check-rules`` resolves configured
+        ``BuiltinRule`` objects, then calls this method so missing callbacks
+        and check exceptions stay normalized by the rule pack.
+        """
         if self._fn is None:
             return []
         try:
@@ -297,26 +302,35 @@ def _check_no_deep_inheritance(conn, G, threshold):
             preds = list(inherit_graph.predecessors(node))
             node_depth[node] = (max(node_depth[p] for p in preds) + 1) if preds else 0
 
+    deep_nodes = [(node, depth) for node, depth in node_depth.items() if depth > limit]
+    if not deep_nodes:
+        return []
+
+    from roam.db.connection import batched_in
+
+    lookup = {}
+    try:
+        for row in batched_in(
+            conn,
+            "SELECT s.id, s.name, f.path, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+            [node for node, _ in deep_nodes],
+        ):
+            lookup[row[0]] = (row[1], row[2], row[3])
+    except sqlite3.Error:
+        lookup = {}
+
     violations = []
-    for node, depth in node_depth.items():
-        if depth > limit:
-            try:
-                row = conn.execute(
-                    "SELECT s.name, f.path, s.line_start "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                    (node,),
-                ).fetchone()
-                sym_name, fpath, line = (row[0], row[1], row[2]) if row else (str(node), "", None)
-            except sqlite3.Error:
-                sym_name, fpath, line = str(node), "", None
-            violations.append(
-                make_violation(
-                    symbol=sym_name,
-                    file=fpath,
-                    line=line,
-                    reason="inheritance depth {} exceeds limit {}".format(depth, limit),
-                )
+    for node, depth in deep_nodes:
+        sym_name, fpath, line = lookup.get(node, (str(node), "", None))
+        violations.append(
+            make_violation(
+                symbol=sym_name,
+                file=fpath,
+                line=line,
+                reason="inheritance depth {} exceeds limit {}".format(depth, limit),
             )
+        )
     violations.sort(key=lambda v: v["file"])
     return violations
 

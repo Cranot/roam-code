@@ -74,6 +74,125 @@ def _challenge(ctype, severity, title, description, question, location=None):
 # ---------------------------------------------------------------------------
 
 
+def _set_layer_status(status, value):
+    if status is not None:
+        status["layer_violations"] = value
+
+
+def _import_layer_contract_tools(status):
+    try:
+        from roam.graph.builder import build_symbol_graph
+        from roam.graph.layers import detect_layers
+    except ImportError:
+        _set_layer_status(status, "skipped:missing_graph_module")
+        return None
+    return build_symbol_graph, detect_layers
+
+
+def _build_layer_contract_graph(conn, build_symbol_graph, status):
+    try:
+        G = build_symbol_graph(conn)
+    except Exception as exc:  # noqa: BLE001
+        _set_layer_status(status, f"errored:build_symbol_graph:{type(exc).__name__}")
+        return None
+
+    if len(G) == 0:
+        _set_layer_status(status, "skipped:empty_graph")
+        return None
+    return G
+
+
+def _detect_layer_contract_map(G, detect_layers, status):
+    try:
+        layers = detect_layers(G)
+    except Exception as exc:  # noqa: BLE001
+        _set_layer_status(status, f"errored:detect_layers:{type(exc).__name__}")
+        return None
+
+    _set_layer_status(status, "ran")
+    return layers
+
+
+def _load_layer_contract_context(conn, status):
+    tools = _import_layer_contract_tools(status)
+    if tools is None:
+        return None
+
+    build_symbol_graph, detect_layers = tools
+    G = _build_layer_contract_graph(conn, build_symbol_graph, status)
+    if G is None:
+        return None
+
+    layers = _detect_layer_contract_map(G, detect_layers, status)
+    if layers is None:
+        return None
+    return G, layers
+
+
+def _layer_contract_changed_symbol_index(G, layers, changed_sym_ids):
+    changed_ids = tuple(changed_sym_ids)
+    eligible_changed_ids = set(changed_ids) & set(G.nodes) & set(layers)
+    return changed_ids, eligible_changed_ids
+
+
+def _iter_layer_contract_candidate_edges(G, changed_ids, eligible_changed_ids):
+    for sid in changed_ids:
+        if sid not in eligible_changed_ids:
+            continue
+        for _, tgt in G.out_edges(sid):
+            yield sid, tgt
+
+
+def _layer_contract_skip_or_none(layers, sid, tgt, seen_edges):
+    src_layer = layers.get(sid)
+    tgt_layer = layers.get(tgt)
+    if src_layer is None or tgt_layer is None:
+        return None
+
+    gap = abs(src_layer - tgt_layer)
+    if gap <= 1:
+        return None
+
+    edge_key = (sid, tgt)
+    if edge_key in seen_edges:
+        return None
+    seen_edges.add(edge_key)
+    return sid, tgt, src_layer, tgt_layer, gap
+
+
+def _iter_changed_edges_that_skip_layer_contract(G, layers, changed_sym_ids):
+    """Yield deduplicated changed edges whose layer gap needs a challenge."""
+    changed_ids, eligible_changed_ids = _layer_contract_changed_symbol_index(G, layers, changed_sym_ids)
+    seen_edges = set()
+
+    for sid, tgt in _iter_layer_contract_candidate_edges(G, changed_ids, eligible_changed_ids):
+        skip = _layer_contract_skip_or_none(layers, sid, tgt, seen_edges)
+        if skip is not None:
+            yield skip
+
+
+def _layer_contract_skip_challenge(G, skip):
+    sid, tgt, src_layer, tgt_layer, gap = skip
+    src_node = G.nodes[sid]
+    tgt_node = G.nodes[tgt]
+    src_name = src_node.get("name", f"id={sid}")
+    tgt_name = tgt_node.get("name", f"id={tgt}")
+    file_path = src_node.get("file_path", "")
+
+    return _challenge(
+        "layer_violation",
+        "HIGH",
+        f"Layer skip: L{src_layer} -> L{tgt_layer}",
+        (
+            f"{src_name} (layer {src_layer}) calls "
+            f"{tgt_name} (layer {tgt_layer}), "
+            f"skipping {gap - 1} layer{'s' if gap - 1 != 1 else ''}."
+        ),
+        ("This dependency skips intermediate layers. Justify the shortcut or route through proper layer interfaces."),
+        location=file_path,
+    )
+
+
 def _check_new_cycles(conn, changed_sym_ids, status=None):
     """Check if changed symbols are part of any SCC (cycle).
 
@@ -164,80 +283,16 @@ def _check_layer_violations(conn, changed_sym_ids, status=None):
     """
     challenges = []
     if not changed_sym_ids:
-        if status is not None:
-            status["layer_violations"] = "skipped:no_changed_symbols"
-        return challenges
-    try:
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
-    except ImportError:
-        if status is not None:
-            status["layer_violations"] = "skipped:missing_graph_module"
+        _set_layer_status(status, "skipped:no_changed_symbols")
         return challenges
 
-    try:
-        G = build_symbol_graph(conn)
-    except Exception as exc:  # noqa: BLE001
-        if status is not None:
-            status["layer_violations"] = f"errored:build_symbol_graph:{type(exc).__name__}"
+    context = _load_layer_contract_context(conn, status)
+    if context is None:
         return challenges
 
-    if len(G) == 0:
-        if status is not None:
-            status["layer_violations"] = "skipped:empty_graph"
-        return challenges
-
-    try:
-        layers = detect_layers(G)
-    except Exception as exc:  # noqa: BLE001
-        if status is not None:
-            status["layer_violations"] = f"errored:detect_layers:{type(exc).__name__}"
-        return challenges
-    if status is not None:
-        status["layer_violations"] = "ran"
-
-    seen = set()
-    for sid in changed_sym_ids:
-        if sid not in G or sid not in layers:
-            continue
-        src_layer = layers[sid]
-        for _, tgt in G.out_edges(sid):
-            if tgt not in layers:
-                continue
-            tgt_layer = layers[tgt]
-            gap = abs(src_layer - tgt_layer)
-            if gap <= 1:
-                continue
-
-            # Deduplicate by (src, tgt) pair
-            edge_key = (sid, tgt)
-            if edge_key in seen:
-                continue
-            seen.add(edge_key)
-
-            src_node = G.nodes[sid]
-            tgt_node = G.nodes[tgt]
-            src_name = src_node.get("name", f"id={sid}")
-            tgt_name = tgt_node.get("name", f"id={tgt}")
-            file_path = src_node.get("file_path", "")
-
-            challenges.append(
-                _challenge(
-                    "layer_violation",
-                    "HIGH",
-                    f"Layer skip: L{src_layer} -> L{tgt_layer}",
-                    (
-                        f"{src_name} (layer {src_layer}) calls "
-                        f"{tgt_name} (layer {tgt_layer}), "
-                        f"skipping {gap - 1} layer{'s' if gap - 1 != 1 else ''}."
-                    ),
-                    (
-                        "This dependency skips intermediate layers. Justify the "
-                        "shortcut or route through proper layer interfaces."
-                    ),
-                    location=file_path,
-                )
-            )
+    G, layers = context
+    for skip in _iter_changed_edges_that_skip_layer_contract(G, layers, changed_sym_ids):
+        challenges.append(_layer_contract_skip_challenge(G, skip))
     return challenges
 
 
@@ -419,37 +474,66 @@ def _check_cross_cluster(conn, changed_sym_ids, status=None):
     return challenges
 
 
-def _check_orphaned_symbols(conn, changed_sym_ids, status=None):
-    """Check for symbols in changed files with zero incoming edges.
+def _load_changed_symbol_counts(conn, changed_sym_ids, status, status_key, direction, alias):
+    """Fetch changed symbols plus their edge count in one batched query.
 
-    single batched query for in-degree + symbol metadata
-    instead of two queries per changed symbol.
+    Shared scaffold for detectors that need a per-symbol edge count
+    (in-degree, fan-out, etc.). Handles the empty-input guard, status
+    bookkeeping, and batched query error handling.
 
-    See :func:`_check_new_cycles` for ``status`` semantics.
+    Parameters
+    ----------
+    conn
+        SQLite connection.
+    changed_sym_ids
+        Iterable of symbol ids to analyze.
+    status
+        Mutable status dict (may be ``None``).
+    status_key
+        Key to use in ``status`` for skip/error/ran messages.
+    direction
+        Edge column direction: ``"source"`` or ``"target"``.
+    alias
+        Result-column alias for the count (e.g. ``"in_degree"``,
+        ``"fan_out"``).
+
+    Returns
+    -------
+    list
+        Result rows, or an empty list if the query was skipped or errored.
     """
-    challenges = []
     if not changed_sym_ids:
         if status is not None:
-            status["orphaned_symbols"] = "skipped:no_changed_symbols"
-        return challenges
+            status[status_key] = "skipped:no_changed_symbols"
+        return []
 
     sid_list = list(changed_sym_ids)
-    # One query per batch instead of two queries per symbol.
     try:
         rows = batched_in(
             conn,
-            "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
-            "       (SELECT COUNT(*) FROM edges WHERE target_id = s.id) AS in_degree "
-            "  FROM symbols s JOIN files f ON s.file_id = f.id "
-            " WHERE s.id IN ({ph})",
+            f"SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
+            f"       (SELECT COUNT(*) FROM edges WHERE {direction}_id = s.id) AS {alias} "
+            f"  FROM symbols s JOIN files f ON s.file_id = f.id "
+            f" WHERE s.id IN ({{ph}})",
             sid_list,
         )
     except Exception as exc:  # noqa: BLE001
         if status is not None:
-            status["orphaned_symbols"] = f"errored:batched_in:{type(exc).__name__}"
-        return challenges
+            status[status_key] = f"errored:batched_in:{type(exc).__name__}"
+        return []
+
     if status is not None:
-        status["orphaned_symbols"] = "ran"
+        status[status_key] = "ran"
+    return rows
+
+
+def _check_orphaned_symbols(conn, changed_sym_ids, status=None):
+    """Check for symbols in changed files with zero incoming edges.
+
+    See :func:`_check_new_cycles` for ``status`` semantics.
+    """
+    challenges = []
+    rows = _load_changed_symbol_counts(conn, changed_sym_ids, status, "orphaned_symbols", "target", "in_degree")
     sym_by_id = {r["id"]: r for r in rows if r["in_degree"] == 0}
 
     for sid in changed_sym_ids:
@@ -500,30 +584,9 @@ def _check_high_fan_out(conn, changed_sym_ids, status=None):
     See :func:`_check_new_cycles` for ``status`` semantics.
     """
     challenges = []
-    if not changed_sym_ids:
-        if status is not None:
-            status["high_fan_out"] = "skipped:no_changed_symbols"
-        return challenges
-
     _FAN_OUT_THRESHOLD = 10
 
-    # single batched query for fan-out + metadata.
-    sid_list = list(changed_sym_ids)
-    try:
-        rows = batched_in(
-            conn,
-            "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
-            "       (SELECT COUNT(*) FROM edges WHERE source_id = s.id) AS fan_out "
-            "  FROM symbols s JOIN files f ON s.file_id = f.id "
-            " WHERE s.id IN ({ph})",
-            sid_list,
-        )
-    except Exception as exc:  # noqa: BLE001
-        if status is not None:
-            status["high_fan_out"] = f"errored:batched_in:{type(exc).__name__}"
-        return challenges
-    if status is not None:
-        status["high_fan_out"] = "ran"
+    rows = _load_changed_symbol_counts(conn, changed_sym_ids, status, "high_fan_out", "source", "fan_out")
     sym_by_id = {r["id"]: r for r in rows if r["fan_out"] > _FAN_OUT_THRESHOLD}
 
     for sid in changed_sym_ids:

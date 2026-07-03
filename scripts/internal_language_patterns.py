@@ -22,6 +22,17 @@ from __future__ import annotations
 
 import re
 
+# Path-loaded consumers access this module dynamically; keep the public
+# catalogue contract explicit for static export audits.
+__all__ = (
+    "EXCLUDED_DIRS",
+    "FORBIDDEN_PATTERNS",
+    "SCAN_EXTENSIONS",
+    "WHITELIST_FILES",
+    "scan_text",
+    "should_scan",
+)
+
 # ---------------------------------------------------------------------------
 # Pattern definitions
 # ---------------------------------------------------------------------------

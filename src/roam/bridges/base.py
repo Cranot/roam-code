@@ -27,13 +27,32 @@ class LanguageBridge(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Short identifier for this bridge (e.g. 'protobuf', 'salesforce')."""
+        """ABI-1 bridge identity contract (e.g. 'protobuf', 'salesforce')."""
 
+    # Audit A6 / dead-code REVIEW: this base abstract definition looks
+    # "unreferenced" to static export analysis because every call site
+    # dispatches dynamically through a bridge instance
+    # (``bridge.source_extensions`` in ``cmd_xlang.py:_resolve_bridge`` /
+    # ``_bridge_files_count``), which resolves to the concrete subclass
+    # override -- not to ``LanguageBridge.source_extensions`` itself. It is
+    # the load-bearing interface contract (every bridge must declare its
+    # source extensions), not dead code. Sibling abstract methods
+    # (``name`` / ``target_extensions`` / ``detect`` / ``resolve``) share
+    # the same dispatch profile.
     @property
     @abstractmethod
     def source_extensions(self) -> frozenset[str]:
-        """File extensions this bridge reads from (e.g. frozenset({'.proto'}))."""
+        """File extensions this bridge reads from (e.g. frozenset({'.proto'})).
 
+        See reference: bridge interface contract consumed through dynamic
+        dispatch in ``cmd_xlang.py`` and implemented by every concrete bridge.
+        """
+
+    # dead-code REVIEW (Audit A6): same dynamic-dispatch profile as
+    # ``source_extensions`` above -- read via ``bridge.target_extensions``
+    # in ``cmd_xlang.py`` (``_resolve_bridge`` / ``_bridge_files_count``).
+    # Load-bearing interface contract implemented by every concrete bridge,
+    # not dead code.
     @property
     @abstractmethod
     def target_extensions(self) -> frozenset[str]:

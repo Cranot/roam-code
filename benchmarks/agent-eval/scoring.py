@@ -10,6 +10,7 @@ Score breakdown (100 points total):
   - Testing:              15 pts  (test existence, count, coverage proxy)
   - Project Completeness:  5 pts  (README, build config, builds, runs)
 """
+
 from __future__ import annotations
 
 

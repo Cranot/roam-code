@@ -95,6 +95,70 @@ _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 # helpers are still checked.
 _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 
+# ---------------------------------------------------------------------------
+# Guardrail wiring (post-edit gate strengthening). Every behavior-CHANGING
+# wire below is env-flagged with a sensible default and a kill switch, so each
+# is fully reversible without a code change. Defaults make the auto/diff-only
+# gate strictly stronger than before WITHOUT touching any existing check:
+#   ROAM_VERIFY_TESTS=1                 run impacted tests in --auto (executable signal)
+#   ROAM_VERIFY_BREAKING=1             block a sig-change with un-edited external callers
+#   ROAM_VERIFY_BREAKING_MIN_CALLERS=1 external-caller blast threshold (private-helper noise)
+#   ROAM_VERIFY_UNRESOLVED=1           flag calls that resolve to nothing (NameError shape)
+#   ROAM_VERIFY_TAINT=0                surface source->sink taint touching the edit (opt-in)
+#   ROAM_VERIFY_DELETE_CHECK=0        block a diff whose deleted symbol still has survivors (opt-in; grep-FP)
+#   ROAM_VERIFY_MIGRATION_SAFETY=1    block a non-idempotent / destructive changed .php migration
+#   ROAM_VERIFY_SMELLS=0              warn on god-class / brain-method / deep-nesting in changed code
+#   ROAM_VERIFY_CLONES=0             warn on AST near-duplicate of changed code (heavier)
+#   ROAM_VERIFY_MAGIC_NUMBERS=0      warn on repeated magic numbers in changed code
+#   ROAM_VERIFY_DEAD=0               warn on a newly-orphaned exported symbol in changed code
+#   ROAM_VERIFY_N1=0                 warn on an N+1 lazy-load introduced by a changed model
+#   ROAM_VERIFY_OVER_FETCH=0         warn on serializer over-fetch in changed code
+#   ROAM_VERIFY_LLM_SMELLS=0         warn on LLM-API anti-patterns in changed code
+#   ROAM_VERIFY_TEST_HERMETICITY=0   warn on non-hermetic patterns in a changed test file
+# ---------------------------------------------------------------------------
+_VERIFY_BREAKING_CATEGORY = "breaking"
+_VERIFY_TAINT_CATEGORY = "taint"
+# Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
+# Guardrails emit hard_block FAIL when they fire; the rest emit advisory WARN
+# that surface in the violations list WITHOUT entering the weighted composite
+# (same contract as the breaking / taint wires).
+_VERIFY_DELETE_CATEGORY = "delete_check"
+_VERIFY_MIGRATION_CATEGORY = "migration_safety"
+_VERIFY_SMELLS_CATEGORY = "smells"
+_VERIFY_CLONES_CATEGORY = "clones"
+_VERIFY_MAGIC_CATEGORY = "magic_numbers"
+_VERIFY_DEAD_CATEGORY = "dead"
+_VERIFY_N1_CATEGORY = "n1"
+_VERIFY_OVER_FETCH_CATEGORY = "over_fetch"
+_VERIFY_LLM_SMELLS_CATEGORY = "llm_smells"
+_VERIFY_HERMETICITY_CATEGORY = "test_hermeticity"
+# Forced score when a hard-block guardrail fires: below the default threshold
+# (70) so the CLI gate exits EXIT_GATE_FAILURE; the verdict is also pinned to
+# FAIL so the verdict-keyed post-edit hook blocks regardless of threshold.
+_HARD_BLOCK_SCORE = 40
+# Cap the breaking-change git/parse work so a huge uncommitted tree can't slow
+# the gate; above it the check fails open (no finding).
+_MAX_BREAKING_FILES = 50
+
+
+def _verify_env_flag(name: str, default: bool) -> bool:
+    """Read a ``ROAM_VERIFY_*`` on/off switch. Unset/garbage falls back to
+    *default* so every wiring is fully reversible from the environment."""
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw in ("1", "true", "on", "yes"):
+        return True
+    if raw in ("0", "false", "off", "no"):
+        return False
+    return default
+
+
+def _verify_env_int(name: str, default: int) -> int:
+    """Read an integer ``ROAM_VERIFY_*`` knob, falling back to *default*."""
+    try:
+        return int((os.environ.get(name) or "").strip())
+    except (TypeError, ValueError):
+        return default
+
 
 def _blast_radius_by_file(conn, files):
     """File-level blast radius = the MAX caller count
@@ -374,7 +438,27 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     # public credential / internal-language leak.
     "secrets",
 )
-_ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + ("complexity", "cycles", "tests", "command_examples", "claims")
+_ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
+    "complexity",
+    "cycles",
+    "tests",
+    "command_examples",
+    "claims",
+    # Guardrail gates (env-flagged; see _verify_env_flag). Selectable via
+    # --checks/--all/config; auto-selected by default on Python edits.
+    _VERIFY_BREAKING_CATEGORY,
+    _VERIFY_TAINT_CATEGORY,
+    _VERIFY_DELETE_CATEGORY,
+    _VERIFY_MIGRATION_CATEGORY,
+    _VERIFY_SMELLS_CATEGORY,
+    _VERIFY_CLONES_CATEGORY,
+    _VERIFY_MAGIC_CATEGORY,
+    _VERIFY_DEAD_CATEGORY,
+    _VERIFY_N1_CATEGORY,
+    _VERIFY_OVER_FETCH_CATEGORY,
+    _VERIFY_LLM_SMELLS_CATEGORY,
+    _VERIFY_HERMETICITY_CATEGORY,
+)
 _VERIFY_CONFIG_REL = (".roam", "verify.yaml")
 _COMMAND_EXAMPLE_EXTS = frozenset({".md", ".mdx", ".rst", ".txt", ".html", ".htm", ".yaml", ".yml"})
 _COMMAND_EXAMPLE_PATH_HINTS = (
@@ -583,6 +667,47 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
         selected.add("command_examples")
     if any(_is_claim_surface(p) for p in target_paths):
         selected.add("claims")
+    if has_py:
+        # Behavioral + guardrail gates (env-flagged, reversible). The impacted-
+        # test run is the executable signal that trips a behavioral regression
+        # even when every static check is green — the #1 reason an edit passes
+        # the gate but breaks at runtime. The breaking-change gate blocks a
+        # signature change whose callers were not co-edited. Both default ON;
+        # taint is opt-in (FP-prone). Each is independently reversible.
+        if _verify_env_flag("ROAM_VERIFY_TESTS", True):
+            selected.add("tests")
+        if _verify_env_flag("ROAM_VERIFY_BREAKING", True):
+            selected.add(_VERIFY_BREAKING_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_TAINT", False):
+            selected.add(_VERIFY_TAINT_CATEGORY)
+    # Additional reusable detectors (env-flagged). Default-OFF ones stay OUT of
+    # the auto set unless their switch is on, so the no-arg / Stop-hook gate is
+    # byte-identical to before. Each detector fn ALSO re-checks its flag and
+    # fails open, so `--checks all` never runs a disabled detector either.
+    if has_nontest_source:
+        if _verify_env_flag("ROAM_VERIFY_DELETE_CHECK", False):
+            selected.add(_VERIFY_DELETE_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_CLONES", False):
+            selected.add(_VERIFY_CLONES_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_OVER_FETCH", False):
+            selected.add(_VERIFY_OVER_FETCH_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_LLM_SMELLS", False):
+            selected.add(_VERIFY_LLM_SMELLS_CATEGORY)
+    if has_py:
+        if _verify_env_flag("ROAM_VERIFY_SMELLS", False):
+            selected.add(_VERIFY_SMELLS_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
+            selected.add(_VERIFY_MAGIC_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_DEAD", False):
+            selected.add(_VERIFY_DEAD_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_N1", False):
+            selected.add(_VERIFY_N1_CATEGORY)
+    if any(("migration" in p.lower() and p.lower().endswith(".php")) for p in target_paths):
+        if _verify_env_flag("ROAM_VERIFY_MIGRATION_SAFETY", True):
+            selected.add(_VERIFY_MIGRATION_CATEGORY)
+    if any((is_test_file(p) and p.endswith(".py")) for p in target_paths):
+        if _verify_env_flag("ROAM_VERIFY_TEST_HERMETICITY", False):
+            selected.add(_VERIFY_HERMETICITY_CATEGORY)
     if not selected:
         selected = set(_DEFAULT_CHECKS)
     return [c for c in _ALL_CHECKS if c in selected]
@@ -905,6 +1030,14 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     # no imports / mixed style) must still surface resolution failures.
     resolution = _unresolved_import_violations(conn, file_ids)
 
+    # Call-resolution pass — the sibling firewall to the import one above.
+    # An import can resolve while a *call* in the same file targets a name that
+    # is bound nowhere (hallucinated helper / wrong method name); that is a
+    # guaranteed NameError/AttributeError the static checks otherwise miss.
+    # Env-gated + reversible; rides the same `imports` category + score.
+    if _verify_env_flag("ROAM_VERIFY_UNRESOLVED", True):
+        resolution = resolution + _unresolved_call_violations(conn, file_ids)
+
     # 1. Determine the codebase import style from ALL file_edges
     all_edges = _all_import_edges(conn)
 
@@ -1010,6 +1143,216 @@ def _unresolved_violation(imp: dict) -> dict:
         "message": msg,
         "fix": fix,
     }
+
+
+# ---------------------------------------------------------------------------
+# Unresolved-CALL detection (the call-graph sibling of the import firewall).
+# Conservative by construction: we only flag a call whose callee resolves to
+# NOTHING with HIGH confidence — a bare name bound nowhere in the module (and
+# not a builtin), or a ``self.method()`` on a base-less, decorator-free,
+# non-dynamic class that defines no such attribute. Anything dynamic
+# (``obj.method()`` on an arbitrary object, ``__getattr__``/``setattr``,
+# ``from x import *``, inheritance, class/metaclass decorators) is skipped so
+# the gate never cries wolf on legitimate dynamic-attribute access.
+# ---------------------------------------------------------------------------
+
+
+def _module_bound_names(tree) -> set[str]:
+    """Every name BOUND anywhere in the module (defs, classes, imports,
+    assignments, for/with/except targets, params, comprehension/walrus targets,
+    global/nonlocal). Over-approximate on purpose: if a name is bound anywhere
+    in the file we never flag a bare call to it — precision over recall, because
+    a gate that false-positives gets turned off. The sentinel ``"*"`` means a
+    star-import is present and bare-name resolution must abstain entirely."""
+    import ast
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add("*" if alias.name == "*" else (alias.asname or alias.name))
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return names
+
+
+def _bare_name_unresolved_calls(tree, bound: set[str]) -> list[tuple[str, int]]:
+    """Bare ``name(...)`` calls whose name is bound nowhere in the module and is
+    not a builtin — a guaranteed NameError. Abstain if a star-import is present
+    (we can't know what it bound)."""
+    import ast
+    import builtins
+
+    if "*" in bound:
+        return []
+    builtin_names = set(dir(builtins))
+    out: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name in bound or name in builtin_names:
+                continue
+            out.append((name, node.func.lineno))
+    return out
+
+
+def _class_is_dynamic(cls) -> bool:
+    """True if *cls* could acquire methods/attrs we cannot see statically:
+    any non-``object`` / complex base (inheritance), any class decorator,
+    a metaclass/keyword, or a ``__getattr__``/``__getattribute__`` /
+    ``setattr(self, ...)`` escape hatch. Such classes are skipped wholesale."""
+    import ast
+
+    if cls.decorator_list or cls.keywords:
+        return True
+    for base in cls.bases:
+        if not (isinstance(base, ast.Name) and base.id == "object"):
+            return True
+    for node in ast.walk(cls):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in (
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+        ):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "setattr":
+            return True
+    return False
+
+
+def _class_defined_attrs(cls) -> set[str]:
+    """Names defined on *cls*: methods, nested defs, class-level and
+    ``self.x = ...`` assignments (the attributes a ``self.X()`` could resolve to)."""
+    import ast
+
+    defined: set[str] = set()
+    for node in ast.walk(cls):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    defined.add(tgt.id)
+                elif isinstance(tgt, ast.Attribute) and isinstance(tgt.value, ast.Name) and tgt.value.id == "self":
+                    defined.add(tgt.attr)
+        elif isinstance(node, ast.AnnAssign):
+            tgt = node.target
+            if isinstance(tgt, ast.Name):
+                defined.add(tgt.id)
+            elif isinstance(tgt, ast.Attribute) and isinstance(tgt.value, ast.Name) and tgt.value.id == "self":
+                defined.add(tgt.attr)
+    return defined
+
+
+def _self_method_unresolved_calls(tree) -> list[tuple[str, int]]:
+    """``self.method(...)`` calls on a static (base-less, non-dynamic) class that
+    defines no such method/attr — a guaranteed AttributeError. Dunder names are
+    skipped (Python provides many implicitly)."""
+    import ast
+
+    out: list[tuple[str, int]] = []
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef) or _class_is_dynamic(cls):
+            continue
+        defined = _class_defined_attrs(cls)
+        for node in ast.walk(cls):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+            ):
+                attr = node.func.attr
+                if attr.startswith("__") or attr in defined:
+                    continue
+                out.append((attr, node.func.value.lineno))
+    return out
+
+
+def _unresolved_call_violation(path: str, name: str, line: int, kind: str) -> dict:
+    if kind == "self":
+        msg = (
+            f"call `self.{name}(...)` resolves to NOTHING — this class defines "
+            f"no `{name}` method/attribute (likely a hallucinated/renamed method)"
+        )
+        fix = f"Define `{name}` on the class, or call the correct method name"
+    else:
+        msg = (
+            f"call `{name}(...)` resolves to NOTHING — `{name}` is bound nowhere "
+            "in this module and is not a builtin (likely hallucinated/undefined)"
+        )
+        fix = f"Import or define `{name}`, or call the correct name"
+    return {
+        "category": "imports",
+        "severity": SEVERITY_FAIL,
+        "file": path,
+        "line": line,
+        "message": msg,
+        "fix": fix,
+    }
+
+
+def _unresolved_calls_for_source(path: str, source: str) -> list[dict]:
+    """High-confidence unresolved calls in one Python source string."""
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        # Mid-edit syntax errors are the syntax check's job, not ours.
+        return []
+    bound = _module_bound_names(tree)
+    violations: list[dict] = []
+    for name, line in _bare_name_unresolved_calls(tree, bound):
+        violations.append(_unresolved_call_violation(path, name, line, "bare"))
+    for name, line in _self_method_unresolved_calls(tree):
+        violations.append(_unresolved_call_violation(path, name, line, "self"))
+    return violations
+
+
+def _unresolved_call_violations(conn, file_ids: list[int]) -> list[dict]:
+    """Flag calls that resolve to NOTHING in the changed Python files. Reads the
+    WORKING-TREE source (so a just-added hallucinated call is caught on the line
+    it was added). Test-role files are excluded — same default as the import
+    resolver and the algo detectors: fixtures intentionally embed dangling
+    references. Best-effort: never raises into the gate."""
+    if not file_ids:
+        return []
+    try:
+        rows = batched_in(conn, "SELECT id, path, file_role FROM files WHERE id IN ({ph})", file_ids)
+        root = Path(find_project_root())
+    except Exception as exc:  # noqa: BLE001 — call resolution is advisory to the gate
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.unresolved_calls.setup", exc)
+        return []
+    out: list[dict] = []
+    for row in rows:
+        path = row["path"]
+        if row["file_role"] == "test" or not str(path).endswith(".py"):
+            continue
+        try:
+            source = (root / path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            out.extend(_unresolved_calls_for_source(path, source))
+        except Exception as exc:  # noqa: BLE001 — one bad file must not break the gate
+            from roam.observability import log_swallowed
+
+            log_swallowed("verify.unresolved_calls.scan", exc)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2591,6 +2934,727 @@ def _check_tests(
 
 
 # ---------------------------------------------------------------------------
+# Breaking-change guardrail — a changed symbol whose SIGNATURE changed while at
+# least one caller lives in a file that was NOT co-edited. The caller will break
+# and the agent never saw it. BLOCK. Reuses the breaking-changes detector (git
+# HEAD vs the indexed working tree) for the signature diff and the canonical
+# call/reference edge graph for the callers.
+# ---------------------------------------------------------------------------
+
+
+def _symbol_ids_in_file(conn, path: str, name: str) -> list[int]:
+    """DB symbol ids named *name* defined in *path* (for the caller lookup)."""
+    rows = conn.execute(
+        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path = ? AND s.name = ?",
+        (path, name),
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
+def _breaking_caller_files(conn, symbol_ids: list[int]) -> set[str]:
+    """Files that CALL or REFERENCE any of *symbol_ids* (reverse edges, 1-hop).
+    Uses the canonical call+reference edge vocabulary so the reach matches
+    blast-radius / affected semantics. Best-effort: empty on any failure (a
+    missed caller is a false-negative gate, never a false block)."""
+    if not symbol_ids:
+        return set()
+    try:
+        from roam.db.edge_kinds import call_or_ref_in_clause
+
+        rows = batched_in(
+            conn,
+            "SELECT DISTINCT f.path AS path "
+            "FROM edges e JOIN symbols s ON e.source_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            f"WHERE e.target_id IN ({{ph}}) AND {call_or_ref_in_clause('e.kind')}",
+            symbol_ids,
+        )
+    except Exception as exc:  # noqa: BLE001 — caller lookup is advisory to the gate
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.breaking.callers", exc)
+        return set()
+    return {r["path"] for r in rows if r["path"]}
+
+
+def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
+    """Guardrail: signature change + an un-edited external caller => FAIL (BLOCK).
+
+    Scoped to EXPORTED, non-dunder, non-underscore symbols (the breaking-changes
+    detector already filters to exported; the name gate is belt-and-suspenders
+    against private-helper churn) and an external-caller blast threshold
+    (``ROAM_VERIFY_BREAKING_MIN_CALLERS``). Findings are marked ``hard_block`` so
+    they survive --diff-only scoping and pin the verdict to FAIL."""
+    if not _verify_env_flag("ROAM_VERIFY_BREAKING", True):
+        return {"score": 100, "violations": []}
+    changed = {p.replace("\\", "/") for p in (target_paths or [])}
+    source_paths = [p for p in changed if p.endswith(".py") and not is_test_file(p)]
+    if not source_paths or len(source_paths) > _MAX_BREAKING_FILES:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_breaking import (
+            _compare_file,
+            _extract_old_symbols,
+            _get_current_symbols,
+            _git_show,
+        )
+    except Exception as exc:  # noqa: BLE001 — never break the gate on an import error
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.breaking.import", exc)
+        return {"score": 100, "violations": []}
+
+    min_callers = max(1, _verify_env_int("ROAM_VERIFY_BREAKING_MIN_CALLERS", 1))
+    violations: list[dict] = []
+    for path in source_paths:
+        old_source = _git_show(root, "HEAD", path)
+        if old_source is None:
+            continue  # new file at HEAD — nothing to break
+        try:
+            old_symbols = _extract_old_symbols(old_source, path)
+        except Exception as exc:  # noqa: BLE001 — one unparseable file must not break the gate
+            from roam.observability import log_swallowed
+
+            log_swallowed("verify.breaking.extract", exc)
+            continue
+        if not old_symbols:
+            continue
+        new_symbols = _get_current_symbols(conn, path)
+        _removed, sig_changed, _renamed = _compare_file(path, old_symbols, new_symbols)
+        for sym in sig_changed:
+            name = sym.get("name") or ""
+            if not name or name.startswith("_"):
+                continue  # private helper / dunder — not a public API contract
+            external = sorted(
+                f for f in _breaking_caller_files(conn, _symbol_ids_in_file(conn, path, name)) if f not in changed
+            )
+            if len(external) < min_callers:
+                continue
+            sample = ", ".join(external[:3]) + (" ..." if len(external) > 3 else "")
+            violations.append(
+                {
+                    "category": _VERIFY_BREAKING_CATEGORY,
+                    "severity": SEVERITY_FAIL,
+                    "hard_block": True,
+                    "file": path,
+                    "line": sym.get("line"),
+                    "message": (
+                        f"breaking change: signature of `{name}` changed but "
+                        f"{len(external)} un-edited caller file(s) still call it "
+                        f"({sample}) — they will break"
+                    ),
+                    "fix": (
+                        "Update the callers in this same change, keep the old "
+                        "signature back-compatible, or stage a deprecation"
+                    ),
+                }
+            )
+    return {"score": 0 if violations else 100, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
+# Taint / auth gate (opt-in, ROAM_VERIFY_TAINT=1) — surface a source->sink taint
+# path that TOUCHES a changed file, reusing the shipped taint engine + rule
+# packs. Default OFF + WARN-severity (FP-prone): it surfaces, it does not block.
+# ---------------------------------------------------------------------------
+
+
+def _taint_finding_files(finding) -> set[str]:
+    syms = [getattr(finding, "source_symbol", None), getattr(finding, "sink_symbol", None)]
+    syms.extend(getattr(finding, "path_symbols", None) or [])
+    files: set[str] = set()
+    for sym in syms:
+        if isinstance(sym, dict) and sym.get("file"):
+            files.add(str(sym["file"]).replace("\\", "/"))
+    return files
+
+
+def _check_taint(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
+    """Opt-in: surface taint source->sink paths whose source/sink/route touches a
+    changed file. Best-effort and advisory — never raises, never hard-blocks."""
+    if not _verify_env_flag("ROAM_VERIFY_TAINT", False):
+        return {"score": 100, "violations": []}
+    changed = {p.replace("\\", "/") for p in (target_paths or [])}
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_taint import _default_rules_dir
+        from roam.security.taint_engine import load_rules, run_taint
+
+        rules = load_rules(_default_rules_dir())
+        findings = run_taint(conn, rules) if rules else []
+    except Exception as exc:  # noqa: BLE001 — opt-in security surface must never break the gate
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.taint", exc)
+        return {"score": 100, "violations": []}
+
+    violations: list[dict] = []
+    seen: set = set()
+    for finding in findings:
+        touched = _taint_finding_files(finding)
+        if not (touched & changed):
+            continue
+        src = getattr(finding, "source_symbol", None) or {}
+        sink = getattr(finding, "sink_symbol", None) or {}
+        rule_id = getattr(finding, "rule_id", "taint")
+        key = (rule_id, src.get("file"), src.get("line"), sink.get("file"), sink.get("line"))
+        if key in seen:
+            continue
+        seen.add(key)
+        loc_file = (sink.get("file") or src.get("file") or sorted(touched & changed)[0] or "").replace("\\", "/")
+        sanitized = " (a sanitizer is on the path)" if getattr(finding, "sanitizer_in_path", False) else ""
+        violations.append(
+            {
+                "category": _VERIFY_TAINT_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": loc_file,
+                "line": sink.get("line") or src.get("line"),
+                "message": (
+                    f"taint [{rule_id}]: source `{src.get('name')}` reaches sink "
+                    f"`{sink.get('name')}` through a file you changed{sanitized}"
+                ),
+                "fix": "Confirm the tainted value is validated/sanitized before the sink",
+            }
+        )
+    return {"score": 100 if not violations else 60, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
+# Additional reusable detector wires. Each reuses the shipped roam command's
+# engine, is scoped to the changed files (the diff), is independently
+# env-flagged (ROAM_VERIFY_<NAME>) and FULLY fail-open: any import or runtime
+# error yields NO finding and never raises the gate.
+# ---------------------------------------------------------------------------
+
+
+def _swallow_verify(tag, exc):
+    try:
+        from roam.observability import log_swallowed
+
+        log_swallowed(tag, exc)
+    except Exception:  # noqa: BLE001 — logging must never break the gate
+        pass
+
+
+def _verify_changed_set(target_paths):
+    return {p.replace("\\", "/") for p in (target_paths or [])}
+
+
+def _verify_loc_path(loc_str):
+    s = (loc_str or "").replace("\\", "/")
+    m = re.match(r"^(.*?):\d+(?::\d+)?$", s)
+    return m.group(1) if m else s
+
+
+def _verify_loc_line(loc_str):
+    m = re.search(r":(\d+)(?::\d+)?$", (loc_str or "").replace("\\", "/"))
+    return int(m.group(1)) if m else None
+
+
+def _verify_rowval(row, key, default=None):
+    try:
+        return row[key]
+    except (IndexError, KeyError, TypeError):
+        return default
+
+
+def _compile_deleted_reference_lookup(candidate_names):
+    ordered = sorted(candidate_names, key=lambda nm: (-len(nm), nm))
+    return re.compile(r"\b(?:" + "|".join(re.escape(nm) for nm in ordered) + r")\b")
+
+
+def _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_lookup):
+    hits = set()
+    for match in reference_rx.finditer(content or ""):
+        name = match.group(0)
+        if name in candidate_lookup:
+            hits.add(name)
+    return sorted(hits)
+
+
+def _check_delete_safety(conn, target_paths, root):
+    """Guardrail (opt-in, ROAM_VERIFY_DELETE_CHECK=1): a symbol the diff DELETES
+    that is still referenced from an un-edited code file => FAIL (BLOCK). Reuses
+    delete-check's git-diff parser + the grep survivor engine. Default OFF: the
+    grep survivor scan is FP-prone for a live gate. Skips names still DEFINED
+    elsewhere (a move/rename, not a dangling delete)."""
+    if not _verify_env_flag("ROAM_VERIFY_DELETE_CHECK", False):
+        return {"score": 100, "violations": []}
+    changed = _verify_changed_set(target_paths)
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_delete_check import _git_diff, _parse_deletions
+        from roam.commands.grep_helpers import indexed_file_scan
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.import", exc)
+        return {"score": 100, "violations": []}
+    try:
+        diff_text, err = _git_diff(root, "working", "main", None)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.diff", exc)
+        return {"score": 100, "violations": []}
+    if err or not diff_text:
+        return {"score": 100, "violations": []}
+    try:
+        _deleted_files, deleted_lines = _parse_deletions(diff_text)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.parse", exc)
+        return {"score": 100, "violations": []}
+    names = []
+    seen = set()
+    for entry in deleted_lines:
+        try:
+            _p, _l, sym, kind = entry
+        except Exception:  # noqa: BLE001
+            continue
+        if kind != "symbol":
+            continue
+        nm = (sym or "").strip()
+        if len(nm) < 5 or nm.startswith("_") or not nm.isidentifier() or nm in seen:
+            continue
+        seen.add(nm)
+        names.append(nm)
+    if not names:
+        return {"score": 100, "violations": []}
+    still_defined = set()
+    try:
+        rows = batched_in(conn, "SELECT DISTINCT name FROM symbols WHERE name IN ({ph})", names)
+        still_defined = {_verify_rowval(r, "name") for r in rows}
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.defined", exc)
+    candidates = [n for n in names if n not in still_defined]
+    if not candidates:
+        return {"score": 100, "violations": []}
+    candidate_lookup = set(candidates)
+    try:
+        # indexed_file_scan (delete-check's own fallback engine) reads indexed
+        # files from disk + regex — tty-independent, unlike run_search/rg which
+        # reads STDIN under a non-interactive Stop hook and silently finds none.
+        reference_rx = _compile_deleted_reference_lookup(candidate_lookup)
+        matches = indexed_file_scan([reference_rx], conn, root)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.search", exc)
+        return {"score": 100, "violations": []}
+    by_name = {}
+    for m in matches or []:
+        mp = (m.get("path") or "").replace("\\", "/")
+        if not mp or mp in changed or is_test_file(mp) or not _is_import_resolution_source_path(mp):
+            continue
+        content = m.get("content") or ""
+        for nm in _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_lookup):
+            by_name.setdefault(nm, []).append((mp, m.get("line")))
+    violations = []
+    for nm, locs in by_name.items():
+        files = sorted({f for f, _ in locs})
+        sample = ", ".join(files[:3]) + (" ..." if len(files) > 3 else "")
+        violations.append(
+            {
+                "category": _VERIFY_DELETE_CATEGORY,
+                "severity": SEVERITY_FAIL,
+                "hard_block": True,
+                "file": files[0],
+                "line": next((ln for _, ln in locs), None),
+                "message": (
+                    f"deleted symbol `{nm}` is still referenced by {len(files)} "
+                    f"un-edited file(s) ({sample}) — they will break"
+                ),
+                "fix": "Restore the symbol, update the surviving references in this change, or stage a deprecation",
+            }
+        )
+    return {"score": 0 if violations else 100, "violations": violations}
+
+
+def _check_migration_safety(conn, target_paths, root):
+    """Guardrail (ROAM_VERIFY_MIGRATION_SAFETY=1, default ON): a changed .php
+    migration with a non-idempotent / destructive op. High-confidence => BLOCK
+    (catastrophic on rerun); the rest WARN. Reuses analyze_migration_safety. A
+    no-op on every non-migration edit (it only runs when a changed file is a
+    .php migration)."""
+    if not _verify_env_flag("ROAM_VERIFY_MIGRATION_SAFETY", True):
+        return {"score": 100, "violations": []}
+    migs = {p for p in _verify_changed_set(target_paths) if "migration" in p.lower() and p.lower().endswith(".php")}
+    if not migs:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_migration_safety import analyze_migration_safety
+
+        findings = analyze_migration_safety(conn, include_archive=False)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.migration_safety", exc)
+        return {"score": 100, "violations": []}
+    violations = []
+    for f in findings or []:
+        fp = (f.get("file") or "").replace("\\", "/")
+        if fp not in migs:
+            continue
+        block = (f.get("confidence") or "").lower() == "high"
+        v = {
+            "category": _VERIFY_MIGRATION_CATEGORY,
+            "severity": SEVERITY_FAIL if block else SEVERITY_WARN,
+            "file": fp,
+            "line": f.get("line"),
+            "message": f"migration safety: {f.get('issue') or 'non-idempotent / destructive operation'}",
+            "fix": f.get("fix") or "Guard create/drop (hasTable/hasColumn), make it reversible, provide a down()",
+        }
+        if block:
+            v["hard_block"] = True
+        violations.append(v)
+    if any(v.get("hard_block") for v in violations):
+        score = 0
+    elif violations:
+        score = 60
+    else:
+        score = 100
+    return {"score": score, "violations": violations}
+
+
+def _check_smells(conn, target_paths):
+    """Advisory WARN (ROAM_VERIFY_SMELLS=1): god-class / brain-method /
+    deep-nesting and the other 24 structural smell detectors, scoped to changed
+    files. Reuses roam.catalog.smells.run_all_detectors."""
+    if not _verify_env_flag("ROAM_VERIFY_SMELLS", False):
+        return {"score": 100, "violations": []}
+    changed = _verify_changed_set(target_paths)
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.catalog.smells import run_all_detectors
+
+        findings = run_all_detectors(conn)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.smells", exc)
+        return {"score": 100, "violations": []}
+    violations = []
+    for f in findings or []:
+        loc_str = f.get("location") or f.get("file") or ""
+        fp = _verify_loc_path(loc_str)
+        if fp not in changed:
+            continue
+        kind = f.get("kind") or f.get("smell_id") or f.get("smell") or "smell"
+        msg = f.get("message") or f.get("detail") or f.get("description") or str(kind)
+        violations.append(
+            {
+                "category": _VERIFY_SMELLS_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": fp,
+                "line": f.get("line") or _verify_loc_line(loc_str),
+                "message": f"smell [{kind}]: {msg}",
+                "fix": f.get("suggestion") or "Refactor (extract / split) to reduce the structural smell",
+            }
+        )
+    return {"score": 100 if not violations else 80, "violations": violations}
+
+
+def _check_clones(conn, target_paths):
+    """Advisory WARN (ROAM_VERIFY_CLONES=1): AST structural near-duplicate of a
+    changed file (reimplemented-existing-code beyond exact dupes). Reuses
+    roam.graph.clone_detect.detect_clones. Heavier (re-parses source)."""
+    if not _verify_env_flag("ROAM_VERIFY_CLONES", False):
+        return {"score": 100, "violations": []}
+    changed = _verify_changed_set(target_paths)
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.graph.clone_detect import detect_clones
+
+        pairs, _clusters = detect_clones(conn)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.clones", exc)
+        return {"score": 100, "violations": []}
+    violations = []
+    seen = set()
+    for p in pairs or []:
+        fa = (getattr(p, "file_a", "") or "").replace("\\", "/")
+        fb = (getattr(p, "file_b", "") or "").replace("\\", "/")
+        if fa in changed:
+            here, other, line = fa, fb, getattr(p, "line_a", None)
+        elif fb in changed:
+            here, other, line = fb, fa, getattr(p, "line_b", None)
+        else:
+            continue
+        sim = float(getattr(p, "similarity", 0.0) or 0.0)
+        key = (min(fa, fb), max(fa, fb), round(sim, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        violations.append(
+            {
+                "category": _VERIFY_CLONES_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": here,
+                "line": line,
+                "message": (
+                    f"near-duplicate code ({sim:.0%} similar) between `{here}` and "
+                    f"`{other}` — likely reimplements existing code"
+                ),
+                "fix": "Extract the shared logic into one place instead of duplicating it",
+            }
+        )
+    return {"score": 100 if not violations else 80, "violations": violations}
+
+
+def _check_magic_numbers(target_paths, root):
+    """Advisory WARN (ROAM_VERIFY_MAGIC_NUMBERS=1): a numeric literal repeated
+    >= ROAM_VERIFY_MAGIC_MIN (default 3) times across the changed Python.
+    Reuses cmd_magic_numbers._scan_python_file."""
+    if not _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
+        return {"score": 100, "violations": []}
+    changed = [p for p in _verify_changed_set(target_paths) if p.endswith(".py") and not is_test_file(p)]
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_magic_numbers import _scan_python_file
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.magic_numbers.import", exc)
+        return {"score": 100, "violations": []}
+    threshold = max(2, _verify_env_int("ROAM_VERIFY_MAGIC_MIN", 3))
+    occ = defaultdict(list)
+    for rel in changed:
+        try:
+            raw = _scan_python_file(root / rel, include_trivial=False)
+        except Exception as exc:  # noqa: BLE001
+            _swallow_verify("verify.magic_numbers.scan", exc)
+            continue
+        for item in raw or []:
+            try:
+                val, line, _snip = item
+            except Exception:  # noqa: BLE001
+                continue
+            occ[val].append((rel, line))
+    violations = []
+    for val, hits in occ.items():
+        if len(hits) < threshold:
+            continue
+        files = sorted({h[0] for h in hits})
+        f0, l0 = hits[0]
+        violations.append(
+            {
+                "category": _VERIFY_MAGIC_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": f0,
+                "line": l0,
+                "message": (
+                    f"magic number {val!r} repeated {len(hits)}x across changed code "
+                    f"({len(files)} file(s)) — name it a constant"
+                ),
+                "fix": "Extract the literal to a named module-level constant",
+            }
+        )
+    return {"score": 100 if not violations else 85, "violations": violations}
+
+
+def _check_dead(conn, target_paths):
+    """Advisory WARN (ROAM_VERIFY_DEAD=1): an exported symbol in a changed file
+    that now has no production consumers. Reuses cmd_dead._analyze_dead."""
+    if not _verify_env_flag("ROAM_VERIFY_DEAD", False):
+        return {"score": 100, "violations": []}
+    py_changed = {p for p in _verify_changed_set(target_paths) if p.endswith(".py")}
+    if not py_changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_dead import _analyze_dead
+
+        result = _analyze_dead(conn)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.dead", exc)
+        return {"score": 100, "violations": []}
+    high = result[0] if result else []
+    try:
+        prows = batched_in(conn, "SELECT id, path FROM files WHERE path IN ({ph})", sorted(py_changed))
+        id_to_path = {_verify_rowval(r, "id"): _verify_rowval(r, "path") for r in prows}
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.dead.files", exc)
+        return {"score": 100, "violations": []}
+    changed_ids = {i for i in id_to_path if i is not None}
+    violations = []
+    for r in high or []:
+        fid = _verify_rowval(r, "file_id")
+        if fid not in changed_ids:
+            continue
+        name = _verify_rowval(r, "name", "?")
+        line = _verify_rowval(r, "line_start") or _verify_rowval(r, "line")
+        violations.append(
+            {
+                "category": _VERIFY_DEAD_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": id_to_path.get(fid),
+                "line": line,
+                "message": f"exported symbol `{name}` has no production consumers (dead) after this change",
+                "fix": "Remove the now-orphaned symbol, or wire the intended consumer",
+            }
+        )
+    return {"score": 100 if not violations else 85, "violations": violations}
+
+
+def _check_n1(conn, target_paths):
+    """Advisory WARN (ROAM_VERIFY_N1=1): an N+1 lazy-load whose model/accessor
+    touches a changed file. Reuses cmd_n1.analyze_n1; low-confidence skipped."""
+    if not _verify_env_flag("ROAM_VERIFY_N1", False):
+        return {"score": 100, "violations": []}
+    changed = _verify_changed_set(target_paths)
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_n1 import analyze_n1
+
+        out = analyze_n1(conn)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.n1", exc)
+        return {"score": 100, "violations": []}
+    findings = out[0] if isinstance(out, tuple) else out
+    violations = []
+    for f in findings or []:
+        if (f.get("confidence") or "").lower() == "low":
+            continue
+        ml = _verify_loc_path(f.get("model_location") or "")
+        al = _verify_loc_path(f.get("accessor_location") or "")
+        if ml not in changed and al not in changed:
+            continue
+        loc_file = al if al in changed else ml
+        violations.append(
+            {
+                "category": _VERIFY_N1_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": loc_file,
+                "line": _verify_loc_line(f.get("accessor_location") or f.get("model_location") or ""),
+                "message": (
+                    f"possible N+1: `{f.get('accessor_name')}` lazily loads "
+                    f"`{f.get('relationship')}` ({f.get('confidence')} confidence)"
+                ),
+                "fix": f.get("suggestion") or "Eager-load the relationship to avoid a per-item query",
+            }
+        )
+    return {"score": 100 if not violations else 85, "violations": violations}
+
+
+def _check_over_fetch(conn, target_paths):
+    """Advisory WARN (ROAM_VERIFY_OVER_FETCH=1): a serializer / endpoint in a
+    changed file returning more fields than used. Reuses analyze_over_fetch."""
+    if not _verify_env_flag("ROAM_VERIFY_OVER_FETCH", False):
+        return {"score": 100, "violations": []}
+    changed = _verify_changed_set(target_paths)
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_over_fetch import analyze_over_fetch
+
+        findings = analyze_over_fetch(conn, 3, 100)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.over_fetch", exc)
+        return {"score": 100, "violations": []}
+    violations = []
+    for f in findings or []:
+        fp = (f.get("file") or "").replace("\\", "/")
+        if fp not in changed:
+            continue
+        violations.append(
+            {
+                "category": _VERIFY_OVER_FETCH_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": fp,
+                "line": f.get("line"),
+                "message": f"over-fetch: {f.get('endpoint') or 'endpoint'} returns more fields than the response uses",
+                "fix": "Select only the fields the response actually needs",
+            }
+        )
+    return {"score": 100 if not violations else 88, "violations": violations}
+
+
+def _check_llm_smells(target_paths, root):
+    """Advisory WARN (ROAM_VERIFY_LLM_SMELLS=1): LLM-API anti-patterns (no model
+    pin, no max_tokens / timeout, prompt-injection concat, ...) in a changed
+    file that calls an LLM SDK. Reuses cmd_llm_smells._DETECTORS per file."""
+    if not _verify_env_flag("ROAM_VERIFY_LLM_SMELLS", False):
+        return {"score": 100, "violations": []}
+    changed = [
+        p for p in _verify_changed_set(target_paths) if _is_import_resolution_source_path(p) and not is_test_file(p)
+    ]
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_llm_smells import _DETECTORS
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.llm_smells.import", exc)
+        return {"score": 100, "violations": []}
+    hints = (
+        "openai",
+        "anthropic",
+        "litellm",
+        "completion",
+        "chat.completion",
+        "messages.create",
+        "generativemodel",
+        "gpt-",
+        "claude-",
+    )
+    violations = []
+    for rel in changed:
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+        low = text.lower()
+        if not any(h in low for h in hints):
+            continue
+        for kind, fn in _DETECTORS:
+            try:
+                hits = fn(rel, text) or []
+            except Exception as exc:  # noqa: BLE001
+                _swallow_verify("verify.llm_smells.detector", exc)
+                continue
+            for h in hits:
+                violations.append(
+                    {
+                        "category": _VERIFY_LLM_SMELLS_CATEGORY,
+                        "severity": SEVERITY_WARN,
+                        "file": (h.get("file") or rel).replace("\\", "/"),
+                        "line": h.get("line"),
+                        "message": f"llm-smell [{kind}]: {h.get('message') or h.get('detail') or h.get('issue') or kind}",
+                        "fix": h.get("fix")
+                        or "Harden the LLM call (pin model, set max_tokens / timeout, validate output)",
+                    }
+                )
+    return {"score": 100 if not violations else 85, "violations": violations}
+
+
+def _check_test_hermeticity(target_paths, root):
+    """Advisory WARN (ROAM_VERIFY_TEST_HERMETICITY=1): non-hermetic patterns
+    (wall-clock, network, randomness, env access) in a changed test file.
+    Reuses cmd_test_hermeticity._scan_test_file."""
+    if not _verify_env_flag("ROAM_VERIFY_TEST_HERMETICITY", False):
+        return {"score": 100, "violations": []}
+    changed = [p for p in _verify_changed_set(target_paths) if is_test_file(p) and p.endswith(".py")]
+    if not changed:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_test_hermeticity import _scan_test_file
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.test_hermeticity.import", exc)
+        return {"score": 100, "violations": []}
+    violations = []
+    for rel in changed:
+        try:
+            hits = _scan_test_file(rel, root) or []
+        except Exception as exc:  # noqa: BLE001
+            _swallow_verify("verify.test_hermeticity.scan", exc)
+            continue
+        for h in hits:
+            violations.append(
+                {
+                    "category": _VERIFY_HERMETICITY_CATEGORY,
+                    "severity": SEVERITY_WARN,
+                    "file": (h.get("file") or rel).replace("\\", "/"),
+                    "line": h.get("line"),
+                    "message": f"non-hermetic test: {h.get('kind')} ({h.get('evidence')})",
+                    "fix": "Mock / freeze the non-hermetic dependency (time, network, randomness, env)",
+                }
+            )
+    return {"score": 100 if not violations else 85, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
 
@@ -2803,7 +3867,17 @@ def _apply_report_mode(
 ) -> tuple[list[str], list[str], bool]:
     if not report:
         return selected, target_paths, False
-    report_selected = selected if checks_opt else [check for check in _ALL_CHECKS if check != "tests"]
+    # REPORT is a whole-repo, non-gating punch-list. Skip the diff/gate-only
+    # checks: the executable `tests` run and the breaking/taint guardrails are
+    # change-relative, not repo-wide lint, so they have no meaning here.
+    _report_excluded = (
+        "tests",
+        _VERIFY_BREAKING_CATEGORY,
+        _VERIFY_TAINT_CATEGORY,
+        _VERIFY_DELETE_CATEGORY,
+        _VERIFY_MIGRATION_CATEGORY,
+    )
+    report_selected = selected if checks_opt else [check for check in _ALL_CHECKS if check not in _report_excluded]
     report_targets = target_paths if files else _all_report_paths(root, report_selected)
     return report_selected, report_targets, True
 
@@ -2883,6 +3957,42 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             selected, "command_examples", lambda: _check_command_examples(target_paths, root)
         ),
         "claims": _maybe_run_verify_check(selected, "claims", lambda: _check_claims(target_paths, root)),
+        _VERIFY_BREAKING_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_BREAKING_CATEGORY, lambda: _check_breaking(conn, file_ids, target_paths, root)
+        ),
+        _VERIFY_TAINT_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_TAINT_CATEGORY, lambda: _check_taint(conn, file_ids, target_paths, root)
+        ),
+        _VERIFY_DELETE_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_DELETE_CATEGORY, lambda: _check_delete_safety(conn, target_paths, root)
+        ),
+        _VERIFY_MIGRATION_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_MIGRATION_CATEGORY, lambda: _check_migration_safety(conn, target_paths, root)
+        ),
+        _VERIFY_SMELLS_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_SMELLS_CATEGORY, lambda: _check_smells(conn, target_paths)
+        ),
+        _VERIFY_CLONES_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_CLONES_CATEGORY, lambda: _check_clones(conn, target_paths)
+        ),
+        _VERIFY_MAGIC_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_MAGIC_CATEGORY, lambda: _check_magic_numbers(target_paths, root)
+        ),
+        _VERIFY_DEAD_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_DEAD_CATEGORY, lambda: _check_dead(conn, target_paths)
+        ),
+        _VERIFY_N1_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_N1_CATEGORY, lambda: _check_n1(conn, target_paths)
+        ),
+        _VERIFY_OVER_FETCH_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_OVER_FETCH_CATEGORY, lambda: _check_over_fetch(conn, target_paths)
+        ),
+        _VERIFY_LLM_SMELLS_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_LLM_SMELLS_CATEGORY, lambda: _check_llm_smells(target_paths, root)
+        ),
+        _VERIFY_HERMETICITY_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_HERMETICITY_CATEGORY, lambda: _check_test_hermeticity(target_paths, root)
+        ),
     }
 
 
@@ -2898,6 +4008,24 @@ def _apply_secrets_verdict_floor(score: int, verdict: str, categories: dict) -> 
         if violation.get("severity") == SEVERITY_FAIL
     )
     if verdict == "PASS" and secrets_fails:
+        return min(score, 79), "WARN"
+    return score, verdict
+
+
+def _apply_hard_block_floor(score: int, verdict: str, violations: list[dict]) -> tuple[int, str]:
+    """Behavioral verdict floors, applied AFTER diff scoping so neither the
+    lenient weighted composite nor a no-op diff-scope can launder a real
+    regression back to PASS (the post-edit gate keys on a non-PASS verdict).
+
+      * hard-block guardrail (breaking change) -> FAIL, score floored hard.
+      * impacted-test FAILURE -> at least WARN (secrets-gate pattern): the
+        executable signal must surface even when the failing test file is not
+        itself on a changed line, which is the common case (you edit source,
+        the covering test lives elsewhere)."""
+    if any(v.get("hard_block") and v.get("severity") == SEVERITY_FAIL for v in violations):
+        return min(score, _HARD_BLOCK_SCORE), "FAIL"
+    test_failed = any(v.get("category") == "tests" and v.get("severity") == SEVERITY_FAIL for v in violations)
+    if test_failed and str(verdict).upper().startswith("PASS"):
         return min(score, 79), "WARN"
     return score, verdict
 
@@ -3018,6 +4146,11 @@ def _filter_baselined_violations(root: Path, categories: dict, violations: list[
 
 def _changed_line_predicate(changed: dict[str, set[int]]):
     def on_changed_line(violation):
+        # Hard-block guardrails (breaking change) are file-level, not line-
+        # scoped — a signature change breaks callers regardless of which exact
+        # line moved, so they survive --diff-only.
+        if violation.get("hard_block"):
+            return True
         path = violation.get("file")
         if path not in changed:
             return True
@@ -3254,6 +4387,8 @@ def _emit_verify_text(
         ("TESTS", "tests"),
         ("COMMAND EXAMPLES", "command_examples"),
         ("CLAIMS", "claims"),
+        ("BREAKING", _VERIFY_BREAKING_CATEGORY),
+        ("TAINT", _VERIFY_TAINT_CATEGORY),
     ):
         _print_category(label, categories[key], fix_suggestions)
     gate_result = "PASS" if score >= threshold else "FAIL"
@@ -3309,6 +4444,9 @@ def _build_verify_run(
         score, verdict = _recompute_filtered_verdict_if_needed(
             score, verdict, all_violations, suppressed_count, baselined_count, diff_scoped, advisory_cats
         )
+        # Hard-block guardrails win last, so neither diff-scoping nor the
+        # recompute can launder a breaking change back to PASS.
+        score, verdict = _apply_hard_block_floor(score, verdict, all_violations)
 
         violation_count = len(all_violations)
         files_checked = len(file_map)

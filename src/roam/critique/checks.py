@@ -205,25 +205,30 @@ def find_changed_symbols(
         ).fetchall()
         # Build a suffix lookup so we can match each row to its unresolved
         # path in O(1) instead of scanning the unresolved list per row.
+        # Hoist the candidate scan out of the assignment loop: each db_path's
+        # candidate suffixes are invariant, so compute them once and reuse.
         unresolved_set = set(unresolved)
+        path_candidates: dict[str, list[str]] = {}
         for row in rows:
             db_path = row["path"]
-            # The candidate unresolved key is whichever known unresolved
-            # suffix matches. We test "path == p" and "path endswith /p"
-            # via the set containment for the relative tail.
-            if db_path in unresolved_set and db_path not in path_to_fid:
-                path_to_fid[db_path] = int(row["id"])
-                continue
-            slash = db_path.rfind("/")
-            tail_key: str | None = None
-            while slash != -1:
-                cand = db_path[slash + 1 :]
-                if cand in unresolved_set and cand not in path_to_fid:
-                    tail_key = cand
+            cands = []
+            if db_path in unresolved_set:
+                cands.append(db_path)
+            suffix_starts = [i + 1 for i, char in enumerate(db_path) if char == "/"]
+            for suffix_start in reversed(suffix_starts):
+                cand = db_path[suffix_start:]
+                if cand in unresolved_set:
+                    cands.append(cand)
+            path_candidates[db_path] = cands
+
+        # Greedy assignment in row order (shortest DB path first): give each
+        # row to the first of its candidates that is still unmapped.
+        for row in rows:
+            file_id = int(row["id"])
+            for cand in path_candidates[row["path"]]:
+                if cand not in path_to_fid:
+                    path_to_fid[cand] = file_id
                     break
-                slash = db_path.rfind("/", 0, slash)
-            if tail_key is not None:
-                path_to_fid[tail_key] = int(row["id"])
 
     if not path_to_fid:
         return []
@@ -377,6 +382,27 @@ def check_clones_not_edited(
 # ---------------------------------------------------------------------------
 
 
+def _load_callers_for_impact_gate(
+    conn: sqlite3.Connection,
+    symbol_ids: list[int],
+) -> dict[int, list[int]]:
+    """Return direct caller ids grouped by changed target symbol."""
+    if not symbol_ids:
+        return {}
+
+    from roam.db.connection import batched_in
+
+    callers_by_symbol: dict[int, list[int]] = {symbol_id: [] for symbol_id in symbol_ids}
+    rows = batched_in(
+        conn,
+        f"SELECT target_id, source_id FROM edges WHERE target_id IN ({{ph}}) AND {call_or_ref_in_clause()}",
+        symbol_ids,
+    )
+    for row in rows:
+        callers_by_symbol.setdefault(int(row[0]), []).append(int(row[1]))
+    return callers_by_symbol
+
+
 def check_impact(
     conn: sqlite3.Connection,
     changed: list[ChangedSymbol],
@@ -395,21 +421,21 @@ def check_impact(
     from roam.runtime.hotspots import runtime_score_max_for_symbols
 
     findings: list[Finding] = []
+    callers_by_symbol = _load_callers_for_impact_gate(
+        conn,
+        [sym.symbol_id for sym in changed],
+    )
     for sym in changed:
         # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pre-W499
         # the plural-only filter matched 0 of 14,949 caller edges on roam-code
         # itself, silently no-op'ing the entire impact check.
-        caller_rows = conn.execute(
-            f"SELECT source_id FROM edges WHERE target_id = ? AND {call_or_ref_in_clause()}",
-            (sym.symbol_id,),
-        ).fetchall()
-        callers = len(caller_rows)
+        caller_ids = callers_by_symbol.get(sym.symbol_id, [])
+        callers = len(caller_ids)
         if callers >= high_callers:
             severity = "high" if callers >= high_callers * 2 else "medium"
             # Hot-path bump: if any direct caller has high runtime weight,
             # escalate severity by one notch. δ signal — Phase 2 leverage
             # primitive shipped earlier this push.
-            caller_ids = [int(row[0]) for row in caller_rows]
             hot_score = runtime_score_max_for_symbols(conn, caller_ids)
             if hot_score >= 0.5 and severity == "medium":
                 severity = "high"

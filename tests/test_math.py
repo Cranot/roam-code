@@ -46,12 +46,12 @@ class TestCatalog:
 
         # Super-optimizer family tasks (agent-opt, observability-opt, ...) have
         # their own family-local detectors and are not run by ``_MATH_DETECTORS``.
-        # These remain catalog tasks for tips/fixes but no longer have built-in
-        # detectors after dead detector removals.
+        # Every non-family catalog task has exactly one built-in detector wired
+        # in ``_MATH_DETECTORS`` (the 11 detectors dropped by the dead-code
+        # autopilot removals were re-wired alongside their restored bodies).
         math_task_keys = {tid for tid, t in CATALOG.items() if not t.get("family")}
-        catalog_only_task_keys = {"async-fire-and-forget-task", "async-nested-run", "membership"}
         detector_tasks = {task_id for task_id, _way_id, _fn in _MATH_DETECTORS}
-        assert detector_tasks == math_task_keys - catalog_only_task_keys
+        assert detector_tasks == math_task_keys
 
     def test_all_tasks_have_required_fields(self):
         from roam.catalog.tasks import CATALOG

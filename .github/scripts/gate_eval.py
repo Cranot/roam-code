@@ -24,9 +24,7 @@ _NUMERIC_RE = re.compile(
     r"(?P<op>>=|<=|>|<|==|=|!=)\s*"
     r"(?P<rhs>[-+]?\d+(?:\.\d+)?)$"
 )
-_DIRECTION_RE = re.compile(
-    r"^(?P<lhs>direction\([A-Za-z_]\w*\))\s*(?P<op>==|=|!=)\s*(?P<rhs>[A-Za-z_-]+)$"
-)
+_DIRECTION_RE = re.compile(r"^(?P<lhs>direction\([A-Za-z_]\w*\))\s*(?P<op>==|=|!=)\s*(?P<rhs>[A-Za-z_-]+)$")
 _FN_RE = re.compile(r"^(?P<fn>[A-Za-z_]\w*)\((?P<metric>[A-Za-z_]\w*)\)$")
 
 _HIGHER_IS_BETTER = {

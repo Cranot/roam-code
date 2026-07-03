@@ -8,7 +8,7 @@ import subprocess
 
 import click
 
-from roam.db.connection import db_exists, find_project_root, open_db
+from roam.db.connection import batched_in, db_exists, find_project_root, open_db
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
 
 
@@ -656,6 +656,24 @@ def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:
     ]
 
 
+def _batch_barrel_counts_to_avoid_n1(conn: sqlite3.Connection, file_ids: list[int]) -> dict[int, int]:
+    """Batch definition counts so index.* barrel filtering avoids N+1 I/O."""
+    counts = {file_id: 0 for file_id in file_ids}
+    rows = batched_in(
+        conn,
+        """
+        SELECT file_id, COUNT(*) AS own_defs
+        FROM symbols
+        WHERE file_id IN ({ph})
+          AND kind IN ('function', 'class', 'method')
+        GROUP BY file_id
+        """,
+        file_ids,
+    )
+    counts.update({r["file_id"]: r["own_defs"] for r in rows})
+    return counts
+
+
 def detect_entry_points(conn: sqlite3.Connection) -> list:
     """Detect project entry points from conventional filenames, main() functions, and route decorators.
 
@@ -701,19 +719,19 @@ def detect_entry_points(conn: sqlite3.Connection) -> list:
 
     # 1. Conventional filenames
     conventional_paths = [f["path"] for f in files if os.path.basename(f["path"]) in _ENTRY_NAMES]
+    barrel_counts = _batch_barrel_counts_to_avoid_n1(
+        conn,
+        [path_to_id[path] for path in conventional_paths if os.path.basename(path).startswith("index.")],
+    )
 
     # 2. Barrel-file filtering: skip index.* files with <=2 own definitions
     for path in conventional_paths:
         bn = os.path.basename(path)
         if bn.startswith("index."):
-            file_id = path_to_id.get(path)
-            if file_id is not None:
-                own_defs = conn.execute(
-                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind IN ('function', 'class', 'method')",
-                    (file_id,),
-                ).fetchone()[0]
-                if own_defs <= 2:
-                    continue  # barrel file — skip
+            file_id = path_to_id[path]
+            own_defs = barrel_counts[file_id]
+            if own_defs <= 2:
+                continue  # barrel file — skip
         if path not in seen_paths:
             seen_paths.add(path)
             results.append({"path": path, "reason": "conventional filename"})

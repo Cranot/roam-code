@@ -101,21 +101,23 @@ def test_unscoped_summary_has_null_scope_fields(tmp_path, monkeypatch):
 
 class TestCompilerAlgoProbe:
     def test_perf_shape_triggers(self):
-        from roam.plan.compiler import _ALGO_PERF_RE
+        from roam.plan.compiler import _compile_algo_perf_re
 
+        pat = _compile_algo_perf_re()
         for t in (
             "optimize the loop in cmd_fan.py",
             "fix the n+1 query in loader.py",
             "make load_items faster",
             "find algorithmic improvements in src/",
         ):
-            assert _ALGO_PERF_RE.search(t), t
+            assert pat.search(t), t
 
     def test_non_perf_shape_does_not_trigger(self):
-        from roam.plan.compiler import _ALGO_PERF_RE
+        from roam.plan.compiler import _compile_algo_perf_re
 
+        pat = _compile_algo_perf_re()
         for t in ("who calls load_items", "explain src/loader.py", "what changed recently"):
-            assert not _ALGO_PERF_RE.search(t), t
+            assert not pat.search(t), t
 
     def test_probe_embeds_scoped_findings(self, tmp_path, monkeypatch):
         proj = _repo(tmp_path)

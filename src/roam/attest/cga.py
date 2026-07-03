@@ -66,6 +66,7 @@ def _git_commit_sha(root: Path) -> str | None:
             timeout=5,
         )
     except (subprocess.SubprocessError, OSError):
+        # No git binary / not a repo / timed out — None is the documented "no SHA" sentinel.
         return None
     if proc.returncode != 0:
         return None
@@ -89,6 +90,7 @@ def _git_dirty_hash(root: Path) -> str | None:
             errors="replace",
         )
     except (subprocess.SubprocessError, OSError):
+        # No git binary / not a repo / timed out — None is the documented "clean or non-git" sentinel.
         return None
     if proc.returncode != 0:
         return None
@@ -380,6 +382,52 @@ def serialize_statement(statement: dict[str, Any]) -> str:
     return json.dumps(statement, sort_keys=True, separators=(",", ":"))
 
 
+def _extract_subject_sha(subject_list: Any) -> str | None:
+    """Return ``subject[0].digest.git_commit_sha1`` if it exists, else None."""
+    if not subject_list or not isinstance(subject_list[0], dict):
+        return None
+    return (subject_list[0].get("digest") or {}).get("git_commit_sha1")
+
+
+def _describe_dirty_hash_mismatch(predicate_dirty: Any, live_dirty: Any) -> str | None:
+    """Return a human-readable mismatch reason, or None when they match."""
+    if predicate_dirty == live_dirty:
+        return None
+    if predicate_dirty is None and live_dirty is not None:
+        return (
+            "git_dirty_hash mismatch — predicate asserts clean tree, but the live working tree has uncommitted changes"
+        )
+    if predicate_dirty is not None and live_dirty is None:
+        return (
+            "git_dirty_hash mismatch — predicate was signed against a "
+            "dirty tree, but the live working tree is clean now"
+        )
+    return (
+        "git_dirty_hash mismatch — predicate's dirty-tree digest "
+        "does not match the live working tree's uncommitted state"
+    )
+
+
+def _check_graph_fingerprints(
+    predicate: dict[str, Any],
+    expected_merkle: str,
+    expected_edges: str,
+    n_symbols: int,
+    n_edges: int,
+) -> list[str]:
+    """Compare the signed graph fingerprints against the live DB values."""
+    mismatches: list[str] = []
+    if predicate.get("merkle_root") != expected_merkle:
+        mismatches.append("merkle_root mismatch — symbols changed since signing")
+    if predicate.get("edge_bundle_digest") != expected_edges:
+        mismatches.append("edge_bundle_digest mismatch — edges changed since signing")
+    if int(predicate.get("symbol_count") or 0) != n_symbols:
+        mismatches.append(f"symbol_count mismatch: got {predicate.get('symbol_count')}, live={n_symbols}")
+    if int(predicate.get("edge_count") or 0) != n_edges:
+        mismatches.append(f"edge_count mismatch: got {predicate.get('edge_count')}, live={n_edges}")
+    return mismatches
+
+
 def verify_cga_statement(
     statement: dict[str, Any],
     conn,
@@ -407,25 +455,14 @@ def verify_cga_statement(
 
     expected_merkle, n_symbols = _symbol_fingerprints(conn)
     expected_edges, n_edges = _edge_bundle_digest(conn)
-
-    if predicate.get("merkle_root") != expected_merkle:
-        errors.append("merkle_root mismatch — symbols changed since signing")
-    if predicate.get("edge_bundle_digest") != expected_edges:
-        errors.append("edge_bundle_digest mismatch — edges changed since signing")
-    if int(predicate.get("symbol_count") or 0) != n_symbols:
-        errors.append(f"symbol_count mismatch: got {predicate.get('symbol_count')}, live={n_symbols}")
-    if int(predicate.get("edge_count") or 0) != n_edges:
-        errors.append(f"edge_count mismatch: got {predicate.get('edge_count')}, live={n_edges}")
+    errors.extend(_check_graph_fingerprints(predicate, expected_merkle, expected_edges, n_symbols, n_edges))
 
     # Subject git_commit_sha1 — the statement claims it was signed against
     # commit X. Refuse if the live tree is at commit Y. Older statements
     # without a usable subject digest (sha == "unknown") are skipped to
     # preserve forward compat with pre-bind statements; emitted statements
     # always carry a usable SHA when in a git repo.
-    subject_list = statement.get("subject") or []
-    subject_sha = None
-    if subject_list and isinstance(subject_list[0], dict):
-        subject_sha = (subject_list[0].get("digest") or {}).get("git_commit_sha1")
+    subject_sha = _extract_subject_sha(statement.get("subject"))
     live_sha = _git_commit_sha(project_root)
     if subject_sha and subject_sha != "unknown" and live_sha and subject_sha != live_sha:
         errors.append(
@@ -436,24 +473,9 @@ def verify_cga_statement(
     # tree is dirty, or vice versa. Pre-bind statements without the field
     # get a soft note (forward compat); newly-emitted ones always include it.
     if "git_dirty_hash" in predicate:
-        predicate_dirty = predicate.get("git_dirty_hash")
-        live_dirty = _git_dirty_hash(project_root)
-        if predicate_dirty != live_dirty:
-            if predicate_dirty is None and live_dirty is not None:
-                errors.append(
-                    "git_dirty_hash mismatch — predicate asserts clean tree, "
-                    "but the live working tree has uncommitted changes"
-                )
-            elif predicate_dirty is not None and live_dirty is None:
-                errors.append(
-                    "git_dirty_hash mismatch — predicate was signed against a "
-                    "dirty tree, but the live working tree is clean now"
-                )
-            else:
-                errors.append(
-                    "git_dirty_hash mismatch — predicate's dirty-tree digest "
-                    "does not match the live working tree's uncommitted state"
-                )
+        dirty_error = _describe_dirty_hash_mismatch(predicate.get("git_dirty_hash"), _git_dirty_hash(project_root))
+        if dirty_error:
+            errors.append(dirty_error)
 
     return not errors, errors
 
@@ -507,6 +529,78 @@ def cosign_available() -> tuple[bool, str]:
     return True, line.strip()
 
 
+def _sign_blob_args(
+    statement_path: Path,
+    sig_path: Path,
+    bundle_path: Path,
+    cert_path: Path | None,
+    key_path: Path | None,
+) -> list[str]:
+    """Assemble the ``cosign sign-blob`` argv for one signing mode.
+
+    Isolated so signing modes (keyless OIDC vs. offline keypair) can
+    diverge without touching the caller's outcome handling.
+    """
+    args = [
+        "cosign",
+        "sign-blob",
+        "--yes",
+        str(statement_path),
+        "--output-signature",
+        str(sig_path),
+        "--bundle",
+        str(bundle_path),
+    ]
+    if cert_path is not None:
+        # Keyless: cosign uses ambient OIDC if available
+        # (GitHub Actions, GCP workload identity, etc.).
+        args.extend(["--output-certificate", str(cert_path)])
+    if key_path is not None:
+        # Offline keypair
+        args.extend(["--key", str(key_path)])
+    return args
+
+
+def _result_if_artifacts_landed(
+    statement_path: Path,
+    sig_path: Path,
+    bundle_path: Path,
+    cert_path: Path | None,
+    version_str: str,
+) -> CosignResult:
+    """Turn cosign's exit-0 into a verdict grounded in on-disk artifacts.
+
+    Pattern-2 discipline: cosign exited 0 but downstream verifiers need
+    an on-disk signature OR bundle to actually verify. If neither
+    landed, we MUST NOT report ``signed=True`` (silent success on
+    degraded resolution — the canonical Pattern-2 anti-pattern). This
+    only fires when cosign's exit status disagrees with its file output
+    (write race, exotic filesystem, output_dir permissions). The
+    well-behaved path (which the test suite exercises) always lands
+    both files and keeps the existing contract.
+    """
+    sig_present = sig_path.exists()
+    bundle_present = bundle_path.exists()
+    if not sig_present and not bundle_present:
+        return CosignResult(
+            signed=False,
+            statement_path=statement_path,
+            skipped_reason=(
+                f"cosign exit 0 but neither signature nor bundle landed on disk "
+                f"(expected {sig_path.name!r} and/or {bundle_path.name!r})"
+            ),
+            cosign_version=version_str,
+        )
+    return CosignResult(
+        signed=True,
+        statement_path=statement_path,
+        signature_path=sig_path if sig_present else None,
+        certificate_path=cert_path if cert_path and cert_path.exists() else None,
+        bundle_path=bundle_path if bundle_present else None,
+        cosign_version=version_str,
+    )
+
+
 def cosign_sign_statement(
     statement_path: Path,
     *,
@@ -558,24 +652,13 @@ def cosign_sign_statement(
     bundle_path = out_dir / (statement_path.stem + ".bundle")
     cert_path = out_dir / (statement_path.stem + ".cert") if keyless else None
 
-    args = [
-        "cosign",
-        "sign-blob",
-        "--yes",
-        str(statement_path),
-        "--output-signature",
-        str(sig_path),
-        "--bundle",
-        str(bundle_path),
-    ]
-    if keyless:
-        # Keyless: cosign uses ambient OIDC if available
-        # (GitHub Actions, GCP workload identity, etc.).
-        if cert_path is not None:
-            args.extend(["--output-certificate", str(cert_path)])
-    else:
-        # Offline keypair
-        args.extend(["--key", str(key_path)])
+    args = _sign_blob_args(
+        statement_path,
+        sig_path,
+        bundle_path,
+        cert_path,
+        None if keyless else key_path,
+    )
 
     try:
         proc = subprocess.run(
@@ -599,34 +682,7 @@ def cosign_sign_statement(
             cosign_version=version_str,
         )
 
-    # Pattern-2 discipline: cosign exited 0 but downstream verifiers
-    # need an on-disk signature OR bundle to actually verify. If neither
-    # landed, we MUST NOT report ``signed=True`` (silent success on
-    # degraded resolution — the canonical Pattern-2 anti-pattern). This
-    # only fires when cosign's exit status disagrees with its file output
-    # (write race, exotic filesystem, output_dir permissions). The
-    # well-behaved path (which the test suite exercises) always lands
-    # both files and keeps the existing contract.
-    sig_present = sig_path.exists()
-    bundle_present = bundle_path.exists()
-    if not sig_present and not bundle_present:
-        return CosignResult(
-            signed=False,
-            statement_path=statement_path,
-            skipped_reason=(
-                f"cosign exit 0 but neither signature nor bundle landed on disk "
-                f"(expected {sig_path.name!r} and/or {bundle_path.name!r})"
-            ),
-            cosign_version=version_str,
-        )
-    return CosignResult(
-        signed=True,
-        statement_path=statement_path,
-        signature_path=sig_path if sig_present else None,
-        certificate_path=cert_path if cert_path and cert_path.exists() else None,
-        bundle_path=bundle_path if bundle_present else None,
-        cosign_version=version_str,
-    )
+    return _result_if_artifacts_landed(statement_path, sig_path, bundle_path, cert_path, version_str)
 
 
 def cosign_verify_statement(

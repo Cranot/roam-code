@@ -51,6 +51,16 @@ from roam.runs.signing import (
     verify_chain,
 )
 
+
+def _run_check_as(phase, warnings_out: list[str], fn, *args, default=None, **kwargs):
+    """Run one substrate helper while preserving W607-AS marker disclosure."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
@@ -123,21 +133,7 @@ def runs_start(ctx, agent):
     # crashing the substrate boundary.
     _w607as_warnings_out: list[str] = []
 
-    def _run_check_as(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AS marker emission.
-
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a ``runs_<phase>_failed:<exc_class>:<detail>``
-        marker via ``_w607as_warnings_out`` and return *default* -- the
-        envelope still emits cleanly with the remaining substrates.
-        """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
-
-    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    root = _run_check_as("resolve_project_root", _w607as_warnings_out, find_project_root, default=None)
     if root is None:
         # find_project_root raised -- surface the marker + bail with a
         # usage-error envelope rather than crashing.
@@ -162,7 +158,7 @@ def runs_start(ctx, agent):
         ctx.exit(2)
 
     try:
-        meta = _run_check_as("start_run", start_run, root, agent=agent, default=None)
+        meta = _run_check_as("start_run", _w607as_warnings_out, start_run, root, agent=agent, default=None)
         if meta is None:
             # start_run raised (caught by W607-AS) -- treat as a partial
             # failure but preserve the original ValueError envelope shape.
@@ -303,15 +299,7 @@ def runs_log(
     # discipline.
     _w607as_warnings_out: list[str] = []
 
-    def _run_check_as(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AS marker emission."""
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
-
-    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    root = _run_check_as("resolve_project_root", _w607as_warnings_out, find_project_root, default=None)
     if root is None:
         verdict = "error: could not resolve project root"
         if json_mode:
@@ -338,7 +326,9 @@ def runs_log(
         # Resolve the implicit run: the most-recent in-progress one.
         # Surface a precise error if none is active so the caller knows
         # exactly what to do next.
-        active = _run_check_as("latest_in_progress_run", latest_in_progress_run, root, default=None)
+        active = _run_check_as(
+            "latest_in_progress_run", _w607as_warnings_out, latest_in_progress_run, root, default=None
+        )
         if active is None:
             verdict = "no active run -- run `roam runs start --agent <name>` first"  # W20.6 error-msg consistency
             if json_mode:
@@ -366,7 +356,7 @@ def runs_log(
         run_id = active.run_id
 
     # Validate the run exists before logging.
-    meta = _run_check_as("read_run_meta", read_run_meta, root, run_id, default=None)
+    meta = _run_check_as("read_run_meta", _w607as_warnings_out, read_run_meta, root, run_id, default=None)
     if meta is None:
         verdict = f"run {run_id} does not exist -- run `roam runs list` to find a valid run_id"
         if json_mode:
@@ -419,7 +409,15 @@ def runs_log(
     # surfaces the marker; the ``seq is None`` check below skips the
     # success envelope and produces an explicit partial_success envelope
     # naming the abort.
-    seq = _run_check_as("compute_hmac_and_write", log_event, root, run_id, default=None, **event_fields)
+    seq = _run_check_as(
+        "compute_hmac_and_write",
+        _w607as_warnings_out,
+        log_event,
+        root,
+        run_id,
+        default=None,
+        **event_fields,
+    )
     if seq is None:
         # HMAC or write-boundary failure -- abort the success path so the
         # ledger does not silently report a successful write. Surface the
@@ -534,15 +532,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     # bundle emit must not block run-close, per existing W15.2 contract).
     _w607as_warnings_out: list[str] = []
 
-    def _run_check_as(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-AS marker emission."""
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
-
-    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    root = _run_check_as("resolve_project_root", _w607as_warnings_out, find_project_root, default=None)
     if root is None:
         verdict = "error: could not resolve project root"
         if json_mode:
@@ -566,7 +556,9 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         ctx.exit(2)
 
     if not run_id:
-        active = _run_check_as("latest_in_progress_run", latest_in_progress_run, root, default=None)
+        active = _run_check_as(
+            "latest_in_progress_run", _w607as_warnings_out, latest_in_progress_run, root, default=None
+        )
         if active is None:
             verdict = "no active run to end -- run `roam runs start --agent <name>` first"
             if json_mode:
@@ -594,7 +586,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         run_id = active.run_id
 
     try:
-        meta = _run_check_as("end_run", end_run, root, run_id, status=status, default=None)
+        meta = _run_check_as("end_run", _w607as_warnings_out, end_run, root, run_id, status=status, default=None)
         if meta is None:
             # end_run raised (caught by W607-AS) -- treat as the existing
             # error path but with the marker already on the bucket.
@@ -633,6 +625,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     if with_pr_bundle_emit:
         _emit_result = _run_check_as(
             "emit_pr_bundle",
+            _w607as_warnings_out,
             _emit_pr_bundle_for_end,
             ctx,
             root,

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from roam.commands.audit_trail_helpers import AUDIT_TRAIL_SCHEMA, next_sequence_number
 from roam.commands.git_helpers import (
@@ -20,6 +22,15 @@ from roam.commands.git_helpers import (
     git_origin_url,
     utc_timestamp,
 )
+
+
+@dataclass(frozen=True)
+class AuditTrailRecordRequest:
+    audit_trail_path: Path
+    diff_text: str
+    bundle: dict[str, Any]
+    intent: str | None = None
+    reviewers_payload: dict[str, Any] | None = None
 
 
 def _last_record_hash(path: Path) -> str:
@@ -44,14 +55,60 @@ def _last_record_hash(path: Path) -> str:
         return ""
 
 
+def _coerce_audit_trail_request(
+    request: AuditTrailRecordRequest | None,
+    legacy_kwargs: dict[str, object],
+) -> AuditTrailRecordRequest:
+    if request is not None:
+        if legacy_kwargs:
+            unexpected = ", ".join(sorted(legacy_kwargs))
+            raise TypeError(f"unexpected keyword arguments with request: {unexpected}")
+        return request
+
+    required = {"audit_trail_path", "diff_text", "bundle", "intent", "reviewers_payload"}
+    missing = sorted(required.difference(legacy_kwargs))
+    unexpected = sorted(set(legacy_kwargs).difference(required))
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected " + ", ".join(unexpected))
+        raise TypeError("; ".join(details))
+
+    audit_trail_path = legacy_kwargs["audit_trail_path"]
+    if not isinstance(audit_trail_path, Path):
+        audit_trail_path = Path(str(audit_trail_path))
+
+    diff_text = legacy_kwargs["diff_text"]
+    if not isinstance(diff_text, str):
+        raise TypeError("diff_text must be a string")
+
+    bundle = legacy_kwargs["bundle"]
+    if not isinstance(bundle, dict):
+        raise TypeError("bundle must be a dict")
+
+    intent = legacy_kwargs["intent"]
+    if intent is not None and not isinstance(intent, str):
+        raise TypeError("intent must be a string or None")
+
+    reviewers_payload = legacy_kwargs["reviewers_payload"]
+    if reviewers_payload is not None and not isinstance(reviewers_payload, dict):
+        raise TypeError("reviewers_payload must be a dict or None")
+
+    return AuditTrailRecordRequest(
+        audit_trail_path=audit_trail_path,
+        diff_text=diff_text,
+        bundle=bundle,
+        intent=intent,
+        reviewers_payload=reviewers_payload,
+    )
+
+
 def _emit_audit_trail_record(
-    *,
-    audit_trail_path: Path,
-    diff_text: str,
-    bundle: dict,
-    intent: str | None,
-    reviewers_payload: dict | None,
-) -> dict:
+    request: AuditTrailRecordRequest | None = None,
+    **legacy_kwargs: object,
+) -> dict[str, Any]:
     """Append a tamper-evident Article 12-shaped record to the audit trail.
 
     The record includes: invoking actor (from git config), repo + git SHA,
@@ -59,6 +116,12 @@ def _emit_audit_trail_record(
     summary, the previous record's hash for chain integrity, and the
     full reviewer payload when supplied.
     """
+    request = _coerce_audit_trail_request(request, legacy_kwargs)
+    audit_trail_path = request.audit_trail_path
+    diff_text = request.diff_text
+    bundle = request.bundle
+    intent = request.intent
+
     audit_trail_path.parent.mkdir(parents=True, exist_ok=True)
     summary = bundle.get("summary") or {}
     rationale = bundle.get("rationale") or {}

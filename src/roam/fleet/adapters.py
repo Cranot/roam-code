@@ -16,6 +16,38 @@ def to_raw(envelope: dict[str, Any]) -> dict[str, Any]:
     return dict(envelope)
 
 
+def _composio_agent(task: dict[str, Any], depends_on: list[str]) -> dict[str, Any]:
+    """Build one Composio agent record from a roam fleet task."""
+    return {
+        "name": task["task_id"],
+        "goal": task["description"],
+        "allowed_paths": task["file_scope"],
+        "depends_on": depends_on,
+        "constraints": {
+            "conflict_risk": task["conflict_risk"],
+            "estimated_complexity": task["estimated_complexity"],
+        },
+    }
+
+
+def _ordered_agents(by_id: dict[str, dict[str, Any]], merge_order: list[int]) -> list[dict[str, Any]]:
+    """Build agents in merge order with accumulated dependency edges.
+
+    Unknown task IDs are skipped so the manifest stays runnable even when
+    the planner referenced tasks that did not survive validation.
+    """
+    agents: list[dict[str, Any]] = []
+    seen: list[int] = []
+    for pid in merge_order:
+        tid = f"task-{pid}"
+        task = by_id.get(tid)
+        if task is None:
+            continue
+        agents.append(_composio_agent(task, depends_on=[f"task-{p}" for p in seen]))
+        seen.append(pid)
+    return agents
+
+
 def to_composio(envelope: dict[str, Any]) -> dict[str, Any]:
     """Composio Agent Orchestrator manifest.
 
@@ -23,44 +55,14 @@ def to_composio(envelope: dict[str, Any]) -> dict[str, Any]:
     of ``agents`` each with ``name``, ``goal``, ``allowed_paths``, and
     optional ``depends_on`` for sequencing.
     """
-    agents = []
-    by_id = {t["task_id"]: t for t in envelope.get("tasks", [])}
+    tasks = envelope.get("tasks", [])
+    by_id = {t["task_id"]: t for t in tasks}
     merge_order = envelope.get("merge_order", [])
-    # Build dependency edges: an agent depends on every agent that should
-    # merge before it.
+
     if merge_order:
-        seen: list[int] = []
-        for pid in merge_order:
-            tid = f"task-{pid}"
-            if tid not in by_id:
-                continue
-            agents.append(
-                {
-                    "name": by_id[tid]["task_id"],
-                    "goal": by_id[tid]["description"],
-                    "allowed_paths": by_id[tid]["file_scope"],
-                    "depends_on": [f"task-{p}" for p in seen],
-                    "constraints": {
-                        "conflict_risk": by_id[tid]["conflict_risk"],
-                        "estimated_complexity": by_id[tid]["estimated_complexity"],
-                    },
-                }
-            )
-            seen.append(pid)
+        agents = _ordered_agents(by_id, merge_order)
     else:
-        for t in envelope.get("tasks", []):
-            agents.append(
-                {
-                    "name": t["task_id"],
-                    "goal": t["description"],
-                    "allowed_paths": t["file_scope"],
-                    "depends_on": [],
-                    "constraints": {
-                        "conflict_risk": t["conflict_risk"],
-                        "estimated_complexity": t["estimated_complexity"],
-                    },
-                }
-            )
+        agents = [_composio_agent(t, depends_on=[]) for t in tasks]
 
     return {
         "version": "composio.v1",

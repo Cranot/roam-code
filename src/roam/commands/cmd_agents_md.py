@@ -28,7 +28,7 @@ from pathlib import Path
 
 import click
 
-from roam.agents_md.generator import generate_agents_md, render_agents_markdown
+from roam.agents_md.generator import AgentsMdOptions, generate_agents_md, render_agents_markdown
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -148,11 +148,13 @@ def agents_md_cmd(
         am = generate_agents_md(
             repo_root,
             conn,
-            with_laws=with_laws,
-            with_rules=with_rules,
-            with_constitution=with_constitution,
-            top_n_danger=top_danger,
-            top_n_laws=top_laws,
+            options=AgentsMdOptions(
+                with_laws=with_laws,
+                with_rules=with_rules,
+                with_constitution=with_constitution,
+                top_n_danger=top_danger,
+                top_n_laws=top_laws,
+            ),
         )
 
     markdown = render_agents_markdown(am)

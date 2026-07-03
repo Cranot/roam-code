@@ -6,6 +6,7 @@ metric deltas, edge analysis, symbol changes, and footprint.
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -130,6 +131,134 @@ def find_before_snapshot(conn, root: Path, base_ref: str | None = None) -> dict 
 # ---------------------------------------------------------------------------
 
 
+def _edge_context_file_ids(edges, changed_file_ids: list[int]) -> list[int]:
+    """Collect every file id needed to explain changed-file edge records."""
+    file_ids = set(changed_file_ids)
+    for edge in edges:
+        file_ids.add(edge["source_file_id"])
+        file_ids.add(edge["target_file_id"])
+    return list(file_ids)
+
+
+def _majority_annotation_by_file(rows, value_key: str) -> dict[int, object]:
+    """Collapse symbol-level annotations to the file-level signal edges need."""
+    counts: dict[int, dict[object, int]] = {}
+    for row in rows:
+        fid = row["file_id"]
+        value = row[value_key]
+        counts.setdefault(fid, {})
+        counts[fid][value] = counts[fid].get(value, 0) + 1
+    return {fid: max(values, key=values.get) for fid, values in counts.items()}
+
+
+def _best_effort_clusters_for_edge_context(conn, file_ids: list[int]) -> dict[int, object]:
+    """Keep edge analysis usable when optional cluster data is unavailable."""
+    from roam.db.connection import batched_in
+
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT s.file_id, c.cluster_label "
+            "FROM symbols s JOIN clusters c ON s.id = c.symbol_id "
+            "WHERE s.file_id IN ({ph})",
+            file_ids,
+        )
+    except (sqlite3.Error, KeyError, TypeError, ValueError):
+        return {}
+    return _majority_annotation_by_file(rows, "cluster_label")
+
+
+def _symbol_file_ids_for_edge_context(conn, file_ids: list[int]) -> dict[int, int]:
+    """Map symbol-layer results back to the files that changed edges mention."""
+    from roam.db.connection import batched_in
+
+    rows = batched_in(
+        conn,
+        "SELECT id, file_id FROM symbols WHERE file_id IN ({ph})",
+        file_ids,
+    )
+    return {row["id"]: row["file_id"] for row in rows}
+
+
+def _layer_rows_for_file_majorities(layer_map: dict, sym_to_file: dict[int, int]) -> list[dict]:
+    """Convert symbol-layer assignments into rows for file-majority collapse."""
+    rows = []
+    for sym_id, layer in layer_map.items():
+        fid = sym_to_file.get(sym_id)
+        if fid is not None:
+            rows.append({"file_id": fid, "layer": layer})
+    return rows
+
+
+def _best_effort_layers_for_edge_context(conn, file_ids: list[int]) -> dict[int, object]:
+    """Keep edge analysis usable when optional graph layering is unavailable."""
+    try:
+        from roam.graph.builder import build_symbol_graph
+        from roam.graph.layers import detect_layers
+
+        layer_map = detect_layers(build_symbol_graph(conn))
+        if not layer_map:
+            return {}
+
+        sym_to_file = _symbol_file_ids_for_edge_context(conn, file_ids)
+        rows = _layer_rows_for_file_majorities(layer_map, sym_to_file)
+    except (ImportError, sqlite3.Error, KeyError, RuntimeError, TypeError, ValueError):
+        return {}
+    return _majority_annotation_by_file(rows, "layer")
+
+
+def _cross_cluster_record(edge, file_paths: dict[int, str], file_clusters: dict[int, object]) -> dict | None:
+    """Report changed edges that cross recovered cluster boundaries."""
+    src_id = edge["source_file_id"]
+    tgt_id = edge["target_file_id"]
+    src_cluster = file_clusters.get(src_id)
+    tgt_cluster = file_clusters.get(tgt_id)
+    if not src_cluster or not tgt_cluster or src_cluster == tgt_cluster:
+        return None
+    return {
+        "source": file_paths.get(src_id, "?"),
+        "target": file_paths.get(tgt_id, "?"),
+        "source_cluster": src_cluster,
+        "target_cluster": tgt_cluster,
+    }
+
+
+def _layer_violation_record(edge, file_paths: dict[int, str], file_layers: dict[int, object]) -> dict | None:
+    """Report changed edges that reverse the recovered layer direction."""
+    src_id = edge["source_file_id"]
+    tgt_id = edge["target_file_id"]
+    src_layer = file_layers.get(src_id)
+    tgt_layer = file_layers.get(tgt_id)
+    if src_layer is None or tgt_layer is None or src_layer >= tgt_layer:
+        return None
+    return {
+        "source": file_paths.get(src_id, "?"),
+        "target": file_paths.get(tgt_id, "?"),
+        "source_layer": src_layer,
+        "target_layer": tgt_layer,
+    }
+
+
+def _classify_edges_with_available_context(
+    edges,
+    file_paths: dict[int, str],
+    file_clusters: dict[int, object],
+    file_layers: dict[int, object],
+) -> tuple[list[dict], list[dict]]:
+    """Separate structural risks while preserving partial optional context."""
+    cross_cluster = []
+    layer_violations = []
+    for edge in edges:
+        cross_cluster_record = _cross_cluster_record(edge, file_paths, file_clusters)
+        if cross_cluster_record:
+            cross_cluster.append(cross_cluster_record)
+
+        layer_violation_record = _layer_violation_record(edge, file_paths, file_layers)
+        if layer_violation_record:
+            layer_violations.append(layer_violation_record)
+    return cross_cluster, layer_violations
+
+
 def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
     """Analyse dependency edges from changed files.
 
@@ -147,108 +276,23 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
         changed_file_ids,
     )
 
-    # Build file_id -> path map
-    all_file_ids = set()
-    for e in edges:
-        all_file_ids.add(e["source_file_id"])
-        all_file_ids.add(e["target_file_id"])
-    all_file_ids.update(changed_file_ids)
+    all_file_ids = _edge_context_file_ids(edges, changed_file_ids)
 
     path_rows = batched_in(
         conn,
         "SELECT id, path FROM files WHERE id IN ({ph})",
-        list(all_file_ids),
+        all_file_ids,
     )
     file_paths = {r["id"]: r["path"] for r in path_rows}
 
-    # Build file_id -> cluster_label map (majority cluster per file)
-    file_clusters: dict[int, str] = {}
-    try:
-        cluster_rows = batched_in(
-            conn,
-            "SELECT s.file_id, c.cluster_label "
-            "FROM symbols s JOIN clusters c ON s.id = c.symbol_id "
-            "WHERE s.file_id IN ({ph})",
-            list(all_file_ids),
-        )
-        counts: dict[int, dict[str, int]] = {}
-        for r in cluster_rows:
-            fid = r["file_id"]
-            label = r["cluster_label"]
-            if fid not in counts:
-                counts[fid] = {}
-            counts[fid][label] = counts[fid].get(label, 0) + 1
-        for fid, labels in counts.items():
-            file_clusters[fid] = max(labels, key=labels.get)
-    except Exception:  # noqa: BLE001 — cluster map is best-effort decoration
-        pass
-
-    # Build file_id -> layer map
-    file_layers: dict[int, int] = {}
-    try:
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
-
-        G = build_symbol_graph(conn)
-        layer_map = detect_layers(G)
-        if layer_map:
-            # Map symbol layers to file layers (majority layer per file)
-            sym_rows = batched_in(
-                conn,
-                "SELECT id, file_id FROM symbols WHERE file_id IN ({ph})",
-                list(all_file_ids),
-            )
-            sym_to_file = {r["id"]: r["file_id"] for r in sym_rows}
-
-            layer_counts: dict[int, dict[int, int]] = {}
-            for sym_id, layer in layer_map.items():
-                fid = sym_to_file.get(sym_id)
-                if fid is None:
-                    continue
-                if fid not in layer_counts:
-                    layer_counts[fid] = {}
-                layer_counts[fid][layer] = layer_counts[fid].get(layer, 0) + 1
-            for fid, layers_dict in layer_counts.items():
-                file_layers[fid] = max(layers_dict, key=layers_dict.get)
-    except Exception:  # noqa: BLE001 — layer map is best-effort decoration
-        pass
-
-    # Flag cross-cluster and layer violations
-    cross_cluster = []
-    layer_violations = []
-
-    for e in edges:
-        src_id = e["source_file_id"]
-        tgt_id = e["target_file_id"]
-        src_path = file_paths.get(src_id, "?")
-        tgt_path = file_paths.get(tgt_id, "?")
-
-        # Cross-cluster
-        src_cluster = file_clusters.get(src_id)
-        tgt_cluster = file_clusters.get(tgt_id)
-        if src_cluster and tgt_cluster and src_cluster != tgt_cluster:
-            cross_cluster.append(
-                {
-                    "source": src_path,
-                    "target": tgt_path,
-                    "source_cluster": src_cluster,
-                    "target_cluster": tgt_cluster,
-                }
-            )
-
-        # Layer violation: lower layer depends on higher layer
-        src_layer = file_layers.get(src_id)
-        tgt_layer = file_layers.get(tgt_id)
-        if src_layer is not None and tgt_layer is not None:
-            if src_layer < tgt_layer:
-                layer_violations.append(
-                    {
-                        "source": src_path,
-                        "target": tgt_path,
-                        "source_layer": src_layer,
-                        "target_layer": tgt_layer,
-                    }
-                )
+    file_clusters = _best_effort_clusters_for_edge_context(conn, all_file_ids)
+    file_layers = _best_effort_layers_for_edge_context(conn, all_file_ids)
+    cross_cluster, layer_violations = _classify_edges_with_available_context(
+        edges,
+        file_paths,
+        file_clusters,
+        file_layers,
+    )
 
     return {
         "total_from_changed": len(edges),
@@ -262,6 +306,58 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _load_current_symbols_without_loop_queries(conn, changed_files: list[str]) -> dict[str, list[dict]]:
+    """Batch current-symbol lookup while preserving exact-then-suffix file resolution."""
+    from roam.db.connection import batched_in
+
+    if not changed_files:
+        return {}
+
+    file_id_by_changed_path: dict[str, int] = {}
+
+    exact_rows = batched_in(
+        conn,
+        "SELECT id, path FROM files WHERE path IN ({ph})",
+        changed_files,
+    )
+    for row in exact_rows:
+        file_id_by_changed_path[row["path"]] = row["id"]
+
+    unresolved_paths = [fpath for fpath in changed_files if fpath not in file_id_by_changed_path]
+    if unresolved_paths:
+        file_rows = conn.execute("SELECT id, path FROM files ORDER BY id").fetchall()
+        for fpath in unresolved_paths:
+            for row in file_rows:
+                if row["path"].endswith(fpath):
+                    file_id_by_changed_path[fpath] = row["id"]
+                    break
+
+    file_ids = sorted(set(file_id_by_changed_path.values()))
+    symbol_rows = batched_in(
+        conn,
+        "SELECT file_id, name, qualified_name, kind, signature, line_start FROM symbols WHERE file_id IN ({ph})",
+        file_ids,
+    )
+
+    symbols_by_file_id: dict[int, list[dict]] = {}
+    for row in symbol_rows:
+        symbols_by_file_id.setdefault(row["file_id"], []).append(
+            {
+                "name": row["name"],
+                "qualified_name": row["qualified_name"],
+                "kind": row["kind"],
+                "signature": row["signature"],
+                "line_start": row["line_start"],
+            }
+        )
+
+    return {
+        fpath: symbols_by_file_id.get(file_id_by_changed_path[fpath], [])
+        for fpath in changed_files
+        if fpath in file_id_by_changed_path
+    }
+
+
 def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) -> dict:
     """Diff symbols between *base_ref* and current index for *changed_files*.
 
@@ -270,34 +366,11 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
     added = []
     removed = []
     modified = []
+    current_symbols_by_path = _load_current_symbols_without_loop_queries(conn, changed_files)
 
     for fpath in changed_files:
         old_source = _git_show(root, base_ref, fpath)
-
-        # Get current symbols from DB
-        file_row = conn.execute("SELECT id FROM files WHERE path = ?", (fpath,)).fetchone()
-        if not file_row:
-            file_row = conn.execute(
-                "SELECT id FROM files WHERE path LIKE ? LIMIT 1",
-                (f"%{fpath}",),
-            ).fetchone()
-
-        current_syms = []
-        if file_row:
-            rows = conn.execute(
-                "SELECT name, qualified_name, kind, signature, line_start FROM symbols WHERE file_id = ?",
-                (file_row["id"],),
-            ).fetchall()
-            current_syms = [
-                {
-                    "name": r["name"],
-                    "qualified_name": r["qualified_name"],
-                    "kind": r["kind"],
-                    "signature": r["signature"],
-                    "line_start": r["line_start"],
-                }
-                for r in rows
-            ]
+        current_syms = current_symbols_by_path.get(fpath, [])
 
         if old_source is None:
             # New file — all symbols are added

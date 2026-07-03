@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -66,7 +67,7 @@ class MemoryEntry:
         if not self.ts:
             self.ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         if not self.id:
-            self.id = _make_id(self.ts, self.kind, self.subject, self.body)
+            self.id = _make_id(self)
         if self.kind not in VALID_KINDS:
             raise ValueError(f"invalid kind {self.kind!r}; expected one of {sorted(VALID_KINDS)}")
         if self.confidence not in VALID_CONFIDENCES:
@@ -83,19 +84,25 @@ class MemoryEntry:
         }
 
     def to_dict(self) -> dict:
+        """Plain-dict wire shape for memory JSONL and JSON envelopes.
+
+        Referenced by the in-file JSONL writer and by ``cmd_memory.py`` JSON
+        envelopes. Kept as the one-call serializer for embedders so callers do
+        not reimplement the dataclass wire shape — reviewed 2026-07-02.
+        """
         return asdict(self)
 
 
-def _make_id(ts: str, kind: str, subject: str, body: str) -> str:
-    """Deterministic id derived from content + timestamp.
+def _make_id(entry: MemoryEntry) -> str:
+    """Deterministic id derived from entry content + timestamp.
 
     Using a hash gives:
-      - de-dup on identical (ts, kind, subject, body) tuples
+      - de-dup on identical (ts, kind, subject, body) entry fields
       - URL-safe / shell-safe (no special chars)
       - short enough to print inline (12 hex chars ≈ 48 bits, plenty for
         per-repo memory volumes — collision probability negligible)
     """
-    payload = f"{ts}|{kind}|{subject}|{body}".encode("utf-8")
+    payload = f"{entry.ts}|{entry.kind}|{entry.subject}|{entry.body}".encode("utf-8")
     digest = hashlib.sha1(payload).hexdigest()[:12]
     # Prefix with "mem_" so the id is self-describing in logs.
     return f"mem_{digest}"
@@ -118,6 +125,10 @@ def memory_path(repo_root: Path) -> Path:
 
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _warn_skipped_memory_line(reason: str, exc: Exception) -> None:
+    print(f"[memory] skipped malformed memory.jsonl line ({reason}): {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +166,8 @@ def _parse_line(line: str) -> MemoryEntry | None:
         return None
     try:
         raw = json.loads(line)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _warn_skipped_memory_line("invalid JSON", exc)
         return None
     if not isinstance(raw, dict):
         return None
@@ -165,8 +177,18 @@ def _parse_line(line: str) -> MemoryEntry | None:
         known = {"id", "ts", "kind", "subject", "body", "agent", "confidence", "tags", "relevance_signals"}
         kwargs = {k: v for k, v in raw.items() if k in known}
         return MemoryEntry(**kwargs)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        _warn_skipped_memory_line("invalid entry", exc)
         return None
+
+
+def _entry_is_visible_to_memory_query(entry: MemoryEntry, *, since: str | None, kind: str | None) -> bool:
+    """Keep list_memory's filtering contract out of the streaming loop."""
+    if kind is not None and entry.kind != kind:
+        return False
+    if since is not None and entry.ts < since:
+        return False
+    return True
 
 
 def list_memory(
@@ -191,9 +213,7 @@ def list_memory(
             entry = _parse_line(line)
             if entry is None:
                 continue
-            if kind is not None and entry.kind != kind:
-                continue
-            if since is not None and entry.ts < since:
+            if not _entry_is_visible_to_memory_query(entry, since=since, kind=kind):
                 continue
             yield entry
 

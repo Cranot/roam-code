@@ -374,7 +374,7 @@ def _load_mcp_tool_names() -> frozenset[str]:
         from roam.mcp_server import _TOOL_METADATA as _meta
 
         collected.update(_meta.keys())
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except (ImportError, AttributeError) as _exc:
         # fastmcp may be absent or mcp_server import may fail; Source 2
         # (AST scan below) still recovers the tool roster.
         from roam.observability import log_swallowed
@@ -411,9 +411,9 @@ def _load_mcp_tool_names() -> frozenset[str]:
                     elif isinstance(deco, ast.Name) and deco.id == "_tool":
                         collected.add(node.name)
                         break
-    except Exception:  # noqa: BLE001 — file IO / ast parse / attr errors, see below
-        # Bare except: file IO, ast parse, attribute errors — none of
-        # these should ever break the dead command's readonly path.
+    except (OSError, SyntaxError, ValueError, AttributeError, TypeError):
+        # File IO, AST parse, or attribute/type issues during traversal —
+        # none of these should break the dead command's readonly path.
         pass
 
     _MCP_TOOL_NAMES_CACHE = frozenset(collected)

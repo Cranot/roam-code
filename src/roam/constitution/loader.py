@@ -24,7 +24,9 @@ SUBSTRATE — failing to load it must not derail an agent.
 
 from __future__ import annotations
 
+import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +44,25 @@ CONSTITUTION_FILE_NAME = "constitution.yml"
 CONSTITUTION_SCHEMA_VERSION = 1
 
 VALID_GATES = ("before_edit", "after_edit", "before_pr")
+
+_YAML_INT_SCALAR_RE = re.compile(r"[+-]?\d+(?:_\d+)*\Z")
+_YAML_FLOAT_SCALAR_RE = re.compile(
+    r"""
+    [+-]?
+    (?:
+        (?:(?:\d+(?:_\d+)*)?\.\d+(?:_\d+)*|\d+(?:_\d+)*\.)
+        (?:[eE][+-]?\d+(?:_\d+)*)?
+        |
+        \d+(?:_\d+)*[eE][+-]?\d+(?:_\d+)*
+        |
+        inf(?:inity)?
+        |
+        nan
+    )
+    \Z
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 # Names match the well-known agent-OS substrate files. Each value is a
 # relative path the loader resolves against ``repo_root``. We also probe
@@ -75,7 +96,13 @@ class Constitution:
     _path: Optional[Path] = None
 
     def to_dict(self) -> dict:
-        """Plain-dict view used by ``roam constitution show --json``."""
+        """Plain-dict view used by ``roam constitution show --json``.
+
+        Referenced from ``cmd_constitution.py`` (the ``show`` envelope's
+        ``constitution`` field). Named here because six same-named
+        ``to_dict`` methods live in this module and reference resolvers
+        routinely misattribute the call edges — reviewed 2026-07-02.
+        """
         return {
             "version": self.version,
             "metadata": self.metadata,
@@ -85,6 +112,15 @@ class Constitution:
             "policy": self.policy,
             "metadata_signals": self.metadata_signals,
         }
+
+
+@dataclass(frozen=True)
+class ConstitutionInitOptions:
+    """Options for generating a repo-local constitution file."""
+
+    with_laws: bool = True
+    with_rules: bool = True
+    force: bool = False
 
 
 @dataclass
@@ -139,6 +175,15 @@ class CheckReport:
     summary_verdict: str = ""
 
     def to_dict(self) -> dict:
+        """Full dict view of the check report.
+
+        No in-tree production caller — ``cmd_constitution.py`` composes
+        its ``check`` envelope field-by-field (it needs per-section
+        counts alongside the lists). Deliberately retained: CheckReport
+        is exported via ``roam.constitution.__all__``, and this is the
+        one-call serialisation embedders get without reimplementing the
+        per-child ``to_dict`` fan-out — reviewed 2026-07-02.
+        """
         return {
             "ok": self.ok,
             "state": self.state,
@@ -162,6 +207,14 @@ class ApplyResult:
 
     @property
     def passed(self) -> bool:
+        """True when a gate command executed and exited cleanly.
+
+        Kept as a public ApplyResult convenience because the apply JSON
+        row, ApplyReport counts, aggregate verdict, and CLI table all
+        share this invariant. Centralising it here prevents each caller
+        from re-defining how skipped checks differ from passing checks -
+        reviewed 2026-07-03.
+        """
         return not self.skipped and self.exit_code == 0
 
     def to_dict(self) -> dict:
@@ -198,6 +251,14 @@ class ApplyReport:
         return sum(1 for r in self.results if not r.passed and not r.skipped)
 
     def to_dict(self) -> dict:
+        """Full dict view of the apply report.
+
+        No in-tree production caller — ``cmd_constitution.py`` composes
+        its ``apply`` envelope field-by-field. Deliberately retained for
+        the same reason as ``CheckReport.to_dict``: ApplyReport is
+        public API (``roam.constitution.__all__``) and this is the
+        embedder-facing one-call serialisation — reviewed 2026-07-02.
+        """
         return {
             "gate": self.gate,
             "results": [r.to_dict() for r in self.results],
@@ -207,6 +268,25 @@ class ApplyReport:
             "failed": self.failed_count,
             "total": len(self.results),
         }
+
+
+@dataclass
+class ApplyOptions:
+    """Grouped execution knobs for :func:`apply_constitution`.
+
+    Collecting ``gate`` / ``variables`` / ``runner`` / ``timeout`` on one
+    object keeps :func:`apply_constitution`'s parameter list short. Each
+    field mirrors a legacy keyword argument of that function; the legacy
+    keywords remain accepted and override the matching field when both
+    are supplied. ``runner`` follows the ``runner(argv, cwd, timeout) ->
+    (exit_code, stdout, stderr)`` contract documented on
+    :func:`apply_constitution` — reviewed 2026-07-03.
+    """
+
+    gate: str = "before_edit"
+    variables: dict[str, str] = field(default_factory=dict)
+    runner: Optional[Any] = None
+    timeout: int = 120
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +392,100 @@ def _yaml_scalar(v: Any) -> str:
     return s
 
 
+@dataclass
+class _ParseContext:
+    """Per-line parse state shared across the ``_fallback_parse`` helpers.
+
+    Bundles the current line's stripped text + indent with the mutable
+    container stack so the dispatch helpers stop repeating the
+    ``(stripped, indent, stack)`` parameter trio (data-clump fix).
+    ``stack`` is the live parser state; the other two fields describe the
+    current line.
+    """
+
+    stripped: str
+    indent: int
+    stack: list[tuple[int, Any, dict | None, str | None]]
+
+
+def _promote_to_list(ctx: _ParseContext) -> list | None:
+    """Return a list parent for the current list-item line.
+
+    A `key:` line with no value creates a dict placeholder. The first `-`
+    child underneath it proves the placeholder is actually a list, so we
+    mutate the grandparent and retarget the stack frame. This late-bound
+    container polymorphism is the main source of complexity in the parser.
+    """
+    stack = ctx.stack
+    _, parent, grandparent, key_in_grand = stack[-1]
+    if isinstance(parent, list):
+        return parent
+    if grandparent is not None and key_in_grand is not None:
+        new_list: list = []
+        grandparent[key_in_grand] = new_list  # type: ignore[index]
+        stack[-1] = (stack[-1][0], new_list, grandparent, key_in_grand)
+        return new_list
+    return None
+
+
+def _add_list_item(parent_list: list, value_part: str, ctx: _ParseContext) -> None:
+    """Append one list item and push a dict frame for multi-line children."""
+    if not value_part:
+        new_dict: dict[str, Any] = {}
+        parent_list.append(new_dict)
+        ctx.stack.append((ctx.indent, new_dict, None, None))
+    else:
+        parent_list.append(_yaml_unscalar(value_part))
+
+
+def _add_mapping_item(parent_dict: dict, ctx: _ParseContext) -> None:
+    """Append one key/value pair and push a frame for nested children."""
+    key, _, rest = ctx.stripped.partition(":")
+    key = key.strip()
+    rest = rest.strip()
+    if rest == "":
+        # Container — default to dict; will get promoted on first `- ` child.
+        new_container: dict = {}
+        parent_dict[key] = new_container
+        ctx.stack.append((ctx.indent, new_container, parent_dict, key))
+    elif rest == "[]":
+        parent_dict[key] = []
+    elif rest == "{}":
+        parent_dict[key] = {}
+    else:
+        parent_dict[key] = _yaml_unscalar(rest)
+
+
+def _is_blank_or_comment(raw_line: str) -> bool:
+    """Skip empty lines and full-line comments."""
+    return not raw_line.strip() or raw_line.lstrip().startswith("#")
+
+
+def _rewind_stack(ctx: _ParseContext, root: dict) -> None:
+    """Pop frames whose indent is >= this line's, guarding against underflow."""
+    stack = ctx.stack
+    while stack and stack[-1][0] >= ctx.indent:
+        stack.pop()
+    if not stack:
+        stack.append((-1, root, None, None))
+
+
+def _handle_list_line(ctx: _ParseContext) -> None:
+    """Dispatch a `-` line to the current (or promoted) list parent."""
+    parent_list = _promote_to_list(ctx)
+    if parent_list is None:
+        return
+    value_part = ctx.stripped[2:].strip() if ctx.stripped.startswith("- ") else ""
+    _add_list_item(parent_list, value_part, ctx)
+
+
+def _handle_mapping_line(ctx: _ParseContext, parent: Any) -> None:
+    """Dispatch a `key:` line to the current dict parent."""
+    if not isinstance(parent, dict):
+        return
+    _add_mapping_item(parent, ctx)
+
+
 def _fallback_parse(text: str) -> dict:
     """Very small YAML parser tolerant of the subset we emit.
 
@@ -325,53 +499,18 @@ def _fallback_parse(text: str) -> dict:
     stack: list[tuple[int, Any, dict | None, str | None]] = [(-1, root, None, None)]
 
     for raw_line in text.splitlines():
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+        if _is_blank_or_comment(raw_line):
             continue
         stripped = raw_line.lstrip()
         indent = len(raw_line) - len(stripped)
-
-        # Pop frames whose indent is >= this line's.
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        if not stack:
-            stack.append((-1, root, None, None))
-        _, parent, grandparent, key_in_grand = stack[-1]
+        ctx = _ParseContext(stripped=stripped, indent=indent, stack=stack)
+        _rewind_stack(ctx, root)
+        _, parent, _, _ = stack[-1]
 
         if stripped.startswith("- ") or stripped == "-":
-            # List item under `parent`. Promote parent from dict to list if needed.
-            if not isinstance(parent, list):
-                if grandparent is not None and key_in_grand is not None:
-                    new_list: list = []
-                    grandparent[key_in_grand] = new_list  # type: ignore[index]
-                    # Replace top stack frame.
-                    stack[-1] = (stack[-1][0], new_list, grandparent, key_in_grand)
-                    parent = new_list
-                else:
-                    continue
-            value_part = stripped[2:].strip() if stripped.startswith("- ") else ""
-            if not value_part:
-                new_dict: dict[str, Any] = {}
-                parent.append(new_dict)
-                stack.append((indent, new_dict, None, None))
-            else:
-                parent.append(_yaml_unscalar(value_part))
+            _handle_list_line(ctx)
         elif ":" in stripped:
-            if not isinstance(parent, dict):
-                continue
-            key, _, rest = stripped.partition(":")
-            key = key.strip()
-            rest = rest.strip()
-            if rest == "":
-                # Container — default to dict; will get promoted on first `- ` child.
-                new_container: dict = {}
-                parent[key] = new_container
-                stack.append((indent, new_container, parent, key))
-            elif rest == "[]":
-                parent[key] = []
-            elif rest == "{}":
-                parent[key] = {}
-            else:
-                parent[key] = _yaml_unscalar(rest)
+            _handle_mapping_line(ctx, parent)
     return root
 
 
@@ -385,14 +524,10 @@ def _yaml_unscalar(s: str) -> Any:
         return False
     if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
         return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    try:
+    if _YAML_INT_SCALAR_RE.fullmatch(s):
         return int(s)
-    except ValueError:
-        pass
-    try:
+    if _YAML_FLOAT_SCALAR_RE.fullmatch(s):
         return float(s)
-    except ValueError:
-        pass
     return s
 
 
@@ -425,6 +560,33 @@ def _project_name(repo_root: Path) -> str:
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
+
+
+_INIT_OPTION_KEYS = frozenset({"with_laws", "with_rules", "force"})
+
+
+def _normalise_init_options(
+    options: ConstitutionInitOptions | None,
+    legacy_options: dict[str, Any],
+) -> ConstitutionInitOptions:
+    """Return init options while preserving legacy keyword compatibility."""
+    unexpected = set(legacy_options) - _INIT_OPTION_KEYS
+    if unexpected:
+        key = sorted(unexpected)[0]
+        raise TypeError(f"init_constitution() got an unexpected keyword argument {key!r}")
+    if options is None:
+        resolved = ConstitutionInitOptions()
+    elif isinstance(options, ConstitutionInitOptions):
+        resolved = options
+    else:
+        raise TypeError("init_constitution() options must be ConstitutionInitOptions")
+    if not legacy_options:
+        return resolved
+    return ConstitutionInitOptions(
+        with_laws=legacy_options.get("with_laws", resolved.with_laws),
+        with_rules=legacy_options.get("with_rules", resolved.with_rules),
+        force=legacy_options.get("force", resolved.force),
+    )
 
 
 def _default_required_checks() -> dict[str, list[str]]:
@@ -507,10 +669,8 @@ def _default_metadata_signals() -> dict[str, Any]:
 
 def init_constitution(
     repo_root: Path,
-    *,
-    with_laws: bool = True,
-    with_rules: bool = True,
-    force: bool = False,
+    options: ConstitutionInitOptions | None = None,
+    **legacy_options: Any,
 ) -> Path:
     """Generate ``.roam/constitution.yml`` from the current repo state.
 
@@ -519,16 +679,17 @@ def init_constitution(
     Populates ``sources`` to point at what exists; absent files yield an
     absent key (NOT a stub path) so ``check`` does not flag them.
 
-    With *with_laws* / *with_rules* set to False, the corresponding
-    source is omitted even if a candidate file exists -- supports the
-    "disable this substrate" workflow.
+    Pass ``ConstitutionInitOptions`` to configure source discovery and
+    overwrite behaviour. Legacy keyword flags remain accepted as
+    overrides for existing callers.
 
-    Raises ``FileExistsError`` if the file already exists and *force*
-    is False.
+    Raises ``FileExistsError`` if the file already exists and
+    ``options.force`` is False.
     """
+    init_options = _normalise_init_options(options, legacy_options)
     repo_root = Path(repo_root).resolve()
     path = constitution_path(repo_root)
-    if path.exists() and not force:
+    if path.exists() and not init_options.force:
         raise FileExistsError(f"constitution already exists at {path}; pass force=True to overwrite")
 
     sources: dict[str, str] = {}
@@ -537,12 +698,12 @@ def init_constitution(
     if agents:
         sources["agents_md"] = f"./{agents}"
 
-    if with_laws:
+    if init_options.with_laws:
         laws = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["laws"])
         if laws:
             sources["laws"] = f"./{laws}"
 
-    if with_rules:
+    if init_options.with_rules:
         rules = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["rules"])
         if rules:
             # Convention: point at a glob within the directory, matching
@@ -600,7 +761,15 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
         return None
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        # Fail-soft by contract ("the loader never raises"), but disclose
+        # the degraded state: the file EXISTS yet cannot be read, which is
+        # not the same as "no constitution". Silent None here would be the
+        # Pattern-2 silent fallback this module avoids elsewhere.
+        print(
+            f"[constitution] cannot read {path}: {exc}",
+            file=sys.stderr,
+        )
         return None
     data = _load_yaml(text)
     if not data:
@@ -744,26 +913,31 @@ def _source_status(repo_root: Path, name: str, raw_path: str) -> SourceStatus:
                 state="empty",
                 detail="file is zero bytes",
             )
-    except OSError:
-        pass
+    except OSError as exc:
+        print(
+            f"[constitution] optional source empty-file probe failed for {raw_path}: {exc}",
+            file=sys.stderr,
+        )
     return SourceStatus(name=name, path=raw_path, exists=True, state="ok", detail="")
 
 
-def check_constitution(repo_root: Path, constitution: Constitution) -> CheckReport:
-    """Verify that every declared source exists and every required-check
-    command resolves to a real roam command.
+def _classify_command(bare: str, known: set[str], deprecated: set[str]) -> tuple[str, bool]:
+    """Return the resolution state for a bare command name."""
+    if bare in known:
+        return "ok", True
+    if bare in deprecated:
+        return "deprecated_command", True
+    return "unknown_command", False
 
-    Returns a structured ``CheckReport`` so the caller can build an
-    envelope. Never raises.
-    """
-    sources_out: list[SourceStatus] = []
-    for name, raw in constitution.sources.items():
-        sources_out.append(_source_status(repo_root, name, raw))
 
-    known = _known_commands()
-    deprecated = _deprecated_commands()
+def _resolve_required_checks(
+    required_checks: dict[str, list[str]],
+    known: set[str],
+    deprecated: set[str],
+) -> list[CommandStatus]:
+    """Resolve every required-check template against the registered command set."""
     commands_out: list[CommandStatus] = []
-    for gate, items in constitution.required_checks.items():
+    for gate, items in required_checks.items():
         for raw in items:
             bare = _bare_command_name(raw)
             if not bare:
@@ -777,15 +951,7 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
                     )
                 )
                 continue
-            if bare in known:
-                state = "ok"
-                resolved = True
-            elif bare in deprecated:
-                state = "deprecated_command"
-                resolved = True
-            else:
-                state = "unknown_command"
-                resolved = False
+            state, resolved = _classify_command(bare, known, deprecated)
             commands_out.append(
                 CommandStatus(
                     gate=gate,
@@ -795,10 +961,17 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
                     state=state,
                 )
             )
+    return commands_out
 
-    # Mode allow-lists: every member must be a known command.
-    mode_issues: list[dict] = []
-    for mode, allowed in constitution.modes.items():
+
+def _check_mode_allow_lists(
+    modes: dict[str, list[str]],
+    known: set[str],
+    deprecated: set[str],
+) -> list[dict[str, str]]:
+    """Validate mode allow-lists: every member must resolve to a real command."""
+    mode_issues: list[dict[str, str]] = []
+    for mode, allowed in modes.items():
         for name in allowed:
             bare = _bare_command_name(name)
             if bare and bare not in known and bare not in deprecated:
@@ -810,41 +983,73 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
                         "state": "unknown_command",
                     }
                 )
+    return mode_issues
 
-    n_missing_sources = sum(1 for s in sources_out if not s.exists)
-    n_unparseable = 1 if constitution.metadata.get("unparseable") else 0
-    n_unknown_cmds = sum(1 for c in commands_out if c.state == "unknown_command")
-    n_deprecated_cmds = sum(1 for c in commands_out if c.state == "deprecated_command")
+
+def _build_check_verdict(
+    *,
+    sources: list[SourceStatus],
+    commands: list[CommandStatus],
+    mode_issues: list[dict[str, str]],
+    gate_count: int,
+    unparseable: bool,
+) -> tuple[bool, str, str]:
+    """Synthesize the aggregate state, ok flag, and human verdict."""
+    n_missing_sources = sum(1 for s in sources if not s.exists)
+    n_unparseable = 1 if unparseable else 0
+    n_unknown_cmds = sum(1 for c in commands if c.state == "unknown_command")
+    n_deprecated_cmds = sum(1 for c in commands if c.state == "deprecated_command")
     n_mode_issues = len(mode_issues)
 
     issues_total = n_missing_sources + n_unparseable + n_unknown_cmds + n_mode_issues
 
-    if n_unparseable:
-        state = "missing"
-        ok = False
-        verdict = "constitution is unparseable -- re-run `roam constitution init --force`"
-    elif issues_total == 0 and n_deprecated_cmds == 0:
-        state = "ok"
-        ok = True
+    if unparseable:
+        return (
+            False,
+            "missing",
+            "constitution is unparseable -- re-run `roam constitution init --force`",
+        )
+    if issues_total == 0 and n_deprecated_cmds == 0:
         verdict = (
             f"constitution is healthy "
-            f"({len(sources_out)} source(s), "
-            f"{len(commands_out)} required-check(s) across "
-            f"{len(constitution.required_checks)} gate(s))"
+            f"({len(sources)} source(s), "
+            f"{len(commands)} required-check(s) across "
+            f"{gate_count} gate(s))"
         )
-    else:
-        state = "partial"
-        ok = False
-        bits: list[str] = []
-        if n_missing_sources:
-            bits.append(f"{n_missing_sources} missing source(s)")
-        if n_unknown_cmds:
-            bits.append(f"{n_unknown_cmds} unknown command(s)")
-        if n_deprecated_cmds:
-            bits.append(f"{n_deprecated_cmds} deprecated command(s)")
-        if n_mode_issues:
-            bits.append(f"{n_mode_issues} mode allow-list issue(s)")
-        verdict = "constitution issues: " + ", ".join(bits)
+        return True, "ok", verdict
+
+    bits: list[str] = []
+    if n_missing_sources:
+        bits.append(f"{n_missing_sources} missing source(s)")
+    if n_unknown_cmds:
+        bits.append(f"{n_unknown_cmds} unknown command(s)")
+    if n_deprecated_cmds:
+        bits.append(f"{n_deprecated_cmds} deprecated command(s)")
+    if n_mode_issues:
+        bits.append(f"{n_mode_issues} mode allow-list issue(s)")
+    return False, "partial", "constitution issues: " + ", ".join(bits)
+
+
+def check_constitution(repo_root: Path, constitution: Constitution) -> CheckReport:
+    """Verify that every declared source exists and every required-check
+    command resolves to a real roam command.
+
+    Returns a structured ``CheckReport`` so the caller can build an
+    envelope. Never raises.
+    """
+    sources_out = [_source_status(repo_root, name, raw) for name, raw in constitution.sources.items()]
+
+    known = _known_commands()
+    deprecated = _deprecated_commands()
+    commands_out = _resolve_required_checks(constitution.required_checks, known, deprecated)
+    mode_issues = _check_mode_allow_lists(constitution.modes, known, deprecated)
+    ok, state, verdict = _build_check_verdict(
+        sources=sources_out,
+        commands=commands_out,
+        mode_issues=mode_issues,
+        gate_count=len(constitution.required_checks),
+        unparseable=bool(constitution.metadata.get("unparseable")),
+    )
 
     return CheckReport(
         ok=ok,
@@ -1051,16 +1256,23 @@ def _apply_aggregate_verdict(gate: str, results: list[ApplyResult]) -> tuple[str
     return "partial", f"{gate} gate: {passed} passed / {failed} failed"
 
 
+_APPLY_LEGACY_KWARGS = frozenset({"gate", "variables", "runner", "timeout"})
+
+
 def apply_constitution(
     repo_root: Path,
     constitution: Constitution,
-    *,
-    gate: str = "before_edit",
-    variables: Optional[dict[str, str]] = None,
-    runner: Optional[Any] = None,
-    timeout: int = 120,
+    options: Optional[ApplyOptions] = None,
+    **legacy: Any,
 ) -> ApplyReport:
     """Run the ``required_checks[gate]`` commands and return per-result data.
+
+    Execution knobs live on :class:`ApplyOptions` (``gate`` / ``variables``
+    / ``runner`` / ``timeout``); pass ``options=ApplyOptions(...)`` for the
+    grouped, typed call shape. The four legacy keyword arguments are still
+    accepted for backward compatibility and override the matching
+    ``options`` field when both are given. Unknown keywords raise
+    ``TypeError`` rather than vanishing into the legacy absorption.
 
     *variables* fills ``${symbol}`` / ``${file}`` placeholders. Anything
     unresolved skips that check (with a recorded reason) rather than
@@ -1070,10 +1282,21 @@ def apply_constitution(
     ``runner(argv: list[str], cwd: Path, timeout: int) -> (exit_code, stdout, stderr)``.
     When None, we use ``subprocess.run`` against the system PATH.
 
-    Never raises. Aggregates everything into an :class:`ApplyReport`.
-    Implementation: split across ``_apply_*`` helpers; this orchestrator
-    wires gate-validation -> per-template execution -> verdict aggregation.
+    Never raises on bad input. Aggregates everything into an
+    :class:`ApplyReport`. Implementation: split across ``_apply_*``
+    helpers; this orchestrator wires gate-validation -> per-template
+    execution -> verdict aggregation.
     """
+    if legacy:
+        unknown = set(legacy) - _APPLY_LEGACY_KWARGS
+        if unknown:
+            raise TypeError("apply_constitution() got unexpected keyword argument(s): " + ", ".join(sorted(unknown)))
+    base = options or ApplyOptions()
+    gate = legacy.get("gate", base.gate)
+    variables = legacy.get("variables", base.variables)
+    runner = legacy.get("runner", base.runner)
+    timeout = legacy.get("timeout", base.timeout)
+
     if gate not in VALID_GATES:
         return ApplyReport(
             gate=gate,

@@ -53,8 +53,8 @@ Hook                                         Demonstrated in
 
 from __future__ import annotations
 
-from roam_plugin_example_extras.bridge import ExampleBridge
-from roam_plugin_example_extras.extractor import ExampleExtractor
+from .bridge import ExampleBridge
+from .extractor import ExampleExtractor
 
 
 def register(ctx) -> None:

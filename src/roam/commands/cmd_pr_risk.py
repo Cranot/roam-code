@@ -31,7 +31,7 @@ from roam.commands.changed_files import (
 )
 from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -647,6 +647,67 @@ def _author_count_risk(author_counts: list[int]) -> float:
     return _clamp01(sum(inv_counts) / len(inv_counts))
 
 
+def _fetch_file_author_churn(conn, file_ids):
+    """Batch-fetch git churn history for file_ids, grouped by file_id.
+
+    WHY: Decouples batched I/O from familiarity math so the math stays
+    pure and the per-file loop issues zero database round-trips.
+    """
+    if not file_ids:
+        return {}
+
+    rows = batched_in(
+        conn,
+        "SELECT gfc.file_id, gc.author, gc.timestamp, gfc.lines_added, gfc.lines_removed "
+        "FROM git_file_changes gfc "
+        "JOIN git_commits gc ON gfc.commit_id = gc.id "
+        "WHERE gfc.file_id IN ({ph})",
+        file_ids,
+    )
+
+    churn_by_file: dict[int, list] = {}
+    for row in rows:
+        churn_by_file.setdefault(row["file_id"], []).append(row)
+    return churn_by_file
+
+
+def _fetch_minor_contributor_churn(conn, author, file_ids):
+    """Batch-fetch the churn facts needed to assess minor authorship.
+
+    WHY: Preserves per-file risk evidence while keeping database round-trips
+    proportional to batches instead of changed files.
+    """
+    if not file_ids:
+        return {}
+
+    stats_rows = batched_in(
+        conn,
+        "SELECT file_id, total_churn FROM file_stats WHERE file_id IN ({ph})",
+        file_ids,
+    )
+    author_rows = batched_in(
+        conn,
+        "SELECT gfc.file_id, "
+        "COALESCE(SUM(gfc.lines_added), 0) + COALESCE(SUM(gfc.lines_removed), 0) AS author_churn "
+        "FROM git_file_changes gfc "
+        "JOIN git_commits gc ON gfc.commit_id = gc.id "
+        "WHERE gc.author = ? AND gfc.file_id IN ({ph}) "
+        "GROUP BY gfc.file_id",
+        file_ids,
+        pre=[author],
+    )
+
+    churn_by_file = {fid: {"total_churn": 0, "author_churn": 0} for fid in file_ids}
+    for row in stats_rows:
+        fid = row["file_id"]
+        churn_by_file[fid]["total_churn"] = row["total_churn"] or 0
+    for row in author_rows:
+        fid = row["file_id"]
+        if fid in churn_by_file:
+            churn_by_file[fid]["author_churn"] = row["author_churn"] or 0
+    return churn_by_file
+
+
 def _author_familiarity(conn, author, changed_files):
     """Calculate how familiar the author is with each changed file.
 
@@ -666,19 +727,18 @@ def _author_familiarity(conn, author, changed_files):
     normalized_scores = []
     file_details = []
 
-    for path, fid in changed_files.items():
-        if is_test_file(path) or is_low_risk_file(path):
-            continue
+    relevant_files = [
+        (path, fid) for path, fid in changed_files.items() if not is_test_file(path) and not is_low_risk_file(path)
+    ]
 
-        # Get all commits touching this file with per-author churn
-        rows = conn.execute(
-            "SELECT gc.author, gc.timestamp, gfc.lines_added, gfc.lines_removed "
-            "FROM git_file_changes gfc "
-            "JOIN git_commits gc ON gfc.commit_id = gc.id "
-            "WHERE gfc.file_id = ?",
-            (fid,),
-        ).fetchall()
+    if not relevant_files:
+        return 0.0, {"avg_familiarity": 1.0, "files_assessed": 0, "files": []}
 
+    file_ids = [fid for _, fid in relevant_files]
+    rows_by_fid = _fetch_file_author_churn(conn, file_ids)
+
+    for path, fid in relevant_files:
+        rows = rows_by_fid.get(fid, [])
         if not rows:
             # No git history for this file — treat as unfamiliar
             normalized_scores.append(0.0)
@@ -710,9 +770,6 @@ def _author_familiarity(conn, author, changed_files):
             }
         )
 
-    if not normalized_scores:
-        return 0.0, {"avg_familiarity": 1.0, "files_assessed": 0, "files": []}
-
     avg_norm = sum(normalized_scores) / len(normalized_scores)
     familiar_count = sum(1 for s in normalized_scores if s >= 0.5)
     risk = (1.0 - avg_norm) * 0.25  # scale to 0-0.25
@@ -737,30 +794,25 @@ def _minor_contributor_risk(conn, author, changed_files):
     assessed = 0
     file_details = []
 
-    for path, fid in changed_files.items():
-        if is_test_file(path) or is_low_risk_file(path):
-            continue
+    relevant_files = [
+        (path, fid) for path, fid in changed_files.items() if not is_test_file(path) and not is_low_risk_file(path)
+    ]
 
-        # Get total churn for this file
-        fs_row = conn.execute(
-            "SELECT total_churn FROM file_stats WHERE file_id = ?",
-            (fid,),
-        ).fetchone()
-        total_churn = (fs_row["total_churn"] or 0) if fs_row else 0
+    if not relevant_files:
+        return 0.0, {"minor_files": 0, "files_assessed": 0, "files": []}
+
+    file_ids = [fid for _, fid in relevant_files]
+    churn_by_fid = _fetch_minor_contributor_churn(conn, author, file_ids)
+
+    for path, fid in relevant_files:
+        churn = churn_by_fid[fid]
+        total_churn = churn["total_churn"]
 
         if total_churn == 0:
             # No churn data — can't assess, skip
             continue
 
-        # Get author's churn on this file
-        author_row = conn.execute(
-            "SELECT COALESCE(SUM(gfc.lines_added), 0) + COALESCE(SUM(gfc.lines_removed), 0) AS churn "
-            "FROM git_file_changes gfc "
-            "JOIN git_commits gc ON gfc.commit_id = gc.id "
-            "WHERE gfc.file_id = ? AND gc.author = ?",
-            (fid, author),
-        ).fetchone()
-        author_churn = author_row["churn"] if author_row else 0
+        author_churn = churn["author_churn"]
 
         assessed += 1
         is_minor = author_churn < (total_churn * 0.05)

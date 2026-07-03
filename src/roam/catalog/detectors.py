@@ -231,11 +231,12 @@ def list_detector_surface() -> list[dict[str, Any]]:
                     "source": "python_idioms",
                 }
             )
-    except ImportError:
-        # Genuine optional-module guard: python_idioms is an optional
-        # detector pack. Its absence simply yields fewer surface entries
-        # — an expected, non-error state. No lineage needed.
-        pass
+    except ImportError as exc:
+        # Optional-module guard: python_idioms absence just yields fewer
+        # surface entries — logged loud rather than silently swallowed.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.surface.python_idioms_import", exc)
 
     try:
         from roam.catalog.js_idioms import JS_IDIOM_DETECTORS
@@ -444,6 +445,61 @@ def _find_match_line(snippet: str, pattern, sym_line_start: int | None) -> int |
         if pattern.search(line):
             return sym_line_start + offset
     return sym_line_start
+
+
+def _js_source_findings_preserving_evidence_lines(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    detected_way: str,
+    patterns: tuple[tuple[re.Pattern[str], str], ...],
+    reason_for_first_match: Callable[[str], str],
+    confidence: str,
+) -> list[dict]:
+    """Run JS-family source-pattern detectors through one evidence-line path."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        matched: list[str] = []
+        first_pos: int | None = None
+        for pattern, label in patterns:
+            match = pattern.search(snippet)
+            if match is None:
+                continue
+            matched.append(label)
+            if first_pos is None or match.start() < first_pos:
+                first_pos = match.start()
+        if not matched:
+            continue
+        match_line = (r["line_start"] or 1) + snippet[: first_pos or 0].count("\n")
+        results.append(
+            _finding(
+                task_id,
+                detected_way,
+                r,
+                reason_for_first_match(matched[0]),
+                confidence,
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=matched,
+            )
+        )
+    return results
 
 
 # M4 — recognise DEV-only / DEBUG-only gates so production-impact
@@ -1496,7 +1552,7 @@ def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
                     "regex-in-loop",
                     "compile-per-iter",
                     r,
-                    f"Regex compile ({', '.join(compile_calls[:2])}) inside loop",
+                    f"Regex compilation via {', '.join(compile_calls[:2])} inside loop",
                     "high",
                 )
             )
@@ -1866,6 +1922,8 @@ def _read_project_json(path: str) -> dict | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
+        # Missing/unreadable/malformed project JSON is expected during
+        # framework profiling — callers treat None as "no such manifest".
         return None
     return data if isinstance(data, dict) else None
 
@@ -3025,6 +3083,64 @@ _RE_EVAL_DECL_LINE = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?(?:function|def
 _RE_SHELL_EXEC_RECEIVER = re.compile(r"(?:child_process|cp)\s*\.\s*exec", re.IGNORECASE)
 
 
+def _dangerous_eval_match_is_executable_code(snippet: str, match: re.Match[str]) -> bool:
+    """Return true when the regex hit sits outside comments and string text."""
+    line_start = snippet.rfind("\n", 0, match.start()) + 1
+    line_end = snippet.find("\n", match.start())
+    line = snippet[line_start : (line_end if line_end != -1 else len(snippet))]
+    match_column = match.start() - line_start
+    quote: str | None = None
+    escaped = False
+    i = 0
+    while i < match_column:
+        ch = line[i]
+        if escaped:
+            escaped = False
+            i += 1
+            continue
+        if quote:
+            if ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if line.startswith(("//", "/*"), i) or ch == "#":
+            return False
+        if ch in {"'", '"', "`"}:
+            quote = ch
+        i += 1
+    return quote is None
+
+
+def _is_dangerous_eval_false_positive(snippet: str, match: re.Match[str]) -> bool:
+    """Keep dangerous-eval findings on executable sinks, not safe APIs or text."""
+    if not _dangerous_eval_match_is_executable_code(snippet, match):
+        return True
+    # Skip ast.literal_eval (safe), regex.compile (different "compile"
+    # — won't actually match because it ends in `.compile(` with a dot
+    # before, so prefix isn't word-boundary — but be defensive).
+    if "literal_eval" in snippet[max(0, match.start() - 20) : match.end()]:
+        return True
+    if ".compile(" in snippet[max(0, match.start() - 5) : match.end() + 1]:
+        return True
+    # `<regex>.exec(x)` / `<str>.exec(x)` is the standard JS/TS regex API,
+    # NOT a code-injection sink — symmetric to the `.compile(` guard above.
+    # Keep genuine shell-exec receivers (`child_process.exec`, `cp.exec`)
+    # firing; suppress every other dotted `.exec(`.
+    exec_window = snippet[max(0, match.start() - 30) : match.end() + 1]
+    if ".exec(" in snippet[max(0, match.start() - 5) : match.end() + 1] and not (
+        _RE_SHELL_EXEC_RECEIVER.search(exec_window)
+    ):
+        return True
+    # Skip declaration lines: `function exec(...)` / `def exec(...)` is a
+    # definition of a sink-named wrapper, not a call to a dynamic-exec sink.
+    line_start = snippet.rfind("\n", 0, match.start()) + 1
+    line_end = snippet.find("\n", match.start())
+    match_line_text = snippet[line_start : (line_end if line_end != -1 else len(snippet))]
+    return bool(_RE_EVAL_DECL_LINE.match(match_line_text))
+
+
 @algorithm_detector(
     task_id="dangerous-eval",
     languages=("python", "javascript", "typescript", "php", "ruby"),
@@ -3055,31 +3171,15 @@ def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
         snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
         if not snippet:
             continue
-        m = _RE_EVAL_CALLS.search(snippet)
-        if not m:
-            continue
-        # Skip ast.literal_eval (safe), regex.compile (different "compile"
-        # — won't actually match because it ends in `.compile(` with a dot
-        # before, so prefix isn't word-boundary — but be defensive).
-        if "literal_eval" in snippet[max(0, m.start() - 20) : m.end()]:
-            continue
-        if ".compile(" in snippet[max(0, m.start() - 5) : m.end() + 1]:
-            continue
-        # `<regex>.exec(x)` / `<str>.exec(x)` is the standard JS/TS regex API,
-        # NOT a code-injection sink — symmetric to the `.compile(` guard above.
-        # Keep genuine shell-exec receivers (`child_process.exec`, `cp.exec`)
-        # firing; suppress every other dotted `.exec(`.
-        _exec_window = snippet[max(0, m.start() - 30) : m.end() + 1]
-        if ".exec(" in snippet[max(0, m.start() - 5) : m.end() + 1] and not (
-            _RE_SHELL_EXEC_RECEIVER.search(_exec_window)
-        ):
-            continue
-        # Skip declaration lines: `function exec(...)` / `def exec(...)` is a
-        # definition of a sink-named wrapper, not a call to a dynamic-exec sink.
-        _ls = snippet.rfind("\n", 0, m.start()) + 1
-        _le = snippet.find("\n", m.start())
-        _match_line_text = snippet[_ls : (_le if _le != -1 else len(snippet))]
-        if _RE_EVAL_DECL_LINE.match(_match_line_text):
+        m = next(
+            (
+                candidate
+                for candidate in _RE_EVAL_CALLS.finditer(snippet)
+                if not _is_dangerous_eval_false_positive(snippet, candidate)
+            ),
+            None,
+        )
+        if m is None:
             continue
         line_offset = snippet[: m.start()].count("\n")
         match_line = (r["line_start"] or 1) + line_offset
@@ -3914,56 +4014,20 @@ def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
 )
 def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `.filter().find()` and friends are 2-pass; one-pass equivalents exist."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
-        if not snippet:
-            continue
-        matched: list[str] = []
-        first_pos: int | None = None
-        for pat, label, fix_hint in (
-            (_RE_FILTER_FIND, "filter().find() — two passes", ".find(x => predA(x) && predB(x))"),
-            (_RE_FILTER_LENGTH_BOOL, "filter().length — full walk for boolean", ".some(x => predA(x))"),
-            (_RE_MAP_FIND, "map().find() — full transform before search", ".find() then .map() of one item"),
-        ):
-            m = pat.search(snippet)
-            if m is None:
-                continue
-            matched.append(f"{label} → {fix_hint}")
-            if first_pos is None or m.start() < first_pos:
-                first_pos = m.start()
-        if not matched:
-            continue
-        if first_pos is None:
-            first_pos = 0
-        line_offset = snippet[:first_pos].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "chained-collection-walk",
-                "two-pass-walk",
-                r,
-                f"Chained collection walk ({matched[0].split(' →')[0]}) — single-pass form available",
-                "medium",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=matched,
-            )
-        )
-    return results
+    return _js_source_findings_preserving_evidence_lines(
+        conn,
+        task_id="chained-collection-walk",
+        detected_way="two-pass-walk",
+        patterns=(
+            (_RE_FILTER_FIND, "filter().find() — two passes → .find(x => predA(x) && predB(x))"),
+            (_RE_FILTER_LENGTH_BOOL, "filter().length — full walk for boolean → .some(x => predA(x))"),
+            (_RE_MAP_FIND, "map().find() — full transform before search → .find() then .map() of one item"),
+        ),
+        reason_for_first_match=lambda label: (
+            f"Chained collection walk ({label.split(' →', 1)[0]}) — single-pass form available"
+        ),
+        confidence="medium",
+    )
 
 
 @detector(
@@ -4135,57 +4199,19 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
 )
 def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `acc = [...acc, x]` or `.reduce((acc, x) => [...acc, x])` is O(n²)."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "f.language AS language, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    results = []
-    for r in rows:
-        if _is_test_path(r["file_path"]):
-            continue
-        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
-        if not snippet:
-            continue
-        matched: list[str] = []
-        first_pos: int | None = None
-        for pat, label in (
+    return _js_source_findings_preserving_evidence_lines(
+        conn,
+        task_id="spread-accumulator",
+        detected_way="spread-rebind",
+        patterns=(
             (_RE_REDUCE_SPREAD, "reduce array spread accumulator"),
             (_RE_REDUCE_SPREAD_OBJ, "reduce object spread accumulator"),
             (_RE_SPREAD_ACC, "in-place array spread re-bind"),
             (_RE_SPREAD_OBJ_ACC, "in-place object spread re-bind"),
-        ):
-            m = pat.search(snippet)
-            if m is None:
-                continue
-            matched.append(label)
-            if first_pos is None or m.start() < first_pos:
-                first_pos = m.start()
-        if not matched:
-            continue
-        if first_pos is None:
-            first_pos = 0
-        line_offset = snippet[:first_pos].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "spread-accumulator",
-                "spread-rebind",
-                r,
-                f"Spread accumulator ({matched[0]}) is O(n^2) — use .push() / Object.assign()",
-                "high",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=matched,
-            )
-        )
-    return results
+        ),
+        reason_for_first_match=lambda label: f"Spread accumulator ({label}) is O(n^2) — use .push() / Object.assign()",
+        confidence="high",
+    )
 
 
 @algorithm_detector(
@@ -4472,7 +4498,7 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
                 context[sid]["runtime_otel_db_system"] = r["db_system"]
                 context[sid]["runtime_otel_db_operation"] = r["db_operation"]
                 context[sid]["runtime_otel_db_statement_type"] = r["db_statement_type"]
-    except (sqlite3.Error, KeyError, TypeError):
+    except (sqlite3.Error, KeyError, TypeError) as exc:
         # W679: narrowed from `except Exception` per the W662 allowlist plan
         # ("re-audit to narrow to (sqlite3.Error, KeyError) once the runtime
         # schema stabilises"). The handler covers three legitimate-skip
@@ -4488,8 +4514,14 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
         #     total_calls / max_err raise TypeError if the column carries a
         #     non-numeric blob (legacy ingest variants).
         # Programmer-class errors (NameError / ImportError / AttributeError)
-        # propagate per W531 fail-loud + W653 incident.
-        pass
+        # propagate per W531 fail-loud + W653 incident. The expected absence
+        # is logged at warning so the skip stays observable to operators
+        # (W661 fail-soft-with-logging discipline), rather than silent.
+        log.warning(
+            "OTel runtime enrichment skipped for %d symbols in _symbol_context: %s",
+            len(symbol_ids),
+            exc,
+        )
 
     return context
 
@@ -4803,6 +4835,23 @@ _MATH_DETECTORS = [
     ("branching-recursion", "naive-branching", detect_branching_recursion),
     ("quadratic-string", "augment-concat", detect_quadratic_string),
     ("loop-invariant-call", "repeated-call", detect_loop_invariant_call),
+    # The 11 entries below were dropped when a dead-code autopilot removed
+    # their detector functions; the restores (aa263622 and siblings) brought
+    # back the function bodies + @algorithm_detector decorators but not this
+    # dispatch wiring, leaving them registry-visible yet never executed
+    # (Pattern-1D silent no-op, caught by test_w1057_math_unknown_detectors).
+    # (task_id, way_id) tuples recovered verbatim from the pre-removal tree.
+    ("membership", "list-scan", detect_list_membership),
+    ("string-concat", "loop-concat", detect_string_concat_loop),
+    ("unique", "nested-dedup", detect_manual_dedup),
+    ("max-min", "manual-loop", detect_manual_maxmin),
+    ("accumulation", "manual-sum", detect_manual_accumulation),
+    ("groupby", "manual-check", detect_manual_groupby),
+    ("async-fire-and-forget-task", "leaked-asyncio-task", detect_async_fire_and_forget),
+    ("async-nested-run", "asyncio-run-in-async", detect_async_nested_run),
+    ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
+    ("defer-in-loop", "loop-defer", detect_defer_in_loop),
+    ("chained-collection-walk", "two-pass-walk", detect_chained_collection_walks),
 ]
 
 
@@ -4819,11 +4868,13 @@ def _iter_registered_detectors():
 
         for det in PYTHON_IDIOM_DETECTORS:
             yield det
-    except ImportError:
-        # Genuine optional-module guard: python_idioms is an optional
-        # detector pack; its absence just yields the built-in set. No
-        # lineage needed — expected non-error state.
-        pass
+    except ImportError as exc:
+        # Optional-module guard: python_idioms absence just yields the
+        # built-in set — logged loud (mirrors js_idioms below) rather
+        # than silently swallowed.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.iter.python_idioms_import", exc)
 
     # JS/TS sibling pack — same isolation rationale as python_idioms.
     try:
@@ -4844,9 +4895,139 @@ def _iter_registered_detectors():
         for task_id, way_id, detect_fn in get_plugin_detectors():
             if callable(detect_fn):
                 yield (task_id, way_id, detect_fn)
-    except Exception:  # noqa: BLE001 -- plugin code may raise anything; isolate it
+    except Exception as exc:  # noqa: BLE001 -- plugin code may raise anything; isolate it
         # Plugin loading errors should not impact built-in detection.
+        from roam.observability import log_swallowed
+
+        log_swallowed("detectors.iter.plugin_detectors", exc)
         return
+
+
+def _apply_detector_scopes(conn, scope_ids):
+    """Apply the three per-run file scopes for ``run_detectors``.
+
+    Returns ``(idiom_reset, js_idiom_reset, catalog_scope_applied)`` — the
+    first two are the already-imported ``set_*_scope`` callables (captured so
+    the caller's ``finally`` can reset them with ``None``), the third flags
+    whether ``_DETECTOR_SCOPE_PATHS`` was set and must be cleared.
+    """
+    global _DETECTOR_SCOPE_PATHS
+    idiom_reset = None
+    js_idiom_reset = None
+    catalog_scope_applied = False
+    try:
+        from roam.catalog.python_idioms import set_idiom_scope
+
+        set_idiom_scope(scope_ids)
+        idiom_reset = set_idiom_scope  # captured for the caller's finally
+    except Exception as exc:  # noqa: BLE001 -- optional Python scope should not abort detector runs
+        # Optional Python scope should not abort detector runs; unscoped detection is the fallback.
+        log.warning("run_detectors: could not apply idiom scope: %s", exc)
+    # The JS pack keeps its own module-global scope; apply it the same way.
+    try:
+        from roam.catalog.js_idioms import set_js_idiom_scope
+
+        set_js_idiom_scope(scope_ids)
+        js_idiom_reset = set_js_idiom_scope  # captured for the caller's finally
+    except Exception as exc:  # noqa: BLE001 -- optional JS scope should not abort detector runs
+        log.warning("run_detectors: could not apply js idiom scope: %s", exc)
+    # Resolve scope file-ids to paths so the catalog detectors' source-read
+    # chokepoint (`_read_symbol_source`) can skip out-of-scope files.
+    try:
+        from roam.db.connection import batched_in as _bi
+
+        paths = {r["path"] for r in _bi(conn, "SELECT path FROM files WHERE id IN ({ph})", list(scope_ids))}
+        _DETECTOR_SCOPE_PATHS = paths
+        catalog_scope_applied = True
+    except Exception as exc:  # noqa: BLE001 -- scope filter is an optimization; unscoped detection is the safe fallback
+        log.warning("run_detectors: could not apply catalog scope: %s", exc)
+    return idiom_reset, js_idiom_reset, catalog_scope_applied
+
+
+def _execute_detectors(conn, detector_entries, task_filter, only_set, exclude_set):
+    """Run the detector loop for ``run_detectors``.
+
+    Returns ``(findings, failed_detectors, executed, executed_tasks)``.
+    Exception discipline (W661): programmer-class errors raise, sqlite-class
+    errors log + record + continue, anything else records + continues.
+    """
+    findings = []
+    failed_detectors = []
+    executed = 0
+    executed_tasks: list[str] = []
+    for task_id, _way_id, detect_fn in detector_entries:
+        if task_filter and task_id != task_filter:
+            continue
+        # A3 — --only / --exclude filter on detector function names.
+        # W1316 extends the filter from decorator-registered detectors
+        # to the full runtime surface (built-in catalog + Python idioms),
+        # so a detector shown by `roam algo --list-detectors` can always
+        # be selected directly.
+        fn_name = getattr(detect_fn, "__name__", "")
+        if only_set:
+            if fn_name not in only_set:
+                continue
+        elif fn_name in exclude_set:
+            continue
+        executed += 1
+        executed_tasks.append(task_id)
+        try:
+            hits = detect_fn(conn)
+        except (NameError, ImportError, AttributeError, TypeError) as err:
+            # W661: programmer-class bug (missing import, wrong attribute,
+            # signature drift) — fail-loud per W531 + CLAUDE.md Pattern-2
+            # discipline. Mirrors W653 in smells.run_all_detectors(). The
+            # W639 smoke test catches these at test time, but the production
+            # loop must also surface the bug class to operators rather than
+            # silently dropping the detector into the `failed_detectors`
+            # bucket where it gets buried in `meta`.
+            raise RuntimeError(
+                f"algo detector {detect_fn.__name__} "
+                f"(task_id={task_id}) crashed with programmer error: "
+                f"{type(err).__name__}: {err}"
+            ) from err
+        except sqlite3.Error as exc:
+            # W661: per-detector DB error (missing table, bad query against
+            # the live schema) is a data-class issue — log + continue so
+            # the remaining detectors still produce findings the operator
+            # can act on. Preserves the existing `failed_detectors` meta
+            # contract for sqlite-class failures.
+            log.warning(
+                "algo detector %s (task_id=%s) failed with sqlite error: %s",
+                detect_fn.__name__,
+                task_id,
+                exc,
+            )
+            failed_detectors.append(
+                {
+                    "task_id": task_id,
+                    "detector": detect_fn.__name__,
+                    "error": str(exc),
+                }
+            )
+            continue
+        except Exception as exc:
+            # W661: anything else (OS errors, third-party plugin
+            # bugs we don't want to crash the run on) keeps the
+            # legacy behaviour — record in `failed_detectors`,
+            # continue. Narrower programmer-class + data-class
+            # branches above already handle the bug classes we
+            # know how to triage.
+            failed_detectors.append(
+                {
+                    "task_id": task_id,
+                    "detector": detect_fn.__name__,
+                    "error": str(exc),
+                }
+            )
+            continue
+        dmeta = _detector_meta(task_id)
+        for h in hits:
+            h.setdefault("precision", dmeta["precision"])
+            h.setdefault("impact", dmeta["impact"])
+            h.setdefault("tags", list(dmeta["tags"]))
+        findings.extend(hits)
+    return findings, failed_detectors, executed, executed_tasks
 
 
 def run_detectors(
@@ -4945,108 +5126,11 @@ def run_detectors(
     _js_idiom_scope_reset = None  # bound to set_js_idiom_scope once applied
     _catalog_scope_applied = False
     if scope_ids is not None:
-        try:
-            from roam.catalog.python_idioms import set_idiom_scope
-
-            set_idiom_scope(scope_ids)
-            _idiom_scope_reset = set_idiom_scope  # captured for the finally
-        except Exception as exc:  # noqa: BLE001
-            log.warning("run_detectors: could not apply idiom scope: %s", exc)
-        # The JS pack keeps its own module-global scope; apply it the same way.
-        try:
-            from roam.catalog.js_idioms import set_js_idiom_scope
-
-            set_js_idiom_scope(scope_ids)
-            _js_idiom_scope_reset = set_js_idiom_scope  # captured for the finally
-        except Exception as exc:  # noqa: BLE001
-            log.warning("run_detectors: could not apply js idiom scope: %s", exc)
-        # Resolve scope file-ids to paths so the catalog detectors' source-read
-        # chokepoint (`_read_symbol_source`) can skip out-of-scope files.
-        try:
-            from roam.db.connection import batched_in as _bi
-
-            paths = {r["path"] for r in _bi(conn, "SELECT path FROM files WHERE id IN ({ph})", list(scope_ids))}
-            _DETECTOR_SCOPE_PATHS = paths
-            _catalog_scope_applied = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning("run_detectors: could not apply catalog scope: %s", exc)
+        _idiom_scope_reset, _js_idiom_scope_reset, _catalog_scope_applied = _apply_detector_scopes(conn, scope_ids)
     try:
-        findings = []
-        failed_detectors = []
-        executed = 0
-        executed_tasks: list[str] = []
-        for task_id, _way_id, detect_fn in detector_entries:
-            if task_filter and task_id != task_filter:
-                continue
-            # A3 — --only / --exclude filter on detector function names.
-            # W1316 extends the filter from decorator-registered detectors
-            # to the full runtime surface (built-in catalog + Python idioms),
-            # so a detector shown by `roam algo --list-detectors` can always
-            # be selected directly.
-            fn_name = getattr(detect_fn, "__name__", "")
-            if only_set:
-                if fn_name not in only_set:
-                    continue
-            elif fn_name in exclude_set:
-                continue
-            executed += 1
-            executed_tasks.append(task_id)
-            try:
-                hits = detect_fn(conn)
-            except (NameError, ImportError, AttributeError, TypeError) as err:
-                # W661: programmer-class bug (missing import, wrong attribute,
-                # signature drift) — fail-loud per W531 + CLAUDE.md Pattern-2
-                # discipline. Mirrors W653 in smells.run_all_detectors(). The
-                # W639 smoke test catches these at test time, but the production
-                # loop must also surface the bug class to operators rather than
-                # silently dropping the detector into the `failed_detectors`
-                # bucket where it gets buried in `meta`.
-                raise RuntimeError(
-                    f"algo detector {detect_fn.__name__} "
-                    f"(task_id={task_id}) crashed with programmer error: "
-                    f"{type(err).__name__}: {err}"
-                ) from err
-            except sqlite3.Error as exc:
-                # W661: per-detector DB error (missing table, bad query against
-                # the live schema) is a data-class issue — log + continue so
-                # the remaining detectors still produce findings the operator
-                # can act on. Preserves the existing `failed_detectors` meta
-                # contract for sqlite-class failures.
-                log.warning(
-                    "algo detector %s (task_id=%s) failed with sqlite error: %s",
-                    detect_fn.__name__,
-                    task_id,
-                    exc,
-                )
-                failed_detectors.append(
-                    {
-                        "task_id": task_id,
-                        "detector": detect_fn.__name__,
-                        "error": str(exc),
-                    }
-                )
-                continue
-            except Exception as exc:
-                # W661: anything else (OS errors, third-party plugin
-                # bugs we don't want to crash the run on) keeps the
-                # legacy behaviour — record in `failed_detectors`,
-                # continue. Narrower programmer-class + data-class
-                # branches above already handle the bug classes we
-                # know how to triage.
-                failed_detectors.append(
-                    {
-                        "task_id": task_id,
-                        "detector": detect_fn.__name__,
-                        "error": str(exc),
-                    }
-                )
-                continue
-            dmeta = _detector_meta(task_id)
-            for h in hits:
-                h.setdefault("precision", dmeta["precision"])
-                h.setdefault("impact", dmeta["impact"])
-                h.setdefault("tags", list(dmeta["tags"]))
-            findings.extend(hits)
+        findings, failed_detectors, executed, executed_tasks = _execute_detectors(
+            conn, detector_entries, task_filter, only_set, exclude_set
+        )
 
         # Catalog detectors query the whole index, so scope their findings by
         # file_id here (idiom detectors are already scoped at the source via

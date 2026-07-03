@@ -31,8 +31,19 @@ from pathlib import Path
 from typing import Iterable
 
 from roam.commands._yaml_loader import load_yaml_with_warnings
+from roam.db.connection import batched_in
 from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.output._severity import validate_severity
+
+__all__ = [
+    "OPENVEX_JUSTIFICATIONS",
+    "OPENVEX_STATUSES",
+    "TaintFinding",
+    "TaintRule",
+    "load_rules",
+    "run_taint",
+    "vex_justification_for",
+]
 
 # OpenVEX justification strings — verbatim from the spec. NEVER add
 # anything here that the spec doesn't list. Sorted set for stable test
@@ -152,19 +163,12 @@ def load_rules(rules_dir: Path | str) -> list[TaintRule]:
         # author can either qualify the entry or drop qualified_only
         # rather than silently shipping with reduced recall.
         if qualified_only:
-            for kind, entries in (
-                ("sources", sources),
-                ("sinks", sinks),
-                ("sanitizers", sanitizers),
-            ):
-                for name in entries:
-                    if "." not in str(name):
-                        warnings.warn(
-                            f"[taint-engine] rule {rule_id!r}: bare {kind[:-1]} "
-                            f"{name!r} is a no-op under qualified_only=true; "
-                            f"either qualify it or drop qualified_only",
-                            stacklevel=2,
-                        )
+            _warn_bare_entries_under_qualified_only(
+                rule_id,
+                sources=sources,
+                sinks=sinks,
+                sanitizers=sanitizers,
+            )
         # W548: closed-enum validation at YAML load. validate_severity()
         # warns the rule author when their YAML spelling is non-canonical
         # (e.g. "HIGH" or "moderate") and returns the canonical form. Pre-
@@ -187,6 +191,31 @@ def load_rules(rules_dir: Path | str) -> list[TaintRule]:
             )
         )
     return out
+
+
+def _warn_bare_entries_under_qualified_only(
+    rule_id: str,
+    *,
+    sources: Iterable[str],
+    sinks: Iterable[str],
+    sanitizers: Iterable[str],
+) -> None:
+    sections: tuple[tuple[str, Iterable[str]], ...] = (
+        ("sources", sources),
+        ("sinks", sinks),
+        ("sanitizers", sanitizers),
+    )
+    for kind, entries in sections:
+        for name in entries:
+            name_text = str(name)
+            if "." in name_text:
+                continue
+            warnings.warn(
+                f"[taint-engine] rule {rule_id!r}: bare {kind[:-1]} "
+                f"{name_text!r} is a no-op under qualified_only=true; "
+                f"either qualify it or drop qualified_only",
+                stacklevel=3,
+            )
 
 
 def _coerce_bool(value: object, *, default: bool) -> bool:
@@ -365,6 +394,78 @@ def _symbols_matching(
 
 
 _BFS_FAN_OUT_LIMIT = 200
+_BfsQueueState = tuple[int, list[int], bool]
+
+
+def _load_frontier_edges_with_bounded_round_trips(
+    conn: sqlite3.Connection,
+    source_ids: Iterable[int],
+) -> tuple[dict[int, list[int]], bool]:
+    """Batch a BFS frontier while preserving each node's fan-out bound."""
+    source_list = list(source_ids)
+    if not source_list:
+        return {}, False
+
+    rows = batched_in(
+        conn,
+        "SELECT source_id, target_id, total_edges "
+        "FROM ("
+        "    SELECT source_id, target_id, "
+        "           ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY id) AS edge_rank, "
+        "           COUNT(*) OVER (PARTITION BY source_id) AS total_edges "
+        "    FROM edges "
+        f"    WHERE source_id IN ({{ph}}) AND {call_or_ref_in_clause()}"
+        ") "
+        "WHERE edge_rank <= ? "
+        "ORDER BY source_id, edge_rank",
+        source_list,
+        post=(_BFS_FAN_OUT_LIMIT,),
+    )
+
+    by_source: dict[int, list[int]] = {}
+    truncated = False
+    for row in rows:
+        source_id = int(row[0])
+        by_source.setdefault(source_id, []).append(int(row[1]))
+        if int(row[2]) >= _BFS_FAN_OUT_LIMIT:
+            truncated = True
+    return by_source, truncated
+
+
+def _drain_frontier_for_batched_reachability(
+    queue: deque[_BfsQueueState],
+    goal_ids: set[int],
+    start_ids: set[int],
+    max_hops: int,
+) -> tuple[list[_BfsQueueState], tuple[list[int], bool] | None, bool]:
+    """Keep terminal and hop-cap checks outside the batched SQL step."""
+    frontier: list[_BfsQueueState] = []
+    truncated = False
+    while queue:
+        node, path, has_sanitizer = queue.popleft()
+        if node in goal_ids and node not in start_ids:
+            return frontier, (path, has_sanitizer), truncated
+        if len(path) > max_hops:
+            truncated = True
+            continue
+        frontier.append((node, path, has_sanitizer))
+    return frontier, None, truncated
+
+
+def _enqueue_targets_to_preserve_bfs_order(
+    queue: deque[_BfsQueueState],
+    frontier: list[_BfsQueueState],
+    edges_by_source: dict[int, list[int]],
+    visited: set[int],
+    sanitizer_ids: set[int],
+) -> None:
+    """Apply batched edges in frontier order so path selection stays BFS."""
+    for node, path, has_sanitizer in frontier:
+        for tgt in edges_by_source.get(node, ()):
+            if tgt in visited:
+                continue
+            visited.add(tgt)
+            queue.append((tgt, path + [tgt], has_sanitizer or tgt in sanitizer_ids))
 
 
 def _bfs_path(
@@ -393,36 +494,35 @@ def _bfs_path(
     if not start_ids or not goal_ids:
         return None, False, False
 
-    queue: deque[tuple[int, list[int], bool]] = deque((s, [s], s in sanitizer_ids) for s in start_ids)
+    queue: deque[_BfsQueueState] = deque((s, [s], s in sanitizer_ids) for s in start_ids)
     visited: set[int] = set(start_ids)
     truncated = False
 
     while queue:
-        node, path, has_sanitizer = queue.popleft()
-        if node in goal_ids and node not in start_ids:
-            return path, has_sanitizer, truncated
-        if len(path) > max_hops:
-            # We're bumping the hop ceiling — record and skip expansion.
+        frontier, found, hop_truncated = _drain_frontier_for_batched_reachability(
+            queue,
+            goal_ids,
+            start_ids,
+            max_hops,
+        )
+        if hop_truncated:
             truncated = True
+        if found is not None:
+            path, has_sanitizer = found
+            return path, has_sanitizer, truncated
+        if not frontier:
             continue
 
-        # W512: edge-kind vocabulary lives in roam.db.edge_kinds. W79 fix
-        # surfaced by W78.
-        rows = conn.execute(
-            f"SELECT target_id FROM edges WHERE source_id = ? AND {call_or_ref_in_clause()} LIMIT ?",
-            (node, _BFS_FAN_OUT_LIMIT),
-        ).fetchall()
-        if len(rows) >= _BFS_FAN_OUT_LIMIT:
+        edges_by_source, frontier_truncated = _load_frontier_edges_with_bounded_round_trips(
+            conn,
+            (node for node, _path, _has_sanitizer in frontier),
+        )
+        if frontier_truncated:
             # Hit the per-node fan-out cap — the path may exist beyond
             # the truncated edge set. Mark and proceed (don't propagate
             # within this branch — other branches may still find a path).
             truncated = True
-        for row in rows:
-            tgt = int(row[0])
-            if tgt in visited:
-                continue
-            visited.add(tgt)
-            queue.append((tgt, path + [tgt], has_sanitizer or tgt in sanitizer_ids))
+        _enqueue_targets_to_preserve_bfs_order(queue, frontier, edges_by_source, visited, sanitizer_ids)
 
     return None, False, truncated
 
@@ -477,6 +577,111 @@ def _intraprocedural_co_calls(
     return out
 
 
+def _collect_findings_for_rule_isolation(
+    conn: sqlite3.Connection,
+    rule: TaintRule,
+    sources: list[dict],
+    sinks: list[dict],
+    sanitizers: list[dict],
+    *,
+    max_hops: int,
+) -> list[TaintFinding]:
+    """Keep co-call and BFS analysis scoped to one resolved taint rule."""
+    findings: list[TaintFinding] = []
+    source_ids = {s["id"] for s in sources}
+    sink_ids = {s["id"] for s in sinks}
+    # Drop overlap: a node listed as both a source and a sanitizer
+    # would otherwise mark every reachable path as has_sanitizer=True
+    # at BFS-start, producing a false `inline_mitigations_already_exist`
+    # OpenVEX claim. Sanitizers must be intermediate nodes, not sources.
+    sanitizer_ids = {s["id"] for s in sanitizers} - source_ids
+
+    # Path id -> metadata for hop rendering.
+    sym_meta: dict[int, dict] = {s["id"]: s for s in sources + sinks + sanitizers}
+
+    # Pass 2 first (cheap): per-function co-call records flow
+    # through assignments / locals without needing an edge.
+    co_calls = _intraprocedural_co_calls(conn, source_ids, sink_ids, sanitizer_ids)
+    for enclosing, src_id, sink_id, has_sanitizer in co_calls:
+        unknown = [pid for pid in (enclosing, src_id, sink_id) if pid not in sym_meta]
+        if unknown:
+            rows = conn.execute(
+                "SELECT s.id, s.name, s.qualified_name, s.line_start, f.path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                f"WHERE s.id IN ({','.join('?' * len(unknown))})",
+                unknown,
+            ).fetchall()
+            for r in rows:
+                sym_meta[int(r[0])] = {
+                    "id": int(r[0]),
+                    "name": r[1],
+                    "qualified_name": r[2],
+                    "line": r[3],
+                    "file": r[4],
+                }
+        findings.append(
+            TaintFinding(
+                rule_id=rule.rule_id,
+                severity=rule.severity,
+                cwe=rule.cwe,
+                source_symbol=sym_meta.get(src_id, {"id": src_id}),
+                sink_symbol=sym_meta.get(sink_id, {"id": sink_id}),
+                path_symbols=[
+                    sym_meta.get(src_id, {"id": src_id}),
+                    sym_meta.get(enclosing, {"id": enclosing}),
+                    sym_meta.get(sink_id, {"id": sink_id}),
+                ],
+                sanitizer_in_path=has_sanitizer,
+                owasp_top10=rule.owasp_top10,
+            )
+        )
+
+    path_ids, has_sanitizer, path_truncated = _bfs_path(conn, source_ids, sink_ids, sanitizer_ids, max_hops=max_hops)
+    if path_ids is None:
+        # No path found within the search bounds. We don't emit a
+        # finding because there's no concrete path to point at;
+        # the truncated-negative case (search hit a cap so a real
+        # path may have been missed) is captured in the per-finding
+        # ``path_truncated`` flag for paths that DID resolve, where
+        # consumers need to know the search wasn't exhaustive.
+        return findings
+
+    # Hydrate any path nodes we don't already have metadata for.
+    unknown = [pid for pid in path_ids if pid not in sym_meta]
+    if unknown:
+        chunk = unknown[:400]
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.line_start, f.path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            f"WHERE s.id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            sym_meta[int(r[0])] = {
+                "id": int(r[0]),
+                "name": r[1],
+                "qualified_name": r[2],
+                "line": r[3],
+                "file": r[4],
+            }
+
+    path_symbols = [sym_meta.get(pid, {"id": pid}) for pid in path_ids]
+    findings.append(
+        TaintFinding(
+            rule_id=rule.rule_id,
+            severity=rule.severity,
+            cwe=rule.cwe,
+            source_symbol=path_symbols[0],
+            sink_symbol=path_symbols[-1],
+            path_symbols=path_symbols,
+            sanitizer_in_path=has_sanitizer,
+            path_truncated=path_truncated,
+            owasp_top10=rule.owasp_top10,
+        )
+    )
+    return findings
+
+
 def run_taint(
     conn: sqlite3.Connection,
     rules: list[TaintRule],
@@ -503,97 +708,14 @@ def run_taint(
         sanitizers = _symbols_matching(conn, rule.sanitizers, rule.languages, qualified_only=rule.qualified_only)
         if not sources or not sinks:
             continue
-        source_ids = {s["id"] for s in sources}
-        sink_ids = {s["id"] for s in sinks}
-        # Drop overlap: a node listed as both a source and a sanitizer
-        # would otherwise mark every reachable path as has_sanitizer=True
-        # at BFS-start, producing a false `inline_mitigations_already_exist`
-        # OpenVEX claim. Sanitizers must be intermediate nodes, not sources.
-        sanitizer_ids = {s["id"] for s in sanitizers} - source_ids
-
-        # Path id → metadata for hop rendering.
-        sym_meta: dict[int, dict] = {s["id"]: s for s in sources + sinks + sanitizers}
-
-        # Pass 2 first (cheap): per-function co-call records flow
-        # through assignments / locals without needing an edge.
-        co_calls = _intraprocedural_co_calls(conn, source_ids, sink_ids, sanitizer_ids)
-        for enclosing, src_id, sink_id, has_sanitizer in co_calls:
-            unknown = [pid for pid in (enclosing, src_id, sink_id) if pid not in sym_meta]
-            if unknown:
-                rows = conn.execute(
-                    "SELECT s.id, s.name, s.qualified_name, s.line_start, f.path "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id "
-                    f"WHERE s.id IN ({','.join('?' * len(unknown))})",
-                    unknown,
-                ).fetchall()
-                for r in rows:
-                    sym_meta[int(r[0])] = {
-                        "id": int(r[0]),
-                        "name": r[1],
-                        "qualified_name": r[2],
-                        "line": r[3],
-                        "file": r[4],
-                    }
-            findings.append(
-                TaintFinding(
-                    rule_id=rule.rule_id,
-                    severity=rule.severity,
-                    cwe=rule.cwe,
-                    source_symbol=sym_meta.get(src_id, {"id": src_id}),
-                    sink_symbol=sym_meta.get(sink_id, {"id": sink_id}),
-                    path_symbols=[
-                        sym_meta.get(src_id, {"id": src_id}),
-                        sym_meta.get(enclosing, {"id": enclosing}),
-                        sym_meta.get(sink_id, {"id": sink_id}),
-                    ],
-                    sanitizer_in_path=has_sanitizer,
-                    owasp_top10=rule.owasp_top10,
-                )
-            )
-
-        path_ids, has_sanitizer, path_truncated = _bfs_path(
-            conn, source_ids, sink_ids, sanitizer_ids, max_hops=max_hops
-        )
-        if path_ids is None:
-            # No path found within the search bounds. We don't emit a
-            # finding because there's no concrete path to point at;
-            # the truncated-negative case (search hit a cap so a real
-            # path may have been missed) is captured in the per-finding
-            # ``path_truncated`` flag for paths that DID resolve, where
-            # consumers need to know the search wasn't exhaustive.
-            continue
-
-        # Hydrate any path nodes we don't already have metadata for.
-        unknown = [pid for pid in path_ids if pid not in sym_meta]
-        if unknown:
-            chunk = unknown[:400]
-            rows = conn.execute(
-                "SELECT s.id, s.name, s.qualified_name, s.line_start, f.path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id "
-                f"WHERE s.id IN ({','.join('?' * len(chunk))})",
-                chunk,
-            ).fetchall()
-            for r in rows:
-                sym_meta[int(r[0])] = {
-                    "id": int(r[0]),
-                    "name": r[1],
-                    "qualified_name": r[2],
-                    "line": r[3],
-                    "file": r[4],
-                }
-
-        path_symbols = [sym_meta.get(pid, {"id": pid}) for pid in path_ids]
-        findings.append(
-            TaintFinding(
-                rule_id=rule.rule_id,
-                severity=rule.severity,
-                cwe=rule.cwe,
-                source_symbol=path_symbols[0],
-                sink_symbol=path_symbols[-1],
-                path_symbols=path_symbols,
-                sanitizer_in_path=has_sanitizer,
-                path_truncated=path_truncated,
-                owasp_top10=rule.owasp_top10,
+        findings.extend(
+            _collect_findings_for_rule_isolation(
+                conn,
+                rule,
+                sources,
+                sinks,
+                sanitizers,
+                max_hops=max_hops,
             )
         )
 
@@ -613,16 +735,23 @@ def vex_justification_for(finding: TaintFinding) -> str:
       / not a *not_affected* claim — caller maps to status, not
       justification).
 
-    The "no path exists" / "package not present" cases live in
-    :func:`vex_justification_for_unreachable`.
+    The "no path exists" / "package not present" cases live in the
+    private ``_vex_justification_for_unreachable`` helper.
     """
     if finding.sanitizer_in_path:
         return "inline_mitigations_already_exist"
     return ""
 
 
-def vex_justification_for_unreachable(*, package_present: bool) -> str:
+def _vex_justification_for_unreachable(*, package_present: bool) -> str:
     """Return the justification string for a not_affected finding."""
     if not package_present:
         return "component_not_present"
     return "vulnerable_code_not_in_execute_path"
+
+
+def __getattr__(name: str) -> object:
+    """Resolve legacy direct imports without exporting the helper."""
+    if name == "vex_justification_for_unreachable":
+        return _vex_justification_for_unreachable
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

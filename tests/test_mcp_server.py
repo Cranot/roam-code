@@ -352,7 +352,8 @@ class TestToolDecorator:
         assert "roam_reindex" in _NON_READ_ONLY_TOOLS
 
     def test_presets_all_defined(self):
-        """All 7 presets should be defined (v12.2 added 'compliance')."""
+        """All 8 presets should be defined (v12.2 added 'compliance';
+        the wiring pass added 'compile-curated')."""
         from roam.mcp_server import _PRESETS
 
         assert set(_PRESETS.keys()) == {
@@ -362,6 +363,7 @@ class TestToolDecorator:
             "debug",
             "architecture",
             "compliance",  # v12.2 — EU AI Act / NIS2 audit subset
+            "compile-curated",  # compile-code wire --mcp pre-approved surface
             "full",
         }
 
@@ -382,6 +384,11 @@ class TestToolDecorator:
                 # narrow "audit-only" framing.
                 assert len(tools) > 0
                 assert len(tools) <= 20, f"compliance preset too wide: {len(tools)} tools"
+            elif name == "compile-curated":
+                # compile-code's pre-approved graph surface — a focused
+                # subset (like compliance), not a core++ superset. Stays tight.
+                assert len(tools) > 0
+                assert len(tools) <= 12, f"compile-curated preset too wide: {len(tools)} tools"
             else:
                 assert _CORE_TOOLS.issubset(tools), f"{name} preset missing core tools"
 
@@ -446,6 +453,7 @@ class TestExpandToolset:
             "debug",
             "architecture",
             "compliance",  # v12.2 — EU AI Act / NIS2 audit subset
+            "compile-curated",  # compile-code wire --mcp pre-approved surface
             "full",
         }
 

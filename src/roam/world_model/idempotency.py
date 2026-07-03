@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import re
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import partial
+from itertools import groupby
 from pathlib import Path
 from typing import Optional
 
@@ -102,21 +105,27 @@ _APPEND_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
 # ---------------------------------------------------------------------------
 
 
-def _load_body(repo_root: Path, rel_path: str, ls: int, le: int) -> str:
-    """Read lines [ls..le] (1-based inclusive)."""
+def _read_source_lines_preserving_retry_evidence(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
+    """Read one source file for retry-pattern evidence, or return empty lines."""
     try:
         p = repo_root / rel_path
         if not p.exists():
-            return ""
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-    except OSError:
-        return ""
-    if ls <= 0:
-        ls = 1
-    if le <= 0 or le > len(lines):
-        le = len(lines)
-    return "".join(lines[ls - 1 : le])
+            return rel_path, []
+        return rel_path, p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
+        # unreadable body yields empty-body classifications that are
+        # indistinguishable from genuinely clean symbols. Surface the
+        # lineage (rate-limited per-scope so a many-file repo won't
+        # flood; visible under ROAM_VERBOSE=1).
+        log_swallowed(f"world_model.idempotency:body_read:{rel_path}", exc)
+        return rel_path, []
+
+
+def _load_source_lines_once_per_file(repo_root: Path, file_paths: Iterable[str]) -> dict[str, list[str]]:
+    """Cache each file once so per-symbol retry checks slice memory."""
+    reader = partial(_read_source_lines_preserving_retry_evidence, repo_root)
+    return dict(map(reader, file_paths))
 
 
 def _classify_one(
@@ -284,7 +293,7 @@ def classify_idempotency(
 
     try:
         repo_root = find_project_root()
-    except Exception as exc:
+    except OSError as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
         # missing project root downgrades per-symbol source slicing
         # silently; surface it so callers see "could not locate repo"
@@ -297,28 +306,13 @@ def classify_idempotency(
         )
         repo_root = Path(".")
 
-    # Group by file for cache-friendly source reads.
-    by_file: dict[str, list[SideEffectClassification]] = {}
-    for se in side_effects:
-        by_file.setdefault(se.file, []).append(se)
+    # Batch the source reads (one open per file, not per symbol), then group
+    # by file using itertools.groupby on the already-sorted side_effects list.
+    source_lines_by_file = _load_source_lines_once_per_file(repo_root, {se.file for se in side_effects})
 
     out: list[IdempotencyClassification] = []
-    for file_path, items in by_file.items():
-        try:
-            p = repo_root / file_path
-            if p.exists():
-                with open(p, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-            else:
-                lines = []
-        except OSError as exc:
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — an
-            # unreadable body yields empty-body classifications that are
-            # indistinguishable from genuinely clean symbols. Surface the
-            # lineage (rate-limited per-scope so a many-file repo won't
-            # flood; visible under ROAM_VERBOSE=1).
-            log_swallowed(f"world_model.idempotency:body_read:{file_path}", exc)
-            lines = []
+    for file_path, items in groupby(side_effects, key=lambda se: se.file):
+        lines = source_lines_by_file[file_path]
         for se in items:
             ls = se.line_start or 1
             le = se.line_end or ls

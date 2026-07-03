@@ -127,42 +127,14 @@ def _load_budgets_with_status(
     if config_path is None:
         return [], "missing"
 
-    from roam.commands._yaml_loader import load_yaml_with_warnings
-
-    path_str = str(config_path)
-    pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data, status = load_yaml_with_warnings(
+    data, status = _load_budget_mapping_without_warning_cascade(
         config_path,
-        tiny_parser=_parse_simple_yaml_dict,
-        config_label="budget",
         warnings_out=warnings_out,
-        return_status=True,
     )
     if data is None:
-        # Missing file — default state, no warning emitted by the helper.
         return [], status
-    if status in ("empty_file", "empty_yaml"):
-        # W1030-followup-A: zero-byte / comments-only file is a distinct
-        # on-disk state from "non-empty file missing the ``budgets:``
-        # key" -- the user created a stub but did not write any rules.
-        # Suppress the "no `budgets:` key" warning that the legacy
-        # missing-key branch would emit so the empty-stub state surfaces
-        # cleanly as ``config_state=empty_file`` (or ``empty_yaml``) on
-        # the envelope, with no warning. Pattern 2 is preserved for the
-        # malformed cases — ``parse_error`` / ``wrong_root_type`` still
-        # emit the canonical loader's warning above.
-        return [], status
-    if warnings_out is not None and len(warnings_out) > pre_warnings:
-        # Helper already explained the failure (read error / malformed
-        # YAML / wrong root type / tiny-parser fallback). Propagate the
-        # empty result without piling on a second "no `budgets:` key"
-        # warning that would just confuse the caller.
-        return [], status
-    # ``data`` is a Mapping when ``allow_list_root`` is left at False
-    # (the default we want for budget.yaml). The helper's root-type check
-    # guarantees this; the assert keeps the type checker happy on the
-    # post-helper budgets-extraction logic.
-    assert isinstance(data, dict)
+
+    path_str = str(config_path)
     if "budgets" not in data:
         if warnings_out is not None:
             warnings_out.append(
@@ -195,6 +167,56 @@ def _load_budgets_with_status(
             continue
         out.append(b)
     return out, status
+
+
+def _load_budget_mapping_without_warning_cascade(
+    config_path: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[dict | None, str]:
+    """Load a budget mapping only when key-level warnings are still useful.
+
+    Empty files and loader-reported failures already carry their own
+    ``config_state`` / warning signal. Returning ``None`` for those cases
+    keeps the caller from adding a second, misleading "no `budgets:` key"
+    warning while preserving the exact status the envelope needs.
+    """
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data, status = load_yaml_with_warnings(
+        config_path,
+        tiny_parser=_parse_simple_yaml_dict,
+        config_label="budget",
+        warnings_out=warnings_out,
+        return_status=True,
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
+        return None, status
+    if status in ("empty_file", "empty_yaml"):
+        # W1030-followup-A: zero-byte / comments-only file is a distinct
+        # on-disk state from "non-empty file missing the ``budgets:``
+        # key" -- the user created a stub but did not write any rules.
+        # Suppress the "no `budgets:` key" warning that the legacy
+        # missing-key branch would emit so the empty-stub state surfaces
+        # cleanly as ``config_state=empty_file`` (or ``empty_yaml``) on
+        # the envelope, with no warning. Pattern 2 is preserved for the
+        # malformed cases — ``parse_error`` / ``wrong_root_type`` still
+        # emit the canonical loader's warning above.
+        return None, status
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # YAML / wrong root type / tiny-parser fallback). Propagate the
+        # empty result without piling on a second "no `budgets:` key"
+        # warning that would just confuse the caller.
+        return None, status
+    # ``data`` is a Mapping when ``allow_list_root`` is left at False
+    # (the default we want for budget.yaml). The helper's root-type check
+    # guarantees this; the assert keeps the type checker happy on the
+    # post-helper budgets-extraction logic.
+    assert isinstance(data, dict)
+    return data, status
 
 
 def _parse_simple_yaml_dict(text: str) -> dict:

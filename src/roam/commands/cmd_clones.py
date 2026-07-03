@@ -114,6 +114,21 @@ def _role_bucket_for_cluster(files: list[str]) -> str:
     return "production"
 
 
+def _fetch_clone_finding_evidence_as_one_scan(conn) -> list[_sqlite3.Row]:
+    """Read clone finding evidence with one query before row classification."""
+    return conn.execute("SELECT id, evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
+
+
+def _write_role_bucket_updates_as_one_batch(conn, updates: list[tuple[str, int]]) -> None:
+    """Keep role-bucket enrichment writes outside the per-row loop."""
+    if not updates:
+        return
+    conn.executemany(
+        "UPDATE findings SET evidence_json = ? WHERE id = ?",
+        updates,
+    )
+
+
 def _enrich_clones_findings_with_role_bucket(conn) -> int:
     """Inject ``role_bucket`` into the evidence_json of every clones row.
 
@@ -129,13 +144,13 @@ def _enrich_clones_findings_with_role_bucket(conn) -> int:
     pre-W89 schemas (no ``findings`` table) — silently returns 0.
     """
     try:
-        rows = conn.execute("SELECT id, evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
+        rows = _fetch_clone_finding_evidence_as_one_scan(conn)
     except _sqlite3.OperationalError:
         # No findings table — caller still wants the clone_pairs path to
         # work, which it does. Nothing to enrich.
         return 0
 
-    updated = 0
+    updates: list[tuple[str, int]] = []
     for r in rows:
         try:
             evidence = _json.loads(r["evidence_json"] or "{}")
@@ -150,12 +165,9 @@ def _enrich_clones_findings_with_role_bucket(conn) -> int:
             # Already enriched (re-run upsert) — skip the write.
             continue
         evidence["role_bucket"] = bucket
-        conn.execute(
-            "UPDATE findings SET evidence_json = ? WHERE id = ?",
-            (_json.dumps(evidence, sort_keys=True), r["id"]),
-        )
-        updated += 1
-    return updated
+        updates.append((_json.dumps(evidence, sort_keys=True), r["id"]))
+    _write_role_bucket_updates_as_one_batch(conn, updates)
+    return len(updates)
 
 
 # R22 — confidence-derivation rule for clone clusters and pairs:

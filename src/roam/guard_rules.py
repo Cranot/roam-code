@@ -142,6 +142,20 @@ def parse_rule_pack_dict(data: dict[str, Any]) -> RulePack:
     return _parse_rule_pack(data, source="<dict>")
 
 
+# Compiled-regex cache for user-supplied patterns. Prevents re-paying the
+# compile cost for repeated regex strings across pack reloads or duplicates.
+_REGEX_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _compile_regex_cached(pattern: str) -> re.Pattern[str]:
+    """Return a compiled regex, reusing a cached result when available."""
+    compiled = _REGEX_CACHE.get(pattern)
+    if compiled is None:
+        compiled = re.compile(pattern, re.IGNORECASE)
+        _REGEX_CACHE[pattern] = compiled
+    return compiled
+
+
 # Built-in pack registry — looked up when a custom pack uses `extends: <name>`.
 _BUILTIN_PACKS: dict[str, "RulePack"] = {}
 
@@ -203,7 +217,7 @@ def _parse_rule_pack(data: Any, source: str) -> RulePack:
         if not isinstance(kinds, list) or not kinds:
             raise ValueError(f"rule pack {source}: file_patterns[{i}].applies_to_kinds must be a non-empty list")
         try:
-            pattern = re.compile(regex_str, re.IGNORECASE)
+            pattern = _compile_regex_cached(regex_str)
         except re.error as e:
             raise ValueError(f"rule pack {source}: file_patterns[{i}].regex is invalid: {e}") from e
         rules.append(

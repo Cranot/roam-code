@@ -65,12 +65,7 @@ def summarize(results_dir: Path) -> dict:
         by_task[task].append(row)
         matrix_seen.add((agent, mode, task))
 
-    expected = {
-        (a, m, t)
-        for a in EXPECTED_AGENTS
-        for m in EXPECTED_MODES
-        for t in EXPECTED_TASKS
-    }
+    expected = {(a, m, t) for a in EXPECTED_AGENTS for m in EXPECTED_MODES for t in EXPECTED_TASKS}
     missing = sorted(expected - matrix_seen)
 
     per_agent = {}
@@ -81,9 +76,7 @@ def summarize(results_dir: Path) -> dict:
             "avg_health": _avg([r.get("scores", {}).get("health") for r in rows_agent]),
             "avg_aqs": _avg([r.get("aqs", {}).get("aqs") for r in rows_agent]),
             "avg_dead_symbols": _avg([r.get("scores", {}).get("dead_symbols") for r in rows_agent]),
-            "completion_rate": round(
-                100.0 * sum(1 for r in rows_agent if _completion(r)) / len(rows_agent), 2
-            ),
+            "completion_rate": round(100.0 * sum(1 for r in rows_agent if _completion(r)) / len(rows_agent), 2),
             "grades": dict(Counter(r.get("aqs", {}).get("grade", "N/A") for r in rows_agent)),
         }
 
@@ -94,9 +87,7 @@ def summarize(results_dir: Path) -> dict:
             "samples": len(rows_mode),
             "avg_health": _avg([r.get("scores", {}).get("health") for r in rows_mode]),
             "avg_aqs": _avg([r.get("aqs", {}).get("aqs") for r in rows_mode]),
-            "completion_rate": round(
-                100.0 * sum(1 for r in rows_mode if _completion(r)) / len(rows_mode), 2
-            ),
+            "completion_rate": round(100.0 * sum(1 for r in rows_mode if _completion(r)) / len(rows_mode), 2),
         }
 
     per_task = {}
@@ -106,20 +97,14 @@ def summarize(results_dir: Path) -> dict:
             "samples": len(rows_task),
             "avg_health": _avg([r.get("scores", {}).get("health") for r in rows_task]),
             "avg_aqs": _avg([r.get("aqs", {}).get("aqs") for r in rows_task]),
-            "completion_rate": round(
-                100.0 * sum(1 for r in rows_task if _completion(r)) / len(rows_task), 2
-            ),
+            "completion_rate": round(100.0 * sum(1 for r in rows_task if _completion(r)) / len(rows_task), 2),
         }
 
     overall = {
         "samples": len(rows),
         "avg_health": _avg([r.get("scores", {}).get("health") for r in rows]),
         "avg_aqs": _avg([r.get("aqs", {}).get("aqs") for r in rows]),
-        "completion_rate": round(
-            100.0 * sum(1 for r in rows if _completion(r)) / len(rows), 2
-        )
-        if rows
-        else 0.0,
+        "completion_rate": round(100.0 * sum(1 for r in rows if _completion(r)) / len(rows), 2) if rows else 0.0,
         "grade_distribution": dict(Counter(r.get("aqs", {}).get("grade", "N/A") for r in rows)),
     }
 
@@ -127,9 +112,7 @@ def summarize(results_dir: Path) -> dict:
         "results_path": str(results_dir.as_posix()),
         "expected_matrix_size": len(expected),
         "observed_matrix_size": len(rows),
-        "missing_matrix_entries": [
-            {"agent": a, "mode": m, "task": t} for (a, m, t) in missing
-        ],
+        "missing_matrix_entries": [{"agent": a, "mode": m, "task": t} for (a, m, t) in missing],
         "overall": overall,
         "per_agent": per_agent,
         "per_mode": per_mode,

@@ -6,6 +6,7 @@ Usage:
     python compare.py results/          # compare all results in directory
     python compare.py results/ --html   # generate HTML report
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,15 +20,15 @@ MODES = ["vanilla", "roam-cli", "roam-mcp"]
 TASKS = ["react-todo", "astro-landing", "python-crawler", "cpp-calculator", "go-loganalyzer"]
 
 SCORE_COLUMNS = [
-    ("health", "Health", "{}", True),              # higher is better
-    ("dead_symbols", "Dead", "{}", False),          # lower is better
-    ("avg_complexity", "AvgCx", "{:.1f}", False),   # lower is better
-    ("p90_complexity", "P90Cx", "{:.1f}", False),   # lower is better
-    ("high_complexity_count", "HiCx", "{}", False), # lower is better
-    ("tangle_ratio", "Tangle", "{:.2f}", False),    # lower is better
-    ("hidden_coupling", "HidCoup", "{}", False),    # lower is better
-    ("critical_issues", "Crit", "{}", False),       # lower is better
-    ("warning_issues", "Warn", "{}", False),        # lower is better
+    ("health", "Health", "{}", True),  # higher is better
+    ("dead_symbols", "Dead", "{}", False),  # lower is better
+    ("avg_complexity", "AvgCx", "{:.1f}", False),  # lower is better
+    ("p90_complexity", "P90Cx", "{:.1f}", False),  # lower is better
+    ("high_complexity_count", "HiCx", "{}", False),  # lower is better
+    ("tangle_ratio", "Tangle", "{:.2f}", False),  # lower is better
+    ("hidden_coupling", "HidCoup", "{}", False),  # lower is better
+    ("critical_issues", "Crit", "{}", False),  # lower is better
+    ("warning_issues", "Warn", "{}", False),  # lower is better
 ]
 
 
@@ -133,12 +134,14 @@ def print_agent_summary(agent: str, lookup: dict):
         avg_health = sum(health_scores) / len(health_scores) if health_scores else None
         avg_cx = sum(complexities) / len(complexities) if complexities else None
 
-        print(f"  {mode:<10}  "
-              f"avg_health={avg_health or 'N/A':>5}  "
-              f"dead={dead_total:>3}  "
-              f"avg_cx={f'{avg_cx:.1f}' if avg_cx else 'N/A':>5}  "
-              f"cycles={cycles_total:>2}  "
-              f"gates={gate_passes}/{task_count}")
+        print(
+            f"  {mode:<10}  "
+            f"avg_health={avg_health or 'N/A':>5}  "
+            f"dead={dead_total:>3}  "
+            f"avg_cx={f'{avg_cx:.1f}' if avg_cx else 'N/A':>5}  "
+            f"cycles={cycles_total:>2}  "
+            f"gates={gate_passes}/{task_count}"
+        )
 
 
 def print_mode_comparison(lookup: dict):
@@ -179,7 +182,8 @@ def print_mode_comparison(lookup: dict):
 
 def generate_html_report(lookup: dict, output: Path):
     """Generate an HTML comparison report."""
-    html = ["""<!DOCTYPE html>
+    html = [
+        """<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <title>Agent Code Quality Evaluation — roam-code</title>
 <style>
@@ -210,7 +214,8 @@ def generate_html_report(lookup: dict, output: Path):
 </style></head><body>
 <h1>Agent Code Quality Evaluation</h1>
 <p class="subtitle">Powered by roam-code | Generated from benchmark results</p>
-"""]
+"""
+    ]
 
     # Per-task tables
     for task in TASKS:

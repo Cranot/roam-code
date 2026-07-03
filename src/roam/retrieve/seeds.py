@@ -27,6 +27,7 @@ on builds without FTS5 support compiled into SQLite).
 
 from __future__ import annotations
 
+import heapq
 import re
 import sqlite3
 
@@ -313,6 +314,128 @@ _NL_EXTRA_STOPWORDS = frozenset(
 # not seeds: API, URL, ID, OK, etc. They produce too much FTS5 noise.
 _INITIALISM_RE = re.compile(r"^[A-Z]{2,3}$")
 
+# dogfood : programming-domain shorthand that falls outside the
+# identifier-shape regexes. ``n+1``, ``n-tier``, ``2fa``, ``i18n``,
+# ``l10n`` etc. are real concepts a user types in a query but the
+# standard tokenizer drops them because they contain ``+``, ``-``, or
+# are too short.
+_DOMAIN_SHORTHANDS = {
+    "n+1": "n1",
+    "n-1": "n1",
+    "2fa": "2fa",
+    "i18n": "i18n",
+    "l10n": "l10n",
+    "a11y": "a11y",
+}
+
+_TokenMap = dict[str, None]
+
+
+def _add_token(found: _TokenMap, tok: str) -> None:
+    tok = tok.strip()
+    if len(tok) < 3:
+        return
+    if tok.lower() in _STOPWORDS:
+        return
+    if _INITIALISM_RE.match(tok):
+        return
+    found[tok] = None
+
+
+def _add_file_dotted_snake_tokens(query: str, found: _TokenMap) -> None:
+    # File paths first (longest, most specific) so they aren't shadowed.
+    for match in _FILE_RE.findall(query):
+        _add_token(found, match)
+    for match in _DOTTED_RE.findall(query):
+        _add_token(found, match)
+    for match in _SNAKE_RE.findall(query):
+        _add_token(found, match)
+
+
+def _add_domain_shorthand_tokens(query: str, found: _TokenMap) -> None:
+    lowered = query.lower()
+    for src_tok, indexed_tok in _DOMAIN_SHORTHANDS.items():
+        if src_tok in lowered:
+            # The normal filter drops tokens shorter than 3 chars; bypass
+            # that for these intentional shorthands.
+            found[indexed_tok] = None
+
+
+def _add_case_identifier_tokens(query: str, found: _TokenMap) -> None:
+    # UPPER_SNAKE constants lowercase to the same FTS terms as snake_case.
+    for match in _UPPER_SNAKE_RE.findall(query):
+        _add_token(found, match.lower())
+
+    # Mixed-case snake (``Personalized_Pagerank``, ``foo_BarBaz``) is not
+    # caught by SNAKE or UPPER_SNAKE. Lowercase + re-snake catches it before
+    # CAMEL/PASCAL so the snake form registers first.
+    if "_" in query:
+        for match in _SNAKE_RE.findall(query.lower()):
+            _add_token(found, match)
+
+    for match in _CAMEL_RE.findall(query):
+        _add_token(found, match)
+    for match in _PASCAL_RE.findall(query):
+        _add_token(found, match)
+
+
+def _add_lowercase_noun_tokens(query: str, found: _TokenMap) -> None:
+    for match in _LOWERCASE_NOUN_RE.findall(query):
+        tok = match.strip()
+        if len(tok) < 5:
+            continue
+        lower = tok.lower()
+        if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
+            continue
+        found[tok] = None
+
+
+def _add_four_char_domain_noun_tokens(query: str, found: _TokenMap) -> None:
+    for match in _FOUR_CHAR_NOUN_RE.findall(query.lower()):
+        if match in _FOUR_CHAR_DOMAIN_NOUNS and match not in found:
+            found[match] = None
+
+
+def _append_existing_token_abbreviations(found: _TokenMap, extra_abbrev: list[str]) -> None:
+    for tok in list(found):
+        lower = tok.lower()
+        expansion = _ABBREVIATION_EXPANSIONS.get(lower)
+        if expansion is not None and expansion not in found:
+            extra_abbrev.append(expansion)
+
+        contraction = _ABBREVIATION_CONTRACTIONS.get(lower)
+        if contraction is not None and contraction not in found:
+            extra_abbrev.append(contraction)
+
+
+def _append_raw_query_abbreviations(query: str, found: _TokenMap, extra_abbrev: list[str]) -> None:
+    # Direct scan of raw query for abbreviations that were below the length
+    # floor of the regex passes (``db``, ``ctx``, ``fn``, ...).
+    raw_words = re.findall(r"\b([a-z]+)\b", query.lower())
+    for word in raw_words:
+        full = _ABBREVIATION_EXPANSIONS.get(word)
+        if full is None:
+            continue
+        if word not in found:
+            extra_abbrev.append(word)
+        if full not in found and full not in extra_abbrev:
+            extra_abbrev.append(full)
+
+
+def _add_abbreviation_tokens(query: str, found: _TokenMap) -> None:
+    # Narrow expansion: short queries benefit from spelling variants, while
+    # long queries already carry enough seed tokens.
+    word_count = len(re.findall(r"\b\w+\b", query))
+    if word_count > 4:
+        return
+
+    extra_abbrev: list[str] = []
+    _append_existing_token_abbreviations(found, extra_abbrev)
+    _append_raw_query_abbreviations(query, found, extra_abbrev)
+
+    for tok in extra_abbrev:
+        found[tok] = None
+
 
 def extract_tokens(query: str) -> list[str]:
     """Return the unique symbol-shaped tokens found in *query*.
@@ -323,66 +446,11 @@ def extract_tokens(query: str) -> list[str]:
     if not query:
         return []
 
-    found: dict[str, None] = {}  # use dict for insertion-order uniqueness
+    found: _TokenMap = {}  # use dict for insertion-order uniqueness
 
-    def _add(tok: str) -> None:
-        tok = tok.strip()
-        if len(tok) < 3:
-            return
-        if tok.lower() in _STOPWORDS:
-            return
-        if _INITIALISM_RE.match(tok):
-            return
-        found[tok] = None
-
-    # File paths first (longest, most specific) so they aren't shadowed.
-    for match in _FILE_RE.findall(query):
-        _add(match)
-    for match in _DOTTED_RE.findall(query):
-        _add(match)
-    for match in _SNAKE_RE.findall(query):
-        _add(match)
-
-    # dogfood : programming-domain shorthand that
-    # falls outside the identifier-shape regexes. ``n+1``, ``n-tier``,
-    # ``2fa``, ``i18n``, ``l10n`` etc. are real concepts a user types
-    # in a query but the standard tokenizer drops them because they
-    # contain ``+``, ``-``, or are too short. Without this, "find n+1
-    # query detection" returned only ["query", "detection"] and missed
-    # the actual ``cmd_n1.py`` file (the implementation). Each match
-    # adds the both raw and a path-shaped form so FTS5 can hit
-    # ``cmd_n1.py``-style filenames.
-    _DOMAIN_SHORTHANDS = {
-        "n+1": "n1",
-        "n-1": "n1",
-        "2fa": "2fa",
-        "i18n": "i18n",
-        "l10n": "l10n",
-        "a11y": "a11y",
-    }
-    lowered = query.lower()
-    for src_tok, indexed_tok in _DOMAIN_SHORTHANDS.items():
-        if src_tok in lowered:
-            # The dict-based ``_add`` filters tokens shorter than 3
-            # chars; bypass that for these intentional shorthands.
-            found[indexed_tok] = None
-    # UPPER_SNAKE constants — lowercase before adding so they resolve
-    # to the same FTS terms as their snake_case usage.
-    for match in _UPPER_SNAKE_RE.findall(query):
-        _add(match.lower())
-    # Mixed-case snake (``Personalized_Pagerank``, ``foo_BarBaz``) —
-    # neither SNAKE nor UPPER_SNAKE catches these, and ``\b`` treats
-    # ``_`` as a word character so PASCAL doesn't fire on the
-    # individual halves. Lowercase + re-snake catches them. Ordered
-    # before CAMEL/PASCAL so the snake form (e.g. ``personalized_pagerank``)
-    # is registered first.
-    if "_" in query:
-        for match in _SNAKE_RE.findall(query.lower()):
-            _add(match)
-    for match in _CAMEL_RE.findall(query):
-        _add(match)
-    for match in _PASCAL_RE.findall(query):
-        _add(match)
+    _add_file_dotted_snake_tokens(query, found)
+    _add_domain_shorthand_tokens(query, found)
+    _add_case_identifier_tokens(query, found)
 
     # DOG.7 / R.1 — natural-language supplement. Always mine lowercase
     # domain nouns as additional seeds. The original DOG.7 ran this only
@@ -395,20 +463,11 @@ def extract_tokens(query: str) -> list[str]:
     # Now we always include lowercase nouns; they ride alongside the
     # Pascal/snake/dotted tokens and lift recall by adding domain
     # signal that BM25 can score against.
-    for match in _LOWERCASE_NOUN_RE.findall(query):
-        tok = match.strip()
-        if len(tok) < 5:
-            continue
-        lower = tok.lower()
-        if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
-            continue
-        found[tok] = None
+    _add_lowercase_noun_tokens(query, found)
 
     # 4-letter domain-noun pass — only allow-listed words that
     # carry programming meaning. Skipped if already present.
-    for match in _FOUR_CHAR_NOUN_RE.findall(query.lower()):
-        if match in _FOUR_CHAR_DOMAIN_NOUNS and match not in found:
-            found[match] = None
+    _add_four_char_domain_noun_tokens(query, found)
 
     # 12.13 — abbreviation expansion (narrow). Two passes only when
     # the query is short enough (≤4 raw words) that adding abbrevs
@@ -417,27 +476,7 @@ def extract_tokens(query: str) -> list[str]:
     # noise tokens that hurt recall@10 in the bench. Short queries
     # are exactly where the user typed shorthand (``db connect``,
     # ``ctx propagation``) and benefit from expansion.
-    word_count = len(re.findall(r"\b\w+\b", query))
-    if word_count <= 4:
-        extra_abbrev: list[str] = []
-        for tok in list(found):
-            lower = tok.lower()
-            if lower in _ABBREVIATION_EXPANSIONS and _ABBREVIATION_EXPANSIONS[lower] not in found:
-                extra_abbrev.append(_ABBREVIATION_EXPANSIONS[lower])
-            if lower in _ABBREVIATION_CONTRACTIONS and _ABBREVIATION_CONTRACTIONS[lower] not in found:
-                extra_abbrev.append(_ABBREVIATION_CONTRACTIONS[lower])
-        # Direct scan of raw query for abbreviations that were below the
-        # length floor of the regex passes (``db``, ``ctx``, ``fn``, …).
-        raw_words = re.findall(r"\b([a-z]+)\b", query.lower())
-        for word in raw_words:
-            if word in _ABBREVIATION_EXPANSIONS:
-                if word not in found:
-                    extra_abbrev.append(word)
-                full = _ABBREVIATION_EXPANSIONS[word]
-                if full not in found and full not in extra_abbrev:
-                    extra_abbrev.append(full)
-        for tok in extra_abbrev:
-            found[tok] = None
+    _add_abbreviation_tokens(query, found)
 
     return list(found)
 
@@ -539,7 +578,11 @@ def infer_seeds(
     if not accumulated:
         return {}
 
-    top = sorted(accumulated.items(), key=lambda kv: -kv[1])[:max_seeds]
+    # Stable top-k: heapq.nlargest is O(N log max_seeds) vs sorting the whole
+    # accumulator O(N log N). It also decorates entries with a descending
+    # counter, so for equal scores earlier-inserted symbols still come first --
+    # identical to the previous score-descending stable sort + slice.
+    top = heapq.nlargest(max_seeds, accumulated.items(), key=lambda kv: kv[1])
     return dict(top)
 
 
@@ -548,19 +591,35 @@ def _like_fallback(
     tokens: list[str],
     max_seeds: int,
 ) -> dict[int, float]:
-    """Used when FTS5 is unavailable. Slower but functional."""
+    """Used when FTS5 is unavailable. Batch-query all token LIKE patterns."""
     accumulated: dict[int, float] = {}
+    if not tokens:
+        return accumulated
+
     candidate_limit = max(max_seeds * 3, 30)
-    for token in tokens:
-        like = f"%{token}%"
+    patterns = [f"%{token}%" for token in tokens]
+
+    # One query per chunk keeps us well under SQLite's host-parameter limit
+    # while replacing the per-token loop with a single round-trip per chunk.
+    chunk_size = 500
+    for chunk_start in range(0, len(patterns), chunk_size):
+        chunk = patterns[chunk_start : chunk_start + chunk_size]
+        values = ", ".join("(?)" for _ in chunk)
+        query = (
+            f"WITH patterns(p) AS (VALUES {values}) "
+            f"SELECT s.id, COUNT(*) AS matches "
+            f"FROM symbols s "
+            f"JOIN patterns p ON s.name LIKE p.p OR s.qualified_name LIKE p.p "
+            f"GROUP BY s.id "
+            f"LIMIT ?"
+        )
         try:
             rows = conn.execute(
-                "SELECT id FROM symbols WHERE name LIKE ? OR qualified_name LIKE ? LIMIT ?",
-                (like, like, candidate_limit),
+                query,
+                (*chunk, len(chunk) * candidate_limit),
             ).fetchall()
         except sqlite3.OperationalError:
             continue
-        for row in rows:
-            sym_id = int(row[0])
-            accumulated[sym_id] = accumulated.get(sym_id, 0.0) + 1.0
+        for sym_id, matches in rows:
+            accumulated[int(sym_id)] = accumulated.get(int(sym_id), 0.0) + float(matches)
     return accumulated

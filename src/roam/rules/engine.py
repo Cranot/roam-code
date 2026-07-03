@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import sys
 from pathlib import Path
 
 from roam._glob_match import matches_glob as _matches_glob
@@ -140,12 +141,149 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError) as exc:
+        print(f"[rules] YAML read failed for {path}: {exc}", file=sys.stderr)
         return None
     try:
         return _parse_simple_yaml_text(text)
-    except ValueError:
+    except ValueError as exc:
+        print(f"[rules] fallback YAML parser failed for {path}: {exc}", file=sys.stderr)
         return None
+
+
+_YAML_QUOTED_SCALAR_RE = re.compile(r"\"[^\"]*\"|'[^']*'")
+_SimpleYamlFrame = tuple[int, object, str, object, object]
+
+
+def _validate_simple_yaml_lines(text: str) -> str:
+    """Return the first real line after checking simple malformed shapes."""
+    first_real_line = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not first_real_line:
+            first_real_line = stripped
+        unquoted = _YAML_QUOTED_SCALAR_RE.sub("", stripped)
+        opens = unquoted.count("[") + unquoted.count("{")
+        closes = unquoted.count("]") + unquoted.count("}")
+        if opens != closes:
+            raise ValueError("malformed YAML: unbalanced brackets")
+    return first_real_line
+
+
+def _parse_top_level_yaml_list(text: str) -> list[object]:
+    """Parse the intentionally-limited top-level list signal."""
+    items: list[object] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- "):
+            items.append(_coerce_scalar(stripped[2:].strip()))
+    return items
+
+
+def _promote_empty_yaml_dict_frame(stack: list[_SimpleYamlFrame]) -> tuple[object, str]:
+    """Promote ``key:`` placeholder dicts to lists for nested ``-`` items."""
+    top_indent, top_container, top_kind, top_parent, top_pkey = stack[-1]
+    if not (
+        top_kind == "dict"
+        and isinstance(top_container, dict)
+        and not top_container
+        and top_parent is not None
+        and top_pkey is not None
+    ):
+        return top_container, top_kind
+
+    new_list: list[object] = []
+    if isinstance(top_parent, dict):
+        top_parent[top_pkey] = new_list
+    elif isinstance(top_parent, list) and isinstance(top_pkey, int):
+        top_parent[top_pkey] = new_list
+    else:
+        return top_container, top_kind
+    stack[-1] = (top_indent, new_list, "list", top_parent, top_pkey)
+    return new_list, "list"
+
+
+def _append_simple_yaml_list_item(
+    items: list[object],
+    after_dash: str,
+    indent: int,
+    stack: list[_SimpleYamlFrame],
+) -> None:
+    """Append one limited YAML list item and update the parse stack."""
+    if ":" in after_dash:
+        new_item: dict = {}
+        items.append(new_item)
+        key, _, val = after_dash.partition(":")
+        key = key.strip()
+        if val.strip():
+            new_item[key] = _coerce_scalar(val)
+        else:
+            new_item[key] = {}
+        # Push the new item dict so subsequent same-indent keys populate it.
+        stack.append((indent + 2, new_item, "dict", items, len(items) - 1))
+    else:
+        items.append(_coerce_scalar(after_dash))
+
+
+def _handle_simple_yaml_list_line(
+    stripped: str,
+    indent: int,
+    stack: list[_SimpleYamlFrame],
+) -> None:
+    """Handle a ``-`` line in the fallback parser."""
+    after_dash = stripped[2:].strip()
+    top_container, top_kind = _promote_empty_yaml_dict_frame(stack)
+    if top_kind == "list" and isinstance(top_container, list):
+        _append_simple_yaml_list_item(top_container, after_dash, indent, stack)
+
+
+def _split_simple_yaml_mapping(stripped: str) -> tuple[str, str, str] | None:
+    """Split a simple ``key: value`` line into key, raw value, stripped value."""
+    if ":" not in stripped:
+        return None
+    key, _, val = stripped.partition(":")
+    return key.strip(), val, val.strip()
+
+
+def _parse_inline_simple_yaml_list(val: str) -> list[str]:
+    """Parse the fallback parser's simple one-line list syntax."""
+    return [v.strip().strip('"').strip("'") for v in val[1:-1].split(",") if v.strip()]
+
+
+def _handle_simple_yaml_mapping_line(
+    parsed: tuple[str, str, str],
+    indent: int,
+    stack: list[_SimpleYamlFrame],
+) -> None:
+    """Handle one mapping line against the current dict frame."""
+    _i, container, kind, _pp, _pk = stack[-1]
+    if kind != "dict" or not isinstance(container, dict):
+        return
+
+    key, val_raw, val = parsed
+    if not val:
+        child: dict = {}
+        container[key] = child
+        stack.append((indent + 2, child, "dict", container, key))
+    elif val.startswith("[") and val.endswith("]"):
+        container[key] = _parse_inline_simple_yaml_list(val)
+    else:
+        container[key] = _coerce_scalar(val_raw)
+
+
+def _collapse_empty_yaml_placeholders(node):
+    """Collapse empty placeholder dicts to match PyYAML's null result."""
+    if isinstance(node, dict):
+        for k in list(node):
+            node[k] = _collapse_empty_yaml_placeholders(node[k])
+        return node if node else None
+    if isinstance(node, list):
+        return [_collapse_empty_yaml_placeholders(v) for v in node]
+    return node
 
 
 def _parse_simple_yaml_text(text: str) -> dict | list | None:
@@ -182,19 +320,7 @@ def _parse_simple_yaml_text(text: str) -> dict | list | None:
     # strings (12.36 — community rule files like
     # `sources: ["$_GET[", "$_POST["]` have legitimate brackets-inside-quotes
     # that aren't balanced if we count naively).
-    _quoted_strip_re = re.compile(r"\"[^\"]*\"|'[^']*'")
-    first_real_line = ""
-    for line in text.split("\n"):
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if not first_real_line:
-            first_real_line = s
-        unquoted = _quoted_strip_re.sub("", s)
-        opens = unquoted.count("[") + unquoted.count("{")
-        closes = unquoted.count("]") + unquoted.count("}")
-        if opens != closes:
-            raise ValueError("malformed YAML: unbalanced brackets")
+    first_real_line = _validate_simple_yaml_lines(text)
 
     # 12.35 — top-level-is-a-list detection. PyYAML returns a Python list
     # for input that starts with `- `; the loader downstream surfaces a
@@ -202,24 +328,12 @@ def _parse_simple_yaml_text(text: str) -> dict | list | None:
     # the root. Without this, a top-level-list file silently returns {}
     # and no warning ever surfaces.
     if first_real_line.startswith("- "):
-        items: list[object] = []
-        for line in text.split("\n"):
-            s = line.strip()
-            if not s or s.startswith("#"):
-                continue
-            if s.startswith("- "):
-                items.append(_coerce_scalar(s[2:].strip()))
-        # Cast to dict-shaped return is wrong — return list explicitly so
-        # callers can detect "not a dict at top level". Using a list-typed
-        # return requires a typing-loose return; the function annotation is
-        # `dict | None` but Python is dynamic — return the list. Callers
-        # downstream check `isinstance(data, dict)`.
-        return items  # type: ignore[return-value]
+        return _parse_top_level_yaml_list(text)
 
     result: dict = {}
     # Frame: (indent, container, kind, parent_dict, parent_key)
     # The root frame has parent_dict=None / parent_key=None.
-    stack: list[tuple[int, object, str, object, object]] = [(0, result, "dict", None, None)]
+    stack: list[_SimpleYamlFrame] = [(0, result, "dict", None, None)]
 
     for raw in text.split("\n"):
         stripped = raw.strip()
@@ -232,83 +346,82 @@ def _parse_simple_yaml_text(text: str) -> dict | list | None:
             stack.pop()
 
         if stripped.startswith("- "):
-            after_dash = stripped[2:].strip()
-            top = stack[-1]
-            top_indent, top_container, top_kind, top_parent, top_pkey = top
-
-            # If current frame is an empty dict that was opened by a parent
-            # `key:` (no value), promote it to a list and replace it in the
-            # parent. This is how `rules:\n  - id: ...` becomes
-            # `{"rules": [{"id": ...}]}` instead of `{"rules": {"- id": ...}}`.
-            if (
-                top_kind == "dict"
-                and isinstance(top_container, dict)
-                and not top_container
-                and top_parent is not None
-                and top_pkey is not None
-            ):
-                new_list: list = []
-                top_parent[top_pkey] = new_list
-                stack[-1] = (top_indent, new_list, "list", top_parent, top_pkey)
-                top_container = new_list
-                top_kind = "list"
-
-            if top_kind == "list" and isinstance(top_container, list):
-                if ":" in after_dash:
-                    new_item: dict = {}
-                    top_container.append(new_item)
-                    key, _, val = after_dash.partition(":")
-                    key = key.strip()
-                    if val.strip():
-                        new_item[key] = _coerce_scalar(val)
-                    else:
-                        new_item[key] = {}
-                    # Push the new item dict so subsequent same-indent keys
-                    # populate it. Indent of children = indent + 2.
-                    stack.append((indent + 2, new_item, "dict", top_container, len(top_container) - 1))
-                else:
-                    top_container.append(_coerce_scalar(after_dash))
+            _handle_simple_yaml_list_line(stripped, indent, stack)
             continue
 
-        if ":" not in stripped:
+        parsed = _split_simple_yaml_mapping(stripped)
+        if parsed is None:
             continue
-
-        key, _, val = stripped.partition(":")
-        key = key.strip()
-        val_raw = val
-        val = val.strip()
-
-        _i, container, kind, _pp, _pk = stack[-1]
-        if kind != "dict" or not isinstance(container, dict):
-            continue
-
-        if not val:
-            child: dict = {}
-            container[key] = child
-            stack.append((indent + 2, child, "dict", container, key))
-        elif val.startswith("[") and val.endswith("]"):
-            items = [v.strip().strip('"').strip("'") for v in val[1:-1].split(",") if v.strip()]
-            container[key] = items
-        else:
-            container[key] = _coerce_scalar(val_raw)
+        _handle_simple_yaml_mapping_line(parsed, indent, stack)
 
     # 12.36 (2026-05-06) — collapse empty placeholder dicts to None so
     # `rules:\n` with no items returns `{"rules": None}` (matching
     # PyYAML behaviour). Without this, the loader downstream sees an
     # empty dict and emits a spurious "must be a list, got dict" warning.
-    def _collapse_empty(node):
-        if isinstance(node, dict):
-            for k in list(node):
-                node[k] = _collapse_empty(node[k])
-            return node if node else None
-        if isinstance(node, list):
-            return [_collapse_empty(v) for v in node]
-        return node
-
-    cleaned = _collapse_empty(result)
+    cleaned = _collapse_empty_yaml_placeholders(result)
     if not cleaned:
         return None
     return cleaned
+
+
+def _dump_scalar(v) -> str:
+    if v is None:
+        return "null"
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    s = str(v)
+    # Quote when the scalar contains characters that change YAML semantics:
+    # leading/trailing whitespace, special chars, glob/wildcard, leading
+    # comment, leading bracket/dash, or empty string.
+    if not s:
+        return "''"
+    special = set("[]{}#&*!|>'\"%@`,:?")
+    if s[0] in special or s[-1] in (" ", "\t") or any(c in s for c in special):
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return s
+
+
+def _dump_kv(key: str, value, pad: str, indent: int) -> str:
+    """One `key: value` line, recursing into non-empty containers."""
+    if isinstance(value, (dict, list)) and value:
+        return f"{pad}{key}:" + _dump_value(value, indent)
+    return f"{pad}{key}: {_dump_scalar(value)}"
+
+
+def _dump_list_item(item, pad: str, indent: int) -> list[str]:
+    """Lines for one `- item` list entry (first key shares the dash line)."""
+    if not isinstance(item, dict):
+        return [f"{pad}- {_dump_scalar(item)}"]
+    if not item:
+        return [f"{pad}- {{}}"]
+    first_key, *rest_keys = item.keys()
+    lines = [_dump_kv(f"- {first_key}", item[first_key], pad, indent + 4)]
+    sub_pad = " " * (indent + 2)
+    lines.extend(_dump_kv(k, item[k], sub_pad, indent + 4) for k in rest_keys)
+    return lines
+
+
+def _dump_value(v, indent: int) -> str:
+    if isinstance(v, dict):
+        if not v:
+            return "{}"
+        pad = " " * indent
+        lines = [""] + [_dump_kv(k, sub, pad, indent + 2) for k, sub in v.items()]
+        return "\n".join(lines)
+    if isinstance(v, list):
+        if not v:
+            return "[]"
+        pad = " " * indent
+        lines = [""]
+        for item in v:
+            lines.extend(_dump_list_item(item, pad, indent))
+        return "\n".join(lines)
+    return f" {_dump_scalar(v)}"
 
 
 def _emit_simple_yaml(doc: dict) -> str:
@@ -323,76 +436,7 @@ def _emit_simple_yaml(doc: dict) -> str:
     12.37 (2026-05-06) — added so the `--fix` write-back works on
     installs without PyYAML.
     """
-
-    def _dump_scalar(v) -> str:
-        if v is None:
-            return "null"
-        if v is True:
-            return "true"
-        if v is False:
-            return "false"
-        if isinstance(v, (int, float)):
-            return str(v)
-        s = str(v)
-        # Quote when the scalar contains characters that change YAML semantics:
-        # leading/trailing whitespace, special chars, glob/wildcard, leading
-        # comment, leading bracket/dash, or empty string.
-        if not s:
-            return "''"
-        special = set("[]{}#&*!|>'\"%@`,:?")
-        if s[0] in special or s[-1] in (" ", "\t") or any(c in s for c in special):
-            escaped = s.replace("\\", "\\\\").replace('"', '\\"')
-            return f'"{escaped}"'
-        return s
-
-    def _dump_value(v, indent: int) -> str:
-        if isinstance(v, dict):
-            if not v:
-                return "{}"
-            lines = [""]
-            pad = " " * indent
-            for k, sub in v.items():
-                if isinstance(sub, (dict, list)) and sub:
-                    lines.append(f"{pad}{k}:" + _dump_value(sub, indent + 2))
-                else:
-                    lines.append(f"{pad}{k}: {_dump_scalar(sub)}")
-            return "\n".join(lines)
-        if isinstance(v, list):
-            if not v:
-                return "[]"
-            lines = [""]
-            pad = " " * indent
-            for item in v:
-                if isinstance(item, dict):
-                    if not item:
-                        lines.append(f"{pad}- {{}}")
-                        continue
-                    keys = list(item.keys())
-                    first_key, *rest_keys = keys
-                    first_val = item[first_key]
-                    if isinstance(first_val, (dict, list)) and first_val:
-                        lines.append(f"{pad}- {first_key}:" + _dump_value(first_val, indent + 4))
-                    else:
-                        lines.append(f"{pad}- {first_key}: {_dump_scalar(first_val)}")
-                    for k in rest_keys:
-                        sub = item[k]
-                        sub_pad = " " * (indent + 2)
-                        if isinstance(sub, (dict, list)) and sub:
-                            lines.append(f"{sub_pad}{k}:" + _dump_value(sub, indent + 4))
-                        else:
-                            lines.append(f"{sub_pad}{k}: {_dump_scalar(sub)}")
-                else:
-                    lines.append(f"{pad}- {_dump_scalar(item)}")
-            return "\n".join(lines)
-        return f" {_dump_scalar(v)}"
-
-    out_lines: list[str] = []
-    for k, v in doc.items():
-        if isinstance(v, (dict, list)) and v:
-            out_lines.append(f"{k}:" + _dump_value(v, 2))
-        else:
-            out_lines.append(f"{k}: {_dump_scalar(v)}")
-    return "\n".join(out_lines) + "\n"
+    return "\n".join(_dump_kv(k, v, "", 2) for k, v in doc.items()) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1049,142 @@ def _format_capture_preview(captures: dict[str, str]) -> str:
     return ", ".join(parts)
 
 
+def _ast_match_failure(name: str, severity: str, rule: dict, reason: str) -> dict:
+    """Build the standard failure result for an ast_match rule."""
+    return {
+        "name": name,
+        "severity": severity,
+        "passed": False,
+        "violations": [
+            {
+                "symbol": "",
+                "file": rule.get("_file", ""),
+                "line": None,
+                "reason": reason,
+            }
+        ],
+    }
+
+
+def _ast_match_project_root() -> Path:
+    """Return the root used to resolve indexed relative paths."""
+    try:
+        return find_project_root()
+    except OSError:
+        return Path.cwd()
+
+
+def _ast_match_detected_language(
+    rel_path: str,
+    *,
+    file_glob,
+    exempt: dict,
+    language_filter: str | None,
+) -> str | None:
+    """Return the detected language for an eligible ast_match file."""
+    if file_glob and not _matches_glob(rel_path, file_glob):
+        return None
+    if _is_exempt("", rel_path, exempt):
+        return None
+
+    detected_lang = normalize_language_name(detect_language(rel_path))
+    if language_filter and detected_lang != language_filter:
+        return None
+    return detected_lang
+
+
+def _ast_match_parsed_candidate(
+    root: Path,
+    rel_path: str,
+    *,
+    file_glob,
+    exempt: dict,
+    language_filter: str | None,
+):
+    """Parse an eligible ast_match file and return its active language."""
+    detected_lang = _ast_match_detected_language(
+        rel_path,
+        file_glob=file_glob,
+        exempt=exempt,
+        language_filter=language_filter,
+    )
+    if detected_lang is None:
+        return None
+
+    tree, source, parsed_lang = parse_file(root / rel_path, detected_lang)
+    if tree is None or source is None:
+        return None
+
+    active_lang = normalize_language_name(parsed_lang or detected_lang or language_filter)
+    if active_lang is None:
+        return None
+    return tree, source, active_lang
+
+
+def _cached_ast_pattern(
+    pattern: str,
+    active_lang: str,
+    compiled_cache: dict[str, object],
+) -> tuple[object | None, str | None]:
+    """Compile an AST pattern once per active language."""
+    compiled = compiled_cache.get(active_lang)
+    if compiled is not None:
+        return compiled, None
+
+    try:
+        compiled = compile_ast_pattern(pattern, active_lang)
+    except Exception as exc:  # noqa: BLE001 - user rule/parser failures become rule output
+        return None, "AST pattern compile failed: {}".format(exc)
+
+    compiled_cache[active_lang] = compiled
+    return compiled, None
+
+
+def _ast_match_violation(pattern: str, rel_path: str, match: dict) -> dict:
+    """Convert one AST match into the public violation shape."""
+    cap_text = _format_capture_preview(match.get("captures", {}))
+    reason = "AST pattern matched: {}".format(pattern)
+    if cap_text:
+        reason += " ({})".format(cap_text)
+
+    return {
+        "symbol": "",
+        "file": rel_path,
+        "line": match.get("line"),
+        "reason": reason,
+        "captures": match.get("captures", {}),
+    }
+
+
+def _append_ast_match_violations(
+    pattern: str,
+    rel_path: str,
+    tree,
+    source,
+    compiled,
+    violations: list[dict],
+    max_matches: int,
+) -> bool:
+    """Append matches for one file and return True when the limit is reached."""
+    remaining = 0
+    if max_matches > 0:
+        remaining = max_matches - len(violations)
+        if remaining <= 0:
+            return True
+
+    matches = find_ast_matches(
+        tree,
+        source,
+        compiled,
+        max_matches=remaining,
+    )
+    for m in matches:
+        violations.append(_ast_match_violation(pattern, rel_path, m))
+        if max_matches > 0 and len(violations) >= max_matches:
+            return True
+    return False
+
+
 def _evaluate_ast_match(rule: dict, conn) -> dict:
     """Evaluate an ast_match rule: structural pattern matching with metavars.
 
@@ -1012,7 +1192,7 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
 
     type: ast_match
     match:
-      ast: "eval($EXPR)"
+      ast: "deprecated_call($EXPR)"
       language: python
       file_glob: "**/*.py"
       max_matches: 100
@@ -1033,102 +1213,45 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
     severity = rule.get("severity", "error")
 
     if not isinstance(pattern, str) or not pattern.strip():
-        return {
-            "name": name,
-            "severity": severity,
-            "passed": False,
-            "violations": [
-                {
-                    "symbol": "",
-                    "file": rule.get("_file", ""),
-                    "line": None,
-                    "reason": "ast_match rule missing non-empty match.ast pattern",
-                }
-            ],
-        }
+        return _ast_match_failure(
+            name,
+            severity,
+            rule,
+            "ast_match rule missing non-empty match.ast pattern",
+        )
 
-    try:
-        root = find_project_root()
-    except OSError:
-        root = Path.cwd()
-
+    root = _ast_match_project_root()
     rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
     violations: list[dict] = []
     compiled_cache: dict[str, object] = {}
 
     for row in rows:
         rel_path = row["path"]
-
-        if file_glob and not _matches_glob(rel_path, file_glob):
+        parsed = _ast_match_parsed_candidate(
+            root,
+            rel_path,
+            file_glob=file_glob,
+            exempt=exempt,
+            language_filter=language_filter,
+        )
+        if parsed is None:
             continue
-        if _is_exempt("", rel_path, exempt):
-            continue
+        tree, source, active_lang = parsed
 
-        detected_lang = normalize_language_name(detect_language(rel_path))
-        if language_filter and detected_lang != language_filter:
-            continue
-        if detected_lang is None:
-            continue
+        compiled, compile_error = _cached_ast_pattern(pattern, active_lang, compiled_cache)
+        if compile_error is not None:
+            return _ast_match_failure(name, severity, rule, compile_error)
 
-        full_path = root / rel_path
-        tree, source, parsed_lang = parse_file(full_path, detected_lang)
-        if tree is None or source is None:
-            continue
-
-        active_lang = normalize_language_name(parsed_lang or detected_lang or language_filter)
-        if active_lang is None:
-            continue
-
-        compiled = compiled_cache.get(active_lang)
-        if compiled is None:
-            try:
-                compiled = compile_ast_pattern(pattern, active_lang)
-            except Exception as exc:
-                return {
-                    "name": name,
-                    "severity": severity,
-                    "passed": False,
-                    "violations": [
-                        {
-                            "symbol": "",
-                            "file": rule.get("_file", ""),
-                            "line": None,
-                            "reason": "AST pattern compile failed: {}".format(exc),
-                        }
-                    ],
-                }
-            compiled_cache[active_lang] = compiled
-
-        remaining = 0
-        if max_matches > 0:
-            remaining = max_matches - len(violations)
-            if remaining <= 0:
-                break
-
-        matches = find_ast_matches(
+        if _append_ast_match_violations(
+            pattern,
+            rel_path,
             tree,
             source,
             compiled,
-            max_matches=remaining,
-        )
-        for m in matches:
-            cap_text = _format_capture_preview(m.get("captures", {}))
-            reason = "AST pattern matched: {}".format(pattern)
-            if cap_text:
-                reason += " ({})".format(cap_text)
-
-            violations.append(
-                {
-                    "symbol": "",
-                    "file": rel_path,
-                    "line": m.get("line"),
-                    "reason": reason,
-                    "captures": m.get("captures", {}),
-                }
-            )
-
-            if max_matches > 0 and len(violations) >= max_matches:
-                break
+            violations,
+            max_matches,
+        ):
+            break
 
     return {
         "name": name,
@@ -1155,7 +1278,7 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
       file_glob: "**/*.py"
       max_matches: 100
       sources: ["input(", "request.args"]
-      sinks: ["eval(", "exec("]
+      sinks: ["os.system(", "subprocess.run("]
       sanitizers: ["escape(", "sanitize("]
       max_chain_length: 5
       min_confidence: 0.5
@@ -1325,6 +1448,172 @@ def _candidate_symbols_for_when(conn, when: dict) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _clause_rule_error(name: str, severity: str, rule: dict, clause: str, reason: str) -> dict:
+    """Failure envelope for a graph-clause rule that cannot be evaluated."""
+    return {
+        "name": name,
+        "severity": severity,
+        "passed": False,
+        "partial_success": True,
+        "violations": [
+            {
+                "symbol": "",
+                "file": rule.get("_file", ""),
+                "line": None,
+                "clause": clause,
+                "reason": reason,
+            }
+        ],
+    }
+
+
+def _graph_clause_max_depth(rule: dict, default_depth: int) -> int:
+    """Apply the per-rule depth override used by graph-clause rules."""
+    rule_depth = rule.get("depth")
+    if isinstance(rule_depth, (int, float)) and int(rule_depth) > 0:
+        return int(rule_depth)
+    return default_depth
+
+
+def _graph_clause_result(name: str, severity: str, violations: list[dict], partial: bool) -> dict:
+    """Build the standard graph-clause result envelope."""
+    result = {
+        "name": name,
+        "severity": severity,
+        "passed": len(violations) == 0,
+        "violations": violations,
+    }
+    if partial:
+        result["partial_success"] = True
+    return result
+
+
+def _graph_clause_targets(conn, when: dict, exempt: dict) -> list[tuple[str, str, int | None, dict]] | None:
+    """Normalize `when`-matched candidates into (label, file, line, candidate) tuples.
+
+    Symbol-scoped rules yield one tuple per matching symbol; file-scoped
+    rules yield one per matching file (empty label, no line). Returns
+    ``None`` when the rule carries no `when` filter at all.
+    """
+    if "symbol" in when or "symbol_kind" in when:
+        return [
+            (
+                sym.get("qualified_name") or sym.get("name"),
+                sym.get("file_path"),
+                sym.get("line_start"),
+                sym,
+            )
+            for sym in _candidate_symbols_for_when(conn, when)
+            if not _is_exempt(sym["name"], sym["file_path"], exempt)
+        ]
+    if "pattern" in when or "file_glob" in when:
+        return [
+            ("", f["path"], None, {"file_path": f["path"]})
+            for f in _candidate_files_for_when(conn, when)
+            if not _is_exempt("", f["path"], exempt)
+        ]
+    return None
+
+
+def _build_clause_plan(must, must_not) -> tuple[list[tuple[str, str, str]], str | None]:
+    """Flatten must/must_not blocks into (block_kind, clause, arg) triples.
+
+    Returns ``(plan, unknown_clause_name)`` — the second element is set (and
+    the plan invalid) when a block names a clause outside SUPPORTED_CLAUSES.
+    """
+    from roam.policy.graph_clauses import SUPPORTED_CLAUSES
+
+    plan: list[tuple[str, str, str]] = []
+    for block_kind, block in (("must", must), ("must_not", must_not)):
+        if not isinstance(block, dict):
+            continue
+        for cname, carg in block.items():
+            if cname not in SUPPORTED_CLAUSES:
+                return [], cname
+            plan.append((block_kind, cname, str(carg)))
+    return plan, None
+
+
+def _eval_plan_for_target(
+    conn,
+    plan: list[tuple[str, str, str]],
+    label: str,
+    target_file: str,
+    line: int | None,
+    candidate: dict,
+    *,
+    max_depth: int,
+    max_nodes: int,
+    message: str,
+) -> tuple[list[dict], bool]:
+    """Run every clause in the plan against one candidate.
+
+    Returns ``(violations, partial)`` — partial is True when any clause
+    reported a non-ok evidence status.
+    """
+    from roam.policy.graph_clauses import evaluate_clause
+
+    violations: list[dict] = []
+    partial = False
+    for block_kind, cname, carg in plan:
+        matches, evidence = evaluate_clause(
+            cname,
+            carg,
+            conn=conn,
+            target_symbol=label or None,
+            target_file=target_file,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+        )
+        status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
+        if status not in ("ok",):
+            partial = True
+        # must => clause must hold; must_not => clause must NOT hold.
+        fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
+        if fired:
+            violations.append(
+                {
+                    "symbol": label,
+                    "file": target_file,
+                    "line": line,
+                    "clause": cname,
+                    "block": block_kind,
+                    "evidence": evidence,
+                    "reason": _format_clause_reason(block_kind, cname, carg, candidate, evidence, message),
+                }
+            )
+    return violations, partial
+
+
+def _eval_plan_for_targets(
+    conn,
+    plan: list[tuple[str, str, str]],
+    targets: list[tuple[str, str, int | None, dict]],
+    *,
+    max_depth: int,
+    max_nodes: int,
+    message: str,
+) -> tuple[list[dict], bool]:
+    """Run a graph-clause plan against every resolved target."""
+    violations: list[dict] = []
+    partial = False
+    for label, target_file, line, candidate in targets:
+        target_violations, target_partial = _eval_plan_for_target(
+            conn,
+            plan,
+            label,
+            target_file,
+            line,
+            candidate,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            message=message,
+        )
+        violations.extend(target_violations)
+        partial = partial or target_partial
+    return violations, partial
+
+
 def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: int = 100) -> dict:
     """Evaluate an R18 graph-clause rule.
 
@@ -1346,10 +1635,6 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
     names (``reachable_from`` / ``imports_from`` / ``clones_with`` /
     ``tested_by``).
     """
-    # Lazy import to keep the rules engine importable without the policy
-    # package on bare installs.
-    from roam.policy.graph_clauses import SUPPORTED_CLAUSES, evaluate_clause
-
     name = rule.get("name") or rule.get("id") or "unnamed"
     severity = rule.get("severity", "error")
     message = rule.get("message", "")
@@ -1359,33 +1644,21 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
     exempt = rule.get("exempt", {})
 
     # Per-rule depth override (defensive — the CLI normally controls this).
-    rule_depth = rule.get("depth")
-    if isinstance(rule_depth, (int, float)) and int(rule_depth) > 0:
-        max_depth = int(rule_depth)
+    max_depth = _graph_clause_max_depth(rule, max_depth)
 
-    # Build the clause plan: (block_kind, clause_name, clause_arg)
-    plan: list[tuple[str, str, str]] = []
-    for block_kind, block in (("must", must), ("must_not", must_not)):
-        if not isinstance(block, dict):
-            continue
-        for cname, carg in block.items():
-            if cname not in SUPPORTED_CLAUSES:
-                return {
-                    "name": name,
-                    "severity": severity,
-                    "passed": False,
-                    "partial_success": True,
-                    "violations": [
-                        {
-                            "symbol": "",
-                            "file": rule.get("_file", ""),
-                            "line": None,
-                            "clause": cname,
-                            "reason": (f"unknown clause '{cname}' — supported: {', '.join(SUPPORTED_CLAUSES)}"),
-                        }
-                    ],
-                }
-            plan.append((block_kind, cname, str(carg)))
+    plan, unknown = _build_clause_plan(must, must_not)
+    if unknown is not None:
+        # Lazy import to keep the rules engine importable without the policy
+        # package on bare installs.
+        from roam.policy.graph_clauses import SUPPORTED_CLAUSES
+
+        return _clause_rule_error(
+            name,
+            severity,
+            rule,
+            unknown,
+            f"unknown clause '{unknown}' — supported: {', '.join(SUPPORTED_CLAUSES)}",
+        )
 
     if not plan:
         return {
@@ -1396,118 +1669,29 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
             "reason": "rule has no must / must_not clauses",
         }
 
-    violations: list[dict] = []
-    partial = False
+    # Symbol-scoped rules iterate matching symbols; file-scoped rules iterate
+    # matching files; a rule with no `when` filter cannot be evaluated.
+    targets = _graph_clause_targets(conn, when, exempt)
+    if targets is None:
+        return _clause_rule_error(
+            name,
+            severity,
+            rule,
+            "",
+            "graph_clause rule has no `when` filter — add "
+            "`when: {pattern: '...'}` or `when: {symbol: '...'}` "
+            "to scope the rule",
+        )
 
-    # ------------------------------------------------------------------
-    # Iterate over candidates. Resolution order:
-    #   - If when carries `symbol` / `symbol_kind`, iterate over matching symbols.
-    #   - Else if when carries `pattern`, iterate over matching files.
-    #   - Else: single synthetic "global" candidate (clause must self-target).
-    # ------------------------------------------------------------------
-    is_symbol_scoped = "symbol" in when or "symbol_kind" in when
-    is_file_scoped = "pattern" in when or "file_glob" in when
-
-    if is_symbol_scoped:
-        candidates_sym = _candidate_symbols_for_when(conn, when)
-        for sym in candidates_sym:
-            if _is_exempt(sym["name"], sym["file_path"], exempt):
-                continue
-            for block_kind, cname, carg in plan:
-                matches, evidence = evaluate_clause(
-                    cname,
-                    carg,
-                    conn=conn,
-                    target_symbol=sym.get("qualified_name") or sym.get("name"),
-                    target_file=sym.get("file_path"),
-                    max_depth=max_depth,
-                    max_nodes=max_nodes,
-                )
-                status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
-                if status not in ("ok",):
-                    partial = True
-                # must => clause must hold; must_not => clause must NOT hold.
-                fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
-                if fired:
-                    violations.append(
-                        {
-                            "symbol": sym.get("qualified_name") or sym.get("name"),
-                            "file": sym.get("file_path"),
-                            "line": sym.get("line_start"),
-                            "clause": cname,
-                            "block": block_kind,
-                            "evidence": evidence,
-                            "reason": _format_clause_reason(block_kind, cname, carg, sym, evidence, message),
-                        }
-                    )
-    elif is_file_scoped:
-        candidates_file = _candidate_files_for_when(conn, when)
-        for f in candidates_file:
-            if _is_exempt("", f["path"], exempt):
-                continue
-            for block_kind, cname, carg in plan:
-                matches, evidence = evaluate_clause(
-                    cname,
-                    carg,
-                    conn=conn,
-                    target_file=f["path"],
-                    target_symbol=None,
-                    max_depth=max_depth,
-                    max_nodes=max_nodes,
-                )
-                status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
-                if status not in ("ok",):
-                    partial = True
-                fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
-                if fired:
-                    violations.append(
-                        {
-                            "symbol": "",
-                            "file": f["path"],
-                            "line": None,
-                            "clause": cname,
-                            "block": block_kind,
-                            "evidence": evidence,
-                            "reason": _format_clause_reason(
-                                block_kind,
-                                cname,
-                                carg,
-                                {"file_path": f["path"]},
-                                evidence,
-                                message,
-                            ),
-                        }
-                    )
-    else:
-        return {
-            "name": name,
-            "severity": severity,
-            "passed": False,
-            "partial_success": True,
-            "violations": [
-                {
-                    "symbol": "",
-                    "file": rule.get("_file", ""),
-                    "line": None,
-                    "clause": "",
-                    "reason": (
-                        "graph_clause rule has no `when` filter — add "
-                        "`when: {pattern: '...'}` or `when: {symbol: '...'}` "
-                        "to scope the rule"
-                    ),
-                }
-            ],
-        }
-
-    result = {
-        "name": name,
-        "severity": severity,
-        "passed": len(violations) == 0,
-        "violations": violations,
-    }
-    if partial:
-        result["partial_success"] = True
-    return result
+    violations, partial = _eval_plan_for_targets(
+        conn,
+        plan,
+        targets,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
+        message=message,
+    )
+    return _graph_clause_result(name, severity, violations, partial)
 
 
 def _format_clause_reason(block_kind, cname, carg, candidate, evidence, message):

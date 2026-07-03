@@ -98,11 +98,13 @@ def _check_retention_documented(project_root: Path) -> dict:
         "docs/retention.md",
         "docs/audit-retention.md",
         "RETENTION.md",
+        "README.md",
+        "CHANGELOG.md",
         ".roam/retention.yaml",
         "AGENTS.md",
         "CLAUDE.md",
     ]
-    keywords = ("retention", "6 month", "180 day", "Article 19")
+    keywords = ("retention", "6 month", "6 months", "6-month", "180 day", "180 days", "180-day", "Article 19")
     matches = []
     for c in candidates:
         p = project_root / c

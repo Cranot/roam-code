@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import posixpath
 
+# Re-export: detect_language moved to roam.index.parser (dedup); external
+# callers still import it from here. The `as` form marks it as an explicit
+# re-export so ruff's unused-import autofix does not strip it again.
+from roam.index.parser import detect_language as detect_language
+
 
 def compute_relative_path(from_file: str, to_file: str) -> str:
     """Compute the relative import path between two files.

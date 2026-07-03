@@ -152,6 +152,106 @@ def _attach_rank_scores(items):
     return items
 
 
+def _rank_files_preserving_context_signal_parity(
+    conn,
+    files,
+    task,
+    session_hint,
+    recent_symbols,
+    propagation_scores,
+    score_file,
+    sort_key,
+):
+    """Apply shared context biases while each mode keeps its own relevance rule."""
+    if not files:
+        return []
+
+    hint_tokens = _tokenize_hint(session_hint)
+    recent_paths = _resolve_recent_symbol_paths(conn, recent_symbols)
+    file_pr = _file_pagerank_map(conn, [f["path"] for f in files])
+    max_pr = max(file_pr.values(), default=0.0)
+
+    prop_scores = propagation_scores or {}
+    has_prop = bool(prop_scores)
+    max_prop = max(prop_scores.values(), default=0.0) if has_prop else 0.0
+
+    ranked = []
+    for item in files:
+        path = item["path"].replace("\\", "/")
+        features = {
+            "has_prop": has_prop,
+            "prop_norm": (prop_scores.get(path, 0.0) / max_prop) if max_prop > 0 else 0.0,
+            "pr_norm": (file_pr.get(path, 0.0) / max_pr) if max_pr > 0 else 0.0,
+            "session_score": _session_overlap(path, hint_tokens),
+            "recent_score": _recent_path_boost(path, recent_paths),
+        }
+
+        ranked.append(
+            {
+                **item,
+                "path": path,
+                "score": round(score_file(item, task, features), 3),
+            }
+        )
+
+    ranked.sort(key=sort_key)
+    return _attach_rank_scores(ranked)
+
+
+def _score_single_file_for_symbol_context_budget(item, task, features):
+    reason = item.get("reason", "")
+    reason_score = _reason_weight(task, reason)
+
+    if features["has_prop"]:
+        score = (
+            (0.40 * reason_score)
+            + (0.25 * features["prop_norm"])
+            + (0.20 * features["pr_norm"])
+            + (0.10 * features["session_score"])
+            + (0.05 * features["recent_score"])
+        )
+    else:
+        score = (
+            (0.50 * reason_score)
+            + (0.30 * features["pr_norm"])
+            + (0.12 * features["session_score"])
+            + (0.08 * features["recent_score"])
+        )
+    if reason == "definition":
+        score = max(score, 1.25)
+    return score
+
+
+def _score_batch_file_for_density_context_budget(item, task, features):
+    reasons = item.get("reasons", [])
+    relevance = float(item.get("relevance") or 0.0)
+    reason_score = max(
+        (_reason_weight(task, r) for r in reasons),
+        default=_DEFAULT_REASON_WEIGHTS["callee"],
+    )
+
+    if features["has_prop"]:
+        score = (
+            (0.35 * relevance)
+            + (0.25 * features["prop_norm"])
+            + (0.22 * reason_score)
+            + (0.12 * features["pr_norm"])
+            + (0.04 * features["session_score"])
+            + (0.02 * features["recent_score"])
+        )
+    else:
+        score = (
+            (0.45 * relevance)
+            + (0.30 * reason_score)
+            + (0.15 * features["pr_norm"])
+            + (0.07 * features["session_score"])
+            + (0.03 * features["recent_score"])
+        )
+    if "definition" in reasons:
+        score = max(score, 1.2)
+    return score
+
+
 def _rank_single_files(
     conn,
     files_to_read,
@@ -166,50 +266,16 @@ def _rank_single_files(
     ``_get_propagation_scores_for_paths``), the score formula is extended to
     include a propagation component that rewards transitive callees/callers.
     """
-    if not files_to_read:
-        return []
-
-    hint_tokens = _tokenize_hint(session_hint)
-    recent_paths = _resolve_recent_symbol_paths(conn, recent_symbols)
-    file_pr = _file_pagerank_map(conn, [f["path"] for f in files_to_read])
-    max_pr = max(file_pr.values(), default=0.0)
-
-    has_prop = bool(propagation_scores)
-    max_prop = max(propagation_scores.values(), default=0.0) if has_prop else 0.0
-
-    ranked = []
-    for f in files_to_read:
-        path = f["path"].replace("\\", "/")
-        reason = f.get("reason", "")
-        reason_score = _reason_weight(task, reason)
-        pr_norm = (file_pr.get(path, 0.0) / max_pr) if max_pr > 0 else 0.0
-        session_score = _session_overlap(path, hint_tokens)
-        recent_score = _recent_path_boost(path, recent_paths)
-
-        if has_prop:
-            prop_norm = (propagation_scores.get(path, 0.0) / max_prop) if max_prop > 0 else 0.0
-            score = (
-                (0.40 * reason_score)
-                + (0.25 * prop_norm)
-                + (0.20 * pr_norm)
-                + (0.10 * session_score)
-                + (0.05 * recent_score)
-            )
-        else:
-            score = (0.50 * reason_score) + (0.30 * pr_norm) + (0.12 * session_score) + (0.08 * recent_score)
-        if reason == "definition":
-            score = max(score, 1.25)
-
-        ranked.append(
-            {
-                **f,
-                "path": path,
-                "score": round(score, 3),
-            }
-        )
-
-    ranked.sort(key=lambda x: (-x["score"], x["path"], x.get("start") or 0))
-    return _attach_rank_scores(ranked)
+    return _rank_files_preserving_context_signal_parity(
+        conn,
+        files_to_read,
+        task,
+        session_hint,
+        recent_symbols,
+        propagation_scores,
+        _score_single_file_for_symbol_context_budget,
+        lambda x: (-x["score"], x["path"], x.get("start") or 0),
+    )
 
 
 def _rank_batch_files(
@@ -225,61 +291,16 @@ def _rank_batch_files(
     When *propagation_scores* is provided, the score formula is extended to
     include a propagation component for transitive callee/caller weighting.
     """
-    if not files:
-        return []
-
-    hint_tokens = _tokenize_hint(session_hint)
-    recent_paths = _resolve_recent_symbol_paths(conn, recent_symbols)
-    file_pr = _file_pagerank_map(conn, [f["path"] for f in files])
-    max_pr = max(file_pr.values(), default=0.0)
-
-    has_prop = bool(propagation_scores)
-    max_prop = max(propagation_scores.values(), default=0.0) if has_prop else 0.0
-
-    ranked = []
-    for item in files:
-        path = item["path"].replace("\\", "/")
-        reasons = item.get("reasons", [])
-        relevance = float(item.get("relevance") or 0.0)
-        reason_score = max(
-            (_reason_weight(task, r) for r in reasons),
-            default=_DEFAULT_REASON_WEIGHTS["callee"],
-        )
-        pr_norm = (file_pr.get(path, 0.0) / max_pr) if max_pr > 0 else 0.0
-        session_score = _session_overlap(path, hint_tokens)
-        recent_score = _recent_path_boost(path, recent_paths)
-
-        if has_prop:
-            prop_norm = (propagation_scores.get(path, 0.0) / max_prop) if max_prop > 0 else 0.0
-            score = (
-                (0.35 * relevance)
-                + (0.25 * prop_norm)
-                + (0.22 * reason_score)
-                + (0.12 * pr_norm)
-                + (0.04 * session_score)
-                + (0.02 * recent_score)
-            )
-        else:
-            score = (
-                (0.45 * relevance)
-                + (0.30 * reason_score)
-                + (0.15 * pr_norm)
-                + (0.07 * session_score)
-                + (0.03 * recent_score)
-            )
-        if "definition" in reasons:
-            score = max(score, 1.2)
-
-        ranked.append(
-            {
-                **item,
-                "path": path,
-                "score": round(score, 3),
-            }
-        )
-
-    ranked.sort(key=lambda x: (-x["score"], -x["relevance"], x["path"]))
-    return _attach_rank_scores(ranked)
+    return _rank_files_preserving_context_signal_parity(
+        conn,
+        files,
+        task,
+        session_hint,
+        recent_symbols,
+        propagation_scores,
+        _score_batch_file_for_density_context_budget,
+        lambda x: (-x["score"], -x["relevance"], x["path"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +458,11 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
 # ---------------------------------------------------------------------------
 
 
+def _is_old_index_without_annotations_table(exc: sqlite3.OperationalError) -> bool:
+    """Return True when annotations are absent because the index predates them."""
+    return "no such table: annotations" in str(exc).lower()
+
+
 def gather_annotations(conn: sqlite3.Connection, sym: dict | None = None, file_path: str | None = None):
     """Fetch active annotations for a symbol or file.
 
@@ -466,10 +492,11 @@ def gather_annotations(conn: sqlite3.Connection, sym: dict | None = None, file_p
             f"SELECT * FROM annotations WHERE {where} ORDER BY created_at DESC",
             params,
         ).fetchall()
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except sqlite3.OperationalError as _exc:
+        if not _is_old_index_without_annotations_table(_exc):
+            raise
         # Expected absence: the annotations table may not exist on an
-        # older index. Surface anything else so a real query bug isn't
-        # mistaken for "no annotations".
+        # older index.
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:gather_annotations:annotations_query", _exc)
@@ -624,11 +651,15 @@ def get_affected_tests_bfs(conn: sqlite3.Connection, sym_id: int, max_hops: int 
             except (KeyError, TypeError):
                 tgt, src, name = row[0], row[1], row[2]
             rev_adj.setdefault(tgt, []).append((src, name))
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        # If anything goes wrong with the bulk load, fall back to an
-        # empty adjacency — we'll just return no affected tests rather
-        # than re-introducing per-hop queries. Surface the cause so an
+    except sqlite3.Error as _exc:
+        # A database-level failure (schema drift, missing table/column,
+        # locked DB) is the only thing this bulk load legitimately raises
+        # — row-shape errors are handled inside. Degrade gracefully to an
+        # empty adjacency (return no affected tests rather than
+        # re-introducing per-hop queries) and surface the cause so an
         # empty result isn't mistaken for "no tests depend on this".
+        # Non-DB errors (a refactor typo, an API misuse) are real bugs and
+        # deliberately propagate instead of being silently swallowed.
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:get_affected_tests_bfs:rev_adj_load", _exc)
@@ -707,10 +738,10 @@ def get_blast_radius(conn: sqlite3.Connection, sym_id: int):
             except (KeyError, TypeError):
                 src, tgt = row[0], row[1]
             rev_adj.setdefault(tgt, []).append(src)
-    except Exception as _exc:  # noqa: BLE001 — defensive
+    except sqlite3.Error as _exc:
         # Bulk edge load failed -> empty adjacency -> blast radius of 0.
-        # Surface the cause so a query bug isn't mistaken for "no
-        # downstream dependents".
+        # Surface the cause so a DB fault isn't mistaken for "no
+        # downstream dependents". Any non-DB failure is allowed to propagate.
         from roam.observability import log_swallowed
 
         log_swallowed("context_helpers:get_blast_radius:rev_adj_load", _exc)
@@ -1053,6 +1084,48 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
 # ---------------------------------------------------------------------------
 
 
+def _collect_file_signals_for_batch_relevance(contexts):
+    """Collect file reasons and edge hits used to compute batch relevance."""
+    file_reasons = {}
+    file_edges_to_query: defaultdict[str, int] = defaultdict(int)
+    for ctx_data in contexts:
+        for f in ctx_data["files_to_read"]:
+            path = f["path"]
+            file_reasons.setdefault(path, set()).add(f["reason"])
+            if f["reason"] in ("caller", "callee"):
+                file_edges_to_query[path] += 1
+    return file_reasons, file_edges_to_query
+
+
+def _load_edge_totals_for_batch_relevance(conn, paths):
+    """Load per-file edge denominators needed by batch relevance scoring."""
+    path_list = sorted({p for p in paths if p})
+    if not path_list:
+        return {}
+
+    rows = batched_in(
+        conn,
+        "SELECT f.path AS path, COUNT(e.id) AS total_edges "
+        "FROM files f "
+        "LEFT JOIN symbols s ON s.file_id = f.id "
+        "LEFT JOIN edges e ON e.source_id = s.id "
+        "WHERE f.path IN ({ph}) "
+        "GROUP BY f.id, f.path",
+        path_list,
+    )
+
+    totals = {}
+    for row in rows:
+        try:
+            path = row["path"]
+            total_edges = row["total_edges"]
+        except (KeyError, TypeError):
+            path = row[0]
+            total_edges = row[1]
+        totals[path] = max(int(total_edges or 0), 1)
+    return totals
+
+
 def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(), use_propagation=True):
     """Compute batch-mode context for multiple symbols.
 
@@ -1084,25 +1157,9 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
     shared_callers = _resolve_ids(shared_caller_ids)
     shared_callees = _resolve_ids(shared_callee_ids)
 
-    file_reasons = {}
-    file_edges_to_query: defaultdict[str, int] = defaultdict(int)
-    for ctx_data in contexts:
-        for f in ctx_data["files_to_read"]:
-            path = f["path"]
-            file_reasons.setdefault(path, set()).add(f["reason"])
-            if f["reason"] in ("caller", "callee"):
-                file_edges_to_query[path] += 1
-
-    file_total_edges = {}
+    file_reasons, file_edges_to_query = _collect_file_signals_for_batch_relevance(contexts)
     all_paths = list(file_reasons.keys())
-    for path in all_paths:
-        frow = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-        if frow:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM edges e JOIN symbols s ON e.source_id = s.id WHERE s.file_id = ?",
-                (frow["id"],),
-            ).fetchone()[0]
-            file_total_edges[path] = max(total, 1)
+    file_total_edges = _load_edge_totals_for_batch_relevance(conn, all_paths)
 
     scored_files = []
     for path in all_paths:

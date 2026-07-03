@@ -20,7 +20,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS, inheritance_in_clause
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
@@ -463,6 +463,9 @@ def _detect_strategy(conn):
             "location": loc(r["parent_path"], r["parent_line"]),
         }
 
+    child_ids = list(dict.fromkeys(r["source_id"] for r in rows))
+    methods_by_child = _load_strategy_methods_by_child(conn, child_ids)
+
     results = []
     for parent_id, children in by_parent.items():
         # Strategy requires 2+ implementations
@@ -474,11 +477,7 @@ def _detect_strategy(conn):
         # Check if children have overlapping method names (shared interface)
         child_methods = {}
         for child in children:
-            methods = conn.execute(
-                "SELECT name FROM symbols WHERE parent_id = ? AND kind IN ('method', 'function')",
-                (child["source_id"],),
-            ).fetchall()
-            child_methods[child["child_name"]] = {m["name"] for m in methods}
+            child_methods[child["child_name"]] = methods_by_child.get(child["source_id"], set())
 
         # Find common methods across implementations
         if child_methods:
@@ -505,6 +504,19 @@ def _detect_strategy(conn):
         )
 
     return results
+
+
+def _load_strategy_methods_by_child(conn, child_ids):
+    """Preserve per-child interfaces while querying method symbols once."""
+    method_rows = batched_in(
+        conn,
+        "SELECT parent_id, name FROM symbols WHERE parent_id IN ({ph}) AND kind IN ('method', 'function')",
+        child_ids,
+    )
+    methods_by_child = defaultdict(set)
+    for row in method_rows:
+        methods_by_child[row["parent_id"]].add(row["name"])
+    return methods_by_child
 
 
 def _detect_decorator(conn):

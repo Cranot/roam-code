@@ -3,7 +3,8 @@
 Public helpers
 ==============
 
-* :func:`compute_hotspots` — full ranking comparison.
+* ``compute_hotspots`` — public alias for the runtime-vs-static ranking
+  comparison.
 * :func:`runtime_score` — symbol-level score in [0, 1] driven by call
   count, p99 latency, and error rate. Used by the retrieve reranker as
   the δ contribution and by ``roam critique``'s impact severity bump
@@ -130,7 +131,45 @@ def runtime_score_max_for_symbols(
     return round(best, 4)
 
 
-def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
+def _static_scores_with_bounded_io(
+    conn: sqlite3.Connection,
+    symbol_ids: list[int | None],
+) -> dict[int, dict]:
+    """Fetch static metrics for runtime symbols without per-row queries."""
+    seen = list(dict.fromkeys(sid for sid in symbol_ids if sid is not None))
+    if not seen:
+        return {}
+
+    static_scores: dict[int, dict] = {}
+    for chunk_start in range(0, len(seen), _BULK_FETCH_CHUNK):
+        chunk = seen[chunk_start : chunk_start + _BULK_FETCH_CHUNK]
+        rows = conn.execute(
+            "SELECT s.id, gm.pagerank, sm.cognitive_complexity, fs.total_churn "
+            "FROM symbols s "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+            "LEFT JOIN file_stats fs ON s.file_id = fs.file_id "
+            f"WHERE s.id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+
+        for row in rows:
+            sid = row[0]
+            pagerank = row[1] or 0.0
+            complexity = row[2] or 0.0
+            churn = row[3] or 0
+            score = (churn + 1) * (complexity + 1) * (pagerank * 1000 + 1)
+            static_scores[sid] = {
+                "pagerank": round(pagerank, 4),
+                "complexity": complexity,
+                "churn": churn,
+                "score": score,
+            }
+
+    return static_scores
+
+
+def _compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
     """Compare static analysis ranking vs runtime ranking.
 
     1. Get symbols ranked by static metrics (churn, complexity, PageRank)
@@ -169,37 +208,10 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
             }
         )
 
-    # Build static ranking for matched symbols
-    # Use a composite score: churn * complexity * pagerank
-    static_scores: dict[int, dict] = {}
-    for item in runtime_ranked:
-        sid = item["symbol_id"]
-        if sid is None:
-            continue
-
-        # Get static metrics
-        row = conn.execute(
-            "SELECT gm.pagerank, sm.cognitive_complexity, fs.total_churn "
-            "FROM symbols s "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
-            "LEFT JOIN file_stats fs ON s.file_id = fs.file_id "
-            "WHERE s.id = ?",
-            (sid,),
-        ).fetchone()
-
-        if row:
-            pagerank = row[0] or 0.0
-            complexity = row[1] or 0.0
-            churn = row[2] or 0
-            # Composite static score: higher = more statically important
-            score = (churn + 1) * (complexity + 1) * (pagerank * 1000 + 1)
-            static_scores[sid] = {
-                "pagerank": round(pagerank, 4),
-                "complexity": complexity,
-                "churn": churn,
-                "score": score,
-            }
+    static_scores = _static_scores_with_bounded_io(
+        conn,
+        [item["symbol_id"] for item in runtime_ranked],
+    )
 
     # Rank by static score
     sorted_static = sorted(static_scores.items(), key=lambda x: x[1]["score"], reverse=True)
@@ -209,6 +221,8 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
 
     total_runtime = len(runtime_ranked)
     total_static = len(static_rank_map) if static_rank_map else total_runtime
+    runtime_high_cutoff = max(1, total_runtime * 0.3)
+    static_high_cutoff = max(1, total_static * 0.3)
 
     # Classify each runtime entry
     hotspots = []
@@ -218,7 +232,7 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
 
         if sid is not None and sid in static_rank_map:
             static_rank = static_rank_map[sid]
-            static_info = static_scores.get(sid, {})
+            static_info = static_scores[sid]
         else:
             # Unmatched symbols get a high (bad) static rank
             static_rank = total_static + 1
@@ -226,8 +240,8 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
 
         # Classification based on rank discrepancy
         # Use relative position: top 30% = high, bottom 30% = low
-        runtime_high = runtime_rank <= max(1, total_runtime * 0.3)
-        static_high = static_rank <= max(1, total_static * 0.3)
+        runtime_high = runtime_rank <= runtime_high_cutoff
+        static_high = static_rank <= static_high_cutoff
 
         if runtime_high and not static_high:
             classification = "UPGRADE"
@@ -253,11 +267,14 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
                     "error_rate": item["error_rate"],
                 },
                 "static_stats": {
-                    "pagerank": static_info.get("pagerank", 0),
-                    "complexity": static_info.get("complexity", 0),
-                    "churn": static_info.get("churn", 0),
+                    "pagerank": static_info["pagerank"],
+                    "complexity": static_info["complexity"],
+                    "churn": static_info["churn"],
                 },
             }
         )
 
     return hotspots
+
+
+compute_hotspots = _compute_hotspots

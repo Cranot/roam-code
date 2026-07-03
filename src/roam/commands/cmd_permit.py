@@ -90,6 +90,7 @@ from roam.exit_codes import EXIT_GATE_FAILURE, EXIT_PARTIAL, EXIT_SUCCESS, EXIT_
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.permits import (
     PermitRecord,
+    PermitRequest,
     issue_permit,
     list_permits,
     permits_root,
@@ -545,11 +546,13 @@ def permit_issue(
         if persist:
             record, on_disk_path = issue_permit(
                 root,
-                scope=scope,
-                expires_at=expires_at,
-                issued_to=issued_to,
-                issued_by=issued_by_effective,
-                reason=reason,
+                PermitRequest(
+                    scope=scope,
+                    expires_at=expires_at,
+                    issued_to=issued_to,
+                    issued_by=issued_by_effective,
+                    reason=reason,
+                ),
                 permit_id=permit_id,
             )
             on_disk_path_str: str | None = str(on_disk_path)

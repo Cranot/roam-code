@@ -123,40 +123,71 @@ def _is_execute_call(call_node: ast.Call) -> bool:
     return False
 
 
+def _missing_escape_clause_violations(
+    rel: str,
+    lineno: int,
+    sql_strings: list[str],
+    pattern_suffix: str = "",
+) -> list[tuple[str, int, str]]:
+    """Return LIKE patterns that still need an explicit ESCAPE clause."""
+    violations: list[tuple[str, int, str]] = []
+    for sql in sql_strings:
+        for pat, has_escape in _scan_string_for_like_violations(sql):
+            if not has_escape:
+                violations.append((rel, lineno, f"{pat}{pattern_suffix}"))
+    return violations
+
+
+def _direct_sql_call_violations(rel: str, node: ast.AST) -> list[tuple[str, int, str]]:
+    """Catch inline SQL literals before they become wildcard-prone queries."""
+    if not isinstance(node, ast.Call) or not _is_execute_call(node):
+        return []
+    return _missing_escape_clause_violations(rel, node.lineno, _collect_string_literal_args(node))
+
+
+def _hoisted_sql_template_violations(rel: str, node: ast.AST) -> list[tuple[str, int, str]]:
+    """Catch module-level SQL templates before execution hides their source line."""
+    if not isinstance(node, ast.Assign):
+        return []
+    value = node.value
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+        return []
+    if "LIKE" not in value.value.upper():
+        return []
+    return _missing_escape_clause_violations(rel, node.lineno, [value.value], "  [module-level]")
+
+
+def _tree_violations_that_preserve_source_lines(rel: str, tree: ast.AST) -> list[tuple[str, int, str]]:
+    """Collect AST violations while preserving the source line of each rule."""
+    violations: list[tuple[str, int, str]] = []
+    for node in ast.walk(tree):
+        violations.extend(_direct_sql_call_violations(rel, node))
+        violations.extend(_hoisted_sql_template_violations(rel, node))
+    return violations
+
+
+def _parse_source_or_skip_to_keep_audit_tolerant(py: Path) -> ast.AST | None:
+    """Parse one source file, returning None when the repo-wide audit should keep walking."""
+    try:
+        src_text = py.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return ast.parse(src_text)
+    except SyntaxError:
+        return None
+
+
 def _walk_src_for_violations() -> list[tuple[str, int, str]]:
     """Return (rel_path, lineno, pattern_body) for every violation in src/roam/."""
     violations: list[tuple[str, int, str]] = []
     for py in _SRC.rglob("*.py"):
-        try:
-            src_text = py.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(src_text)
-        except SyntaxError:
+        tree = _parse_source_or_skip_to_keep_audit_tolerant(py)
+        if tree is None:
             continue
 
         rel = py.relative_to(_REPO_ROOT).as_posix()
-
-        for node in ast.walk(tree):
-            # 1) Direct .execute(...) / .executemany(...) call sites.
-            if isinstance(node, ast.Call) and _is_execute_call(node):
-                for s in _collect_string_literal_args(node):
-                    for pat, has_escape in _scan_string_for_like_violations(s):
-                        if not has_escape:
-                            violations.append((rel, node.lineno, pat))
-                continue
-
-            # 2) Module-level SQL string constants (assigned to a name) that
-            # contain a LIKE pattern. These are typically hoisted query
-            # templates fed to `.execute(...)` elsewhere; we flag them
-            # at the assignment line so the user knows where to fix.
-            if isinstance(node, ast.Assign):
-                v = node.value
-                if isinstance(v, ast.Constant) and isinstance(v.value, str) and "LIKE" in v.value.upper():
-                    for pat, has_escape in _scan_string_for_like_violations(v.value):
-                        if not has_escape:
-                            violations.append((rel, node.lineno, f"{pat}  [module-level]"))
+        violations.extend(_tree_violations_that_preserve_source_lines(rel, tree))
     return violations
 
 

@@ -156,16 +156,24 @@ def _populate_edge_fanout_fallback(conn, symbol_id: int, result: dict) -> None:
         _swallow("cmd_metrics:nested_query", exc)
 
 
-def _populate_file_level_metrics(conn, file_id: int, result: dict) -> None:
-    """Pull churn/commits, test-file count, and co-change count for a file."""
+def _collect_file_level_metrics(conn, file_id: int) -> dict:
+    """Pull the file-level churn/commits, test-file count, and co-change
+    count for a file ONCE.
+
+    These four values are identical for every symbol sharing the file, so
+    the bulk file-level collector computes them a single time and reuses
+    the result for both the file aggregate and each per-symbol dict (the
+    previous per-symbol path recomputed them once per symbol).
+    """
+    out = {"churn": 0, "commits": 0, "test_files": 0, "co_change_count": 0}
     try:
         fs = conn.execute(
             "SELECT commit_count, total_churn FROM file_stats WHERE file_id = ?",
             (file_id,),
         ).fetchone()
         if fs:
-            result["commits"] = fs["commit_count"] or 0
-            result["churn"] = fs["total_churn"] or 0
+            out["commits"] = fs["commit_count"] or 0
+            out["churn"] = fs["total_churn"] or 0
     except Exception as exc:  # noqa: BLE001 — defensive
         _swallow("cmd_metrics:nested_query", exc)
     try:
@@ -176,7 +184,7 @@ def _populate_file_level_metrics(conn, file_id: int, result: dict) -> None:
             "WHERE fe.target_file_id = ? AND f.file_role = 'test'",
             (file_id,),
         ).fetchone()
-        result["test_files"] = tf[0] if tf else 0
+        out["test_files"] = tf[0] if tf else 0
     except Exception as exc:  # noqa: BLE001 — defensive
         _swallow("cmd_metrics:nested_query", exc)
     try:
@@ -184,9 +192,19 @@ def _populate_file_level_metrics(conn, file_id: int, result: dict) -> None:
             "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
             (file_id, file_id),
         ).fetchone()
-        result["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
+        out["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
     except Exception as exc:  # noqa: BLE001 — defensive
         _swallow("cmd_metrics:nested_query", exc)
+    return out
+
+
+def _populate_file_level_metrics(conn, file_id: int, result: dict) -> None:
+    """Pull churn/commits, test-file count, and co-change count for a file."""
+    fl = _collect_file_level_metrics(conn, file_id)
+    result["churn"] = fl["churn"]
+    result["commits"] = fl["commits"]
+    result["test_files"] = fl["test_files"]
+    result["co_change_count"] = fl["co_change_count"]
 
 
 def _populate_dead_code_risk(sym_row, result: dict) -> None:
@@ -199,19 +217,15 @@ def _populate_dead_code_risk(sym_row, result: dict) -> None:
         result["dead_code_risk"] = True
 
 
-def collect_symbol_metrics(
-    conn: sqlite3.Connection,
-    symbol_id: int,
-    *,
-    include_comprehension: bool = True,
-) -> dict:
-    """Gather all available metrics for a single symbol.
+def _default_symbol_metrics() -> dict:
+    """Canonical empty per-symbol metrics dict.
 
-    Returns a flat dict with keys: complexity, fan_in, fan_out, pagerank,
-    betweenness, churn, commits, test_files, layer_depth, dead_code_risk,
-    loc, co_change_count.
+    Single source of truth shared by :func:`collect_symbol_metrics` and the
+    bulk file-level collector (:func:`_collect_file_symbol_metrics_bulk`) so
+    the two paths cannot drift apart in dict shape — callers that spread
+    the result (``**sm``) see identical keys either way.
     """
-    result: dict = {
+    return {
         "complexity": 0,
         "fan_in": 0,
         "fan_out": 0,
@@ -235,6 +249,21 @@ def collect_symbol_metrics(
         "covered_lines": 0,
         "coverable_lines": 0,
     }
+
+
+def collect_symbol_metrics(
+    conn: sqlite3.Connection,
+    symbol_id: int,
+    *,
+    include_comprehension: bool = True,
+) -> dict:
+    """Gather all available metrics for a single symbol.
+
+    Returns a flat dict with keys: complexity, fan_in, fan_out, pagerank,
+    betweenness, churn, commits, test_files, layer_depth, dead_code_risk,
+    loc, co_change_count.
+    """
+    result = _default_symbol_metrics()
 
     _populate_symbol_metrics(conn, symbol_id, result)
     _populate_graph_metrics(conn, symbol_id, result)
@@ -322,6 +351,133 @@ def _comprehension_score(*, fan_out: int, information_scatter: int, working_set_
 # ---------------------------------------------------------------------------
 
 
+def _collect_file_symbol_metrics_bulk(
+    conn: sqlite3.Connection, file_id: int, sym_rows
+) -> tuple[dict[int, dict], dict[str, int]]:
+    """Bulk-collect per-symbol metrics for every symbol in a file.
+
+    Replaces the previous N x :func:`collect_symbol_metrics` loop, which
+    issued roughly seven SELECTs per symbol (symbol_metrics x2,
+    graph_metrics x2, edge-count fallback x2, plus a symbols-row lookup)
+    AND recomputed the file's own churn / commits / test_files /
+    co_change once per symbol even though those values are identical for
+    every symbol sharing the file.
+
+    This joins ``symbol_metrics`` + ``graph_metrics`` in a single pass,
+    preloads edge fan-in / fan-out via ``GROUP BY``, derives
+    ``dead_code_risk`` inline, and computes the shared file-level metrics
+    once. Net queries for an N-symbol file drop from ~7N to a small
+    constant (one join + at most two edge GROUP BYs + the file-level set).
+
+    Each entry in the returned ``by_id`` mapping has the SAME shape as
+    ``collect_symbol_metrics(..., include_comprehension=False)`` so callers
+    that spread the dict (``**sm``) are unaffected. ``file_level`` holds
+    the shared churn / commits / test_files / co_change_count.
+    """
+    by_id: dict[int, dict] = {int(sr["id"]): _default_symbol_metrics() for sr in sym_rows}
+    symbol_ids = list(by_id)
+    # kind/exported come from the join when available; sym_rows already
+    # carries ``kind`` so dead_code_risk still works in the fallback path.
+    kind_map: dict[int, str] = {int(sr["id"]): (sr["kind"] or "") for sr in sym_rows}
+    exported_map: dict[int, bool] = {}
+
+    joined = True
+    try:
+        join_rows = batched_in(
+            conn,
+            "SELECT s.id, s.kind, s.is_exported, "
+            "sm.cognitive_complexity, sm.line_count, "
+            "sm.coverage_pct, sm.covered_lines, sm.coverable_lines, "
+            "gm.pagerank, gm.in_degree, gm.out_degree, gm.betweenness, "
+            "gm.closeness, gm.eigenvector, gm.clustering_coefficient, gm.debt_score "
+            "FROM symbols s "
+            "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE s.id IN ({ph})",
+            symbol_ids,
+        )
+        for r in join_rows:
+            sid = int(r["id"])
+            m = by_id[sid]
+            m["complexity"] = r["cognitive_complexity"] or 0
+            m["loc"] = r["line_count"] or 0
+            m["coverage_pct"] = r["coverage_pct"]
+            m["covered_lines"] = r["covered_lines"] or 0
+            m["coverable_lines"] = r["coverable_lines"] or 0
+            m["pagerank"] = r["pagerank"] or 0.0
+            m["fan_in"] = r["in_degree"] or 0
+            m["fan_out"] = r["out_degree"] or 0
+            m["betweenness"] = r["betweenness"] or 0.0
+            m["closeness"] = r["closeness"] or 0.0
+            m["eigenvector"] = r["eigenvector"] or 0.0
+            m["clustering_coefficient"] = r["clustering_coefficient"] or 0.0
+            m["debt_score"] = r["debt_score"] or 0.0
+            kind_map[sid] = r["kind"] or ""
+            exported_map[sid] = bool(r["is_exported"])
+    except Exception as exc:  # noqa: BLE001 — older schema may lack a column
+        _swallow("cmd_metrics:bulk_metric_join", exc)
+        joined = False
+
+    if not joined:
+        # Older schema missing one of the joined columns: fall back to the
+        # per-symbol path, whose column-group try/except degrades column by
+        # column instead of all-or-nothing. Behavior is identical to the
+        # pre-bulk implementation.
+        for sr in sym_rows:
+            sid = int(sr["id"])
+            by_id[sid] = collect_symbol_metrics(conn, sid, include_comprehension=False)
+    else:
+        # Edge-count fallback (bulk) only for symbols graph_metrics scored 0/0,
+        # matching _populate_edge_fanout_fallback's early-return guard.
+        zero_symbols = [sid for sid in symbol_ids if by_id[sid]["fan_in"] == 0 and by_id[sid]["fan_out"] == 0]
+        if zero_symbols:
+            try:
+                fi_map = {
+                    row["target_id"]: row["c"]
+                    for row in batched_in(
+                        conn,
+                        "SELECT target_id, COUNT(*) AS c FROM edges WHERE target_id IN ({ph}) GROUP BY target_id",
+                        zero_symbols,
+                    )
+                    if row["target_id"] is not None
+                }
+                fo_map = {
+                    row["source_id"]: row["c"]
+                    for row in batched_in(
+                        conn,
+                        "SELECT source_id, COUNT(*) AS c FROM edges WHERE source_id IN ({ph}) GROUP BY source_id",
+                        zero_symbols,
+                    )
+                    if row["source_id"] is not None
+                }
+                for sid in zero_symbols:
+                    by_id[sid]["fan_in"] = fi_map.get(sid, 0)
+                    by_id[sid]["fan_out"] = fo_map.get(sid, 0)
+            except Exception as exc:  # noqa: BLE001 — defensive
+                _swallow("cmd_metrics:bulk_edge_fallback", exc)
+
+        # dead_code_risk derived from the FINAL fan_in (post edge fallback).
+        for sid in symbol_ids:
+            m = by_id[sid]
+            if (
+                m["fan_in"] == 0
+                and kind_map.get(sid, "") in ("function", "method", "class")
+                and not exported_map.get(sid, False)
+            ):
+                m["dead_code_risk"] = True
+
+    # File-level metrics computed ONCE; identical for every symbol in the
+    # file, so reuse for both the file aggregate and each per-symbol dict.
+    file_level = _collect_file_level_metrics(conn, file_id)
+    for m in by_id.values():
+        m["churn"] = file_level["churn"]
+        m["commits"] = file_level["commits"]
+        m["test_files"] = file_level["test_files"]
+        m["co_change_count"] = file_level["co_change_count"]
+
+    return by_id, file_level
+
+
 def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
     """Gather aggregate metrics for all symbols in a file.
 
@@ -335,17 +491,20 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
     if not file_row:
         return {}
 
-    # Gather symbols in this file
+    # Symbols in this file. Per-symbol metrics come from the bulk collector
+    # below, so this is a plain read with no per-row symbol_metrics join.
     sym_rows = conn.execute(
-        "SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, s.line_end, "
-        "COALESCE(sm.cognitive_complexity, 0) AS cognitive_complexity "
-        "FROM symbols s "
-        "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
-        "WHERE s.file_id = ? ORDER BY s.line_start",
+        "SELECT id, name, kind, qualified_name, line_start, line_end "
+        "FROM symbols WHERE file_id = ? ORDER BY line_start",
         (file_id,),
     ).fetchall()
 
-    # Per-symbol metrics
+    # Bulk-collect per-symbol metrics + the shared file-level metrics in a
+    # small fixed number of queries (the previous loop ran ~7 SELECTs per
+    # symbol and recomputed the file-level metrics once per symbol).
+    by_id, file_level = _collect_file_symbol_metrics_bulk(conn, file_id, sym_rows)
+
+    # Aggregate per-symbol metrics
     symbol_metrics_list = []
     total_complexity = 0.0
     total_fan_in = 0
@@ -354,7 +513,7 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
     dead_count = 0
 
     for sr in sym_rows:
-        sm = collect_symbol_metrics(conn, sr["id"], include_comprehension=False)
+        sm = by_id[int(sr["id"])]
         total_complexity += sm["complexity"]
         total_fan_in += sm["fan_in"]
         total_fan_out += sm["fan_out"]
@@ -372,79 +531,33 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
             }
         )
 
-    # File-level churn / commits
-    churn = 0
-    commits = 0
+    # File-level coverage from file_stats (distinct from per-symbol coverage,
+    # which the bulk collector reads from symbol_metrics). The churn / commits
+    # / test_files / co_change aggregates are the shared file_level values.
     coverage_pct = None
     covered_lines = 0
     coverable_lines = 0
-    try:
-        fs = conn.execute(
-            "SELECT commit_count, total_churn FROM file_stats WHERE file_id = ?",
-            (file_id,),
-        ).fetchone()
-        if fs:
-            commits = fs["commit_count"] or 0
-            churn = fs["total_churn"] or 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-    try:
-        cov = conn.execute(
-            "SELECT coverage_pct, covered_lines, coverable_lines FROM file_stats WHERE file_id = ?",
-            (file_id,),
-        ).fetchone()
-        if cov:
-            coverage_pct = cov["coverage_pct"]
-            covered_lines = cov["covered_lines"] or 0
-            coverable_lines = cov["coverable_lines"] or 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-
-    # Test files referencing this file
-    test_files = 0
-    try:
-        tf = conn.execute(
-            "SELECT COUNT(DISTINCT fe.source_file_id) "
-            "FROM file_edges fe "
-            "JOIN files f ON fe.source_file_id = f.id "
-            "WHERE fe.target_file_id = ? AND f.file_role = 'test'",
-            (file_id,),
-        ).fetchone()
-        test_files = tf[0] if tf else 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-
-    # Co-change count
-    co_change = 0
-    try:
-        cc_row = conn.execute(
-            "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
-            (file_id, file_id),
-        ).fetchone()
-        co_change = cc_row["total"] or 0 if cc_row else 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
+    cov = conn.execute(
+        "SELECT coverage_pct, covered_lines, coverable_lines FROM file_stats WHERE file_id = ?",
+        (file_id,),
+    ).fetchone()
+    if cov:
+        coverage_pct = cov["coverage_pct"]
+        covered_lines = cov["covered_lines"] or 0
+        coverable_lines = cov["coverable_lines"] or 0
 
     file_metrics = {
         "complexity": round(total_complexity, 1),
         "fan_in": total_fan_in,
         "fan_out": total_fan_out,
         "max_pagerank": round(max_pagerank, 6),
-        "churn": churn,
-        "commits": commits,
-        "test_files": test_files,
+        "churn": file_level["churn"],
+        "commits": file_level["commits"],
+        "test_files": file_level["test_files"],
         "dead_symbols": dead_count,
         "loc": file_row["line_count"] or 0,
         "symbol_count": len(sym_rows),
-        "co_change_count": co_change,
+        "co_change_count": file_level["co_change_count"],
         "coverage_pct": coverage_pct,
         "covered_lines": covered_lines,
         "coverable_lines": coverable_lines,

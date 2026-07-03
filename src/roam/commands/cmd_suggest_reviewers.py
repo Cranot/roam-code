@@ -24,7 +24,7 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -142,33 +142,31 @@ def _compute_breadth(conn, file_ids: list[int], changed_dirs: set[str]) -> dict[
 
     # Get all files in the changed directories
     all_files = conn.execute("SELECT id, path FROM files").fetchall()
-    sibling_file_ids: set[int] = set()
+    changed_file_ids = set(file_ids)
+    sibling_dirs: dict[int, str] = {}
     for f in all_files:
         fdir = os.path.dirname(f["path"].replace("\\", "/"))
-        if fdir in changed_dirs and f["id"] not in file_ids:
-            sibling_file_ids.add(f["id"])
+        if fdir in changed_dirs and f["id"] not in changed_file_ids:
+            sibling_dirs[f["id"]] = fdir
 
-    if not sibling_file_ids:
+    if not sibling_dirs:
         return {}
 
     # Find authors who have touched those sibling files
     author_dirs: dict[str, set[str]] = defaultdict(set)
-    for sfid in sibling_file_ids:
-        rows = conn.execute(
-            "SELECT DISTINCT gc.author "
-            "FROM git_file_changes gfc "
-            "JOIN git_commits gc ON gfc.commit_id = gc.id "
-            "WHERE gfc.file_id = ?",
-            (sfid,),
-        ).fetchall()
-        # Get this sibling file's dir
-        frow = conn.execute("SELECT path FROM files WHERE id = ?", (sfid,)).fetchone()
-        if frow:
-            fdir = os.path.dirname(frow["path"].replace("\\", "/"))
-            for r in rows:
-                author = r["author"] or ""
-                if author:
-                    author_dirs[author].add(fdir)
+    rows = batched_in(
+        conn,
+        "SELECT DISTINCT gfc.file_id, gc.author "
+        "FROM git_file_changes gfc "
+        "JOIN git_commits gc ON gfc.commit_id = gc.id "
+        "WHERE gfc.file_id IN ({ph})",
+        sibling_dirs.keys(),
+    )
+    for r in rows:
+        author = r["author"] or ""
+        fdir = sibling_dirs.get(r["file_id"])
+        if author and fdir is not None:
+            author_dirs[author].add(fdir)
 
     if not author_dirs:
         return {}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import shlex
+from functools import lru_cache
+from importlib import import_module
 from typing import Iterable
 
 _GLOBAL_FLAGS_NO_VALUE = frozenset(
@@ -42,6 +44,33 @@ def _base_record(source: str, command_text: str) -> dict:
         "target_status": "not_checked",
         "executable_status": "not_checked",
     }
+
+
+@lru_cache(maxsize=1)
+def _cli_command_targets() -> tuple[dict[str, tuple[str, str]], str | None]:
+    """Return CLI command targets without importing ``roam.cli``.
+
+    The advice validator is imported by command modules, so importing the CLI
+    here spends import isolation to preserve registry truth. The AST registry
+    keeps the same source of truth while avoiding the cycle.
+    """
+    try:
+        from roam.surface_counts import cli_commands
+
+        raw_commands = cli_commands()
+    except (ImportError, KeyError, OSError, RuntimeError, SyntaxError, TypeError, ValueError) as exc:
+        return {}, f"CLI registry unavailable: {type(exc).__name__}"
+
+    commands: dict[str, tuple[str, str]] = {}
+    for name, target in raw_commands.items():
+        if not isinstance(name, str):
+            continue
+        if not isinstance(target, (tuple, list)) or len(target) != 2:
+            continue
+        module_path, attr_name = target
+        if isinstance(module_path, str) and isinstance(attr_name, str):
+            commands[name] = (module_path, attr_name)
+    return commands, None
 
 
 def _first_segment(command_text: str) -> str:
@@ -114,14 +143,11 @@ def _is_placeholder_token(token: str | None) -> bool:
 
 
 def _registry_status(subcommand: str) -> tuple[str, str | None]:
-    try:
-        from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS
-    except Exception:  # noqa: BLE001 - validation must never break output
-        return "not_checked", "CLI registry unavailable"
-    if subcommand in _COMMANDS:
+    commands, load_reason = _cli_command_targets()
+    if load_reason:
+        return "not_checked", load_reason
+    if subcommand in commands:
         return "known", None
-    if subcommand in _DEPRECATED_COMMANDS:
-        return "known_deprecated", None
     return "unknown", f"unknown roam subcommand: {subcommand}"
 
 
@@ -150,12 +176,18 @@ def _mark_non_roam(record: dict, command_text: str) -> dict:
 
 
 def _load_click_command(subcommand: str):
+    commands, load_reason = _cli_command_targets()
+    if load_reason:
+        return None, load_reason
+    target = commands.get(subcommand)
+    if target is None:
+        return None, f"unknown roam subcommand: {subcommand}"
+    module_path, attr_name = target
     try:
-        from roam.cli import cli
-    except Exception as exc:  # noqa: BLE001 - validation must never break output
-        return None, f"CLI parser unavailable: {type(exc).__name__}"
-    try:
-        return cli.get_command(None, subcommand), None
+        mod = import_module(module_path)
+        return getattr(mod, attr_name), None
+    except (AttributeError, ImportError) as exc:
+        return None, f"CLI command loader failed: {type(exc).__name__}"
     except Exception as exc:  # noqa: BLE001
         return None, f"CLI command loader failed: {type(exc).__name__}"
 
@@ -215,26 +247,28 @@ def _parse_status(tokens: list[str]) -> tuple[str, str | None]:
 
 
 def _is_root_level_invocation(tokens: list[str]) -> bool:
-    return len(tokens) > 1 and all(token.startswith("-") for token in tokens[1:])
+    return len(tokens) > 1 and tokens[1].startswith("-")
 
 
 def _root_parse_status(tokens: list[str]) -> tuple[str, str | None]:
-    import contextlib
-    import io
-
-    try:
-        from roam.cli import cli
-    except Exception as exc:  # noqa: BLE001
-        return "not_checked", f"CLI parser unavailable: {type(exc).__name__}"
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            cli.make_context("roam", tokens[1:], resilient_parsing=False)
-        return "parsed", None
-    except Exception as exc:  # noqa: BLE001
-        if getattr(exc, "exit_code", None) == 0:
-            return "parsed", None
-        reason = str(exc) or type(exc).__name__
-        return "failed", reason
+    idx = 1
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in _GLOBAL_FLAGS_NO_VALUE:
+            idx += 1
+            continue
+        if token in _GLOBAL_FLAGS_WITH_VALUE:
+            if idx + 1 >= len(tokens):
+                return "failed", f"missing value for {token}"
+            idx += 2
+            continue
+        if any(token.startswith(f"{flag}=") for flag in _GLOBAL_FLAGS_WITH_VALUE):
+            if token.endswith("="):
+                return "failed", f"missing value for {token[:-1]}"
+            idx += 1
+            continue
+        return "failed", f"unknown root option: {token}"
+    return "parsed", None
 
 
 def _mark_empty(record: dict) -> dict:

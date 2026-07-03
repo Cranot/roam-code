@@ -478,51 +478,65 @@ class PhpExtractor(LanguageExtractor):
 
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
-            ntype = child.type
-            if ntype == "namespace_use_declaration":
-                self._extract_use_import(child, source, refs, scope_name)
-            elif ntype == "use_declaration":
-                # Trait use inside class body: use HasFactory, SoftDeletes;
-                self._extract_trait_use(child, source, refs, scope_name)
-            elif ntype == "member_call_expression":
-                self._extract_member_call(child, source, refs, scope_name)
-            elif ntype == "nullsafe_member_call_expression":
-                self._extract_member_call(child, source, refs, scope_name)
-            elif ntype == "nullsafe_member_access_expression":
-                self._extract_member_call(child, source, refs, scope_name)
-            elif ntype == "scoped_call_expression":
-                self._extract_scoped_call(child, source, refs, scope_name)
-            elif ntype == "object_creation_expression":
-                self._extract_new(child, source, refs, scope_name)
-            elif ntype == "function_call_expression":
-                self._extract_function_call(child, source, refs, scope_name)
-            else:
-                new_scope = scope_name
-                if ntype == "namespace_definition":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        new_scope = self.node_text(n, source)
-                elif ntype in (
-                    "class_declaration",
-                    "interface_declaration",
-                    "trait_declaration",
-                    "enum_declaration",
-                ):
-                    n = child.child_by_field_name("name")
-                    if n:
-                        cname = self.node_text(n, source)
-                        new_scope = f"{scope_name}\\{cname}" if scope_name else cname
-                elif ntype == "method_declaration":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        mname = self.node_text(n, source)
-                        new_scope = f"{scope_name}\\{mname}" if scope_name else mname
-                elif ntype == "function_definition":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        fname = self.node_text(n, source)
-                        new_scope = f"{scope_name}\\{fname}" if scope_name else fname
-                self._walk_refs(child, source, refs, new_scope)
+            if self._extract_reference_that_owns_recursion(child, source, refs, scope_name):
+                continue
+            new_scope = self._scope_that_preserves_reference_owner(child, source, scope_name)
+            self._walk_refs(child, source, refs, new_scope)
+
+    def _extract_reference_that_owns_recursion(self, node, source, refs, scope_name):
+        """Extract terminal reference nodes whose helpers recurse into arguments."""
+        ntype = node.type
+        if ntype == "namespace_use_declaration":
+            self._extract_use_import(node, source, refs, scope_name)
+            return True
+        if ntype == "use_declaration":
+            # Trait use inside class body: use HasFactory, SoftDeletes;
+            self._extract_trait_use(node, source, refs, scope_name)
+            return True
+        if ntype in (
+            "member_call_expression",
+            "nullsafe_member_call_expression",
+            "nullsafe_member_access_expression",
+        ):
+            self._extract_member_call(node, source, refs, scope_name)
+            return True
+        if ntype == "scoped_call_expression":
+            self._extract_scoped_call(node, source, refs, scope_name)
+            return True
+        if ntype == "object_creation_expression":
+            self._extract_new(node, source, refs, scope_name)
+            return True
+        if ntype == "function_call_expression":
+            self._extract_function_call(node, source, refs, scope_name)
+            return True
+        return False
+
+    def _scope_that_preserves_reference_owner(self, node, source, scope_name):
+        """Return the scope descendants should use for reference ownership."""
+        ntype = node.type
+        if ntype == "namespace_definition":
+            return self._named_child_text(node, source) or scope_name
+        if ntype in (
+            "class_declaration",
+            "interface_declaration",
+            "trait_declaration",
+            "enum_declaration",
+            "method_declaration",
+            "function_definition",
+        ):
+            return self._nested_reference_scope(scope_name, self._named_child_text(node, source))
+        return scope_name
+
+    def _named_child_text(self, node, source):
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return None
+        return self.node_text(name_node, source)
+
+    def _nested_reference_scope(self, scope_name, child_name):
+        if child_name is None:
+            return scope_name
+        return f"{scope_name}\\{child_name}" if scope_name else child_name
 
     def _use_clause_target(self, clause_node, source):
         """Extract (target_name, import_path) from a namespace_use_clause."""

@@ -45,6 +45,42 @@ class CExtractor(LanguageExtractor):
 
     # ---- Symbol extraction ----
 
+    def _add_symbol(
+        self,
+        symbols,
+        node,
+        name,
+        kind,
+        parent_name,
+        *,
+        signature=None,
+        docstring=None,
+        is_exported=False,
+    ) -> str:
+        """Record `node` as one symbol in the enclosing scope.
+
+        Owns the two invariants every extractor must agree on — `::`
+        qualification against the parent scope and the tree-sitter
+        0-based -> 1-based line convention — so they are stated once
+        instead of per extractor. Returns the qualified name for
+        extractors that scope children under it.
+        """
+        qualified = f"{parent_name}::{name}" if parent_name else name
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=signature,
+                docstring=docstring,
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
+        return qualified
+
     def _walk_symbols(self, node, source, symbols, parent_name, is_header):
         for child in node.children:
             if child.type == "function_definition":
@@ -82,19 +118,15 @@ class CExtractor(LanguageExtractor):
         ret_text = self.node_text(ret_type, source) if ret_type else ""
         sig = f"{ret_text} {name}({params_text})"
 
-        qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="function",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig.strip(),
-                docstring=self.get_docstring(node, source),
-                is_exported=is_header,
-                parent_name=parent_name,
-            )
+        self._add_symbol(
+            symbols,
+            node,
+            name,
+            "function",
+            parent_name,
+            signature=sig.strip(),
+            docstring=self.get_docstring(node, source),
+            is_exported=is_header,
         )
 
     def _parse_function_declarator(self, declarator, source) -> tuple[str | None, str]:
@@ -146,53 +178,39 @@ class CExtractor(LanguageExtractor):
                 name, params_text = self._parse_function_declarator(child, source)
                 if name:
                     sig = f"{type_text} {name}({params_text})"
-                    qualified = f"{parent_name}::{name}" if parent_name else name
-                    symbols.append(
-                        self._make_symbol(
-                            name=name,
-                            kind="function",
-                            line_start=node.start_point[0] + 1,
-                            line_end=node.end_point[0] + 1,
-                            qualified_name=qualified,
-                            signature=sig.strip(),
-                            docstring=self.get_docstring(node, source),
-                            is_exported=is_header,
-                            parent_name=parent_name,
-                        )
+                    self._add_symbol(
+                        symbols,
+                        node,
+                        name,
+                        "function",
+                        parent_name,
+                        signature=sig.strip(),
+                        docstring=self.get_docstring(node, source),
+                        is_exported=is_header,
                     )
             elif child.type == "init_declarator":
                 decl = child.child_by_field_name("declarator")
                 if decl and decl.type == "identifier":
                     name = self.node_text(decl, source)
-                    sig = f"{type_text} {name}"
-                    qualified = f"{parent_name}::{name}" if parent_name else name
-                    symbols.append(
-                        self._make_symbol(
-                            name=name,
-                            kind="variable",
-                            line_start=node.start_point[0] + 1,
-                            line_end=node.end_point[0] + 1,
-                            qualified_name=qualified,
-                            signature=sig,
-                            is_exported=is_header,
-                            parent_name=parent_name,
-                        )
+                    self._add_symbol(
+                        symbols,
+                        node,
+                        name,
+                        "variable",
+                        parent_name,
+                        signature=f"{type_text} {name}",
+                        is_exported=is_header,
                     )
             elif child.type == "identifier":
                 name = self.node_text(child, source)
-                sig = f"{type_text} {name}"
-                qualified = f"{parent_name}::{name}" if parent_name else name
-                symbols.append(
-                    self._make_symbol(
-                        name=name,
-                        kind="variable",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        is_exported=is_header,
-                        parent_name=parent_name,
-                    )
+                self._add_symbol(
+                    symbols,
+                    node,
+                    name,
+                    "variable",
+                    parent_name,
+                    signature=f"{type_text} {name}",
+                    is_exported=is_header,
                 )
 
     def _extract_struct(self, node, source, symbols, parent_name, is_header, kind="struct"):
@@ -200,21 +218,15 @@ class CExtractor(LanguageExtractor):
         if name_node is None:
             return
         name = self.node_text(name_node, source)
-        sig = f"{kind} {name}"
-
-        qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="struct",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                is_exported=is_header,
-                parent_name=parent_name,
-            )
+        qualified = self._add_symbol(
+            symbols,
+            node,
+            name,
+            "struct",
+            parent_name,
+            signature=f"{kind} {name}",
+            docstring=self.get_docstring(node, source),
+            is_exported=is_header,
         )
 
         # Extract fields
@@ -230,16 +242,13 @@ class CExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "field_identifier":
                 field_name = self.node_text(child, source)
-                symbols.append(
-                    self._make_symbol(
-                        name=field_name,
-                        kind="field",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=f"{struct_name}::{field_name}",
-                        signature=f"{type_text} {field_name}",
-                        parent_name=struct_name,
-                    )
+                self._add_symbol(
+                    symbols,
+                    node,
+                    field_name,
+                    "field",
+                    struct_name,
+                    signature=f"{type_text} {field_name}",
                 )
 
     def _extract_enum(self, node, source, symbols, parent_name, is_header):
@@ -247,21 +256,15 @@ class CExtractor(LanguageExtractor):
         name = self.node_text(name_node, source) if name_node else None
         if name is None:
             return
-        sig = f"enum {name}"
-
-        qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="enum",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                is_exported=is_header,
-                parent_name=parent_name,
-            )
+        qualified = self._add_symbol(
+            symbols,
+            node,
+            name,
+            "enum",
+            parent_name,
+            signature=f"enum {name}",
+            docstring=self.get_docstring(node, source),
+            is_exported=is_header,
         )
 
         # Extract enumerators
@@ -272,83 +275,66 @@ class CExtractor(LanguageExtractor):
                     en = child.child_by_field_name("name")
                     if en:
                         en_name = self.node_text(en, source)
-                        symbols.append(
-                            self._make_symbol(
-                                name=en_name,
-                                kind="constant",
-                                line_start=child.start_point[0] + 1,
-                                line_end=child.end_point[0] + 1,
-                                qualified_name=f"{qualified}::{en_name}",
-                                parent_name=qualified,
-                                is_exported=is_header,
-                            )
+                        self._add_symbol(
+                            symbols,
+                            child,
+                            en_name,
+                            "constant",
+                            qualified,
+                            is_exported=is_header,
                         )
 
-    def _extract_typedef(self, node, source, symbols, parent_name, is_header):
-        """Extract typedef declarations."""
-        # The last identifier/type_identifier before the semicolon is the alias name
+    def _resolve_typedef_alias_without_losing_fallbacks(self, node, source) -> tuple[str, str, bool] | None:
+        """Preserve precise typedef aliases while keeping grammar fallback coverage."""
         declarator = node.child_by_field_name("declarator")
         if declarator:
-            name = self.node_text(declarator, source)
-            # Clean up pointer/array suffixes
-            name = name.strip("*[] ")
+            name = self.node_text(declarator, source).strip("*[] ")
             if not name:
-                return
+                return None
             type_node = node.child_by_field_name("type")
             type_text = self.node_text(type_node, source) if type_node else ""
-            sig = f"typedef {type_text} {name}"
+            return name, f"typedef {type_text} {name}".strip(), True
 
-            qualified = f"{parent_name}::{name}" if parent_name else name
-            symbols.append(
-                self._make_symbol(
-                    name=name,
-                    kind="type_alias",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=sig.strip(),
-                    docstring=self.get_docstring(node, source),
-                    is_exported=is_header,
-                    parent_name=parent_name,
-                )
-            )
-        else:
-            # Try to find the type identifier directly
-            type_id = None
-            for child in node.children:
-                if child.type == "type_identifier":
-                    type_id = child
-            if type_id:
-                name = self.node_text(type_id, source)
-                sig = f"typedef ... {name}"
-                qualified = f"{parent_name}::{name}" if parent_name else name
-                symbols.append(
-                    self._make_symbol(
-                        name=name,
-                        kind="type_alias",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        is_exported=is_header,
-                        parent_name=parent_name,
-                    )
-                )
+        type_id = None
+        for child in node.children:
+            if child.type == "type_identifier":
+                type_id = child
+        if type_id is None:
+            return None
+
+        name = self.node_text(type_id, source)
+        return name, f"typedef ... {name}", False
+
+    def _add_typedef_alias_with_docstring_scope(self, symbols, node, source, parent_name, is_header, resolved) -> None:
+        name, signature, include_docstring = resolved
+        self._add_symbol(
+            symbols,
+            node,
+            name,
+            "type_alias",
+            parent_name,
+            signature=signature,
+            docstring=self.get_docstring(node, source) if include_docstring else None,
+            is_exported=is_header,
+        )
+
+    def _extract_typedef(self, node, source, symbols, parent_name, is_header):
+        if resolved := self._resolve_typedef_alias_without_losing_fallbacks(node, source):
+            self._add_typedef_alias_with_docstring_scope(symbols, node, source, parent_name, is_header, resolved)
 
     def _extract_namespace(self, node, source, symbols, is_header):
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
         name = self.node_text(name_node, source)
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="module",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                signature=f"namespace {name}",
-                is_exported=True,
-            )
+        self._add_symbol(
+            symbols,
+            node,
+            name,
+            "module",
+            None,
+            signature=f"namespace {name}",
+            is_exported=True,
         )
 
         body = node.child_by_field_name("body")
@@ -360,21 +346,15 @@ class CExtractor(LanguageExtractor):
         if name_node is None:
             return
         name = self.node_text(name_node, source)
-        sig = f"class {name}"
-
-        qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="class",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                is_exported=is_header,
-                parent_name=parent_name,
-            )
+        qualified = self._add_symbol(
+            symbols,
+            node,
+            name,
+            "class",
+            parent_name,
+            signature=f"class {name}",
+            docstring=self.get_docstring(node, source),
+            is_exported=is_header,
         )
 
         body = node.child_by_field_name("body")

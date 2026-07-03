@@ -11,8 +11,10 @@ cached envelopes don't surface as stale renders.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json as _json
+import sys
 from pathlib import Path
 
 from roam.output.formatter import WarningsOut
@@ -21,20 +23,49 @@ DEFAULT_CACHE_DIR = Path(".roam") / "pr-analyze-cache"
 CACHE_VERSION = 1  # bump when the envelope shape changes
 
 
-def _cache_key(diff_text: str, rules_path: Path, block_threshold: int, language_override: str | None) -> str:
+@dataclass(frozen=True)
+class _CacheKeyInputs:
+    diff_text: str
+    rules_path: Path
+    block_threshold: int
+    language_override: str | None
+
+    @classmethod
+    def from_args(cls, args: tuple[object, ...]) -> "_CacheKeyInputs":
+        if len(args) == 1 and isinstance(args[0], cls):
+            return args[0]
+        if len(args) != 4:
+            raise TypeError(
+                "_cache_key() expects _CacheKeyInputs or diff_text, rules_path, block_threshold, language_override"
+            )
+        diff_text, rules_path, block_threshold, language_override = args
+        normalized_rules_path = rules_path if isinstance(rules_path, Path) else Path(str(rules_path))
+        return cls(
+            diff_text="" if diff_text is None else str(diff_text),
+            rules_path=normalized_rules_path,
+            block_threshold=int(block_threshold),
+            language_override=None if language_override is None else str(language_override),
+        )
+
+
+def _cache_key(*args: object) -> str:
     """Derive a stable cache key from inputs that affect the analysis."""
+    return _cache_key_from_inputs(_CacheKeyInputs.from_args(args))
+
+
+def _cache_key_from_inputs(inputs: _CacheKeyInputs) -> str:
     h = hashlib.sha256()
     h.update(f"v={CACHE_VERSION}\n".encode())
     h.update(b"diff=")
-    h.update((diff_text or "").encode("utf-8"))
+    h.update((inputs.diff_text or "").encode("utf-8"))
     h.update(b"\nrules=")
-    if rules_path.exists():
+    if inputs.rules_path.exists():
         try:
-            h.update(rules_path.read_bytes())
+            h.update(inputs.rules_path.read_bytes())
         except OSError:
             h.update(b"<unreadable>")
-    h.update(f"\nthreshold={block_threshold}\n".encode())
-    h.update(f"lang={language_override or ''}".encode())
+    h.update(f"\nthreshold={inputs.block_threshold}\n".encode())
+    h.update(f"lang={inputs.language_override or ''}".encode())
     return h.hexdigest()
 
 
@@ -118,9 +149,22 @@ def _load_cache(
 
 
 def _save_cache(cache_dir: Path, key: str, bundle: dict) -> None:
-    """Persist envelope to the cache. Best-effort; failures are silent."""
+    """Persist envelope to the cache. Best-effort; a failed write is
+    noted on stderr and never raises — the next run just re-analyzes.
+
+    The write path deliberately does NOT thread ``warnings_out`` (W598
+    scoped that plumb to the cache READER; the guard
+    ``test_save_cache_untouched`` pins it), so visibility here is a
+    one-line stderr note in the ``_load_cache`` marker vocabulary
+    (``<path>:<exc_class>:<detail>``) — stderr keeps the JSON envelope
+    on stdout clean.
+    """
+    p = _cache_path(cache_dir, key)
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        _cache_path(cache_dir, key).write_text(_json.dumps(bundle, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+        p.write_text(_json.dumps(bundle, indent=2), encoding="utf-8")
+    except (OSError, TypeError, ValueError) as exc:
+        print(
+            f"[pr-analyze] cache write skipped: {p}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )  # noqa: T201

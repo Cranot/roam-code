@@ -11,7 +11,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from roam.db.connection import find_project_root, get_db_path, open_db
+from roam.db.connection import batched_in, find_project_root, get_db_path, open_db
 from roam.index.discovery import discover_files
 from roam.index.file_roles import classify_file
 from roam.index.incremental import file_hash, get_index_changed_files
@@ -590,6 +590,24 @@ def _compute_cognitive_load(conn):
     _log(f"  Cognitive load for {len(updates)} files")
 
 
+def _seed_parent_ids_for_batch_parent_linking(conn, file_id, symbols):
+    """Load existing parent ids once so symbol storage preserves links without N+1 reads."""
+    parent_names = sorted({sym.get("parent_name") for sym in symbols if sym.get("parent_name")})
+    if not parent_names:
+        return {}
+
+    rows = batched_in(
+        conn,
+        "SELECT id, name FROM symbols WHERE file_id = ? AND name IN ({ph}) ORDER BY id",
+        parent_names,
+        pre=[file_id],
+    )
+    parent_ids_by_name = {}
+    for row in rows:
+        parent_ids_by_name.setdefault(row["name"], row["id"])
+    return parent_ids_by_name
+
+
 def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_version=None):
     """Insert extracted symbols into the DB and populate all_symbol_rows.
 
@@ -600,23 +618,19 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
     None falls back to NULL — pre-A6 callers and tests that bypass the
     indexer pipeline get the same value they would have written before.
     """
-    for sym in symbols:
-        parent_id = None
-        if sym["parent_name"]:
-            parent_row = conn.execute(
-                "SELECT id FROM symbols WHERE file_id = ? AND name = ?",
-                (file_id, sym["parent_name"]),
-            ).fetchone()
-            if parent_row:
-                parent_id = parent_row["id"]
+    parent_ids_by_name = _seed_parent_ids_for_batch_parent_linking(conn, file_id, symbols)
+    insert_sql = """INSERT INTO symbols
+       (file_id, name, qualified_name, kind, signature,
+        line_start, line_end, docstring, visibility,
+        is_exported, parent_id, default_value,
+        is_async, decorators, extractor_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
-        conn.execute(
-            """INSERT INTO symbols
-               (file_id, name, qualified_name, kind, signature,
-                line_start, line_end, docstring, visibility,
-                is_exported, parent_id, default_value,
-                is_async, decorators, extractor_version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    for sym in symbols:
+        parent_id = parent_ids_by_name.get(sym.get("parent_name"))
+
+        cursor = conn.execute(
+            insert_sql,
             (
                 file_id,
                 sym["name"],
@@ -635,10 +649,10 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
                 extractor_version,
             ),
         )
-        row = conn.execute("SELECT last_insert_rowid()").fetchone()
-        if not row:
+        sym_id = cursor.lastrowid
+        if sym_id is None:
             continue
-        sym_id = row[0]
+        parent_ids_by_name.setdefault(sym["name"], sym_id)
         all_symbol_rows[sym_id] = {
             "id": sym_id,
             "file_id": file_id,

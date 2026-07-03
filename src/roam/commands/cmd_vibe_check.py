@@ -804,12 +804,11 @@ def _normalize_body(source: str) -> str:
     return s
 
 
-def _detect_copy_paste(conn, project_root: Path) -> tuple[int, int, list[dict]]:
-    """Find groups of 3+ functions with identical normalized bodies.
-
-    Returns (found_in_clone_groups, total_functions, details).
-    """
-    # Get function symbols with their line ranges
+def _copy_paste_clone_groups_preserving_detector_parity(
+    conn,
+    project_root: Path,
+) -> tuple[int, list[list[dict]]]:
+    """Derive clone groups once so detector counts and findings cannot drift."""
     functions = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, "
         "  f.path as file_path "
@@ -821,16 +820,13 @@ def _detect_copy_paste(conn, project_root: Path) -> tuple[int, int, list[dict]]:
 
     total_functions = len(functions)
     if total_functions < 3:
-        return 0, max(total_functions, 1), []
+        return total_functions, []
 
-    # Group by file for efficient reading
     by_file: dict[str, list] = defaultdict(list)
     for fn in functions:
         by_file[fn["file_path"]].append(fn)
 
-    # Hash normalized bodies
     body_hashes: dict[str, list[dict]] = defaultdict(list)
-
     for file_path, fns in by_file.items():
         full_path = project_root / file_path
         try:
@@ -845,29 +841,42 @@ def _detect_copy_paste(conn, project_root: Path) -> tuple[int, int, list[dict]]:
             normalized = _normalize_body(body)
 
             if len(normalized) < 30:
-                continue  # Too short to be meaningful
+                continue
 
             h = hashlib.md5(normalized.encode("utf-8")).hexdigest()
             body_hashes[h].append(
                 {
+                    "symbol_id": int(fn["id"]),
                     "name": fn["name"],
-                    "file": file_path,
-                    "line": fn["line_start"],
+                    "file_path": file_path,
+                    "line_start": fn["line_start"],
+                    "line_end": fn["line_end"],
+                    "group_hash": h,
                 }
             )
 
-    # Find groups of 3+ duplicates
+    return total_functions, [group for group in body_hashes.values() if len(group) >= 3]
+
+
+def _detect_copy_paste(conn, project_root: Path) -> tuple[int, int, list[dict]]:
+    """Find groups of 3+ functions with identical normalized bodies.
+
+    Returns (found_in_clone_groups, total_functions, details).
+    """
+    total_functions, clone_groups = _copy_paste_clone_groups_preserving_detector_parity(conn, project_root)
+    if total_functions < 3:
+        return 0, max(total_functions, 1), []
+
     found = 0
     details: list[dict] = []
-    for h, group in body_hashes.items():
-        if len(group) >= 3:
-            found += len(group)
-            details.append(
-                {
-                    "clone_group_size": len(group),
-                    "functions": group[:5],  # limit detail size
-                }
-            )
+    for group in clone_groups:
+        found += len(group)
+        details.append(
+            {
+                "clone_group_size": len(group),
+                "functions": [{"name": m["name"], "file": m["file_path"], "line": m["line_start"]} for m in group[:5]],
+            }
+        )
 
     return found, max(total_functions, 1), details
 
@@ -1515,62 +1524,24 @@ def _collect_dead_export_findings(conn) -> list[dict]:
 def _collect_copy_paste_findings(conn, project_root: Path) -> list[dict]:
     """Re-derive copy-paste groups at symbol granularity for finding emit.
 
-    Mirrors ``_detect_copy_paste`` exactly — same body normalisation,
-    same minimum-length filter, same >=3-group threshold. Returns one
+    Uses the same grouped source as ``_detect_copy_paste`` — same body
+    normalisation, same minimum-length filter, same >=3-group threshold. Returns one
     record per CLONE-GROUP MEMBER (so a group of 4 produces 4 records).
     The detector's ``found`` value is the sum across all groups, which
     this function reproduces by yielding one record per member.
     """
-    functions = conn.execute(
-        "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, "
-        "  f.path as file_path "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.kind IN ('function', 'method') "
-        "AND s.line_start IS NOT NULL AND s.line_end IS NOT NULL "
-        "AND (s.line_end - s.line_start) >= 3"
-    ).fetchall()
-    if len(functions) < 3:
+    total_functions, clone_groups = _copy_paste_clone_groups_preserving_detector_parity(conn, project_root)
+    if total_functions < 3:
         return []
 
-    by_file: dict[str, list] = defaultdict(list)
-    for fn in functions:
-        by_file[fn["file_path"]].append(fn)
-
-    body_hashes: dict[str, list[dict]] = defaultdict(list)
-    for file_path, fns in by_file.items():
-        full_path = project_root / file_path
-        try:
-            source_lines = full_path.read_text(encoding="utf-8", errors="replace").split("\n")
-        except OSError:
-            continue
-        for fn in fns:
-            start = (fn["line_start"] or 1) - 1
-            end = fn["line_end"] or start + 1
-            body = "\n".join(source_lines[start:end])
-            normalized = _normalize_body(body)
-            if len(normalized) < 30:
-                continue
-            h = hashlib.md5(normalized.encode("utf-8")).hexdigest()
-            body_hashes[h].append(
-                {
-                    "symbol_id": int(fn["id"]),
-                    "name": fn["name"],
-                    "file_path": file_path,
-                    "line_start": fn["line_start"],
-                    "line_end": fn["line_end"],
-                    "group_hash": h,
-                }
-            )
-
     records: list[dict] = []
-    for h, group in body_hashes.items():
-        if len(group) >= 3:
-            group_members = [{"name": m["name"], "file": m["file_path"], "line": m["line_start"]} for m in group]
-            for m in group:
-                rec = dict(m)
-                rec["group_size"] = len(group)
-                rec["group_members"] = group_members[:5]
-                records.append(rec)
+    for group in clone_groups:
+        group_members = [{"name": m["name"], "file": m["file_path"], "line": m["line_start"]} for m in group]
+        for m in group:
+            rec = dict(m)
+            rec["group_size"] = len(group)
+            rec["group_members"] = group_members[:5]
+            records.append(rec)
     return records
 
 

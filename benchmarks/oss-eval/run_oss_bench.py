@@ -118,9 +118,7 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"- Generated: `{summary['generated_at']}`")
     lines.append(f"- Manifest: `{summary['manifest_path']}`")
-    lines.append(
-        f"- Evaluated: `{summary['counts']['evaluated']}` / `{summary['counts']['targets_total']}` targets"
-    )
+    lines.append(f"- Evaluated: `{summary['counts']['evaluated']}` / `{summary['counts']['targets_total']}` targets")
     lines.append(
         f"- Full vs partial: `{summary['counts']['evaluated_full']}` full, `{summary['counts']['evaluated_partial']}` partial"
     )
@@ -138,9 +136,7 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Per repository")
     lines.append("")
-    lines.append(
-        "| Target | Tier | Status | Health | Dead | AvgCx | P90Cx | HiddenCoupling | Time(s) |"
-    )
+    lines.append("| Target | Tier | Status | Health | Dead | AvgCx | P90Cx | HiddenCoupling | Time(s) |")
     lines.append("|---|---|---|---:|---:|---:|---:|---:|---:|")
     for row in summary["results"]:
         metrics = row.get("metrics", {})
@@ -209,9 +205,7 @@ def run(manifest_path: Path, timeout_s: int, init_if_missing: bool) -> dict[str,
             record["status"] = "missing_local_repo"
             record["reason"] = "repository path does not exist locally"
             if record["required_for_item_37"]:
-                major_missing.append(
-                    {"id": record["id"], "repo": record["repo"], "reason": record["reason"]}
-                )
+                major_missing.append({"id": record["id"], "repo": record["repo"], "reason": record["reason"]})
             results.append(record)
             continue
 
@@ -231,7 +225,12 @@ def run(manifest_path: Path, timeout_s: int, init_if_missing: bool) -> dict[str,
                 continue
 
         total_elapsed = 0.0
-        commands: dict[str, dict[str, Any] | None] = {"health": None, "dead": None, "complexity": None, "coupling": None}
+        commands: dict[str, dict[str, Any] | None] = {
+            "health": None,
+            "dead": None,
+            "complexity": None,
+            "coupling": None,
+        }
         failed_optional: list[str] = []
         for cmd in ("health", "dead", "complexity", "coupling"):
             payload, cmd_res = _run_roam_json(repo_dir, cmd, timeout_s=timeout_s)
@@ -287,9 +286,7 @@ def run(manifest_path: Path, timeout_s: int, init_if_missing: bool) -> dict[str,
     ]
 
     major_targets = [t for t in targets if t.get("required_for_item_37")]
-    major_eval = [
-        r for r in evaluated if r.get("required_for_item_37")
-    ]
+    major_eval = [r for r in evaluated if r.get("required_for_item_37")]
 
     try:
         manifest_for_report = manifest_path.relative_to(root.resolve()).as_posix()

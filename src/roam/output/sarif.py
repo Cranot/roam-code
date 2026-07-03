@@ -4476,6 +4476,142 @@ def _bus_factor_risk_level(risk: str) -> str:
     return "note"
 
 
+def _bus_factor_solo_summary_result(row: dict) -> dict:
+    """Build the repo-level solo-author summary SARIF result."""
+    repo = row.get("repo") or "./"
+    unique_authors = row.get("unique_authors_count")
+    dominant = row.get("dominant_actor") or row.get("dominant_author") or ""
+    dominant_pct = row.get("dominant_author_share_pct")
+    total_dirs = row.get("total_directories_analyzed")
+
+    parts = ["Solo-author repo summary"]
+    if dominant:
+        parts.append(
+            f"{dominant} owns {dominant_pct}% of churn" if dominant_pct is not None else f"primary author: {dominant}"
+        )
+    if total_dirs is not None:
+        parts.append(f"{total_dirs} directories analysed")
+    if unique_authors is not None:
+        parts.append(f"{unique_authors} unique authors")
+    message_text = " — ".join(str(p) for p in parts)
+
+    # W1062-followup-3: per-result tags add the SARIF-level axis
+    # (the solo-summary row is always "LOW" risk -> "note" level
+    # via _bus_factor_risk_level — pre-resolve here so the tag
+    # vocabulary stays lowercase).
+    solo_tags = _derive_finding_tags(
+        family="governance",
+        extra=["bus-factor", "solo-author-summary"],
+        severity=_bus_factor_risk_level("LOW"),
+    )
+    return _result_entry(
+        rule_id="bus-factor/solo-author-summary",
+        severity="LOW",
+        locations=[_location(repo, None)],
+        message=message_text,
+        level_mapper=_bus_factor_risk_level,
+        properties={"tags": list(solo_tags)},
+    )
+
+
+def _bus_factor_decimal(value: Any) -> str:
+    """Format a bus-factor float while preserving degraded producer values."""
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _bus_factor_concentration_result(row: dict, directory: str) -> dict:
+    """Build one author-concentration SARIF result for a directory row."""
+    risk = row.get("risk") or ""
+    primary_author = row.get("primary_actor") or row.get("primary_author") or "unknown"
+    primary_share_pct = row.get("primary_share_pct", 0)
+    bus_factor = row.get("bus_factor", 1)
+    entropy_str = _bus_factor_decimal(row.get("entropy", 0.0))
+    message_text = (
+        f"Bus-factor risk: {directory} is "
+        f"{primary_share_pct}%-owned by {primary_author} "
+        f"({bus_factor} effective contributor"
+        f"{'s' if bus_factor != 1 else ''}, "
+        f"entropy {entropy_str}) [risk={risk}]"
+    )
+    # W1062-followup-3: per-result tags add the risk + SARIF
+    # level axes so dashboards can slice on actionable bands
+    # (HIGH -> warning) from the result chip set without
+    # re-resolving locally. Producer-side uppercase risk labels
+    # converge to lowercase via the helper's _normalize_tag
+    # chokepoint.
+    concentration_tags = _derive_finding_tags(
+        family="governance",
+        extra=["bus-factor", "author-concentration", risk],
+        severity=_bus_factor_risk_level(risk),
+    )
+    return _result_entry(
+        rule_id="bus-factor/author-concentration",
+        severity=risk,
+        locations=[_location(directory, None)],
+        message=message_text,
+        level_mapper=_bus_factor_risk_level,
+        properties={"tags": list(concentration_tags)},
+    )
+
+
+def _bus_factor_stale_result(row: dict, directory: str) -> dict:
+    """Build one stale-ownership SARIF result for a directory row."""
+    risk = row.get("risk") or ""
+    primary_author = row.get("primary_actor") or row.get("primary_author") or "unknown"
+    primary_share_pct = row.get("primary_share_pct", 0)
+    staleness_str = _bus_factor_decimal(row.get("staleness_factor", 1.0))
+    message_text = (
+        f"Stale ownership: {directory} primary author "
+        f"{primary_author} ({primary_share_pct}% share) "
+        f"inactive — staleness factor {staleness_str} "
+        f"[risk={risk}]"
+    )
+    # W1062-followup-3: per-result tags for the stale-ownership
+    # row mirror the author-concentration shape — same family,
+    # different kind / risk surfaces.
+    stale_tags = _derive_finding_tags(
+        family="governance",
+        extra=["bus-factor", "stale-ownership", risk],
+        severity=_bus_factor_risk_level(risk),
+    )
+    return _result_entry(
+        rule_id="bus-factor/stale-ownership",
+        severity=risk,
+        locations=[_location(directory, None)],
+        message=message_text,
+        level_mapper=_bus_factor_risk_level,
+        properties={"tags": list(stale_tags)},
+    )
+
+
+def _bus_factor_directory_results(row: dict) -> list[dict]:
+    """Build zero, one, or two SARIF results for one directory row."""
+    directory = row.get("directory") or ""
+    if not directory:
+        # Without a directory anchor we cannot surface the row
+        # meaningfully — skip rather than emit an anchorless
+        # result (matches Pattern 1 / LAW 6 disclosure rules).
+        return []
+
+    concentrated = bool(row.get("concentrated"))
+    stale_primary = bool(row.get("stale_primary"))
+    if not concentrated and not stale_primary:
+        # Below the persist threshold — the long tail of
+        # well-distributed directories is not actionable SARIF
+        # output. Mirrors the cmd_bus_factor --persist gate.
+        return []
+
+    results: list[dict] = []
+    if concentrated:
+        results.append(_bus_factor_concentration_result(row, directory))
+    if stale_primary:
+        results.append(_bus_factor_stale_result(row, directory))
+    return results
+
+
 def bus_factor_to_sarif(findings: list[dict]) -> dict:
     """Convert ``roam bus-factor`` knowledge-loss findings to SARIF.
 
@@ -4586,134 +4722,10 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
         # repos as a single roll-up row in place of N per-directory
         # author-concentration findings.
         if r.get("summary_only"):
-            repo = r.get("repo") or "./"
-            unique_authors = r.get("unique_authors_count")
-            dominant = r.get("dominant_actor") or r.get("dominant_author") or ""
-            dominant_pct = r.get("dominant_author_share_pct")
-            total_dirs = r.get("total_directories_analyzed")
-
-            parts = ["Solo-author repo summary"]
-            if dominant:
-                parts.append(
-                    f"{dominant} owns {dominant_pct}% of churn"
-                    if dominant_pct is not None
-                    else f"primary author: {dominant}"
-                )
-            if total_dirs is not None:
-                parts.append(f"{total_dirs} directories analysed")
-            if unique_authors is not None:
-                parts.append(f"{unique_authors} unique authors")
-            message_text = " — ".join(str(p) for p in parts)
-
-            # W1062-followup-3: per-result tags add the SARIF-level axis
-            # (the solo-summary row is always "LOW" risk -> "note" level
-            # via _bus_factor_risk_level — pre-resolve here so the tag
-            # vocabulary stays lowercase).
-            solo_tags = _derive_finding_tags(
-                family="governance",
-                extra=["bus-factor", "solo-author-summary"],
-                severity=_bus_factor_risk_level("LOW"),
-            )
-            results.append(
-                _result_entry(
-                    rule_id="bus-factor/solo-author-summary",
-                    severity="LOW",
-                    locations=[_location(repo, None)],
-                    message=message_text,
-                    level_mapper=_bus_factor_risk_level,
-                    properties={"tags": list(solo_tags)},
-                )
-            )
+            results.append(_bus_factor_solo_summary_result(r))
             continue
 
-        directory = r.get("directory") or ""
-        if not directory:
-            # Without a directory anchor we cannot surface the row
-            # meaningfully — skip rather than emit an anchorless
-            # result (matches Pattern 1 / LAW 6 disclosure rules).
-            continue
-
-        concentrated = bool(r.get("concentrated"))
-        stale_primary = bool(r.get("stale_primary"))
-        if not concentrated and not stale_primary:
-            # Below the persist threshold — the long tail of
-            # well-distributed directories is not actionable SARIF
-            # output. Mirrors the cmd_bus_factor --persist gate.
-            continue
-
-        risk = r.get("risk") or ""
-        primary_author = r.get("primary_actor") or r.get("primary_author") or "unknown"
-        primary_share_pct = r.get("primary_share_pct", 0)
-        bus_factor = r.get("bus_factor", 1)
-        entropy = r.get("entropy", 0.0)
-        staleness_factor = r.get("staleness_factor", 1.0)
-
-        if concentrated:
-            # entropy is a float — format defensively in case the
-            # producer emits it as a string or None on a degraded
-            # path.
-            try:
-                entropy_str = f"{float(entropy):.2f}"
-            except (TypeError, ValueError):
-                entropy_str = str(entropy)
-            message_text = (
-                f"Bus-factor risk: {directory} is "
-                f"{primary_share_pct}%-owned by {primary_author} "
-                f"({bus_factor} effective contributor"
-                f"{'s' if bus_factor != 1 else ''}, "
-                f"entropy {entropy_str}) [risk={risk}]"
-            )
-            # W1062-followup-3: per-result tags add the risk + SARIF
-            # level axes so dashboards can slice on actionable bands
-            # (HIGH -> warning) from the result chip set without
-            # re-resolving locally. Producer-side uppercase risk labels
-            # converge to lowercase via the helper's _normalize_tag
-            # chokepoint.
-            concentration_tags = _derive_finding_tags(
-                family="governance",
-                extra=["bus-factor", "author-concentration", risk],
-                severity=_bus_factor_risk_level(risk),
-            )
-            results.append(
-                _result_entry(
-                    rule_id="bus-factor/author-concentration",
-                    severity=risk,
-                    locations=[_location(directory, None)],
-                    message=message_text,
-                    level_mapper=_bus_factor_risk_level,
-                    properties={"tags": list(concentration_tags)},
-                )
-            )
-
-        if stale_primary:
-            try:
-                staleness_str = f"{float(staleness_factor):.2f}"
-            except (TypeError, ValueError):
-                staleness_str = str(staleness_factor)
-            message_text = (
-                f"Stale ownership: {directory} primary author "
-                f"{primary_author} ({primary_share_pct}% share) "
-                f"inactive — staleness factor {staleness_str} "
-                f"[risk={risk}]"
-            )
-            # W1062-followup-3: per-result tags for the stale-ownership
-            # row mirror the author-concentration shape — same family,
-            # different kind / risk surfaces.
-            stale_tags = _derive_finding_tags(
-                family="governance",
-                extra=["bus-factor", "stale-ownership", risk],
-                severity=_bus_factor_risk_level(risk),
-            )
-            results.append(
-                _result_entry(
-                    rule_id="bus-factor/stale-ownership",
-                    severity=risk,
-                    locations=[_location(directory, None)],
-                    message=message_text,
-                    level_mapper=_bus_factor_risk_level,
-                    properties={"tags": list(stale_tags)},
-                )
-            )
+        results.extend(_bus_factor_directory_results(r))
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 

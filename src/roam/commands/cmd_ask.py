@@ -22,7 +22,7 @@ import click
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, Recipe, by_name
-from roam.ask.runner import extract_recipe_file, extract_recipe_symbol, fill_followups, run_recipe
+from roam.ask.runner import expand_followups, run_recipe
 from roam.capability import roam_capability
 from roam.output.confidence import DEFAULT_CONFIDENCE_THRESHOLD, is_low_confidence
 from roam.output.formatter import json_envelope, to_json
@@ -358,9 +358,7 @@ def ask(ctx, query, list_recipes, explain, recipe_override):
         _emit_explain(chosen, score)
 
     results = run_recipe(chosen, query_text)
-    rendered_followups = fill_followups(
-        chosen.followups, query_text, extract_recipe_symbol(query_text), extract_recipe_file(query_text)
-    )
+    rendered_followups = expand_followups(chosen.followups, query_text)
 
     if json_mode:
         _emit_json_result(chosen, score, query_text, results, rendered_followups)

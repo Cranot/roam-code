@@ -690,6 +690,150 @@ def test_fan_markers_do_not_leak_foreign_prefixes(cli_runner, fan_project, monke
 # ---------------------------------------------------------------------------
 
 
+def _cmd_fan_ast() -> ast.Module:
+    """Parse ``cmd_fan.py`` source into an AST for the W978 audit helpers."""
+    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_fan.py"
+    return ast.parse(src_path.read_text(encoding="utf-8"))
+
+
+def _run_check_cy_calls(tree: ast.AST):
+    """Yield every ``_run_check_cy(...)`` Call node in ``tree``."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run_check_cy":
+            yield node
+
+
+def _calls_for_phase(tree: ast.AST, phase: str):
+    """Yield ``_run_check_cy`` calls whose first positional arg is the
+    string constant ``phase``."""
+    for call in _run_check_cy_calls(tree):
+        if not call.args:
+            continue
+        first = call.args[0]
+        if isinstance(first, ast.Constant) and first.value == phase:
+            yield call
+
+
+def _default_kwarg(call: ast.Call):
+    """Return the ``default=`` kwarg value of ``call`` (or ``None``).
+
+    A Python call cannot bind the same keyword twice, so the first match
+    is the only one.
+    """
+    for kw in call.keywords:
+        if kw.arg == "default":
+            return kw.value
+    return None
+
+
+def _audit_d1_verdict_floor_is_literal(tree: ast.AST) -> None:
+    """Discipline 1: the ``compute_verdict`` floor is the literal string
+    ``"fan analysis completed"``, never an f-string re-interpolating the
+    predicate values that just raised."""
+    found = False
+    for call in _calls_for_phase(tree, "compute_verdict"):
+        default = _default_kwarg(call)
+        if default is None:
+            continue
+        assert isinstance(default, ast.Constant) and isinstance(default.value, str), (
+            f"W978 discipline 1: compute_verdict floor must be a "
+            f"literal string ast.Constant, not {type(default).__name__}; "
+            f"f-string floors re-interpolate the poisoned values "
+            f"that just raised"
+        )
+        assert default.value == "fan analysis completed", (
+            f"W978 discipline 1: compute_verdict floor must be the "
+            f"canonical literal ``fan analysis completed``; "
+            f"got {default.value!r}"
+        )
+        found = True
+    assert found, (
+        "W978 discipline 1: no _run_check_cy('compute_verdict', ..., "
+        "default=<literal>) call found; the verdict floor must be a "
+        "literal string"
+    )
+
+
+def _audit_d2_kwarg_defaults_not_calls(tree: ast.AST) -> None:
+    """Discipline 2: no ``default=`` argument is an ``ast.Call`` (which
+    would eagerly evaluate an expensive default at call time)."""
+    for call in _run_check_cy_calls(tree):
+        default = _default_kwarg(call)
+        if default is None:
+            continue
+        assert not isinstance(default, ast.Call), (
+            f"W978 discipline 2: _run_check_cy default= MUST NOT be "
+            f"an ast.Call (eager evaluation of expensive default); "
+            f"got {ast.dump(default)!r}"
+        )
+
+
+def _audit_d3_no_json_dumps_in_helper(tree: ast.AST) -> None:
+    """Discipline 3: the ``_run_check_cy`` helper body must not call
+    ``json.dumps`` -- markers carry ``str(exc)`` directly."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_check_cy":
+            helper_src = ast.unparse(node)
+            assert "json.dumps" not in helper_src, (
+                f"W978 discipline 3: _run_check_cy must not call json.dumps "
+                f"(use plain f-string marker format); got body = {helper_src!r}"
+            )
+
+
+def _audit_d4_no_phase_name_collision() -> None:
+    """Discipline 4: W607-CY phase names must not collide with the
+    W607-X substrate-CALL phase names."""
+    w607cy_phases = {"compute_predicate", "compute_verdict", "serialize_envelope"}
+    w607x_phases = {
+        "fetch_symbol_rows",
+        "filter_tooling",
+        "file_scope_metrics",
+        "emit_findings_symbol",
+        "fetch_file_rows",
+        "emit_findings_file",
+    }
+    overlap = w607cy_phases & w607x_phases
+    assert not overlap, (
+        f"W978 discipline 4: W607-CY phase names collide with W607-X substrate-CALL phase names; overlap = {overlap!r}"
+    )
+
+
+def _audit_d567_predicate_floor_constants(tree: ast.AST) -> None:
+    """Disciplines 5/6/7: each ``compute_predicate`` floor is a literal
+    ``ast.Dict`` of ``ast.Constant`` values (or a single ``len(name)``);
+    no expensive-call defaults, no poisoned-object ``len()``, no
+    ``dict.get(key, expensive_default)``."""
+    inspected = 0
+    for call in _calls_for_phase(tree, "compute_predicate"):
+        default = _default_kwarg(call)
+        if default is None:
+            continue
+        # The floor must be an ast.Dict whose values are ast.Constant
+        # (concrete int / str), NOT ast.Call to an expensive helper and
+        # NOT ast.Attribute references that could be poisoned.
+        assert isinstance(default, ast.Dict), (
+            f"W978 discipline 6: compute_predicate floor must be a literal ast.Dict; got {type(default).__name__}"
+        )
+        for value in default.values:
+            # Allow ast.Constant + ast.Call(len, ...) -- the len(rows)
+            # call IS evaluated at floor-construction time but rows is the
+            # live list, not a poisoned object. Block everything else.
+            if isinstance(value, ast.Call):
+                assert isinstance(value.func, ast.Name) and value.func.id == "len", (
+                    f"W978 discipline 5/7: compute_predicate floor "
+                    f"may only call ``len(name)`` as a default "
+                    f"computation; got {ast.dump(value)!r}"
+                )
+            else:
+                assert isinstance(value, ast.Constant), (
+                    f"W978 discipline 6: compute_predicate floor "
+                    f"values must be ast.Constant or len(name); "
+                    f"got {type(value).__name__} = {ast.dump(value)!r}"
+                )
+        inspected += 1
+    assert inspected >= 2, f"expected at least 2 compute_predicate floor dicts (symbol + file mode); found {inspected}"
+
+
 def test_w607cy_w978_seven_discipline_ast_audit():
     """AST audit: the W607-CY plumbing in cmd_fan honours all 7 W978
     first-hypothesis disciplines.
@@ -712,139 +856,13 @@ def test_w607cy_w978_seven_discipline_ast_audit():
        closures use direct ``dict["key"]`` lookups, NOT
        ``dict.get(key, expensive_default)``.
     """
-    src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_fan.py"
-    src = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(src)
+    tree = _cmd_fan_ast()
 
-    # Discipline 1: f-string verdict floor MUST be a literal string.
-    # Walk every ``_run_check_cy("compute_verdict", ...)`` call and
-    # assert its ``default=`` kwarg is an ast.Constant string, NOT an
-    # ast.JoinedStr (f-string).
-    literal_floor_found = False
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_cy"):
-            continue
-        # First positional arg is the phase string
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_verdict"):
-            continue
-        # Find default= kwarg
-        for kw in node.keywords:
-            if kw.arg == "default":
-                assert isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str), (
-                    f"W978 discipline 1: compute_verdict floor must be a "
-                    f"literal string ast.Constant, not {type(kw.value).__name__}; "
-                    f"f-string floors re-interpolate the poisoned values "
-                    f"that just raised"
-                )
-                assert kw.value.value == "fan analysis completed", (
-                    f"W978 discipline 1: compute_verdict floor must be the "
-                    f"canonical literal ``fan analysis completed``; "
-                    f"got {kw.value.value!r}"
-                )
-                literal_floor_found = True
-    assert literal_floor_found, (
-        "W978 discipline 1: no _run_check_cy('compute_verdict', ..., "
-        "default=<literal>) call found; the verdict floor must be a "
-        "literal string"
-    )
-
-    # Discipline 2: kwarg-default eagerness -- all default= args are
-    # ast.Constant / ast.Dict / ast.List with constant elements (no
-    # ast.Call as default value).
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_cy"):
-            continue
-        for kw in node.keywords:
-            if kw.arg == "default":
-                assert not isinstance(kw.value, ast.Call), (
-                    f"W978 discipline 2: _run_check_cy default= MUST NOT be "
-                    f"an ast.Call (eager evaluation of expensive default); "
-                    f"got {ast.dump(kw.value)!r}"
-                )
-
-    # Discipline 3: json.dumps(default=str) sentinel NOT used at the
-    # W607-CY layer for marker serialization. Check the W607-CY helper
-    # body does not contain json.dumps.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_check_cy":
-            helper_src = ast.unparse(node)
-            assert "json.dumps" not in helper_src, (
-                f"W978 discipline 3: _run_check_cy must not call json.dumps "
-                f"(use plain f-string marker format); got body = {helper_src!r}"
-            )
-
-    # Discipline 4: phase-name collision check. The W607-CY phase names
-    # MUST NOT collide with W607-X substrate-CALL phase names.
-    w607cy_phases = {"compute_predicate", "compute_verdict", "serialize_envelope"}
-    w607x_phases = {
-        "fetch_symbol_rows",
-        "filter_tooling",
-        "file_scope_metrics",
-        "emit_findings_symbol",
-        "fetch_file_rows",
-        "emit_findings_file",
-    }
-    overlap = w607cy_phases & w607x_phases
-    assert not overlap, (
-        f"W978 discipline 4: W607-CY phase names collide with W607-X substrate-CALL phase names; overlap = {overlap!r}"
-    )
-
-    # Discipline 5 + 6 + 7: textual audit -- the W607-CY plumbing
-    # surrounding the wraps doesn't introduce len()/dict.get(...,
-    # expensive_default) on poisoned floor objects.
-    #
-    # We check that the floor dicts in compute_predicate use
-    # CONSTANT default values (int / str), not call expressions.
-    floor_dicts_inspected = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if not (isinstance(node.func, ast.Name) and node.func.id == "_run_check_cy"):
-            continue
-        if not node.args:
-            continue
-        phase_arg = node.args[0]
-        if not (isinstance(phase_arg, ast.Constant) and phase_arg.value == "compute_predicate"):
-            continue
-        for kw in node.keywords:
-            if kw.arg != "default":
-                continue
-            # The floor must be an ast.Dict whose values are
-            # ast.Constant (concrete int / str), NOT ast.Call (expensive
-            # default) and NOT ast.Attribute references that could be
-            # poisoned.
-            assert isinstance(kw.value, ast.Dict), (
-                f"W978 discipline 6: compute_predicate floor must be a literal ast.Dict; got {type(kw.value).__name__}"
-            )
-            for v in kw.value.values:
-                # Allow ast.Constant + ast.Call(len, ...) -- the
-                # len(rows) call IS evaluated at floor-construction
-                # time but rows is the live list, not a poisoned
-                # object. We just block ast.Call to expensive helpers.
-                if isinstance(v, ast.Call):
-                    # Only allow len() on a Name argument
-                    assert isinstance(v.func, ast.Name) and v.func.id == "len", (
-                        f"W978 discipline 5/7: compute_predicate floor "
-                        f"may only call ``len(name)`` as a default "
-                        f"computation; got {ast.dump(v)!r}"
-                    )
-                else:
-                    assert isinstance(v, ast.Constant), (
-                        f"W978 discipline 6: compute_predicate floor "
-                        f"values must be ast.Constant or len(name); "
-                        f"got {type(v).__name__} = {ast.dump(v)!r}"
-                    )
-            floor_dicts_inspected += 1
-    assert floor_dicts_inspected >= 2, (
-        f"expected at least 2 compute_predicate floor dicts (symbol + file mode); found {floor_dicts_inspected}"
-    )
+    _audit_d1_verdict_floor_is_literal(tree)
+    _audit_d2_kwarg_defaults_not_calls(tree)
+    _audit_d3_no_json_dumps_in_helper(tree)
+    _audit_d4_no_phase_name_collision()
+    _audit_d567_predicate_floor_constants(tree)
 
 
 # ---------------------------------------------------------------------------

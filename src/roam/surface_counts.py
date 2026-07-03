@@ -88,6 +88,43 @@ def _literal_assignment(module: ast.Module, name: str):
     raise KeyError(f"Assignment '{name}' not found")
 
 
+def _literal_set_for_count_contract(module: ast.Module, name: str, *, missing_ok: bool = False) -> set[str]:
+    """Return a static set assignment while preserving fail-loud count semantics."""
+    try:
+        value = _literal_assignment(module, name)
+    except KeyError:
+        if missing_ok:
+            return set()
+        raise
+    if not isinstance(value, set):
+        raise TypeError(f"{name} is not a set literal")
+    return value
+
+
+def _assignment_value_for_top_level_name(node: ast.stmt, name: str) -> ast.expr | None:
+    """Return one module-level assignment value without importing the module."""
+    if isinstance(node, ast.Assign):
+        if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            return node.value
+    elif isinstance(node, ast.AnnAssign):
+        target = node.target
+        if isinstance(target, ast.Name) and target.id == name:
+            return node.value
+    return None
+
+
+def _dict_assignment_for_count_contract(module: ast.Module, name: str, source_label: str) -> ast.Dict:
+    """Find a static dict assignment that surface counts depend on."""
+    for node in module.body:
+        value = _assignment_value_for_top_level_name(node, name)
+        if value is None:
+            continue
+        if isinstance(value, ast.Dict):
+            return value
+        raise TypeError(f"{name} is not a dict literal in {source_label}")
+    raise KeyError(f"`{name}` dict not found in {source_label}")
+
+
 def cli_commands() -> dict[str, tuple[str, str]]:
     """Return raw CLI command registration from `_COMMANDS`.
 
@@ -141,17 +178,7 @@ def mcp_tool_names() -> list[str]:
     """
     mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
-    names: list[str] = []
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not _is_tool_decorator(decorator):
-                continue
-            for kw in decorator.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                    if isinstance(kw.value.value, str):
-                        names.append(kw.value.value)
+    names = _decorated_tool_names_from_loaded_mcp_ast(module)
     duplicates = sorted(name for name, c in Counter(names).items() if c > 1)
     if duplicates:
         raise ValueError(f"duplicate @_tool(name=...) decorations in mcp_server.py: {duplicates}")
@@ -221,6 +248,73 @@ def mcp_candidate_tool_names(command_name: str) -> set[str]:
     return candidates
 
 
+def _iter_tool_decorations(module: ast.Module):
+    """Yield ``(function_node, decorator_call)`` for every ``@_tool(...)`` decoration.
+
+    Exists because "which decorations exist" is a traversal concern shared
+    by every surface-count reader, separate from what any one reader
+    derives per decoration.
+    """
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if _is_tool_decorator(decorator):
+                yield node, decorator
+
+
+def _literal_str(node: ast.expr) -> str | None:
+    """Evaluate a kwarg value as a literal string, else ``None``.
+
+    Exists because tolerating a non-literal ``description=`` value is a
+    decoration-reading policy, not a traversal concern.
+    """
+    try:
+        val = ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return None
+    return val if isinstance(val, str) else None
+
+
+def _decoration_name_and_description(decorator: ast.Call) -> tuple[str | None, str | None]:
+    """Extract the ``name=`` / ``description=`` kwargs from one ``@_tool(...)`` call."""
+    name: str | None = None
+    description: str | None = None
+    for kw in decorator.keywords:
+        if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            name = kw.value.value
+        elif kw.arg == "description":
+            description = _literal_str(kw.value)
+    return name, description
+
+
+def _decorated_tool_names_from_loaded_mcp_ast(module: ast.Module) -> list[str]:
+    """Extract tool names after callers choose the import-safe AST source."""
+    names: list[str] = []
+    for _node, decorator in _iter_tool_decorations(module):
+        name, _description = _decoration_name_and_description(decorator)
+        if name is not None:
+            names.append(name)
+    return names
+
+
+def _docstring_first_sentence(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    """Return the wrapped function's docstring first sentence as a one-liner.
+
+    Exists because the fallback-description format (first sentence,
+    period-terminated, capped at 240 chars) is a README-rendering policy,
+    not an AST concern.
+    """
+    doc = ast.get_docstring(node) or ""
+    if not doc:
+        return ""
+    first = doc.strip().split("\n", 1)[0].strip()
+    # Trim at first period for a one-liner; keep up to ~240 chars.
+    if "." in first:
+        first = first.split(".", 1)[0].strip() + "."
+    return first[:240]
+
+
 def mcp_tool_descriptions() -> list[tuple[str, str]]:
     """Return ``(tool_name, description)`` for every ``@_tool(...)`` decoration.
 
@@ -240,36 +334,13 @@ def mcp_tool_descriptions() -> list[tuple[str, str]]:
     mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
     entries: dict[str, str] = {}
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    for node, decorator in _iter_tool_decorations(module):
+        name, description = _decoration_name_and_description(decorator)
+        if name is None:
             continue
-        for decorator in node.decorator_list:
-            if not _is_tool_decorator(decorator):
-                continue
-            name: str | None = None
-            description: str | None = None
-            for kw in decorator.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                    name = kw.value.value
-                elif kw.arg == "description":
-                    try:
-                        val = ast.literal_eval(kw.value)
-                        if isinstance(val, str):
-                            description = val
-                    except (TypeError, ValueError):
-                        description = None
-            if name is None:
-                continue
-            if not description:
-                # Fall back to the wrapped function's docstring first sentence.
-                doc = ast.get_docstring(node) or ""
-                if doc:
-                    first = doc.strip().split("\n", 1)[0].strip()
-                    # Trim at first period for a one-liner; keep up to ~200 chars.
-                    if "." in first:
-                        first = first.split(".", 1)[0].strip() + "."
-                    description = first[:240]
-            entries[name] = (description or "").strip()
+        if not description:
+            description = _docstring_first_sentence(node)
+        entries[name] = (description or "").strip()
     return sorted(entries.items())
 
 
@@ -385,60 +456,26 @@ def mcp_preset_counts() -> dict[str, int]:
     """
     mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
-    core_tools = _literal_assignment(module, "_CORE_TOOLS")
-    if not isinstance(core_tools, set):
-        raise TypeError("_CORE_TOOLS is not a set literal")
+    core_tools = _literal_set_for_count_contract(module, "_CORE_TOOLS")
     # _WORKFLOW_TOOLS is the optional sibling set holding tools that USED
     # to live in core (pre-2026-05-24 shrink) and now live in the
     # specialised presets via the `_CORE_TOOLS | _WORKFLOW_TOOLS | {extras}`
     # union. Absent on older mcp_server.py revisions; treat as empty set
     # in that case so the AST evaluator stays backward-compatible.
-    try:
-        workflow_tools = _literal_assignment(module, "_WORKFLOW_TOOLS")
-    except (KeyError, ValueError):
-        workflow_tools = set()
-    if not isinstance(workflow_tools, set):
-        raise TypeError("_WORKFLOW_TOOLS is not a set literal")
-
-    # Locate the `_PRESETS = {...}` (or annotated `_PRESETS: ... = {...}`) Dict node.
-    presets_dict: ast.Dict | None = None
-    for node in module.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_PRESETS":
-                    if isinstance(node.value, ast.Dict):
-                        presets_dict = node.value
-                    break
-        elif isinstance(node, ast.AnnAssign):
-            if (
-                isinstance(node.target, ast.Name)
-                and node.target.id == "_PRESETS"
-                and node.value is not None
-                and isinstance(node.value, ast.Dict)
-            ):
-                presets_dict = node.value
-        if presets_dict is not None:
-            break
-    if presets_dict is None:
-        raise KeyError("`_PRESETS` dict not found in mcp_server.py")
+    workflow_tools = _literal_set_for_count_contract(module, "_WORKFLOW_TOOLS", missing_ok=True)
+    presets_dict = _dict_assignment_for_count_contract(module, "_PRESETS", "mcp_server.py")
 
     # Build the static name environment the preset values reference.
-    decorated = set()
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not _is_tool_decorator(decorator):
-                continue
-            for kw in decorator.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                    decorated.add(kw.value.value)
-    total = len(decorated)
+    total = len(set(_decorated_tool_names_from_loaded_mcp_ast(module)))
     env: dict[str, set[str]] = {
         "_CORE_TOOLS": set(core_tools),
         "_WORKFLOW_TOOLS": set(workflow_tools),
     }
+    return _preset_counts_with_full_sentinel(presets_dict, env, total)
 
+
+def _preset_counts_with_full_sentinel(presets_dict: ast.Dict, env: dict[str, set[str]], total: int) -> dict[str, int]:
+    """Resolve preset sizes while conserving the runtime ``full`` sentinel."""
     counts: dict[str, int] = {}
     for key_node, value_node in zip(presets_dict.keys, presets_dict.values):
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
@@ -456,21 +493,8 @@ def mcp_surface_counts() -> dict:
     """Return MCP tool counts from `_tool(name=...)` decorators and presets."""
     mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
-    core_tools = _literal_assignment(module, "_CORE_TOOLS")
-    if not isinstance(core_tools, set):
-        raise TypeError("_CORE_TOOLS is not a set literal")
-
-    decorated_tool_names: list[str] = []
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not _is_tool_decorator(decorator):
-                continue
-            for kw in decorator.keywords:
-                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
-                    if isinstance(kw.value.value, str):
-                        decorated_tool_names.append(kw.value.value)
+    core_tools = _literal_set_for_count_contract(module, "_CORE_TOOLS")
+    decorated_tool_names = _decorated_tool_names_from_loaded_mcp_ast(module)
 
     duplicates = sorted(name for name, c in Counter(decorated_tool_names).items() if c > 1)
     return {

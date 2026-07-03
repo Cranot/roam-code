@@ -1286,6 +1286,22 @@ def _emit_auth_gaps_findings(
         )
 
 
+def _run_auth_gaps_phase_preserving_failure_provenance(
+    phase,
+    fn,
+    warnings_out: list[str],
+    *args,
+    default=None,
+    **kwargs,
+):
+    """Run one auth-gaps phase while preserving partial output and provenance."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 -- detector phase isolation
+        warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
+        return default
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -1428,11 +1444,14 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         marker via ``_w607cm_warnings_out`` and return *default* -- the
         envelope still emits cleanly with the remaining substrates.
         """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607cm_warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        return _run_auth_gaps_phase_preserving_failure_provenance(
+            phase,
+            fn,
+            _w607cm_warnings_out,
+            *args,
+            default=default,
+            **kwargs,
+        )
 
     # W607-ED -- ADDITIVE aggregation-phase plumbing for cmd_auth_gaps.
     # Layered on top of the W607-CM substrate-CALL layer. The two
@@ -1471,11 +1490,14 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         ``return default if default is not None else {}``) so the floor
         is a literal pass-through.
         """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607ed_warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        return _run_auth_gaps_phase_preserving_failure_provenance(
+            phase,
+            fn,
+            _w607ed_warnings_out,
+            *args,
+            default=default,
+            **kwargs,
+        )
 
     with open_db(readonly=not persist) as conn:
         # --- Route file analysis ---

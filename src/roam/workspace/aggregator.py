@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from roam.observability import log_swallowed
 from roam.workspace.db import get_cross_edges
 
 
@@ -89,92 +90,9 @@ def cross_repo_context(
         conn = sqlite3.connect(str(db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute(
-                "SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, "
-                "  s.line_start, s.line_end, f.path AS file_path "
-                "FROM symbols s "
-                "JOIN files f ON f.id = s.file_id "
-                "WHERE s.name = ? OR s.qualified_name = ? "
-                "OR s.name LIKE ?",
-                (symbol_name, symbol_name, f"%{symbol_name}%"),
-            ).fetchall()
-
-            for row in rows:
-                # Get callers and callees
-                callers = conn.execute(
-                    "SELECT s.name, s.kind, f.path, e.line "
-                    "FROM edges e "
-                    "JOIN symbols s ON s.id = e.source_id "
-                    "JOIN files f ON f.id = s.file_id "
-                    "WHERE e.target_id = ? LIMIT 10",
-                    (row["id"],),
-                ).fetchall()
-
-                callees = conn.execute(
-                    "SELECT s.name, s.kind, f.path, e.line "
-                    "FROM edges e "
-                    "JOIN symbols s ON s.id = e.target_id "
-                    "JOIN files f ON f.id = s.file_id "
-                    "WHERE e.source_id = ? LIMIT 10",
-                    (row["id"],),
-                ).fetchall()
-
-                found_in.append(
-                    {
-                        "repo": info["name"],
-                        "symbol_id": row["id"],
-                        "name": row["name"],
-                        "qualified_name": row["qualified_name"],
-                        "kind": row["kind"],
-                        "signature": row["signature"],
-                        "file_path": row["file_path"],
-                        "line_start": row["line_start"],
-                        "line_end": row["line_end"],
-                        "callers": [
-                            {
-                                "name": c["name"],
-                                "kind": c["kind"],
-                                "file": c["path"],
-                                "line": c["line"],
-                            }
-                            for c in callers
-                        ],
-                        "callees": [
-                            {
-                                "name": c["name"],
-                                "kind": c["kind"],
-                                "file": c["path"],
-                                "line": c["line"],
-                            }
-                            for c in callees
-                        ],
-                    }
-                )
-
-                # Cross-repo edges for this symbol
-                ws_edges = ws_conn.execute(
-                    "SELECT e.*, "
-                    "  sr.name AS source_repo_name, "
-                    "  tr.name AS target_repo_name "
-                    "FROM ws_cross_edges e "
-                    "JOIN ws_repos sr ON sr.id = e.source_repo_id "
-                    "JOIN ws_repos tr ON tr.id = e.target_repo_id "
-                    "WHERE (sr.name=? AND e.source_symbol_id=?) "
-                    "   OR (tr.name=? AND e.target_symbol_id=?)",
-                    (info["name"], row["id"], info["name"], row["id"]),
-                ).fetchall()
-
-                for edge in ws_edges:
-                    meta = json.loads(edge["metadata"]) if edge["metadata"] else {}
-                    cross_edges_for_symbol.append(
-                        {
-                            "source_repo": edge["source_repo_name"],
-                            "target_repo": edge["target_repo_name"],
-                            "kind": edge["kind"],
-                            "url_pattern": meta.get("url_pattern", ""),
-                            "http_method": meta.get("http_method", ""),
-                        }
-                    )
+            for row in _find_symbol_matches(conn, symbol_name):
+                found_in.append(_symbol_context_entry(conn, info["name"], row))
+                cross_edges_for_symbol.extend(_workspace_edges_for_symbol(ws_conn, info["name"], row["id"]))
         finally:
             conn.close()
 
@@ -182,6 +100,92 @@ def cross_repo_context(
         "symbol": symbol_name,
         "found_in": found_in,
         "cross_repo_edges": cross_edges_for_symbol,
+    }
+
+
+def _find_symbol_matches(conn: sqlite3.Connection, symbol_name: str) -> list[sqlite3.Row]:
+    """Find repo-local symbols matching a user-supplied name."""
+    return conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, "
+        "  s.line_start, s.line_end, f.path AS file_path "
+        "FROM symbols s "
+        "JOIN files f ON f.id = s.file_id "
+        "WHERE s.name = ? OR s.qualified_name = ? "
+        "OR s.name LIKE ?",
+        (symbol_name, symbol_name, f"%{symbol_name}%"),
+    ).fetchall()
+
+
+def _symbol_context_entry(conn: sqlite3.Connection, repo_name: str, row: sqlite3.Row) -> dict[str, Any]:
+    """Build the repo-local context payload for one symbol row."""
+    callers = conn.execute(
+        "SELECT s.name, s.kind, f.path, e.line "
+        "FROM edges e "
+        "JOIN symbols s ON s.id = e.source_id "
+        "JOIN files f ON f.id = s.file_id "
+        "WHERE e.target_id = ? LIMIT 10",
+        (row["id"],),
+    ).fetchall()
+    callees = conn.execute(
+        "SELECT s.name, s.kind, f.path, e.line "
+        "FROM edges e "
+        "JOIN symbols s ON s.id = e.target_id "
+        "JOIN files f ON f.id = s.file_id "
+        "WHERE e.source_id = ? LIMIT 10",
+        (row["id"],),
+    ).fetchall()
+
+    return {
+        "repo": repo_name,
+        "symbol_id": row["id"],
+        "name": row["name"],
+        "qualified_name": row["qualified_name"],
+        "kind": row["kind"],
+        "signature": row["signature"],
+        "file_path": row["file_path"],
+        "line_start": row["line_start"],
+        "line_end": row["line_end"],
+        "callers": [_call_edge_context(c) for c in callers],
+        "callees": [_call_edge_context(c) for c in callees],
+    }
+
+
+def _call_edge_context(row: sqlite3.Row) -> dict[str, Any]:
+    """Format a local caller/callee edge for context output."""
+    return {
+        "name": row["name"],
+        "kind": row["kind"],
+        "file": row["path"],
+        "line": row["line"],
+    }
+
+
+def _workspace_edges_for_symbol(ws_conn: sqlite3.Connection, repo_name: str, symbol_id: int) -> list[dict[str, Any]]:
+    """Find workspace cross-repo edges touching one repo-local symbol."""
+    ws_edges = ws_conn.execute(
+        "SELECT e.*, "
+        "  sr.name AS source_repo_name, "
+        "  tr.name AS target_repo_name "
+        "FROM ws_cross_edges e "
+        "JOIN ws_repos sr ON sr.id = e.source_repo_id "
+        "JOIN ws_repos tr ON tr.id = e.target_repo_id "
+        "WHERE (sr.name=? AND e.source_symbol_id=?) "
+        "   OR (tr.name=? AND e.target_symbol_id=?)",
+        (repo_name, symbol_id, repo_name, symbol_id),
+    ).fetchall()
+
+    return [_workspace_edge_context(edge) for edge in ws_edges]
+
+
+def _workspace_edge_context(edge: sqlite3.Row) -> dict[str, Any]:
+    """Format a workspace edge for context output."""
+    meta = json.loads(edge["metadata"]) if edge["metadata"] else {}
+    return {
+        "source_repo": edge["source_repo_name"],
+        "target_repo": edge["target_repo_name"],
+        "kind": edge["kind"],
+        "url_pattern": meta.get("url_pattern", ""),
+        "http_method": meta.get("http_method", ""),
     }
 
 
@@ -323,8 +327,8 @@ def _query_repo_stats(info: dict[str, Any]) -> dict[str, Any]:
             result["key_symbols"] = [
                 {"name": r["name"], "kind": r["kind"], "pagerank": round(r["pagerank"], 6)} for r in top
             ]
-        except sqlite3.OperationalError:
-            pass
+        except sqlite3.OperationalError as exc:
+            log_swallowed("workspace.aggregator:query_repo_stats.key_symbols", exc)
 
         result["indexed"] = True
         result["index_age_s"] = int(time.time() - db_path.stat().st_mtime)

@@ -129,6 +129,54 @@ class GodComponentsSummary:
         return out
 
 
+def _severity_band(degree: int, critical_cut: int, warning_cut: int) -> str:
+    """Map a degree onto a severity band.
+
+    Exists so the utility (150/90) and standard (50/30) threshold pairs
+    are band *data* passed as arguments, not two cloned if/elif ladders.
+    """
+    if degree > critical_cut:
+        return "CRITICAL"
+    if degree > warning_cut:
+        return "WARNING"
+    return "INFO"
+
+
+def _classify_and_count(god_items: list[dict]) -> tuple[int, int, int]:
+    """Annotate each item with ``category``/``severity``; return counts.
+
+    Exists to keep severity *policy* (data-attribute guard, utility-aware
+    bands) out of the fetch/filter pipeline in :func:`god_components`.
+    Mutates ``god_items`` in place; returns ``(critical, actionable,
+    utility)`` counts.
+    """
+    from roam.commands.cmd_health import _is_utility_path
+
+    critical = 0
+    actionable_count = 0
+    utility_count = 0
+    for g in god_items:
+        # Kind-aware guard: a data attribute (dataclass field / property /
+        # module var) with high fan-in is NOT a refactorable god component —
+        # there is no logic to decompose. Band it non-actionable + cap at INFO
+        # so it never pollutes the CRITICAL count or the refactor headline.
+        if (g["kind"] or "").lower() in _DATA_ATTRIBUTE_KINDS:
+            g["category"] = "data_attribute"
+            g["severity"] = "INFO"
+            continue
+        if _is_utility_path(g["file"]):
+            g["category"] = "utility"
+            utility_count += 1
+            g["severity"] = _severity_band(g["degree"], 150, 90)
+        else:
+            g["category"] = "actionable"
+            actionable_count += 1
+            g["severity"] = _severity_band(g["degree"], 50, 30)
+        if g["severity"] == "CRITICAL":
+            critical += 1
+    return critical, actionable_count, utility_count
+
+
 def god_components(
     conn,
     *,
@@ -160,7 +208,6 @@ def god_components(
         All counts derived from a single DB pass — deterministic for a
         fixed DB state.
     """
-    from roam.commands.cmd_health import _is_utility_path
     from roam.db.queries import TOP_BY_DEGREE
 
     try:
@@ -191,38 +238,7 @@ def god_components(
                 }
             )
 
-    critical = 0
-    actionable_count = 0
-    utility_count = 0
-    for g in god_items:
-        # Kind-aware guard: a data attribute (dataclass field / property /
-        # module var) with high fan-in is NOT a refactorable god component —
-        # there is no logic to decompose. Band it non-actionable + cap at INFO
-        # so it never pollutes the CRITICAL count or the refactor headline.
-        if (g["kind"] or "").lower() in _DATA_ATTRIBUTE_KINDS:
-            g["category"] = "data_attribute"
-            g["severity"] = "INFO"
-            continue
-        is_util = _is_utility_path(g["file"])
-        g["category"] = "utility" if is_util else "actionable"
-        if is_util:
-            utility_count += 1
-            if g["degree"] > 150:
-                g["severity"] = "CRITICAL"
-            elif g["degree"] > 90:
-                g["severity"] = "WARNING"
-            else:
-                g["severity"] = "INFO"
-        else:
-            actionable_count += 1
-            if g["degree"] > 50:
-                g["severity"] = "CRITICAL"
-            elif g["degree"] > 30:
-                g["severity"] = "WARNING"
-            else:
-                g["severity"] = "INFO"
-        if g["severity"] == "CRITICAL":
-            critical += 1
+    critical, actionable_count, utility_count = _classify_and_count(god_items)
 
     return GodComponentsSummary(
         total=len(god_items),
