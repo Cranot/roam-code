@@ -161,3 +161,114 @@ def test_compile_no_model_calls(runner):
     avoided = envelope["summary"]["model_calls_avoided"]
     assert isinstance(avoided, list)
     assert len(avoided) >= 1
+
+
+# --------------------------------------------------------------------------
+# Backprop: prior compile failures → next evidence packet
+# --------------------------------------------------------------------------
+
+from roam.commands.cmd_compile import (  # noqa: E402
+    _compile_failure_signals,
+    _next_evidence_for_compile,
+    _next_evidence_hint,
+)
+
+
+def _write_runs(tmp_path, rows):
+    """Write a synthetic .roam/compile-runs.jsonl under tmp_path."""
+    import json as _json
+
+    (tmp_path / ".roam").mkdir()
+    with (tmp_path / ".roam" / "compile-runs.jsonl").open("w") as fh:
+        for row in rows:
+            fh.write(_json.dumps(row) + "\n")
+
+
+def _task_hash(task: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(task.encode("utf-8", "replace")).hexdigest()[:12]
+
+
+def test_next_evidence_not_initialized_when_no_log(tmp_path):
+    """Missing .roam/compile-runs.jsonl ⇒ explicit not_initialized state."""
+    ev = _next_evidence_for_compile(str(tmp_path))
+    assert ev["state"] == "not_initialized"
+    assert ev["hint"] is None
+
+
+def test_next_evidence_no_recent_failure_when_healthy(tmp_path):
+    """A tail with only healthy rows ⇒ no_recent_failure, null hint."""
+    _write_runs(tmp_path, [
+        {"ts": "2026-07-01T00:00:00Z", "procedure": "structural_coupling",
+         "classifier_conf": 0.85, "cache_hit": True, "compile_ms": 12.0,
+         "task_hash": "aaa", "task_prefix": "healthy"},
+    ])
+    ev = _next_evidence_for_compile(str(tmp_path))
+    assert ev["state"] == "no_recent_failure"
+    assert ev["hint"] is None
+
+
+def test_next_evidence_surfaces_latest_prior_failure(tmp_path):
+    """A degraded prior row backprops a recent_failure hint into the packet."""
+    _write_runs(tmp_path, [
+        {"ts": "2026-07-01T00:00:00Z", "procedure": "freeform_explore",
+         "classifier_conf": 0.45, "cache_hit": False, "compile_ms": 1.0,
+         "task_hash": "older", "task_prefix": "older degrade"},
+        {"ts": "2026-07-02T00:00:00Z", "procedure": "structural_coupling",
+         "classifier_conf": 0.9, "cache_hit": True, "compile_ms": 10.0,
+         "task_hash": "healthy", "task_prefix": "healthy recent"},
+    ])
+    # No current-task exclusion → the newest degraded row wins (the older one).
+    ev = _next_evidence_for_compile(str(tmp_path))
+    assert ev["state"] == "recent_failure"
+    assert ev["from_failure_at"] == "2026-07-01T00:00:00Z"
+    assert "freeform_explore" in ev["signals"]
+    assert "low_confidence" in ev["signals"]
+    assert ev["hint"]  # non-empty imperative hint
+    assert "freeform_explore" in ev["hint"] or "target" in ev["hint"]
+
+
+def test_next_evidence_excludes_current_task_row(tmp_path):
+    """The current compile's own row is skipped so we backprop a PRIOR failure."""
+    current = "investigate why login is slow"
+    _write_runs(tmp_path, [
+        {"ts": "2026-07-01T00:00:00Z", "procedure": "freeform_explore",
+         "classifier_conf": 0.4, "cache_hit": False, "compile_ms": 1.0,
+         "task_hash": "priorfail", "task_prefix": "prior degrade"},
+        {"ts": "2026-07-02T00:00:00Z", "procedure": "freeform_explore",
+         "classifier_conf": 0.4, "cache_hit": False, "compile_ms": 1.0,
+         "task_hash": _task_hash(current), "task_prefix": "current run"},
+    ])
+    ev = _next_evidence_for_compile(str(tmp_path), current_task=current)
+    assert ev["state"] == "recent_failure"
+    # The current run (newest) was excluded; the prior degrade surfaced.
+    assert ev["from_failure_at"] == "2026-07-01T00:00:00Z"
+
+
+def test_next_evidence_hint_is_empty_for_unknown_signal():
+    """A failure dict with no recognized signal yields an empty hint."""
+    assert _next_evidence_hint({"signals": ["bogus"]}) == ""
+
+
+def test_next_evidence_signals_detect_slow_uncached():
+    """cache_hit False + compile_ms >= 1500 ⇒ slow_uncached signal."""
+    row = {"procedure": "structural_coupling", "classifier_conf": 0.9,
+           "cache_hit": False, "compile_ms": 2100.0}
+    assert "slow_uncached" in _compile_failure_signals(row)
+    assert "slow_uncached" not in _compile_failure_signals({**row, "compile_ms": 100.0})
+    assert "slow_uncached" not in _compile_failure_signals({**row, "cache_hit": True})
+
+
+def test_compile_envelope_carries_next_evidence(runner):
+    """The --json envelope always carries an explicit next_evidence state."""
+    result = runner.invoke(
+        cli, ["--json", "compile", "Find files coupled to src/roam/cli.py"]
+    )
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    ev = envelope["summary"]["next_evidence"]
+    assert isinstance(ev, dict)
+    assert ev["state"] in {"recent_failure", "no_recent_failure", "not_initialized"}
+    # hint is a string when there is a failure, else null — never undefined.
+    assert "hint" in ev
