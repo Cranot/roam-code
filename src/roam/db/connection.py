@@ -8,6 +8,7 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 from roam.db.schema import SCHEMA_SQL
 
@@ -752,6 +753,25 @@ def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str
 _PLACEHOLDER = "{ph}"  # marker every caller's SQL template must contain
 _SQLITE_MAX_VARIABLES = 999  # default SQLITE_MAX_VARIABLE_NUMBER
 _BATCH_SIZE = 500  # leaves room for extra pre/post params under the limit
+_BATCH_OPTION_KEYS = frozenset({"pre", "post", "batch_size"})
+
+
+class _BatchOptions(NamedTuple):
+    pre: tuple
+    post: tuple
+    batch_size: int
+
+
+def _parse_batch_options(function_name: str, batch_options: dict[str, object]) -> _BatchOptions:
+    unexpected = set(batch_options) - _BATCH_OPTION_KEYS
+    if unexpected:
+        name = sorted(unexpected)[0]
+        raise TypeError(f"{function_name}() got an unexpected keyword argument {name!r}")
+    return _BatchOptions(
+        pre=tuple(batch_options.get("pre", ())),
+        post=tuple(batch_options.get("post", ())),
+        batch_size=batch_options.get("batch_size", _BATCH_SIZE),
+    )
 
 
 def _iter_in_batches(sql: str, ids: list, pre, post, batch_size: int):
@@ -794,10 +814,7 @@ def batched_in(
     conn: sqlite3.Connection,
     sql: str,
     ids,
-    *,
-    pre=(),
-    post=(),
-    batch_size: int = _BATCH_SIZE,
+    **batch_options,
 ) -> list:
     """Execute *sql* with ``{ph}`` placeholder(s) in batches.
 
@@ -816,10 +833,11 @@ def batched_in(
     if *sql* contains no ``{ph}`` marker (misuse formerly re-ran the same
     unbatched query once per chunk, duplicating rows).
     """
+    options = _parse_batch_options("batched_in", batch_options)
     if not ids:
         return []
     rows = []
-    for q, params in _iter_in_batches(sql, list(ids), pre, post, batch_size):
+    for q, params in _iter_in_batches(sql, list(ids), options.pre, options.post, options.batch_size):
         rows.extend(conn.execute(q, params).fetchall())
     return rows
 
@@ -831,16 +849,14 @@ def _legacy_batched_scalar_sum(
     conn: sqlite3.Connection,
     sql: str,
     ids,
-    *,
-    pre=(),
-    post=(),
-    batch_size: int = _BATCH_SIZE,
+    **batch_options,
 ) -> int:
     """Compatibility implementation for the removed public count helper."""
+    options = _parse_batch_options(_LEGACY_BATCHED_COUNT_NAME, batch_options)
     if not ids:
         return 0
     total = 0
-    for q, params in _iter_in_batches(sql, list(ids), pre, post, batch_size):
+    for q, params in _iter_in_batches(sql, list(ids), options.pre, options.post, options.batch_size):
         total += conn.execute(q, params).fetchone()[0]
     return total
 
