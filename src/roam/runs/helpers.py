@@ -260,11 +260,12 @@ def auto_log(
             },
             **extra_fields_safe,
         )
-    except Exception as exc:
+    except _AUTO_LOG_EXPECTED_FAILURES as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
         # auto-logging is OPPORTUNISTIC and must never crash the gate
-        # command that called us, but a silent pass here means a gate
-        # event vanishes from the run ledger with no trace. Surface the
-        # lineage so a broken auto-log path is discoverable.
+        # command that called us for known operational failures (filesystem,
+        # shape). Unexpected programming errors propagate instead of being
+        # conserved as silent ledger gaps. Surface the lineage so a broken
+        # auto-log path is discoverable.
         log_swallowed("runs.helpers:auto_log:log_event", exc)
         return None
