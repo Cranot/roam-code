@@ -388,17 +388,9 @@ def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[
         )
         hl_row = conn.execute(highlight_sql, (symbol_id, fts_query)).fetchone()
         if hl_row:
-            field_map = {
-                "name": hl_row["hl_name"],
-                "qualified_name": hl_row["hl_qualified_name"],
-                "signature": hl_row["hl_signature"],
-                "kind": hl_row["hl_kind"],
-                "file_path": hl_row["hl_file_path"],
-            }
-            for field, value in field_map.items():
-                if value and "<<" in value:
-                    explanation["matched_fields"].append(field)
-                    explanation["highlights"][field] = value
+            highlighted = _highlighted_fts_fields(hl_row)
+            explanation["matched_fields"].extend(highlighted)
+            explanation["highlights"].update(highlighted)
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_highlight_failed:{type(exc).__name__}:{exc}")
@@ -412,20 +404,48 @@ def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[
             (symbol_id,),
         ).fetchone()
         if sym_row:
-            # Extract plain terms from the FTS5 query expression
-            raw_terms = re.sub(r'["*(){}^]', "", fts_query).split()
-            for field in _FTS_COLUMNS:
-                field_val = (sym_row[field] or "").lower()
-                if not field_val:
-                    continue
-                count = sum(field_val.count(term.lower()) for term in raw_terms if term)
-                if count > 0:
-                    explanation["term_counts"][field] = count
+            terms = _unique_terms_preserve_count_signal(fts_query)
+            explanation["term_counts"].update(
+                _field_term_counts_preserve_single_row_signal(sym_row, terms)
+            )
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
 
     return explanation
+
+
+def _highlighted_fts_fields(row) -> dict[str, str]:
+    """Return fields that FTS5 marked while preserving output field order."""
+    field_map = {
+        "name": row["hl_name"],
+        "qualified_name": row["hl_qualified_name"],
+        "signature": row["hl_signature"],
+        "kind": row["hl_kind"],
+        "file_path": row["hl_file_path"],
+    }
+    return {field: value for field, value in field_map.items() if value and "<<" in value}
+
+
+def _unique_terms_preserve_count_signal(fts_query: str) -> frozenset[str]:
+    """Deduplicate query terms once so repeated tokens do not inflate counts."""
+    return frozenset(term.lower() for term in re.sub(r'["*(){}^]', "", fts_query).split() if term)
+
+
+def _field_term_counts_preserve_single_row_signal(sym_row, terms: frozenset[str]) -> dict[str, int]:
+    """Keep one row's term-count signal independent from batch plumbing."""
+    if not terms:
+        return {}
+
+    counts: dict[str, int] = {}
+    for field in _FTS_COLUMNS:
+        field_val = (sym_row[field] or "").lower()
+        if not field_val:
+            continue
+        count = sum(field_val.count(term) for term in terms)
+        if count > 0:
+            counts[field] = count
+    return counts
 
 
 def _get_explain_data_batch(
@@ -508,17 +528,9 @@ def _get_explain_data_batch(
             sid = row["rowid"]
             if sid not in out:
                 continue
-            field_map = {
-                "name": row["hl_name"],
-                "qualified_name": row["hl_qualified_name"],
-                "signature": row["hl_signature"],
-                "kind": row["hl_kind"],
-                "file_path": row["hl_file_path"],
-            }
-            for field, value in field_map.items():
-                if value and "<<" in value:
-                    out[sid]["matched_fields"].append(field)
-                    out[sid]["highlights"][field] = value
+            highlighted = _highlighted_fts_fields(row)
+            out[sid]["matched_fields"].extend(highlighted)
+            out[sid]["highlights"].update(highlighted)
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_highlight_failed:{type(exc).__name__}:{exc}")
@@ -535,19 +547,14 @@ def _get_explain_data_batch(
             list(symbol_ids),
         )
         sym_by_id = {row["id"]: row for row in sym_rows}
-        # Extract plain terms from the FTS5 query expression.
-        raw_terms = re.sub(r'["*(){}^]', "", fts_query).split()
+        terms = _unique_terms_preserve_count_signal(fts_query)
         for sid in symbol_ids:
             sym_row = sym_by_id.get(sid)
             if not sym_row:
                 continue
-            for field in _FTS_COLUMNS:
-                field_val = (sym_row[field] or "").lower()
-                if not field_val:
-                    continue
-                count = sum(field_val.count(term.lower()) for term in raw_terms if term)
-                if count > 0:
-                    out[sid]["term_counts"][field] = count
+            out[sid]["term_counts"].update(
+                _field_term_counts_preserve_single_row_signal(sym_row, terms)
+            )
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
