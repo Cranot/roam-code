@@ -523,7 +523,21 @@ _INTENT_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
     ),
     # Failed grep-heavy workflows: the roam equivalents are reachability-aware.
     (
-        ("grep -r", "grep -rn", "grep -ri", "grep for", "rg ", "ripgrep", "git grep", "xargs grep", "find . -name"),
+        (
+            "grep -r",
+            "grep -rn",
+            "grep -ri",
+            "grep for",
+            "rg ",
+            "ripgrep",
+            "git grep",
+            "xargs grep",
+            "xargs -0 grep",
+            "find . -name",
+            "find . -type f",
+            "ack ",
+            "ag ",
+        ),
         ("grep", "uses", "retrieve", "refs-text"),
         "reachability-aware grep replaces raw recursive grep with manual filtering",
     ),
