@@ -4367,33 +4367,14 @@ def _chunked(values: list[int], size: int = 500):
         yield values[i : i + size]
 
 
-def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
-    """Load calibration + evidence context for findings in bulk."""
-    context: dict[int, dict] = {
-        sid: {
-            "signals": [],
-            "loop_depth": 0,
-            "loop_bound_small": 0,
-            "caller_count": 0,
-            "cognitive_complexity": 0.0,
-            "cyclomatic_density": 0.0,
-            "line_count": 0,
-            "complexity_zscore": 0.0,
-            "runtime_call_count": 0,
-            "runtime_p99_latency_ms": None,
-            "runtime_error_rate": 0.0,
-            "runtime_otel_db_system": None,
-            "runtime_otel_db_operation": None,
-            "runtime_otel_db_statement_type": None,
-        }
-        for sid in symbol_ids
-    }
-    if not symbol_ids:
-        return context
+def _complexity_baseline(conn) -> tuple[float, float]:
+    """Repo-wide cognitive-complexity baseline (mean, std) for z-score scoring.
 
-    # Repo-relative complexity baseline (differential scoring signal).
-    complexity_mean = 0.0
-    complexity_std = 0.0
+    Differential scoring signal: computed over the whole ``symbol_metrics``
+    table (NOT scoped to the candidate set) so high-complexity findings score
+    as outliers. Returns (0.0, 0.0) when the table is missing on a legacy DB
+    or holds no rows.
+    """
     try:
         row = conn.execute(
             "SELECT AVG(COALESCE(cognitive_complexity, 0)) AS avg_cc, "
@@ -4401,15 +4382,17 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             "FROM symbol_metrics"
         ).fetchone()
         if row and row["avg_cc"] is not None:
-            complexity_mean = float(row["avg_cc"] or 0.0)
+            mean = float(row["avg_cc"] or 0.0)
             avg_sq = float(row["avg_sq_cc"] or 0.0)
-            variance = max(0.0, avg_sq - (complexity_mean * complexity_mean))
-            complexity_std = variance**0.5
+            variance = max(0.0, avg_sq - (mean * mean))
+            return mean, variance**0.5
     except sqlite3.Error:
-        complexity_mean = 0.0
-        complexity_std = 0.0
+        pass
+    return 0.0, 0.0
 
-    # Static AST signals
+
+def _load_static_signals(conn, symbol_ids: list[int], context: dict[int, dict]) -> None:
+    """Populate loop_depth / loop_bound_small / signals from math_signals."""
     for chunk in _chunked(symbol_ids):
         ph = ",".join("?" for _ in chunk)
         rows = conn.execute(
@@ -4433,7 +4416,15 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
                     signals.append(label)
             ctx["signals"] = signals
 
-    # Complexity metrics
+
+def _load_complexity_metrics(
+    conn,
+    symbol_ids: list[int],
+    context: dict[int, dict],
+    complexity_mean: float,
+    complexity_std: float,
+) -> None:
+    """Populate cognitive_complexity / cyclomatic_density / line_count / z-score."""
     for chunk in _chunked(symbol_ids):
         ph = ",".join("?" for _ in chunk)
         rows = conn.execute(
@@ -4455,15 +4446,19 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             if complexity_std > 0:
                 ctx["complexity_zscore"] = (cc - complexity_mean) / complexity_std
 
-    # Caller counts. W512: edge-kind vocabulary lives in
-    # roam.db.edge_kinds — pure call edges only here, callers
-    # of a function in the algorithm-context catalog.
-    _detectors_call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
+
+def _load_caller_counts(conn, symbol_ids: list[int], context: dict[int, dict]) -> None:
+    """Populate caller_count from pure call edges.
+
+    W512: edge-kind vocabulary lives in roam.db.edge_kinds — pure call edges
+    only here, callers of a function in the algorithm-context catalog.
+    """
+    call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
     for chunk in _chunked(symbol_ids):
         ph = ",".join("?" for _ in chunk)
         rows = conn.execute(
             f"SELECT target_id, COUNT(*) AS cnt "
-            f"FROM edges WHERE kind IN ({_detectors_call_kind_ph}) "
+            f"FROM edges WHERE kind IN ({call_kind_ph}) "
             f"AND target_id IN ({ph}) "
             f"GROUP BY target_id",
             (*CALL_EDGE_KINDS, *chunk),
@@ -4473,7 +4468,13 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             if sid in context:
                 context[sid]["caller_count"] = int(r["cnt"] or 0)
 
-    # Runtime traces (optional table for legacy DB compatibility)
+
+def _load_runtime_traces(conn, symbol_ids: list[int], context: dict[int, dict]) -> None:
+    """Populate runtime_* OTel enrichment from runtime_stats.
+
+    Optional table for legacy DB compatibility; absence is expected and
+    logged, not raised (see the W661/W679 notes on the handler below).
+    """
     try:
         for chunk in _chunked(symbol_ids):
             ph = ",".join("?" for _ in chunk)
@@ -4504,7 +4505,7 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
         # schema stabilises"). The handler covers three legitimate-skip
         # classes for the optional OTel runtime-enrichment merge:
         #   * sqlite3.Error — `runtime_stats` is an optional table on legacy
-        #     DBs (see surrounding comment "optional table for legacy DB
+        #     DBs (see surrounding docstring "optional table for legacy DB
         #     compatibility"); OperationalError on a missing table /
         #     missing OTel column is the expected absence signal.
         #   * KeyError — Row mapping access (`r["db_system"]` etc.) raises
@@ -4523,6 +4524,42 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             exc,
         )
 
+
+def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
+    """Load calibration + evidence context for findings in bulk.
+
+    Thin orchestrator over five single-purpose loaders; each mutates
+    ``context`` in place. The returned dict is keyed by symbol_id and carries
+    every key the calibrate / evidence / score consumers read, defaulting to
+    zero / None when the underlying row is absent.
+    """
+    context: dict[int, dict] = {
+        sid: {
+            "signals": [],
+            "loop_depth": 0,
+            "loop_bound_small": 0,
+            "caller_count": 0,
+            "cognitive_complexity": 0.0,
+            "cyclomatic_density": 0.0,
+            "line_count": 0,
+            "complexity_zscore": 0.0,
+            "runtime_call_count": 0,
+            "runtime_p99_latency_ms": None,
+            "runtime_error_rate": 0.0,
+            "runtime_otel_db_system": None,
+            "runtime_otel_db_operation": None,
+            "runtime_otel_db_statement_type": None,
+        }
+        for sid in symbol_ids
+    }
+    if not symbol_ids:
+        return context
+
+    complexity_mean, complexity_std = _complexity_baseline(conn)
+    _load_static_signals(conn, symbol_ids, context)
+    _load_complexity_metrics(conn, symbol_ids, context, complexity_mean, complexity_std)
+    _load_caller_counts(conn, symbol_ids, context)
+    _load_runtime_traces(conn, symbol_ids, context)
     return context
 
 
