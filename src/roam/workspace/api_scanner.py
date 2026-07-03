@@ -57,7 +57,7 @@ _RouteRecordBuilder = Callable[[re.Match[str], str, int], dict[str, Any]]
 @dataclass(frozen=True)
 class _BackendRouteLookup:
     routes: list[dict[str, Any]]
-    exact_route_ids: dict[str, list[int]]
+    exact_route_ids: dict[str, set[int]]
     route_ids_by_length: dict[int, set[int]]
     route_ids_by_segment: dict[tuple[int, str], set[int]]
     route_ids_by_prefix: dict[str, set[int]]
@@ -501,7 +501,7 @@ def _url_segments(normalized_url: str) -> list[str]:
 def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> _BackendRouteLookup:
     """Index route shape once so fuzzy matching stays local to set lookups."""
     routes = list(backend_routes)
-    exact_route_ids: dict[str, list[int]] = {}
+    exact_route_ids: dict[str, set[int]] = {}
     route_ids_by_length: dict[int, set[int]] = {}
     route_ids_by_segment: dict[tuple[int, str], set[int]] = {}
     route_ids_by_prefix: dict[str, set[int]] = {}
@@ -512,7 +512,7 @@ def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> 
         normalized = _normalize_url(route["url_pattern"])
         segments = _url_segments(normalized)
         method = (route.get("http_method") or "").upper()
-        exact_route_ids.setdefault(normalized, []).append(route_id)
+        exact_route_ids.setdefault(normalized, set()).add(route_id)
         route_ids_by_length.setdefault(len(segments), set()).add(route_id)
         if segments:
             route_ids_by_prefix.setdefault(segments[0], set()).add(route_id)
@@ -538,7 +538,7 @@ def _route_candidate_ids_without_backend_scan(
     normalized_url: str, backend_lookup: _BackendRouteLookup
 ) -> set[int]:
     """Preserve fuzzy URL coverage without comparing against every route."""
-    exact_ids = backend_lookup.exact_route_ids.get(normalized_url, [])
+    exact_ids = backend_lookup.exact_route_ids.get(normalized_url, set())
     if exact_ids:
         return set(exact_ids)
 
