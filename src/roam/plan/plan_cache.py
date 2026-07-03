@@ -144,22 +144,36 @@ def _persist_sweep_stale_generation(path: str, cwd: str | None) -> None:
 def _apply_generation_sweep(conn, generation: str) -> None:
     """Wipe the index-derived tables unless `generation` matches the one
     recorded in persist_meta; record the new generation either way."""
-    import sqlite3
-
     conn.execute("CREATE TABLE IF NOT EXISTS persist_meta (k TEXT PRIMARY KEY, v TEXT)")
     row = conn.execute("SELECT v FROM persist_meta WHERE k='index_generation'").fetchone()
     if row and row[0] == generation:
         return
-    for table in _INDEX_DERIVED_TABLES:
-        try:
-            conn.execute(f"DELETE FROM {table}")  # noqa: S608 — closed enum above
-        except sqlite3.OperationalError as exc:
-            log_swallowed("compile.persist_sweep.missing_table", exc)
+    _delete_existing_index_derived_tables(conn)
     conn.execute(
         "INSERT OR REPLACE INTO persist_meta VALUES ('index_generation', ?)",
         (generation,),
     )
     conn.commit()
+
+
+def _delete_existing_index_derived_tables(conn) -> None:
+    """Delete every present index-derived table in one SQLite round trip."""
+    tables = _existing_index_derived_tables(conn)
+    if not tables:
+        return
+    statements = ";\n".join(f"DELETE FROM {table}" for table in tables)
+    conn.executescript(f"{statements};")  # noqa: S608 — table names are a closed enum
+
+
+def _existing_index_derived_tables(conn) -> tuple[str, ...]:
+    """Return index-derived cache tables that exist in sweep order."""
+    placeholders = ",".join("?" for _ in _INDEX_DERIVED_TABLES)
+    rows = conn.execute(
+        f"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({placeholders})",
+        _INDEX_DERIVED_TABLES,
+    ).fetchall()
+    existing = {row[0] for row in rows}
+    return tuple(table for table in _INDEX_DERIVED_TABLES if table in existing)
 
 
 def _run_roam_persist_ensure_schema(conn) -> None:
