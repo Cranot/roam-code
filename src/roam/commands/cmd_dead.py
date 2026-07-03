@@ -1754,25 +1754,57 @@ def _detect_dead_param_chains(conn) -> list[dict]:
     return findings
 
 
+def _resolve_side_effect_candidate_ids(conn, unused_return_findings: list[dict]) -> dict[str, int]:
+    """Resolve unused-return symbols once for side-effect classification."""
+    symbol_names = sorted(
+        {
+            finding["symbol"]
+            for finding in unused_return_findings
+            if finding.get("type") == "unused_return" and finding.get("symbol")
+        }
+    )
+    rows = batched_in(
+        conn,
+        "SELECT id, name, qualified_name FROM symbols "
+        "WHERE qualified_name IN ({ph}) OR name IN ({ph}) "
+        "ORDER BY id",
+        symbol_names,
+    )
+    ids_by_symbol: dict[str, int] = {}
+    wanted = set(symbol_names)
+    for row in rows:
+        for key in (row["qualified_name"], row["name"]):
+            if key in wanted and key not in ids_by_symbol:
+                ids_by_symbol[key] = row["id"]
+    return ids_by_symbol
+
+
+def _load_side_effect_candidate_effects(conn, symbol_ids: list[int]) -> dict[int, set[str]]:
+    """Batch-load effect types needed by side-effect-only classification."""
+    rows = batched_in(
+        conn,
+        "SELECT DISTINCT symbol_id, effect_type FROM symbol_effects WHERE symbol_id IN ({ph})",
+        symbol_ids,
+    )
+    effect_types_by_symbol: dict[int, set[str]] = {}
+    for row in rows:
+        effect_types_by_symbol.setdefault(row["symbol_id"], set()).add(row["effect_type"])
+    return effect_types_by_symbol
+
+
 def _detect_side_effect_only(conn, unused_return_findings: list[dict]) -> list[dict]:
     """C. discard-return funcs whose only effects are pure/logging."""
     findings: list[dict] = []
     benign = {"pure", "logging"}
+    ids_by_symbol = _resolve_side_effect_candidate_ids(conn, unused_return_findings)
+    effects_by_symbol = _load_side_effect_candidate_effects(conn, sorted(set(ids_by_symbol.values())))
     for f in unused_return_findings:
         if f["type"] != "unused_return":
             continue
-        sym_id_row = conn.execute(
-            "SELECT id FROM symbols WHERE qualified_name = ? OR name = ? LIMIT 1",
-            (f["symbol"], f["symbol"]),
-        ).fetchone()
-        if not sym_id_row:
+        sym_id = ids_by_symbol.get(f["symbol"])
+        if sym_id is None:
             continue
-        sym_id = sym_id_row["id"]
-        effects = conn.execute(
-            "SELECT DISTINCT effect_type FROM symbol_effects WHERE symbol_id = ?",
-            (sym_id,),
-        ).fetchall()
-        effect_types = {e["effect_type"] for e in effects}
+        effect_types = effects_by_symbol.get(sym_id, set())
         if effect_types and effect_types <= benign:
             findings.append(
                 {
