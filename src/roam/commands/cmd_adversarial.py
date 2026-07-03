@@ -171,6 +171,22 @@ def _iter_changed_edges_that_skip_layer_contract(G, layers, changed_sym_ids):
             yield skip
 
 
+def _iter_changed_edges_that_cross_cluster_boundaries(G, clusters, changed_sym_ids):
+    """Yield changed outgoing edges whose endpoints belong to different clusters."""
+    changed_ids = tuple(changed_sym_ids)
+    clustered_graph_nodes = set(G.nodes) & set(clusters)
+    eligible_changed_ids = [sid for sid in changed_ids if sid in clustered_graph_nodes]
+
+    for sid in eligible_changed_ids:
+        src_cluster = clusters[sid]
+        src_node = G.nodes[sid]
+        for _, tgt in G.out_edges(sid):
+            tgt_cluster = clusters.get(tgt)
+            if tgt_cluster is None or tgt_cluster == src_cluster:
+                continue
+            yield src_node, G.nodes[tgt], src_cluster, tgt_cluster
+
+
 def _layer_contract_skip_challenge(G, skip):
     sid, tgt, src_layer, tgt_layer, gap = skip
     src_node = G.nodes[sid]
@@ -423,21 +439,7 @@ def _check_cross_cluster(conn, changed_sym_ids, status=None):
     if not clusters:
         return challenges
 
-    # Collect cross-cluster edges from changed symbols
-    cross_edges = []
-    for sid in changed_sym_ids:
-        if sid not in G or sid not in clusters:
-            continue
-        src_cluster = clusters[sid]
-        for _, tgt in G.out_edges(sid):
-            if tgt not in clusters:
-                continue
-            tgt_cluster = clusters[tgt]
-            if tgt_cluster == src_cluster:
-                continue
-            src_node = G.nodes[sid]
-            tgt_node = G.nodes[tgt]
-            cross_edges.append((src_node, tgt_node, src_cluster, tgt_cluster))
+    cross_edges = list(_iter_changed_edges_that_cross_cluster_boundaries(G, clusters, changed_sym_ids))
 
     if not cross_edges:
         return challenges
