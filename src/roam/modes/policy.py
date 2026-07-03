@@ -339,7 +339,8 @@ def _materialise_from_constitution(
 
     try:
         constitution = load_constitution(repo_root)
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as exc:
+        sys.stderr.write(f"[modes.policy] constitution policy unavailable: {exc}\n")
         return None
     if constitution is None:
         return None
