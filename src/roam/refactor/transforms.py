@@ -874,25 +874,48 @@ def extract_symbol(
     }
 
     if not dry_run:
-        _apply_extract(source_file, lines, start_idx, end_idx, call_stmt, new_func_lines, sym_end)
+        _apply_extract(
+            _ExtractApplySpec(
+                source_file=source_file,
+                lines=lines,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                call_stmt=call_stmt,
+                new_func_lines=new_func_lines,
+                sym_end=sym_end,
+            )
+        )
 
     return result
 
 
-def _apply_extract(source_file, lines, start_idx, end_idx, call_stmt, new_func_lines, sym_end):
+@dataclass(frozen=True)
+class _ExtractApplySpec:
+    """Parameters for applying an extract-function transform."""
+
+    source_file: str
+    lines: list[str]
+    start_idx: int
+    end_idx: int
+    call_stmt: str
+    new_func_lines: list[str]
+    sym_end: int
+
+
+def _apply_extract(spec: _ExtractApplySpec) -> None:
     """Actually write the extract changes to disk."""
-    new_lines = list(lines)
+    new_lines = list(spec.lines)
 
     # Replace extracted lines with call
-    new_lines[start_idx:end_idx] = [call_stmt]
+    new_lines[spec.start_idx : spec.end_idx] = [spec.call_stmt]
 
     # Adjust insertion point (we removed lines, so shift)
-    removed_count = (end_idx - start_idx) - 1
-    insert_idx = sym_end - removed_count
+    removed_count = (spec.end_idx - spec.start_idx) - 1
+    insert_idx = spec.sym_end - removed_count
     if insert_idx < 0:
         insert_idx = len(new_lines)
 
-    for i, fl in enumerate(new_func_lines):
+    for i, fl in enumerate(spec.new_func_lines):
         new_lines.insert(insert_idx + i, fl)
 
-    _write_file(source_file, new_lines)
+    _write_file(spec.source_file, new_lines)
