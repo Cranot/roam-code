@@ -722,30 +722,40 @@ class DjangoBridge(LanguageBridge):
             qname = sym.get("qualified_name", sym.get("name", ""))
 
             for m in _DRF_ROUTER_RE.finditer(sig):
-                prefix = m.group(1)
-                viewset_name = m.group(2)
-                target_qname = symbol_index.get(viewset_name)
-                if target_qname is None:
-                    continue
-
-                # Synthesize list and detail routes
-                list_pattern = f"{prefix}/" if prefix else "/"
-                detail_pattern = f"{prefix}/{{id}}/" if prefix else "/{id}/"
-
-                for url_pattern in (list_pattern, detail_pattern):
-                    edges.append(
-                        {
-                            "source": qname,
-                            "target": target_qname,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "routes_to",
-                            "confidence": 0.80,
-                            "url_pattern": url_pattern,
-                        }
-                    )
+                edges.extend(
+                    self._drf_edges_preserving_list_detail_resolution(qname, m, symbol_index)
+                )
 
         return edges
+
+    def _drf_edges_preserving_list_detail_resolution(
+        self,
+        source_qname: str,
+        register_match: re.Match[str],
+        symbol_index: dict[str, str],
+    ) -> list[dict]:
+        """Emit DRF router routes only when the registered ViewSet resolves."""
+        prefix = register_match.group(1)
+        viewset_name = register_match.group(2)
+        target_qname = symbol_index.get(viewset_name)
+        if target_qname is None:
+            return []
+
+        # DRF exposes collection and instance endpoints for each ViewSet.
+        list_pattern = f"{prefix}/" if prefix else "/"
+        detail_pattern = f"{prefix}/{{id}}/" if prefix else "/{id}/"
+        return [
+            {
+                "source": source_qname,
+                "target": target_qname,
+                "kind": "x-lang",
+                "bridge": self.name,
+                "mechanism": "routes_to",
+                "confidence": 0.80,
+                "url_pattern": url_pattern,
+            }
+            for url_pattern in (list_pattern, detail_pattern)
+        ]
 
 
 # Auto-register on import
