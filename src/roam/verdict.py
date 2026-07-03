@@ -21,21 +21,11 @@ from typing import Any
 
 # Centralized closed enums — single source of truth lives in guard_enums.
 # `VERDICTS` is re-exported here (explicit `as` alias) for external consumers
-# that import it from `roam.verdict`; the others are used internally.
-from roam.guard_enums import (
-    VERDICT_PRECEDENCE,
-    exit_code_for,
-)
+# that import it from `roam.verdict`.
+from roam.guard_enums import exit_code_for
 from roam.guard_enums import (
     VERDICTS as VERDICTS,
 )
-
-
-def _merge(current: str | None, candidate: str) -> str:
-    """Pick the more-severe verdict."""
-    if current is None:
-        return candidate
-    return current if VERDICT_PRECEDENCE[current] >= VERDICT_PRECEDENCE[candidate] else candidate
 
 
 def compute_verdict(
@@ -56,24 +46,52 @@ def compute_verdict(
        "reasons": [{"code": str, ...context}, ...]}
     """
     executed_checks = executed_checks or []
-    missing_checks = missing_checks or []
     optimizer_findings = optimizer_findings or []
     scope_findings = scope_findings or []
     mcp_tool_findings = mcp_tool_findings or []
     risk = risk or {}
 
-    verdict: str | None = None
+    blocked_reasons = _collect_blockers_that_invalidate_proof(
+        verification_contract=verification_contract,
+        executed_checks=executed_checks,
+        mcp_tool_findings=mcp_tool_findings,
+        ledger=ledger,
+    )
+    if blocked_reasons:
+        return {"value": "blocked", "reasons": aggregate_reasons(blocked_reasons)}
+
+    review_reasons = _collect_review_gates_that_preserve_human_judgment(
+        risk=risk,
+        scope_findings=scope_findings,
+    )
+    if review_reasons:
+        return {"value": "needs_review", "reasons": aggregate_reasons(review_reasons)}
+
+    warning_reasons = _collect_warnings_that_keep_proof_passable(
+        optimizer_findings=optimizer_findings,
+        scope_findings=scope_findings,
+        mcp_tool_findings=mcp_tool_findings,
+    )
+    if warning_reasons:
+        return {"value": "pass_with_warnings", "reasons": aggregate_reasons(warning_reasons)}
+
+    return {"value": "pass", "reasons": aggregate_reasons([{"code": "all_required_passed"}])}
+
+
+def _collect_blockers_that_invalidate_proof(
+    *,
+    verification_contract: dict[str, Any],
+    executed_checks: list[dict[str, Any]],
+    mcp_tool_findings: list[dict[str, Any]],
+    ledger: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return hard-gate reasons that make the proof untrustworthy."""
     reasons: list[dict[str, Any]] = []
-
-    # ---- blocked: hard gates ----
-
-    # 1. Required check not run.
     required = verification_contract.get("required", []) if verification_contract else []
     executed_names = {c.get("command") for c in executed_checks}
     for req in required:
         cmd = req.get("command")
         if cmd not in executed_names:
-            verdict = _merge(verdict, "blocked")
             reasons.append(
                 {
                     "code": "required_check_not_run",
@@ -87,10 +105,8 @@ def compute_verdict(
                 }
             )
 
-    # 2. Required check failed.
     for c in executed_checks:
         if c.get("status") in ("fail", "error"):
-            verdict = _merge(verdict, "blocked")
             reasons.append(
                 {
                     "code": "required_check_failed",
@@ -103,9 +119,7 @@ def compute_verdict(
                 }
             )
 
-    # 3. Ledger integrity failure (if a ledger is referenced).
     if ledger and ledger.get("verified") is False:
-        verdict = _merge(verdict, "blocked")
         reasons.append(
             {
                 "code": "ledger_integrity_failure",
@@ -114,10 +128,8 @@ def compute_verdict(
             }
         )
 
-    # 4. MCP redaction required but not applied.
     for finding in mcp_tool_findings:
         if finding.get("policy_decision") in ("deny", "fail") and finding.get("severity") == "high":
-            verdict = _merge(verdict, "blocked")
             reasons.append(
                 {
                     "code": "mcp_redaction_required",
@@ -129,88 +141,83 @@ def compute_verdict(
                 }
             )
 
-    # ---- needs_review: judgment gates ----
+    return reasons
 
-    if not _is_blocked(verdict):
-        risk_level = risk.get("level") or ""
-        if risk_level == "high":
-            verdict = _merge(verdict, "needs_review")
-            paths = risk.get("paths", [])
+
+def _collect_review_gates_that_preserve_human_judgment(
+    *,
+    risk: dict[str, Any],
+    scope_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return reasons that pass the hard gate but still need human judgment."""
+    reasons: list[dict[str, Any]] = []
+    risk_level = risk.get("level") or ""
+    if risk_level == "high":
+        paths = risk.get("paths", [])
+        reasons.append(
+            {
+                "code": "high_risk_path",
+                "paths": paths,
+                "reasons": risk.get("reasons", []),
+                "suggested_command": (
+                    f"review high-risk paths ({len(paths)} files); accept via "
+                    f"`roam permit <path>` after human review"
+                ),
+            }
+        )
+
+    for finding in scope_findings:
+        if finding.get("severity") == "high":
             reasons.append(
                 {
-                    "code": "high_risk_path",
-                    "paths": paths,
-                    "reasons": risk.get("reasons", []),
-                    "suggested_command": (
-                        f"review high-risk paths ({len(paths)} files); accept via "
-                        f"`roam permit <path>` after human review"
-                    ),
+                    "code": "out_of_scope_edit",
+                    "path": finding.get("path"),
+                    "detail": finding.get("detail"),
+                    "suggested_command": (f"split commit OR expand scope to include {finding.get('path')}"),
                 }
             )
 
-        for finding in scope_findings:
-            if finding.get("severity") == "high":
-                verdict = _merge(verdict, "needs_review")
-                reasons.append(
-                    {
-                        "code": "out_of_scope_edit",
-                        "path": finding.get("path"),
-                        "detail": finding.get("detail"),
-                        "suggested_command": (f"split commit OR expand scope to include {finding.get('path')}"),
-                    }
-                )
-
-    # ---- pass_with_warnings: soft findings ----
-
-    if not _is_blocked(verdict) and not _is_needs_review(verdict):
-        for finding in optimizer_findings:
-            if finding.get("severity") in ("medium", "low"):
-                verdict = _merge(verdict, "pass_with_warnings")
-                reasons.append(
-                    {
-                        "code": "optimizer_warning",
-                        "task": finding.get("task") or finding.get("kind"),
-                        "subject": finding.get("subject") or finding.get("symbol"),
-                    }
-                )
-
-        for finding in scope_findings:
-            if finding.get("severity") in ("medium", "low"):
-                verdict = _merge(verdict, "pass_with_warnings")
-                reasons.append(
-                    {
-                        "code": "scope_finding",
-                        "path": finding.get("path"),
-                    }
-                )
-
-        for finding in mcp_tool_findings:
-            if finding.get("severity") in ("medium", "low"):
-                verdict = _merge(verdict, "pass_with_warnings")
-                reasons.append(
-                    {
-                        "code": "mcp_tool_finding",
-                        "tool": finding.get("tool"),
-                        "kind": finding.get("kind"),
-                    }
-                )
-
-    # ---- pass (default) ----
-
-    if verdict is None:
-        verdict = "pass"
-        reasons.append({"code": "all_required_passed"})
-
-    # Collapse redundant reasons (4 missing checks with the same cause → one record).
-    return {"value": verdict, "reasons": aggregate_reasons(reasons)}
+    return reasons
 
 
-def _is_blocked(verdict: str | None) -> bool:
-    return verdict == "blocked"
+def _collect_warnings_that_keep_proof_passable(
+    *,
+    optimizer_findings: list[dict[str, Any]],
+    scope_findings: list[dict[str, Any]],
+    mcp_tool_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return soft findings that should not block a passing proof."""
+    reasons: list[dict[str, Any]] = []
+    for finding in optimizer_findings:
+        if finding.get("severity") in ("medium", "low"):
+            reasons.append(
+                {
+                    "code": "optimizer_warning",
+                    "task": finding.get("task") or finding.get("kind"),
+                    "subject": finding.get("subject") or finding.get("symbol"),
+                }
+            )
 
+    for finding in scope_findings:
+        if finding.get("severity") in ("medium", "low"):
+            reasons.append(
+                {
+                    "code": "scope_finding",
+                    "path": finding.get("path"),
+                }
+            )
 
-def _is_needs_review(verdict: str | None) -> bool:
-    return verdict == "needs_review"
+    for finding in mcp_tool_findings:
+        if finding.get("severity") in ("medium", "low"):
+            reasons.append(
+                {
+                    "code": "mcp_tool_finding",
+                    "tool": finding.get("tool"),
+                    "kind": finding.get("kind"),
+                }
+            )
+
+    return reasons
 
 
 def aggregate_reasons(reasons: list[dict[str, Any]]) -> list[dict[str, Any]]:
