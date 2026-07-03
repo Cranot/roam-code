@@ -356,7 +356,12 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
     event["seq"] = seq
 
     prev_sig = _last_event_signature(events_path)
-    signature = _sign_event(repo_root, prev_sig, event)
+    # Lazy import keeps a corrupt signing module from breaking the ledger;
+    # signing is additive, not mandatory. sign_event lives in signing.py so
+    # key materialisation, seed constant, and chain math stay colocated.
+    from roam.runs.signing import sign_event
+
+    signature = sign_event(repo_root, prev_sig, event)
     if signature is not None:
         event["signature"] = signature
 
@@ -364,37 +369,6 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
     with events_path.open("a", encoding="utf-8") as fh:
         fh.write(line + "\n")
     return seq
-
-
-def _sign_event(
-    repo_root: Path,
-    prev_signature: Optional[str],
-    event: dict,
-) -> Optional[str]:
-    """Best-effort rolling-HMAC signature for *event*, or ``None``.
-
-    Adapter around ``roam.runs.signing`` — the seed constant, key
-    materialisation, and chain math live there; this is the ledger's one
-    touch-point (R20 phase 4: HMAC over prev_sig || canonical_event_json).
-    *event* must NOT yet carry a ``signature`` field — the signature is
-    computed over the event as passed.
-
-    Import lazily so a corrupt signing module never blocks the rest of the
-    ledger from working (signing is additive, not mandatory).
-    """
-    try:
-        from roam.runs.signing import sign_event
-
-        return sign_event(repo_root, prev_signature, event)
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # missing key or filesystem error must not prevent the event from
-        # being recorded (append-only is the higher invariant). The event
-        # is still written unsigned and verify_chain flags it as
-        # ``tampered``; surface the lineage so the unsigned event has a
-        # discoverable cause rather than a silent gap.
-        log_swallowed("runs.ledger:log_event:sign", exc)
-        return None
 
 
 def _last_event_signature(events_path: Path) -> Optional[str]:
