@@ -151,6 +151,14 @@ where = ["src"]
 # under a pip install. Resolved via importlib.resources at runtime.
 "roam.templates.audit_report" = ["*.yaml", "*.yml"]
 "roam" = ["mcp-server-card.json"]
+# Published consumer-contract evidence envelopes (the ecosystem-protocol
+# half of ChangeEvidence). Downstream harnesses load these at runtime via
+# importlib.resources.files("roam.evidence.consumer_fixtures") to self-test
+# their ingestion. Mirrors the W554/W610/W624 package-data discipline -
+# without this line the package code ships but the JSON does not, and every
+# pip-install consumer silently loads zero fixtures (the W610 silent-empty
+# class).
+"roam.evidence.consumer_fixtures" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
