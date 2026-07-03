@@ -34,6 +34,26 @@ NON-GOALS:
   across Python versions, dict-ordering modes, and platforms;
   consumers verifying the ``content_hash`` field MUST get the same
   bytes regardless of where they parsed the packet.
+
+Published consumer contract
+---------------------------
+
+``ChangeEvidence`` is a wire format other tools consume, not just a local
+implementation detail. The companion package
+:mod:`roam.evidence.consumer_fixtures` ships a curated set of golden
+canonical-JSON envelopes as wheel package data (``*.json`` under that
+package, declared in ``pyproject.toml`` ``[tool.setuptools.package-data]``);
+a downstream harness - any tool, CI pipeline, or attestation gateway that
+depends on ``roam-code`` - loads them at runtime via
+``importlib.resources.files("roam.evidence.consumer_fixtures")`` and
+self-tests its own ingestion by round-tripping each fixture through
+:meth:`ChangeEvidence.from_canonical_json` defined below. Those published
+envelopes are the ones a ``pip install`` consumer can actually reach; the
+hash-stability goldens under ``tests/fixtures/evidence/`` pin the INTERNAL
+schema-migration contract but do NOT ship in the wheel. The companion
+compatibility test ``tests/test_evidence_consumer_fixtures.py`` pins that
+every published envelope parses, round-trips byte-stably, and carries a
+self-consistent ``content_hash``.
 """
 
 from __future__ import annotations
