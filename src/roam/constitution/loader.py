@@ -194,6 +194,17 @@ class CheckReport:
         }
 
 
+@dataclass(frozen=True)
+class _CheckVerdictInputs:
+    """Grouped inputs for :func:`_build_check_verdict`."""
+
+    sources: list[SourceStatus]
+    commands: list[CommandStatus]
+    mode_issues: list[dict[str, str]]
+    gate_count: int
+    unparseable: bool
+
+
 @dataclass
 class ApplyResult:
     """Single (gate-command, exit-code, verdict) result."""
@@ -980,24 +991,17 @@ def _check_mode_allow_lists(
     return mode_issues
 
 
-def _build_check_verdict(
-    *,
-    sources: list[SourceStatus],
-    commands: list[CommandStatus],
-    mode_issues: list[dict[str, str]],
-    gate_count: int,
-    unparseable: bool,
-) -> tuple[bool, str, str]:
+def _build_check_verdict(inputs: _CheckVerdictInputs) -> tuple[bool, str, str]:
     """Synthesize the aggregate state, ok flag, and human verdict."""
-    n_missing_sources = sum(1 for s in sources if not s.exists)
-    n_unparseable = 1 if unparseable else 0
-    n_unknown_cmds = sum(1 for c in commands if c.state == "unknown_command")
-    n_deprecated_cmds = sum(1 for c in commands if c.state == "deprecated_command")
-    n_mode_issues = len(mode_issues)
+    n_missing_sources = sum(1 for s in inputs.sources if not s.exists)
+    n_unparseable = 1 if inputs.unparseable else 0
+    n_unknown_cmds = sum(1 for c in inputs.commands if c.state == "unknown_command")
+    n_deprecated_cmds = sum(1 for c in inputs.commands if c.state == "deprecated_command")
+    n_mode_issues = len(inputs.mode_issues)
 
     issues_total = n_missing_sources + n_unparseable + n_unknown_cmds + n_mode_issues
 
-    if unparseable:
+    if inputs.unparseable:
         return (
             False,
             "missing",
@@ -1006,9 +1010,9 @@ def _build_check_verdict(
     if issues_total == 0 and n_deprecated_cmds == 0:
         verdict = (
             f"constitution is healthy "
-            f"({len(sources)} source(s), "
-            f"{len(commands)} required-check(s) across "
-            f"{gate_count} gate(s))"
+            f"({len(inputs.sources)} source(s), "
+            f"{len(inputs.commands)} required-check(s) across "
+            f"{inputs.gate_count} gate(s))"
         )
         return True, "ok", verdict
 
@@ -1037,13 +1041,14 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
     deprecated = _deprecated_commands()
     commands_out = _resolve_required_checks(constitution.required_checks, known, deprecated)
     mode_issues = _check_mode_allow_lists(constitution.modes, known, deprecated)
-    ok, state, verdict = _build_check_verdict(
+    check_inputs = _CheckVerdictInputs(
         sources=sources_out,
         commands=commands_out,
         mode_issues=mode_issues,
         gate_count=len(constitution.required_checks),
         unparseable=bool(constitution.metadata.get("unparseable")),
     )
+    ok, state, verdict = _build_check_verdict(check_inputs)
 
     return CheckReport(
         ok=ok,
