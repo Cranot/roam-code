@@ -155,22 +155,6 @@ def get_active_run_id(repo_root: Path) -> Optional[str]:
     return meta.run_id if meta else None
 
 
-def _resolve_run_id(repo_root: Path) -> Optional[str]:
-    """Resolve the active run id as auto_log's own failure domain.
-
-    ``get_active_run_id`` already shields its disk scan, but auto_log's
-    never-raise contract demands a belt-and-braces shield here too;
-    isolating it keeps that shield out of auto_log's control flow.
-    """
-    try:
-        return get_active_run_id(repo_root)
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — same
-        # rationale: a resolution failure silently drops the ledger event.
-        log_swallowed("runs.helpers:auto_log:get_active_run_id", exc)
-        return None
-
-
 def _filter_authority_fields(
     extra_event_fields: Optional[Mapping[str, Any]],
 ) -> dict[str, str]:
@@ -254,7 +238,7 @@ def auto_log(
         repo_root = _resolve_repo_root_for_auto_log()
         if repo_root is None:
             return None
-    run_id = _resolve_run_id(repo_root)
+    run_id = get_active_run_id(repo_root)
     if not run_id:
         return None
     try:
@@ -276,7 +260,7 @@ def auto_log(
             },
             **extra_fields_safe,
         )
-    except _AUTO_LOG_EXPECTED_FAILURES as exc:
+    except Exception as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
         # auto-logging is OPPORTUNISTIC and must never crash the gate
         # command that called us, but a silent pass here means a gate
