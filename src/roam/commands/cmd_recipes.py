@@ -17,7 +17,7 @@ import click
 
 from roam.ask.recipes import RECIPES
 from roam.capability import roam_capability
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import format_catalog_output
 
 
 @roam_capability(
@@ -52,23 +52,23 @@ def recipes(ctx) -> None:
     items.sort(key=lambda x: x["name"])
     verdict = f"{len(items)} ask recipe(s) in registry"
 
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "recipes",
-                    summary={"verdict": verdict, "count": len(items)},
-                    recipes=items,
-                )
-            )
-        )
-        return
-
-    click.echo(f"VERDICT: {verdict}")
-    click.echo()
-    click.echo(f"{'Name':<26}  {'Phase':<14}  Intent")
-    click.echo(f"{'-' * 26}  {'-' * 14}  {'-' * 50}")
+    text_lines = [
+        f"{'Name':<26}  {'Phase':<14}  Intent",
+        f"{'-' * 26}  {'-' * 14}  {'-' * 50}",
+    ]
     for it in items:
-        click.echo(f"{it['name']:<26}  {it['phase'][:14]:<14}  {it['intent'][:60]}")
-    click.echo()
-    click.echo('Run `roam ask "<query>"` to dispatch by intent.')
+        text_lines.append(
+            f"{it['name']:<26}  {it['phase'][:14]:<14}  {it['intent'][:60]}"
+        )
+
+    click.echo(
+        format_catalog_output(
+            json_mode,
+            "recipes",
+            verdict,
+            items,
+            "recipes",
+            text_lines,
+            footer='Run `roam ask "<query>"` to dispatch by intent.',
+        )
+    )

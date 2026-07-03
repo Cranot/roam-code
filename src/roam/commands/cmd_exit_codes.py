@@ -15,7 +15,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import format_catalog_output
 
 _DESCRIPTIONS = {
     "EXIT_SUCCESS": "Command completed normally.",
@@ -66,21 +66,20 @@ def exit_codes(ctx) -> None:
     rows.sort(key=lambda r: r["code"])
 
     verdict = f"{len(rows)} exit code(s) defined"
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "exit-codes",
-                    summary={"verdict": verdict, "count": len(rows)},
-                    exit_codes=rows,
-                )
-            )
-        )
-        return
-
-    click.echo(f"VERDICT: {verdict}")
-    click.echo()
-    click.echo(f"{'Code':>4}  {'Name':<24}  Description")
-    click.echo(f"{'-' * 4}  {'-' * 24}  {'-' * 50}")
+    text_lines = [
+        f"{'Code':>4}  {'Name':<24}  Description",
+        f"{'-' * 4}  {'-' * 24}  {'-' * 50}",
+    ]
     for r in rows:
-        click.echo(f"{r['code']:>4}  {r['name']:<24}  {r['description']}")
+        text_lines.append(f"{r['code']:>4}  {r['name']:<24}  {r['description']}")
+
+    click.echo(
+        format_catalog_output(
+            json_mode,
+            "exit-codes",
+            verdict,
+            rows,
+            "exit_codes",
+            text_lines,
+        )
+    )
