@@ -64,15 +64,25 @@ def get_repo_paths(config: dict[str, Any], root: Path) -> list[dict[str, Any]]:
     for repo in repos:
         repo_path = (root / repo["path"]).resolve()
         db_path = repo_path / roam_db_suffix
+        name, role = _repo_metadata_with_workspace_defaults(repo, repo_path.name)
         results.append(
             {
-                "name": repo.get("name", repo_path.name),
+                "name": name,
                 "path": repo_path,
-                "role": repo.get("role", ""),
+                "role": role,
                 "db_path": db_path,
             }
         )
     return results
+
+
+def _repo_metadata_with_workspace_defaults(
+    repo: dict[str, Any], default_name: str
+) -> tuple[Any, Any]:
+    """Return optional repo metadata without loop-local get() lookups."""
+    name = repo["name"] if "name" in repo else default_name
+    role = repo["role"] if "role" in repo else ""
+    return name, role
 
 
 def get_workspace_db_path(root: Path) -> Path:
