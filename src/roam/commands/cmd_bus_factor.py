@@ -602,6 +602,228 @@ def _emit_bus_factor_findings(
             )
 
 
+def _project_bus_factor_directories_for_stable_envelope(limited: list[dict]) -> list[dict]:
+    """Project directory rows through the stable JSON envelope vocabulary."""
+    return [
+        {
+            "directory": r["directory"],
+            "bus_factor": r["bus_factor"],
+            "entropy": r["entropy"],
+            "knowledge_risk": r["knowledge_risk"],
+            "risk": r["risk"],
+            "risk_score": r["risk_score"],
+            "total_commits": r["total_commits"],
+            "total_churn": r["total_churn"],
+            "author_count": r["author_count"],
+            "primary_author": r["primary_author"],
+            "primary_actor": r["primary_author"],
+            "primary_share": r["primary_share"],
+            "primary_last_active": r["primary_last_active"],
+            "concentrated": r["concentrated"],
+            "stale_primary": r["stale_primary"],
+            "staleness_factor": r["staleness_factor"],
+            "top_authors": [{**a, "actor": a.get("name")} for a in r["top_authors"]],
+        }
+        for r in limited
+    ]
+
+
+def _classify_bus_factor_run_so_degradation_is_named(results: list[dict]) -> dict:
+    """Classify run state so an aggregation failure has a named floor."""
+    if not results:
+        return {"state": "DEGRADED", "scanned": 0}
+    min_bf = min(r["bus_factor"] for r in results)
+    if min_bf >= 3:
+        state_label = "HEALTHY"
+    elif min_bf == 2:
+        state_label = "WARN"
+    else:
+        state_label = "CRITICAL"
+    return {"state": state_label, "scanned": len(results)}
+
+
+def _summarize_bus_factor_predicates_for_reviewer_context(results: list[dict]) -> dict:
+    """Summarize ownership predicates without re-reading directory rows."""
+    solo = 0
+    low = 0
+    hottest_files: list[dict] = []
+    for r in results:
+        bus_factor = r.get("bus_factor")
+        if bus_factor == 1:
+            solo += 1
+        if isinstance(bus_factor, int) and bus_factor <= 2:
+            low += 1
+    ranked = sorted(
+        results,
+        key=lambda x: -(x.get("risk_score") or 0),
+    )[:3]
+    for r in ranked:
+        hottest_files.append(
+            {
+                "directory": r.get("directory"),
+                "bus_factor": r.get("bus_factor"),
+                "risk": r.get("risk"),
+            }
+        )
+    return {
+        "solo_authored_count": solo,
+        "low_contributor_count": low,
+        "hottest_files": hottest_files,
+    }
+
+
+def _preserve_bus_factor_verdict_for_eh_boundary(verdict_floor: str) -> str:
+    """Keep the verdict pass-through inside the aggregation boundary."""
+    return verdict_floor
+
+
+def _combine_bus_factor_warnings_for_disclosure(
+    substrate_warnings: list[str],
+    aggregation_warnings: list[str],
+) -> list[str]:
+    """Merge W607 buckets so no degradation marker is lost."""
+    return list(substrate_warnings) + list(aggregation_warnings)
+
+
+def _bus_factor_floor_envelope_preserving_warnings(warnings: list[str]) -> dict:
+    """Build the parseable envelope floor used when serialization fails."""
+    return {
+        "command": "bus-factor",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": "bus_factor completed",
+            "partial_success": True,
+            "warnings_out": list(warnings),
+        },
+        "warnings_out": list(warnings),
+    }
+
+
+def _emit_json_preserving_bus_factor_degradation_lineage(
+    *,
+    results: list[dict],
+    limited: list[dict],
+    shape,
+    stale_months: int,
+    high_risk: int,
+    medium_risk: int,
+    concentrated_count: int,
+    stale_count: int,
+    critical_entropy_count: int,
+    excluded_files_count: int,
+    exclude_prefixes: tuple[str, ...],
+    brain_methods: bool,
+    brain_list: list[dict],
+    bus_verdict: str,
+    single_author_mode: bool,
+    _run_check_cq,
+    _run_check_eh,
+    _w607cq_warnings_out: list[str],
+    _w607eh_warnings_out: list[str],
+) -> None:
+    """Emit populated JSON while preserving warning disclosure and continuity."""
+    summary = {
+        "verdict": bus_verdict,
+        # W21.7 LAW 4 rename: ``directory_count`` -> ``directories_analyzed``
+        # so the auto-derived fact reads ``"N directories analyzed"``
+        # instead of ``"directory count N"``.
+        "directories_analyzed": len(results),
+        "high_risk": high_risk,
+        "medium_risk": medium_risk,
+        "concentrated": concentrated_count,
+        "stale_primary": stale_count,
+        "critical_entropy": critical_entropy_count,
+        "project_team_size": getattr(shape, "team_size", "unknown") if shape else "unknown",
+        "single_author_mode": single_author_mode,
+        "excluded_files_count": excluded_files_count,
+        "exclude_prefixes_active": list(exclude_prefixes),
+    }
+    if brain_methods:
+        summary["brain_method_count"] = len(brain_list)
+        # W1298 Pattern-3a: brain_methods rows carry raw
+        # cognitive_complexity from symbol_metrics -- disclose the
+        # scorer so consumers cannot confuse it with cyclomatic.
+        summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
+
+    envelope_directories = _run_check_cq(
+        "build_envelope_directories",
+        _project_bus_factor_directories_for_stable_envelope,
+        limited,
+        default=[],
+    )
+    if envelope_directories is None:
+        envelope_directories = []
+
+    _score_dict = _run_check_eh(
+        "score_classify",
+        _classify_bus_factor_run_so_degradation_is_named,
+        results,
+        default={"state": "DEGRADED", "scanned": 0},
+    )
+
+    _pred_fields = _run_check_eh(
+        "compute_predicate",
+        _summarize_bus_factor_predicates_for_reviewer_context,
+        results,
+        default={
+            "solo_authored_count": 0,
+            "low_contributor_count": 0,
+            "hottest_files": [],
+        },
+    )
+
+    verdict = _run_check_eh(
+        "compute_verdict",
+        _preserve_bus_factor_verdict_for_eh_boundary,
+        bus_verdict,
+        default="bus_factor completed",
+    )
+    summary["verdict"] = verdict
+    summary["run_state"] = _score_dict["state"]
+    summary["solo_authored_count"] = _pred_fields["solo_authored_count"]
+    summary["low_contributor_count"] = _pred_fields["low_contributor_count"]
+    summary["hottest_files"] = _pred_fields["hottest_files"]
+
+    envelope_kwargs = dict(
+        summary=summary,
+        stale_months=stale_months,
+        # W198 vocabulary drift fix: every per-directory row now carries
+        # both ``primary_author`` (git-blame vocabulary, kept for
+        # back-compat) and ``primary_actor`` (W182 ActorRef crosswalk
+        # vocabulary). Same value, two keys.
+        directories=envelope_directories,
+    )
+    if brain_methods:
+        envelope_kwargs["brain_methods"] = brain_list
+
+    combined_warnings = _combine_bus_factor_warnings_for_disclosure(
+        _w607cq_warnings_out,
+        _w607eh_warnings_out,
+    )
+    if combined_warnings:
+        summary["partial_success"] = True
+        summary["warnings_out"] = list(combined_warnings)
+        envelope_kwargs["warnings_out"] = list(combined_warnings)
+
+    _envelope_floor: dict = _bus_factor_floor_envelope_preserving_warnings(combined_warnings)
+    envelope = _run_check_eh(
+        "serialize_envelope",
+        json_envelope,
+        "bus-factor",
+        default=_envelope_floor,
+        **envelope_kwargs,
+    )
+    if envelope is _envelope_floor and _w607eh_warnings_out:
+        combined_warnings = _combine_bus_factor_warnings_for_disclosure(
+            _w607cq_warnings_out,
+            _w607eh_warnings_out,
+        )
+        _envelope_floor["summary"]["warnings_out"] = list(combined_warnings)
+        _envelope_floor["warnings_out"] = list(combined_warnings)
+        envelope = _envelope_floor
+    click.echo(to_json(envelope))
+
+
 @roam_capability(
     name="bus-factor",
     category="reports",
@@ -1128,253 +1350,27 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
             return
 
         if json_mode:
-            summary = {
-                "verdict": bus_verdict,
-                # W21.7 LAW 4 rename: ``directory_count`` → ``directories_analyzed``
-                # so the auto-derived fact reads ``"N directories analyzed"``
-                # instead of ``"directory count N"``.
-                "directories_analyzed": len(results),
-                "high_risk": high_risk,
-                "medium_risk": medium_risk,
-                "concentrated": concentrated_count,
-                "stale_primary": stale_count,
-                "critical_entropy": critical_entropy_count,
-                "project_team_size": getattr(shape, "team_size", "unknown") if shape else "unknown",
-                "single_author_mode": single_author_mode,
-                "excluded_files_count": excluded_files_count,
-                "exclude_prefixes_active": list(exclude_prefixes),
-            }
-            if brain_methods:
-                summary["brain_method_count"] = len(brain_list)
-                # W1298 Pattern-3a: brain_methods rows carry raw
-                # cognitive_complexity from symbol_metrics — disclose the
-                # scorer so consumers cannot confuse it with cyclomatic.
-                summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
-
-            # W607-CQ: ``build_envelope_directories`` substrate -- the
-            # per-directory row construction. A KeyError on a malformed
-            # result row (missing ``directory`` / ``risk`` / etc.)
-            # degrades to [] so the envelope still composes the verdict
-            # and summary even when the upstream substrates raised AFTER
-            # producing the empty floor (or before, leaving the malformed
-            # rows in ``limited``).
-            def _build_envelope_directories():
-                return [
-                    {
-                        "directory": r["directory"],
-                        "bus_factor": r["bus_factor"],
-                        "entropy": r["entropy"],
-                        "knowledge_risk": r["knowledge_risk"],
-                        "risk": r["risk"],
-                        "risk_score": r["risk_score"],
-                        "total_commits": r["total_commits"],
-                        "total_churn": r["total_churn"],
-                        "author_count": r["author_count"],
-                        "primary_author": r["primary_author"],
-                        "primary_actor": r["primary_author"],
-                        "primary_share": r["primary_share"],
-                        "primary_last_active": r["primary_last_active"],
-                        "concentrated": r["concentrated"],
-                        "stale_primary": r["stale_primary"],
-                        "staleness_factor": r["staleness_factor"],
-                        "top_authors": [{**a, "actor": a.get("name")} for a in r["top_authors"]],
-                    }
-                    for r in limited
-                ]
-
-            envelope_directories = _run_check_cq(
-                "build_envelope_directories",
-                _build_envelope_directories,
-                default=[],
-            )
-            if envelope_directories is None:
-                envelope_directories = []
-
-            # W607-EH -- score_classify boundary. Buckets the run by the
-            # minimum bus_factor across analysed directories:
-            #   * HEALTHY   -- min_bus_factor >= 3
-            #   * WARN      -- min_bus_factor == 2
-            #   * CRITICAL  -- min_bus_factor == 1
-            #   * DEGRADED  -- floor on raise (or results empty)
-            # W978 5th-discipline: ``results`` passed as a raw arg;
-            # min()/iteration lives INSIDE the closure (no len() / no
-            # min() at kwarg-bind).
-            def _score_classify_run(_results):
-                # W761/W847 retained UPPER-case for internal vocabulary —
-                # ``state`` is the W607-EH score_classify rollup label
-                # (HEALTHY / WARN / CRITICAL / DEGRADED), surfaced as the
-                # ``run_state`` summary field. Distinct from the canonical
-                # W547 ``severity`` envelope slot (bus-factor's summary
-                # has no ``severity`` slot by design — rollup is on
-                # ``run_state`` / ``directories_analyzed`` / ``high_risk``).
-                if not _results:
-                    return {"state": "DEGRADED", "scanned": 0}
-                _min_bf = min(r["bus_factor"] for r in _results)
-                if _min_bf >= 3:
-                    _state_label = "HEALTHY"
-                elif _min_bf == 2:
-                    _state_label = "WARN"
-                else:
-                    _state_label = "CRITICAL"
-                return {"state": _state_label, "scanned": len(_results)}
-
-            _score_dict = _run_check_eh(
-                "score_classify",
-                _score_classify_run,
-                results,
-                default={"state": "DEGRADED", "scanned": 0},
-            )
-
-            # W607-EH -- compute_predicate boundary. Rollup metrics dict
-            # surfacing aggregate dimensions (solo_authored_count,
-            # low_contributor_count, hottest_files) so a downstream refactor
-            # of the rollup logic surfaces a marker rather than crashing.
-            # W978 5th-discipline: ``results`` passed as a raw arg;
-            # counting / iteration lives INSIDE the closure.
-            def _compute_predicate_fields(_results):
-                _solo = 0
-                _low = 0
-                _hottest_files: list[dict] = []
-                for _r in _results:
-                    _bf = _r.get("bus_factor")
-                    if _bf == 1:
-                        _solo += 1
-                    if isinstance(_bf, int) and _bf <= 2:
-                        _low += 1
-                # hottest_files: top 3 directories by risk_score desc
-                _ranked = sorted(
-                    _results,
-                    key=lambda x: -(x.get("risk_score") or 0),
-                )[:3]
-                for _r in _ranked:
-                    _hottest_files.append(
-                        {
-                            "directory": _r.get("directory"),
-                            "bus_factor": _r.get("bus_factor"),
-                            "risk": _r.get("risk"),
-                        }
-                    )
-                return {
-                    "solo_authored_count": _solo,
-                    "low_contributor_count": _low,
-                    "hottest_files": _hottest_files,
-                }
-
-            _pred_fields = _run_check_eh(
-                "compute_predicate",
-                _compute_predicate_fields,
-                results,
-                default={
-                    "solo_authored_count": 0,
-                    "low_contributor_count": 0,
-                    "hottest_files": [],
-                },
-            )
-
-            # W607-EH -- compute_verdict boundary. Wraps the verdict
-            # string assembly so a downstream f-string refactor surfaces
-            # a marker rather than crashing the envelope. Literal
-            # "bus_factor completed" floor (LAW 6 still holds: the line
-            # works standalone).
-            #
-            # W978 1st-discipline: the floor MUST NOT re-interpolate the
-            # same values that tripped the closure. W978 2nd-discipline:
-            # ``default=`` is a literal constant.
-            def _build_verdict_str(_verdict_floor):
-                return _verdict_floor
-
-            verdict = _run_check_eh(
-                "compute_verdict",
-                _build_verdict_str,
-                bus_verdict,
-                default="bus_factor completed",
-            )
-            # Keep the original key in summary aligned with the wrapped
-            # verdict so downstream consumers (and the auto-fact
-            # humanizer) read the SAME string both layers produced.
-            summary["verdict"] = verdict
-
-            # W607-EH: surface score_classify + compute_predicate results
-            # on the envelope so consumers can read run state + rollup
-            # dimensions without re-deriving from the raw `directories`
-            # list. W978 7th-discipline: bare ``_score_dict["state"]``
-            # / ``_pred_fields["..."]`` lookups (floor dicts guarantee
-            # the keys) -- NOT ``.get(..., expensive_default)``.
-            summary["run_state"] = _score_dict["state"]
-            summary["solo_authored_count"] = _pred_fields["solo_authored_count"]
-            summary["low_contributor_count"] = _pred_fields["low_contributor_count"]
-            summary["hottest_files"] = _pred_fields["hottest_files"]
-
-            envelope_kwargs = dict(
-                summary=summary,
+            _emit_json_preserving_bus_factor_degradation_lineage(
+                results=results,
+                limited=limited,
+                shape=shape,
                 stale_months=stale_months,
-                # W198 vocabulary drift fix: every per-directory row now
-                # carries both ``primary_author`` (git-blame vocabulary,
-                # kept for back-compat) and ``primary_actor`` (W182
-                # ActorRef crosswalk vocabulary). Same value, two keys —
-                # so a ``ChangeEvidence`` collector reading this envelope
-                # picks one canonical name without losing the original.
-                # ``top_authors`` entries get the same treatment: each
-                # row carries ``name`` (existing) and ``actor`` (new) so
-                # the crosswalk surface is consistent across the array.
-                directories=envelope_directories,
+                high_risk=high_risk,
+                medium_risk=medium_risk,
+                concentrated_count=concentrated_count,
+                stale_count=stale_count,
+                critical_entropy_count=critical_entropy_count,
+                excluded_files_count=excluded_files_count,
+                exclude_prefixes=exclude_prefixes,
+                brain_methods=brain_methods,
+                brain_list=brain_list,
+                bus_verdict=bus_verdict,
+                single_author_mode=single_author_mode,
+                _run_check_cq=_run_check_cq,
+                _run_check_eh=_run_check_eh,
+                _w607cq_warnings_out=_w607cq_warnings_out,
+                _w607eh_warnings_out=_w607eh_warnings_out,
             )
-            if brain_methods:
-                envelope_kwargs["brain_methods"] = brain_list
-            # W607-CQ + W607-EH: mirror combined substrate-CALL +
-            # aggregation-phase markers into BOTH the top-level envelope
-            # ``warnings_out`` AND ``summary.warnings_out`` so MCP
-            # consumers see disclosure regardless of which surface they
-            # read. Flipping ``partial_success: True`` is the Pattern-2
-            # silent-fallback guard -- a degraded substrate OR
-            # aggregation path must NOT be mistaken for a clean ranked
-            # verdict.
-            _combined_warnings = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
-            if _combined_warnings:
-                summary["partial_success"] = True
-                summary["warnings_out"] = list(_combined_warnings)
-                envelope_kwargs["warnings_out"] = list(_combined_warnings)
-
-            # W607-EH -- serialize_envelope boundary. Wraps the envelope
-            # serialization itself. A downstream schema-shape refactor
-            # that breaks ``json_envelope("bus-factor", ...)`` would
-            # otherwise crash AFTER all substrate + aggregation signals
-            # were already gathered. Floor to a minimal envelope stub so
-            # consumers still receive a parseable JSON object with the
-            # marker attached + the canonical command name. W978
-            # 6th-discipline: floor is a concrete dict, not a sentinel
-            # that may __len__-raise downstream.
-            _envelope_floor: dict = {
-                "command": "bus-factor",
-                "schema_version": "1.0.0",
-                "summary": {
-                    "verdict": "bus_factor completed",
-                    "partial_success": True,
-                    "warnings_out": list(_combined_warnings),
-                },
-                "warnings_out": list(_combined_warnings),
-            }
-            envelope = _run_check_eh(
-                "serialize_envelope",
-                json_envelope,
-                "bus-factor",
-                default=_envelope_floor,
-                **envelope_kwargs,
-            )
-            # W607-EH -- if ``serialize_envelope`` raised AFTER the
-            # combined bucket was already snapshotted, the new
-            # ``bus_factor_serialize_envelope_failed:`` marker was
-            # appended to ``_w607eh_warnings_out`` and the floor stub
-            # carries only the pre-raise combined list. Rebuild the
-            # floor stub's warnings_out so the new marker reaches the
-            # JSON output. Clean path -> envelope is the real
-            # json_envelope return value, no rebuild.
-            if envelope is _envelope_floor and _w607eh_warnings_out:
-                _combined_warnings = list(_w607cq_warnings_out) + list(_w607eh_warnings_out)
-                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
-                _envelope_floor["warnings_out"] = list(_combined_warnings)
-                envelope = _envelope_floor
-            click.echo(to_json(envelope))
             return
 
         # --- Text output ---
