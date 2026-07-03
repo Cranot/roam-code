@@ -61,6 +61,8 @@ class _BackendRouteLookup:
     route_ids_by_length: dict[int, set[int]]
     route_ids_by_segment: dict[tuple[int, str], set[int]]
     route_ids_by_prefix: dict[str, set[int]]
+    route_ids_by_method: dict[str, set[int]]
+    methodless_route_ids: set[int]
 
 
 def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[str, Any]]:
@@ -255,36 +257,42 @@ def match_api_endpoints(
 
     matches = []
     for call in frontend_calls:
-        normalized = _normalize_url(call["url_pattern"])
-        candidates = _route_candidates_without_backend_scan(normalized, backend_lookup)
+        matches.extend(_matches_preserving_method_fidelity(call, backend_lookup))
 
-        for candidate in candidates:
-            # Method match (if both specify a method)
-            method_match = (
-                not call.get("http_method")
-                or not candidate.get("http_method")
-                or call["http_method"].upper() == candidate["http_method"].upper()
-            )
-            if not method_match:
-                continue
+    return _dedupe_endpoint_matches_by_best_score(matches)
 
-            score = _match_score(
-                call["url_pattern"],
-                candidate["url_pattern"],
-                call.get("http_method"),
-                candidate.get("http_method"),
-            )
-            matches.append(
-                {
-                    "frontend": call,
-                    "backend": candidate,
-                    "url_pattern": call["url_pattern"],
-                    "http_method": call.get("http_method", candidate.get("http_method", "")),
-                    "score": score,
-                }
-            )
 
-    # Deduplicate: keep best score per (frontend_call, backend_route) pair
+def _matches_preserving_method_fidelity(
+    call: dict[str, Any], backend_lookup: _BackendRouteLookup
+) -> list[dict[str, Any]]:
+    """Score only route-local candidates that pass the method compatibility gate."""
+    normalized = _normalize_url(call["url_pattern"])
+    path_candidate_ids = _route_candidate_ids_without_backend_scan(normalized, backend_lookup)
+    candidate_ids = _route_ids_that_preserve_method_fidelity(call, path_candidate_ids, backend_lookup)
+
+    matches: list[dict[str, Any]] = []
+    for route_id in sorted(candidate_ids):
+        candidate = backend_lookup.routes[route_id]
+        score = _match_score(
+            call["url_pattern"],
+            candidate["url_pattern"],
+            call.get("http_method"),
+            candidate.get("http_method"),
+        )
+        matches.append(
+            {
+                "frontend": call,
+                "backend": candidate,
+                "url_pattern": call["url_pattern"],
+                "http_method": call.get("http_method", candidate.get("http_method", "")),
+                "score": score,
+            }
+        )
+    return matches
+
+
+def _dedupe_endpoint_matches_by_best_score(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the highest-scoring endpoint match for each frontend/backend pair."""
     seen: dict[tuple, dict] = {}
     for m in matches:
         key = (
@@ -497,16 +505,23 @@ def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> 
     route_ids_by_length: dict[int, set[int]] = {}
     route_ids_by_segment: dict[tuple[int, str], set[int]] = {}
     route_ids_by_prefix: dict[str, set[int]] = {}
+    route_ids_by_method: dict[str, set[int]] = {}
+    methodless_route_ids: set[int] = set()
 
     for route_id, route in enumerate(routes):
         normalized = _normalize_url(route["url_pattern"])
         segments = _url_segments(normalized)
+        method = (route.get("http_method") or "").upper()
         exact_route_ids.setdefault(normalized, []).append(route_id)
         route_ids_by_length.setdefault(len(segments), set()).add(route_id)
         if segments:
             route_ids_by_prefix.setdefault(segments[0], set()).add(route_id)
         for position, segment in enumerate(segments):
             route_ids_by_segment.setdefault((position, segment), set()).add(route_id)
+        if method:
+            route_ids_by_method.setdefault(method, set()).add(route_id)
+        else:
+            methodless_route_ids.add(route_id)
 
     return _BackendRouteLookup(
         routes=routes,
@@ -514,16 +529,18 @@ def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> 
         route_ids_by_length=route_ids_by_length,
         route_ids_by_segment=route_ids_by_segment,
         route_ids_by_prefix=route_ids_by_prefix,
+        route_ids_by_method=route_ids_by_method,
+        methodless_route_ids=methodless_route_ids,
     )
 
 
-def _route_candidates_without_backend_scan(
+def _route_candidate_ids_without_backend_scan(
     normalized_url: str, backend_lookup: _BackendRouteLookup
-) -> list[dict[str, Any]]:
+) -> set[int]:
     """Preserve fuzzy URL coverage without comparing against every route."""
     exact_ids = backend_lookup.exact_route_ids.get(normalized_url, [])
     if exact_ids:
-        return [backend_lookup.routes[route_id] for route_id in exact_ids]
+        return set(exact_ids)
 
     segments = _url_segments(normalized_url)
     candidate_ids = set(backend_lookup.route_ids_by_length.get(len(segments), set()))
@@ -534,9 +551,32 @@ def _route_candidates_without_backend_scan(
         wildcard_matches = backend_lookup.route_ids_by_segment.get((position, "[*]"), set())
         candidate_ids &= segment_matches | wildcard_matches
         if not candidate_ids:
-            return []
+            return set()
 
-    return [backend_lookup.routes[route_id] for route_id in sorted(candidate_ids)]
+    return candidate_ids
+
+
+def _route_candidates_without_backend_scan(
+    normalized_url: str, backend_lookup: _BackendRouteLookup
+) -> list[dict[str, Any]]:
+    """Preserve fuzzy URL coverage without comparing against every route."""
+    route_ids = _route_candidate_ids_without_backend_scan(normalized_url, backend_lookup)
+    return [backend_lookup.routes[route_id] for route_id in sorted(route_ids)]
+
+
+def _route_ids_that_preserve_method_fidelity(
+    call: dict[str, Any],
+    path_candidate_ids: set[int],
+    backend_lookup: _BackendRouteLookup,
+) -> set[int]:
+    """Keep route-local candidates compatible with the call's HTTP method."""
+    call_method = (call.get("http_method") or "").upper()
+    if not call_method:
+        return path_candidate_ids
+
+    method_route_ids = set(backend_lookup.route_ids_by_method.get(call_method, set()))
+    method_route_ids.update(backend_lookup.methodless_route_ids)
+    return path_candidate_ids & method_route_ids
 
 
 def _same_prefix_route_for_path_shape_mismatch(
