@@ -91,10 +91,11 @@ LoadStatus = Literal[
 SchemaValidator = Callable[[Any], list[str]]
 
 # Per-callsite fallback parser used when PyYAML is unavailable. Receives
-# the raw text; returns the parsed object. Allowed to return ``None`` to
-# signal "I could not parse this." Each callsite supplies its own — the
-# tiny YAML parsers are intentionally schema-specific (W706 expects a
-# top-level ``rules:`` list, W994 expects ``suppressions:``, etc.).
+# the raw text; returns the parsed object. Allowed to return ``None`` or
+# raise ``ValueError`` to signal "I could not parse this." Each callsite
+# supplies its own — the tiny YAML parsers are intentionally schema-specific
+# (W706 expects a top-level ``rules:`` list, W994 expects ``suppressions:``,
+# etc.).
 TinyParser = Callable[[str], Any]
 
 
@@ -279,7 +280,7 @@ def _run_tiny_parser_branch(
                 return False, empty
     try:
         data = tiny_parser(text) if tiny_parser is not None else None
-    except Exception as exc2:  # noqa: BLE001 — tiny parser failures are non-fatal
+    except ValueError as exc2:
         append_warning(
             warnings_out,
             config_label,
