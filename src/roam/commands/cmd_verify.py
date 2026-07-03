@@ -3173,6 +3173,79 @@ def _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_l
     return sorted(hits)
 
 
+def _build_deleted_symbol_candidates(conn, deleted_lines):
+    """Return deleted symbol names that are not still defined elsewhere.
+
+    Filters parsed deletion entries to real identifiers, deduplicates, and
+    removes symbols that still exist in the index (moves/renames, not dangling
+    deletes). Swallows DB failures and treats every name as a candidate.
+    """
+    names = []
+    seen = set()
+    for entry in deleted_lines:
+        try:
+            _p, _l, sym, kind = entry
+        except Exception:  # noqa: BLE001
+            continue
+        if kind != "symbol":
+            continue
+        nm = (sym or "").strip()
+        if len(nm) < 5 or nm.startswith("_") or not nm.isidentifier() or nm in seen:
+            continue
+        seen.add(nm)
+        names.append(nm)
+    if not names:
+        return []
+    still_defined = set()
+    try:
+        rows = batched_in(conn, "SELECT DISTINCT name FROM symbols WHERE name IN ({ph})", names)
+        still_defined = {_verify_rowval(r, "name") for r in rows}
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.delete_check.defined", exc)
+    return [n for n in names if n not in still_defined]
+
+
+def _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup):
+    """Group surviving references to deleted symbols by symbol name.
+
+    Filters out matches inside the changed set, test files, or non-source
+    surfaces, then uses a compiled regex + set lookup to avoid a per-candidate
+    list scan.
+    """
+    by_name = {}
+    for m in matches or []:
+        mp = (m.get("path") or "").replace("\\", "/")
+        if not mp or mp in changed or is_test_file(mp) or not _is_import_resolution_source_path(mp):
+            continue
+        content = m.get("content") or ""
+        for nm in _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_lookup):
+            by_name.setdefault(nm, []).append((mp, m.get("line")))
+    return by_name
+
+
+def _build_delete_check_violations(by_name):
+    """Translate grouped survivor references into verify violations."""
+    violations = []
+    for nm, locs in by_name.items():
+        files = sorted({f for f, _ in locs})
+        sample = ", ".join(files[:3]) + (" ..." if len(files) > 3 else "")
+        violations.append(
+            {
+                "category": _VERIFY_DELETE_CATEGORY,
+                "severity": SEVERITY_FAIL,
+                "hard_block": True,
+                "file": files[0],
+                "line": next((ln for _, ln in locs), None),
+                "message": (
+                    f"deleted symbol `{nm}` is still referenced by {len(files)} "
+                    f"un-edited file(s) ({sample}) — they will break"
+                ),
+                "fix": "Restore the symbol, update the surviving references in this change, or stage a deprecation",
+            }
+        )
+    return violations
+
+
 def _check_delete_safety(conn, target_paths, root):
     """Guardrail (opt-in, ROAM_VERIFY_DELETE_CHECK=1): a symbol the diff DELETES
     that is still referenced from an un-edited code file => FAIL (BLOCK). Reuses
@@ -3202,29 +3275,7 @@ def _check_delete_safety(conn, target_paths, root):
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.parse", exc)
         return {"score": 100, "violations": []}
-    names = []
-    seen = set()
-    for entry in deleted_lines:
-        try:
-            _p, _l, sym, kind = entry
-        except Exception:  # noqa: BLE001
-            continue
-        if kind != "symbol":
-            continue
-        nm = (sym or "").strip()
-        if len(nm) < 5 or nm.startswith("_") or not nm.isidentifier() or nm in seen:
-            continue
-        seen.add(nm)
-        names.append(nm)
-    if not names:
-        return {"score": 100, "violations": []}
-    still_defined = set()
-    try:
-        rows = batched_in(conn, "SELECT DISTINCT name FROM symbols WHERE name IN ({ph})", names)
-        still_defined = {_verify_rowval(r, "name") for r in rows}
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.delete_check.defined", exc)
-    candidates = [n for n in names if n not in still_defined]
+    candidates = _build_deleted_symbol_candidates(conn, deleted_lines)
     if not candidates:
         return {"score": 100, "violations": []}
     candidate_lookup = set(candidates)
@@ -3237,32 +3288,8 @@ def _check_delete_safety(conn, target_paths, root):
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.search", exc)
         return {"score": 100, "violations": []}
-    by_name = {}
-    for m in matches or []:
-        mp = (m.get("path") or "").replace("\\", "/")
-        if not mp or mp in changed or is_test_file(mp) or not _is_import_resolution_source_path(mp):
-            continue
-        content = m.get("content") or ""
-        for nm in _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_lookup):
-            by_name.setdefault(nm, []).append((mp, m.get("line")))
-    violations = []
-    for nm, locs in by_name.items():
-        files = sorted({f for f, _ in locs})
-        sample = ", ".join(files[:3]) + (" ..." if len(files) > 3 else "")
-        violations.append(
-            {
-                "category": _VERIFY_DELETE_CATEGORY,
-                "severity": SEVERITY_FAIL,
-                "hard_block": True,
-                "file": files[0],
-                "line": next((ln for _, ln in locs), None),
-                "message": (
-                    f"deleted symbol `{nm}` is still referenced by {len(files)} "
-                    f"un-edited file(s) ({sample}) — they will break"
-                ),
-                "fix": "Restore the symbol, update the surviving references in this change, or stage a deprecation",
-            }
-        )
+    by_name = _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup)
+    violations = _build_delete_check_violations(by_name)
     return {"score": 0 if violations else 100, "violations": violations}
 
 
