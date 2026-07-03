@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from roam.command_advice import validate_command_advice
+from roam.command_advice import (
+    _ADVICE_EXAMPLES,
+    _INTENT_RULES,
+    recommend_commands,
+    validate_command_advice,
+)
 
 
 def test_validate_roam_command_advice_accepts_known_command_flags():
@@ -180,3 +185,103 @@ def test_validate_unknown_subcommand_with_help_still_fails():
     failed before the eager-flag short-circuit is reached."""
     check = validate_command_advice("docs", "roam notacommand --help")
     assert check["executable_status"] == "failed"
+
+
+# --- recommend_commands ------------------------------------------------------
+
+
+def test_recommend_callers_intent_maps_to_uses():
+    suggestions = {s["command"]: s for s in recommend_commands("who calls handleSave")}
+    assert "uses" in suggestions
+    assert "impact" in suggestions
+    assert suggestions["uses"]["example"] == "roam uses <symbol>"
+    assert suggestions["uses"]["runnable"] is True
+
+
+def test_recommend_depends_on_intent_maps_to_deps():
+    suggestions = {s["command"]: s for s in recommend_commands("what depends on auth.py")}
+    assert "deps" in suggestions
+    assert "coupling" in suggestions
+    assert all(s["runnable"] for s in suggestions.values())
+
+
+def test_recommend_safe_to_delete_intent_maps_to_safe_delete():
+    suggestions = {s["command"]: s for s in recommend_commands("is it safe to delete oldUtil")}
+    assert "safe-delete" in suggestions
+    assert "delete-check" in suggestions
+
+
+def test_recommend_grep_workflow_maps_to_grep():
+    """Failed grep-heavy workflows route to reachability-aware roam grep."""
+    suggestions = {s["command"]: s for s in recommend_commands("grep -rn handleSave src/")}
+    assert "grep" in suggestions
+    # the leading suggestion is the direct roam grep replacement
+    assert suggestions["grep"]["example"] == "roam grep <pattern>"
+
+
+def test_recommend_every_suggestion_is_runnable_and_known():
+    """Ground-truth invariant: no suggestion is ever offered for a command that
+    does not exist or whose example does not validate."""
+    probes = [
+        "who calls x",
+        "what depends on y",
+        "is it safe to delete z",
+        "what breaks if I refactor w",
+        "trace the login flow",
+        "where is parseToken defined",
+        "circular imports",
+        "what is this file for",
+        "who owns this module",
+        "grep -r foo",
+        "find duplicate code",
+    ]
+    for intent in probes:
+        for suggestion in recommend_commands(intent):
+            assert suggestion["runnable"] is True, (intent, suggestion)
+            check = validate_command_advice("probe", suggestion["example"])
+            assert check["registry_status"] == "known", (intent, suggestion)
+            assert check["executable_status"] != "failed", (intent, suggestion)
+
+
+def test_recommend_empty_and_unknown_intent_returns_empty():
+    assert recommend_commands("") == []
+    assert recommend_commands("   ") == []
+    assert recommend_commands(None) == []
+    assert recommend_commands("completely unrelated gibberish xyzzy") == []
+
+
+def test_recommend_non_positive_limit_returns_empty():
+    assert recommend_commands("who calls x", limit=0) == []
+    assert recommend_commands("who calls x", limit=-3) == []
+
+
+def test_recommend_limit_caps_result_count():
+    suggestions = recommend_commands("grep -rn handleSave", limit=2)
+    assert len(suggestions) == 2
+    # ordering preserved within the cap
+    assert [s["command"] for s in suggestions] == ["grep", "uses"]
+
+
+def test_recommend_dedups_across_rules():
+    """A command surfaced by multiple rules appears at most once."""
+    intent = "who calls handleSave — I was about to grep -rn for it"
+    commands = [s["command"] for s in recommend_commands(intent)]
+    assert len(commands) == len(set(commands))
+    assert "uses" in commands  # shared by both the callers and grep-workflow rules
+
+
+def test_recommend_curated_tables_are_self_consistent():
+    """Every candidate named by a rule has a runnable example and is a real
+    command; every example command is named by at least one rule or kept as a
+    standalone suggestion surface."""
+    from roam.surface_counts import cli_commands
+
+    registry = set(cli_commands().keys())
+    candidates = {cmd for _, cmds, _ in _INTENT_RULES for cmd in cmds}
+    # candidates are a subset of the curated examples
+    assert candidates <= set(_ADVICE_EXAMPLES)
+    for command, example in _ADVICE_EXAMPLES.items():
+        assert command in registry, command
+        check = validate_command_advice("audit", example)
+        assert check["registry_status"] == "known", command
+        assert check["executable_status"] != "failed", command

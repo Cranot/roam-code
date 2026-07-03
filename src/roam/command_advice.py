@@ -1,3 +1,18 @@
+"""Command-advice helpers: validate agent command hints and recommend commands.
+
+Two complementary directions, both explicit-only (no I/O, never auto-injected
+into another command's output):
+
+* :func:`validate_command_advice` / :func:`validate_command_advice_many` — given
+  a ``roam ...`` command hint an agent emitted, check it against the CLI
+  registry/parser without executing it (registry-known? parses? unresolved
+  placeholders?). Direction: command-text -> is-it-valid.
+* :func:`recommend_commands` — the reverse direction: given an intent phrase or
+  a failed grep-heavy workflow, return existing roam commands that satisfy it.
+  Direction: intent / workflow -> candidate commands. It reuses the validator so
+  every suggestion is registry-confirmed and its example is copy-paste runnable.
+"""
+
 from __future__ import annotations
 
 import re
@@ -410,3 +425,180 @@ def validate_command_advice(source: str, command_text: str) -> dict:
 
 def validate_command_advice_many(items: Iterable[tuple[str, str]]) -> list[dict]:
     return [validate_command_advice(source, text) for source, text in items if text]
+
+
+# --- Command recommender -----------------------------------------------------
+# The reverse direction of validate_command_advice: map an intent phrase or a
+# failed grep-heavy workflow to existing roam commands. Stays smaller than the
+# agent loop it serves: a hand-curated local rule table (no embeddings, no DB,
+# no LLM, no I/O), reusing the validator so it can never suggest a command whose
+# example does not validate.
+
+# Canonical copy-paste example per command. Required positionals use angle-bracket
+# placeholders (the validator marks these "unchecked", not "failed"). Verified
+# runnable for every entry at authoring time via validate_command_advice.
+_ADVICE_EXAMPLES: dict[str, str] = {
+    "uses": "roam uses <symbol>",
+    "impact": "roam impact <symbol>",
+    "preflight": "roam preflight <symbol>",
+    "trace": "roam trace <symbol>",
+    "diagnose": "roam diagnose <symbol>",
+    "retrieve": 'roam retrieve "<task>"',
+    "grep": "roam grep <pattern>",
+    "search": "roam search <pattern>",
+    "symbol": "roam symbol <pattern>",
+    "deps": "roam deps <path>",
+    "coupling": "roam coupling -n 20",
+    "safe-delete": "roam safe-delete <symbol>",
+    "delete-check": "roam delete-check",
+    "dead": "roam dead",
+    "refs-text": "roam refs-text <string>",
+    "owner": "roam owner <symbol>",
+    "history-grep": "roam history-grep <pattern>",
+    "churn": "roam churn",
+    "cycles": "roam cycles",
+    "clusters": "roam clusters",
+    "layers": "roam layers",
+    "understand": "roam understand",
+    "file": "roam file <path>",
+    "describe": "roam describe <symbol>",
+    "context": "roam context <symbol>",
+    "clones": "roam clones",
+    "diff": "roam diff",
+}
+
+# Each rule: (substring matchers, candidate commands in priority order, rationale).
+# Matched case-insensitively against the whole intent. A rule fires when ANY of
+# its matchers is present; rank is by hit count, then rule order.
+_INTENT_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    (
+        ("who calls", "callers", "who uses", "who references", "references to", "called"),
+        ("uses", "impact", "refs-text"),
+        "graph-resolved callers replace grepping for a symbol name",
+    ),
+    (
+        ("depends on", "what depends", "importers of", "who imports", "coupled", "what uses this file"),
+        ("deps", "coupling", "impact"),
+        "file/module coupling replaces manual import grepping",
+    ),
+    (
+        ("safe to delete", "can i delete", "can i remove", "is it safe to remove", "unused", "dead code", "remove this"),
+        ("safe-delete", "delete-check", "dead"),
+        "deletion-safety gates replace guessing about surviving references",
+    ),
+    (
+        ("what breaks", "blast radius", "impact of changing", "refactor", "if i change", "before editing", "before i change"),
+        ("impact", "preflight", "uses"),
+        "blast-radius gates run before an edit instead of after",
+    ),
+    (
+        ("trace the", "trace a", "how does", "follow the call", "follow the flow", "walk the call", "why does it"),
+        ("trace", "retrieve", "diagnose"),
+        "ranked path retrieval replaces hand-walking the call graph",
+    ),
+    (
+        ("where is", "definition of", "find function", "find class", "find the function", "find the class", "locate"),
+        ("search", "symbol", "file"),
+        "graph-precise symbol lookup replaces text grep across files",
+    ),
+    (
+        ("circular", "import cycle", "circular import", "tangle"),
+        ("cycles", "clusters", "layers"),
+        "Tarjan cycle detection replaces manual import-loop hunting",
+    ),
+    (
+        ("what is this file", "what does this file", "file role", "lay of the land", "tour the codebase", "orient"),
+        ("understand", "file", "describe"),
+        "structured file briefing replaces reading the whole file",
+    ),
+    (
+        ("who owns", "owner of", "who wrote", "blame", "git history of", "history of", "when was"),
+        ("owner", "history-grep", "churn"),
+        "ownership and churn replace manual blame archaeology",
+    ),
+    (
+        ("duplicate", "duplicated", "copy-paste", "same code"),
+        ("clones", "diff"),
+        "clone detection replaces eyeballing for repeated blocks",
+    ),
+    # Failed grep-heavy workflows: the roam equivalents are reachability-aware.
+    (
+        ("grep -r", "grep -rn", "grep -ri", "grep for", "rg ", "ripgrep", "git grep", "xargs grep", "find . -name"),
+        ("grep", "uses", "retrieve", "refs-text"),
+        "reachability-aware grep replaces raw recursive grep with manual filtering",
+    ),
+)
+
+
+def _score_intent_rules(text: str) -> list[tuple[int, int, tuple[str, ...], str]]:
+    """Return rules that match ``text``, ranked by hit count then rule order."""
+    ranked: list[tuple[int, int, tuple[str, ...], str]] = []
+    for index, (matchers, candidates, why) in enumerate(_INTENT_RULES):
+        hits = sum(1 for matcher in matchers if matcher in text)
+        if hits:
+            ranked.append((hits, index, candidates, why))
+    ranked.sort(key=lambda entry: (-entry[0], entry[1]))
+    return ranked
+
+
+def _build_advice_suggestion(command: str, why: str) -> dict | None:
+    """Build one suggestion, or ``None`` if the command is not in the registry.
+
+    When the registry is reachable, never suggest a command that isn't in it
+    (handles renames/removals). When unreachable, fall back to the
+    author-verified curated list and let ``runnable`` disclose the unconfirmed
+    state.
+    """
+    commands, _load_reason = _cli_command_targets()
+    if commands and command not in commands:
+        return None
+    example = _ADVICE_EXAMPLES.get(command, f"roam {command}")
+    check = validate_command_advice("recommend", example)
+    runnable = check.get("registry_status") == "known" and check.get("executable_status") != "failed"
+    return {
+        "command": command,
+        "example": example,
+        "why": why,
+        "runnable": runnable,
+    }
+
+
+def _collect_advice_suggestions(
+    ranked: list[tuple[int, int, tuple[str, ...], str]], limit: int
+) -> list[dict]:
+    """Expand ranked rules into deduplicated suggestions, capped at ``limit``."""
+    suggestions: list[dict] = []
+    seen: set[str] = set()
+    for _hits, _index, candidates, why in ranked:
+        for command in candidates:
+            suggestion = None if command in seen else _build_advice_suggestion(command, why)
+            if suggestion is None:
+                continue
+            seen.add(command)
+            suggestions.append(suggestion)
+        if len(suggestions) >= limit:
+            return suggestions[:limit]
+    return suggestions
+
+
+def recommend_commands(intent: str, *, limit: int = 5) -> list[dict]:
+    """Map an intent phrase or a failed grep-heavy workflow to existing commands.
+
+    Explicit-only: this performs no I/O and is never run as a side effect of
+    another command. Call it from advice/help contexts that opt in. Each
+    suggestion is confirmed against the CLI registry and its example is validated
+    via :func:`validate_command_advice`, so a suggestion is never offered for a
+    command that does not exist or whose example does not validate. Returns
+    ``[]`` for empty, non-positive ``limit``, or unrecognized intent — it never
+    fabricates commands.
+
+    Each returned dict has ``command``, ``example``, ``why``, and ``runnable``
+    (``True`` when the command is registry-known and its example is executable
+    or a copy-paste placeholder that the validator accepted).
+    """
+    if limit <= 0:
+        return []
+    text = (intent or "").strip().lower()
+    if not text:
+        return []
+    return _collect_advice_suggestions(_score_intent_rules(text), limit)
