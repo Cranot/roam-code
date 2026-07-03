@@ -794,6 +794,44 @@ def _emit_consistent_laws_explain_contract(
     return False
 
 
+def _emit_laws_explain_resolution_failure(
+    json_mode,
+    token_budget,
+    law_id,
+    *,
+    verdict,
+    state,
+    available_ids=None,
+    next_commands=None,
+):
+    """Keep unresolved law requests structured without repeating branches."""
+    payload = {"law": None}
+    if available_ids is not None:
+        payload["available_ids"] = available_ids
+    if next_commands:
+        payload["agent_contract"] = {
+            "facts": [verdict],
+            "next_commands": next_commands,
+        }
+
+    _emit_consistent_laws_explain_contract(
+        json_mode,
+        token_budget,
+        {
+            "verdict": verdict,
+            "law_id": law_id,
+            "partial_success": True,
+            "state": state,
+        },
+        **payload,
+    )
+
+    if available_ids is not None and not json_mode:
+        click.echo("Available ids:")
+        for available_id in available_ids:
+            click.echo(f"  {available_id}")
+
+
 @laws_group.command("explain")
 @click.argument("law_id")
 @click.option("--laws-file", default=None, help="Path to a roam-laws.yml.")
@@ -810,20 +848,13 @@ def laws_explain(ctx, law_id, laws_file):
         # Pattern 1: parallel with laws-list / laws-check — JSON-mode
         # consumers reaching the not_initialized branch get the same
         # recovery hint that text-mode users see.
-        _emit_consistent_laws_explain_contract(
+        _emit_laws_explain_resolution_failure(
             json_mode,
             token_budget,
-            {
-                "verdict": verdict,
-                "law_id": law_id,
-                "partial_success": True,
-                "state": "not_initialized",
-            },
-            law=None,
-            agent_contract={
-                "facts": [verdict],
-                "next_commands": ["roam laws mine --out roam-laws.yml"],
-            },
+            law_id,
+            verdict=verdict,
+            state="not_initialized",
+            next_commands=["roam laws mine --out roam-laws.yml"],
         )
         return
 
@@ -831,22 +862,14 @@ def laws_explain(ctx, law_id, laws_file):
     match = next((law for law in laws if law.id == law_id), None)
     if match is None:
         verdict = f"no law with id '{law_id}'"
-        _emit_consistent_laws_explain_contract(
+        _emit_laws_explain_resolution_failure(
             json_mode,
             token_budget,
-            {
-                "verdict": verdict,
-                "law_id": law_id,
-                "partial_success": True,
-                "state": "not_found",
-            },
-            law=None,
+            law_id,
+            verdict=verdict,
+            state="not_found",
             available_ids=[law.id for law in laws],
         )
-        if not json_mode:
-            click.echo("Available ids:")
-            for law in laws:
-                click.echo(f"  {law.id}")
         return
 
     verdict = f"{match.id} -- {match.description}"
