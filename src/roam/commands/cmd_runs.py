@@ -61,6 +61,70 @@ def _run_check_as(phase, warnings_out: list[str], fn, *args, default=None, **kwa
         return default
 
 
+def _resolve_run_target_for_consistent_failure_contract(
+    ctx,
+    command_name: str,
+    run_id: str | None,
+    json_mode: bool,
+    warnings_out: list[str],
+    failure_flag: str,
+    no_active_verdict: str,
+):
+    """Resolve root/run_id while preserving each ledger command's failure contract."""
+    root = _run_check_as("resolve_project_root", warnings_out, find_project_root, default=None)
+    if root is None:
+        verdict = "error: could not resolve project root"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        command_name,
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": True,
+                            "state": "no_project_root",
+                            failure_flag: False,
+                            "warnings_out": list(warnings_out),
+                        },
+                        warnings_out=list(warnings_out),
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
+
+    if run_id:
+        return root, run_id
+
+    active = _run_check_as("latest_in_progress_run", warnings_out, latest_in_progress_run, root, default=None)
+    if active is None:
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        command_name,
+                        summary={
+                            "verdict": no_active_verdict,
+                            "partial_success": True,
+                            "state": "no_active_run",
+                            failure_flag: False,
+                        },
+                        # W20.6 error-msg consistency
+                        agent_contract={
+                            "facts": ["no in-progress run exists for this repo"],
+                            "next_commands": ["roam runs start --agent <name>"],
+                        },
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {no_active_verdict}")
+        ctx.exit(2)
+
+    return root, active.run_id
+
+
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
@@ -299,61 +363,15 @@ def runs_log(
     # discipline.
     _w607as_warnings_out: list[str] = []
 
-    root = _run_check_as("resolve_project_root", _w607as_warnings_out, find_project_root, default=None)
-    if root is None:
-        verdict = "error: could not resolve project root"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-log",
-                        summary={
-                            "verdict": verdict,
-                            "partial_success": True,
-                            "state": "no_project_root",
-                            "logged": False,
-                            "warnings_out": list(_w607as_warnings_out),
-                        },
-                        warnings_out=list(_w607as_warnings_out),
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
-
-    if not run_id:
-        # Resolve the implicit run: the most-recent in-progress one.
-        # Surface a precise error if none is active so the caller knows
-        # exactly what to do next.
-        active = _run_check_as(
-            "latest_in_progress_run", _w607as_warnings_out, latest_in_progress_run, root, default=None
-        )
-        if active is None:
-            verdict = "no active run -- run `roam runs start --agent <name>` first"  # W20.6 error-msg consistency
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "runs-log",
-                            summary={
-                                "verdict": verdict,
-                                "partial_success": True,
-                                "state": "no_active_run",
-                                "logged": False,
-                            },
-                            # W20.6 error-msg consistency
-                            agent_contract={
-                                "facts": ["no in-progress run exists for this repo"],
-                                "next_commands": ["roam runs start --agent <name>"],
-                            },
-                        )
-                    )
-                )
-                ctx.exit(2)
-            click.echo(f"VERDICT: {verdict}")
-            ctx.exit(2)
-        run_id = active.run_id
+    root, run_id = _resolve_run_target_for_consistent_failure_contract(
+        ctx,
+        "runs-log",
+        run_id,
+        json_mode,
+        _w607as_warnings_out,
+        "logged",
+        "no active run -- run `roam runs start --agent <name>` first",  # W20.6 error-msg consistency
+    )
 
     # Validate the run exists before logging.
     meta = _run_check_as("read_run_meta", _w607as_warnings_out, read_run_meta, root, run_id, default=None)
@@ -532,58 +550,15 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     # bundle emit must not block run-close, per existing W15.2 contract).
     _w607as_warnings_out: list[str] = []
 
-    root = _run_check_as("resolve_project_root", _w607as_warnings_out, find_project_root, default=None)
-    if root is None:
-        verdict = "error: could not resolve project root"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "runs-end",
-                        summary={
-                            "verdict": verdict,
-                            "partial_success": True,
-                            "state": "no_project_root",
-                            "ended": False,
-                            "warnings_out": list(_w607as_warnings_out),
-                        },
-                        warnings_out=list(_w607as_warnings_out),
-                    )
-                )
-            )
-            ctx.exit(2)
-        click.echo(f"VERDICT: {verdict}")
-        ctx.exit(2)
-
-    if not run_id:
-        active = _run_check_as(
-            "latest_in_progress_run", _w607as_warnings_out, latest_in_progress_run, root, default=None
-        )
-        if active is None:
-            verdict = "no active run to end -- run `roam runs start --agent <name>` first"
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "runs-end",
-                            summary={
-                                "verdict": verdict,
-                                "partial_success": True,
-                                "state": "no_active_run",
-                                "ended": False,
-                            },
-                            # W20.6 error-msg consistency
-                            agent_contract={
-                                "facts": ["no in-progress run exists for this repo"],
-                                "next_commands": ["roam runs start --agent <name>"],
-                            },
-                        )
-                    )
-                )
-                ctx.exit(2)
-            click.echo(f"VERDICT: {verdict}")
-            ctx.exit(2)
-        run_id = active.run_id
+    root, run_id = _resolve_run_target_for_consistent_failure_contract(
+        ctx,
+        "runs-end",
+        run_id,
+        json_mode,
+        _w607as_warnings_out,
+        "ended",
+        "no active run to end -- run `roam runs start --agent <name>` first",
+    )
 
     try:
         meta = _run_check_as("end_run", _w607as_warnings_out, end_run, root, run_id, status=status, default=None)
