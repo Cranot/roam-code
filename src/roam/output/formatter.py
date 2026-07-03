@@ -6,6 +6,7 @@ import json as _json
 import os
 import time
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any, Literal, Mapping, TypeAlias
 
 # Envelope schema versioning (semver: major.minor.patch)
@@ -240,6 +241,31 @@ def format_catalog_output(
     if footer:
         lines.extend(["", footer])
     return "\n".join(lines)
+
+
+def render_catalog(
+    json_mode: bool,
+    command_name: str,
+    items: list[dict],
+    field_name: str,
+    verdict: str,
+    headers: list[tuple[str, int]],
+    format_row: Callable[[dict], str],
+    footer: str | None = None,
+) -> str:
+    """Render a simple catalog listing using the shared output dispatch.
+
+    Centralises the invariant text-table wrapping (header, separator, rows)
+    while letting each command supply its own rows and row formatter.
+    """
+    text_lines = [
+        "  ".join(label.ljust(width) for label, width in headers),
+        "  ".join("-" * width for _, width in headers),
+    ]
+    text_lines.extend(format_row(it) for it in items)
+    return format_catalog_output(
+        json_mode, command_name, verdict, items, field_name, text_lines, footer
+    )
 
 
 def to_json(data) -> str:
