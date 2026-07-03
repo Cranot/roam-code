@@ -24,6 +24,7 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import click
@@ -167,11 +168,66 @@ def _resolve_convention_subject_id(
         return None
 
 
+@dataclass(frozen=True)
+class _ConventionRegistryFields:
+    """Detector-specific convention fields ready for one registry row."""
+
+    name: str
+    file_path: str
+    line_start: int | None
+    finding_id: str
+    claim: str
+    evidence_json: str
+    confidence: str
+
+
+def _prepare_convention_fields_for_registry_row(outlier: dict) -> _ConventionRegistryFields:
+    """Normalize one naming outlier before the shared registry emit loop."""
+    name = outlier.get("name") or ""
+    kind = outlier.get("kind") or ""
+    file_path = outlier.get("file") or ""
+    line_start = outlier.get("line")
+    try:
+        line_start_int: int | None = int(line_start) if line_start is not None else None
+    except (TypeError, ValueError):
+        line_start_int = None
+    family = outlier.get("language_family") or "unknown"
+    group = _group_for_kind(kind)
+    actual_style = outlier.get("actual_style") or "?"
+    expected_style = outlier.get("expected_style") or "?"
+    expected_source = outlier.get("expected_source")
+
+    finding_id = _conventions_finding_id(family, group, name, file_path, line_start_int)
+    evidence = {
+        "name": name,
+        "kind": kind,
+        "language_family": family,
+        "kind_group": group,
+        "actual_style": actual_style,
+        "expected_style": expected_style,
+        "expected_source": expected_source,
+        "file_path": file_path,
+        "line_start": line_start_int,
+    }
+    location = f"{file_path}:{line_start_int}" if line_start_int is not None else file_path
+    claim = (
+        f"naming-outlier: {name} ({kind}) is {actual_style}, "
+        f"expected {expected_style} for {family}/{group} at {location}"
+    )
+    return _ConventionRegistryFields(
+        name=name,
+        file_path=file_path,
+        line_start=line_start_int,
+        finding_id=finding_id,
+        claim=claim,
+        evidence_json=_json.dumps(evidence, sort_keys=True),
+        confidence=_conventions_violation_confidence(expected_source),
+    )
+
+
 def _emit_records_to_findings_registry(
     conn: sqlite3.Connection,
     records: list[dict],
-    source_detector: str,
-    source_version: str,
     *,
     build_finding: Callable[[dict, sqlite3.Connection], "FindingRecord | None"],
 ) -> int:
@@ -219,46 +275,20 @@ def _emit_conventions_findings(
     from roam.db.findings import FindingRecord
 
     def _build_convention_finding(o: dict, _conn: sqlite3.Connection) -> FindingRecord | None:
-        name = o.get("name") or ""
-        kind = o.get("kind") or ""
-        file_path = o.get("file") or ""
-        line_start = o.get("line")
-        try:
-            line_start_int: int | None = int(line_start) if line_start is not None else None
-        except (TypeError, ValueError):
-            line_start_int = None
-        family = o.get("language_family") or "unknown"
-        group = _group_for_kind(kind)
-        actual_style = o.get("actual_style") or "?"
-        expected_style = o.get("expected_style") or "?"
-        expected_source = o.get("expected_source")
-
-        subject_id = _resolve_convention_subject_id(_conn, file_path, name, line_start_int)
-        finding_id = _conventions_finding_id(family, group, name, file_path, line_start_int)
-        evidence = {
-            "name": name,
-            "kind": kind,
-            "language_family": family,
-            "kind_group": group,
-            "actual_style": actual_style,
-            "expected_style": expected_style,
-            "expected_source": expected_source,
-            "file_path": file_path,
-            "line_start": line_start_int,
-        }
-        location = f"{file_path}:{line_start_int}" if line_start_int is not None else file_path
-        claim = (
-            f"naming-outlier: {name} ({kind}) is {actual_style}, "
-            f"expected {expected_style} for {family}/{group} at {location}"
+        fields = _prepare_convention_fields_for_registry_row(o)
+        subject_id = _resolve_convention_subject_id(
+            _conn,
+            fields.file_path,
+            fields.name,
+            fields.line_start,
         )
-        confidence = _conventions_violation_confidence(expected_source)
         return FindingRecord(
-            finding_id_str=finding_id,
+            finding_id_str=fields.finding_id,
             subject_kind="symbol" if subject_id is not None else "file",
             subject_id=subject_id,
-            claim=claim,
-            evidence_json=_json.dumps(evidence, sort_keys=True),
-            confidence=confidence,
+            claim=fields.claim,
+            evidence_json=fields.evidence_json,
+            confidence=fields.confidence,
             source_detector="conventions",
             source_version=source_version,
         )
@@ -266,8 +296,6 @@ def _emit_conventions_findings(
     return _emit_records_to_findings_registry(
         conn,
         outliers,
-        "conventions",
-        source_version,
         build_finding=_build_convention_finding,
     )
 
