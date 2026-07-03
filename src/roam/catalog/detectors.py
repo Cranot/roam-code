@@ -4940,7 +4940,7 @@ def _apply_detector_scopes(conn, scope_ids):
         _DETECTOR_SCOPE_PATHS = paths
         catalog_scope_applied = True
     except Exception as exc:  # noqa: BLE001 -- scope filter is an optimization; unscoped detection is the safe fallback
-        log.warning("run_detectors: could not apply catalog scope: %s", exc)
+        log.warning("run_detectors: could not apply catalog scope: %s", exc, exc_info=True)
     return idiom_reset, js_idiom_reset, catalog_scope_applied
 
 
