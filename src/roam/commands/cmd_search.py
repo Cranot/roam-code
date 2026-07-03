@@ -405,9 +405,7 @@ def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[
         ).fetchone()
         if sym_row:
             terms = _unique_terms_preserve_count_signal(fts_query)
-            explanation["term_counts"].update(
-                _field_term_counts_preserve_single_row_signal(sym_row, terms)
-            )
+            explanation["term_counts"].update(_field_term_counts_preserve_single_row_signal(sym_row, terms))
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
@@ -433,19 +431,38 @@ def _unique_terms_preserve_count_signal(fts_query: str) -> frozenset[str]:
 
 
 def _field_term_counts_preserve_single_row_signal(sym_row, terms: frozenset[str]) -> dict[str, int]:
-    """Keep one row's term-count signal independent from batch plumbing."""
+    """Keep one row's term-count signal independent from batch plumbing.
+
+    Uses set-lookup token counting instead of a term-by-term substring scan.
+    The trade-off: we lose arbitrary substring overlap (e.g. "user" inside
+    "username") but gain a single-pass membership scan that matches how
+    FTS5 itself tokenizes text.
+    """
     if not terms:
         return {}
 
     counts: dict[str, int] = {}
     for field in _FTS_COLUMNS:
-        field_val = (sym_row[field] or "").lower()
+        field_val = sym_row[field] or ""
         if not field_val:
             continue
-        count = sum(field_val.count(term) for term in terms)
+        count = _count_term_tokens_in_text(field_val, terms)
         if count > 0:
             counts[field] = count
     return counts
+
+
+def _count_term_tokens_in_text(text: str, terms: frozenset[str]) -> int:
+    """Count tokens in *text* that are members of *terms*.
+
+    Splits snake_case, camelCase and non-word boundaries so a term like
+    ``user`` matches ``authenticate_user``, ``UserProfile`` and ``get_user``.
+    """
+    tokens: list[str] = []
+    for part in re.split(r"[^a-zA-Z0-9]+", text):
+        camel_split = re.sub(r"(?<!^)(?=[A-Z])", " ", part)
+        tokens.extend(token.lower() for token in camel_split.split() if token)
+    return sum(1 for token in tokens if token in terms)
 
 
 def _get_explain_data_batch(
@@ -552,9 +569,7 @@ def _get_explain_data_batch(
             sym_row = sym_by_id.get(sid)
             if not sym_row:
                 continue
-            out[sid]["term_counts"].update(
-                _field_term_counts_preserve_single_row_signal(sym_row, terms)
-            )
+            out[sid]["term_counts"].update(_field_term_counts_preserve_single_row_signal(sym_row, terms))
     except Exception as exc:
         if warnings_out is not None:
             warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
