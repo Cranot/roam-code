@@ -697,6 +697,99 @@ def _relink_annotations(conn):
         log_swallowed("index.indexer:relink_annotations", exc)
 
 
+def _backup_annotations(db_path):
+    """Read all annotations from the DB before force-reindex deletes it."""
+    import gc
+    import sqlite3
+
+    if not db_path.exists():
+        return []
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=10)
+        conn.row_factory = sqlite3.Row
+        # Check if annotations table exists
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='annotations'").fetchone()
+        if not tables:
+            return []
+        rows = conn.execute("SELECT * FROM annotations").fetchall()
+        result = [dict(r) for r in rows]
+    except Exception as exc:
+        # Pattern-2 lineage: this is a data-loss path. force-reindex is
+        # about to unlink the DB (see _reset_index_for_force, ~line 1158);
+        # if we silently return [] here, user annotations vanish with no
+        # signal. Emit a WARN so an operator can see WHY annotations went
+        # missing after a force rebuild.
+        log.warning(
+            "_backup_annotations: failed to read annotations from %s "
+            "(%s: %s); force-reindex may proceed and existing annotations "
+            "will not be restored",
+            db_path,
+            type(exc).__name__,
+            exc,
+        )
+        return []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — see cleanup rationale below
+                # Intentional silent guard: best-effort close in a finally
+                # block — the real error (if any) was already surfaced by
+                # the try-body's WARN above; a close failure must not mask it.
+                pass
+        del conn
+        gc.collect()  # Release file handles on Windows
+
+    # Also write to JSON backup for crash safety
+    backup_path = db_path.parent / "annotations_backup.json"
+    try:
+        import json
+
+        backup_path.write_text(
+            json.dumps(result, default=str),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        # Pattern-2 lineage: secondary crash-safety backup failed. The
+        # primary in-memory copy is still returned for restore, but the
+        # on-disk JSON safety net is now empty — warn so an operator who
+        # later relies on the JSON backup learns why it's missing.
+        log.warning(
+            "_backup_annotations: failed to write JSON crash-safety backup "
+            "to %s (%s: %s); in-memory restore path is still active",
+            backup_path,
+            type(exc).__name__,
+            exc,
+        )
+
+    return result
+
+
+def _restore_annotations(conn, saved):
+    """Re-insert saved annotations and re-link to new symbol IDs."""
+    if not saved:
+        return
+    for ann in saved:
+        conn.execute(
+            "INSERT INTO annotations "
+            "(qualified_name, file_path, tag, content, author, "
+            " created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                ann.get("qualified_name"),
+                ann.get("file_path"),
+                ann.get("tag"),
+                ann["content"],
+                ann.get("author"),
+                ann.get("created_at"),
+                ann.get("expires_at"),
+            ),
+        )
+    _relink_annotations(conn)
+    _log(f"  Restored {len(saved)} annotations")
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
 
@@ -1204,99 +1297,6 @@ class Indexer:
                 verbose,
             )
 
-    @staticmethod
-    def _backup_annotations(db_path):
-        """Read all annotations from the DB before force-reindex deletes it."""
-        import gc
-        import sqlite3
-
-        if not db_path.exists():
-            return []
-        conn = None
-        try:
-            conn = sqlite3.connect(str(db_path), timeout=10)
-            conn.row_factory = sqlite3.Row
-            # Check if annotations table exists
-            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='annotations'").fetchone()
-            if not tables:
-                return []
-            rows = conn.execute("SELECT * FROM annotations").fetchall()
-            result = [dict(r) for r in rows]
-        except Exception as exc:
-            # Pattern-2 lineage: this is a data-loss path. force-reindex is
-            # about to unlink the DB (see _reset_index_for_force, ~line 1158);
-            # if we silently return [] here, user annotations vanish with no
-            # signal. Emit a WARN so an operator can see WHY annotations went
-            # missing after a force rebuild.
-            log.warning(
-                "_backup_annotations: failed to read annotations from %s "
-                "(%s: %s); force-reindex may proceed and existing annotations "
-                "will not be restored",
-                db_path,
-                type(exc).__name__,
-                exc,
-            )
-            return []
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 — see cleanup rationale below
-                    # Intentional silent guard: best-effort close in a finally
-                    # block — the real error (if any) was already surfaced by
-                    # the try-body's WARN above; a close failure must not mask it.
-                    pass
-            del conn
-            gc.collect()  # Release file handles on Windows
-
-        # Also write to JSON backup for crash safety
-        backup_path = db_path.parent / "annotations_backup.json"
-        try:
-            import json
-
-            backup_path.write_text(
-                json.dumps(result, default=str),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            # Pattern-2 lineage: secondary crash-safety backup failed. The
-            # primary in-memory copy is still returned for restore, but the
-            # on-disk JSON safety net is now empty — warn so an operator who
-            # later relies on the JSON backup learns why it's missing.
-            log.warning(
-                "_backup_annotations: failed to write JSON crash-safety backup "
-                "to %s (%s: %s); in-memory restore path is still active",
-                backup_path,
-                type(exc).__name__,
-                exc,
-            )
-
-        return result
-
-    @staticmethod
-    def _restore_annotations(conn, saved):
-        """Re-insert saved annotations and re-link to new symbol IDs."""
-        if not saved:
-            return
-        for ann in saved:
-            conn.execute(
-                "INSERT INTO annotations "
-                "(qualified_name, file_path, tag, content, author, "
-                " created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    ann.get("qualified_name"),
-                    ann.get("file_path"),
-                    ann.get("tag"),
-                    ann["content"],
-                    ann.get("author"),
-                    ann.get("created_at"),
-                    ann.get("expires_at"),
-                ),
-            )
-        _relink_annotations(conn)
-        _log(f"  Restored {len(saved)} annotations")
-
     def _reset_index_for_force(self, force: bool) -> list[dict]:
         if not force:
             return []
@@ -1304,7 +1304,7 @@ class Indexer:
         if not db_path.exists():
             return []
 
-        saved_annotations = self._backup_annotations(db_path)
+        saved_annotations = _backup_annotations(db_path)
         db_path.unlink()
         for suffix in ("-wal", "-shm"):
             wal = db_path.parent / (db_path.name + suffix)
@@ -1930,7 +1930,7 @@ class Indexer:
         if force and saved_annotations:
             self._log("Restoring annotations...")
             try:
-                self._restore_annotations(conn, saved_annotations)
+                _restore_annotations(conn, saved_annotations)
             except Exception as e:
                 self._log(f"  Annotation restore failed: {e}")
             return
