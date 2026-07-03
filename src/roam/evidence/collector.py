@@ -1537,13 +1537,13 @@ def _collect_corroborated_authorities_from_runs(
 
     try:
         key = ensure_ledger_key(Path(repo_root))
-    except Exception as exc:  # noqa: BLE001 - key missing / corrupt
+    except (OSError, ValueError) as exc:
         warnings.append(f"authority-corroboration: ledger key unavailable ({exc})")
         return frozenset()
 
     try:
         run_metas = list(list_runs(Path(repo_root)))
-    except Exception as exc:  # noqa: BLE001
+    except OSError as exc:
         warnings.append(f"authority-corroboration: list_runs failed ({exc})")
         return frozenset()
 
@@ -1562,7 +1562,7 @@ def _collect_corroborated_authorities_from_runs(
             continue
         try:
             result = verify_chain(events, key)
-        except Exception as exc:  # noqa: BLE001
+        except (TypeError, ValueError) as exc:
             warnings.append(f"authority-corroboration: verify_chain crashed on {meta.run_id} ({exc})")
             continue
         if result.get("state") != "ok":
