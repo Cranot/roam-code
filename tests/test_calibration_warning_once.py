@@ -18,10 +18,10 @@ import pytest
 
 import roam.plan.calibration as calibration
 from roam.plan.calibration import (
+    _WARNED_PROFILES,
     PROFILES,
     VALIDATED_PROFILES,
     CalibrationProfile,
-    _WARNED_PROFILES,
     get_profile,
     reset_profile_warnings,
 )

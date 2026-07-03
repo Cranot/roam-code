@@ -709,7 +709,6 @@ def resolve_references(
     )
 
     for ref in references:
-        source_name = ref.get("source_name", "")
         target_name = ref.get("target_name", "")
         kind = ref.get("kind", "call")
         line = ref.get("line")

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from roam.plan.compiler import _extract_file_paths, _likely_files_from_search, _repo_contained_path
+from roam.plan.compiler import _extract_file_paths, _repo_contained_path
 
 
 @pytest.mark.parametrize(

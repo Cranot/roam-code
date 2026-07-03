@@ -45,8 +45,8 @@ from __future__ import annotations
 import hashlib as _hashlib
 import json as _json
 import subprocess as _subprocess
-from collections.abc import Callable
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path

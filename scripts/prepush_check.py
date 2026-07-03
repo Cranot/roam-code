@@ -39,6 +39,7 @@ command for each failure.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -142,10 +143,17 @@ class GateRunner:
     root: Path
     results: list[GateResult] = field(default_factory=list)
 
+    def _env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        src = str(self.root / "src")
+        current = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = src if not current else f"{src}{os.pathsep}{current}"
+        return env
+
     def _run(self, name: str, argv: list[str], fix_hint: str) -> GateResult:
         print(f"[prepush] {name} ...", flush=True)
         start = time.perf_counter()
-        proc = subprocess.run(argv, cwd=str(self.root), check=False)
+        proc = subprocess.run(argv, cwd=str(self.root), check=False, env=self._env())
         elapsed = time.perf_counter() - start
         passed = proc.returncode == 0
         result = GateResult(name=name, passed=passed, seconds=elapsed, fix_hint=fix_hint if not passed else "")

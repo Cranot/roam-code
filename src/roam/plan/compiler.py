@@ -7155,7 +7155,6 @@ def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str
         entity = _probe_freeform_entities_for_task(task, cwd) or {}
         entity.update(_probe_freeform_intent_boosters(task, [], cwd))
         return entity or None
-    import os
     import subprocess
 
     facts: dict = {}

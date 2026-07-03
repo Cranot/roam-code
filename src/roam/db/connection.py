@@ -906,9 +906,8 @@ def _commit_and_optimize(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("PRAGMA optimize")
     except sqlite3.DatabaseError as exc:
-        print(
-            f"roam: PRAGMA optimize skipped (non-fatal, stats not refreshed): {type(exc).__name__}: {exc}",
-            file=sys.stderr,
+        sys.stderr.write(
+            f"roam: PRAGMA optimize skipped (non-fatal, stats not refreshed): {type(exc).__name__}: {exc}\n"
         )
 
 

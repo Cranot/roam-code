@@ -50,6 +50,8 @@ from .registry import (
     RoamPluginContext,
     _registry_state,
     get_framework_profile,
+)
+from .registry import (
     get_framework_profiles as _registry_get_framework_profiles,
 )
 

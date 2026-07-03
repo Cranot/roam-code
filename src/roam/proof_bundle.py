@@ -43,6 +43,7 @@ from roam.guard_enums import (
     VERDICTS as _V1_VERDICTS,
 )
 from roam.guard_rules import RulePack
+from roam.output._severity import severity_rank
 from roam.verdict import compute_verdict
 from roam.verification_contract import build_verification_contract
 
@@ -196,14 +197,12 @@ def _extract_risk(bundle: dict[str, Any]) -> dict[str, Any]:
         desc = r.get("description") or r.get("reason") or r.get("kind")
         if desc:
             reasons.append(str(desc))
-    # Promote highest level present. Prebuilt rank map: severity rank is
-    # intrinsic data, so store it once (O(1) lookup) instead of rescanning a
-    # positional tuple via .index() on every comparison.
-    severity_rank = {"low": 0, "medium": 1, "high": 2}
     chosen = "low"
-    chosen_rank = severity_rank[chosen]
+    chosen_rank = severity_rank(chosen)
     for lvl in levels:
-        rank = severity_rank.get(lvl, -1)
+        if not isinstance(lvl, str) or lvl not in _V1_RISK_LEVELS:
+            continue
+        rank = severity_rank(lvl)
         if rank > chosen_rank:
             chosen = lvl
             chosen_rank = rank

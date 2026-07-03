@@ -20,7 +20,6 @@ from pathlib import Path
 from roam.output.formatter import WarningsOut
 from roam.runtime.lockmgr import default_lockmgr
 
-
 __all__ = (
     "acquire_lock_for_command",
     "daemon_running",

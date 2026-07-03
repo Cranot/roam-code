@@ -18,7 +18,6 @@ import pytest
 
 from roam.plan import compiler as M
 
-
 SENSITIVE = ["grep", "retrieve", "search-semantic", "taint", "file", "refs-text", "history-grep", "config"]
 SAFE = ["uses", "impact", "dead", "complexity", "clusters", "deps", "search", "brief", "coupling", "batch-search"]
 

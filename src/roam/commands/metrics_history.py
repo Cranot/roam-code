@@ -84,6 +84,7 @@ def _count_layer_violations_for_resilient_snapshots(G):
         return 0
 
     from networkx.exception import NetworkXException
+
     from roam.graph.layers import detect_layers, find_violations
 
     try:

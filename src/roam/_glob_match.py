@@ -34,10 +34,9 @@ export. That is a resolver blind spot, not dead code — do not delete.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import fnmatch
 import re
-
+from collections.abc import Iterator
 
 _REGEX_META_CHARS = frozenset(r".+^${}()|[]")
 

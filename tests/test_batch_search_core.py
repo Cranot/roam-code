@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from importlib.util import module_from_spec, spec_from_file_location
 import sqlite3
-from pathlib import Path
+from importlib.util import module_from_spec, spec_from_file_location
 
 import pytest
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "roam" / "commands" / "batch_search_core.py"
+from tests._helpers.repo_root import repo_root
+
+MODULE_PATH = repo_root() / "src" / "roam" / "commands" / "batch_search_core.py"
 SPEC = spec_from_file_location("local_batch_search_core", MODULE_PATH)
 assert SPEC is not None
 batch_search_core = module_from_spec(SPEC)

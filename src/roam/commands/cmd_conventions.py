@@ -24,6 +24,7 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import click
 
@@ -43,6 +44,9 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+
+if TYPE_CHECKING:
+    from roam.db.findings import FindingRecord
 
 # W133 (W93 follow-up): conventions is the next detector migrating onto
 # the central findings registry (after ``clones`` in W95, ``dead`` in
@@ -180,7 +184,7 @@ def _emit_records_to_findings_registry(
     """
     # Local import keeps the cost out of the read-only path — callers
     # without --persist never reach here.
-    from roam.db.findings import FindingRecord, emit_finding
+    from roam.db.findings import emit_finding
 
     written = 0
     for rec in records:

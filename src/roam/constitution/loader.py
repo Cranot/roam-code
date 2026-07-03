@@ -766,10 +766,7 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
         # the degraded state: the file EXISTS yet cannot be read, which is
         # not the same as "no constitution". Silent None here would be the
         # Pattern-2 silent fallback this module avoids elsewhere.
-        print(
-            f"[constitution] cannot read {path}: {exc}",
-            file=sys.stderr,
-        )
+        sys.stderr.write(f"[constitution] cannot read {path}: {exc}\n")
         return None
     data = _load_yaml(text)
     if not data:
@@ -914,10 +911,7 @@ def _source_status(repo_root: Path, name: str, raw_path: str) -> SourceStatus:
                 detail="file is zero bytes",
             )
     except OSError as exc:
-        print(
-            f"[constitution] optional source empty-file probe failed for {raw_path}: {exc}",
-            file=sys.stderr,
-        )
+        sys.stderr.write(f"[constitution] optional source empty-file probe failed for {raw_path}: {exc}\n")
     return SourceStatus(name=name, path=raw_path, exists=True, state="ok", detail="")
 
 

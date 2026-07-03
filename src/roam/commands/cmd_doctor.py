@@ -13,12 +13,12 @@ to populate. See W1085 / W1144 for the audit + design rationale.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import json as _json
 import re
 import shutil
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import click

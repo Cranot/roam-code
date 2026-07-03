@@ -259,6 +259,7 @@ def math_cmd(
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+    _json_mode_warnings: list[str] = []
 
     if list_frameworks:
         from roam.catalog.detectors import list_framework_profiles
@@ -424,11 +425,14 @@ def math_cmd(
             # helper without first re-balancing the catalog vocabulary.
             close = difflib.get_close_matches(task_filter, known_task_ids, n=3, cutoff=0.4)
             hint = f" Did you mean: {', '.join(close)}?" if close else ""
-            click.echo(
-                f"NOTE: --task '{task_filter}' is not a known task id."
-                f" Run `roam algo --list-detectors` to see task ids." + hint,
-                err=True,
+            msg = (
+                f"--task '{task_filter}' is not a known task id."
+                f" Run `roam algo --list-detectors` to see task ids.{hint}"
             )
+            if json_mode:
+                _json_mode_warnings.append(msg)
+            else:
+                click.echo(f"NOTE: {msg}", err=True)
 
     ensure_index()
 
@@ -464,18 +468,22 @@ def math_cmd(
             scope_file_ids=scope_file_ids,
         )
         if scope_misses:
-            click.echo(
-                f"NOTE: --path matched no indexed files for: {', '.join(scope_misses)}",
-                err=True,
-            )
+            msg = f"--path matched no indexed files for: {', '.join(scope_misses)}"
+            if json_mode:
+                _json_mode_warnings.append(msg)
+            else:
+                click.echo(f"NOTE: {msg}", err=True)
 
         if detector_meta.get("framework_unknown"):
-            click.echo(
-                f"NOTE: framework '{detector_meta['framework_unknown']}' is not a "
+            msg = (
+                f"framework '{detector_meta['framework_unknown']}' is not a "
                 "bundled profile. Defaults applied. Run `roam math --list-frameworks` "
-                "to see options.",
-                err=True,
+                "to see options."
             )
+            if json_mode:
+                _json_mode_warnings.append(msg)
+            else:
+                click.echo(f"NOTE: {msg}", err=True)
 
         # W1057 (Pattern 1D + Pattern 2): surface unknown --only/--exclude
         # names so a typo doesn't silently filter the run to zero detectors.
@@ -521,7 +529,8 @@ def math_cmd(
                 f"--only: unknown detector name(s): {', '.join(only_unknown)}. "
                 "Run `roam math --list-detectors` to see registered names." + _only_frag["verdict_suffix"]
             )
-            click.echo(f"NOTE: {msg}", err=True)
+            if not json_mode:
+                click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
         if exclude_unknown:
             _exclude_frag = structured_unknown_filter_many(
@@ -535,7 +544,8 @@ def math_cmd(
                 f"--exclude: unknown detector name(s): {', '.join(exclude_unknown)}. "
                 "Run `roam math --list-detectors` to see registered names." + _exclude_frag["verdict_suffix"]
             )
-            click.echo(f"NOTE: {msg}", err=True)
+            if not json_mode:
+                click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
 
         # `--since baseline.json`: keep only findings whose
@@ -759,7 +769,7 @@ def math_cmd(
             # mirrors the cmd_alerts / cmd_pr_risk warnings_out discipline.
             # W1057 (Pattern 1D + Pattern 2): unknown --only/--exclude names
             # fold into the same warnings_out / partial_success discipline.
-            _all_warnings = list(_suppression_warnings) + list(_filter_warnings)
+            _all_warnings = list(_json_mode_warnings) + list(_suppression_warnings) + list(_filter_warnings)
             if _all_warnings:
                 _math_summary["partial_success"] = True
                 _math_summary["warnings_count"] = len(_all_warnings)

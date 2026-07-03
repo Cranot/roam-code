@@ -521,7 +521,7 @@ def claim_lease(
         # fire-and-forget idiom in memory/store.py's _warn_skipped_memory_line).
         # The claim itself still proceeds — the GC is best-effort per the
         # docstring, and a stale-lease sweep must never block a fresh claim.
-        print(f"[leases] pre-claim GC skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+        sys.stderr.write(f"[leases] pre-claim GC skipped ({type(exc).__name__}: {exc})\n")
 
     subject_list = [str(s) for s in subject]
     conflict = find_conflict(repo_root, subject_list)

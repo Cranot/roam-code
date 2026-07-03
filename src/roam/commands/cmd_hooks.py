@@ -11,11 +11,11 @@ W1148 audit memo.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import json
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import click

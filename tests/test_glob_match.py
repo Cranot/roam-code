@@ -17,7 +17,6 @@ import pytest
 
 from roam._glob_match import matches_glob
 
-
 # --- Empty / None handling -------------------------------------------------
 
 

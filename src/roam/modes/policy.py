@@ -334,10 +334,7 @@ def _materialise_from_constitution(
     try:
         from roam.constitution.loader import load_constitution
     except ImportError as exc:
-        print(
-            f"[modes.policy] optional constitution loader unavailable: {exc}",
-            file=sys.stderr,
-        )
+        sys.stderr.write(f"[modes.policy] optional constitution loader unavailable: {exc}\n")
         return None
 
     try:

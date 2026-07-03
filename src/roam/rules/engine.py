@@ -142,12 +142,12 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        print(f"[rules] YAML read failed for {path}: {exc}", file=sys.stderr)
+        sys.stderr.write(f"[rules] YAML read failed for {path}: {exc}\n")
         return None
     try:
         return _parse_simple_yaml_text(text)
     except ValueError as exc:
-        print(f"[rules] fallback YAML parser failed for {path}: {exc}", file=sys.stderr)
+        sys.stderr.write(f"[rules] fallback YAML parser failed for {path}: {exc}\n")
         return None
 
 

@@ -15,7 +15,6 @@ import pytest
 
 from roam._signature_utils import _IGNORED_PARAM_NAMES, parse_param_names
 
-
 # ---------------------------------------------------------------------------
 # Empty / falsy / unparseable inputs -> []
 # ---------------------------------------------------------------------------

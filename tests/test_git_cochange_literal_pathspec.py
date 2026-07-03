@@ -25,8 +25,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init  # noqa: E402,F401  (re-exported convention)
 

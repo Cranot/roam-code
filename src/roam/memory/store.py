@@ -128,7 +128,7 @@ def _ensure_parent(path: Path) -> None:
 
 
 def _warn_skipped_memory_line(reason: str, exc: Exception) -> None:
-    print(f"[memory] skipped malformed memory.jsonl line ({reason}): {exc}", file=sys.stderr)
+    sys.stderr.write(f"[memory] skipped malformed memory.jsonl line ({reason}): {exc}\n")
 
 
 # ---------------------------------------------------------------------------

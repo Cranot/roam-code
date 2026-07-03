@@ -11,10 +11,10 @@ cached envelopes don't surface as stale renders.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json as _json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from roam.output.formatter import WarningsOut
@@ -164,7 +164,4 @@ def _save_cache(cache_dir: Path, key: str, bundle: dict) -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         p.write_text(_json.dumps(bundle, indent=2), encoding="utf-8")
     except (OSError, TypeError, ValueError) as exc:
-        print(
-            f"[pr-analyze] cache write skipped: {p}: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )  # noqa: T201
+        sys.stderr.write(f"[pr-analyze] cache write skipped: {p}: {type(exc).__name__}: {exc}\n")

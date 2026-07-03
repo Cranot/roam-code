@@ -14,8 +14,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
 from roam.plan.import_audit import (
     _audit_file_contained,
     _audit_source_files_in_dir,
