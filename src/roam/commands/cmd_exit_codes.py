@@ -15,7 +15,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.output.formatter import format_catalog_output
+from roam.output.formatter import render_catalog
 
 _DESCRIPTIONS = {
     "EXIT_SUCCESS": "Command completed normally.",
@@ -65,21 +65,17 @@ def exit_codes(ctx) -> None:
         )
     rows.sort(key=lambda r: r["code"])
 
-    verdict = f"{len(rows)} exit code(s) defined"
-    text_lines = [
-        f"{'Code':>4}  {'Name':<24}  Description",
-        f"{'-' * 4}  {'-' * 24}  {'-' * 50}",
-    ]
-    for r in rows:
-        text_lines.append(f"{r['code']:>4}  {r['name']:<24}  {r['description']}")
+    def _format_exit_code_row(r: dict) -> str:
+        return f"{r['code']:>4}  {r['name']:<24}  {r['description']}"
 
     click.echo(
-        format_catalog_output(
+        render_catalog(
             json_mode,
             "exit-codes",
-            verdict,
             rows,
             "exit_codes",
-            text_lines,
+            f"{len(rows)} exit code(s) defined",
+            [("Code", 4), ("Name", 24), ("Description", 50)],
+            _format_exit_code_row,
         )
     )

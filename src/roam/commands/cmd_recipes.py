@@ -17,7 +17,7 @@ import click
 
 from roam.ask.recipes import RECIPES
 from roam.capability import roam_capability
-from roam.output.formatter import format_catalog_output
+from roam.output.formatter import render_catalog
 
 
 @roam_capability(
@@ -50,25 +50,19 @@ def recipes(ctx) -> None:
         for r in RECIPES
     ]
     items.sort(key=lambda x: x["name"])
-    verdict = f"{len(items)} ask recipe(s) in registry"
 
-    text_lines = [
-        f"{'Name':<26}  {'Phase':<14}  Intent",
-        f"{'-' * 26}  {'-' * 14}  {'-' * 50}",
-    ]
-    for it in items:
-        text_lines.append(
-            f"{it['name']:<26}  {it['phase'][:14]:<14}  {it['intent'][:60]}"
-        )
+    def _format_recipe_row(it: dict) -> str:
+        return f"{it['name']:<26}  {it['phase'][:14]:<14}  {it['intent'][:60]}"
 
     click.echo(
-        format_catalog_output(
+        render_catalog(
             json_mode,
             "recipes",
-            verdict,
             items,
             "recipes",
-            text_lines,
+            f"{len(items)} ask recipe(s) in registry",
+            [("Name", 26), ("Phase", 14), ("Intent", 50)],
+            _format_recipe_row,
             footer='Run `roam ask "<query>"` to dispatch by intent.',
         )
     )
