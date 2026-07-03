@@ -147,23 +147,33 @@ def load_laws_yaml(text: str) -> list[Law]:
     raw_laws = data.get("laws") or []
     laws: list[Law] = []
     for entry in raw_laws:
-        if not isinstance(entry, dict):
-            continue
-        try:
-            laws.append(
-                Law(
-                    id=str(entry.get("id", "")),
-                    kind=str(entry.get("kind", "")),
-                    description=str(entry.get("description", "")),
-                    evidence=dict(entry.get("evidence") or {}),
-                    severity=str(entry.get("severity", "advisory")),
-                    confidence=str(entry.get("confidence", "medium")),
-                    rule=dict(entry.get("rule") or {}),
-                )
-            )
-        except (TypeError, ValueError):
-            continue
+        law = _law_from_entry(entry)
+        if law is not None:
+            laws.append(law)
     return laws
+
+
+def _law_from_entry(raw: Any) -> Law | None:
+    """Normalize one raw ``laws`` entry into a :class:`Law`.
+
+    Returns ``None`` when the entry is not a dict or cannot be
+    constructed as a ``Law`` (missing fields become their default
+    string values rather than failing).
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return Law(
+            id=str(raw.get("id", "")),
+            kind=str(raw.get("kind", "")),
+            description=str(raw.get("description", "")),
+            evidence=dict(raw.get("evidence") or {}),
+            severity=str(raw.get("severity", "advisory")),
+            confidence=str(raw.get("confidence", "medium")),
+            rule=dict(raw.get("rule") or {}),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _fallback_parse(text: str) -> dict:
