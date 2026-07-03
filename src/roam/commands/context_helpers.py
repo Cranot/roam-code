@@ -1237,3 +1237,142 @@ def summarize_tests(test_hits: list[dict], cap: int) -> tuple[list[dict], int, i
 
     direct_files = sum(1 for r in rows if r["kind"] == "DIRECT")
     return rows[:cap], direct_files, len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Pre-edit uncertainty bundle (single-symbol composer)
+# ---------------------------------------------------------------------------
+
+
+def gather_task_bundle(
+    conn,
+    sym,
+    task=None,
+    session_hint="",
+    recent_symbols=(),
+    use_propagation=True,
+    *,
+    test_cap=10,
+    coupling_limit=8,
+):
+    """Compose a single-symbol pre-edit uncertainty bundle into one JSON-first dict.
+
+    Reduces recurrent pre-edit navigation into a single read-only envelope by
+    composing the per-symbol helpers already defined in this module:
+
+    * ``gather_symbol_context`` -> ranked ``files_to_read`` plus caller/callee
+      file counts (the existing context helpers).
+    * ``get_affected_tests_bfs`` + ``summarize_tests`` -> file-level test
+      coverage (direct vs transitive) for the symbols an edit would break.
+    * ``get_file_churn`` + ``get_coupling`` -> recent churn on the owning file
+      and its temporal co-change partners.
+    * ``get_blast_radius`` -> downstream dependent symbols/files.
+    * ``gather_annotations`` -> human ``policy_hints`` (caveats attached to the
+      symbol, e.g. deprecated / owns-transaction).
+
+    Read-only: issues no writes and adds no DB queries beyond what those
+    helpers already run (no index-schema change). Each section is best-effort
+    and degrades to a neutral default so the bundle always emits a non-empty
+    envelope even when an optional table is absent or a helper fails. Returns a
+    plain dict of JSON-serializable scalars/lists/dicts (no ``sqlite3.Row``
+    leakage) ready to hand to ``json_envelope(...)``.
+    """
+    sym_id = sym["id"]
+    file_path = sym["file_path"]
+
+    try:
+        qualified_name = sym["qualified_name"] or sym["name"]
+    except (KeyError, IndexError):
+        qualified_name = sym["name"]
+
+    # --- context (existing context helpers) ---
+    try:
+        ctx = gather_symbol_context(
+            conn,
+            sym,
+            task=task,
+            session_hint=session_hint,
+            recent_symbols=recent_symbols,
+            use_propagation=use_propagation,
+        )
+        context = {
+            "files_to_read": ctx["files_to_read"],
+            "caller_files": len(ctx["non_test_callers"]),
+            "callee_files": len(ctx["callees"]),
+            "sibling_files": len(ctx["siblings"]),
+            "skipped_callers": ctx["skipped_callers"],
+            "skipped_callees": ctx["skipped_callees"],
+        }
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to empty
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:context", _exc)
+        context = {}
+
+    # --- affected tests (file-level collapse) ---
+    try:
+        raw_tests = get_affected_tests_bfs(conn, sym_id)
+        test_rows, direct_files, total_files = summarize_tests(raw_tests, cap=test_cap)
+        affected_tests = {
+            "rows": test_rows,
+            "direct_files": direct_files,
+            "total_files": total_files,
+        }
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to empty
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:affected_tests", _exc)
+        affected_tests = {"rows": [], "direct_files": 0, "total_files": 0}
+
+    # --- recent churn ---
+    try:
+        git_churn = get_file_churn(conn, file_path)
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to None
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:git_churn", _exc)
+        git_churn = None
+
+    try:
+        coupling = get_coupling(conn, file_path, limit=coupling_limit)
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to empty
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:coupling", _exc)
+        coupling = []
+
+    # --- blast radius (downstream dependents) ---
+    try:
+        blast_radius = get_blast_radius(conn, sym_id)
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to None
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:blast_radius", _exc)
+        blast_radius = None
+
+    # --- policy hints (human annotations on the symbol) ---
+    try:
+        policy_hints = gather_annotations(conn, sym=sym)
+    except Exception as _exc:  # noqa: BLE001 -- best-effort; degrade to empty
+        from roam.observability import log_swallowed
+
+        log_swallowed("context_helpers:gather_task_bundle:policy_hints", _exc)
+        policy_hints = []
+
+    return {
+        "symbol": {
+            "id": sym_id,
+            "name": sym["name"],
+            "kind": sym["kind"],
+            "qualified_name": qualified_name,
+            "file_path": file_path,
+            "line_start": sym["line_start"],
+            "line_end": sym["line_end"] or sym["line_start"],
+        },
+        "context": context,
+        "affected_tests": affected_tests,
+        "git_churn": git_churn,
+        "coupling": coupling,
+        "blast_radius": blast_radius,
+        "policy_hints": policy_hints,
+    }
