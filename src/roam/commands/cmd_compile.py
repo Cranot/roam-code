@@ -23,6 +23,7 @@ Displaces:
 
 from __future__ import annotations
 
+import json
 import os
 
 import click
@@ -257,6 +258,167 @@ def _next_commands_for_compile(verify_hint: str | None) -> list[str]:
     return commands
 
 
+# ----------------------------------------------------------------------
+# Backprop: prior compile failures → next evidence packet
+# ----------------------------------------------------------------------
+# Reads the latest DEGRADED row from `.roam/compile-runs.jsonl` (the same
+# telemetry `roam compiler-health` / `roam compile-stats` consume) and
+# surfaces a compact, reproducible "next evidence to collect" hint in the
+# compile envelope. Thesis: make verification reproducible and portable —
+# the hint carries a timestamp + signals that name the exact prior degrade,
+# so another agent/session can reproduce the diagnosis from the envelope.
+
+# Mirrors the cmd_compiler_health per-mode-KPI degradation buckets.
+_COMPILE_FAILURE_LOW_CONF = 0.6
+_COMPILE_FAILURE_SLOW_MS = 1500.0
+
+
+def _parse_jsonl_lines(lines: list[str]) -> list[dict]:
+    """Parse JSON-object rows from text lines, skipping blank/corrupt ones."""
+    out: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def _tail_jsonl(path: str, n: int = 64) -> list[dict]:
+    """Read up to the last ``n`` JSON-object rows from a JSONL file.
+
+    Bounded IO: seeks to the final ~64 KiB rather than reading the whole
+    file (``compile-runs.jsonl`` can grow to ~10 MiB before manual
+    rotation, and ``compile`` is a hot path). Tolerates a missing file, a
+    short file, and corrupt/partial lines. Never raises.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return []
+    if size == 0:
+        return []
+    chunk = min(size, 65536)
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(size - chunk)
+            data = fh.read(chunk)
+    except OSError:
+        return []
+    lines = data.decode("utf-8", "replace").splitlines()
+    # The first line after a mid-line seek may be partial — drop it unless
+    # we read the whole file (offset 0).
+    if chunk != size and lines:
+        lines = lines[1:]
+    return _parse_jsonl_lines(lines[-(n * 2):])[-n:]
+
+
+def _compile_failure_signals(row: dict) -> list[str]:
+    """Degradation signals on a telemetry row. Empty list ⇒ healthy row.
+
+    Mirrors the buckets ``cmd_compiler_health._section_per_mode_kpis``
+    rolls up: freeform fall-through, low classifier confidence, and slow
+    uncached compile.
+    """
+    signals: list[str] = []
+    if row.get("procedure") == "freeform_explore":
+        signals.append("freeform_explore")
+    conf = row.get("classifier_conf")
+    if isinstance(conf, (int, float)) and conf < _COMPILE_FAILURE_LOW_CONF:
+        signals.append("low_confidence")
+    if row.get("cache_hit") is False:
+        ms = row.get("compile_ms")
+        if isinstance(ms, (int, float)) and ms >= _COMPILE_FAILURE_SLOW_MS:
+            signals.append("slow_uncached")
+    return signals
+
+
+def _latest_compile_failure(cwd: str | None, exclude_task_hash: str | None = None) -> dict | None:
+    """Newest degraded row in ``.roam/compile-runs.jsonl``, or ``None``.
+
+    ``exclude_task_hash`` skips the current compile's own row (its
+    telemetry is appended before this read) so the hint backprops a
+    genuinely PRIOR failure into the current packet. Returns a compact,
+    reproducible summary. Never raises; missing/empty log ⇒ ``None``.
+    """
+    if not cwd:
+        return None
+    path = os.path.join(cwd, ".roam", "compile-runs.jsonl")
+    for row in reversed(_tail_jsonl(path, 64)):  # newest first
+        if exclude_task_hash and row.get("task_hash") == exclude_task_hash:
+            continue
+        signals = _compile_failure_signals(row)
+        if signals:
+            return {
+                "from_failure_at": row.get("ts"),
+                "task_prefix": (row.get("task_prefix") or "")[:80],
+                "procedure": row.get("procedure"),
+                "classifier_conf": row.get("classifier_conf"),
+                "signals": signals,
+            }
+    return None
+
+
+def _next_evidence_hint(failure: dict) -> str:
+    """One compact imperative line: what evidence to collect so the last
+    degradation does not recur. Imperative voice (LAW 2). Empty when the
+    failure carries no recognized signal.
+    """
+    signals = failure.get("signals") or []
+    conf = failure.get("classifier_conf")
+    conf_txt = f" (confidence {conf:.2f})" if isinstance(conf, (int, float)) else ""
+    parts: list[str] = []
+    # freeform fall-through already implies "name the target" — subsume the
+    # low-confidence clause when both fire, but keep the confidence number.
+    if "freeform_explore" in signals:
+        parts.append(
+            f"name the target symbol or file path so a specialized procedure matches{conf_txt}"
+        )
+    elif "low_confidence" in signals:
+        parts.append(f"pin the target symbol or file path; classifier was unsure{conf_txt}")
+    if "slow_uncached" in signals:
+        parts.append("re-run `roam compile <task> --probes` to persist the prefetched facts")
+    if not parts:
+        return ""
+    hint = "; ".join(parts)
+    hint = hint[0].upper() + hint[1:]
+    ts = failure.get("from_failure_at")
+    if ts:
+        hint += f" (last degraded compile: {ts})"
+    return hint
+
+
+def _next_evidence_for_compile(cwd: str | None, current_task: str | None = None) -> dict:
+    """Compact, reproducible 'next evidence to collect' block for the
+    compile envelope. Always returns a dict with an explicit ``state``
+    (Pattern 2 — never silent on absent state):
+
+      * ``recent_failure``    — a prior degraded row was found; ``hint`` set.
+      * ``no_recent_failure`` — log exists, tail is healthy; ``hint`` null.
+      * ``not_initialized``   — no ``.roam/compile-runs.jsonl`` at cwd.
+    """
+    if not cwd or not os.path.exists(os.path.join(cwd, ".roam", "compile-runs.jsonl")):
+        return {"state": "not_initialized", "hint": None}
+    exclude_task_hash: str | None = None
+    if current_task:
+        import hashlib
+
+        exclude_task_hash = hashlib.sha256(
+            current_task.encode("utf-8", "replace")
+        ).hexdigest()[:12]
+    failure = _latest_compile_failure(cwd, exclude_task_hash=exclude_task_hash)
+    if not failure:
+        return {"state": "no_recent_failure", "hint": None}
+    failure["state"] = "recent_failure"
+    failure["hint"] = _next_evidence_hint(failure)
+    return failure
+
+
 def _command_checks_for_compile(plan, env: dict, next_commands: list[str]) -> list[dict]:
     command_advice_items = [("artifact.plan.recommended_first_command", plan.recommended_first_command)]
     roam_starter = (env.get("plan") or {}).get("roam_starter")
@@ -268,7 +430,9 @@ def _command_checks_for_compile(plan, env: dict, next_commands: list[str]) -> li
     return validate_command_advice_many(command_advice_items)
 
 
-def _build_compile_json_envelope(task: str, plan, env: dict, art_label: str, verify_hint: str | None) -> dict:
+def _build_compile_json_envelope(
+    task: str, plan, env: dict, art_label: str, verify_hint: str | None, next_evidence: dict
+) -> dict:
     next_commands = _next_commands_for_compile(verify_hint)
     return json_envelope(
         "compile",
@@ -283,6 +447,7 @@ def _build_compile_json_envelope(task: str, plan, env: dict, art_label: str, ver
             "model_calls_avoided": plan.model_calls_avoided,
             "injection_advice": injection_advice(plan.procedure, task),
             "partial_success": False,
+            "next_evidence": next_evidence,
         },
         agent_contract={
             "facts": [
@@ -331,7 +496,9 @@ def _emit_prefetched_answers(prefetched: dict) -> None:
         _emit_prefetched_value(key, value)
 
 
-def _emit_text_compile(task: str, plan, env: dict, art_label: str, verify_hint: str | None) -> None:
+def _emit_text_compile(
+    task: str, plan, env: dict, art_label: str, verify_hint: str | None, next_evidence: dict
+) -> None:
     click.echo(f"VERDICT: {art_label}_envelope for {plan.procedure}")
     click.echo(f"task:              {task[:200]}")
     click.echo(f"procedure:         {plan.procedure}")
@@ -356,6 +523,9 @@ def _emit_text_compile(task: str, plan, env: dict, art_label: str, verify_hint: 
         click.echo(f"recommended_first: {plan.recommended_first_command}")
     if verify_hint:
         click.echo(f"post_edit_verify:  {verify_hint}")
+    next_hint = next_evidence.get("hint") if isinstance(next_evidence, dict) else None
+    if next_hint:
+        click.echo(f"next_evidence:     {next_hint}")
     click.echo(f"model_calls_avoided: {plan.model_calls_avoided}")
 
 
@@ -501,9 +671,14 @@ def compile_(
     # knobs, but when enabled the envelope should always carry the follow-up.
     verify_hint = _compile_verify_hint(_cwd)
 
+    # Backprop prior compile failures into this packet: read the latest
+    # degraded row from .roam/compile-runs.jsonl and surface a compact
+    # 'next evidence to collect' hint (state is always explicit).
+    next_evidence = _next_evidence_for_compile(_cwd, current_task=plan.task)
+
     # Build a roam-envelope-v1 envelope wrapping the artifact
     if json_mode:
-        envelope = _build_compile_json_envelope(task, plan, env, art_label, verify_hint)
+        envelope = _build_compile_json_envelope(task, plan, env, art_label, verify_hint, next_evidence)
         # W117 — --probes mode short-circuits: emit just the
         # prefetched_facts dict. Useful for CI scripts.
         if probes_only:
@@ -517,4 +692,4 @@ def compile_(
         return
 
     # Text mode
-    _emit_text_compile(task, plan, env, art_label, verify_hint)
+    _emit_text_compile(task, plan, env, art_label, verify_hint, next_evidence)
