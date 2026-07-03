@@ -3266,85 +3266,133 @@ def _check_delete_safety(conn, target_paths, root):
     return {"score": 0 if violations else 100, "violations": violations}
 
 
+def _run_verify_detector_wire(
+    conn,
+    env_name: str,
+    default: bool,
+    target_paths,
+    analyzer,
+    build_violations,
+    log_tag: str,
+    score_with_violations: int = 80,
+    score_with_hard_block: int | None = None,
+    scope_filter=None,
+):
+    """Fail-open scaffolding reused by verify's diff-scoped detector wires.
+
+    Centralizes the conservation between uniform safety behavior (env guard,
+    swallowed errors, empty-scope short-circuit) and per-detector specialization
+    (the analysis call and violation translation). Callers only supply their
+    domain-specific parts.
+    """
+    if not _verify_env_flag(env_name, default):
+        return {"score": 100, "violations": []}
+    scope = _verify_changed_set(target_paths)
+    if scope_filter is not None:
+        scope = scope_filter(scope)
+    if not scope:
+        return {"score": 100, "violations": []}
+    try:
+        findings = analyzer(conn)
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify(log_tag, exc)
+        return {"score": 100, "violations": []}
+    violations = build_violations(findings, scope)
+    if score_with_hard_block is not None and any(v.get("hard_block") for v in violations):
+        return {"score": score_with_hard_block, "violations": violations}
+    return {"score": 100 if not violations else score_with_violations, "violations": violations}
+
+
 def _check_migration_safety(conn, target_paths, root):
     """Guardrail (ROAM_VERIFY_MIGRATION_SAFETY=1, default ON): a changed .php
     migration with a non-idempotent / destructive op. High-confidence => BLOCK
     (catastrophic on rerun); the rest WARN. Reuses analyze_migration_safety. A
     no-op on every non-migration edit (it only runs when a changed file is a
     .php migration)."""
-    if not _verify_env_flag("ROAM_VERIFY_MIGRATION_SAFETY", True):
-        return {"score": 100, "violations": []}
-    migs = {p for p in _verify_changed_set(target_paths) if "migration" in p.lower() and p.lower().endswith(".php")}
-    if not migs:
-        return {"score": 100, "violations": []}
-    try:
+
+    def _migration_scope(paths):
+        return {p for p in paths if "migration" in p.lower() and p.lower().endswith(".php")}
+
+    def _analyze(conn):
         from roam.commands.cmd_migration_safety import analyze_migration_safety
 
-        findings = analyze_migration_safety(conn, include_archive=False)
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.migration_safety", exc)
-        return {"score": 100, "violations": []}
-    violations = []
-    for f in findings or []:
-        fp = (f.get("file") or "").replace("\\", "/")
-        if fp not in migs:
-            continue
-        block = (f.get("confidence") or "").lower() == "high"
-        v = {
-            "category": _VERIFY_MIGRATION_CATEGORY,
-            "severity": SEVERITY_FAIL if block else SEVERITY_WARN,
-            "file": fp,
-            "line": f.get("line"),
-            "message": f"migration safety: {f.get('issue') or 'non-idempotent / destructive operation'}",
-            "fix": f.get("fix") or "Guard create/drop (hasTable/hasColumn), make it reversible, provide a down()",
-        }
-        if block:
-            v["hard_block"] = True
-        violations.append(v)
-    if any(v.get("hard_block") for v in violations):
-        score = 0
-    elif violations:
-        score = 60
-    else:
-        score = 100
-    return {"score": score, "violations": violations}
+        return analyze_migration_safety(conn, include_archive=False)
+
+    def _build(findings, scope):
+        violations = []
+        for f in findings or []:
+            fp = (f.get("file") or "").replace("\\", "/")
+            if fp not in scope:
+                continue
+            block = (f.get("confidence") or "").lower() == "high"
+            v = {
+                "category": _VERIFY_MIGRATION_CATEGORY,
+                "severity": SEVERITY_FAIL if block else SEVERITY_WARN,
+                "file": fp,
+                "line": f.get("line"),
+                "message": f"migration safety: {f.get('issue') or 'non-idempotent / destructive operation'}",
+                "fix": f.get("fix") or "Guard create/drop (hasTable/hasColumn), make it reversible, provide a down()",
+            }
+            if block:
+                v["hard_block"] = True
+            violations.append(v)
+        return violations
+
+    return _run_verify_detector_wire(
+        conn,
+        "ROAM_VERIFY_MIGRATION_SAFETY",
+        True,
+        target_paths,
+        analyzer=_analyze,
+        build_violations=_build,
+        log_tag="verify.migration_safety",
+        score_with_violations=60,
+        score_with_hard_block=0,
+        scope_filter=_migration_scope,
+    )
 
 
 def _check_smells(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_SMELLS=1): god-class / brain-method /
     deep-nesting and the other 24 structural smell detectors, scoped to changed
     files. Reuses roam.catalog.smells.run_all_detectors."""
-    if not _verify_env_flag("ROAM_VERIFY_SMELLS", False):
-        return {"score": 100, "violations": []}
-    changed = _verify_changed_set(target_paths)
-    if not changed:
-        return {"score": 100, "violations": []}
-    try:
+
+    def _analyze(conn):
         from roam.catalog.smells import run_all_detectors
 
-        findings = run_all_detectors(conn)
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.smells", exc)
-        return {"score": 100, "violations": []}
-    violations = []
-    for f in findings or []:
-        loc_str = f.get("location") or f.get("file") or ""
-        fp = _verify_loc_path(loc_str)
-        if fp not in changed:
-            continue
-        kind = f.get("kind") or f.get("smell_id") or f.get("smell") or "smell"
-        msg = f.get("message") or f.get("detail") or f.get("description") or str(kind)
-        violations.append(
-            {
-                "category": _VERIFY_SMELLS_CATEGORY,
-                "severity": SEVERITY_WARN,
-                "file": fp,
-                "line": f.get("line") or _verify_loc_line(loc_str),
-                "message": f"smell [{kind}]: {msg}",
-                "fix": f.get("suggestion") or "Refactor (extract / split) to reduce the structural smell",
-            }
-        )
-    return {"score": 100 if not violations else 80, "violations": violations}
+        return run_all_detectors(conn)
+
+    def _build(findings, scope):
+        violations = []
+        for f in findings or []:
+            loc_str = f.get("location") or f.get("file") or ""
+            fp = _verify_loc_path(loc_str)
+            if fp not in scope:
+                continue
+            kind = f.get("kind") or f.get("smell_id") or f.get("smell") or "smell"
+            msg = f.get("message") or f.get("detail") or f.get("description") or str(kind)
+            violations.append(
+                {
+                    "category": _VERIFY_SMELLS_CATEGORY,
+                    "severity": SEVERITY_WARN,
+                    "file": fp,
+                    "line": f.get("line") or _verify_loc_line(loc_str),
+                    "message": f"smell [{kind}]: {msg}",
+                    "fix": f.get("suggestion") or "Refactor (extract / split) to reduce the structural smell",
+                }
+            )
+        return violations
+
+    return _run_verify_detector_wire(
+        conn,
+        "ROAM_VERIFY_SMELLS",
+        False,
+        target_paths,
+        analyzer=_analyze,
+        build_violations=_build,
+        log_tag="verify.smells",
+        score_with_violations=80,
+    )
 
 
 def _check_clones(conn, target_paths):
@@ -3491,42 +3539,48 @@ def _check_dead(conn, target_paths):
 def _check_n1(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_N1=1): an N+1 lazy-load whose model/accessor
     touches a changed file. Reuses cmd_n1.analyze_n1; low-confidence skipped."""
-    if not _verify_env_flag("ROAM_VERIFY_N1", False):
-        return {"score": 100, "violations": []}
-    changed = _verify_changed_set(target_paths)
-    if not changed:
-        return {"score": 100, "violations": []}
-    try:
+
+    def _analyze(conn):
         from roam.commands.cmd_n1 import analyze_n1
 
         out = analyze_n1(conn)
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.n1", exc)
-        return {"score": 100, "violations": []}
-    findings = out[0] if isinstance(out, tuple) else out
-    violations = []
-    for f in findings or []:
-        if (f.get("confidence") or "").lower() == "low":
-            continue
-        ml = _verify_loc_path(f.get("model_location") or "")
-        al = _verify_loc_path(f.get("accessor_location") or "")
-        if ml not in changed and al not in changed:
-            continue
-        loc_file = al if al in changed else ml
-        violations.append(
-            {
-                "category": _VERIFY_N1_CATEGORY,
-                "severity": SEVERITY_WARN,
-                "file": loc_file,
-                "line": _verify_loc_line(f.get("accessor_location") or f.get("model_location") or ""),
-                "message": (
-                    f"possible N+1: `{f.get('accessor_name')}` lazily loads "
-                    f"`{f.get('relationship')}` ({f.get('confidence')} confidence)"
-                ),
-                "fix": f.get("suggestion") or "Eager-load the relationship to avoid a per-item query",
-            }
-        )
-    return {"score": 100 if not violations else 85, "violations": violations}
+        return out[0] if isinstance(out, tuple) else out
+
+    def _build(findings, scope):
+        violations = []
+        for f in findings or []:
+            if (f.get("confidence") or "").lower() == "low":
+                continue
+            ml = _verify_loc_path(f.get("model_location") or "")
+            al = _verify_loc_path(f.get("accessor_location") or "")
+            if ml not in scope and al not in scope:
+                continue
+            loc_file = al if al in scope else ml
+            violations.append(
+                {
+                    "category": _VERIFY_N1_CATEGORY,
+                    "severity": SEVERITY_WARN,
+                    "file": loc_file,
+                    "line": _verify_loc_line(f.get("accessor_location") or f.get("model_location") or ""),
+                    "message": (
+                        f"possible N+1: `{f.get('accessor_name')}` lazily loads "
+                        f"`{f.get('relationship')}` ({f.get('confidence')} confidence)"
+                    ),
+                    "fix": f.get("suggestion") or "Eager-load the relationship to avoid a per-item query",
+                }
+            )
+        return violations
+
+    return _run_verify_detector_wire(
+        conn,
+        "ROAM_VERIFY_N1",
+        False,
+        target_paths,
+        analyzer=_analyze,
+        build_violations=_build,
+        log_tag="verify.n1",
+        score_with_violations=85,
+    )
 
 
 def _check_over_fetch(conn, target_paths):
