@@ -557,18 +557,6 @@ def load_yaml_with_warnings(
     else:
         try:
             import yaml  # type: ignore[import-untyped]
-
-            try:
-                data = yaml.safe_load(text)
-            except Exception as exc:  # noqa: BLE001 — malformed YAML never crashes the loader
-                append_warning(
-                    warnings_out,
-                    config_label,
-                    path,
-                    f"malformed {parse_error_label}: {exc}. Treating as empty; "
-                    f"fix the file or remove it to clear this warning.",
-                )
-                return _ret(empty, "parse_error")
         except ImportError:
             # No PyYAML: try strict JSON first (every well-formed JSON is also
             # well-formed YAML 1.2, so JSON files on disk still load), then a
@@ -586,6 +574,18 @@ def load_yaml_with_warnings(
             if not ok:
                 return _ret(value, "parse_error")
             data = value
+        else:
+            try:
+                data = yaml.safe_load(text)
+            except yaml.YAMLError as exc:
+                append_warning(
+                    warnings_out,
+                    config_label,
+                    path,
+                    f"malformed {parse_error_label}: {exc}. Treating as empty; "
+                    f"fix the file or remove it to clear this warning.",
+                )
+                return _ret(empty, "parse_error")
 
     # W1030: empty-yaml (file had content, parser returned None) -- e.g.
     # comments-only YAML. Distinct from empty_file (zero-byte input
