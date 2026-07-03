@@ -630,9 +630,47 @@ def _attestation_render_model_for_format_parity(evidence):
     }
 
 
+def _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict):
+    """Collect report decisions once so text and markdown cannot drift."""
+    model = _attestation_render_model_for_format_parity(evidence)
+    budget = model["budget"]
+    tests = model["tests"]
+    effect_items = model["effect_items"]
+    total_breaking = model["total_breaking"]
+
+    return {
+        "safe_to_merge": verdict["safe_to_merge"],
+        "conditions": verdict["conditions"],
+        "warnings": verdict["warnings"],
+        "risk": model["risk"],
+        "blast": model["blast"],
+        "breaking": {
+            "removed": model["removed_count"],
+            "signature_changed": model["signature_changed_count"],
+            "renamed": model["renamed_count"],
+            "total": total_breaking,
+        },
+        "has_breaking_changes": total_breaking > 0,
+        "removed_preview": model["removed"][:5],
+        "budget": budget,
+        "budget_rules": budget.get("rules", []),
+        "has_budget": budget.get("rules_checked", 0) > 0,
+        "fitness_violations": model["fitness"].get("violations", []),
+        "tests": tests,
+        "has_tests": tests.get("selected", 0) > 0,
+        "test_command": tests.get("command", ""),
+        "effect_items": effect_items,
+        "has_effects": bool(effect_items),
+        "tool_version": attestation.get("tool_version", "?"),
+        "timestamp": attestation.get("timestamp", "?"),
+        "content_hash": attestation.get("content_hash"),
+        "git_range": attestation.get("git_range", "?"),
+    }
+
+
 def _format_markdown(attestation, evidence, verdict):
     """Format attestation as GitHub/GitLab compatible markdown."""
-    model = _attestation_render_model_for_format_parity(evidence)
+    plan = _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
     lines = []
     lines.append("## Roam Attestation")
     lines.append("")
@@ -640,29 +678,29 @@ def _format_markdown(attestation, evidence, verdict):
     # Verdict banner (canonical [PASS]/[FAIL] bracketed form per AGENTS.md
     # output convention; matches cmd_doctor / cmd_health / cmd_fitness /
     # cmd_check_rules).
-    safe_icon = "[PASS]" if verdict["safe_to_merge"] else "[FAIL]"
+    safe_icon = "[PASS]" if plan["safe_to_merge"] else "[FAIL]"
     lines.append(f"**Verdict: {safe_icon}**")
-    if verdict["conditions"]:
+    if plan["conditions"]:
         lines.append("")
         lines.append("Conditions:")
-        for c in verdict["conditions"]:
+        for c in plan["conditions"]:
             lines.append(f"- {c}")
-    if verdict["warnings"]:
+    if plan["warnings"]:
         lines.append("")
         lines.append("Warnings:")
-        for w in verdict["warnings"]:
+        for w in plan["warnings"]:
             lines.append(f"- {w}")
 
     lines.append("")
 
     # Risk
-    risk = model["risk"]
+    risk = plan["risk"]
     if risk:
         lines.append(f"### Risk: {risk['level']} ({risk['score']}/100)")
         lines.append("")
 
     # Blast radius
-    br = model["blast"]
+    br = plan["blast"]
     lines.append("### Blast Radius")
     lines.append("")
     lines.append("| Metric | Value |")
@@ -673,51 +711,49 @@ def _format_markdown(attestation, evidence, verdict):
     lines.append("")
 
     # Breaking changes
-    removed = model["removed_count"]
-    sig_changed = model["signature_changed_count"]
-    renamed = model["renamed_count"]
-    total_bc = model["total_breaking"]
-    if total_bc > 0:
+    breaking = plan["breaking"]
+    if plan["has_breaking_changes"]:
+        total_bc = breaking["total"]
         lines.append(f"### Breaking Changes ({total_bc})")
         lines.append("")
-        if removed:
-            lines.append(f"- {removed} removed")
-        if sig_changed:
-            lines.append(f"- {sig_changed} signature changed")
-        if renamed:
-            lines.append(f"- {renamed} renamed")
+        if breaking["removed"]:
+            lines.append(f"- {breaking['removed']} removed")
+        if breaking["signature_changed"]:
+            lines.append(f"- {breaking['signature_changed']} signature changed")
+        if breaking["renamed"]:
+            lines.append(f"- {breaking['renamed']} renamed")
         lines.append("")
     else:
         lines.append("### Breaking Changes: None")
         lines.append("")
 
     # Budget
-    bg = model["budget"]
-    if bg.get("rules_checked", 0) > 0:
+    bg = plan["budget"]
+    if plan["has_budget"]:
         lines.append(f"### Budget ({bg['passed']} passed, {bg['failed']} failed, {bg['skipped']} skipped)")
         lines.append("")
-        for r in bg.get("rules", []):
+        for r in plan["budget_rules"]:
             status = r.get("status", "?")
             name = r.get("name", "unnamed")
             lines.append(f"- [{status}] {name}")
         lines.append("")
 
     # Tests
-    tests = model["tests"]
-    if tests.get("selected", 0) > 0:
+    tests = plan["tests"]
+    if plan["has_tests"]:
         lines.append(f"### Affected Tests ({tests['selected']})")
         lines.append("")
         lines.append(
             f"- {tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive, {tests.get('colocated', 0)} colocated"
         )
-        cmd = tests.get("command", "")
+        cmd = plan["test_command"]
         if cmd:
             lines.append(f"- `{cmd}`")
         lines.append("")
 
     # Effects
-    effect_items = model["effect_items"]
-    if effect_items:
+    if plan["has_effects"]:
+        effect_items = plan["effect_items"]
         lines.append(f"### Effects ({len(effect_items)} symbols)")
         lines.append("")
         for e, all_eff in effect_items[:20]:
@@ -726,11 +762,9 @@ def _format_markdown(attestation, evidence, verdict):
 
     # Attestation metadata
     lines.append("---")
-    lines.append(
-        f"*Generated by roam-code v{attestation.get('tool_version', '?')} at {attestation.get('timestamp', '?')}*"
-    )
-    if attestation.get("content_hash"):
-        lines.append(f"*Hash: `{attestation['content_hash']}`*")
+    lines.append(f"*Generated by roam-code v{plan['tool_version']} at {plan['timestamp']}*")
+    if plan["content_hash"]:
+        lines.append(f"*Hash: `{plan['content_hash']}`*")
 
     return "\n".join(lines)
 
@@ -1447,26 +1481,26 @@ def _emit_text(
     output_file,
 ):
     """Emit plain text attestation."""
-    model = _attestation_render_model_for_format_parity(evidence)
+    plan = _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
     lines = []
 
     # Verdict line
-    safe = "SAFE TO MERGE" if verdict["safe_to_merge"] else "NOT SAFE TO MERGE"
+    safe = "SAFE TO MERGE" if plan["safe_to_merge"] else "NOT SAFE TO MERGE"
     lines.append(f"VERDICT: {safe}")
-    if verdict["conditions"]:
-        lines.append(f"  Conditions: {'; '.join(verdict['conditions'])}")
-    if verdict["warnings"]:
-        lines.append(f"  Warnings: {'; '.join(verdict['warnings'])}")
+    if plan["conditions"]:
+        lines.append(f"  Conditions: {'; '.join(plan['conditions'])}")
+    if plan["warnings"]:
+        lines.append(f"  Warnings: {'; '.join(plan['warnings'])}")
     lines.append("")
 
     # Risk
-    risk = model["risk"]
+    risk = plan["risk"]
     if risk:
         lines.append(f"RISK: {risk['level']} ({risk['score']}/100)")
         lines.append("")
 
     # Blast radius
-    blast = model["blast"]
+    blast = plan["blast"]
     lines.append("BLAST RADIUS:")
     lines.append(f"  Changed files:    {blast.get('changed_files', 0)}")
     lines.append(f"  Affected symbols: {blast.get('affected_symbols', 0)}")
@@ -1474,30 +1508,28 @@ def _emit_text(
     lines.append("")
 
     # Breaking changes
-    removed = model["removed_count"]
-    sig_changed = model["signature_changed_count"]
-    renamed = model["renamed_count"]
-    total_bc = model["total_breaking"]
-    if total_bc > 0:
+    breaking = plan["breaking"]
+    if plan["has_breaking_changes"]:
+        total_bc = breaking["total"]
         lines.append(f"BREAKING CHANGES ({total_bc}):")
-        if removed:
-            lines.append(f"  {removed} removed")
-            for r in model["removed"][:5]:
+        if breaking["removed"]:
+            lines.append(f"  {breaking['removed']} removed")
+            for r in plan["removed_preview"]:
                 lines.append(f"    {abbrev_kind(r.get('kind', ''))} {r['name']}  {r.get('file', '')}")
-        if sig_changed:
-            lines.append(f"  {sig_changed} signature changed")
-        if renamed:
-            lines.append(f"  {renamed} renamed")
+        if breaking["signature_changed"]:
+            lines.append(f"  {breaking['signature_changed']} signature changed")
+        if breaking["renamed"]:
+            lines.append(f"  {breaking['renamed']} renamed")
         lines.append("")
     else:
         lines.append("BREAKING CHANGES: none")
         lines.append("")
 
     # Budget
-    budget = model["budget"]
-    if budget.get("rules_checked", 0) > 0:
+    budget = plan["budget"]
+    if plan["has_budget"]:
         lines.append(f"BUDGET ({budget['passed']} pass, {budget['failed']} fail, {budget['skipped']} skip):")
-        for r in budget.get("rules", []):
+        for r in plan["budget_rules"]:
             status = r.get("status", "?")
             name = r.get("name", "unnamed")
             detail = ""
@@ -1507,8 +1539,7 @@ def _emit_text(
         lines.append("")
 
     # Fitness
-    fitness = model["fitness"]
-    fitness_v = fitness.get("violations", [])
+    fitness_v = plan["fitness_violations"]
     if fitness_v:
         lines.append(f"FITNESS VIOLATIONS ({len(fitness_v)}):")
         for v in fitness_v[:10]:
@@ -1516,15 +1547,15 @@ def _emit_text(
         lines.append("")
 
     # Affected tests
-    tests = model["tests"]
-    if tests.get("selected", 0) > 0:
+    tests = plan["tests"]
+    if plan["has_tests"]:
         lines.append(
             f"AFFECTED TESTS ({tests['selected']}: "
             f"{tests.get('direct', 0)} direct, "
             f"{tests.get('transitive', 0)} transitive, "
             f"{tests.get('colocated', 0)} colocated):"
         )
-        cmd = tests.get("command", "")
+        cmd = plan["test_command"]
         if cmd:
             lines.append(f"  Run: {cmd}")
         lines.append("")
@@ -1533,8 +1564,8 @@ def _emit_text(
         lines.append("")
 
     # Effects
-    effect_items = model["effect_items"]
-    if effect_items:
+    if plan["has_effects"]:
+        effect_items = plan["effect_items"]
         lines.append(f"EFFECTS ({len(effect_items)} symbols):")
         for e, all_eff in effect_items[:15]:
             lines.append(f"  {e.get('symbol', '?')}: {', '.join(all_eff)}")
@@ -1542,13 +1573,10 @@ def _emit_text(
 
     # Attestation metadata
     lines.append("---")
-    lines.append(
-        f"Attested by roam-code v{attestation.get('tool_version', '?')} at {attestation.get('timestamp', '?')}"
-    )
-    if attestation.get("content_hash"):
-        lines.append(f"Hash: {attestation['content_hash']}")
-    git_range = attestation.get("git_range", "?")
-    lines.append(f"Range: {git_range}")
+    lines.append(f"Attested by roam-code v{plan['tool_version']} at {plan['timestamp']}")
+    if plan["content_hash"]:
+        lines.append(f"Hash: {plan['content_hash']}")
+    lines.append(f"Range: {plan['git_range']}")
 
     text = "\n".join(lines)
 
