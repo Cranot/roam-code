@@ -273,6 +273,33 @@ def complete_prefix(
 # ---------------------------------------------------------------------------
 
 
+def _completion_values_for_decoupled_protocol_target(
+    ref: Any,
+    value: str,
+    arg_name: str,
+    *,
+    prompt_reference_type: Any,
+    resource_template_reference_type: Any,
+) -> list[str]:
+    """Keep protocol routing independent from MCP handler registration."""
+    if arg_name in _SYMBOL_ARG_NAMES:
+        return complete_prefix(value, kind="symbol").get("symbols", [])
+    if arg_name in _PATH_ARG_NAMES:
+        return complete_prefix(value, kind="path").get("paths", [])
+    if arg_name in _COMMAND_ARG_NAMES:
+        return complete_prefix(value, kind="command").get("commands", [])
+    if isinstance(ref, resource_template_reference_type):
+        uri = getattr(ref, "uri", "") or ""
+        if "symbol" in uri:
+            return complete_prefix(value, kind="symbol").get("symbols", [])
+        if "file" in uri or "path" in uri:
+            return complete_prefix(value, kind="path").get("paths", [])
+    if isinstance(ref, prompt_reference_type):
+        # Best-effort fallback for unknown prompt args.
+        return complete_prefix(value, kind="symbol").get("symbols", [])[:10]
+    return []
+
+
 def install_completion_handler(fastmcp_server: Any) -> bool:
     """Register a low-level completion handler on the FastMCP server.
 
@@ -309,23 +336,13 @@ def install_completion_handler(fastmcp_server: Any) -> bool:
     ) -> CompleteResult:
         value = (argument.value or "").strip()
         arg_name = (argument.name or "").lower()
-
-        values: list[str] = []
-        if arg_name in _SYMBOL_ARG_NAMES:
-            values = complete_prefix(value, kind="symbol").get("symbols", [])
-        elif arg_name in _PATH_ARG_NAMES:
-            values = complete_prefix(value, kind="path").get("paths", [])
-        elif arg_name in _COMMAND_ARG_NAMES:
-            values = complete_prefix(value, kind="command").get("commands", [])
-        elif isinstance(ref, ResourceTemplateReference):
-            uri = getattr(ref, "uri", "") or ""
-            if "symbol" in uri:
-                values = complete_prefix(value, kind="symbol").get("symbols", [])
-            elif "file" in uri or "path" in uri:
-                values = complete_prefix(value, kind="path").get("paths", [])
-        elif isinstance(ref, PromptReference):
-            # Best-effort fallback for unknown prompt args.
-            values = complete_prefix(value, kind="symbol").get("symbols", [])[:10]
+        values = _completion_values_for_decoupled_protocol_target(
+            ref,
+            value,
+            arg_name,
+            prompt_reference_type=PromptReference,
+            resource_template_reference_type=ResourceTemplateReference,
+        )
 
         return CompleteResult(
             completion=Completion(
