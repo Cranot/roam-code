@@ -6,10 +6,13 @@ Roam evaluates them against the indexed graph and reports violations.
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import sys
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from roam._glob_match import matches_glob as _matches_glob
 from roam.db.connection import find_project_root
@@ -668,6 +671,7 @@ def _as_float_or_none(value) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
+        log.debug("Ignoring non-numeric rule value %r", value)
         return None
 
 
