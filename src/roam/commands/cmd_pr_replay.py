@@ -1253,7 +1253,7 @@ def _gather_permit_policy_decisions(
     try:
         from roam.db.connection import find_project_root
         from roam.permits.store import load_permits_from_disk
-    except Exception as exc:  # noqa: BLE001 — best-effort
+    except ImportError as exc:
         warnings.append(f"_gather_permit_policy_decisions: import failed ({exc})")
         return []
     # W591: mirror W590's surgical Pattern-2 fix for the SIBLING permit
