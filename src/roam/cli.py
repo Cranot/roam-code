@@ -1331,11 +1331,11 @@ def _save_short_help_cache_if_dirty() -> None:
 
         atomic_write_json(_SHORT_HELP_CACHE_PATH, _short_help_disk_cache, indent=None)
         _short_help_disk_cache_dirty = False
-    except OSError:
+    except OSError as exc:
         # Cache is best-effort: a write failure means the next CLI
         # invocation will re-parse the AST. Never fail the parent
         # command on a cache hiccup.
-        pass
+        print(f"[short-help-cache] write failed: {exc}", file=sys.stderr)
 
 
 def _short_help_source_path(module_path: str) -> str:
