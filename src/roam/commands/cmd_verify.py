@@ -3133,7 +3133,7 @@ def _swallow_verify(tag, exc):
         from roam.observability import log_swallowed
 
         log_swallowed(tag, exc)
-    except Exception:  # noqa: BLE001 — logging must never break the gate
+    except (ImportError, AttributeError, OSError):  # noqa: BLE001 — logging must never break the gate
         pass
 
 
