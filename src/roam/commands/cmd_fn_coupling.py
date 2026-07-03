@@ -103,9 +103,8 @@ def _build_symbol_cochange(
     # Step 3: rank symbols per file by PageRank descending and trim. This
     # gives every commit the "architecturally important" symbols only.
     # Large files only need the capped PageRank leaders, so select them with
-    # heapq.nlargest (O(n log k) partial selection, equivalent to
-    # sorted(..., reverse=True)[:k] including tie-stability) instead of
-    # fully sorting every symbol.
+    # heapq.nlargest (O(n log k) partial selection) instead of fully sorting
+    # every symbol.
     file_top_syms: dict[int, list[int]] = {}
     for fid, syms in file_to_syms.items():
         if len(syms) > max_symbols_per_file:
@@ -351,18 +350,12 @@ def fn_coupling(
             else:
                 hidden.append(entry)
 
-        # Sort both by count descending
-        hidden.sort(key=lambda x: -x[2])
-        connected.sort(key=lambda x: -x[2])
-
-        # Build the results list
+        # Build the results list: direct-select the top ``limit`` pairs by
+        # co-change count instead of fully sorting either list.
         if include_connected:
-            results = hidden + connected
-            results.sort(key=lambda x: -x[2])
+            results = heapq.nlargest(limit, hidden + connected, key=lambda x: x[2])
         else:
-            results = hidden
-
-        results = results[:limit]
+            results = heapq.nlargest(limit, hidden, key=lambda x: x[2])
 
         if not results:
             if json_mode:
@@ -422,8 +415,7 @@ def fn_coupling(
                 if has_edge:
                     entry["has_edge"] = True
         results = [(e["sa"], e["sb"], e["count"], e["has_edge"], e["duplicates"]) for e in merged.values()]
-        results.sort(key=lambda x: -x[2])
-        results = results[:limit]
+        results = heapq.nlargest(limit, results, key=lambda x: x[2])
 
         # --- Build verdict ---
         if results:
