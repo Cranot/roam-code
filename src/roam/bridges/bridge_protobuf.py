@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
@@ -75,6 +76,13 @@ _TARGET_EXTS = frozenset(
 
 # Pattern to extract package from proto file symbols
 _PROTO_PACKAGE_RE = re.compile(r"package\s+([\w.]+)")
+
+
+@dataclass(frozen=True)
+class _ProtoKindEdgeSpec:
+    symbols: list[dict]
+    matcher: Callable[[str, dict[str, str], str], list[str]]
+    mechanism: str
 
 
 class ProtobufBridge(LanguageBridge):
@@ -139,12 +147,14 @@ class ProtobufBridge(LanguageBridge):
         for tpath, tsymbols, lang in generated_targets:
             target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
             self._emit_edges_for_proto_kind(
-                messages, self._match_message, "proto-message", target_symbol_names, lang, edges
+                _ProtoKindEdgeSpec(messages, self._match_message, "proto-message"), target_symbol_names, lang, edges
             )
             self._emit_edges_for_proto_kind(
-                services, self._match_service, "proto-service", target_symbol_names, lang, edges
+                _ProtoKindEdgeSpec(services, self._match_service, "proto-service"), target_symbol_names, lang, edges
             )
-            self._emit_edges_for_proto_kind(enums, self._match_enum, "proto-enum", target_symbol_names, lang, edges)
+            self._emit_edges_for_proto_kind(
+                _ProtoKindEdgeSpec(enums, self._match_enum, "proto-enum"), target_symbol_names, lang, edges
+            )
 
         return edges
 
@@ -167,9 +177,7 @@ class ProtobufBridge(LanguageBridge):
 
     def _emit_edges_for_proto_kind(
         self,
-        symbols: list[dict],
-        matcher: Callable[[str, dict[str, str], str], list[str]],
-        mechanism: str,
+        spec: _ProtoKindEdgeSpec,
         target_symbol_names: dict[str, str],
         lang: str,
         edges: list[dict],
@@ -179,17 +187,17 @@ class ProtobufBridge(LanguageBridge):
         The supplied ``matcher`` encapsulates the target language's
         generated naming convention; this helper only translates source
         symbols into the uniform cross-language edge shape."""
-        for sym in symbols:
+        for sym in spec.symbols:
             sym_name = sym.get("name", "")
             sym_qname = sym.get("qualified_name", sym_name)
-            for target_qname in matcher(sym_name, target_symbol_names, lang):
+            for target_qname in spec.matcher(sym_name, target_symbol_names, lang):
                 edges.append(
                     {
                         "source": sym_qname,
                         "target": target_qname,
                         "kind": "x-lang",
                         "bridge": self.name,
-                        "mechanism": mechanism,
+                        "mechanism": spec.mechanism,
                         "target_lang": lang,
                     }
                 )
