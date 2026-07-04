@@ -1121,6 +1121,51 @@ def _extract_python_handlers(source: str) -> list[tuple[int, str]]:
     return handlers
 
 
+def _find_matching_brace(source: str, open_brace_pos: int) -> int:
+    """Return the position of the ``}`` matching ``source[open_brace_pos]``.
+
+    Treats ``{`` / ``}`` inside line comments, block comments, and quoted
+    strings as non-structural. Returns ``-1`` if no matching close is found.
+    """
+    depth = 0
+    i = open_brace_pos
+    in_string: str | None = None
+    in_line_comment = False
+    in_block_comment = False
+    while i < len(source):
+        ch = source[i]
+        nxt = source[i + 1] if i + 1 < len(source) else ""
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+        elif in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 1
+        elif in_string is not None:
+            if ch == "\\":
+                i += 1  # skip escape
+            elif ch == in_string:
+                in_string = None
+        else:
+            if ch == "/" and nxt == "/":
+                in_line_comment = True
+                i += 1
+            elif ch == "/" and nxt == "*":
+                in_block_comment = True
+                i += 1
+            elif ch in ('"', "'", "`"):
+                in_string = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return i
+        i += 1
+    return -1
+
+
 def _extract_brace_handlers(source: str) -> list[tuple[int, str]]:
     """Yield (line_number, body_text) per ``catch (...) { ... }`` block.
 
@@ -1132,45 +1177,7 @@ def _extract_brace_handlers(source: str) -> list[tuple[int, str]]:
     for m in _BRACE_CATCH_HEADER.finditer(source):
         open_brace_pos = m.end() - 1  # the matched ``{``
         line_no = source.count("\n", 0, m.start()) + 1
-        # Brace-balance to find the matching close.
-        depth = 0
-        i = open_brace_pos
-        in_string: str | None = None
-        in_line_comment = False
-        in_block_comment = False
-        end = -1
-        while i < len(source):
-            ch = source[i]
-            nxt = source[i + 1] if i + 1 < len(source) else ""
-            if in_line_comment:
-                if ch == "\n":
-                    in_line_comment = False
-            elif in_block_comment:
-                if ch == "*" and nxt == "/":
-                    in_block_comment = False
-                    i += 1
-            elif in_string is not None:
-                if ch == "\\":
-                    i += 1  # skip escape
-                elif ch == in_string:
-                    in_string = None
-            else:
-                if ch == "/" and nxt == "/":
-                    in_line_comment = True
-                    i += 1
-                elif ch == "/" and nxt == "*":
-                    in_block_comment = True
-                    i += 1
-                elif ch in ('"', "'", "`"):
-                    in_string = ch
-                elif ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = i
-                        break
-            i += 1
+        end = _find_matching_brace(source, open_brace_pos)
         if end < 0:
             continue
         body = source[open_brace_pos + 1 : end]
