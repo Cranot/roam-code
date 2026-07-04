@@ -231,6 +231,13 @@ class _CheckVerdictCounts:
 
     @property
     def issue_total(self) -> int:
+        """Total non-deprecated issues detected during constitution check.
+
+        Referenced by ``_build_check_verdict`` at ``counts.issue_total``.
+        The dead-export analyzer mis-flags this accessor as unreferenced
+        because it does not resolve ``@property`` reads to the underlying
+        method; verified referenced, 2026-07-04.
+        """
         return (
             self.missing_sources
             + self.unparseable
