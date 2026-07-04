@@ -158,6 +158,7 @@ def _git_remote_url(root: Path) -> str | None:
             timeout=5,
         )
     except (subprocess.SubprocessError, OSError):
+        # Remote URL is optional metadata; callers fall back to the project path.
         return None
     if proc.returncode != 0:
         return None
