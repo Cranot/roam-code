@@ -3522,25 +3522,17 @@ def _check_clones(conn, target_paths):
     return {"score": 100 if not violations else 80, "violations": violations}
 
 
-def _check_magic_numbers(target_paths, root):
-    """Advisory WARN (ROAM_VERIFY_MAGIC_NUMBERS=1): a numeric literal repeated
-    >= ROAM_VERIFY_MAGIC_MIN (default 3) times across the changed Python.
-    Reuses cmd_magic_numbers._scan_python_file."""
-    if not _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
-        return {"score": 100, "violations": []}
-    changed = [p for p in _verify_changed_set(target_paths) if p.endswith(".py") and not is_test_file(p)]
-    if not changed:
-        return {"score": 100, "violations": []}
-    try:
-        from roam.commands.cmd_magic_numbers import _scan_python_file
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.magic_numbers.import", exc)
-        return {"score": 100, "violations": []}
-    threshold = max(2, _verify_env_int("ROAM_VERIFY_MAGIC_MIN", 3))
+def _changed_python_paths_for_magic_number_scan(target_paths):
+    """Changed production Python files where repeated literals can matter."""
+    return sorted(p for p in _verify_changed_set(target_paths) if p.endswith(".py") and not is_test_file(p))
+
+
+def _magic_number_occurrences_by_literal(changed_paths, root, scan_python_file):
+    """Group scanned literal occurrences by value while preserving first location."""
     occ = defaultdict(list)
-    for rel in changed:
+    for rel in changed_paths:
         try:
-            raw = _scan_python_file(root / rel, include_trivial=False)
+            raw = scan_python_file(root / rel, include_trivial=False)
         except Exception as exc:  # noqa: BLE001
             _swallow_verify("verify.magic_numbers.scan", exc)
             continue
@@ -3550,11 +3542,16 @@ def _check_magic_numbers(target_paths, root):
             except Exception:  # noqa: BLE001
                 continue
             occ[val].append((rel, line))
+    return occ
+
+
+def _magic_number_repetition_violations(occurrences, threshold):
+    """Build one violation per repeated literal that crosses the configured threshold."""
     violations = []
-    for val, hits in occ.items():
+    for val, hits in occurrences.items():
         if len(hits) < threshold:
             continue
-        files = sorted({h[0] for h in hits})
+        files = sorted({path for path, _line in hits})
         f0, l0 = hits[0]
         violations.append(
             {
@@ -3569,6 +3566,26 @@ def _check_magic_numbers(target_paths, root):
                 "fix": "Extract the literal to a named module-level constant",
             }
         )
+    return violations
+
+
+def _check_magic_numbers(target_paths, root):
+    """Advisory WARN (ROAM_VERIFY_MAGIC_NUMBERS=1): a numeric literal repeated
+    >= ROAM_VERIFY_MAGIC_MIN (default 3) times across the changed Python.
+    Reuses cmd_magic_numbers._scan_python_file."""
+    if not _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
+        return {"score": 100, "violations": []}
+    changed_paths = _changed_python_paths_for_magic_number_scan(target_paths)
+    if not changed_paths:
+        return {"score": 100, "violations": []}
+    try:
+        from roam.commands.cmd_magic_numbers import _scan_python_file
+    except Exception as exc:  # noqa: BLE001
+        _swallow_verify("verify.magic_numbers.import", exc)
+        return {"score": 100, "violations": []}
+    threshold = max(2, _verify_env_int("ROAM_VERIFY_MAGIC_MIN", 3))
+    occurrences = _magic_number_occurrences_by_literal(changed_paths, root, _scan_python_file)
+    violations = _magic_number_repetition_violations(occurrences, threshold)
     return {"score": 100 if not violations else 85, "violations": violations}
 
 
