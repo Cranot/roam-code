@@ -404,7 +404,8 @@ def get_active_mode(repo_root: Path) -> Optional[str]:
         return None
     try:
         raw = path.read_text(encoding="utf-8").strip()
-    except OSError:
+    except OSError as exc:
+        sys.stderr.write(f"[modes.policy] active_mode read failed: {exc}\n")
         return None
     if raw in VALID_MODES:
         return raw
