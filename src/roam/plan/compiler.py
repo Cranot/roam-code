@@ -7170,6 +7170,77 @@ def _freeform_excerpt_safe_path(target: str, cwd: str | None) -> str | None:
     return full
 
 
+def _ground_task_when_freeform_has_no_file_anchor(task: str, cwd: str | None) -> dict | None:
+    """Ground no-file freeform tasks on entities and task-text boosters."""
+    entity = _probe_freeform_entities_for_task(task, cwd) or {}
+    entity.update(_probe_freeform_intent_boosters(task, [], cwd))
+    return entity or None
+
+
+def _excerpt_file_when_task_asks_explain(task: str, target: str, cwd: str | None) -> dict:
+    """Embed a safe file excerpt when the task asks for explanation."""
+    if not _EXPLAIN_RE.search(task):
+        return {}
+    safe_full = _freeform_excerpt_safe_path(target, cwd)
+    if safe_full is None:
+        # Out-of-repo target or a forbidden path (private folder / secret /
+        # lockfile) — skip the excerpt rather than leaking its contents.
+        return {}
+    try:
+        with open(safe_full, encoding="utf-8", errors="replace") as fh:
+            head_lines = fh.readlines()[:_FILE_EXCERPT_LINES]
+    except (OSError, ValueError) as exc:
+        log_swallowed("compile.freeform_augment.read_excerpt", exc)
+        return {}
+    if not head_lines:
+        return {}
+    return {
+        "file_excerpt": {
+            "path": target,
+            "lines_shown": len(head_lines),
+            "content": "".join(head_lines),
+        },
+        "file_excerpt_definition": (
+            f"First {len(head_lines)} lines of {target}. The user asked "
+            f"an explain/describe question — answer from THIS content "
+            f"rather than re-Reading the file."
+        ),
+    }
+
+
+def _git_log_when_task_asks_history(task: str, target: str, cwd: str | None) -> dict:
+    """Embed literal-pathspec commit history when the task asks for history."""
+    if not _HISTORY_QUERY_RE.search(task):
+        return {}
+    try:
+        proc = subprocess.run(
+            ["git", "log", "--max-count=5", "--stat", "--format=%h %ad %an %s", "--date=short", "--", target],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            cwd=cwd or None,
+            # `--` blocks option injection but does NOT force literal
+            # pathspec interpretation: a normalized repo path with leading
+            # magic (`:(top)`, `:(glob)`, `:./...`) still globs/broadens the
+            # matched commit set. GIT_LITERAL_PATHSPECS=1 treats `target` as
+            # a plain filename — same guard as `_git_cochange_counts`.
+            env=_git_literal_pathspec_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log_swallowed("compile.freeform_augment.git_log", exc)
+        return {}
+    if proc.returncode == 0 and proc.stdout.strip():
+        return {
+            "recent_commits": proc.stdout.strip(),
+            "recent_commits_definition": (
+                f"Last 5 commits touching {target} (hash date author subject + "
+                f"stat). Answer history questions from THIS log rather than "
+                f"running `git log` again."
+            ),
+        }
+    return {}
+
+
 def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W35b/c — augment freeform_explore probe with:
       (b) `file_excerpt`: when task is an explain-question on a single small
@@ -7180,68 +7251,13 @@ def _probe_freeform_augment_for_task(task: str, named_paths: list[str], cwd: str
     in _probe_for_procedure. Either can fire independently.
     """
     if not named_paths:
-        # W-ENTITY — no file anchor: fall back to entity grounding so a bare-
-        # identifier prompt still gets prefetch instead of an empty envelope.
-        # Intent boosters that key on the TASK TEXT (introduced-when, which-
-        # tests, taint, TODO scan) still apply without a file anchor.
-        entity = _probe_freeform_entities_for_task(task, cwd) or {}
-        entity.update(_probe_freeform_intent_boosters(task, [], cwd))
-        return entity or None
-    import subprocess
+        return _ground_task_when_freeform_has_no_file_anchor(task, cwd)
 
     facts: dict = {}
     target = named_paths[0]
 
-    if _EXPLAIN_RE.search(task):
-        safe_full = _freeform_excerpt_safe_path(target, cwd)
-        if safe_full is None:
-            # Out-of-repo target or a forbidden path (private folder / secret /
-            # lockfile) — skip the excerpt rather than leaking its contents.
-            head_lines: list[str] = []
-        else:
-            try:
-                with open(safe_full, encoding="utf-8", errors="replace") as fh:
-                    head_lines = fh.readlines()[:_FILE_EXCERPT_LINES]
-            except (OSError, ValueError) as exc:
-                log_swallowed("compile.freeform_augment.read_excerpt", exc)
-                head_lines = []
-        if head_lines:
-            facts["file_excerpt"] = {
-                "path": target,
-                "lines_shown": len(head_lines),
-                "content": "".join(head_lines),
-            }
-            facts["file_excerpt_definition"] = (
-                f"First {len(head_lines)} lines of {target}. The user asked "
-                f"an explain/describe question — answer from THIS content "
-                f"rather than re-Reading the file."
-            )
-
-    if _HISTORY_QUERY_RE.search(task):
-        try:
-            proc = subprocess.run(
-                ["git", "log", "--max-count=5", "--stat", "--format=%h %ad %an %s", "--date=short", "--", target],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-                cwd=cwd or None,
-                # `--` blocks option injection but does NOT force literal
-                # pathspec interpretation: a normalized repo path with leading
-                # magic (`:(top)`, `:(glob)`, `:./...`) still globs/broadens the
-                # matched commit set. GIT_LITERAL_PATHSPECS=1 treats `target` as
-                # a plain filename — same guard as `_git_cochange_counts`.
-                env=_git_literal_pathspec_env(),
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            log_swallowed("compile.freeform_augment.git_log", exc)
-            proc = None
-        if proc and proc.returncode == 0 and proc.stdout.strip():
-            facts["recent_commits"] = proc.stdout.strip()
-            facts["recent_commits_definition"] = (
-                f"Last 5 commits touching {target} (hash date author subject + "
-                f"stat). Answer history questions from THIS log rather than "
-                f"running `git log` again."
-            )
+    facts.update(_excerpt_file_when_task_asks_explain(task, target, cwd))
+    facts.update(_git_log_when_task_asks_history(task, target, cwd))
 
     # W-BUGSITE (2026-06-10) — "fix the bug in cli.py:45" carries an explicit
     # file:LINE but freeform only embeds skeleton+grep, so the agent must Read
