@@ -746,6 +746,41 @@ def _default_metadata_signals() -> dict[str, Any]:
     }
 
 
+def _discover_sources(
+    repo_root: Path, init_options: ConstitutionInitOptions
+) -> dict[str, str]:
+    """Probe the repo for the supporting substrate files.
+
+    Returns the ``sources`` mapping (relative ``./``-prefixed paths) for
+    every file that exists. ``agents_md`` and ``memory`` are always probed;
+    ``laws`` / ``rules`` are probed only when the corresponding option is
+    set. Absent files are omitted so ``check`` does not flag stub paths.
+    """
+    sources: dict[str, str] = {}
+
+    agents = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["agents_md"])
+    if agents:
+        sources["agents_md"] = f"./{agents}"
+
+    if init_options.with_laws:
+        laws = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["laws"])
+        if laws:
+            sources["laws"] = f"./{laws}"
+
+    if init_options.with_rules:
+        rules = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["rules"])
+        if rules:
+            # Convention: point at a glob within the directory, matching
+            # the YAML rule convention used elsewhere in roam.
+            sources["rules"] = f"./{rules}/*.yml"
+
+    memory = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["memory"])
+    if memory:
+        sources["memory"] = f"./{memory}"
+
+    return sources
+
+
 def init_constitution(
     repo_root: Path,
     options: ConstitutionInitOptions | None = None,
@@ -771,27 +806,7 @@ def init_constitution(
     if path.exists() and not init_options.force:
         raise FileExistsError(f"constitution already exists at {path}; pass force=True to overwrite")
 
-    sources: dict[str, str] = {}
-
-    agents = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["agents_md"])
-    if agents:
-        sources["agents_md"] = f"./{agents}"
-
-    if init_options.with_laws:
-        laws = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["laws"])
-        if laws:
-            sources["laws"] = f"./{laws}"
-
-    if init_options.with_rules:
-        rules = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["rules"])
-        if rules:
-            # Convention: point at a glob within the directory, matching
-            # the YAML rule convention used elsewhere in roam.
-            sources["rules"] = f"./{rules}/*.yml"
-
-    memory = _detect_source(repo_root, DEFAULT_SOURCE_LOCATIONS["memory"])
-    if memory:
-        sources["memory"] = f"./{memory}"
+    sources = _discover_sources(repo_root, init_options)
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
