@@ -133,8 +133,13 @@ def load_laws_yaml(text: str) -> list[Law]:
     the PyYAML output.
     """
     data = _parse_laws_document_without_requiring_pyyaml(text)
+    return _valid_laws_from_entries(_law_entries_when_document_shape_is_supported(data))
+
+
+def _valid_laws_from_entries(entries: list[Any]) -> list[Law]:
+    """Build valid Law objects from raw entries, skipping malformed ones."""
     laws: list[Law] = []
-    for entry in _law_entries_when_document_shape_is_supported(data):
+    for entry in entries:
         law = _law_from_entry(entry)
         if law is not None:
             laws.append(law)
