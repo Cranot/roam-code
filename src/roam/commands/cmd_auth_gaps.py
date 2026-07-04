@@ -986,6 +986,13 @@ def _find_service_provider_files(conn) -> list[str]:
     return [r["path"] for r in rows]
 
 
+def _remember_protection_scope_exit(
+    auth_depth_stack: list[tuple[int, bool]], brace_depth: int, *, is_auth: bool
+) -> None:
+    """Record the depth where the current route group stops protecting controllers."""
+    auth_depth_stack.append((brace_depth, is_auth))
+
+
 def _analyze_service_provider(file_path: str, source: str) -> set[str]:
     """Scan a ServiceProvider file for controllers registered inside auth middleware groups.
 
@@ -1020,7 +1027,7 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
                     brace_depth = 0
                 if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
                     auth_depth_stack.pop()
-            auth_depth_stack.append((brace_depth, True))
+            _remember_protection_scope_exit(auth_depth_stack, brace_depth, is_auth=True)
             brace_depth += opens
             continue
 
