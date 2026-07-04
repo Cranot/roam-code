@@ -752,9 +752,9 @@ def classify_tx_boundaries(
 
     try:
         repo_root = find_project_root()
-    except Exception as exc:
+    except OSError as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # missing project root downgrades per-symbol body reads to a
+        # filesystem root-resolution failure downgrades per-symbol body reads to a
         # CWD-relative path; an unreadable body classifies as ``unknown``,
         # so a silent fallback would mask real transactions as unknown.
         # Surface the lineage (mirrors classify_side_effects /
