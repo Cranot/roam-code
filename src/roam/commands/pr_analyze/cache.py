@@ -25,10 +25,51 @@ CACHE_VERSION = 1  # bump when the envelope shape changes
 
 @dataclass(frozen=True)
 class _CacheKeyInputs:
+    """Value object bundling the inputs that affect a ``pr-analyze`` cache key.
+
+    Owns both the loose-input normalization (``from_loose``) and the stable
+    digest derivation (``digest``) so the cache-key logic lives on the bundled
+    type rather than scattered across loose primitive-param functions — the
+    value-object realization the ``_cache_key`` adapter defers to.
+    """
+
     diff_text: str
     rules_path: Path
     block_threshold: int
     language_override: str | None
+
+    @classmethod
+    def from_loose(
+        cls,
+        diff_text: object,
+        rules_path: object,
+        block_threshold: object,
+        language_override: object | None,
+    ) -> _CacheKeyInputs:
+        """Build a value object from unnormalized primitive inputs."""
+        normalized_rules_path = rules_path if isinstance(rules_path, Path) else Path(str(rules_path))
+        return cls(
+            diff_text="" if diff_text is None else str(diff_text),
+            rules_path=normalized_rules_path,
+            block_threshold=int(block_threshold),
+            language_override=None if language_override is None else str(language_override),
+        )
+
+    def digest(self) -> str:
+        """Derive the stable sha256 cache key for these inputs."""
+        h = hashlib.sha256()
+        h.update(f"v={CACHE_VERSION}\n".encode())
+        h.update(b"diff=")
+        h.update((self.diff_text or "").encode("utf-8"))
+        h.update(b"\nrules=")
+        if self.rules_path.exists():
+            try:
+                h.update(self.rules_path.read_bytes())
+            except OSError:
+                h.update(b"<unreadable>")
+        h.update(f"\nthreshold={self.block_threshold}\n".encode())
+        h.update(f"lang={self.language_override or ''}".encode())
+        return h.hexdigest()
 
 
 def _cache_key(
@@ -37,32 +78,19 @@ def _cache_key(
     block_threshold: object,
     language_override: object | None,
 ) -> str:
-    """Derive a stable cache key from inputs that affect the analysis."""
-    normalized_rules_path = rules_path if isinstance(rules_path, Path) else Path(str(rules_path))
-    return _cache_key_from_inputs(
-        _CacheKeyInputs(
-            diff_text="" if diff_text is None else str(diff_text),
-            rules_path=normalized_rules_path,
-            block_threshold=int(block_threshold),
-            language_override=None if language_override is None else str(language_override),
-        )
-    )
+    """Derive a stable cache key from inputs that affect the analysis.
 
-
-def _cache_key_from_inputs(inputs: _CacheKeyInputs) -> str:
-    h = hashlib.sha256()
-    h.update(f"v={CACHE_VERSION}\n".encode())
-    h.update(b"diff=")
-    h.update((inputs.diff_text or "").encode("utf-8"))
-    h.update(b"\nrules=")
-    if inputs.rules_path.exists():
-        try:
-            h.update(inputs.rules_path.read_bytes())
-        except OSError:
-            h.update(b"<unreadable>")
-    h.update(f"\nthreshold={inputs.block_threshold}\n".encode())
-    h.update(f"lang={inputs.language_override or ''}".encode())
-    return h.hexdigest()
+    Thin coercion adapter over the ``_CacheKeyInputs`` value object, which
+    owns the loose-input normalization (``from_loose``) and the digest
+    derivation (``digest``). The 4-param signature is the documented stable
+    boundary (``pr_analyze/__init__.py``: re-exports are kept so callers and
+    tests import ``_cache_key`` without churn); the value object is the
+    canonical type, so hashing + coercion no longer live in loose
+    primitive-param functions.
+    """
+    return _CacheKeyInputs.from_loose(
+        diff_text, rules_path, block_threshold, language_override
+    ).digest()
 
 
 def _cache_path(cache_dir: Path, key: str) -> Path:
