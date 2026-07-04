@@ -3693,7 +3693,7 @@ def _check_llm_smells(target_paths, root):
         for kind, fn in detectors:
             try:
                 hits = fn(rel, text) or []
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, ImportError, ModuleNotFoundError) as exc:
                 _swallow_verify("verify.llm_smells.detector", exc)
                 continue
             for h in hits:
