@@ -238,7 +238,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
 
     # Find all <script...>...</script> regions
     script_pattern = re.compile(
-        r"<script(\s[^>]*)?>.*?</script>",
+        r"<script(?P<attrs>\s[^>]*)?>(?P<body>.*?)</script>",
         re.DOTALL,
     )
 
@@ -252,18 +252,14 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
     newline_offsets = [i for i, ch in enumerate(text) if ch == "\n"]
 
     for match in script_pattern.finditer(text):
-        attrs = match.group(1) or ""
+        attrs = match.group("attrs") or ""
         if 'lang="ts"' in attrs or "lang='ts'" in attrs or 'lang="tsx"' in attrs:
             effective_lang = "typescript"
 
         # Find the line range for the script content (excluding the tags)
-        inner_text = match.group(0)
-        opening_tag_end = inner_text.index(">") + 1
-        closing_tag_start = inner_text.rfind("</script>")
-
         # +1 to skip the opening tag line, no +1 on end to exclude </script>
-        content_start = bisect.bisect_left(newline_offsets, match.start() + opening_tag_end) + 1
-        content_end = bisect.bisect_left(newline_offsets, match.start() + closing_tag_start)
+        content_start = bisect.bisect_left(newline_offsets, match.start("body")) + 1
+        content_end = bisect.bisect_left(newline_offsets, match.end("body"))
 
         for i in range(content_start, min(content_end, len(lines))):
             script_line_flags[i] = True
