@@ -1359,6 +1359,24 @@ def _compute_score(patterns: dict[str, dict]) -> int:
 # ---------------------------------------------------------------------------
 
 
+_COPY_PASTE_GROUP_SENTINELS = frozenset({"clone_group_size"})
+
+
+def _file_issue_contributions_preserving_detector_shape(detail: dict) -> list[tuple[str, int]]:
+    """Normalize one detector detail into per-file issue counts."""
+    if _COPY_PASTE_GROUP_SENTINELS <= detail.keys():
+        return [
+            (fn.get("file", ""), 1)
+            for fn in detail.get("functions", [])
+            if fn.get("file", "")
+        ]
+
+    file_path = detail.get("file", "")
+    if not file_path:
+        return []
+    return [(file_path, detail.get("count", 1))]
+
+
 def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -> list[dict]:
     """Aggregate per-file issue counts across all patterns.
 
@@ -1368,16 +1386,8 @@ def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -
 
     for pattern_key, details in all_details.items():
         for d in details:
-            fp = d.get("file", "")
-            if not fp:
-                continue
-            count = d.get("count", 1)
-            if "clone_group_size" in d:
-                # copy-paste pattern uses different structure
-                for fn in d.get("functions", []):
-                    file_issues[fn.get("file", "")][pattern_key] += 1
-                continue
-            file_issues[fp][pattern_key] += count
+            for fp, count in _file_issue_contributions_preserving_detector_shape(d):
+                file_issues[fp][pattern_key] += count
 
     results = []
     for fp, patterns in file_issues.items():
