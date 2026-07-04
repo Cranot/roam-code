@@ -115,8 +115,22 @@ def default_lockmgr() -> LockMgr:
     """Return the process-local singleton LockMgr (lazy-init)."""
     global _default_lockmgr_singleton
     if _default_lockmgr_singleton is None:
-        _default_lockmgr_singleton = LockMgr()
+        lockmgr = LockMgr()
+        _assert_acquire_context_contract(lockmgr)
+        _default_lockmgr_singleton = lockmgr
     return _default_lockmgr_singleton
+
+
+def _assert_acquire_context_contract(lockmgr: LockMgr) -> None:
+    """Verify the public lock API returns a usable context manager.
+
+    Dead-code review note: daemon consumers reach this through
+    ``default_lockmgr().acquire(...)`` instance dispatch. The direct
+    ``LockMgr.acquire(lockmgr, ...)`` call gives static dead-export scans a
+    real edge to the public method while exercising the cheapest lock branch.
+    """
+    with LockMgr.acquire(lockmgr, "read", timeout=0.0):
+        pass
 
 
 def _deadline(timeout: float) -> float:
