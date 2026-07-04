@@ -689,6 +689,64 @@ def _call_in(calls: list[str], targets: set[str]) -> list[str]:
     return _dedupe(hits)
 
 
+# Note: call target names are extracted as the last identifier in member
+# expressions (e.g. re.compile -> "compile", re.match -> "match").
+_REGEX_COMPILE_CALLS = {"compile", "Compile", "MustCompile"}
+_REGEX_CONVENIENCE_CALLS = {
+    "match",
+    "search",
+    "findall",
+    "sub",
+    "split",
+    "fullmatch",
+    "finditer",
+    "matches",
+    "Replace",
+    "ReplaceAll",
+    "Find",
+    "FindAll",
+    "MatchString",
+}
+
+# Module-level regex prefixes — calls like `re.match()` recompile each time,
+# but `compiled_pattern.match()` does not. Only flag the former.
+_REGEX_MODULE_PREFIXES = ("re.", "regexp.", "regex.", "Pattern.")
+
+
+def _regex_module_convenience_calls(row) -> list[str]:
+    """Return loop calls that use module-level regex convenience APIs."""
+    qcalls = _json_list(_row_value(row, "calls_in_loops_qualified", ""))
+    return [
+        c
+        for c in qcalls
+        if c.startswith(_REGEX_MODULE_PREFIXES) and _call_leaf(c) in _REGEX_CONVENIENCE_CALLS
+    ]
+
+
+def _regex_loop_finding(row) -> dict | None:
+    """Build the regex-in-loop finding for one loop-bearing symbol row."""
+    compile_calls = _call_in(_iter_loop_calls(row), _REGEX_COMPILE_CALLS)
+    if compile_calls:
+        return _finding(
+            "regex-in-loop",
+            "compile-per-iter",
+            row,
+            f"Regex compilation via {', '.join(compile_calls[:2])} inside loop",
+            "high",
+        )
+
+    module_convenience = _regex_module_convenience_calls(row)
+    if not module_convenience:
+        return None
+    return _finding(
+        "regex-in-loop",
+        "compile-per-iter",
+        row,
+        f"Regex call ({', '.join(module_convenience[:2])}) inside loop (recompiles per iteration)",
+        "high",
+    )
+
+
 _FRAMEWORK_IO_PACKS = {
     "python": [
         {
@@ -1506,66 +1564,13 @@ def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
         "AND ms.loop_depth >= 1"
     ).fetchall()
 
-    # Note: call target names are extracted as the last identifier in
-    # member expressions (e.g. re.compile -> "compile", re.match -> "match")
-    _REGEX_COMPILE_CALLS = {"compile", "Compile", "MustCompile"}
-    _REGEX_CONVENIENCE_CALLS = {
-        "match",
-        "search",
-        "findall",
-        "sub",
-        "split",
-        "fullmatch",
-        "finditer",
-        "matches",
-        "Replace",
-        "ReplaceAll",
-        "Find",
-        "FindAll",
-        "MatchString",
-    }
-
-    # Module-level regex prefixes — calls like `re.match()` recompile each time,
-    # but `compiled_pattern.match()` does not.  Only flag the former.
-    _REGEX_MODULE_PREFIXES = {"re.", "regexp.", "regex.", "Pattern."}
-
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        calls = _iter_loop_calls(r)
-        # Direct compile in loop is always bad
-        compile_calls = _call_in(calls, _REGEX_COMPILE_CALLS)
-        # Convenience regex calls — only flag when called via the regex module
-        # (e.g. `re.findall`), NOT when called on a pre-compiled pattern object
-        # (e.g. `_MY_RE.findall`).  Check qualified names for module prefix.
-        qcalls = _json_list(_row_value(r, "calls_in_loops_qualified", ""))
-        module_convenience = [
-            c
-            for c in qcalls
-            if any(c.startswith(prefix) for prefix in _REGEX_MODULE_PREFIXES)
-            and _call_leaf(c) in _REGEX_CONVENIENCE_CALLS
-        ]
-        if compile_calls:
-            results.append(
-                _finding(
-                    "regex-in-loop",
-                    "compile-per-iter",
-                    r,
-                    f"Regex compilation via {', '.join(compile_calls[:2])} inside loop",
-                    "high",
-                )
-            )
-        elif module_convenience:
-            results.append(
-                _finding(
-                    "regex-in-loop",
-                    "compile-per-iter",
-                    r,
-                    f"Regex call ({', '.join(module_convenience[:2])}) inside loop (recompiles per iteration)",
-                    "high",
-                )
-            )
+        finding = _regex_loop_finding(r)
+        if finding:
+            results.append(finding)
     return results
 
 
