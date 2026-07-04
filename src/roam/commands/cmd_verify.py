@@ -13,6 +13,7 @@ W1198-audit memo.
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 from collections import Counter, defaultdict
@@ -3643,6 +3644,17 @@ def _check_over_fetch(conn, target_paths):
     return {"score": 100 if not violations else 88, "violations": violations}
 
 
+def _load_llm_smell_detectors_without_hiding_import_bugs():
+    try:
+        module = importlib.import_module("roam.commands.cmd_llm_smells")
+    except ModuleNotFoundError as exc:
+        if exc.name == "roam.commands.cmd_llm_smells":
+            _swallow_verify("verify.llm_smells.import", exc)
+            return ()
+        raise
+    return module._DETECTORS
+
+
 def _check_llm_smells(target_paths, root):
     """Advisory WARN (ROAM_VERIFY_LLM_SMELLS=1): LLM-API anti-patterns (no model
     pin, no max_tokens / timeout, prompt-injection concat, ...) in a changed
@@ -3654,10 +3666,8 @@ def _check_llm_smells(target_paths, root):
     ]
     if not changed:
         return {"score": 100, "violations": []}
-    try:
-        from roam.commands.cmd_llm_smells import _DETECTORS
-    except Exception as exc:  # noqa: BLE001
-        _swallow_verify("verify.llm_smells.import", exc)
+    detectors = _load_llm_smell_detectors_without_hiding_import_bugs()
+    if not detectors:
         return {"score": 100, "violations": []}
     hints = (
         "openai",
@@ -3679,7 +3689,7 @@ def _check_llm_smells(target_paths, root):
         low = text.lower()
         if not any(h in low for h in hints):
             continue
-        for kind, fn in _DETECTORS:
+        for kind, fn in detectors:
             try:
                 hits = fn(rel, text) or []
             except Exception as exc:  # noqa: BLE001
