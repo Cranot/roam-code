@@ -7,13 +7,14 @@ import json as _json
 import os
 import re
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.observability import log_swallowed
 from roam.output._severity import severity_rank
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, loc, to_json
@@ -1312,6 +1313,384 @@ def _run_auth_gaps_phase_preserving_failure_provenance(
         warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
         return default
 
+def _emit_auth_gaps_json(
+    all_findings,
+    route_findings,
+    ctrl_findings,
+    total,
+    n_high,
+    n_medium,
+    n_low,
+    limit,
+    _run_check_ed,
+    _w607cm_warnings_out,
+    _w607ed_warnings_out,
+):
+    """Emit the canonical auth-gaps JSON envelope.
+
+    Encapsulates the W607-ED aggregation-phase boundaries
+    (score_classify / compute_predicate / compute_verdict /
+    serialize_envelope) so the command body stays focused on detection.
+    """
+    verdict_floor = f"{total} auth gap(s) found"
+
+    # LAW 4: suppress zero-severity rows from auto-derived facts.
+    explicit_facts = [verdict_floor]
+    for sev, n in (("high", n_high), ("medium", n_medium), ("low", n_low)):
+        if n > 0:
+            explicit_facts.append(f"{n} {sev}-severity auth gaps")
+
+    def _score_classify_run(_total):
+        if _total == 0:
+            _state_label = "NO_AUTH_GAPS"
+        elif _total <= 3:
+            _state_label = "LIGHT"
+        elif _total <= 10:
+            _state_label = "MODERATE"
+        else:
+            _state_label = "HEAVY"
+        return {"state": _state_label, "scanned": _total}
+
+    _score_dict = _run_check_ed(
+        "score_classify",
+        _score_classify_run,
+        total,
+        default={"state": "DEGRADED", "scanned": 0},
+    )
+
+    def _compute_predicate_fields(_findings):
+        _by_kind: defaultdict[str, int] = defaultdict(int)
+        _files: set[str] = set()
+        _endpoints: set[str] = set()
+        for _f in _findings:
+            _t = _f.get("type") or "auth_gap"
+            _r = _f.get("reason") or _t
+            _k = f"{_t}:{_r}"
+            _by_kind[_k] += 1
+            _file = _f.get("file") or ""
+            if _file:
+                _files.add(_file)
+            if _t == "route":
+                _ep = f"{_f.get('verb', '?')} {_f.get('path', '?')}"
+            else:
+                _ep = f"{_f.get('controller', '?')}::{_f.get('name', '?')}"
+            _endpoints.add(_ep)
+        return {
+            "total_count": len(_findings),
+            "by_kind": dict(_by_kind),
+            "files_affected": len(_files),
+            "endpoints_affected": len(_endpoints),
+        }
+
+    _pred_fields = _run_check_ed(
+        "compute_predicate",
+        _compute_predicate_fields,
+        all_findings,
+        default={
+            "total_count": 0,
+            "by_kind": {},
+            "files_affected": 0,
+            "endpoints_affected": 0,
+        },
+    )
+
+    def _build_verdict_str(_verdict_floor):
+        return _verdict_floor
+
+    verdict = _run_check_ed(
+        "compute_verdict",
+        _build_verdict_str,
+        verdict_floor,
+        default="auth_gaps completed",
+    )
+
+    _combined_warnings = list(_w607cm_warnings_out) + list(_w607ed_warnings_out)
+    summary_block: dict = {
+        "verdict": verdict,
+        "total": total,
+        "high": n_high,
+        "medium": n_medium,
+        "low": n_low,
+        "route_gaps": len(route_findings),
+        "controller_gaps": len(ctrl_findings),
+        "run_state": _score_dict["state"],
+        "by_kind": _pred_fields["by_kind"],
+        "files_affected": _pred_fields["files_affected"],
+        "endpoints_affected": _pred_fields["endpoints_affected"],
+    }
+    envelope_kwargs: dict = {
+        "summary": summary_block,
+        "agent_contract": {"facts": explicit_facts},
+        "route_gaps": route_findings[:limit],
+        "controller_gaps": ctrl_findings[:limit],
+    }
+    if _combined_warnings:
+        summary_block["partial_success"] = True
+        summary_block["warnings_out"] = list(_combined_warnings)
+        envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+    _envelope_floor: dict = {
+        "command": "auth-gaps",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": "auth_gaps completed",
+            "partial_success": True,
+            "warnings_out": list(_combined_warnings),
+        },
+        "warnings_out": list(_combined_warnings),
+    }
+    envelope = _run_check_ed(
+        "serialize_envelope",
+        json_envelope,
+        "auth-gaps",
+        default=_envelope_floor,
+        **envelope_kwargs,
+    )
+    if envelope is _envelope_floor and _w607ed_warnings_out:
+        _combined_warnings = list(_w607cm_warnings_out) + list(_w607ed_warnings_out)
+        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+        _envelope_floor["warnings_out"] = list(_combined_warnings)
+        envelope = _envelope_floor
+    click.echo(to_json(envelope))
+
+
+def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit):
+    """Emit the human-readable auth-gaps report."""
+    click.echo("=== Auth Gaps ===\n")
+
+    verdict = f"{total} auth gap(s) found"
+    if total:
+        parts = []
+        if n_high:
+            parts.append(f"{n_high} high")
+        if n_medium:
+            parts.append(f"{n_medium} medium")
+        if n_low:
+            parts.append(f"{n_low} low")
+        verdict += f"  ({', '.join(parts)})"
+    click.echo(f"VERDICT: {verdict}\n")
+
+    if route_findings:
+        click.echo(f"Routes without auth middleware ({len(route_findings)}):")
+        rows = []
+        for f in route_findings[:limit]:
+            rows.append(
+                [
+                    f"[{f['confidence']}]",
+                    f"{f['verb']}  {f['path']}",
+                    loc(f["file"], f["line"]),
+                    f["fix"],
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Conf", "Route", "Location", "Fix"],
+                rows,
+                budget=limit,
+            )
+        )
+        click.echo()
+    else:
+        click.echo("Routes without auth middleware: (none found)\n")
+
+    if ctrl_findings:
+        click.echo(f"Controllers without authorization ({len(ctrl_findings)}):")
+        if len(ctrl_findings) >= 10:
+            by_ctrl = Counter(f.get("controller", "?") for f in ctrl_findings)
+            top = by_ctrl.most_common(5)
+            click.echo("  Top by controller:")
+            for ctrl, n in top:
+                click.echo(f"    {ctrl:<40s} {n} method(s)")
+            tail = len(by_ctrl) - 5
+            if tail > 0:
+                click.echo(f"    ...and {tail} more controller(s)")
+            click.echo()
+        rows = []
+        for f in ctrl_findings[:limit]:
+            rows.append(
+                [
+                    f"[{f['confidence']}]",
+                    f"{f['controller']}::{f['method']}",
+                    loc(f["file"], f["line"]),
+                    f["fix"],
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Conf", "Symbol", "Location", "Fix"],
+                rows,
+                budget=limit,
+            )
+        )
+        click.echo()
+    else:
+        click.echo("Controllers without authorization: (none found)\n")
+
+    if total == 0:
+        click.echo("No auth gaps detected.")
+    elif n_high == 0:
+        click.echo("No high-confidence gaps found. Review medium/low findings manually.")
+
+
+def _collect_auth_gaps_findings(
+    conn,
+    project_root,
+    routes_only,
+    controllers_only,
+    _run_check_cm,
+):
+    """Scan route, provider, and controller files for auth-gap findings.
+
+    Encapsulates the W607-CM substrate-CALL boundaries for the three
+    file-discovery and per-file analysis phases so the command body can
+    focus on orchestration.
+    """
+    all_findings: list[dict] = []
+    route_protected_controllers: set[str] = set()
+
+    if not controllers_only:
+        route_files = _run_check_cm(
+            "find_route_files",
+            _find_route_files,
+            conn,
+            default=[],
+        )
+        if route_files is None:
+            route_files = []
+        for db_path in route_files:
+            abs_path = _resolve_path(project_root, db_path)
+            source = _read_source(abs_path)
+            if source is None:
+                continue
+            pair = _run_check_cm(
+                "analyze_route_file",
+                _analyze_route_file,
+                abs_path,
+                source,
+                default=([], set()),
+            )
+            if pair is None:
+                pair = ([], set())
+            findings, protected = pair
+            all_findings.extend(findings)
+            route_protected_controllers.update(protected)
+
+    if not controllers_only:
+        provider_files = _run_check_cm(
+            "find_service_provider_files",
+            _find_service_provider_files,
+            conn,
+            default=[],
+        )
+        if provider_files is None:
+            provider_files = []
+        for db_path in provider_files:
+            abs_path = _resolve_path(project_root, db_path)
+            source = _read_source(abs_path)
+            if source is None:
+                continue
+            provider_protected = _run_check_cm(
+                "analyze_service_provider",
+                _analyze_service_provider,
+                abs_path,
+                source,
+                default=set(),
+            )
+            if provider_protected is None:
+                provider_protected = set()
+            route_protected_controllers.update(provider_protected)
+
+    if not routes_only:
+        controller_files = _run_check_cm(
+            "find_controller_files",
+            _find_controller_files,
+            conn,
+            default=[],
+        )
+        if controller_files is None:
+            controller_files = []
+        class_source_map = _run_check_cm(
+            "build_class_source_map",
+            _build_class_source_map,
+            controller_files,
+            project_root,
+            default={},
+        )
+        if class_source_map is None:
+            class_source_map = {}
+        for db_path in controller_files:
+            abs_path = _resolve_path(project_root, db_path)
+            source = _read_source(abs_path)
+            if source is None:
+                continue
+            findings = _run_check_cm(
+                "analyze_controller_file",
+                _analyze_controller_file,
+                abs_path,
+                source,
+                route_protected_controllers,
+                class_source_map=class_source_map,
+                default=[],
+            )
+            if findings is None:
+                findings = []
+            all_findings.extend(findings)
+
+    return all_findings, route_protected_controllers
+
+
+def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
+    """Apply confidence floor, sort, count, and split auth-gap findings.
+
+    Encapsulates the W607-CM boundaries for filtering, sorting, and
+    histogram construction so the command body stays at orchestration
+    altitude.
+    """
+    def _apply_confidence_filter():
+        return [f for f in all_findings if severity_rank(f["confidence"]) >= min_conf_rank]
+
+    _filtered = _run_check_cm(
+        "apply_confidence_filter",
+        _apply_confidence_filter,
+        default=all_findings,
+    )
+    if _filtered is not None:
+        all_findings = _filtered
+
+    def _sort_findings():
+        all_findings.sort(
+            key=lambda f: (
+                -confidence_level_rank(f["confidence"], fallback=-1),
+                f["file"],
+                f.get("line", 0),
+            )
+        )
+        return all_findings
+
+    _run_check_cm("sort_findings", _sort_findings, default=None)
+
+    def _aggregate_by_confidence():
+        return (
+            sum(1 for f in all_findings if f["confidence"] == "high"),
+            sum(1 for f in all_findings if f["confidence"] == "medium"),
+            sum(1 for f in all_findings if f["confidence"] == "low"),
+        )
+
+    counts = _run_check_cm(
+        "aggregate_by_confidence",
+        _aggregate_by_confidence,
+        default=(0, 0, 0),
+    )
+    if counts is None:
+        counts = (0, 0, 0)
+    n_high, n_medium, n_low = counts
+    total = len(all_findings)
+
+    route_findings = [f for f in all_findings if f["type"] == "route"]
+    ctrl_findings = [f for f in all_findings if f["type"] == "controller"]
+
+    return all_findings, n_high, n_medium, n_low, total, route_findings, ctrl_findings
+
 
 # ---------------------------------------------------------------------------
 # CLI command
@@ -1448,21 +1827,19 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
     _w607cm_warnings_out: list[str] = []
 
     def _run_check_cm(phase, fn, *args, default=None, **kwargs):
-        """Run one substrate helper with W607-CM marker emission.
-
-        On a clean call the result is returned as-is. On an uncaught
-        exception, surface a ``auth_gaps_<phase>_failed:<exc_class>:<detail>``
-        marker via ``_w607cm_warnings_out`` and return *default* -- the
-        envelope still emits cleanly with the remaining substrates.
-        """
-        return _run_auth_gaps_phase_preserving_failure_provenance(
-            phase,
-            fn,
-            _w607cm_warnings_out,
-            *args,
-            default=default,
-            **kwargs,
-        )
+        """Run one substrate helper with W607-CM marker emission."""
+        try:
+            return _run_auth_gaps_phase_preserving_failure_provenance(
+                phase,
+                fn,
+                _w607cm_warnings_out,
+                *args,
+                default=default,
+                **kwargs,
+            )
+        except Exception as exc:  # noqa: BLE001 -- detector phase isolation
+            _w607cm_warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
 
     # W607-ED -- ADDITIVE aggregation-phase plumbing for cmd_auth_gaps.
     # Layered on top of the W607-CM substrate-CALL layer. The two
@@ -1491,152 +1868,31 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
     _w607ed_warnings_out: list[str] = []
 
     def _run_check_ed(phase, fn, *args, default=None, **kwargs):
-        """Run one aggregation-phase boundary with W607-ED marker emission.
-
-        Mirror of ``_run_check_cm`` shape (same
-        ``auth_gaps_<phase>_failed:`` marker family) but writes into
-        ``_w607ed_warnings_out`` so the additive bucket stays
-        distinguishable in tests + audits. W607-DW finding pin: the
-        return statement is verbatim ``return default`` (NOT
-        ``return default if default is not None else {}``) so the floor
-        is a literal pass-through.
-        """
-        return _run_auth_gaps_phase_preserving_failure_provenance(
-            phase,
-            fn,
-            _w607ed_warnings_out,
-            *args,
-            default=default,
-            **kwargs,
-        )
+        """Run one aggregation-phase boundary with W607-ED marker emission."""
+        try:
+            return _run_auth_gaps_phase_preserving_failure_provenance(
+                phase,
+                fn,
+                _w607ed_warnings_out,
+                *args,
+                default=default,
+                **kwargs,
+            )
+        except Exception as exc:  # noqa: BLE001 -- detector phase isolation
+            _w607ed_warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
 
     with open_db(readonly=not persist) as conn:
-        # --- Route file analysis ---
-        # Also collects controller names inside auth-protected groups so we
-        # can suppress false-positive controller findings later.
-        route_protected_controllers: set[str] = set()
-        if not controllers_only:
-            # W607-CM: ``find_route_files`` substrate -- raise in the
-            # path-LIKE SQL query degrades to [] so the empty-state
-            # envelope still composes.
-            route_files = _run_check_cm(
-                "find_route_files",
-                _find_route_files,
-                conn,
-                default=[],
-            )
-            if route_files is None:
-                route_files = []
-            for db_path in route_files:
-                abs_path = _resolve_path(project_root, db_path)
-                source = _read_source(abs_path)
-                if source is None:
-                    continue
-                # W607-CM: ``analyze_route_file`` substrate -- per-file
-                # brace-depth analyser. A raise on ONE route file must
-                # not torpedo other route files (per-framework isolation),
-                # so this is wrapped inside the per-file loop. Default
-                # is ``([], set())`` so the protected-controllers set
-                # stays correct even when one file fails.
-                pair = _run_check_cm(
-                    "analyze_route_file",
-                    _analyze_route_file,
-                    abs_path,
-                    source,
-                    default=([], set()),
-                )
-                if pair is None:
-                    pair = ([], set())
-                findings, protected = pair
-                all_findings.extend(findings)
-                route_protected_controllers.update(protected)
-
-        # --- ServiceProvider analysis ---
-        # Routes can also be registered in ServiceProvider::boot() methods
-        # with Route::middleware(['auth:sanctum'])->group(...).  Controllers
-        # referenced inside those groups should be treated as protected.
-        if not controllers_only:
-            # W607-CM: ``find_service_provider_files`` substrate -- raise
-            # in the path-LIKE SQL query degrades to [] so the empty-state
-            # envelope still composes.
-            provider_files = _run_check_cm(
-                "find_service_provider_files",
-                _find_service_provider_files,
-                conn,
-                default=[],
-            )
-            if provider_files is None:
-                provider_files = []
-            for db_path in provider_files:
-                abs_path = _resolve_path(project_root, db_path)
-                source = _read_source(abs_path)
-                if source is None:
-                    continue
-                # W607-CM: ``analyze_service_provider`` substrate -- one
-                # provider raising must not torpedo siblings. Default
-                # is the empty set so route_protected_controllers stays
-                # well-formed.
-                provider_protected = _run_check_cm(
-                    "analyze_service_provider",
-                    _analyze_service_provider,
-                    abs_path,
-                    source,
-                    default=set(),
-                )
-                if provider_protected is None:
-                    provider_protected = set()
-                route_protected_controllers.update(provider_protected)
-
-        # --- Controller file analysis ---
-        if not routes_only:
-            # W607-CM: ``find_controller_files`` substrate -- raise in
-            # the path-LIKE SQL query degrades to [] so the empty-state
-            # envelope still composes.
-            controller_files = _run_check_cm(
-                "find_controller_files",
-                _find_controller_files,
-                conn,
-                default=[],
-            )
-            if controller_files is None:
-                controller_files = []
-            # E2 — build the project-wide class-source map once so the
-            # inheritance walker can resolve `extends` parents in O(1).
-            # W607-CM: ``build_class_source_map`` substrate -- raise in
-            # the cross-file walker degrades to {} so per-controller
-            # analysis still runs (W36.10 ancestor descent silently
-            # bypasses with no ancestor source).
-            class_source_map = _run_check_cm(
-                "build_class_source_map",
-                _build_class_source_map,
-                controller_files,
-                project_root,
-                default={},
-            )
-            if class_source_map is None:
-                class_source_map = {}
-            for db_path in controller_files:
-                abs_path = _resolve_path(project_root, db_path)
-                source = _read_source(abs_path)
-                if source is None:
-                    continue
-                # W607-CM: ``analyze_controller_file`` substrate -- W140
-                # helper-indirection + W36.10 depth-2 ancestor descent
-                # live here. Per-file isolation so one controller raising
-                # does not torpedo siblings (matches the per-framework
-                # isolation discipline).
-                findings = _run_check_cm(
-                    "analyze_controller_file",
-                    _analyze_controller_file,
-                    abs_path,
-                    source,
-                    route_protected_controllers,
-                    class_source_map=class_source_map,
-                    default=[],
-                )
-                if findings is None:
-                    findings = []
-                all_findings.extend(findings)
+        # --- Discovery and analysis ---
+        # Encapsulates route / ServiceProvider / controller scanning so the
+        # command body focuses on orchestration, not per-file loops.
+        all_findings, _route_protected_controllers = _collect_auth_gaps_findings(
+            conn,
+            project_root,
+            routes_only,
+            controllers_only,
+            _run_check_cm,
+        )
 
         # --- W116: mirror auth-gaps into the central findings registry.
         # Runs ONLY with --persist. The persisted set is the unfiltered
@@ -1665,72 +1921,20 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
                 # degrade gracefully so the standard auth-gaps output
                 # still ships. Surface lineage so a non-expected variant
                 # (locked / corrupt DB) is still discoverable.
-                from roam.observability import log_swallowed
-
                 log_swallowed("cmd_auth_gaps:emit_findings", _exc)
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-CM disclosure
                 _w607cm_warnings_out.append(f"auth_gaps_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
-    # Apply confidence floor via canonical severity_rank() (W1005-followup-D).
-    # Floor semantic: keep finding when ``severity_rank(f.confidence) >= floor``.
-    # Unknown labels collapse to rank -1 and sort below every defined tier — so
-    # ``--min-confidence info`` (rank 0) drops them, matching the W531
-    # CI-safety lesson (a typo never accidentally promotes a finding).
-    # W607-CM: ``apply_confidence_filter`` substrate -- raise in the
-    # comprehension (e.g. severity_rank raising on a malformed finding
-    # dict) degrades to the unfiltered list so a single bad row doesn't
-    # wipe the findings list.
-    def _apply_confidence_filter():
-        return [f for f in all_findings if severity_rank(f["confidence"]) >= min_conf_rank]
-
-    _filtered = _run_check_cm(
-        "apply_confidence_filter",
-        _apply_confidence_filter,
-        default=all_findings,
-    )
-    if _filtered is not None:
-        all_findings = _filtered
-
-    # Sort: high first, then medium, then low; within tier by file.
-    # W607-CM: ``sort_findings`` substrate -- raise in the sort key
-    # (e.g. malformed finding dict missing ``confidence`` / ``file``)
-    # degrades to the unsorted list so the envelope still composes.
-    def _sort_findings():
-        all_findings.sort(
-            key=lambda f: (
-                -confidence_level_rank(f["confidence"], fallback=-1),
-                f["file"],
-                f.get("line", 0),
-            )
-        )
-        return all_findings
-
-    _run_check_cm("sort_findings", _sort_findings, default=None)
-
-    # Counts by confidence
-    # W607-CM: ``aggregate_by_confidence`` substrate -- histogram
-    # construction. Degrades to (0, 0, 0) on raise so the verdict
-    # composer still produces a coherent string.
-    def _aggregate_by_confidence():
-        return (
-            sum(1 for f in all_findings if f["confidence"] == "high"),
-            sum(1 for f in all_findings if f["confidence"] == "medium"),
-            sum(1 for f in all_findings if f["confidence"] == "low"),
-        )
-
-    counts = _run_check_cm(
-        "aggregate_by_confidence",
-        _aggregate_by_confidence,
-        default=(0, 0, 0),
-    )
-    if counts is None:
-        counts = (0, 0, 0)
-    n_high, n_medium, n_low = counts
-    total = len(all_findings)
-
-    # Split by type for display
-    route_findings = [f for f in all_findings if f["type"] == "route"]
-    ctrl_findings = [f for f in all_findings if f["type"] == "controller"]
+    # Apply confidence floor, sort, count, and split findings for display.
+    (
+        all_findings,
+        n_high,
+        n_medium,
+        n_low,
+        total,
+        route_findings,
+        ctrl_findings,
+    ) = _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm)
 
     # --- SARIF output ---
     # W1195: SARIF projection mirrors the three confidence tiers used
@@ -1758,275 +1962,22 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
 
     # --- JSON output ---
     if json_mode:
-        verdict_floor = f"{total} auth gap(s) found"
-        # W21.7 LAW 4: suppress zero-severity rows from the auto-derived
-        # ``agent_contract.facts`` so we don't ship noise like
-        # ``"0 high findings"`` / ``"0 medium findings"`` /
-        # ``"0 low findings"``. Build the contract explicitly: verdict +
-        # only the non-zero severity buckets. When everything is zero the
-        # facts list contains only the verdict ("0 auth gap(s) found").
-        explicit_facts = [verdict_floor]
-        for sev, n in (("high", n_high), ("medium", n_medium), ("low", n_low)):
-            if n > 0:
-                explicit_facts.append(f"{n} {sev}-severity auth gaps")
-
-        # W607-ED -- score_classify boundary. Buckets the run by total
-        # auth-gap count into a state label:
-        #   * NO_AUTH_GAPS  -- total == 0
-        #   * LIGHT         -- 0 < total <= 3
-        #   * MODERATE      -- 3 < total <= 10
-        #   * HEAVY         -- total > 10
-        #   * DEGRADED      -- floor on raise
-        # W978 5th-discipline: ``total`` passed as a raw int; counting /
-        # iteration lives INSIDE the closure (no len() at kwarg-bind).
-        def _score_classify_run(_total):
-            if _total == 0:
-                _state_label = "NO_AUTH_GAPS"
-            elif _total <= 3:
-                _state_label = "LIGHT"
-            elif _total <= 10:
-                _state_label = "MODERATE"
-            else:
-                _state_label = "HEAVY"
-            return {"state": _state_label, "scanned": _total}
-
-        _score_dict = _run_check_ed(
-            "score_classify",
-            _score_classify_run,
-            total,
-            default={"state": "DEGRADED", "scanned": 0},
-        )
-
-        # W607-ED -- compute_predicate boundary. Rollup metrics dict
-        # surfacing aggregate dimensions (total_count / by_kind /
-        # files_affected / endpoints_affected) so a downstream refactor
-        # of the rollup logic surfaces a marker rather than crashing.
-        # W978 5th-discipline: ``all_findings`` passed as a raw arg;
-        # counting / iteration lives INSIDE the closure.
-        def _compute_predicate_fields(_findings):
-            _by_kind: defaultdict[str, int] = defaultdict(int)
-            _files: set[str] = set()
-            _endpoints: set[str] = set()
-            for _f in _findings:
-                # Auth-gap findings carry ``type`` (route|controller) and
-                # ``reason`` (e.g. helper_indirection / ancestor_descent /
-                # missing_authorize). Compose a stable key per finding:
-                # ``<type>:<reason>`` so by_kind is a meaningful 2D rollup.
-                _t = _f.get("type") or "auth_gap"
-                _r = _f.get("reason") or _t
-                _k = f"{_t}:{_r}"
-                _by_kind[_k] += 1
-                _file = _f.get("file") or ""
-                if _file:
-                    _files.add(_file)
-                # Endpoint identity: route uses verb+path, controller
-                # uses class+method
-                if _t == "route":
-                    _ep = f"{_f.get('verb', '?')} {_f.get('path', '?')}"
-                else:
-                    _ep = f"{_f.get('controller', '?')}::{_f.get('name', '?')}"
-                _endpoints.add(_ep)
-            return {
-                "total_count": len(_findings),
-                "by_kind": dict(_by_kind),
-                "files_affected": len(_files),
-                "endpoints_affected": len(_endpoints),
-            }
-
-        _pred_fields = _run_check_ed(
-            "compute_predicate",
-            _compute_predicate_fields,
+        _emit_auth_gaps_json(
             all_findings,
-            default={
-                "total_count": 0,
-                "by_kind": {},
-                "files_affected": 0,
-                "endpoints_affected": 0,
-            },
+            route_findings,
+            ctrl_findings,
+            total,
+            n_high,
+            n_medium,
+            n_low,
+            limit,
+            _run_check_ed,
+            _w607cm_warnings_out,
+            _w607ed_warnings_out,
         )
-
-        # W607-ED -- compute_verdict boundary. Wraps the verdict string
-        # assembly so a downstream f-string refactor surfaces a marker
-        # rather than crashing the envelope. Literal "auth_gaps
-        # completed" floor (LAW 6 still holds: the line works
-        # standalone).
-        #
-        # W978 1st-discipline: the floor MUST NOT re-interpolate the
-        # same values that tripped the closure. W978 2nd-discipline:
-        # ``default=`` is a literal constant.
-        def _build_verdict_str(_verdict_floor):
-            return _verdict_floor
-
-        verdict = _run_check_ed(
-            "compute_verdict",
-            _build_verdict_str,
-            verdict_floor,
-            default="auth_gaps completed",
-        )
-
-        # W607-CM + W607-ED: any substrate marker OR aggregation marker
-        # flips ``partial_success: True`` so a degraded envelope is NOT
-        # mistaken for a clean "0 auth gaps" verdict (Pattern-2
-        # silent-fallback guard). W815 already validates that the
-        # empty-corpus path explicitly names the zero-count outcome --
-        # the W607-CM/ED flip extends that guard to the degraded paths.
-        _combined_warnings = list(_w607cm_warnings_out) + list(_w607ed_warnings_out)
-        summary_block: dict = {
-            "verdict": verdict,
-            "total": total,
-            "high": n_high,
-            "medium": n_medium,
-            "low": n_low,
-            "route_gaps": len(route_findings),
-            "controller_gaps": len(ctrl_findings),
-            # W607-ED: surface score_classify result so consumers can
-            # read the run state without re-deriving from raw counts.
-            # W978 7th-discipline: bare ``_score_dict["state"]`` (floor
-            # dict guarantees the key) -- NOT ``.get(..., expensive)``.
-            "run_state": _score_dict["state"],
-            # W607-ED: surface compute_predicate rollup on the envelope
-            # so consumers can read the aggregate dimensions without
-            # rebuilding from the raw list. W978 7th-discipline: bare
-            # key lookups.
-            "by_kind": _pred_fields["by_kind"],
-            "files_affected": _pred_fields["files_affected"],
-            "endpoints_affected": _pred_fields["endpoints_affected"],
-        }
-        envelope_kwargs: dict = {
-            "summary": summary_block,
-            "agent_contract": {"facts": explicit_facts},
-            "route_gaps": route_findings[:limit],
-            "controller_gaps": ctrl_findings[:limit],
-        }
-        # W607-CM + W607-ED: mirror combined substrate + aggregation
-        # markers into BOTH the top-level envelope ``warnings_out``
-        # AND ``summary.warnings_out`` so MCP consumers see disclosure
-        # regardless of which surface they read.
-        if _combined_warnings:
-            summary_block["partial_success"] = True
-            summary_block["warnings_out"] = list(_combined_warnings)
-            envelope_kwargs["warnings_out"] = list(_combined_warnings)
-
-        # W607-ED -- serialize_envelope boundary. Wraps the envelope
-        # serialization itself. A downstream schema-shape refactor that
-        # breaks ``json_envelope("auth-gaps", ...)`` would otherwise
-        # crash AFTER all substrate + aggregation signals were already
-        # gathered. Floor to a minimal envelope stub so consumers still
-        # receive a parseable JSON object with the marker attached + the
-        # canonical command name. W978 6th-discipline: floor is a
-        # concrete dict, not a sentinel that may __len__-raise downstream.
-        _envelope_floor: dict = {
-            "command": "auth-gaps",
-            "schema_version": "1.0.0",
-            "summary": {
-                "verdict": "auth_gaps completed",
-                "partial_success": True,
-                "warnings_out": list(_combined_warnings),
-            },
-            "warnings_out": list(_combined_warnings),
-        }
-        envelope = _run_check_ed(
-            "serialize_envelope",
-            json_envelope,
-            "auth-gaps",
-            default=_envelope_floor,
-            **envelope_kwargs,
-        )
-        # W607-ED -- if ``serialize_envelope`` raised AFTER the combined
-        # bucket was already snapshotted, the new
-        # ``auth_gaps_serialize_envelope_failed:`` marker was appended to
-        # ``_w607ed_warnings_out`` and the floor stub carries only the
-        # pre-raise combined list. Rebuild the floor stub's warnings_out
-        # so the new marker reaches the JSON output. Clean path ->
-        # envelope is the real json_envelope return value, no rebuild.
-        if envelope is _envelope_floor and _w607ed_warnings_out:
-            _combined_warnings = list(_w607cm_warnings_out) + list(_w607ed_warnings_out)
-            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
-            _envelope_floor["warnings_out"] = list(_combined_warnings)
-            envelope = _envelope_floor
-        click.echo(to_json(envelope))
         return
 
     # --- Text output ---
-    click.echo("=== Auth Gaps ===\n")
-
-    verdict = f"{total} auth gap(s) found"
-    if total:
-        parts = []
-        if n_high:
-            parts.append(f"{n_high} high")
-        if n_medium:
-            parts.append(f"{n_medium} medium")
-        if n_low:
-            parts.append(f"{n_low} low")
-        verdict += f"  ({', '.join(parts)})"
-    click.echo(f"VERDICT: {verdict}\n")
-
-    # --- Routes section ---
-    if route_findings:
-        click.echo(f"Routes without auth middleware ({len(route_findings)}):")
-        rows = []
-        for f in route_findings[:limit]:
-            rows.append(
-                [
-                    f"[{f['confidence']}]",
-                    f"{f['verb']}  {f['path']}",
-                    loc(f["file"], f["line"]),
-                    f["fix"],
-                ]
-            )
-        click.echo(
-            format_table(
-                ["Conf", "Route", "Location", "Fix"],
-                rows,
-                budget=limit,
-            )
-        )
-        click.echo()
-    else:
-        click.echo("Routes without auth middleware: (none found)\n")
-
-    # --- Controllers section ---
-    if ctrl_findings:
-        click.echo(f"Controllers without authorization ({len(ctrl_findings)}):")
-        # when many findings cluster on a few controllers
-        # (e.g. ~115 methods of DynamicResourceController-derived classes),
-        # a per-controller rollup makes triage radically faster than skimming
-        # 100+ detail rows. Threshold: only show rollup when >= 10 findings.
-        if len(ctrl_findings) >= 10:
-            from collections import Counter
-
-            by_ctrl = Counter(f.get("controller", "?") for f in ctrl_findings)
-            top = by_ctrl.most_common(5)
-            click.echo("  Top by controller:")
-            for ctrl, n in top:
-                click.echo(f"    {ctrl:<40s} {n} method(s)")
-            tail = len(by_ctrl) - 5
-            if tail > 0:
-                click.echo(f"    ...and {tail} more controller(s)")
-            click.echo()
-        rows = []
-        for f in ctrl_findings[:limit]:
-            rows.append(
-                [
-                    f"[{f['confidence']}]",
-                    f"{f['controller']}::{f['method']}",
-                    loc(f["file"], f["line"]),
-                    f["fix"],
-                ]
-            )
-        click.echo(
-            format_table(
-                ["Conf", "Symbol", "Location", "Fix"],
-                rows,
-                budget=limit,
-            )
-        )
-        click.echo()
-    else:
-        click.echo("Controllers without authorization: (none found)\n")
-
-    if total == 0:
-        click.echo("No auth gaps detected.")
-    elif n_high == 0:
-        click.echo("No high-confidence gaps found. Review medium/low findings manually.")
+    _emit_auth_gaps_text(
+        total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit
+    )
