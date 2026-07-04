@@ -32,18 +32,21 @@ _PREFIX = "mcp__roam-code__"
 _GREP_RE = re.compile(r"\b(grep|rg|ripgrep|git\s+grep)\b")
 
 
-def _tool_calls(path: str):
+def _tool_calls(path: str) -> tuple[list[tuple[str, dict]], int]:
+    calls: list[tuple[str, dict]] = []
+    skipped = 0
     try:
         if os.path.getsize(path) > 50 * 1024 * 1024:
-            return
+            return calls, skipped
     except OSError:
-        return
+        return calls, skipped
     try:
         with open(path, encoding="utf-8", errors="ignore") as fh:
             for line in fh:
                 try:
                     e = json.loads(line)
                 except json.JSONDecodeError:
+                    skipped += 1
                     continue
                 if e.get("type") != "assistant":
                     continue
@@ -52,9 +55,10 @@ def _tool_calls(path: str):
                     continue
                 for b in m.get("content") or []:
                     if isinstance(b, dict) and b.get("type") == "tool_use":
-                        yield (b.get("name") or "", b.get("input") or {})
+                        calls.append((b.get("name") or "", b.get("input") or {}))
     except OSError:
-        return
+        return calls, skipped
+    return calls, skipped
 
 
 def _target(ti: dict) -> str:
@@ -94,10 +98,11 @@ def main() -> int:
 
     cases = collections.Counter()
     samples = collections.defaultdict(list)
-    n_calls = n_fallbacks = 0
+    n_calls = n_fallbacks = n_skipped = 0
 
     for f in files:
-        calls = list(_tool_calls(f))
+        calls, file_skipped = _tool_calls(f)
+        n_skipped += file_skipped
         for i, (name, ti) in enumerate(calls):
             if name != target_tool:
                 continue
@@ -136,8 +141,11 @@ def main() -> int:
 
     print(
         f"=== {args.tool}: {n_calls} calls, {n_fallbacks} fallbacks "
-        f"({n_fallbacks * 100 // n_calls if n_calls else 0}%) ===\n"
+        f"({n_fallbacks * 100 // n_calls if n_calls else 0}%) ==="
     )
+    if n_skipped:
+        print(f"  {n_skipped} malformed JSON line(s) skipped")
+    print()
     for k, v in cases.most_common():
         print(f"  {k}: {v} ({v * 100 // n_fallbacks if n_fallbacks else 0}%)")
     print()
