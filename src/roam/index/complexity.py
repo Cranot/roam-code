@@ -721,6 +721,36 @@ def _record_node_signals(node, ntype: str, source: bytes, loop_depth: int, loop_
         _record_self_call(node, source, state)
 
 
+def _walk_loop(node, source: bytes, loop_depth: int, loop_vars: set[str], state: _MathSignalState, walk) -> None:
+    """Enter a loop and walk its children at the correct loop depth.
+
+    Responsibility: preserve signal fidelity when entering a loop,
+    including the grammar fallback that walks all children if no
+    identifiable body exists.
+    """
+    new_depth, new_loop_vars = _enter_loop(node, source, loop_depth, loop_vars, state)
+    body_node = _resolve_loop_body(node)
+    if body_node is not None:
+        _walk_loop_children(node, body_node, new_depth, loop_depth, new_loop_vars, loop_vars, walk)
+        return
+    # Last-resort: preserve old behaviour (walk all children at
+    # increased depth) so we don't silently drop signals on languages
+    # whose grammar we don't recognise here.
+    for child in node.children:
+        walk(child, new_depth, new_loop_vars)
+
+
+def _walk_nested_function(node, func_node, walk) -> None:
+    """Walk a nested function body with a fresh loop scope.
+
+    Responsibility: isolate nested function scopes from the enclosing
+    loop so callbacks and parameter defaults are not mis-attributed to
+    the outer loop context.
+    """
+    for child in node.children:
+        walk(child, 0, set())
+
+
 def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     """Walk a function AST node once and extract algorithmic signals.
 
@@ -736,30 +766,11 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
         ntype = node.type
 
         if ntype in _LOOP_NODES:
-            new_depth, new_loop_vars = _enter_loop(node, source, loop_depth, loop_vars, state)
-            body_node = _resolve_loop_body(node)
-            if body_node is not None:
-                _walk_loop_children(node, body_node, new_depth, loop_depth, new_loop_vars, loop_vars, _walk)
-            else:
-                # Last-resort: preserve old behaviour (walk all children
-                # at increased depth) so we don't silently drop signals
-                # on languages whose grammar we don't recognise here.
-                for child in node.children:
-                    _walk(child, new_depth, new_loop_vars)
+            _walk_loop(node, source, loop_depth, loop_vars, state, _walk)
             return
 
-        # nested function bodies establish a fresh scope:
-        # an arrow function in a parameter default, a callback passed to map(),
-        # or a local function declared inside a loop should NOT inherit the
-        # enclosing function's loop_depth. Without this isolation, a default
-        # parameter like `(item) => item.name || item.id` was getting flagged
-        # as I/O in loop because its calls were attributed to whatever loop
-        # depth the enclosing function had reached. We still walk the inner
-        # function so its own `_record_self_call` opportunities aren't lost,
-        # but we reset loop_depth to 0 and clear loop_vars at the boundary.
         if ntype in _FUNCTION_NODES and node is not func_node:
-            for child in node.children:
-                _walk(child, 0, set())
+            _walk_nested_function(node, func_node, _walk)
             return
 
         _record_node_signals(node, ntype, source, loop_depth, loop_vars, string_vars, state)
