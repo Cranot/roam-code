@@ -2978,6 +2978,87 @@ def _breaking_caller_files(conn, symbol_ids: list[int]) -> set[str]:
     return {r["path"] for r in rows if r["path"]}
 
 
+def _is_public_breaking_contract_name(name: str) -> bool:
+    """Names that represent externally visible call contracts for this gate."""
+    return bool(name) and not name.startswith("_")
+
+
+def _changed_public_signatures_for_caller_gate(
+    conn,
+    path: str,
+    root: Path,
+    *,
+    git_show,
+    extract_old_symbols,
+    get_current_symbols,
+    compare_file,
+) -> list[dict]:
+    """Signature changes that can matter to callers outside this edit."""
+    old_source = git_show(root, "HEAD", path)
+    if old_source is None:
+        return []  # new file at HEAD — nothing to break
+    try:
+        old_symbols = extract_old_symbols(old_source, path)
+    except Exception as exc:  # noqa: BLE001 — one unparseable file must not break the gate
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.breaking.extract", exc)
+        return []
+    if not old_symbols:
+        return []
+    new_symbols = get_current_symbols(conn, path)
+    _removed, sig_changed, _renamed = compare_file(path, old_symbols, new_symbols)
+    return [
+        sym
+        for sym in sig_changed
+        if _is_public_breaking_contract_name(str(sym.get("name") or ""))
+    ]
+
+
+def _external_caller_files_for_contract(conn, path: str, name: str, changed_paths: set[str]) -> list[str]:
+    """Unedited caller files that would still consume the old call contract."""
+    symbol_ids = _symbol_ids_in_file(conn, path, name)
+    return sorted(f for f in _breaking_caller_files(conn, symbol_ids) if f not in changed_paths)
+
+
+def _breaking_contract_violation(path: str, sym: dict, external: list[str]) -> dict:
+    name = str(sym.get("name") or "")
+    sample = ", ".join(external[:3]) + (" ..." if len(external) > 3 else "")
+    return {
+        "category": _VERIFY_BREAKING_CATEGORY,
+        "severity": SEVERITY_FAIL,
+        "hard_block": True,
+        "file": path,
+        "line": sym.get("line"),
+        "message": (
+            f"breaking change: signature of `{name}` changed but "
+            f"{len(external)} un-edited caller file(s) still call it "
+            f"({sample}) — they will break"
+        ),
+        "fix": (
+            "Update the callers in this same change, keep the old "
+            "signature back-compatible, or stage a deprecation"
+        ),
+    }
+
+
+def _breaking_contract_violations_for_file(
+    conn,
+    path: str,
+    changed_paths: set[str],
+    min_callers: int,
+    sig_changed: list[dict],
+) -> list[dict]:
+    """Caller-gate violations for public signatures with unedited callers."""
+    violations: list[dict] = []
+    for sym in sig_changed:
+        name = str(sym.get("name") or "")
+        external = _external_caller_files_for_contract(conn, path, name, changed_paths)
+        if len(external) >= min_callers:
+            violations.append(_breaking_contract_violation(path, sym, external))
+    return violations
+
+
 def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
     """Guardrail: signature change + an un-edited external caller => FAIL (BLOCK).
 
@@ -2988,8 +3069,8 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     they survive --diff-only scoping and pin the verdict to FAIL."""
     if not _verify_env_flag("ROAM_VERIFY_BREAKING", True):
         return {"score": 100, "violations": []}
-    changed = {p.replace("\\", "/") for p in (target_paths or [])}
-    source_paths = [p for p in changed if p.endswith(".py") and not is_test_file(p)]
+    changed_paths = {p.replace("\\", "/") for p in (target_paths or [])}
+    source_paths = [p for p in changed_paths if p.endswith(".py") and not is_test_file(p)]
     if not source_paths or len(source_paths) > _MAX_BREAKING_FILES:
         return {"score": 100, "violations": []}
     try:
@@ -3008,48 +3089,18 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     min_callers = max(1, _verify_env_int("ROAM_VERIFY_BREAKING_MIN_CALLERS", 1))
     violations: list[dict] = []
     for path in source_paths:
-        old_source = _git_show(root, "HEAD", path)
-        if old_source is None:
-            continue  # new file at HEAD — nothing to break
-        try:
-            old_symbols = _extract_old_symbols(old_source, path)
-        except Exception as exc:  # noqa: BLE001 — one unparseable file must not break the gate
-            from roam.observability import log_swallowed
-
-            log_swallowed("verify.breaking.extract", exc)
-            continue
-        if not old_symbols:
-            continue
-        new_symbols = _get_current_symbols(conn, path)
-        _removed, sig_changed, _renamed = _compare_file(path, old_symbols, new_symbols)
-        for sym in sig_changed:
-            name = sym.get("name") or ""
-            if not name or name.startswith("_"):
-                continue  # private helper / dunder — not a public API contract
-            external = sorted(
-                f for f in _breaking_caller_files(conn, _symbol_ids_in_file(conn, path, name)) if f not in changed
-            )
-            if len(external) < min_callers:
-                continue
-            sample = ", ".join(external[:3]) + (" ..." if len(external) > 3 else "")
-            violations.append(
-                {
-                    "category": _VERIFY_BREAKING_CATEGORY,
-                    "severity": SEVERITY_FAIL,
-                    "hard_block": True,
-                    "file": path,
-                    "line": sym.get("line"),
-                    "message": (
-                        f"breaking change: signature of `{name}` changed but "
-                        f"{len(external)} un-edited caller file(s) still call it "
-                        f"({sample}) — they will break"
-                    ),
-                    "fix": (
-                        "Update the callers in this same change, keep the old "
-                        "signature back-compatible, or stage a deprecation"
-                    ),
-                }
-            )
+        sig_changed = _changed_public_signatures_for_caller_gate(
+            conn,
+            path,
+            root,
+            git_show=_git_show,
+            extract_old_symbols=_extract_old_symbols,
+            get_current_symbols=_get_current_symbols,
+            compare_file=_compare_file,
+        )
+        violations.extend(
+            _breaking_contract_violations_for_file(conn, path, changed_paths, min_callers, sig_changed)
+        )
     return {"score": 0 if violations else 100, "violations": violations}
 
 
