@@ -27,6 +27,7 @@ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import heapq
 import os
 import shutil
 
@@ -86,7 +87,7 @@ def _verdict_for(per_string: dict) -> tuple[str, str]:
     if hot:
         return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable, {len(hot)} in hot symbols"
     if len(reachable) <= _REVIEW_REACHABLE_MAX:
-        names = ", ".join(sorted({m.get("enclosing_symbol") or m["path"] for m in reachable})[:3])
+        names = ", ".join(heapq.nsmallest(3, {m.get("enclosing_symbol") or m["path"] for m in reachable}))
         return _validate_verdict("REVIEW"), f"{len(reachable)} reachable: {names}"
     return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable code references"
 
@@ -578,6 +579,25 @@ def _serialise_match(m):
     return out
 
 
+def _emit_surface_items(items, surface):
+    """Emit the first few matches for a single surface."""
+    for m in items[:3]:
+        sym = m.get("enclosing_symbol")
+        tag = ""
+        if surface == "code":
+            tag = " [reachable]" if m.get("reachable") else " [unreachable]"
+        bridges = m.get("bridge_links")
+        clones = m.get("clone_siblings")
+        extra = ""
+        if bridges:
+            extra += f" bridges={len(bridges)}"
+        if clones:
+            extra += f" clones={len(clones)}"
+        click.echo(f"    - {loc(m['path'], m['line'])}{f' in {sym}' if sym else ''}{tag}{extra}")
+    if len(items) > 3:
+        click.echo(f"    ... +{len(items) - 3} more")
+
+
 def _emit_text(analyses, targets, reachable_from):
     overall_load = sum(1 for s in targets if _verdict_for(analyses[s])[0] == "LOAD-BEARING")
     click.echo(f"VERDICT: {len(targets)} string(s) checked, {overall_load} load-bearing")
@@ -591,19 +611,5 @@ def _emit_text(analyses, targets, reachable_from):
         click.echo(f"  total references: {a['total']}")
         for surface, items in sorted(a["surfaces"].items()):
             click.echo(f"  {surface}: {len(items)}")
-            for m in items[:3]:
-                sym = m.get("enclosing_symbol")
-                tag = ""
-                if surface == "code":
-                    tag = " [reachable]" if m.get("reachable") else " [unreachable]"
-                bridges = m.get("bridge_links")
-                clones = m.get("clone_siblings")
-                extra = ""
-                if bridges:
-                    extra += f" bridges={len(bridges)}"
-                if clones:
-                    extra += f" clones={len(clones)}"
-                click.echo(f"    - {loc(m['path'], m['line'])}{f' in {sym}' if sym else ''}{tag}{extra}")
-            if len(items) > 3:
-                click.echo(f"    ... +{len(items) - 3} more")
+            _emit_surface_items(items, surface)
         click.echo()
