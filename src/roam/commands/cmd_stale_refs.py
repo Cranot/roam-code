@@ -1359,6 +1359,10 @@ def _rewrite_is_safe(
     return True, ""
 
 
+def _line_number_for_stable_fix_order(edit: dict) -> int:
+    return edit["line"]
+
+
 def _build_fix_edits(
     targets: list[dict],
     project_root: Path,
@@ -1470,7 +1474,7 @@ def _build_fix_edits(
             seen_at_line[e["line"]].add(e["raw"])
         kept = [e for e in edits if len(seen_at_line[e["line"]]) == 1]
         if kept:
-            cleaned[src] = sorted(kept, key=lambda e: e["line"])
+            cleaned[src] = sorted(kept, key=_line_number_for_stable_fix_order)
     return cleaned
 
 
