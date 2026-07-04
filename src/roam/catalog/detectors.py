@@ -4386,8 +4386,11 @@ def _complexity_baseline(conn) -> tuple[float, float]:
             avg_sq = float(row["avg_sq_cc"] or 0.0)
             variance = max(0.0, avg_sq - (mean * mean))
             return mean, variance**0.5
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as exc:
+        log.warning(
+            "complexity baseline skipped for _symbol_context: %s",
+            exc,
+        )
     return 0.0, 0.0
 
 
