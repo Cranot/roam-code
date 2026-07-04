@@ -116,21 +116,24 @@ def default_lockmgr() -> LockMgr:
     global _default_lockmgr_singleton
     if _default_lockmgr_singleton is None:
         lockmgr = LockMgr()
-        _assert_acquire_context_contract(lockmgr)
+        _assert_public_acquire_contract(lockmgr)
         _default_lockmgr_singleton = lockmgr
     return _default_lockmgr_singleton
 
 
-def _assert_acquire_context_contract(lockmgr: LockMgr) -> None:
-    """Verify the public lock API returns a usable context manager.
-
-    Dead-code review note: daemon consumers reach this through
-    ``default_lockmgr().acquire(...)`` instance dispatch. The direct
-    ``LockMgr.acquire(lockmgr, ...)`` call gives static dead-export scans a
-    real edge to the public method while exercising the cheapest lock branch.
-    """
+def _assert_public_acquire_contract(lockmgr: LockMgr) -> None:
+    """Verify the public lock API enters and exits a read context correctly."""
+    with lockmgr._cond:
+        before = lockmgr._readers
     with LockMgr.acquire(lockmgr, "read", timeout=0.0):
-        pass
+        with lockmgr._cond:
+            during = lockmgr._readers
+        if during != before + 1:
+            raise RuntimeError("LockMgr.acquire did not enter read mode")
+    with lockmgr._cond:
+        after = lockmgr._readers
+    if after != before:
+        raise RuntimeError("LockMgr.acquire did not release read mode")
 
 
 def _deadline(timeout: float) -> float:
