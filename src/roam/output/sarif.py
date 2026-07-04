@@ -4961,6 +4961,14 @@ _LLM_SMELLS_KIND_TO_RULE: dict[str, str] = {
 }
 
 
+# Precomputed SARIF rule catalogue helpers. The mapping above is immutable
+# configuration, so the sorted order and membership set are invariant across
+# calls. Computing them once avoids a per-call full sort of the vocabulary
+# (addresses the "direct-select" finding at the catalogue-build site).
+_LLM_SMELLS_RULE_IDS: list[str] = sorted(_LLM_SMELLS_KIND_TO_RULE.values())
+_LLM_SMELLS_KNOWN_RULE_IDS: set[str] = set(_LLM_SMELLS_RULE_IDS)
+
+
 # Per-rule short descriptions for the SARIF rule catalogue. Mirrors the
 # label vocabulary at :data:`roam.commands.cmd_llm_smells._PATTERN_LABELS`
 # but phrased in noun-form so each rule reads cleanly as a SARIF
@@ -5082,7 +5090,6 @@ def llm_smells_to_sarif(findings: list[dict]) -> dict:
     # by smells_to_sarif). Per-rule defaultLevel reflects the canonical
     # severity-band each kind typically lands in; per-finding level
     # always overrides via the closed _to_level mapping.
-    rule_ids_sorted = sorted(_LLM_SMELLS_KIND_TO_RULE.values())
     rules = [
         _rule_entry(
             id=rule_id,
@@ -5090,9 +5097,8 @@ def llm_smells_to_sarif(findings: list[dict]) -> dict:
             help_uri=_HELP_BASE + "llm-smells",
             default_level=_LLM_SMELLS_RULE_DEFAULT_LEVELS[rule_id],
         )
-        for rule_id in rule_ids_sorted
+        for rule_id in _LLM_SMELLS_RULE_IDS
     ]
-    known_rule_ids = set(rule_ids_sorted)
 
     results: list[dict] = []
     for f in findings or []:
@@ -5106,7 +5112,7 @@ def llm_smells_to_sarif(findings: list[dict]) -> dict:
             # llm-smells pattern lands here once it's wired into BOTH
             # the detector registry AND _LLM_SMELLS_KIND_TO_RULE.
             continue
-        if rule_id not in known_rule_ids:  # defence-in-depth
+        if rule_id not in _LLM_SMELLS_KNOWN_RULE_IDS:  # defence-in-depth
             continue
 
         fpath = f.get("file") or ""
