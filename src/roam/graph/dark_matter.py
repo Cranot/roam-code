@@ -316,6 +316,31 @@ def file_co_change_scores_bulk(
     return _score_cross_product(cand_list, seed_list, cochange_map, commit_map)
 
 
+def _load_seed_files_for_max_score(
+    conn: sqlite3.Connection,
+    seed_symbol_ids: Iterable[int],
+) -> set[int]:
+    """Resolve seed symbols to file ids without imposing incidental order.
+
+    WHY: the seed side is consumed as a max-over-set selection. Preserving
+    membership matters; sorting the ids only spends work on an order the
+    scoring contract never observes.
+    """
+    seed_ids = {int(s) for s in seed_symbol_ids}
+    if not seed_ids:
+        return set()
+
+    seed_files: set[int] = set()
+    for row in batched_in(
+        conn,
+        "SELECT DISTINCT file_id FROM symbols WHERE id IN ({ph})",
+        seed_ids,
+    ):
+        if row[0] is not None:
+            seed_files.add(int(row[0]))
+    return seed_files
+
+
 def co_change_scores_to_seed_set_bulk(
     conn: sqlite3.Connection,
     candidate_symbol_ids: Iterable[int],
@@ -335,8 +360,8 @@ def co_change_scores_to_seed_set_bulk(
     per-candidate path.
     """
     cand_list = [int(c) for c in candidate_symbol_ids]
-    seed_list = list(seed_symbol_ids)
-    if not cand_list or not seed_list:
+    seed_ids = {int(s) for s in seed_symbol_ids}
+    if not cand_list or not seed_ids:
         return {}
 
     # Resolve candidate symbol -> file id (bulk). co_change_score_to_seed_set
@@ -346,26 +371,17 @@ def co_change_scores_to_seed_set_bulk(
     for row in batched_in(
         conn,
         "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
-        sorted(set(cand_list)),
+        set(cand_list),
     ):
         if row[1] is not None:
             cand_file[int(row[0])] = int(row[1])
 
-    # Resolve seed symbol -> distinct file ids (bulk). The per-candidate
-    # path builds an identical set via `SELECT DISTINCT file_id`.
-    seed_files: set[int] = set()
-    for row in batched_in(
-        conn,
-        "SELECT DISTINCT file_id FROM symbols WHERE id IN ({ph})",
-        sorted(set(seed_list)),
-    ):
-        if row[0] is not None:
-            seed_files.add(int(row[0]))
+    seed_files = _load_seed_files_for_max_score(conn, seed_ids)
     if not seed_files:
         return {}
 
-    candidate_files = sorted(set(cand_file.values()))
-    pair_scores = file_co_change_scores_bulk(conn, candidate_files, sorted(seed_files))
+    candidate_files = set(cand_file.values())
+    pair_scores = file_co_change_scores_bulk(conn, candidate_files, seed_files)
 
     out: dict[int, float] = {}
     for cand_sym in cand_list:
