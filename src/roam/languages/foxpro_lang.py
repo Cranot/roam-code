@@ -627,6 +627,35 @@ _VFP_BUILTINS = frozenset(
 # Note: FORM is NOT here — DO FORM is handled separately by _RE_DO_FORM
 _DO_KEYWORDS = frozenset({"CASE", "WHILE"})
 
+_VFP_GENERIC_BASE_CLASSES = frozenset(
+    {
+        "CUSTOM",
+        "SESSION",
+        "FORM",
+        "COMMANDBUTTON",
+        "TEXTBOX",
+        "LABEL",
+        "CONTAINER",
+        "PAGE",
+        "PAGEFRAME",
+        "GRID",
+        "COLUMN",
+        "HEADER",
+        "COMBOBOX",
+        "LISTBOX",
+        "EDITBOX",
+        "SPINNER",
+        "TIMER",
+        "IMAGE",
+        "SHAPE",
+        "LINE",
+        "COMMANDGROUP",
+        "OPTIONGROUP",
+        "CHECKBOX",
+        "OPTIONBUTTON",
+    }
+)
+
 _PROPERTY_ASSIGNMENT_NON_NAMES = frozenset(
     {
         "IF",
@@ -658,6 +687,20 @@ class _PrgSymbolState:
     current_func_start: int | None = None
     current_func_kind: str | None = None
     has_top_level_routine: bool = False
+
+
+@dataclass
+class _PrgReferenceState:
+    current_func: str | None = None
+    current_class: str | None = None
+
+    @property
+    def source_name(self) -> str | None:
+        if self.current_class and self.current_func:
+            return f"{self.current_class}.{self.current_func}"
+        if self.current_class:
+            return self.current_class
+        return self.current_func
 
 
 # -- SCX/SCT binary parsing -------------------------------------------
@@ -1250,251 +1293,56 @@ class FoxProExtractor(LanguageExtractor):
             return self._extract_scx_references(source, file_path)
         lines, line_map = _preprocess(source)
         refs: list[dict] = []
-
-        # Track current scope for source_name
-        current_func: str | None = None
-        current_class: str | None = None
+        state = _PrgReferenceState()
 
         for idx, line in enumerate(lines):
             orig = line_map.get(idx, idx + 1)
             stripped = line.strip()
             if not stripped:
                 continue
-
-            # Track scope
-            m = _RE_CLASS.match(stripped)
-            if m:
-                current_class = m.group(1)
-                base = m.group(2)
-                # Inheritance reference (skip generic bases)
-                if base.upper() not in (
-                    "CUSTOM",
-                    "SESSION",
-                    "FORM",
-                    "COMMANDBUTTON",
-                    "TEXTBOX",
-                    "LABEL",
-                    "CONTAINER",
-                    "PAGE",
-                    "PAGEFRAME",
-                    "GRID",
-                    "COLUMN",
-                    "HEADER",
-                    "COMBOBOX",
-                    "LISTBOX",
-                    "EDITBOX",
-                    "SPINNER",
-                    "TIMER",
-                    "IMAGE",
-                    "SHAPE",
-                    "LINE",
-                    "COMMANDGROUP",
-                    "OPTIONGROUP",
-                    "CHECKBOX",
-                    "OPTIONBUTTON",
-                ):
-                    refs.append(
-                        self._make_reference(
-                            target_name=base,
-                            kind="inherits",
-                            line=orig,
-                            source_name=m.group(1),
-                        )
-                    )
+            if self._consume_prg_reference_scope_line(stripped, orig, state, refs):
                 continue
-
-            m = _RE_FUNC.match(stripped)
-            if m:
-                current_func = m.group(2)
-                continue
-
-            if _RE_ENDFUNC.match(stripped):
-                current_func = None
-                continue
-
-            if _RE_ENDDEFINE.match(stripped):
-                current_class = None
-                current_func = None
-                continue
-
-            scope = current_func
-            if current_class and current_func:
-                scope = f"{current_class}.{current_func}"
-            elif current_class:
-                scope = current_class
-
-            # DO proc IN file
-            m = _RE_DO_IN.match(stripped)
-            if m:
-                proc = m.group(1)
-                lib = m.group(2).strip("'\"")
-                refs.append(
-                    self._make_reference(
-                        target_name=proc,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                        import_path=lib,
-                    )
-                )
-                continue
-
-            # DO FORM formname — links to .scx form file
-            m = _RE_DO_FORM.match(stripped)
-            if m:
-                target = m.group(1).strip("'\"")
-                target = os.path.splitext(target)[0]  # strip .scx if present
-                refs.append(
-                    self._make_reference(
-                        target_name=target,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    )
-                )
-                continue
-
-            # DO filename (not DO CASE / DO WHILE)
-            m = _RE_DO_FILE.match(stripped)
-            if m:
-                target = m.group(1)
-                if target.upper() not in _DO_KEYWORDS:
-                    refs.append(
-                        self._make_reference(
-                            target_name=target,
-                            kind="call",
-                            line=orig,
-                            source_name=scope,
-                        )
-                    )
-                    continue
-
-            # SET PROCEDURE TO
-            m = _RE_SET_PROC.match(stripped)
-            if m:
-                path = m.group(1).strip("'\"")
-                refs.append(
-                    self._make_reference(
-                        target_name=os.path.splitext(os.path.basename(path))[0],
-                        kind="import",
-                        line=orig,
-                        source_name=scope,
-                        import_path=path,
-                    )
-                )
-                continue
-
-            # SET CLASSLIB TO
-            m = _RE_SET_CLASSLIB.match(stripped)
-            if m:
-                path = m.group(1).strip("'\"")
-                refs.append(
-                    self._make_reference(
-                        target_name=os.path.splitext(os.path.basename(path))[0],
-                        kind="import",
-                        line=orig,
-                        source_name=scope,
-                        import_path=path,
-                    )
-                )
-                continue
-
-            # #INCLUDE
-            m = _RE_INCLUDE.match(stripped)
-            if m:
-                path = m.group(1).strip()
-                refs.append(
-                    self._make_reference(
-                        target_name=os.path.splitext(os.path.basename(path))[0],
-                        kind="import",
-                        line=orig,
-                        source_name=scope,
-                        import_path=path,
-                    )
-                )
-                continue
-
-            # CREATEOBJECT("class") — mid-line search
-            for cm in _RE_CREATEOBJ.finditer(stripped):
-                refs.append(
-                    self._make_reference(
-                        target_name=cm.group(1),
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    )
-                )
-
-            # NEWOBJECT("class", "lib") — mid-line search
-            for nm in _RE_NEWOBJ.finditer(stripped):
-                refs.append(
-                    self._make_reference(
-                        target_name=nm.group(1),
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                        import_path=nm.group(2),
-                    )
-                )
-
-            # DECLARE func IN dll
-            m = _RE_DECLARE.match(stripped)
-            if m:
-                refs.append(
-                    self._make_reference(
-                        target_name=m.group(1),
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                        import_path=m.group(2).strip("'\""),
-                    )
-                )
-                continue
-
-            # =funcname(args) — expression-style function call
-            m = _RE_EXPR_CALL.match(stripped)
-            if m:
-                fname = m.group(1)
-                if fname.upper() not in _VFP_BUILTINS:
-                    refs.append(
-                        self._make_reference(
-                            target_name=fname,
-                            kind="call",
-                            line=orig,
-                            source_name=scope,
-                        )
-                    )
-
-            # obj.method(args) — method calls (THIS.x(), THISFORM.x(), var.x())
-            for mc in _RE_METHOD_CALL.finditer(stripped):
-                obj_name = mc.group(1)
-                method_name = mc.group(2)
-                # Skip VFP built-in objects/namespaces as targets
-                if method_name.upper() in _VFP_BUILTINS:
-                    continue
-                # Skip known noise patterns
-                if obj_name.upper() in ("M", "THIS", "THISFORM", "THISFORMSET"):
-                    # THIS.method() — target is the method name
-                    refs.append(
-                        self._make_reference(
-                            target_name=method_name,
-                            kind="call",
-                            line=orig,
-                            source_name=scope,
-                        )
-                    )
-                else:
-                    # variable.method() — target is the method name
-                    refs.append(
-                        self._make_reference(
-                            target_name=method_name,
-                            kind="call",
-                            line=orig,
-                            source_name=scope,
-                        )
-                    )
+            self._code_line_refs(stripped, orig, state.source_name, refs)
 
         return refs
+
+    def _consume_prg_reference_scope_line(
+        self,
+        stripped: str,
+        line_no: int,
+        state: _PrgReferenceState,
+        refs: list[dict],
+    ) -> bool:
+        m = _RE_CLASS.match(stripped)
+        if m:
+            state.current_class = m.group(1)
+            base = m.group(2)
+            if base.upper() not in _VFP_GENERIC_BASE_CLASSES:
+                refs.append(
+                    self._make_reference(
+                        target_name=base,
+                        kind="inherits",
+                        line=line_no,
+                        source_name=state.current_class,
+                    )
+                )
+            return True
+
+        m = _RE_FUNC.match(stripped)
+        if m:
+            state.current_func = m.group(2)
+            return True
+
+        if _RE_ENDFUNC.match(stripped):
+            state.current_func = None
+            return True
+
+        if _RE_ENDDEFINE.match(stripped):
+            state.current_class = None
+            state.current_func = None
+            return True
+
+        return False
 
     # -- SCX form support ----------------------------------------------
 
@@ -1552,23 +1400,14 @@ class FoxProExtractor(LanguageExtractor):
 
         return symbols
 
-    def _code_line_refs(self, stripped, line_num, scope, refs):
+    def _code_line_refs(
+        self,
+        stripped: str,
+        line_num: int,
+        scope: str | None,
+        refs: list[dict],
+    ) -> None:
         """Extract references from a single VFP code line."""
-        # DO FORM
-        m = _RE_DO_FORM.match(stripped)
-        if m:
-            target = m.group(1).strip("'\"")
-            target = os.path.splitext(target)[0]
-            refs.append(
-                self._make_reference(
-                    target_name=target,
-                    kind="call",
-                    line=line_num,
-                    source_name=scope,
-                )
-            )
-            return
-
         # DO proc IN file
         m = _RE_DO_IN.match(stripped)
         if m:
@@ -1583,7 +1422,22 @@ class FoxProExtractor(LanguageExtractor):
             )
             return
 
-        # DO filename
+        # DO FORM formname
+        m = _RE_DO_FORM.match(stripped)
+        if m:
+            target = m.group(1).strip("'\"")
+            target = os.path.splitext(target)[0]
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                )
+            )
+            return
+
+        # DO filename (not DO CASE / DO WHILE)
         m = _RE_DO_FILE.match(stripped)
         if m:
             target = m.group(1)
@@ -1613,7 +1467,37 @@ class FoxProExtractor(LanguageExtractor):
             )
             return
 
-        # CREATEOBJECT
+        # SET CLASSLIB TO
+        m = _RE_SET_CLASSLIB.match(stripped)
+        if m:
+            path = m.group(1).strip("'\"")
+            refs.append(
+                self._make_reference(
+                    target_name=os.path.splitext(os.path.basename(path))[0],
+                    kind="import",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=path,
+                )
+            )
+            return
+
+        # #INCLUDE
+        m = _RE_INCLUDE.match(stripped)
+        if m:
+            path = m.group(1).strip()
+            refs.append(
+                self._make_reference(
+                    target_name=os.path.splitext(os.path.basename(path))[0],
+                    kind="import",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=path,
+                )
+            )
+            return
+
+        # CREATEOBJECT("class")
         for cm in _RE_CREATEOBJ.finditer(stripped):
             refs.append(
                 self._make_reference(
@@ -1624,7 +1508,33 @@ class FoxProExtractor(LanguageExtractor):
                 )
             )
 
-        # =funcname()
+        # NEWOBJECT("class", "lib")
+        for nm in _RE_NEWOBJ.finditer(stripped):
+            refs.append(
+                self._make_reference(
+                    target_name=nm.group(1),
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=nm.group(2),
+                )
+            )
+
+        # DECLARE func IN dll
+        m = _RE_DECLARE.match(stripped)
+        if m:
+            refs.append(
+                self._make_reference(
+                    target_name=m.group(1),
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=m.group(2).strip("'\""),
+                )
+            )
+            return
+
+        # =funcname(args)
         m = _RE_EXPR_CALL.match(stripped)
         if m:
             fname = m.group(1)
@@ -1638,7 +1548,7 @@ class FoxProExtractor(LanguageExtractor):
                     )
                 )
 
-        # obj.method()
+        # obj.method(args)
         for mc in _RE_METHOD_CALL.finditer(stripped):
             method_name = mc.group(2)
             if method_name.upper() not in _VFP_BUILTINS:
