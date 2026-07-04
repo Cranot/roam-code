@@ -35,6 +35,7 @@ from roam.db.findings import (
     CONFIDENCE_STRUCTURAL,
 )
 from roam.languages import JS_FAMILY_LANGUAGES
+from roam.observability import log_swallowed
 from roam.output._severity import severity_rank
 
 # W1037: public surface declaration. New detector functions added below
@@ -234,8 +235,6 @@ def list_detector_surface() -> list[dict[str, Any]]:
     except ImportError as exc:
         # Optional-module guard: python_idioms absence just yields fewer
         # surface entries — logged loud rather than silently swallowed.
-        from roam.observability import log_swallowed
-
         log_swallowed("detectors.surface.python_idioms_import", exc)
 
     try:
@@ -257,8 +256,6 @@ def list_detector_surface() -> list[dict[str, Any]]:
     except ImportError as exc:
         # Optional-module guard: js_idioms absence just yields fewer surface
         # entries — logged loud rather than silently swallowed.
-        from roam.observability import log_swallowed
-
         log_swallowed("detectors.surface.js_idioms_import", exc)
 
     return entries
@@ -4919,8 +4916,6 @@ def _iter_registered_detectors():
         # Optional-module guard: python_idioms absence just yields the
         # built-in set — logged loud (mirrors js_idioms below) rather
         # than silently swallowed.
-        from roam.observability import log_swallowed
-
         log_swallowed("detectors.iter.python_idioms_import", exc)
 
     # JS/TS sibling pack — same isolation rationale as python_idioms.
@@ -4932,8 +4927,6 @@ def _iter_registered_detectors():
     except ImportError as exc:
         # Optional-module guard: js_idioms absence just yields the built-in
         # set — logged loud rather than silently swallowed.
-        from roam.observability import log_swallowed
-
         log_swallowed("detectors.iter.js_idioms_import", exc)
 
     try:
@@ -4944,8 +4937,6 @@ def _iter_registered_detectors():
                 yield (task_id, way_id, detect_fn)
     except Exception as exc:  # noqa: BLE001 -- plugin code may raise anything; isolate it
         # Plugin loading errors should not impact built-in detection.
-        from roam.observability import log_swallowed
-
         log_swallowed("detectors.iter.plugin_detectors", exc)
         return
 
