@@ -138,6 +138,11 @@ class ProtobufBridge(LanguageBridge):
 
         # Classify source symbols into proto semantic kinds.
         messages, services, enums = self._classify_proto_symbols(source_symbols)
+        kind_specs = (
+            _ProtoKindEdgeSpec(messages, self._match_message, "proto-message"),
+            _ProtoKindEdgeSpec(services, self._match_service, "proto-service"),
+            _ProtoKindEdgeSpec(enums, self._match_enum, "proto-enum"),
+        )
 
         # Find generated target files that correspond to this proto
         generated_targets = self._find_generated_files(proto_stem, target_files)
@@ -146,27 +151,8 @@ class ProtobufBridge(LanguageBridge):
         # proto kind through the language-specific naming convention.
         for tpath, tsymbols, lang in generated_targets:
             target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
-            edges.extend(
-                self._edges_for_proto_kind(
-                    _ProtoKindEdgeSpec(messages, self._match_message, "proto-message"),
-                    target_symbol_names,
-                    lang,
-                )
-            )
-            edges.extend(
-                self._edges_for_proto_kind(
-                    _ProtoKindEdgeSpec(services, self._match_service, "proto-service"),
-                    target_symbol_names,
-                    lang,
-                )
-            )
-            edges.extend(
-                self._edges_for_proto_kind(
-                    _ProtoKindEdgeSpec(enums, self._match_enum, "proto-enum"),
-                    target_symbol_names,
-                    lang,
-                )
-            )
+            for spec in kind_specs:
+                edges.extend(self._edges_for_proto_kind(spec, target_symbol_names, lang))
 
         return edges
 
