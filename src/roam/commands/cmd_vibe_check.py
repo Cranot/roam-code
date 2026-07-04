@@ -56,6 +56,7 @@ import json
 import re
 import sqlite3
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -1545,6 +1546,217 @@ def _collect_copy_paste_findings(conn, project_root: Path) -> list[dict]:
     return records
 
 
+_VibeFindingPayload = tuple[str, int | None, str, str, dict[str, object]]
+
+
+def _preserve_dead_export_symbol_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "symbol"
+    subject_id = rec.get("symbol_id")
+    file_path = rec.get("file_path") or ""
+    line_start = rec.get("line_start")
+    finding_id = _vibe_finding_id("dead_exports", f"{file_path}:{rec.get('name')}", line_start)
+    claim = (
+        f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at "
+        f"{file_path}:{line_start} — zero incoming edges"
+    )
+    evidence = {
+        "name": rec.get("name"),
+        "kind": rec.get("kind"),
+        "file_path": file_path,
+        "line_start": line_start,
+        "pattern": "dead_exports",
+        "note": (
+            "Coarser than `roam dead` — uses raw edges only, "
+            "no test-consumer / barrel / scaffolding filters."
+        ),
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_short_churn_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("short_churn", file_path, None)
+    claim = f"AI-rot short-churn: {file_path} — {rec.get('commits')} commits over {rec.get('span_days')}d"
+    evidence = {
+        "file_path": file_path,
+        "commits": rec.get("commits"),
+        "span_days": rec.get("span_days"),
+        "pattern": "short_churn",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_empty_handler_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("empty_handlers", file_path, None)
+    count = rec.get("count", 0)
+    claim = f"AI-rot empty-handlers: {file_path} — {count} empty error handler(s)"
+    evidence = {
+        "file_path": file_path,
+        "count": count,
+        "pattern": "empty_handlers",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_abandoned_stub_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("abandoned_stubs", file_path, None)
+    count = rec.get("count", 0)
+    claim = f"AI-rot abandoned-stubs: {file_path} — {count} stub function(s)"
+    evidence = {
+        "file_path": file_path,
+        "count": count,
+        "pattern": "abandoned_stubs",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_hallucinated_import_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("hallucinated_imports", file_path, None)
+    count = rec.get("count", 0)
+    claim = f"AI-rot hallucinated-imports: {file_path} — {count} unresolvable import(s)"
+    evidence = {
+        "file_path": file_path,
+        "count": count,
+        "pattern": "hallucinated_imports",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_error_pattern_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("error_inconsistency", file_path, None)
+    patterns = rec.get("patterns", [])
+    claim = f"AI-rot error-inconsistency: {file_path} — {len(patterns)} distinct error patterns mixed"
+    evidence = {
+        "file_path": file_path,
+        "patterns": list(patterns),
+        "count": rec.get("count", len(patterns)),
+        "pattern": "error_inconsistency",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_comment_anomaly_file_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file") or ""
+    finding_id = _vibe_finding_id("comment_anomalies", file_path, None)
+    direction = rec.get("direction", "")
+    ratio = rec.get("comment_ratio")
+    z = rec.get("z_score")
+    claim = f"AI-rot comment-anomaly: {file_path} — {direction} comments (ratio={ratio}, z={z})"
+    evidence = {
+        "file_path": file_path,
+        "comment_ratio": ratio,
+        "z_score": z,
+        "direction": direction,
+        "pattern": "comment_anomalies",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_copy_paste_clone_member_identity(rec: dict) -> _VibeFindingPayload:
+    subject_kind = "symbol"
+    subject_id = rec.get("symbol_id")
+    file_path = rec.get("file_path") or ""
+    line_start = rec.get("line_start")
+    finding_id = _vibe_finding_id(
+        "copy_paste",
+        f"{file_path}:{rec.get('name')}:{rec.get('group_hash')}",
+        line_start,
+    )
+    claim = (
+        f"AI-rot copy-paste: {rec.get('name')} at "
+        f"{file_path}:{line_start} — member of {rec.get('group_size')}-way clone group"
+    )
+    evidence = {
+        "name": rec.get("name"),
+        "file_path": file_path,
+        "line_start": line_start,
+        "line_end": rec.get("line_end"),
+        "group_size": rec.get("group_size"),
+        "group_members": rec.get("group_members", []),
+        "group_hash": rec.get("group_hash"),
+        "pattern": "copy_paste",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_modular_mirage_symbol_identity(rec: dict) -> _VibeFindingPayload:
+    # W371: one finding per single-caller exported helper. Subject is the
+    # symbol (not the file) so consumers can join on ``symbols.id``.
+    subject_kind = "symbol"
+    subject_id = rec.get("symbol_id")
+    file_path = rec.get("file_path") or ""
+    line_start = rec.get("line_start")
+    finding_id = _vibe_finding_id("modular_mirage", f"{file_path}:{rec.get('name')}", line_start)
+    caller_file = rec.get("caller_file") or ""
+    claim = (
+        f"AI-rot modular-mirage: {rec.get('name')} ({rec.get('kind')}) "
+        f"at {file_path}:{line_start} — exactly 1 cross-file caller "
+        f"({caller_file or 'unknown'})"
+    )
+    evidence = {
+        "name": rec.get("name"),
+        "kind": rec.get("kind"),
+        "file_path": file_path,
+        "line_start": line_start,
+        "caller_file": caller_file,
+        "caller_count": 1,
+        "pattern": "modular_mirage",
+        "research": "arxiv:2605.02741",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+def _preserve_boilerplate_occurrence_identity(rec: dict) -> _VibeFindingPayload:
+    # W371: one finding per occurrence inside a file (not one per file).
+    subject_kind = "file"
+    subject_id = None
+    file_path = rec.get("file_path") or rec.get("file") or ""
+    line_start = rec.get("line")
+    subkind = rec.get("subkind", "boilerplate_inflation")
+    finding_id = _vibe_finding_id("boilerplate_inflation", f"{file_path}:{subkind}", line_start)
+    snippet = rec.get("snippet", "")
+    claim = f"AI-rot boilerplate-inflation ({subkind}): {file_path}:{line_start} — {snippet[:80]}"
+    evidence = {
+        "file_path": file_path,
+        "line": line_start,
+        "subkind": subkind,
+        "snippet": snippet,
+        "pattern": "boilerplate_inflation",
+        "research": "arxiv:2605.02741+2512.18020",
+    }
+    return subject_kind, subject_id, finding_id, claim, evidence
+
+
+_VIBE_FINDING_PAYLOAD_BY_KIND: dict[str, Callable[[dict], _VibeFindingPayload]] = {
+    "dead_exports": _preserve_dead_export_symbol_identity,
+    "short_churn": _preserve_short_churn_file_identity,
+    "empty_handlers": _preserve_empty_handler_file_identity,
+    "abandoned_stubs": _preserve_abandoned_stub_file_identity,
+    "hallucinated_imports": _preserve_hallucinated_import_file_identity,
+    "error_inconsistency": _preserve_error_pattern_file_identity,
+    "comment_anomalies": _preserve_comment_anomaly_file_identity,
+    "copy_paste": _preserve_copy_paste_clone_member_identity,
+    "modular_mirage": _preserve_modular_mirage_symbol_identity,
+    "boilerplate_inflation": _preserve_boilerplate_occurrence_identity,
+}
+
+
 def _emit_vibe_check_findings(
     conn,
     findings_by_kind: dict[str, list[dict]],
@@ -1571,185 +1783,18 @@ def _emit_vibe_check_findings(
 
     emitted = 0
     for kind, records in findings_by_kind.items():
+        payload_for_kind = _VIBE_FINDING_PAYLOAD_BY_KIND.get(kind)
+        if payload_for_kind is None:
+            # Unknown kind — defensive skip rather than crash on a
+            # future detector that forgets to register here.
+            continue
+
         tier = _vibe_check_tier(kind)
         # W1256: per-pattern version stamp; falls back to composite for
         # any future kind that isn't yet in the lookup table.
         kind_version = _VIBE_KIND_TO_VERSION.get(kind, source_version)
         for rec in records:
-            # Per-kind subject + claim shape.
-            if kind == "dead_exports":
-                subject_kind = "symbol"
-                subject_id = rec.get("symbol_id")
-                file_path = rec.get("file_path") or ""
-                line_start = rec.get("line_start")
-                finding_id = _vibe_finding_id(kind, f"{file_path}:{rec.get('name')}", line_start)
-                claim = (
-                    f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at "
-                    f"{file_path}:{line_start} — zero incoming edges"
-                )
-                evidence = {
-                    "name": rec.get("name"),
-                    "kind": rec.get("kind"),
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "pattern": "dead_exports",
-                    "note": (
-                        "Coarser than `roam dead` — uses raw edges only, "
-                        "no test-consumer / barrel / scaffolding filters."
-                    ),
-                }
-            elif kind == "short_churn":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                claim = f"AI-rot short-churn: {file_path} — {rec.get('commits')} commits over {rec.get('span_days')}d"
-                evidence = {
-                    "file_path": file_path,
-                    "commits": rec.get("commits"),
-                    "span_days": rec.get("span_days"),
-                    "pattern": "short_churn",
-                }
-            elif kind == "empty_handlers":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                count = rec.get("count", 0)
-                claim = f"AI-rot empty-handlers: {file_path} — {count} empty error handler(s)"
-                evidence = {
-                    "file_path": file_path,
-                    "count": count,
-                    "pattern": "empty_handlers",
-                }
-            elif kind == "abandoned_stubs":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                count = rec.get("count", 0)
-                claim = f"AI-rot abandoned-stubs: {file_path} — {count} stub function(s)"
-                evidence = {
-                    "file_path": file_path,
-                    "count": count,
-                    "pattern": "abandoned_stubs",
-                }
-            elif kind == "hallucinated_imports":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                count = rec.get("count", 0)
-                claim = f"AI-rot hallucinated-imports: {file_path} — {count} unresolvable import(s)"
-                evidence = {
-                    "file_path": file_path,
-                    "count": count,
-                    "pattern": "hallucinated_imports",
-                }
-            elif kind == "error_inconsistency":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                patterns = rec.get("patterns", [])
-                claim = f"AI-rot error-inconsistency: {file_path} — {len(patterns)} distinct error patterns mixed"
-                evidence = {
-                    "file_path": file_path,
-                    "patterns": list(patterns),
-                    "count": rec.get("count", len(patterns)),
-                    "pattern": "error_inconsistency",
-                }
-            elif kind == "comment_anomalies":
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file") or ""
-                finding_id = _vibe_finding_id(kind, file_path, None)
-                direction = rec.get("direction", "")
-                ratio = rec.get("comment_ratio")
-                z = rec.get("z_score")
-                claim = f"AI-rot comment-anomaly: {file_path} — {direction} comments (ratio={ratio}, z={z})"
-                evidence = {
-                    "file_path": file_path,
-                    "comment_ratio": ratio,
-                    "z_score": z,
-                    "direction": direction,
-                    "pattern": "comment_anomalies",
-                }
-            elif kind == "copy_paste":
-                subject_kind = "symbol"
-                subject_id = rec.get("symbol_id")
-                file_path = rec.get("file_path") or ""
-                line_start = rec.get("line_start")
-                finding_id = _vibe_finding_id(
-                    kind,
-                    f"{file_path}:{rec.get('name')}:{rec.get('group_hash')}",
-                    line_start,
-                )
-                claim = (
-                    f"AI-rot copy-paste: {rec.get('name')} at "
-                    f"{file_path}:{line_start} — member of {rec.get('group_size')}-way clone group"
-                )
-                evidence = {
-                    "name": rec.get("name"),
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "line_end": rec.get("line_end"),
-                    "group_size": rec.get("group_size"),
-                    "group_members": rec.get("group_members", []),
-                    "group_hash": rec.get("group_hash"),
-                    "pattern": "copy_paste",
-                }
-            elif kind == "modular_mirage":
-                # W371: one finding per single-caller exported helper.
-                # subject is the symbol (not the file) so consumers can
-                # join on ``symbols.id``.
-                subject_kind = "symbol"
-                subject_id = rec.get("symbol_id")
-                file_path = rec.get("file_path") or ""
-                line_start = rec.get("line_start")
-                finding_id = _vibe_finding_id(kind, f"{file_path}:{rec.get('name')}", line_start)
-                caller_file = rec.get("caller_file") or ""
-                claim = (
-                    f"AI-rot modular-mirage: {rec.get('name')} ({rec.get('kind')}) "
-                    f"at {file_path}:{line_start} — exactly 1 cross-file caller "
-                    f"({caller_file or 'unknown'})"
-                )
-                evidence = {
-                    "name": rec.get("name"),
-                    "kind": rec.get("kind"),
-                    "file_path": file_path,
-                    "line_start": line_start,
-                    "caller_file": caller_file,
-                    "caller_count": 1,
-                    "pattern": "modular_mirage",
-                    "research": "arxiv:2605.02741",
-                }
-            elif kind == "boilerplate_inflation":
-                # W371: one finding per OCCURRENCE inside a file (not
-                # one per file) — so a file with 4 comment-restates +
-                # 1 shallow-wrapper produces 5 finding rows. The
-                # caller of ``_emit_vibe_check_findings`` flattens the
-                # per-file ``occurrences`` list before passing here.
-                subject_kind = "file"
-                subject_id = None
-                file_path = rec.get("file_path") or rec.get("file") or ""
-                line_start = rec.get("line")
-                subkind = rec.get("subkind", "boilerplate_inflation")
-                finding_id = _vibe_finding_id(kind, f"{file_path}:{subkind}", line_start)
-                snippet = rec.get("snippet", "")
-                claim = f"AI-rot boilerplate-inflation ({subkind}): {file_path}:{line_start} — {snippet[:80]}"
-                evidence = {
-                    "file_path": file_path,
-                    "line": line_start,
-                    "subkind": subkind,
-                    "snippet": snippet,
-                    "pattern": "boilerplate_inflation",
-                    "research": "arxiv:2605.02741+2512.18020",
-                }
-            else:
-                # Unknown kind — defensive skip rather than crash on a
-                # future detector that forgets to register here.
-                continue
+            subject_kind, subject_id, finding_id, claim, evidence = payload_for_kind(rec)
 
             emit_finding(
                 conn,
