@@ -62,10 +62,9 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypeAlias
 
 from roam.atomic_io import atomic_write_json
-from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -81,6 +80,10 @@ DEFAULT_TTL_SECONDS = 1800  # 30 minutes — matches the dogfood "edit session" 
 
 # Lease ids look like ``lease_YYYYMMDD_<short-hash>``. Hash is 6+ hex chars.
 LEASE_ID_RE = re.compile(r"^lease_\d{8}_[0-9a-f]{6,}$")
+
+# Pattern-2 warning accumulator local to the lease store. Passing None keeps
+# legacy silent behavior; passing a list opts into structured diagnostics.
+WarningsOut: TypeAlias = list[str] | None
 
 
 # ---------------------------------------------------------------------------
