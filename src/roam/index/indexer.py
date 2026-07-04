@@ -1167,8 +1167,82 @@ class _ProcessingProgress:
             pass
 
 
+def _compute_graph_signature(G) -> dict | None:
+    """Cheap structural signature of *G* for cluster-cache gating.
+
+    Captures node count, edge count, and the IDs of the top-N highest
+    degree nodes (sorted). When all three match the persisted
+    signature on the previous run AND the previous cluster table is
+    non-empty, the Louvain pass can be skipped — its output is still
+    valid for this graph topology.
+
+    We deliberately avoid hashing the full edge list: on 17K
+    symbols / 17K edges this method runs in <50ms (top-N partial
+    sort) versus ~3-11s for Louvain. The top-N IDs catch most
+    meaningful structural changes (any new high-fan symbol reshapes
+    community membership).
+    """
+    if G is None or len(G) == 0:
+        return None
+    try:
+        n = G.number_of_nodes()
+        m = G.number_of_edges()
+        # Top-N high-degree nodes — N=64 is enough to detect "anything
+        # interesting reshuffled" without paying a full sort.
+        top_n = 64
+        # Use total degree (in + out) so direction-flips also register.
+        degs = [(node, G.in_degree(node) + G.out_degree(node)) for node in G.nodes()]
+        degs.sort(key=lambda p: (-p[1], p[0]))
+        top_ids = sorted(int(p[0]) for p in degs[:top_n])
+        return {"n": int(n), "m": int(m), "top": top_ids}
+    except Exception:  # noqa: BLE001 -- signature is a best-effort cache key; any failure skips it
+        return None
+
+
+def _previous_cluster_signature(conn) -> dict | None:
+    """Read the most recent persisted cluster signature, or None.
+
+    Pulled from the ``notes`` JSON of the latest ``index_manifest``
+    row under the ``cluster_signature`` key. Tolerant of all the
+    shapes the manifest might be in (missing table, no rows, notes
+    not JSON, key absent).
+    """
+    try:
+        from roam.index.manifest import latest_manifest
+
+        prev = latest_manifest(conn)
+    except Exception:  # noqa: BLE001 -- tolerant of missing table / no rows / import failure
+        return None
+    if not prev:
+        return None
+    notes_raw = prev.get("notes")
+    if not notes_raw:
+        return None
+    try:
+        import json as _json
+
+        notes = _json.loads(notes_raw)
+    except (ValueError, TypeError):
+        return None
+    sig = notes.get("cluster_signature") if isinstance(notes, dict) else None
+    if not isinstance(sig, dict):
+        return None
+    return sig
+
+
+def _has_existing_clusters(conn) -> bool:
+    """Return True if the clusters table has at least one row."""
+    try:
+        row = conn.execute("SELECT 1 FROM clusters LIMIT 1").fetchone()
+        return row is not None
+    except Exception:  # noqa: BLE001 -- missing/locked table means "no existing clusters"
+        return False
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
+
+    _compute_graph_signature = staticmethod(_compute_graph_signature)
 
     def __init__(self, project_root: Path | None = None):
         if project_root is None:
@@ -1652,9 +1726,9 @@ class Indexer:
             # gate (_run_clustering); shares the same persisted signature so a
             # topology-unchanged reindex (e.g. a no-op or comment-only edit)
             # skips both. --force always recomputes.
-            live_sig = self._compute_graph_signature(G)
+            live_sig = _compute_graph_signature(G)
             self._cluster_signature = live_sig
-            prev_sig = self._previous_cluster_signature(conn) if not force else None
+            prev_sig = _previous_cluster_signature(conn) if not force else None
             if (
                 live_sig is not None
                 and prev_sig is not None
@@ -1881,78 +1955,6 @@ class Indexer:
                 duration_ms=(time.monotonic() - start) * 1000.0,
             )
 
-    @staticmethod
-    def _compute_graph_signature(G) -> dict | None:
-        """Cheap structural signature of *G* for cluster-cache gating.
-
-        Captures node count, edge count, and the IDs of the top-N highest
-        degree nodes (sorted). When all three match the persisted
-        signature on the previous run AND the previous cluster table is
-        non-empty, the Louvain pass can be skipped — its output is still
-        valid for this graph topology.
-
-        We deliberately avoid hashing the full edge list: on 17K
-        symbols / 17K edges this method runs in <50ms (top-N partial
-        sort) versus ~3-11s for Louvain. The top-N IDs catch most
-        meaningful structural changes (any new high-fan symbol reshapes
-        community membership).
-        """
-        if G is None or len(G) == 0:
-            return None
-        try:
-            n = G.number_of_nodes()
-            m = G.number_of_edges()
-            # Top-N high-degree nodes — N=64 is enough to detect "anything
-            # interesting reshuffled" without paying a full sort.
-            top_n = 64
-            # Use total degree (in + out) so direction-flips also register.
-            degs = [(node, G.in_degree(node) + G.out_degree(node)) for node in G.nodes()]
-            degs.sort(key=lambda p: (-p[1], p[0]))
-            top_ids = sorted(int(p[0]) for p in degs[:top_n])
-            return {"n": int(n), "m": int(m), "top": top_ids}
-        except Exception:  # noqa: BLE001 -- signature is a best-effort cache key; any failure skips it
-            return None
-
-    @staticmethod
-    def _previous_cluster_signature(conn) -> dict | None:
-        """Read the most recent persisted cluster signature, or None.
-
-        Pulled from the ``notes`` JSON of the latest ``index_manifest``
-        row under the ``cluster_signature`` key. Tolerant of all the
-        shapes the manifest might be in (missing table, no rows, notes
-        not JSON, key absent).
-        """
-        try:
-            from roam.index.manifest import latest_manifest
-
-            prev = latest_manifest(conn)
-        except Exception:  # noqa: BLE001 -- tolerant of missing table / no rows / import failure
-            return None
-        if not prev:
-            return None
-        notes_raw = prev.get("notes")
-        if not notes_raw:
-            return None
-        try:
-            import json as _json
-
-            notes = _json.loads(notes_raw)
-        except (ValueError, TypeError):
-            return None
-        sig = notes.get("cluster_signature") if isinstance(notes, dict) else None
-        if not isinstance(sig, dict):
-            return None
-        return sig
-
-    @staticmethod
-    def _has_existing_clusters(conn) -> bool:
-        """Return True if the clusters table has at least one row."""
-        try:
-            row = conn.execute("SELECT 1 FROM clusters LIMIT 1").fetchone()
-            return row is not None
-        except Exception:  # noqa: BLE001 -- missing/locked table means "no existing clusters"
-            return False
-
     def _run_clustering(
         self,
         conn,
@@ -1969,17 +1971,17 @@ class Indexer:
 
         # Cache the live graph signature so _record_manifest can persist
         # it whether we ran Louvain or skipped it.
-        live_sig = self._compute_graph_signature(G)
+        live_sig = _compute_graph_signature(G)
         self._cluster_signature = live_sig
 
         if not force and live_sig is not None:
-            prev_sig = self._previous_cluster_signature(conn)
+            prev_sig = _previous_cluster_signature(conn)
             if (
                 prev_sig is not None
                 and prev_sig.get("n") == live_sig["n"]
                 and prev_sig.get("m") == live_sig["m"]
                 and list(prev_sig.get("top") or ()) == live_sig["top"]
-                and self._has_existing_clusters(conn)
+                and _has_existing_clusters(conn)
             ):
                 self._log("Computing clusters...")
                 # W985-incremental: cluster-cache log already names the
