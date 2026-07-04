@@ -679,6 +679,132 @@ def _format_markdown(attestation, evidence, verdict):
     return "\n".join(_attestation_report_lines(attestation, evidence, verdict, "markdown"))
 
 
+def _run_attest_boundary_for_evidence_continuity(
+    phase: str,
+    marker_bucket: list[str],
+    fn,
+    *args,
+    default=None,
+    **kwargs,
+):
+    """Run an attest boundary while preserving partial evidence on failure."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        marker_bucket.append(f"attest_{phase}_failed:{type(exc).__name__}:{exc}")
+        return default
+
+
+def _combined_attest_warnings_for_evidence_continuity(
+    attest_warnings_out: list[str],
+    substrate_warnings_out: list[str],
+    aggregation_warnings_out: list[str],
+) -> list[str]:
+    """Merge attest warning buckets in the emitted contract order."""
+    return list(attest_warnings_out) + list(substrate_warnings_out) + list(aggregation_warnings_out)
+
+
+def _mark_attest_partial_evidence(summary_block: dict, envelope_kwargs: dict, warnings_out: list[str]) -> None:
+    """Mirror warning markers where agents read degraded attest evidence."""
+    if not warnings_out:
+        return
+    summary_block["warnings_out"] = list(warnings_out)
+    summary_block["partial_success"] = True
+    envelope_kwargs["warnings_out"] = list(warnings_out)
+    envelope_kwargs["partial_success"] = True
+
+
+def _build_attest_envelope_that_preserves_late_markers(
+    *,
+    summary_block: dict,
+    attestation: dict,
+    evidence: dict,
+    verdict: dict,
+    risk_level_canonical: str,
+    risk_rank_int: int,
+    attest_verdict_str: str,
+    attest_warnings_out: list[str],
+    substrate_warnings_out: list[str],
+    aggregation_warnings_out: list[str],
+    _run_check_bt,
+    target: str,
+    root: Path,
+) -> dict:
+    """Build the attest envelope so late disclosure markers still emit."""
+    combined_warnings_out = _combined_attest_warnings_for_evidence_continuity(
+        attest_warnings_out,
+        substrate_warnings_out,
+        aggregation_warnings_out,
+    )
+    envelope_kwargs: dict = dict(
+        summary=summary_block,
+        attestation=attestation,
+        evidence=evidence,
+        verdict=verdict,
+        # W641-followup-D — top-level mirrors of summary.risk_level_canonical /
+        # summary.risk_rank so consumers that read the top-level envelope head
+        # see the canonical bucket without descending into ``summary``.
+        risk_level_canonical=risk_level_canonical,
+        risk_rank=risk_rank_int,
+    )
+    _mark_attest_partial_evidence(summary_block, envelope_kwargs, combined_warnings_out)
+
+    envelope_floor: dict = {
+        "command": "attest",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": attest_verdict_str,
+            "partial_success": True,
+            "warnings_out": list(combined_warnings_out),
+        },
+        "warnings_out": list(combined_warnings_out),
+    }
+    attest_envelope = _run_check_bt(
+        "serialize_envelope",
+        json_envelope,
+        "attest",
+        default=envelope_floor,
+        **envelope_kwargs,
+    )
+    if attest_envelope is envelope_floor and aggregation_warnings_out:
+        combined_warnings_out = _combined_attest_warnings_for_evidence_continuity(
+            attest_warnings_out,
+            substrate_warnings_out,
+            aggregation_warnings_out,
+        )
+        envelope_floor["summary"]["warnings_out"] = list(combined_warnings_out)
+        envelope_floor["warnings_out"] = list(combined_warnings_out)
+        attest_envelope = envelope_floor
+
+    _run_check_bt(
+        "auto_log",
+        auto_log,
+        attest_envelope,
+        action="attest",
+        target=target,
+        repo_root=root,
+        default=None,
+    )
+    if aggregation_warnings_out and not any(
+        m.startswith("attest_auto_log_failed:") for m in (summary_block.get("warnings_out") or [])
+    ):
+        combined_warnings_out = _combined_attest_warnings_for_evidence_continuity(
+            attest_warnings_out,
+            substrate_warnings_out,
+            aggregation_warnings_out,
+        )
+        _mark_attest_partial_evidence(summary_block, envelope_kwargs, combined_warnings_out)
+        attest_envelope = _run_check_bt(
+            "serialize_envelope",
+            json_envelope,
+            "attest",
+            default=envelope_floor,
+            **envelope_kwargs,
+        )
+
+    return attest_envelope
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -790,11 +916,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         marker via ``_w607ad_warnings_out`` and return *default* -- the
         envelope still emits cleanly with the remaining substrates.
         """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607ad_warnings_out.append(f"attest_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        return _run_attest_boundary_for_evidence_continuity(
+            phase,
+            _w607ad_warnings_out,
+            fn,
+            *args,
+            default=default,
+            **kwargs,
+        )
 
     # W607-BT -- ADDITIVE aggregation-phase plumbing on top of the
     # W607-AD substrate-CALL markers. W607-AD already wrapped the 11
@@ -851,11 +980,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         marker family) but writes into ``_w607bt_warnings_out`` so the
         additive bucket stays distinguishable in tests + audits.
         """
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
-            _w607bt_warnings_out.append(f"attest_{phase}_failed:{type(exc).__name__}:{exc}")
-            return default
+        return _run_attest_boundary_for_evidence_continuity(
+            phase,
+            _w607bt_warnings_out,
+            fn,
+            *args,
+            default=default,
+            **kwargs,
+        )
 
     # Resolve git range
     base_ref, head_ref = _resolve_git_range(root, commit_range)
@@ -1192,139 +1324,22 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             "affected_tests": tests.get("selected", 0),
             "effects_count": len(effects),
         }
-        # W641-followup-D — record any unknown-status drops on the
-        # summary so Pattern-2 silent-fallback stays visible. Non-empty
-        # ``warnings_out`` flips ``partial_success`` (mirrors W989 pr-
-        # risk + W918 alerts + W641-followup-B critique discipline) so
-        # a downstream consumer reading ``partial_success`` alone sees
-        # the degradation.
-        #
-        # W607-AD — substrate-CALL markers ride the same ``warnings_out``
-        # channel but accumulate in a DIFFERENT bucket
-        # (``_w607ad_warnings_out``) so the two axes (unknown-status data
-        # shape vs. helper-raised substrate boundary) don't conflate at
-        # the call site. They merge into a single ``warnings_out`` list
-        # on emission; the marker PREFIX disambiguates them downstream
-        # (``attest_unknown_status:*`` vs. ``attest_<phase>_failed:*``).
-        # ``partial_success`` flips when EITHER bucket is non-empty --
-        # consumers reading ``partial_success`` alone need not
-        # distinguish the two flavours.
-        #
-        # W607-BT -- ADDITIVE aggregation-phase markers join the same
-        # combined channel: ``_attest_warnings_out`` (unknown-status) +
-        # ``_w607ad_warnings_out`` (substrate-CALL) +
-        # ``_w607bt_warnings_out`` (aggregation-phase). All three share
-        # the ``attest_*`` family per the marker-prefix discipline test;
-        # the additive bucket stays distinguishable in tests + audits via
-        # its phase names (``score_classify`` / ``severity_normalize`` /
-        # ``compute_verdict`` / ``auto_log`` / ``serialize_envelope``).
-        _combined_warnings_out: list[str] = (
-            list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
-        )
-        if _combined_warnings_out:
-            summary_block["warnings_out"] = list(_combined_warnings_out)
-            summary_block["partial_success"] = True
-
-        # -- Envelope (built unconditionally so we can auto-log it) ---
-        _envelope_kwargs: dict = dict(
-            summary=summary_block,
+        _attest_target = commit_range or ("staged" if staged else "uncommitted")
+        attest_envelope = _build_attest_envelope_that_preserves_late_markers(
+            summary_block=summary_block,
             attestation=attestation,
             evidence=evidence,
             verdict=verdict,
-            # W641-followup-D — top-level mirrors of
-            # summary.risk_level_canonical / summary.risk_rank so
-            # consumers that read the top-level envelope head (without
-            # descending into ``summary``) see the canonical bucket.
-            # Mirror of the W641-followup-A cmd_impact + W641-followup-B
-            # cmd_critique contract.
             risk_level_canonical=risk_level_canonical,
-            risk_rank=risk_rank_int,
-        )
-        # W607-AD / W607-BT — top-level mirror of summary.warnings_out so
-        # consumers that read the top-level envelope directly (without
-        # descending into ``summary``) see the marker channel. Mirror
-        # parity with W607-Y cmd_critique (and the rest of the W607 family).
-        if _combined_warnings_out:
-            _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
-            _envelope_kwargs["partial_success"] = True
-
-        # W607-BT -- serialize_envelope boundary. Wraps the envelope
-        # serialization itself. A downstream schema-shape refactor that
-        # breaks ``json_envelope("attest", ...)`` would otherwise crash
-        # AFTER all substrate + aggregation signals were already gathered.
-        # Floor to a minimal envelope stub so consumers still receive a
-        # parseable JSON object with the marker attached + the canonical
-        # command name. Mirror of cmd_diff's W607-BP serialize_envelope
-        # floor pattern.
-        _envelope_floor: dict = {
-            "command": "attest",
-            "schema_version": "1.0.0",
-            "summary": {
-                "verdict": _attest_verdict_str,
-                "partial_success": True,
-                "warnings_out": list(_combined_warnings_out),
-            },
-            "warnings_out": list(_combined_warnings_out),
-        }
-        attest_envelope = _run_check_bt(
-            "serialize_envelope",
-            json_envelope,
-            "attest",
-            default=_envelope_floor,
-            **_envelope_kwargs,
-        )
-        # W607-BT -- if ``serialize_envelope`` raised AFTER the combined
-        # bucket was already snapshotted, the new
-        # ``attest_serialize_envelope_failed:`` marker was appended to
-        # ``_w607bt_warnings_out`` and the floor stub carries only the old
-        # combined list. Rebuild the floor stub's warnings_out so the new
-        # marker reaches the JSON output. Clean path -> envelope is the
-        # real json_envelope return value, no rebuild needed.
-        if attest_envelope is _envelope_floor and _w607bt_warnings_out:
-            _combined_warnings_out = (
-                list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
-            )
-            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
-            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
-            attest_envelope = _envelope_floor
-
-        _attest_target = commit_range or ("staged" if staged else "uncommitted")
-        # W607-BT -- auto_log boundary. Silent no-op if no active run; the
-        # wrap surfaces HMAC chain-misshape / filesystem failures as
-        # ``attest_auto_log_failed:...`` markers instead of crashing the
-        # envelope after it was already built. Mirror of cmd_diff's
-        # W607-BP auto_log pattern.
-        _run_check_bt(
-            "auto_log",
-            auto_log,
-            attest_envelope,
-            action="attest",
+            risk_rank_int=risk_rank_int,
+            attest_verdict_str=_attest_verdict_str,
+            attest_warnings_out=_attest_warnings_out,
+            substrate_warnings_out=_w607ad_warnings_out,
+            aggregation_warnings_out=_w607bt_warnings_out,
+            _run_check_bt=_run_check_bt,
             target=_attest_target,
-            repo_root=root,
-            default=None,
+            root=root,
         )
-        # W607-BT -- if ``auto_log`` raised, rebuild the envelope so the
-        # marker reaches the JSON output. Empty bucket (clean auto_log)
-        # -> envelope stays byte-identical to the version already built
-        # above.
-        if _w607bt_warnings_out and not any(
-            m.startswith("attest_auto_log_failed:") for m in (summary_block.get("warnings_out") or [])
-        ):
-            _combined_warnings_out = (
-                list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
-            )
-            summary_block["warnings_out"] = list(_combined_warnings_out)
-            summary_block["partial_success"] = True
-            _envelope_kwargs["summary"] = summary_block
-            _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
-            _envelope_kwargs["partial_success"] = True
-            attest_envelope = _run_check_bt(
-                "serialize_envelope",
-                json_envelope,
-                "attest",
-                default=_envelope_floor,
-                **_envelope_kwargs,
-            )
 
         # -- Output ----------------------------------------------------
 
