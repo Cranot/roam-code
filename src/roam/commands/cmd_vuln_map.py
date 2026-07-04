@@ -19,7 +19,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output import formatter as output_formatter
 
 
 @roam_capability(
@@ -120,8 +120,8 @@ def vuln_map_cmd(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, gene
     if not all_vulns:
         if json_mode:
             click.echo(
-                to_json(
-                    json_envelope(
+                output_formatter.to_json(
+                    output_formatter.json_envelope(
                         "vuln-map",
                         summary={
                             "verdict": "No vulnerability reports provided",
@@ -142,8 +142,8 @@ def vuln_map_cmd(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, gene
 
     if json_mode:
         click.echo(
-            to_json(
-                json_envelope(
+            output_formatter.to_json(
+                output_formatter.json_envelope(
                     "vuln-map",
                     summary={
                         "verdict": f"{total} vulnerabilities ingested, {matched} matched to symbols",
