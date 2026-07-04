@@ -267,42 +267,39 @@ def _build_invariants(conn, sym_ids, task):
     """Gather invariants to preserve: caller signatures + target signatures."""
     invariants = []
 
-    # Add target symbols themselves
-    for sid in sym_ids:
-        row = conn.execute(
-            """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
-                      (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
-               FROM symbols s
-               JOIN files f ON s.file_id = f.id
-               WHERE s.id = ?""",
-            (sid,),
-        ).fetchone()
-        if row:
-            invariants.append(
-                {
-                    "name": row["name"],
-                    "kind": row["kind"],
-                    "signature": _trim_signature(row["signature"] or ""),
-                    "callers": row["caller_count"],
-                    "location": loc(row["file_path"], row["line_start"]),
-                    "role": "target",
-                }
-            )
+    # Add target symbols themselves in a single batched query.
+    target_rows = batched_in(
+        conn,
+        """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
+                  (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
+           FROM symbols s
+           JOIN files f ON s.file_id = f.id
+           WHERE s.id IN ({ph})""",
+        sym_ids,
+    )
+    for row in target_rows:
+        invariants.append(
+            {
+                "name": row["name"],
+                "kind": row["kind"],
+                "signature": _trim_signature(row["signature"] or ""),
+                "callers": row["caller_count"],
+                "location": loc(row["file_path"], row["line_start"]),
+                "role": "target",
+            }
+        )
 
-    # Add direct callers with their signatures
-    caller_rows = []
-    for sid in sym_ids:
-        rows = conn.execute(
-            """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
-                      (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
-               FROM edges e
-               JOIN symbols s ON e.source_id = s.id
-               JOIN files f ON s.file_id = f.id
-               WHERE e.target_id = ?
-               LIMIT 20""",
-            (sid,),
-        ).fetchall()
-        caller_rows.extend(rows)
+    # Add direct callers with their signatures in a single batched query.
+    caller_rows = batched_in(
+        conn,
+        """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
+                  (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
+           FROM edges e
+           JOIN symbols s ON e.source_id = s.id
+           JOIN files f ON s.file_id = f.id
+           WHERE e.target_id IN ({ph})""",
+        sym_ids,
+    )
 
     seen_names = {inv["name"] for inv in invariants}
     for row in caller_rows:
