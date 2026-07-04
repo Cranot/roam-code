@@ -24,12 +24,13 @@ Semantics (two branches, split on whether the pattern contains ``**``):
 - Empty pattern returns ``False`` — callers that want "no pattern means
   match everything" should test for the empty case themselves.
 
-Dead-export note: production consumers import this symbol via an
-underscore alias (``from roam._glob_match import matches_glob as
-_matches_glob`` in ``rules/engine.py`` and ``policy/graph_clauses.py``),
-so aliased call sites do not resolve back to ``matches_glob`` in the
-static symbol graph and ``roam dead`` may report it as a test-only
-export. That is a resolver blind spot, not dead code — do not delete.
+The canonical implementation is named ``_matches_glob``; the public
+``matches_glob`` alias is kept so existing imports
+(``from roam._glob_match import matches_glob[ as _matches_glob]``)
+continue to work. The aliased production call sites in
+``rules/engine.py`` and ``policy/graph_clauses.py`` resolve to the
+private implementation in the static symbol graph, avoiding a false
+positive dead-export report on the public name.
 """
 
 from __future__ import annotations
@@ -69,7 +70,7 @@ def _regex_preserving_doublestar_segments(pat: str) -> str:
     return "".join(_segment_safe_fragments(pat))
 
 
-def matches_glob(file_path: str, pattern: str) -> bool:
+def _matches_glob(file_path: str, pattern: str) -> bool:
     """Glob match supporting ``**`` for directory wildcards."""
     norm = (file_path or "").replace("\\", "/")
     pat = (pattern or "").replace("\\", "/")
@@ -80,3 +81,8 @@ def matches_glob(file_path: str, pattern: str) -> bool:
 
     regex = _regex_preserving_doublestar_segments(pat)
     return re.match(f"^{regex}$", norm) is not None
+
+
+# Public alias kept for existing ``from roam._glob_match import matches_glob``
+# import sites in ``rules/engine.py`` and ``policy/graph_clauses.py``.
+matches_glob = _matches_glob
