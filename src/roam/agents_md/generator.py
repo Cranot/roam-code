@@ -931,17 +931,6 @@ def _generated_at_timestamp() -> str:
     return generated_at.isoformat().replace("+00:00", "Z")
 
 
-def _add_source_if_content(
-    sources: dict[str, str],
-    key: str,
-    value: Any,
-    label: str,
-) -> None:
-    """Record a source only when the corresponding section has content."""
-    if value:
-        sources[key] = label
-
-
 def _populate_index_sections(
     am: AgentsMd,
     conn,
@@ -950,21 +939,20 @@ def _populate_index_sections(
 ) -> None:
     """Populate sections derived directly from the index database."""
     am.stack = section_stack(conn)
-    _add_source_if_content(sources, "stack", am.stack, "db: files.language")
+    if am.stack:
+        sources["stack"] = "db: files.language"
 
     am.conventions = _section_conventions(conn)
-    _add_source_if_content(sources, "conventions", am.conventions, "roam.commands.conventions_helper")
+    if am.conventions:
+        sources["conventions"] = "roam.commands.conventions_helper"
 
     am.danger_zones = section_danger_zones(conn, limit=opts.top_n_danger)
-    _add_source_if_content(
-        sources,
-        "danger_zones",
-        am.danger_zones,
-        "db: files + file_stats + graph_metrics.in_degree",
-    )
+    if am.danger_zones:
+        sources["danger_zones"] = "db: files + file_stats + graph_metrics.in_degree"
 
     am.test_conventions = _section_test_conventions(conn)
-    _add_source_if_content(sources, "test_conventions", am.test_conventions, "db: files.file_role='test'")
+    if am.test_conventions:
+        sources["test_conventions"] = "db: files.file_role='test'"
 
 
 def _populate_gates_section(
@@ -998,15 +986,18 @@ def _populate_agent_os_sections(
     # the constitution toggle: modes resolve from env / file / default
     # even when the constitution loader yields nothing.
     am.current_mode = _section_current_mode(repo_root)
-    _add_source_if_content(sources, "current_mode", am.current_mode, "roam.modes.policy.resolve_mode")
+    if am.current_mode:
+        sources["current_mode"] = "roam.modes.policy.resolve_mode"
 
     if opts.with_laws:
         am.laws = section_laws(conn, top_n=opts.top_n_laws)
-        _add_source_if_content(sources, "laws", am.laws, "roam.laws.miner")
+        if am.laws:
+            sources["laws"] = "roam.laws.miner"
 
     if opts.with_rules:
         am.rules_files = _section_rules_files(repo_root)
-        _add_source_if_content(sources, "rules", am.rules_files, ".roam/rules/*.yml")
+        if am.rules_files:
+            sources["rules"] = ".roam/rules/*.yml"
 
 
 def _populate_capability_and_summary(
@@ -1016,7 +1007,8 @@ def _populate_capability_and_summary(
 ) -> None:
     """Populate capability counts and the summary that depends on them."""
     am.capability_summary = _section_capability_summary()
-    _add_source_if_content(sources, "capability", am.capability_summary, "roam.capability.REGISTRY")
+    if am.capability_summary:
+        sources["capability"] = "roam.capability.REGISTRY"
     am.summary = _build_summary(repo_root, am.stack, am.capability_summary)
 
 
