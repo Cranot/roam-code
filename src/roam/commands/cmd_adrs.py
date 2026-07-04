@@ -76,7 +76,10 @@ def _git_ls_files(project_root: Path) -> list[str] | None:
         if result.returncode != 0:
             return None
         return [p.strip() for p in result.stdout.splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        # Intentional fail-soft: ADR discovery works without git by scanning
+        # well-known directories. Log the failure so it is not silent.
+        click.echo(f"[adrs] git ls-files unavailable ({exc}); using directory scan", err=True)
         return None
 
 
