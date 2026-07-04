@@ -254,15 +254,24 @@ def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
 
     out: dict[int, float] = {}
     for c in candidates:
-        sid = int(c.get("symbol_id") or 0)
-        path = (c.get("file_path") or c.get("file") or "").lower()
-        if not path or not sid:
+        scored = _boost_candidate_when_path_names_task_token(c, lowered)
+        if scored is None:
             continue
-        hits = _token_hits(lowered, _path_parts(path))
-        if not hits:
-            continue
-        out[sid] = _boost_for_hit_count(len(hits))
+        sid, boost = scored
+        out[sid] = boost
     return out
+
+
+def _boost_candidate_when_path_names_task_token(candidate: dict, tokens: set[str]) -> tuple[int, float] | None:
+    """Return a bounded lift only when a candidate path names a task token."""
+    sid = int(candidate.get("symbol_id") or 0)
+    path = (candidate.get("file_path") or candidate.get("file") or "").lower()
+    if not path or not sid:
+        return None
+    hits = _token_hits(tokens, _path_parts(path))
+    if not hits:
+        return None
+    return sid, _boost_for_hit_count(len(hits))
 
 
 def _task_path_tokens(task: str) -> set[str]:
