@@ -5062,7 +5062,10 @@ def _resolve_path_comparison_operand(path: str, cwd: str | None) -> tuple[str, s
     try:
         full = (root / rel).resolve(strict=False)
         full.relative_to(root)
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError) as exc:
+        # post-resolution containment failed (traversal, symlink escape, etc.)
+        # fail-soft: refuse to embed it as a diff operand.
+        log_swallowed("compile.path_comparison.resolve_operand", exc)
         return None
     return rel, str(full)
 
