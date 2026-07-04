@@ -187,6 +187,29 @@ class YamlExtractor(LanguageExtractor):
             return self._github_refs(lines, file_path)
         return []
 
+    def _preserve_ci_declaration_symbol(
+        self,
+        symbols: list[dict],
+        *,
+        name: str,
+        kind: str,
+        line: int,
+        signature: str,
+        is_exported: bool = True,
+    ) -> None:
+        """Preserve one YAML CI declaration line as one indexed symbol."""
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=line,
+                line_end=line,
+                signature=signature,
+                visibility="public",
+                is_exported=is_exported,
+            )
+        )
+
     # ------------------------------------------------------------------
     # GitLab CI
     # ------------------------------------------------------------------
@@ -206,16 +229,12 @@ class YamlExtractor(LanguageExtractor):
             if in_stages:
                 m = _RE_STAGE_ENTRY.match(line)
                 if m:
-                    symbols.append(
-                        self._make_symbol(
-                            name=m.group(1),
-                            kind="constant",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f"stage: {m.group(1)}",
-                            visibility="public",
-                            is_exported=True,
-                        )
+                    self._preserve_ci_declaration_symbol(
+                        symbols,
+                        name=m.group(1),
+                        kind="constant",
+                        line=ln,
+                        signature=f"stage: {m.group(1)}",
                     )
                     continue
                 # End of stage list when we hit a non-list, non-empty line at col 0
@@ -230,29 +249,21 @@ class YamlExtractor(LanguageExtractor):
                 continue
             if key.startswith("."):
                 # Template anchor
-                symbols.append(
-                    self._make_symbol(
-                        name=key,
-                        kind="class",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f"template: {key}",
-                        visibility="public",
-                        is_exported=True,
-                    )
+                self._preserve_ci_declaration_symbol(
+                    symbols,
+                    name=key,
+                    kind="class",
+                    line=ln,
+                    signature=f"template: {key}",
                 )
             else:
                 # Job definition
-                symbols.append(
-                    self._make_symbol(
-                        name=key,
-                        kind="function",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f"job: {key}",
-                        visibility="public",
-                        is_exported=True,
-                    )
+                self._preserve_ci_declaration_symbol(
+                    symbols,
+                    name=key,
+                    kind="function",
+                    line=ln,
+                    signature=f"job: {key}",
                 )
 
         return symbols
@@ -430,16 +441,12 @@ class YamlExtractor(LanguageExtractor):
             if m:
                 name = m.group(1).strip().strip("'\"")
                 if name:
-                    symbols.append(
-                        self._make_symbol(
-                            name=name,
-                            kind="module",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f"workflow: {name}",
-                            visibility="public",
-                            is_exported=True,
-                        )
+                    self._preserve_ci_declaration_symbol(
+                        symbols,
+                        name=name,
+                        kind="module",
+                        line=ln,
+                        signature=f"workflow: {name}",
                     )
 
             # jobs: block
@@ -452,16 +459,12 @@ class YamlExtractor(LanguageExtractor):
                 m = _RE_JOB_NAME.match(line)
                 if m:
                     job = m.group(1)
-                    symbols.append(
-                        self._make_symbol(
-                            name=job,
-                            kind="function",
-                            line_start=ln,
-                            line_end=ln,
-                            signature=f"job: {job}",
-                            visibility="public",
-                            is_exported=True,
-                        )
+                    self._preserve_ci_declaration_symbol(
+                        symbols,
+                        name=job,
+                        kind="function",
+                        line=ln,
+                        signature=f"job: {job}",
                     )
                     continue
                 # uses: reusable workflow call
@@ -472,16 +475,13 @@ class YamlExtractor(LanguageExtractor):
                     action_name = target.split("@")[0].split("/")[-1]
                     action_name = os.path.splitext(action_name)[0]
                     if action_name:
-                        symbols.append(
-                            self._make_symbol(
-                                name=action_name,
-                                kind="class",
-                                line_start=ln,
-                                line_end=ln,
-                                signature=f"uses: {target}",
-                                visibility="public",
-                                is_exported=False,
-                            )
+                        self._preserve_ci_declaration_symbol(
+                            symbols,
+                            name=action_name,
+                            kind="class",
+                            line=ln,
+                            signature=f"uses: {target}",
+                            is_exported=False,
                         )
                 # Back to top level when we hit a key at col 0
                 if line and not line[0].isspace():
