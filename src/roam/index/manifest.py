@@ -192,10 +192,11 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 ext = get_extractor(lang)
                 version = getattr(type(ext), "VERSION", LanguageExtractor.VERSION)
                 out["extractors"][str(lang)] = str(version)
-            except Exception as _exc:  # noqa: BLE001 -- per-extractor probe; any failure drops one language from the partial map, never blocks the rest
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
                 # Per-language probe failure — one extractor's VERSION is
                 # absent; the documented "partial map" behaviour keeps the
                 # rest. The section-level catch below surfaces a wholesale loss.
+                log_swallowed(f"index.manifest:component_versions:extractor_probe:{lang}", exc)
                 continue
     except Exception as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
