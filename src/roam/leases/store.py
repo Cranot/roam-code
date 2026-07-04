@@ -556,6 +556,33 @@ def claim_lease(
     return lease, None
 
 
+def _load_lease_for_mutation(
+    path: Path,
+    read_context: _LeaseReadContext,
+) -> tuple[Optional[Lease], Optional[str]]:
+    """Load a lease for a state-changing operation.
+
+    Returns ``(lease, None)`` on success, or ``(None, kind)`` on failure.
+    The *kind* is a closed-form string consumed by :func:`release_lease`
+    for its ``warnings_out`` bucket. This helper keeps the release path
+    on the same ``_LeaseReadContext`` pattern used by :func:`_iter_leases`
+    and :func:`read_lease`, while preserving release-specific error
+    classification.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return None, f"lease_corrupt:{path.name}:{type(exc).__name__}"
+    except (json.JSONDecodeError, ValueError) as exc:
+        return None, f"lease_corrupt:{path.name}:{type(exc).__name__}"
+    if not isinstance(raw, dict):
+        return None, f"lease_corrupt:{path.name}:NotAJsonObject"
+    lease = _lease_from_dict(raw, read_context.repo_root)
+    if lease is None:
+        return None, f"lease_corrupt:{path.name}:SchemaInvalid"
+    return lease, None
+
+
 def release_lease(
     repo_root: Path,
     lease_id: str,
@@ -593,7 +620,8 @@ def release_lease(
         if warnings_out is not None:
             warnings_out.append(kind)
 
-    path = _lease_path(repo_root, lease_id)
+    read_context = _LeaseReadContext(repo_root, warnings_out)
+    path = _lease_path(read_context.repo_root, lease_id)
     if not path.exists():
         _emit(f"lease_not_found:{path.name}")
         return False
@@ -602,20 +630,9 @@ def release_lease(
     # release-site can identify WHICH failure mode fired and emit the
     # structured kind. ``read_lease`` returns ``None`` for all three
     # corrupt sub-cases without distinguishing them at the call site.
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        _emit(f"lease_corrupt:{path.name}:{type(exc).__name__}")
-        return False
-    except (json.JSONDecodeError, ValueError) as exc:
-        _emit(f"lease_corrupt:{path.name}:{type(exc).__name__}")
-        return False
-    if not isinstance(raw, dict):
-        _emit(f"lease_corrupt:{path.name}:NotAJsonObject")
-        return False
-    lease = _lease_from_dict(raw, repo_root)
-    if lease is None:
-        _emit(f"lease_corrupt:{path.name}:SchemaInvalid")
+    lease, kind = _load_lease_for_mutation(path, read_context)
+    if kind is not None:
+        _emit(kind)
         return False
 
     if lease.state == "released":
