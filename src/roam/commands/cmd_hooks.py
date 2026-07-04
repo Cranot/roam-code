@@ -254,6 +254,104 @@ def _collect_exclusive_hook_outcomes(
     return results, successful, skipped, errors
 
 
+_HookVerdictBuilder = Callable[[list[str], list[str], list[dict[str, str]]], str]
+
+
+def _run_hook_operation_preserving_cli_contract(
+    ctx: click.Context,
+    *,
+    json_mode: bool,
+    missing_repo_verdict: str,
+    operation: Callable[[Path], tuple[str, str | None]],
+    success_actions: tuple[str, ...],
+    primary_summary_key: str,
+    secondary_summary_key: str,
+    build_verdict: _HookVerdictBuilder,
+    create_hooks_dir: bool = False,
+    show_hooks_dir: bool = False,
+    secondary_tip: str | None = None,
+) -> None:
+    """Share hook command plumbing while preserving each command's public contract."""
+    hooks_dir = _find_git_hooks_dir()
+    if hooks_dir is None:
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "hooks",
+                        summary={
+                            "verdict": missing_repo_verdict,
+                            primary_summary_key: [],
+                            secondary_summary_key: [],
+                            "errors": [],
+                        },
+                        hooks_dir=None,
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {missing_repo_verdict}")
+        ctx.exit(1)
+        return
+
+    if create_hooks_dir:
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    results, primary, secondary, errors = _collect_exclusive_hook_outcomes(
+        hooks_dir,
+        operation,
+        success_actions=success_actions,
+    )
+    verdict = build_verdict(primary, secondary, errors)
+
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "hooks",
+                    summary={
+                        "verdict": verdict,
+                        primary_summary_key: primary,
+                        secondary_summary_key: secondary,
+                        "errors": errors,
+                    },
+                    hooks_dir=str(hooks_dir),
+                    results=results,
+                )
+            )
+        )
+        return
+
+    click.echo(f"VERDICT: {verdict}")
+    if show_hooks_dir:
+        click.echo(f"Hooks directory: {hooks_dir}")
+    for hook_name in _HOOK_NAMES:
+        action = results.get(hook_name, "?")
+        click.echo(f"  {hook_name:20s} {action}")
+    if secondary_tip and secondary:
+        click.echo(secondary_tip)
+
+
+def _verdict_for_git_reindex_install(
+    installed: list[str], skipped: list[str], errors: list[dict[str, str]]
+) -> str:
+    """Summarize install outcomes around refreshing git-triggered indexing."""
+    if errors:
+        return f"Installed {len(installed)} hook(s) with {len(errors)} error(s)."
+    if installed:
+        return f"Installed {len(installed)} hook(s): {', '.join(installed)}."
+    return f"All hooks already installed ({len(skipped)} skipped). Use --force to refresh."
+
+
+def _verdict_for_git_reindex_uninstall(
+    removed: list[str], _not_installed: list[str], _errors: list[dict[str, str]]
+) -> str:
+    """Summarize uninstall outcomes around disabling git-triggered indexing."""
+    if removed:
+        return f"Removed roam hooks from: {', '.join(removed)}."
+    return "No roam hooks found to remove."
+
+
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
@@ -296,64 +394,19 @@ def install(ctx, force):
     """Install git hooks for automatic re-indexing after merge/checkout/rebase."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    hooks_dir = _find_git_hooks_dir()
-    if hooks_dir is None:
-        msg = "No git repository found. Run `git init` first."
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "hooks",
-                        summary={"verdict": msg, "installed": [], "skipped": [], "errors": []},
-                        hooks_dir=None,
-                    )
-                )
-            )
-        else:
-            click.echo(f"VERDICT: {msg}")
-        ctx.exit(1)
-        return
-
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-
-    results, installed, skipped, errors = _collect_exclusive_hook_outcomes(
-        hooks_dir,
-        lambda hook_path: _install_hook(hook_path, force=force),
+    _run_hook_operation_preserving_cli_contract(
+        ctx,
+        json_mode=json_mode,
+        missing_repo_verdict="No git repository found. Run `git init` first.",
+        operation=lambda hook_path: _install_hook(hook_path, force=force),
         success_actions=("created", "appended", "overwritten"),
+        primary_summary_key="installed",
+        secondary_summary_key="skipped",
+        build_verdict=_verdict_for_git_reindex_install,
+        create_hooks_dir=True,
+        show_hooks_dir=True,
+        secondary_tip="Tip: use --force to overwrite existing roam hook sections.",
     )
-
-    if errors:
-        verdict = f"Installed {len(installed)} hook(s) with {len(errors)} error(s)."
-    elif installed:
-        verdict = f"Installed {len(installed)} hook(s): {', '.join(installed)}."
-    else:
-        verdict = f"All hooks already installed ({len(skipped)} skipped). Use --force to refresh."
-
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "hooks",
-                    summary={
-                        "verdict": verdict,
-                        "installed": installed,
-                        "skipped": skipped,
-                        "errors": errors,
-                    },
-                    hooks_dir=str(hooks_dir),
-                    results=results,
-                )
-            )
-        )
-        return
-
-    click.echo(f"VERDICT: {verdict}")
-    click.echo(f"Hooks directory: {hooks_dir}")
-    for hook_name in _HOOK_NAMES:
-        action = results.get(hook_name, "?")
-        click.echo(f"  {hook_name:20s} {action}")
-    if skipped:
-        click.echo("Tip: use --force to overwrite existing roam hook sections.")
 
 
 # ---------------------------------------------------------------------------
@@ -367,57 +420,16 @@ def uninstall(ctx):
     """Remove roam git hooks (or the roam section from shared hooks)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    hooks_dir = _find_git_hooks_dir()
-    if hooks_dir is None:
-        msg = "No git repository found."
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "hooks",
-                        summary={"verdict": msg, "removed": [], "not_installed": [], "errors": []},
-                        hooks_dir=None,
-                    )
-                )
-            )
-        else:
-            click.echo(f"VERDICT: {msg}")
-        ctx.exit(1)
-        return
-
-    results, removed, not_installed, errors = _collect_exclusive_hook_outcomes(
-        hooks_dir,
-        _uninstall_hook,
+    _run_hook_operation_preserving_cli_contract(
+        ctx,
+        json_mode=json_mode,
+        missing_repo_verdict="No git repository found.",
+        operation=_uninstall_hook,
         success_actions=("removed", "deleted"),
+        primary_summary_key="removed",
+        secondary_summary_key="not_installed",
+        build_verdict=_verdict_for_git_reindex_uninstall,
     )
-
-    if removed:
-        verdict = f"Removed roam hooks from: {', '.join(removed)}."
-    else:
-        verdict = "No roam hooks found to remove."
-
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "hooks",
-                    summary={
-                        "verdict": verdict,
-                        "removed": removed,
-                        "not_installed": not_installed,
-                        "errors": errors,
-                    },
-                    hooks_dir=str(hooks_dir),
-                    results=results,
-                )
-            )
-        )
-        return
-
-    click.echo(f"VERDICT: {verdict}")
-    for hook_name in _HOOK_NAMES:
-        action = results.get(hook_name, "?")
-        click.echo(f"  {hook_name:20s} {action}")
 
 
 # ---------------------------------------------------------------------------
