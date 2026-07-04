@@ -808,26 +808,33 @@ def _backup_annotations(db_path):
     return result
 
 
+def _annotation_restore_rows_without_stale_ids(saved):
+    """Return insert rows that exclude IDs invalidated by force-reindex."""
+    return [
+        (
+            ann.get("qualified_name"),
+            ann.get("file_path"),
+            ann.get("tag"),
+            ann["content"],
+            ann.get("author"),
+            ann.get("created_at"),
+            ann.get("expires_at"),
+        )
+        for ann in saved
+    ]
+
+
 def _restore_annotations(conn, saved):
     """Re-insert saved annotations and re-link to new symbol IDs."""
     if not saved:
         return
-    for ann in saved:
-        conn.execute(
-            "INSERT INTO annotations "
-            "(qualified_name, file_path, tag, content, author, "
-            " created_at, expires_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                ann.get("qualified_name"),
-                ann.get("file_path"),
-                ann.get("tag"),
-                ann["content"],
-                ann.get("author"),
-                ann.get("created_at"),
-                ann.get("expires_at"),
-            ),
-        )
+    conn.executemany(
+        "INSERT INTO annotations "
+        "(qualified_name, file_path, tag, content, author, "
+        " created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        _annotation_restore_rows_without_stale_ids(saved),
+    )
     _relink_annotations(conn)
     _log(f"  Restored {len(saved)} annotations")
 
