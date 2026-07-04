@@ -311,6 +311,18 @@ def ingest_trivy(conn: sqlite3.Connection, report_path: str) -> list[dict]:
     return results
 
 
+def _normalized_osv_severity(vuln: dict) -> str:
+    """Return the OSV database_specific severity lowercased, or 'unknown'.
+
+    OSV stores severity inside ``database_specific`` as a raw string. We
+    normalize it once so downstream reporting sees a consistent lowercase
+    value, and default to ``'unknown'`` when the field is absent or empty.
+    """
+    db_specific = vuln.get("database_specific") or {}
+    severity = db_specific.get("severity")
+    return severity.lower() if severity else "unknown"
+
+
 def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
     """Parse OSV JSON format and ingest vulnerabilities.
 
@@ -330,16 +342,12 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                     aliases = vuln.get("aliases", [])
                     if not cve_id and aliases:
                         cve_id = aliases[0]
-                    severity = "unknown"
-                    db_specific = vuln.get("database_specific", {})
-                    if db_specific.get("severity"):
-                        severity = db_specific["severity"].lower()
                     results.append(
                         _insert_vuln(
                             conn,
                             cve_id,
                             pkg_name,
-                            severity,
+                            _normalized_osv_severity(vuln),
                             vuln.get("summary"),
                             "osv",
                         )
@@ -351,16 +359,12 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
             affected = vuln.get("affected", [])
             if affected:
                 pkg_name = affected[0].get("package", {}).get("name", pkg_name)
-            severity = "unknown"
-            db_specific = vuln.get("database_specific", {})
-            if db_specific.get("severity"):
-                severity = db_specific["severity"].lower()
             results.append(
                 _insert_vuln(
                     conn,
                     cve_id,
                     pkg_name,
-                    severity,
+                    _normalized_osv_severity(vuln),
                     vuln.get("summary"),
                     "osv",
                 )
