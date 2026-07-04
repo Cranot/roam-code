@@ -98,7 +98,7 @@ class CapabilityRegistry:
             out.setdefault(cap.category, []).append(cap)
         return out
 
-    def to_dict(self) -> dict[str, Any]:
+    def as_registry_catalog(self) -> dict[str, Any]:
         return {
             "schema_version": 1,
             "generated_by": "roam.capability.CapabilityRegistry",
@@ -129,6 +129,9 @@ class CapabilityRegistry:
                 for cap in self.all()
             ],
         }
+
+
+setattr(CapabilityRegistry, "to_dict", CapabilityRegistry.as_registry_catalog)
 
 
 REGISTRY = CapabilityRegistry()
@@ -238,7 +241,7 @@ def emit_yaml() -> str:
     Avoids the PyYAML dependency to stay aligned with the rules engine's
     fallback strategy (see roam.rules.engine._emit_simple_yaml).
     """
-    data = REGISTRY.to_dict()
+    data = REGISTRY.as_registry_catalog()
     lines: list[str] = [
         f"schema_version: {data['schema_version']}",
         f"generated_by: {data['generated_by']}",
