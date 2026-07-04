@@ -17,6 +17,7 @@ can act on them programmatically.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 # Centralized closed enums — single source of truth lives in guard_enums.
@@ -51,30 +52,44 @@ def compute_verdict(
     mcp_tool_findings = mcp_tool_findings or []
     risk = risk or {}
 
-    blocked_reasons = _collect_blockers_that_invalidate_proof(
-        verification_contract=verification_contract,
-        executed_checks=executed_checks,
-        mcp_tool_findings=mcp_tool_findings,
-        ledger=ledger,
+    return _select_verdict_that_preserves_gate_precedence(
+        (
+            (
+                "blocked",
+                lambda: _collect_blockers_that_invalidate_proof(
+                    verification_contract=verification_contract,
+                    executed_checks=executed_checks,
+                    mcp_tool_findings=mcp_tool_findings,
+                    ledger=ledger,
+                ),
+            ),
+            (
+                "needs_review",
+                lambda: _collect_review_gates_that_preserve_human_judgment(
+                    risk=risk,
+                    scope_findings=scope_findings,
+                ),
+            ),
+            (
+                "pass_with_warnings",
+                lambda: _collect_warnings_that_keep_proof_passable(
+                    optimizer_findings=optimizer_findings,
+                    scope_findings=scope_findings,
+                    mcp_tool_findings=mcp_tool_findings,
+                ),
+            ),
+        )
     )
-    if blocked_reasons:
-        return {"value": "blocked", "reasons": aggregate_reasons(blocked_reasons)}
 
-    review_reasons = _collect_review_gates_that_preserve_human_judgment(
-        risk=risk,
-        scope_findings=scope_findings,
-    )
-    if review_reasons:
-        return {"value": "needs_review", "reasons": aggregate_reasons(review_reasons)}
 
-    warning_reasons = _collect_warnings_that_keep_proof_passable(
-        optimizer_findings=optimizer_findings,
-        scope_findings=scope_findings,
-        mcp_tool_findings=mcp_tool_findings,
-    )
-    if warning_reasons:
-        return {"value": "pass_with_warnings", "reasons": aggregate_reasons(warning_reasons)}
-
+def _select_verdict_that_preserves_gate_precedence(
+    reason_collectors: tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...],
+) -> dict[str, Any]:
+    """Return the first verdict tier with evidence, preserving hard-gate order."""
+    for value, collect_reasons in reason_collectors:
+        reasons = collect_reasons()
+        if reasons:
+            return {"value": value, "reasons": aggregate_reasons(reasons)}
     return {"value": "pass", "reasons": aggregate_reasons([{"code": "all_required_passed"}])}
 
 
