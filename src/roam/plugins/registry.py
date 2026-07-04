@@ -139,21 +139,6 @@ class _RegistryState:
     current_plugin_meta: tuple[str, str, str] | None = None  # (name, version, description)
     current_capabilities: list[str] = field(default_factory=list)
 
-    def reset(self) -> None:
-        self.plugins.clear()
-        self.errors.clear()
-        self.commands.clear()
-        self.detectors.clear()
-        self.framework_detectors.clear()
-        self.framework_profiles.clear()
-        self.bridges.clear()
-        self.language_extractors.clear()
-        self.language_extensions.clear()
-        self.language_grammar_aliases.clear()
-        self.current_source = None
-        self.current_plugin_meta = None
-        self.current_capabilities.clear()
-
 
 _STATE: _RegistryState | None = None
 
