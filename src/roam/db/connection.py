@@ -774,7 +774,7 @@ def _parse_batch_options(function_name: str, batch_options: dict[str, object]) -
     )
 
 
-def _iter_in_batches(sql: str, ids: list, pre, post, batch_size: int):
+def _iter_in_batches(sql: str, ids: list, options: _BatchOptions):
     """Yield ``(query, params)`` pairs for one batched IN-clause execution.
 
     Single source of truth for the chunking algorithm shared by
@@ -792,6 +792,9 @@ def _iter_in_batches(sql: str, ids: list, pre, post, batch_size: int):
     n_ph = sql.count(_PLACEHOLDER)
     if n_ph == 0:
         raise ValueError(f"batched_in SQL must contain at least one {_PLACEHOLDER} placeholder marker")
+    pre = options.pre
+    post = options.post
+    batch_size = options.batch_size
     chunk = max(1, batch_size // n_ph)
     # Boundary guard: ``batch_size`` does not account for pre/post params,
     # so a too-large value could render a batch that blows SQLite's variable
@@ -837,7 +840,7 @@ def batched_in(
     if not ids:
         return []
     rows = []
-    for q, params in _iter_in_batches(sql, list(ids), options.pre, options.post, options.batch_size):
+    for q, params in _iter_in_batches(sql, list(ids), options):
         rows.extend(conn.execute(q, params).fetchall())
     return rows
 
@@ -856,7 +859,7 @@ def _legacy_batched_scalar_sum(
     if not ids:
         return 0
     total = 0
-    for q, params in _iter_in_batches(sql, list(ids), options.pre, options.post, options.batch_size):
+    for q, params in _iter_in_batches(sql, list(ids), options):
         total += conn.execute(q, params).fetchone()[0]
     return total
 
