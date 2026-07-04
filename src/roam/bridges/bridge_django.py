@@ -158,6 +158,12 @@ def _find_url_file(
     return None
 
 
+def _path_preserves_route_recall_without_broad_scan(source_path: str) -> bool:
+    """Limit route detection to URL-shaped files without losing Django urls.py."""
+    path_lower = source_path.lower()
+    return "urls" in path_lower or "url" in path_lower
+
+
 class _DjangoUrlResolver:
     """Resolve Django URL-config relationships (path()/re_path()/include()).
 
@@ -178,47 +184,60 @@ class _DjangoUrlResolver:
         symbol_index: dict[str, str],
     ) -> list[dict]:
         edges: list[dict] = []
-        path_lower = source_path.lower()
-        if "urls" not in path_lower and "url" not in path_lower:
+        if not _path_preserves_route_recall_without_broad_scan(source_path):
             return edges
 
         for sym in source_symbols:
-            sig = sym.get("signature", "") or ""
-            qname = sym.get("qualified_name", sym.get("name", ""))
+            edges.extend(
+                self._route_edges_visible_from_url_symbol(sym, target_files, symbol_index)
+            )
 
-            # Match path()/re_path()/url() calls
-            for m in _URL_PATH_RE.finditer(sig):
-                url_pattern = m.group(1)
-                view_ref = m.group(2)
-                edge = self._make_url_edge(qname, view_ref, url_pattern, symbol_index)
-                if edge:
-                    edges.append(edge)
+        return edges
 
-            # Match Class.as_view() references
-            for m in _AS_VIEW_RE.finditer(sig):
-                view_class = m.group(1)
-                edge = self._make_url_edge(qname, view_class, "", symbol_index)
-                if edge:
-                    edges.append(edge)
+    def _route_edges_visible_from_url_symbol(
+        self,
+        sym: dict,
+        target_files: dict[str, list[dict]],
+        symbol_index: dict[str, str],
+    ) -> list[dict]:
+        """Keep route recall complete inside the strict URL-file gate."""
+        edges: list[dict] = []
+        sig = sym.get("signature", "") or ""
+        qname = sym.get("qualified_name", sym.get("name", ""))
 
-            # Match include() patterns and resolve recursively
-            for m in _INCLUDE_RE.finditer(sig):
-                module_path = m.group(1)
-                namespace = m.group(2)  # May be None
-                # Extract URL prefix from the parent path()/url() wrapping
-                prefix_m = _URL_PATH_RE.search(sig)
-                url_prefix = prefix_m.group(1) if prefix_m else ""
-                include_edges = self._resolve_include(
-                    module_path,
-                    _IncludeResolutionContext(
-                        source_qname=qname,
-                        namespace=namespace,
-                        url_prefix=url_prefix,
-                        target_files=target_files,
-                        symbol_index=symbol_index,
-                    ),
-                )
-                edges.extend(include_edges)
+        # Match path()/re_path()/url() calls
+        for m in _URL_PATH_RE.finditer(sig):
+            url_pattern = m.group(1)
+            view_ref = m.group(2)
+            edge = self._make_url_edge(qname, view_ref, url_pattern, symbol_index)
+            if edge:
+                edges.append(edge)
+
+        # Match Class.as_view() references
+        for m in _AS_VIEW_RE.finditer(sig):
+            view_class = m.group(1)
+            edge = self._make_url_edge(qname, view_class, "", symbol_index)
+            if edge:
+                edges.append(edge)
+
+        # Match include() patterns and resolve recursively
+        for m in _INCLUDE_RE.finditer(sig):
+            module_path = m.group(1)
+            namespace = m.group(2)  # May be None
+            # Extract URL prefix from the parent path()/url() wrapping
+            prefix_m = _URL_PATH_RE.search(sig)
+            url_prefix = prefix_m.group(1) if prefix_m else ""
+            include_edges = self._resolve_include(
+                module_path,
+                _IncludeResolutionContext(
+                    source_qname=qname,
+                    namespace=namespace,
+                    url_prefix=url_prefix,
+                    target_files=target_files,
+                    symbol_index=symbol_index,
+                ),
+            )
+            edges.extend(include_edges)
 
         return edges
 
@@ -434,7 +453,7 @@ class DjangoBridge(LanguageBridge):
         edges.extend(self._resolve_celery(source_symbols))
         url_resolver = _DjangoUrlResolver(self.name)
         edges.extend(url_resolver.resolve_urls(source_path, source_symbols, target_files, symbol_index))
-        edges.extend(self._resolve_drf_routers(source_path, source_symbols, target_files, symbol_index))
+        edges.extend(self._resolve_drf_routers(source_path, source_symbols, symbol_index))
 
         return edges
 
@@ -708,23 +727,32 @@ class DjangoBridge(LanguageBridge):
         self,
         source_path: str,
         source_symbols: list[dict],
-        target_files: dict[str, list[dict]],
         symbol_index: dict[str, str],
     ) -> list[dict]:
         """Detect DRF router.register() calls and synthesize routes_to edges."""
         edges: list[dict] = []
-        path_lower = source_path.lower()
-        if "urls" not in path_lower and "url" not in path_lower:
+        if not _path_preserves_route_recall_without_broad_scan(source_path):
             return edges
 
         for sym in source_symbols:
-            sig = sym.get("signature", "") or ""
-            qname = sym.get("qualified_name", sym.get("name", ""))
+            edges.extend(self._drf_edges_visible_from_router_symbol(sym, symbol_index))
 
-            for m in _DRF_ROUTER_RE.finditer(sig):
-                edges.extend(
-                    self._drf_edges_preserving_list_detail_resolution(qname, m, symbol_index)
-                )
+        return edges
+
+    def _drf_edges_visible_from_router_symbol(
+        self,
+        sym: dict,
+        symbol_index: dict[str, str],
+    ) -> list[dict]:
+        """Preserve DRF router recall after the URL-file false-positive gate."""
+        edges: list[dict] = []
+        sig = sym.get("signature", "") or ""
+        qname = sym.get("qualified_name", sym.get("name", ""))
+
+        for m in _DRF_ROUTER_RE.finditer(sig):
+            edges.extend(
+                self._drf_edges_preserving_list_detail_resolution(qname, m, symbol_index)
+            )
 
         return edges
 
