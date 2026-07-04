@@ -300,7 +300,7 @@ def sign_event(
     ledger from working (signing is additive, not mandatory).
     """
     try:
-        key = ensure_ledger_key(Path(repo_root))
+        key = ensure_ledger_key(repo_root)
         seed = prev_signature or SEED_SIGNATURE
         return compute_event_signature(seed, event, key)
     except Exception as exc:
