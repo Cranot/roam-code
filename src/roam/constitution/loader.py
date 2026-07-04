@@ -256,9 +256,15 @@ class ApplyResult:
 
         Kept as a public ApplyResult convenience because the apply JSON
         row, ApplyReport counts, aggregate verdict, and CLI table all
-        share this invariant. Centralising it here prevents each caller
-        from re-defining how skipped checks differ from passing checks -
-        reviewed 2026-07-03.
+        share this invariant -- six read sites in this module
+        (``ApplyResult.to_dict``, ``passed_count``, ``failed_count``,
+        ``_apply_aggregate_verdict``) plus the CLI table in
+        ``cmd_constitution.py``. Centralising it here prevents each
+        caller from re-defining how skipped checks differ from passing
+        checks. The dead-export analyzer mis-flags it as unreferenced
+        because tree-sitter does not resolve ``@property`` reads
+        (``r.passed``) as edges to the accessor -- same blind spot as
+        ``Constitution.to_dict``; verified referenced, 2026-07-04.
         """
         return not self.skipped and self.exit_code == 0
 
