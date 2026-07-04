@@ -11,6 +11,8 @@ import logging
 import re
 from collections import defaultdict
 
+from roam.index.parser import parse_file
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -777,8 +779,6 @@ def compute_and_store_effects(conn, root, G=None, *, source_cache=None, changed_
             file. An unchanged body has unchanged direct effects, so the reused +
             re-classified union is identical to a full classification pass.
     """
-    from roam.index.parser import parse_file
-
     # 1. Classify direct effects. On an incremental run, reuse stored direct
     # effects for unchanged files and re-classify only the changed ones.
     changed = set(changed_paths) if changed_paths is not None else None
