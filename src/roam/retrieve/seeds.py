@@ -525,6 +525,56 @@ def _fts5_query_for(token: str) -> str:
     return " OR ".join(f'"{p}"*' for p in parts)
 
 
+def _accumulate_fts_scores_for_token(
+    conn: sqlite3.Connection,
+    token: str,
+    candidate_limit: int,
+    accumulated: dict[int, float],
+) -> None:
+    """Score one query token via FTS5 and merge its weights into *accumulated*.
+
+    Kept separate so a malformed token or transient FTS5 failure only loses
+    that token's contribution, not the whole query.
+    """
+    fts_query = _fts5_query_for(token)
+    if not fts_query:
+        return
+    try:
+        rows = conn.execute(
+            f"SELECT sf.rowid, -bm25(symbol_fts, {_BM25_WEIGHTS}) AS score "
+            f"FROM symbol_fts sf "
+            f"WHERE symbol_fts MATCH ? "
+            f"ORDER BY bm25(symbol_fts, {_BM25_WEIGHTS}) "
+            f"LIMIT ?",
+            (fts_query, candidate_limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Malformed FTS5 token; skip rather than break the pipeline.
+        return
+    for row in rows:
+        sym_id = int(row[0])
+        weight = float(row[1])
+        if weight <= 0:
+            continue
+        accumulated[sym_id] = accumulated.get(sym_id, 0.0) + weight
+
+
+def _select_top_seeds(
+    accumulated: dict[int, float],
+    max_seeds: int,
+) -> dict[int, float]:
+    """Return the highest-weight seeds, preserving stable order for ties."""
+    if not accumulated:
+        return {}
+
+    # Stable top-k: heapq.nlargest is O(N log max_seeds) vs sorting the whole
+    # accumulator O(N log N). It also decorates entries with a descending
+    # counter, so for equal scores earlier-inserted symbols still come first --
+    # identical to the previous score-descending stable sort + slice.
+    top = heapq.nlargest(max_seeds, accumulated.items(), key=lambda kv: kv[1])
+    return dict(top)
+
+
 def infer_seeds(
     conn: sqlite3.Connection,
     query: str,
@@ -547,43 +597,14 @@ def infer_seeds(
         return {}
 
     accumulated: dict[int, float] = {}
-
+    candidate_limit = max(max_seeds * 3, 30)
     if _has_symbol_fts(conn):
-        candidate_limit = max(max_seeds * 3, 30)
         for token in tokens:
-            fts_query = _fts5_query_for(token)
-            if not fts_query:
-                continue
-            try:
-                rows = conn.execute(
-                    f"SELECT sf.rowid, -bm25(symbol_fts, {_BM25_WEIGHTS}) AS score "
-                    f"FROM symbol_fts sf "
-                    f"WHERE symbol_fts MATCH ? "
-                    f"ORDER BY bm25(symbol_fts, {_BM25_WEIGHTS}) "
-                    f"LIMIT ?",
-                    (fts_query, candidate_limit),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                # Malformed FTS5 token; skip rather than break the pipeline.
-                continue
-            for row in rows:
-                sym_id = int(row[0])
-                weight = float(row[1])
-                if weight <= 0:
-                    continue
-                accumulated[sym_id] = accumulated.get(sym_id, 0.0) + weight
+            _accumulate_fts_scores_for_token(conn, token, candidate_limit, accumulated)
     else:
         accumulated = _like_fallback(conn, tokens, max_seeds)
 
-    if not accumulated:
-        return {}
-
-    # Stable top-k: heapq.nlargest is O(N log max_seeds) vs sorting the whole
-    # accumulator O(N log N). It also decorates entries with a descending
-    # counter, so for equal scores earlier-inserted symbols still come first --
-    # identical to the previous score-descending stable sort + slice.
-    top = heapq.nlargest(max_seeds, accumulated.items(), key=lambda kv: kv[1])
-    return dict(top)
+    return _select_top_seeds(accumulated, max_seeds)
 
 
 def _like_fallback(
