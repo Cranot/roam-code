@@ -148,7 +148,7 @@ def _component_versions() -> dict[str, dict[str, str]]:
             from roam.index.laravel_post import VERSION as _laravel_version
 
             out["bridges"]["laravel"] = str(_laravel_version)
-        except Exception as exc:
+        except (ImportError, AttributeError) as exc:
             # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
             # Laravel post-resolver VERSION dropped out of the drift map; a
             # bridge version bump would then go undetected. Surface the lineage.
