@@ -625,6 +625,9 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
     None falls back to NULL — pre-A6 callers and tests that bypass the
     indexer pipeline get the same value they would have written before.
     """
+    if not symbols:
+        return
+
     parent_ids_by_name = _seed_parent_ids_for_batch_parent_linking(conn, file_id, symbols)
     insert_sql = """INSERT INTO symbols
        (file_id, name, qualified_name, kind, signature,
@@ -633,11 +636,9 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
         is_async, decorators, extractor_version)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
+    insert_rows = []
     for sym in symbols:
-        parent_id = parent_ids_by_name.get(sym.get("parent_name"))
-
-        cursor = conn.execute(
-            insert_sql,
+        insert_rows.append(
             (
                 file_id,
                 sym["name"],
@@ -649,17 +650,51 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
                 sym["docstring"],
                 sym["visibility"],
                 1 if sym["is_exported"] else 0,
-                parent_id,
+                parent_ids_by_name.get(sym.get("parent_name")),
                 sym.get("default_value"),
                 1 if sym.get("is_async") else 0,
                 sym.get("decorators") or "",
                 extractor_version,
-            ),
+            )
         )
-        sym_id = cursor.lastrowid
-        if sym_id is None:
-            continue
+
+    # Avoid the N+1 execute-per-symbol pattern by inserting the whole batch
+    # at once, then resolving IDs and parent links with batched queries.
+    max_id_before = conn.execute("SELECT COALESCE(MAX(id), 0) FROM symbols").fetchone()[0]
+    conn.executemany(insert_sql, insert_rows)
+
+    new_rows = conn.execute(
+        "SELECT id, name, qualified_name, kind, line_start, line_end "
+        "FROM symbols WHERE file_id = ? AND id > ? ORDER BY id",
+        (file_id, max_id_before),
+    ).fetchall()
+
+    def _row_key(row):
+        return (row["name"], row["qualified_name"], row["kind"], row["line_start"], row["line_end"])
+
+    def _sym_key(sym):
+        return (sym["name"], sym["qualified_name"], sym["kind"], sym["line_start"], sym["line_end"])
+
+    if len(new_rows) == len(symbols):
+        symbol_ids = [row["id"] for row in new_rows]
+    else:
+        # Defensive: if autoincrement ordering ever diverges from insertion
+        # order, match rows back to symbols by their identifying fields.
+        row_by_key = {_row_key(row): row["id"] for row in new_rows}
+        symbol_ids = [row_by_key.get(_sym_key(sym)) for sym in symbols]
+
+    for sym, sym_id in zip(symbols, symbol_ids):
         parent_ids_by_name.setdefault(sym["name"], sym_id)
+
+    parent_updates = []
+    for sym, sym_id in zip(symbols, symbol_ids):
+        parent_name = sym.get("parent_name")
+        parent_id = parent_ids_by_name.get(parent_name) if parent_name else None
+        parent_updates.append((parent_id, sym_id))
+
+    conn.executemany("UPDATE symbols SET parent_id = ? WHERE id = ?", parent_updates)
+
+    for sym, sym_id in zip(symbols, symbol_ids):
         all_symbol_rows[sym_id] = {
             "id": sym_id,
             "file_id": file_id,
