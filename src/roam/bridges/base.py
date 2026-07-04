@@ -15,6 +15,22 @@ class LanguageBridge(ABC):
     - OpenAPI spec -> client SDKs
     """
 
+    # Cohesion REVIEW (low-cohesion detector: "5 methods, 0 internal
+    # edges", threshold 2): structural for an ABC interface contract,
+    # not a fixable smell. 3 of the 5 members (``name`` /
+    # ``source_extensions`` / ``target_extensions``) are ``@property``
+    # accessors, and property reads (``self.name``) create NO call-graph
+    # edge here -- verified: ``self.<property>`` accesses across every
+    # concrete bridge yield 0 edges; only real ``self.method()`` calls
+    # do (positive control: ``TestHighAIRatio``). The other 2
+    # (``detect`` / ``resolve``) are independent abstract contract
+    # methods that never call each other -- ``resolve`` runs per-file
+    # AFTER ``detect`` has gated relevance in ``cmd_xlang``. Clearing
+    # the metric would need an artificial multi-level call chain among
+    # unrelated helpers -- metric-gaming forbidden by Pattern 2
+    # (AGENTS.md). Expected by design, like the A6 dead-code disclosures
+    # below.
+
     # Audit A6: every bridge stamps a version on its inference logic.
     # When the resolver changes (e.g. learning to follow ``through=`` on
     # Django M2M), the index built with the older bridge version may
