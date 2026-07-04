@@ -133,16 +133,22 @@ def load_laws_yaml(text: str) -> list[Law]:
     the PyYAML output.
     """
     data = _parse_laws_document_without_requiring_pyyaml(text)
-
-    if not isinstance(data, dict):
-        return []
-    raw_laws = data.get("laws") or []
     laws: list[Law] = []
-    for entry in raw_laws:
+    for entry in _law_entries_when_document_shape_is_supported(data):
         law = _law_from_entry(entry)
         if law is not None:
             laws.append(law)
     return laws
+
+
+def _law_entries_when_document_shape_is_supported(data: Any) -> list[Any]:
+    """Return law entries only when the document has the supported shape."""
+    if not isinstance(data, dict):
+        return []
+    raw_laws = data.get("laws") or []
+    if not isinstance(raw_laws, list):
+        return []
+    return raw_laws
 
 
 def _parse_laws_document_without_requiring_pyyaml(text: str) -> Any:
