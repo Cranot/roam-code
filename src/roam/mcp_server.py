@@ -6054,6 +6054,25 @@ def _batch_get_many(conn, symbols: list[str]) -> tuple[dict, dict]:
     return results, errors
 
 
+def _batch_get_summary(verdict: str, symbols_requested: int, symbols_resolved: int) -> dict:
+    return {
+        "verdict": verdict,
+        "symbols_requested": symbols_requested,
+        "symbols_resolved": symbols_resolved,
+    }
+
+
+def _batch_get_payload(summary: dict, results: dict | None = None, errors: dict | None = None) -> dict:
+    payload: dict = {
+        "command": "batch-get",
+        "summary": summary,
+        "results": results or {},
+    }
+    if errors is not None:
+        payload["errors"] = errors
+    return payload
+
+
 @_tool(
     name="roam_batch_search",
     description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
@@ -6208,38 +6227,25 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     symbols_list: list[str] = [str(s) for s in (symbols or [])][:_MAX_BATCH_SYMBOLS]
 
     if not symbols_list:
-        return {
-            "command": "batch-get",
-            "summary": {
-                "verdict": "no symbols provided",
-                "symbols_requested": 0,
-                "symbols_resolved": 0,
-            },
-            "results": {},
-            "errors": {},
-        }
+        return _batch_get_payload(
+            _batch_get_summary("no symbols provided", 0, 0),
+            errors={},
+        )
 
     # W103/W607: open_db() and the per-symbol loop are kept in separate blocks
     # so a connection failure short-circuits with a _fatal payload while
     # DB-level lookup errors stay isolated inside _batch_get_one's return
-    # value. This also keeps the wrapper shallow, matching
-    # batch_search). Programmer-class failures propagate instead of looking
-    # like no data.
+    # value. This also keeps the wrapper shallow, matching batch_search.
+    # Programmer-class failures propagate instead of looking like no data.
     try:
         conn_ctx = open_db(readonly=True)
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
-        return {
-            "command": "batch-get",
-            "summary": {
-                "verdict": f"batch get failed: {exc}",
-                "symbols_requested": len(symbols_list),
-                "symbols_resolved": 0,
-            },
-            "results": {},
-            "errors": {"_fatal": str(exc)},
-        }
+        return _batch_get_payload(
+            _batch_get_summary(f"batch get failed: {exc}", len(symbols_list), 0),
+            errors={"_fatal": str(exc)},
+        )
 
     with conn_ctx as conn:
         results, errors = _batch_get_many(conn, symbols_list)
@@ -6249,19 +6255,11 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     if errors:
         verdict += f", {len(errors)} not found"
 
-    payload: dict = {
-        "command": "batch-get",
-        "summary": {
-            "verdict": verdict,
-            "symbols_requested": len(symbols_list),
-            "symbols_resolved": resolved,
-        },
-        "results": results,
-    }
-    if errors:
-        payload["errors"] = errors
-
-    return payload
+    return _batch_get_payload(
+        _batch_get_summary(verdict, len(symbols_list), resolved),
+        results=results,
+        errors=errors if errors else None,
+    )
 
 
 # ===================================================================
