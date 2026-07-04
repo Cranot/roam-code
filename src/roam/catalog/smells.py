@@ -1602,9 +1602,10 @@ def _refused_bequest_finding(
     child_path = row["child_path"]
     child_line = int(row["child_line_start"] or 1)
     loc_str = _loc(child_path, child_line)
-    method_summary = ", ".join(f"{name}()" for name, _ in trivial_overrides[:5])
+    method_parts = [f"{name}()" for name, _ in trivial_overrides[:5]]
     if len(trivial_overrides) > 5:
-        method_summary += f", +{len(trivial_overrides) - 5} more"
+        method_parts.append(f"+{len(trivial_overrides) - 5} more")
+    method_summary = ", ".join(method_parts)
     return _finding(
         "refused-bequest",
         "warning",
