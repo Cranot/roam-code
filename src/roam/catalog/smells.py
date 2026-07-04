@@ -1575,7 +1575,11 @@ def _prefetch_refused_bequest_parent_names(
             if r["name"]:
                 parent_names_by_id.setdefault(r["parent_id"], set()).add(r["name"])
     except sqlite3.OperationalError:
-        pass
+        log.debug(
+            "Skipping refused bequest parent-name prefetch for %d parent ids",
+            len(parent_ids),
+            exc_info=True,
+        )
     return parent_names_by_id
 
 
