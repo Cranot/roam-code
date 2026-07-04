@@ -366,6 +366,7 @@ def _query_repo_health(info: dict[str, Any]) -> dict[str, Any]:
                 result["health_score"] = snap["health_score"]
                 result["cycles"] = snap["cycles"] or 0
         except sqlite3.OperationalError as exc:
+            # Snapshot metadata is optional for partial or older repo DBs; keep the basic counts.
             log_swallowed("workspace.aggregator:query_repo_health.snapshot", exc)
     finally:
         conn.close()
