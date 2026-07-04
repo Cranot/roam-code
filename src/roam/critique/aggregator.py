@@ -43,7 +43,8 @@ def aggregate(
     omitted, the legacy ``"No concerns"`` verdict is preserved for
     callers that don't yet pass the dict (LAW 11: explicit > inferred).
     """
-    sorted_findings = sorted(findings, key=lambda f: -_severity_rank(f.severity))
+    sorted_findings = _sort_findings_for_report(findings)
+    top_finding = _select_top_finding_without_report_sort(findings)
 
     # W566 — bucketing delegates to the canonical helper. The critique
     # vocabulary is the 4-tier ``high/medium/low/info`` (no CVSS
@@ -109,12 +110,24 @@ def aggregate(
         "verdict": verdict,
         "severity_breakdown": breakdown,
         "findings": [_finding_to_dict(f) for f in sorted_findings],
-        "top_finding": _finding_to_dict(sorted_findings[0]) if sorted_findings else None,
+        "top_finding": _finding_to_dict(top_finding) if top_finding else None,
     }
     if check_status is not None:
         result["check_status"] = dict(check_status)
         result["partial_success"] = partial
     return result
+
+
+def _severity_for_critique_ranking(finding: Finding) -> int:
+    return _severity_rank(finding.severity)
+
+
+def _sort_findings_for_report(findings: list[Finding]) -> list[Finding]:
+    return sorted(findings, key=lambda f: -_severity_for_critique_ranking(f))
+
+
+def _select_top_finding_without_report_sort(findings: list[Finding]) -> Finding | None:
+    return max(findings, key=_severity_for_critique_ranking, default=None)
 
 
 def _finding_to_dict(f: Finding) -> dict:
