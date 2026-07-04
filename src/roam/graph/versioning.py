@@ -374,24 +374,25 @@ def _find_move_for_removed(
     if not rname:
         return None
     candidates = added_by_name.get(rname, [])
-    picked = _pick_move_candidate(rmeta, candidates, after_syms, used_added)
+    picked = _balance_move_specificity_and_recall(
+        rmeta, candidates, after_syms, used_added
+    )
     if picked is None:
         return None
     used_added.add(picked)
     return _build_move_record(rname, rmeta, picked, after_syms)
 
 
-def _pick_move_candidate(
+def _balance_move_specificity_and_recall(
     rmeta: dict,
     candidates: list[str],
     after_syms: dict,
     used_added: set[str],
 ) -> str | None:
-    """Choose the best added candidate, preferring kind + name matches.
+    """Choose the best added candidate under the specificity/recall law.
 
-    This encodes the specificity/coverage trade-off: a matching kind raises
-    confidence to HIGH; otherwise we accept the first valid name-only match
-    as MEDIUM-confidence evidence.
+    Prefer same-kind evidence so move detection stays specific, but keep the
+    first valid name-only match so extractor kind drift does not erase recall.
     """
     rfile = rmeta.get("file")
     med_match: str | None = None
