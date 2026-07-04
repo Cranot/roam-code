@@ -4687,10 +4687,9 @@ def _resolve_sibling_test_path(src_path: str, cwd: str | None) -> str | None:
 
         pattern = f"tests/test_{stem}*.py"
         base_dir = cwd if cwd else "."
-        matches = sorted(glob.glob(os.path.join(base_dir, pattern)))
-        if matches:
+        chosen = min(glob.iglob(os.path.join(base_dir, pattern)), default=None)
+        if chosen:
             # Return path relative to cwd if possible
-            chosen = matches[0]
             if cwd and chosen.startswith(cwd):
                 chosen = os.path.relpath(chosen, cwd)
             return chosen
