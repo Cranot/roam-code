@@ -108,7 +108,8 @@ def _discover_adr_files(project_root: Path) -> list[str]:
     all_files = _git_ls_files(project_root)
     if all_files is None:
         # Fallback: walk known dirs only (already done above)
-        pass
+        # Intentionally keep the well-known-directory results.
+        return sorted(found)
     else:
         for rel_path in all_files:
             rel_path = rel_path.replace("\\", "/")
