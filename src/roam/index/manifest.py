@@ -173,10 +173,11 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 continue
             seen.add(task_id)
             out["detectors"][str(task_id)] = detector_version(str(task_id))
-    except Exception as exc:
+    except (ImportError, AttributeError, TypeError) as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
-        # detectors drift sub-map is missing (catalog import failed). A partial
-        # map is intentional, but the omission must be discoverable.
+        # detectors drift sub-map is missing due to catalog import/version skew.
+        # Preserve manifest writes for known section-shape failures; let
+        # unexpected bugs propagate so they are not hidden as an empty map.
         log_swallowed("index.manifest:component_versions:detectors", exc)
 
     # Extractors — instantiate each supported language to pull its
