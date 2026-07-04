@@ -506,8 +506,15 @@ class JavaScriptExtractor(LanguageExtractor):
                 )
             )
 
-    def _collect_pattern_names(self, pattern_node, source):
+    def _collect_pattern_names(self, pattern_node, source, memo=None):
         """Collect all identifier names from a destructuring pattern."""
+        if memo is None:
+            memo = {}
+        key = (pattern_node.type, pattern_node.start_byte, pattern_node.end_byte)
+        cached = memo.get(key)
+        if cached is not None:
+            return list(cached)
+
         names = []
         for child in pattern_node.children:
             if child.type in (
@@ -523,7 +530,7 @@ class JavaScriptExtractor(LanguageExtractor):
                     if value.type == "identifier":
                         names.append(self.node_text(value, source))
                     elif value.type in ("object_pattern", "array_pattern"):
-                        names.extend(self._collect_pattern_names(value, source))
+                        names.extend(self._collect_pattern_names(value, source, memo))
             elif child.type == "rest_pattern":
                 for sub in child.children:
                     if sub.type == "identifier":
@@ -540,7 +547,8 @@ class JavaScriptExtractor(LanguageExtractor):
                     ):
                         names.append(self.node_text(left, source))
             elif child.type in ("object_pattern", "array_pattern"):
-                names.extend(self._collect_pattern_names(child, source))
+                names.extend(self._collect_pattern_names(child, source, memo))
+        memo[key] = tuple(names)
         return names
 
     # ---- Reference extraction ----
