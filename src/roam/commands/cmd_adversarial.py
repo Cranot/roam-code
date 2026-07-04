@@ -209,6 +209,107 @@ def _layer_contract_skip_challenge(G, skip):
     )
 
 
+def _set_cycle_status(status, value):
+    if status is not None:
+        status["new_cycles"] = value
+
+
+def _import_cycle_detection_tools(status):
+    try:
+        from roam.graph.builder import build_symbol_graph
+        from roam.graph.cycles import find_cycles
+    except ImportError:
+        _set_cycle_status(status, "skipped:missing_graph_module")
+        return None
+    return build_symbol_graph, find_cycles
+
+
+def _build_cycle_detection_graph(conn, build_symbol_graph, status):
+    try:
+        G = build_symbol_graph(conn)
+    except Exception as exc:  # noqa: BLE001
+        _set_cycle_status(status, f"errored:build_symbol_graph:{type(exc).__name__}")
+        return None
+
+    if len(G) == 0:
+        _set_cycle_status(status, "skipped:empty_graph")
+        return None
+    return G
+
+
+def _find_symbol_cycles(G, find_cycles, status):
+    try:
+        sccs = find_cycles(G, min_size=2)
+    except Exception as exc:  # noqa: BLE001
+        _set_cycle_status(status, f"errored:find_cycles:{type(exc).__name__}")
+        return None
+
+    _set_cycle_status(status, "ran")
+    return sccs
+
+
+def _load_cycle_detection_context(conn, status):
+    tools = _import_cycle_detection_tools(status)
+    if tools is None:
+        return None
+
+    build_symbol_graph, find_cycles = tools
+    G = _build_cycle_detection_graph(conn, build_symbol_graph, status)
+    if G is None:
+        return None
+
+    sccs = _find_symbol_cycles(G, find_cycles, status)
+    if sccs is None:
+        return None
+    return G, sccs
+
+
+def _iter_cycles_touching_changed_symbols(sccs, changed_sym_ids):
+    """Yield SCCs that touch changed symbols using one changed-id lookup set."""
+    for scc in sccs:
+        overlap = changed_sym_ids.intersection(scc)
+        if overlap:
+            yield tuple(scc), overlap
+
+
+def _cycle_display_names(G, cycle_ids):
+    """Return the leading symbol names that make a cycle challenge readable."""
+    names = []
+    for sid in cycle_ids[:5]:
+        node = G.nodes.get(sid, {})
+        names.append(node.get("name", f"id={sid}"))
+    return names
+
+
+def _cycle_location_that_preserves_changed_scope(G, cycle_ids, overlap):
+    """Use a changed symbol location so global SCCs stay scoped to the edit."""
+    first_overlap = next((sid for sid in cycle_ids if sid in overlap), None)
+    if first_overlap in G.nodes:
+        return G.nodes[first_overlap].get("file_path", "")
+    return ""
+
+
+def _new_cycle_challenge(G, cycle_ids, overlap):
+    names = _cycle_display_names(G, cycle_ids)
+    location = _cycle_location_that_preserves_changed_scope(G, cycle_ids, overlap)
+
+    return _challenge(
+        "new_cycle",
+        "CRITICAL",
+        f"Cyclic dependency involving {len(cycle_ids)} symbols",
+        (
+            f"Changed symbols participate in a cycle: "
+            f"{' -> '.join(names)}{'...' if len(cycle_ids) > 5 else ''}. "
+            f"SCC size: {len(cycle_ids)} symbols."
+        ),
+        (
+            "With circular dependencies, explain why this won't cause "
+            "infinite recursion or initialization ordering issues."
+        ),
+        location=location,
+    )
+
+
 def _check_new_cycles(conn, changed_sym_ids, status=None):
     """Check if changed symbols are part of any SCC (cycle).
 
@@ -221,73 +322,18 @@ def _check_new_cycles(conn, changed_sym_ids, status=None):
     None so out-of-tree callers keep working.
     """
     challenges = []
-    if not changed_sym_ids:
-        if status is not None:
-            status["new_cycles"] = "skipped:no_changed_symbols"
-        return challenges
-    try:
-        from roam.graph.builder import build_symbol_graph
-        from roam.graph.cycles import find_cycles
-    except ImportError:
-        if status is not None:
-            status["new_cycles"] = "skipped:missing_graph_module"
+    changed_ids = set(changed_sym_ids or ())
+    if not changed_ids:
+        _set_cycle_status(status, "skipped:no_changed_symbols")
         return challenges
 
-    try:
-        G = build_symbol_graph(conn)
-    except Exception as exc:  # noqa: BLE001
-        if status is not None:
-            status["new_cycles"] = f"errored:build_symbol_graph:{type(exc).__name__}"
+    context = _load_cycle_detection_context(conn, status)
+    if context is None:
         return challenges
 
-    if len(G) == 0:
-        if status is not None:
-            status["new_cycles"] = "skipped:empty_graph"
-        return challenges
-
-    try:
-        sccs = find_cycles(G, min_size=2)
-    except Exception as exc:  # noqa: BLE001
-        if status is not None:
-            status["new_cycles"] = f"errored:find_cycles:{type(exc).__name__}"
-        return challenges
-    if status is not None:
-        status["new_cycles"] = "ran"
-
-    for scc in sccs:
-        overlap = set(scc) & changed_sym_ids
-        if not overlap:
-            continue
-
-        # Gather names for display (limit to 5)
-        names = []
-        for sid in scc[:5]:
-            node = G.nodes.get(sid, {})
-            name = node.get("name", f"id={sid}")
-            names.append(name)
-
-        location = ""
-        first_overlap = list(overlap)[0]
-        if first_overlap in G.nodes:
-            location = G.nodes[first_overlap].get("file_path", "")
-
-        challenges.append(
-            _challenge(
-                "new_cycle",
-                "CRITICAL",
-                f"Cyclic dependency involving {len(scc)} symbols",
-                (
-                    f"Changed symbols participate in a cycle: "
-                    f"{' -> '.join(names)}{'...' if len(scc) > 5 else ''}. "
-                    f"SCC size: {len(scc)} symbols."
-                ),
-                (
-                    "With circular dependencies, explain why this won't cause "
-                    "infinite recursion or initialization ordering issues."
-                ),
-                location=location,
-            )
-        )
+    G, sccs = context
+    for cycle_ids, overlap in _iter_cycles_touching_changed_symbols(sccs, changed_ids):
+        challenges.append(_new_cycle_challenge(G, cycle_ids, overlap))
     return challenges
 
 
