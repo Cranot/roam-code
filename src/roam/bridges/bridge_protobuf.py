@@ -146,14 +146,26 @@ class ProtobufBridge(LanguageBridge):
         # proto kind through the language-specific naming convention.
         for tpath, tsymbols, lang in generated_targets:
             target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
-            self._emit_edges_for_proto_kind(
-                _ProtoKindEdgeSpec(messages, self._match_message, "proto-message"), target_symbol_names, lang, edges
+            edges.extend(
+                self._edges_for_proto_kind(
+                    _ProtoKindEdgeSpec(messages, self._match_message, "proto-message"),
+                    target_symbol_names,
+                    lang,
+                )
             )
-            self._emit_edges_for_proto_kind(
-                _ProtoKindEdgeSpec(services, self._match_service, "proto-service"), target_symbol_names, lang, edges
+            edges.extend(
+                self._edges_for_proto_kind(
+                    _ProtoKindEdgeSpec(services, self._match_service, "proto-service"),
+                    target_symbol_names,
+                    lang,
+                )
             )
-            self._emit_edges_for_proto_kind(
-                _ProtoKindEdgeSpec(enums, self._match_enum, "proto-enum"), target_symbol_names, lang, edges
+            edges.extend(
+                self._edges_for_proto_kind(
+                    _ProtoKindEdgeSpec(enums, self._match_enum, "proto-enum"),
+                    target_symbol_names,
+                    lang,
+                )
             )
 
         return edges
@@ -175,18 +187,18 @@ class ProtobufBridge(LanguageBridge):
                 enums.append(sym)
         return messages, services, enums
 
-    def _emit_edges_for_proto_kind(
+    def _edges_for_proto_kind(
         self,
         spec: _ProtoKindEdgeSpec,
         target_symbol_names: dict[str, str],
         lang: str,
-        edges: list[dict],
-    ) -> None:
-        """Bind one proto semantic kind to target symbols and emit edges.
+    ) -> list[dict]:
+        """Bind one proto semantic kind to target symbols and return edges.
 
         The supplied ``matcher`` encapsulates the target language's
         generated naming convention; this helper only translates source
         symbols into the uniform cross-language edge shape."""
+        edges: list[dict] = []
         for sym in spec.symbols:
             sym_name = sym.get("name", "")
             sym_qname = sym.get("qualified_name", sym_name)
@@ -201,6 +213,7 @@ class ProtobufBridge(LanguageBridge):
                         "target_lang": lang,
                     }
                 )
+        return edges
 
     def _find_generated_files(
         self, proto_stem: str, target_files: dict[str, list[dict]]
