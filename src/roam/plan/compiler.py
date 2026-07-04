@@ -12193,6 +12193,195 @@ def _compute_lean_gate_flags(plan: "PlanV0") -> _LeanGateFlags:
     )
 
 
+_FACTS_TO_L1_PROBE_PROCEDURES = frozenset(
+    (
+        "symbol_defined_where",
+        "top_n_ranking",
+        "cli_verb_why_slow",
+        "compare_x_vs_y",
+        "describe_file",
+        "file_history",
+        "repo_structure",
+        "entry_point_where",
+        "config_where",
+        "session_meta",
+        "self_contained_task",
+    )
+)
+
+
+def _task_text_promises_probe_answer(task: str) -> bool:
+    """True when task text carries enough signal to promote facts to L1.
+
+    These regex families are answer-shaped: the useful output is the probe
+    result itself, not the larger context envelope.
+    """
+    return bool(
+        task
+        and (
+            any(
+                regex.search(task) is not None
+                for regex in (_API_SURFACE_RE, _REFACTOR_MOVE_RE, _W196_LITERAL_RE)
+            )
+            or _w201_import_re().search(task) is not None
+        )
+    )
+
+
+def _promote_artifact_when_probe_result_is_answer(plan: "PlanV0", art: str) -> str:
+    """Apply the answer-richness side of the L1 routing law.
+
+    ``select_artifact`` may pick ``facts`` for low-confidence or compact
+    policies. Promote only when task text or procedure identity says the L1
+    probe result is the answer the agent needs.
+    """
+    if art != "facts":
+        return art
+    if _task_text_promises_probe_answer(plan.task or ""):
+        return "l1_probe"
+    if plan.procedure in _FACTS_TO_L1_PROBE_PROCEDURES:
+        return "l1_probe"
+    return art
+
+
+def _apply_restraint_gates_to_artifact(art: str, gates: _LeanGateFlags) -> str:
+    """Apply the agent-restraint side of the L1 routing law."""
+    if gates.low_conf or gates.bare_stack or gates.opinion or gates.meta_self:
+        return "facts"
+    if gates.gen_synth and art not in ("contract",):
+        return "lean"
+    return art
+
+
+def _task_text_justifies_l1_despite_facts_policy(task_text: str) -> bool:
+    """True when a facts policy should still spend the L1 probe budget.
+
+    Bare-symbol phrasings for these probe families often score low
+    confidence, but the probe payload is still the answer when the trigger
+    matches.
+    """
+    task_lower = task_text.lower()
+    return bool(
+        task_text
+        and (
+            _TEST_IMPACT_RE.search(task_text)
+            or _OWNER_RE.search(task_text)
+            or _TODO_AUDIT_RE.search(task_text)
+            or (
+                _task_has_any(task_lower, _SECURITY_TAINT_TOKENS)
+                and _compile_security_taint_re().search(task_text)
+            )
+            or (
+                _task_has_any(task_lower, _ALGO_PERF_TOKENS)
+                and _compile_algo_perf_re().search(task_text)
+            )
+            or (
+                _task_has_any(task_lower, _WORLD_MODEL_TOKENS)
+                and _compile_world_model_re().search(task_text)
+            )
+            or (
+                _task_has_any(task_lower, _DESIGN_PATTERN_TOKENS)
+                and _compile_design_pattern_re().search(task_text)
+            )
+        )
+    )
+
+
+def _should_spend_l1_probe_budget(plan: "PlanV0", art: str, gates: _LeanGateFlags) -> bool:
+    """Balance answer-rich L1 probes against lean-gate restraint."""
+    if plan.procedure not in _L1_PROBE_ELIGIBLE:
+        return False
+    if not _l1_has_target(plan):
+        return False
+    if gates.gen_synth or gates.low_conf or gates.bare_stack or gates.opinion:
+        return False
+    if art != "facts":
+        return True
+    return _task_text_justifies_l1_despite_facts_policy(plan.task or "")
+
+
+def _l1_probe_envelope_when_it_answers(plan: "PlanV0", cwd: str | None) -> dict | None:
+    """Return an L1 envelope only when procedure-specific probe data exists."""
+    env = plan.to_l1_probe_envelope(cwd=cwd)
+    pre = env.get("plan", {}).get("prefetched_facts") or {}
+    if _l1_has_procedure_data(plan.procedure, pre):
+        return env
+    return None
+
+
+def _attach_degraded_probe_signal(envelope: dict, probe_attempted: bool) -> dict:
+    """Mark fallback envelopes when an attempted L1 probe returned empty."""
+    if not probe_attempted:
+        return envelope
+    plan_obj = envelope.get("plan")
+    if isinstance(plan_obj, dict):
+        plan_obj["probe_attempted"] = True
+        plan_obj["probe_returned_empty"] = True
+    return envelope
+
+
+def _fallback_envelope_after_probe_degrades(
+    plan: "PlanV0", art: str, cwd: str | None, probe_attempted: bool
+) -> tuple[dict, str]:
+    """Build the fallback envelope selected after L1 routing."""
+    if art == "contract":
+        return (
+            _attach_degraded_probe_signal(
+                plan.to_facts_contract_envelope(cwd=cwd),
+                probe_attempted,
+            ),
+            "contract",
+        )
+    if art == "facts":
+        return (
+            _attach_degraded_probe_signal(plan.to_facts_envelope(cwd=cwd), probe_attempted),
+            "facts",
+        )
+    if art == "lean":
+        # W34a (E8): pass cwd so trace probe can fire inside the lean envelope.
+        return (
+            _attach_degraded_probe_signal(plan.to_lean_envelope(cwd=cwd), probe_attempted),
+            "lean",
+        )
+    return _attach_degraded_probe_signal(plan.to_envelope(), probe_attempted), "full"
+
+
+def _emit_result_after_required_compile_side_effects(
+    plan: "PlanV0", env_obj: dict, label: str, cwd: str | None, started_at: float
+) -> tuple[dict, str]:
+    """W39/W56 — stamp staleness, cache, and telemetry on every return."""
+    _stamp_index_staleness(env_obj, plan, cwd)
+    _envelope_cache_store(plan, env_obj, label, cwd)
+    _maybe_append_compile_telemetry(
+        plan,
+        env_obj,
+        label,
+        (time.perf_counter() - started_at) * 1000,
+        cwd,
+    )
+    return env_obj, label
+
+
+def _cached_compile_result_if_fresh(
+    plan: "PlanV0", cwd: str | None, started_at: float
+) -> tuple[dict, str] | None:
+    """Return a cached compile result and record cache-hit telemetry."""
+    cached = _envelope_cache_lookup(plan, cwd)
+    if cached is None:
+        return None
+    cached_env, cached_label = cached
+    # W58 — flag cache hit on the plan so telemetry can record it.
+    object.__setattr__(plan, "_w58_cache_hit", True)
+    _maybe_append_compile_telemetry(
+        plan,
+        cached_env,
+        cached_label,
+        (time.perf_counter() - started_at) * 1000,
+        cwd,
+    )
+    return cached_env, cached_label
+
+
 def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, str]:
     """Compile the right envelope for this plan's artifact type.
 
@@ -12224,71 +12413,13 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # internal probes (specifically L10 symbol resolution) on cache MISS,
     # which dominates the warm-tier latency for symbol-only tasks. The
     # cache lookup itself is already <1ms on hit.
-    _t0 = time.perf_counter()
-    cached = _envelope_cache_lookup(plan, cwd)
+    started_at = time.perf_counter()
+    cached = _cached_compile_result_if_fresh(plan, cwd, started_at)
     if cached is not None:
-        cached_env, cached_label = cached
-        # W58 — flag cache hit on the plan so telemetry can record it.
-        object.__setattr__(plan, "_w58_cache_hit", True)
-        _maybe_append_compile_telemetry(
-            plan,
-            cached_env,
-            cached_label,
-            (time.perf_counter() - _t0) * 1000,
-            cwd,
-        )
-        return cached_env, cached_label
+        return cached
     # W77 — mark high-confidence plans so downstream can skip optional probes.
     if plan.classifier_confidence >= 0.85:
         object.__setattr__(plan, "_w77_high_confidence", True)
-
-    art = select_artifact(plan)
-
-    # W189b — promote to L1 when high-value task-text probes are
-    # available. select_artifact may pick "facts" on low-conf
-    # freeform_explore, but api_surface / refactor_move regex matches
-    # carry their own task-specific signal that L1 unlocks. The W165
-    # iter-7 t4 regression came from this gap: conf=0.45 → facts →
-    # api_surface probe never fired despite the regex matching.
-    if art == "facts" and (
-        _API_SURFACE_RE.search(plan.task or "") is not None
-        or _REFACTOR_MOVE_RE.search(plan.task or "") is not None
-        or _W196_LITERAL_RE.search(plan.task or "") is not None  # W196
-        or _w201_import_re().search(plan.task or "") is not None  # W201
-        # W11/W12/W13 — three new probe families are entirely
-        # probe-driven: the answer IS the probe result (symbol_definitions /
-        # top_n_ranking / cli_verb_slow_diagnosis). Promote unconditionally
-        # when the policy picked "facts" so the L1 envelope embeds the
-        # probe data. Without this, art stayed at "facts" with empty
-        # prefetched_keys — see compiler-usage analysis 2026-06-02.
-        or plan.procedure
-        in (
-            "symbol_defined_where",
-            "top_n_ranking",
-            "cli_verb_why_slow",
-            # W28 — compare-X-vs-Y is entirely probe-driven; the diff
-            # summary / divergence points ARE the answer.
-            "compare_x_vs_y",
-            # W-LIFT — describe-file is entirely probe-driven; the embedded
-            # file skeleton/summary/body IS the answer. Without promotion it
-            # stayed "facts" with an empty probe payload (626-byte envelope).
-            "describe_file",
-            # W-HIST — file-history is entirely probe-driven; the embedded
-            # git log IS the answer.
-            "file_history",
-            # W-REPO — repo-structure is entirely probe-driven; the embedded
-            # summary IS the answer.
-            "repo_structure",
-            # W-ENTRY / W-CFG — entirely probe-driven.
-            "entry_point_where",
-            "config_where",
-            # W-META — entirely probe-driven (tiny brief embed).
-            "session_meta",
-            # W-BATCH — notice-driven.
-            "self_contained_task",
-        )
-    ):
-        art = "l1_probe"
 
     # W167/W168/W169/W188/W-GENLEAN lean-fallback gates. Computed in
     # ``_compute_lean_gate_flags`` (pure over ``plan``); each flag names a
@@ -12297,27 +12428,8 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # instead. See the helper for the per-flag A/B evidence. (W186
     # cross-file-survey demote was dropped in W196 — see helper docstring.)
     _gates = _compute_lean_gate_flags(plan)
-    if _gates.low_conf or _gates.bare_stack or _gates.opinion or _gates.meta_self:
-        art = "facts"
-    if _gates.gen_synth and art not in ("contract",):
-        art = "lean"
-
-    def _emit(env_obj: dict, label: str) -> tuple[dict, str]:
-        """W39 D1 — telemetry-on-return wrapper.
-        W56 — also stores envelope in persistent cache.
-        2026-06-12 — stamps the stale-index disclosure first (the one
-        mutation allowed here; it must precede the cache store so the
-        cached row carries the same disclosure)."""
-        _stamp_index_staleness(env_obj, plan, cwd)
-        _envelope_cache_store(plan, env_obj, label, cwd)
-        _maybe_append_compile_telemetry(
-            plan,
-            env_obj,
-            label,
-            (time.perf_counter() - _t0) * 1000,
-            cwd,
-        )
-        return env_obj, label
+    art = _promote_artifact_when_probe_result_is_answer(plan, select_artifact(plan))
+    art = _apply_restraint_gates_to_artifact(art, _gates)
 
     # W33: if eligible for L1 probe AND named_paths exist, try probe envelope
     # first. Falls back to declared `art` if probe returned no procedure-specific
@@ -12326,7 +12438,6 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # trace probe is task-text-driven (`roam retrieve` on the natural-language
     # task). Other procedures still require named_paths.
     probe_attempted = False
-    has_target = _l1_has_target(plan)
     # Probe-trigger override: these shape regexes map 1:1 to L1-promotable
     # probes (test-impact / owner / TODO / taint / perf-algo) whose output
     # IS the answer. Bare-symbol phrasings of these shapes score only 0.35
@@ -12335,55 +12446,24 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # injection risks" shipped empty envelopes while the probes that answer
     # them outright sat idle. A matched trigger attempts L1 regardless; the
     # existing fall-through still demotes to facts when probes return nothing.
-    task_text = plan.task or ""
-    task_lower = task_text.lower()
-    _probe_trigger = bool(plan.task) and (
-        _TEST_IMPACT_RE.search(task_text)
-        or _OWNER_RE.search(task_text)
-        or _TODO_AUDIT_RE.search(task_text)
-        or (_task_has_any(task_lower, _SECURITY_TAINT_TOKENS) and _compile_security_taint_re().search(task_text))
-        or (_task_has_any(task_lower, _ALGO_PERF_TOKENS) and _compile_algo_perf_re().search(task_text))
-        or (_task_has_any(task_lower, _WORLD_MODEL_TOKENS) and _compile_world_model_re().search(task_text))
-        or (_task_has_any(task_lower, _DESIGN_PATTERN_TOKENS) and _compile_design_pattern_re().search(task_text))
-    )
     # W167/W168/W169 — when gated to lean, skip the L1 probe path entirely.
-    if (
-        plan.procedure in _L1_PROBE_ELIGIBLE
-        and has_target
-        and (art != "facts" or _probe_trigger)
-        and not _gates.gen_synth  # W-GENLEAN — lean is final for test-writes
-        and not (_gates.low_conf or _gates.bare_stack or _gates.opinion)
-    ):
+    if _should_spend_l1_probe_budget(plan, art, _gates):
         probe_attempted = True
-        env = plan.to_l1_probe_envelope(cwd=cwd)
-        pre = env.get("plan", {}).get("prefetched_facts") or {}
-        # Promotion keys come from the single `_L1_PROCEDURE_METADATA` source of
-        # truth (derived into `_L1_PROCEDURE_KEYS`). This used to be a fourth
-        # hand-maintained copy that silently drifted from the module-level map
-        # (it had lost `bug_site_slice` from freeform_explore).
-        required = _L1_PROCEDURE_KEYS.get(plan.procedure, ())
-        if required and any(k in pre for k in required):
-            return _emit(env, "l1_probe")
+        env = _l1_probe_envelope_when_it_answers(plan, cwd)
+        if env is not None:
+            return _emit_result_after_required_compile_side_effects(
+                plan,
+                env,
+                "l1_probe",
+                cwd,
+                started_at,
+            )
 
     # Probe was eligible but returned no procedure-specific data — mark
     # the fallback envelope so callers / telemetry can detect "L1 was
     # tried but degraded" vs "L1 wasn't even attempted" (H3 fix).
-    def _attach_probe_signal(envelope: dict) -> dict:
-        if probe_attempted:
-            plan_obj = envelope.get("plan")
-            if isinstance(plan_obj, dict):
-                plan_obj["probe_attempted"] = True
-                plan_obj["probe_returned_empty"] = True
-        return envelope
-
-    if art == "contract":
-        return _emit(_attach_probe_signal(plan.to_facts_contract_envelope(cwd=cwd)), "contract")
-    if art == "facts":
-        return _emit(_attach_probe_signal(plan.to_facts_envelope(cwd=cwd)), "facts")
-    if art == "lean":
-        # W34a (E8): pass cwd so trace probe can fire inside the lean envelope.
-        return _emit(_attach_probe_signal(plan.to_lean_envelope(cwd=cwd)), "lean")
-    return _emit(_attach_probe_signal(plan.to_envelope()), "full")
+    env, label = _fallback_envelope_after_probe_degrades(plan, art, cwd, probe_attempted)
+    return _emit_result_after_required_compile_side_effects(plan, env, label, cwd, started_at)
 
 
 # ALL-LEVERS production routing (2026-05-29, validated +220% score/$ on 68% of corpus).
