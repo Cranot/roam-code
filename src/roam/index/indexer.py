@@ -834,17 +834,18 @@ def _restore_annotations(conn, saved):
 
 def _file_ids_for_paths(conn, paths: list[str]) -> list[int]:
     """Return existing file IDs for repo-relative paths."""
-    changed_file_ids = []
-    for path in paths:
-        row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-        if row:
-            changed_file_ids.append(row["id"])
-    return changed_file_ids
+    if not paths:
+        return []
+    rows = batched_in(conn, "SELECT id FROM files WHERE path IN ({ph})", paths)
+    return [row["id"] for row in rows]
 
 
-def _clear_nullable_symbol_refs(conn, file_id: int) -> None:
-    """Clear optional references before deleting a file's symbols."""
-    sym_ids = [r[0] for r in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()]
+def _clear_nullable_symbol_refs(conn, file_ids: list[int]) -> None:
+    """Clear optional references before deleting files' symbols."""
+    if not file_ids:
+        return
+    sym_rows = batched_in(conn, "SELECT id FROM symbols WHERE file_id IN ({ph})", file_ids)
+    sym_ids = [r[0] for r in sym_rows]
     if not sym_ids:
         return
     ph = ",".join("?" for _ in sym_ids)
@@ -866,13 +867,13 @@ def _clear_nullable_symbol_refs(conn, file_id: int) -> None:
 
 def _delete_changed_files(conn, paths: list[str]) -> None:
     """Delete changed file rows after clearing nullable symbol references."""
-    for path in paths:
-        row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-        if not row:
-            continue
-        fid = row["id"]
-        _clear_nullable_symbol_refs(conn, fid)
-        conn.execute("DELETE FROM files WHERE id = ?", (fid,))
+    if not paths:
+        return
+    rows = batched_in(conn, "SELECT id FROM files WHERE path IN ({ph})", paths)
+    file_ids = [row["id"] for row in rows]
+    _clear_nullable_symbol_refs(conn, file_ids)
+    if file_ids:
+        batched_in(conn, "DELETE FROM files WHERE id IN ({ph})", file_ids)
 
 
 def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
