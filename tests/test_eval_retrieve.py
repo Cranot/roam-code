@@ -333,21 +333,20 @@ class TestEvalCLI:
 class TestWeightSweepPlumbing:
     """Pre-Round-4, the sweep was a placebo: every iteration ran with
     config-default weights regardless of the grid. After plumbing
-    `run_retrieve(weights=...)` through, the sweep results should
+    `run_retrieve(options=RetrieveOptions(weights=...))` through, the sweep results should
     actually vary as α/β/γ/δ/ε rotate.
     """
 
     def test_run_retrieve_accepts_weights_kwarg(self, eval_project):
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
             override = {"alpha": 0.9, "beta": 0.05, "gamma": 0.0, "delta": 0.0, "epsilon": 0.0}
             result = run_retrieve(
                 conn,
                 "trace UserSession",
-                weights=override,
-                k=5,
+                options=RetrieveOptions(weights=override, k=5),
             )
         # The returned weights dict must reflect the override.
         assert result["weights"]["alpha"] == 0.9
@@ -357,14 +356,13 @@ class TestWeightSweepPlumbing:
         """Caller passing only `alpha` should still get other weights
         from config — never crash on missing keys."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
             result = run_retrieve(
                 conn,
                 "trace UserSession",
-                weights={"alpha": 0.99},
-                k=5,
+                options=RetrieveOptions(weights={"alpha": 0.99}, k=5),
             )
         assert result["weights"]["alpha"] == 0.99
         # Other weights still present (from config defaults)
@@ -375,20 +373,24 @@ class TestWeightSweepPlumbing:
         """Two extreme weight vectors should produce different ranked
         outputs — proving the sweep actually rotates weights."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
             r1 = run_retrieve(
                 conn,
                 "trace UserSession",
-                weights={"alpha": 1.0, "beta": 0.0, "gamma": 0.0, "delta": 0.0, "epsilon": 0.0},
-                k=20,
+                options=RetrieveOptions(
+                    weights={"alpha": 1.0, "beta": 0.0, "gamma": 0.0, "delta": 0.0, "epsilon": 0.0},
+                    k=20,
+                ),
             )
             r2 = run_retrieve(
                 conn,
                 "trace UserSession",
-                weights={"alpha": 0.0, "beta": 0.0, "gamma": 0.0, "delta": 0.0, "epsilon": 0.0},
-                k=20,
+                options=RetrieveOptions(
+                    weights={"alpha": 0.0, "beta": 0.0, "gamma": 0.0, "delta": 0.0, "epsilon": 0.0},
+                    k=20,
+                ),
             )
         # Score ordering should differ between "PageRank-only" and
         # "lexical-baseline-only" — at least one candidate's score must

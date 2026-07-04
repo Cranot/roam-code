@@ -75,10 +75,21 @@ def indexed_project(tmp_path):
 class TestPipeline:
     def _run(self, project: Path, **kwargs):
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
+
+        task = kwargs.pop("task")
+        seed_files = kwargs.pop("seed_files", None)
+        config_root = kwargs.pop("config_root", None)
+        options = RetrieveOptions(**kwargs) if kwargs else None
 
         with open_db(readonly=True) as conn:
-            return run_retrieve(conn, **kwargs)
+            return run_retrieve(
+                conn,
+                task,
+                seed_files=seed_files,
+                config_root=config_root,
+                options=options,
+            )
 
     def test_returns_candidates_for_pascal_query(self, indexed_project):
         result = self._run(indexed_project, task="is it safe to delete UserSession?")
@@ -543,15 +554,23 @@ class TestConfigDrivenKnobs:
     def test_tokens_per_line_override(self, indexed_project):
         """Doubling tokens_per_line must double budget_used."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
-            baseline = run_retrieve(conn, "UserSession refresh", k=3, budget=10000)
+            baseline = run_retrieve(
+                conn,
+                "UserSession refresh",
+                options=RetrieveOptions(k=3, budget=10000),
+            )
 
         self._write_config(indexed_project, "[retrieve]\ntokens_per_line = 8\n")
 
         with open_db(readonly=True) as conn:
-            doubled = run_retrieve(conn, "UserSession refresh", k=3, budget=10000)
+            doubled = run_retrieve(
+                conn,
+                "UserSession refresh",
+                options=RetrieveOptions(k=3, budget=10000),
+            )
 
         # Same candidates fit under 10k budget either way; tokens_per_line
         # only affects the cost accounting.
@@ -709,10 +728,14 @@ class TestBetaCoChange:
         produces zero contributions. Confirm β doesn't crash and the
         absence is silent (no spurious justification keys)."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
-            result = run_retrieve(conn, "UserSession refresh", k=5)
+            result = run_retrieve(
+                conn,
+                "UserSession refresh",
+                options=RetrieveOptions(k=5),
+            )
         for c in result["candidates"]:
             # Either co_change is missing (no signal) or numeric and in [0,1]
             if "co_change" in c["justifications"]:
@@ -723,7 +746,7 @@ class TestBetaCoChange:
         retrieve, and confirm runtime_hot is in the candidate's
         justification block."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         # Insert a runtime row for one symbol so δ has something to
         # contribute. Use a writeable connection.
@@ -740,7 +763,11 @@ class TestBetaCoChange:
             conn.commit()
 
         with open_db(readonly=True) as conn:
-            result = run_retrieve(conn, "UserSession", k=10)
+            result = run_retrieve(
+                conn,
+                "UserSession",
+                options=RetrieveOptions(k=10),
+            )
 
         # At least one candidate (UserSession itself) must surface the
         # runtime_hot justification — otherwise δ isn't wired.
@@ -752,10 +779,14 @@ class TestBetaCoChange:
         traces, β and δ contributions must be exactly 0 — they only
         boost ordering, never destabilise it."""
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
-            result = run_retrieve(conn, "UserSession refresh", k=5)
+            result = run_retrieve(
+                conn,
+                "UserSession refresh",
+                options=RetrieveOptions(k=5),
+            )
         for c in result["candidates"]:
             assert c["justifications"].get("co_change", 0) == 0 or (0 < c["justifications"]["co_change"] <= 1.0)
             assert c["justifications"].get("runtime_hot", 0) == 0 or (0 < c["justifications"]["runtime_hot"] <= 1.0)
@@ -777,10 +808,14 @@ class TestRerankConsistency:
         The pipeline reserves 'heavy' for when A.13 ships.
         """
         from roam.db.connection import open_db
-        from roam.retrieve.pipeline import run_retrieve
+        from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
         with open_db(readonly=True) as conn:
-            result = run_retrieve(conn, "UserSession", rerank="heavy")
+            result = run_retrieve(
+                conn,
+                "UserSession",
+                options=RetrieveOptions(rerank="heavy"),
+            )
         # No candidate should be tagged as personalized — heavy is not implemented.
         kinds = {
             c["justifications"].get("pagerank_kind")

@@ -38,7 +38,7 @@ from roam.eval.harness import (
     sweep_weights,
 )
 from roam.output.formatter import json_envelope, to_json
-from roam.retrieve.pipeline import run_retrieve
+from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
 
 def _default_task_path() -> Path:
@@ -81,7 +81,7 @@ def _default_task_path() -> Path:
     help=(
         "Run the harness across a small grid of weight vectors. "
         "Output the best-scoring vector. Weights are plumbed end-to-end "
-        "through ``run_retrieve(weights=...)`` so the rerank score rotates."
+        "through ``run_retrieve(options=RetrieveOptions(weights=...))`` so the rerank score rotates."
     ),
 )
 @click.option(
@@ -311,7 +311,11 @@ def _emit_bench_run(conn, tasks, fmt: str, out_path: Path, *, top_k: int) -> int
         for task in tasks:
             # Run a real retrieve. K is the binding limit (no budget cap)
             # because benchmark submissions need stable top-K results.
-            result = run_retrieve(conn, task.task, budget=10_000, k=top_k, rerank="fast")
+            result = run_retrieve(
+                conn,
+                task.task,
+                options=RetrieveOptions(budget=10_000, k=top_k, rerank="fast"),
+            )
             candidates = result.get("candidates", [])[:top_k]
 
             if fmt == "coderag":

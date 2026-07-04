@@ -32,7 +32,7 @@ from roam.config import get_retrieve_config
 from roam.db.connection import open_db
 from roam.output.confidence import verdict_prefix
 from roam.output.formatter import json_envelope, loc, to_json
-from roam.retrieve.pipeline import run_retrieve
+from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 from roam.retrieve.semantic import semantic_coverage
 
 _RECOVERABLE_RETRIEVE_ERRORS: tuple[type[Exception], ...] = (
@@ -85,10 +85,8 @@ def _fts5_search_full(conn, task_str, *, budget, k, rerank, seed_files):
     return run_retrieve(
         conn,
         task_str,
-        budget=budget,
-        k=k,
-        rerank=rerank,
         seed_files=seed_files,
+        options=RetrieveOptions(budget=budget, k=k, rerank=rerank),
     )
 
 
@@ -102,10 +100,8 @@ def _fts5_search_lexical_only(conn, task_str, *, budget, k, seed_files):
     return run_retrieve(
         conn,
         task_str,
-        budget=budget,
-        k=k,
-        rerank="off",
         seed_files=seed_files,
+        options=RetrieveOptions(budget=budget, k=k, rerank="off"),
     )
 
 
