@@ -56,22 +56,9 @@ def _check_no_circular_imports(conn, G, threshold):
     """Find cycles (SCCs with >= 2 members)."""
     if G is None or len(G) == 0:
         return []
-    from roam.graph.cycles import find_cycles, format_cycles
+    from roam.graph.cycles import find_cycle_violations
 
-    cycles = find_cycles(G, min_size=2)
-    if not cycles:
-        return []
-    formatted = format_cycles(cycles, conn)
-    violations = []
-    for cyc in formatted:
-        files = cyc.get("files", [])
-        names = [s["name"] for s in cyc.get("symbols", [])]
-        reason = "cycle of {} symbols: {}".format(cyc["size"], ", ".join(names[:5]))
-        if len(names) > 5:
-            reason += " (+{} more)".format(len(names) - 5)
-        fpath = files[0] if files else ""
-        violations.append(make_violation(symbol=names[0] if names else "", file=fpath, reason=reason))
-    return violations
+    return find_cycle_violations(G, conn, min_size=2)
 
 
 def _check_max_fan_out(conn, G, threshold):
