@@ -135,10 +135,11 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 name = bridge.name
                 version = getattr(type(bridge), "VERSION", LanguageBridge.VERSION)
                 out["bridges"][str(name)] = str(version)
-            except Exception as _exc:  # noqa: BLE001 -- per-bridge probe; any failure drops one bridge from the partial map, never blocks the rest
+            except (AttributeError, TypeError) as exc:
                 # Per-bridge probe failure — one bridge's VERSION is absent;
                 # the documented "partial map" behaviour keeps the rest. The
                 # section-level catch below surfaces a wholesale loss.
+                log_swallowed("index.manifest:component_versions:bridge_probe", exc)
                 continue
         # Laravel post-resolver is bridge-shaped but module-level; pull
         # its VERSION alongside so the drift map covers every edge
