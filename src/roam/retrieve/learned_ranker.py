@@ -29,7 +29,7 @@ from pathlib import Path
 
 from roam.eval.harness import load_tasks
 from roam.observability import log_swallowed
-from roam.retrieve.pipeline import run_retrieve
+from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
 __all__ = (
     "FEATURE_NAMES",
@@ -240,7 +240,11 @@ def train_from_bench(bench_path: Path, model_out: Path, *, n_estimators: int = 2
 
     with open_db(readonly=True) as conn:
         for t in tasks:
-            result = run_retrieve(conn, t.task, budget=100_000, k=50, rerank="fast")
+            result = run_retrieve(
+                conn,
+                t.task,
+                options=RetrieveOptions(budget=100_000, k=50, rerank="fast"),
+            )
             cands = result.get("candidates") or []
             if not cands:
                 continue

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from roam.retrieve.pipeline import run_retrieve
+from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 
 
 @dataclass
@@ -94,17 +94,14 @@ def evaluate_task(
 ) -> TaskResult:
     """Run retrieve once and compute recall@K for each K in *ks*.
 
-    Pass ``weights`` to override the config-driven α/β/γ/δ/ε vector —
+    Pass ``options=RetrieveOptions(weights=...)`` to override the config-driven α/β/γ/δ/ε vector —
     used by the sweep mode to rotate weights without touching config.
     """
     biggest_k = max(ks)
     result = run_retrieve(
         conn,
         task.task,
-        budget=10_000,  # large enough that K is the binding limit, not budget
-        k=biggest_k,
-        rerank=rerank,
-        weights=weights,
+        options=RetrieveOptions(budget=10_000, k=biggest_k, rerank=rerank, weights=weights),
     )
     candidates = result["candidates"]
     retrieved_files: list[str] = []
@@ -186,7 +183,7 @@ def sweep_weights(
 ) -> list[dict[str, Any]]:
     """Run the harness across the cartesian product of *grid*.
 
-    Each weight vector is plumbed through ``run_retrieve(weights=...)``
+    Each weight vector is plumbed through ``run_retrieve(options=RetrieveOptions(weights=...))``
     so the rerank score actually rotates instead of repeating the
     baseline. Returns one dict per weight vector with the mean
     recall@target_k plus the full aggregate. Sorted descending by

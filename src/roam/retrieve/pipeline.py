@@ -21,6 +21,7 @@ test and reuse from the MCP tool wrapper.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 from roam.config import get_retrieve_config, get_retrieve_weights
@@ -33,6 +34,40 @@ from roam.retrieve.seeds import _fts5_query_for, extract_tokens, infer_seeds
 # `[retrieve] tokens_per_line` in `.roam/config.toml`.
 DEFAULT_TOKENS_PER_LINE = 4
 DEFAULT_FIRST_STAGE_TOKEN_CAP = 8
+
+
+@dataclass(frozen=True)
+class RetrieveOptions:
+    """Tuning knobs for the retrieve pipeline.
+
+    Grouped into a parameter object so ``run_retrieve`` does not need
+    one explicit argument per knob. Callers that only need defaults can
+    omit the object entirely.
+    """
+
+    budget: int = 4000
+    k: int = 20
+    rerank: str = "fast"
+    first_stage_limit: int = 200
+    weights: dict[str, float] | None = None
+
+    def with_defaults(self, defaults: "RetrieveOptions") -> "RetrieveOptions":
+        """Return a new options object filling any ``None`` fields from *defaults*."""
+        return RetrieveOptions(
+            budget=self.budget,
+            k=self.k,
+            rerank=self.rerank,
+            first_stage_limit=self.first_stage_limit,
+            weights=self.weights if self.weights is not None else defaults.weights,
+        )
+
+
+def _resolve_options(options: RetrieveOptions | None) -> RetrieveOptions:
+    """Return concrete options, applying the built-in defaults."""
+    defaults = RetrieveOptions()
+    if options is None:
+        return defaults
+    return options.with_defaults(defaults)
 
 
 def _retrieve_settings(
@@ -75,13 +110,9 @@ def run_retrieve(
     conn: sqlite3.Connection,
     task: str,
     *,
-    budget: int = 4000,
-    k: int = 20,
-    rerank: str = "fast",
     seed_files: list[str] | None = None,
     config_root: Path | None = None,
-    first_stage_limit: int = 200,
-    weights: dict[str, float] | None = None,
+    options: RetrieveOptions | None = None,
 ) -> dict:
     """Execute the full retrieve pipeline.
 
@@ -89,16 +120,17 @@ def run_retrieve(
     ``total_candidates``, ``budget``, ``budget_used``, ``k``, ``rerank``,
     ``weights``.
 
-    Pass ``weights={"alpha": ..., "beta": ..., ...}`` to override the
+    Pass ``options=RetrieveOptions(weights={...})`` to override the
     config-driven weights (used by the ``roam eval-retrieve --sweep``
     harness to rotate vectors deterministically without rewriting
     config files).
     """
-    weights, tokens_per_line, token_cap = _retrieve_settings(config_root, weights)
+    opts = _resolve_options(options)
+    weights, tokens_per_line, token_cap = _retrieve_settings(config_root, opts.weights)
 
     seeds = _resolve_seeds(conn, task, seed_files)
 
-    first_stage = _first_stage(conn, task, top_n=max(first_stage_limit, k * 5), token_cap=token_cap)
+    first_stage = _first_stage(conn, task, top_n=max(opts.first_stage_limit, opts.k * 5), token_cap=token_cap)
     # R.2 — pull in symbols from files structurally adjacent to the
     # first-stage hits (imports both directions). The lexical query
     # finds e.g. ``ruby_lang.py`` directly, but the eval expects also
@@ -112,7 +144,7 @@ def run_retrieve(
     # evidence — re-introduce here when A.13 ships and eval shows ≥3pt
     # recall@20 lift over 'fast'. For now only 'fast' triggers structural
     # rerank; 'off' falls back to lexical-only.
-    use_personalized = rerank in ("fast", "learned")
+    use_personalized = opts.rerank in ("fast", "learned")
     scored = structural_score(
         conn,
         first_stage,
@@ -123,20 +155,20 @@ def run_retrieve(
         task=task,
     )
 
-    if rerank == "learned":
+    if opts.rerank == "learned":
         _replace_scores_only_when_learned_model_is_available(scored, task)
 
-    selected, budget_used = _apply_budget(scored, budget=budget, k=k, tokens_per_line=tokens_per_line)
+    selected, budget_used = _apply_budget(scored, budget=opts.budget, k=opts.k, tokens_per_line=tokens_per_line)
 
     return {
         "task": task,
-        "rerank": rerank,
+        "rerank": opts.rerank,
         "seeds": [{"symbol_id": sid, "weight": round(weight, 4)} for sid, weight in seeds.items()],
         "candidates": selected,
         "total_candidates": len(scored),
-        "budget": budget,
+        "budget": opts.budget,
         "budget_used": budget_used,
-        "k": k,
+        "k": opts.k,
         "weights": weights,
     }
 
