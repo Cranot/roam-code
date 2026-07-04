@@ -1364,7 +1364,11 @@ def _parse_short_help_source(src_path: str):
 
         with open(src_path, encoding="utf-8") as fh:
             return _ast.parse(fh.read(), filename=src_path)
-    except (OSError, SyntaxError):
+    except (OSError, SyntaxError) as exc:
+        # Best-effort: a missing/unparseable file means the caller falls
+        # back to the live Click get_command() path. Never fail help
+        # rendering on a parse hiccup — but surface it so it's not silent.
+        print(f"[short-help-cache] parse failed for {src_path}: {exc}", file=sys.stderr)
         return None
 
 
