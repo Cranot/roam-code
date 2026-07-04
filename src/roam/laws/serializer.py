@@ -28,12 +28,15 @@ verify.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from roam.atomic_io import atomic_write_text
 from roam.laws.miner import Law
+
+log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 DEFAULT_LOCATIONS = ("roam-laws.yml", ".roam/laws.yml")
@@ -164,7 +167,16 @@ def _parse_laws_document_without_requiring_pyyaml(text: str) -> Any:
         return _fallback_parse(text)
     try:
         return yaml.safe_load(text)
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        # Fail-soft: a malformed/torn roam-laws.yml round-trips back to []
+        # (no laws) rather than crashing the loader. Log the parser error so
+        # the silent degradation is visible — PyYAML stays optional, but
+        # parser bugs are surfaced instead of swallowed (Pattern-2 discipline).
+        log.warning(
+            "roam-laws YAML parse failed (%s: %s); loading 0 laws",
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 
