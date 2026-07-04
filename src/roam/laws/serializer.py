@@ -83,29 +83,43 @@ def _fallback_dump(doc: dict[str, Any], indent: int = 0) -> str:
     Covers the surface required by ``roam laws mine`` output. Not
     general-purpose — strings with special characters get quoted.
     """
-    lines: list[str] = []
     pad = "  " * indent
     if isinstance(doc, dict):
+        lines: list[str] = []
         for k, v in doc.items():
-            if isinstance(v, (dict, list)) and v:
-                lines.append(f"{pad}{k}:")
-                lines.append(_fallback_dump(v, indent + 1))
-            elif isinstance(v, list):
-                lines.append(f"{pad}{k}: []")
-            elif isinstance(v, dict):
-                lines.append(f"{pad}{k}: {{}}")
-            else:
-                lines.append(f"{pad}{k}: {_scalar(v)}")
-    elif isinstance(doc, list):
+            lines.extend(_fallback_dump_mapping_pair(k, v, indent, pad))
+        return "\n".join(filter(None, lines))
+    if isinstance(doc, list):
+        lines = []
         for item in doc:
-            if isinstance(item, dict):
-                lines.append(f"{pad}-")
-                lines.append(_fallback_dump(item, indent + 1))
-            else:
-                lines.append(f"{pad}- {_scalar(item)}")
-    else:
-        lines.append(f"{pad}{_scalar(doc)}")
-    return "\n".join(filter(None, lines))
+            lines.extend(_fallback_dump_sequence_item(item, indent, pad))
+        return "\n".join(filter(None, lines))
+    return f"{pad}{_scalar(doc)}"
+
+
+def _fallback_dump_mapping_pair(k: str, v: Any, indent: int, pad: str) -> list[str]:
+    """Return lines for one mapping key/value pair.
+
+    Dicts and lists recurse when non-empty; empty containers render as
+    inline literals so the output stays compact.
+    """
+    if isinstance(v, (dict, list)):
+        empty_literal = "{}" if isinstance(v, dict) else "[]"
+        if not v:
+            return [f"{pad}{k}: {empty_literal}"]
+        return [f"{pad}{k}:", _fallback_dump(v, indent + 1)]
+    return [f"{pad}{k}: {_scalar(v)}"]
+
+
+def _fallback_dump_sequence_item(item: Any, indent: int, pad: str) -> list[str]:
+    """Return lines for one sequence item.
+
+    Dict items become block mappings; scalars stay inline.
+    """
+    if isinstance(item, dict):
+        return [f"{pad}-", _fallback_dump(item, indent + 1)]
+    return [f"{pad}- {_scalar(item)}"]
+
 
 
 def _scalar(v: Any) -> str:
