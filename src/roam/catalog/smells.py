@@ -1551,7 +1551,7 @@ def _prefetch_refused_bequest_methods_by_file(
             methods_by_file.setdefault(m["file_id"], []).append(m)
     except sqlite3.OperationalError:
         # Missing or pre-migration symbol tables mean no method evidence to score.
-        pass
+        return methods_by_file
     return methods_by_file
 
 
