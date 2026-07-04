@@ -198,7 +198,7 @@ def _component_versions() -> dict[str, dict[str, str]]:
                 # rest. The section-level catch below surfaces a wholesale loss.
                 log_swallowed(f"index.manifest:component_versions:extractor_probe:{lang}", exc)
                 continue
-    except Exception as exc:
+    except (ImportError, AttributeError, TypeError) as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
         # extractors drift sub-map is missing (registry import failed). A
         # partial map is intentional, but the omission must be discoverable.
