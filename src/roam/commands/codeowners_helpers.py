@@ -68,7 +68,7 @@ def parse_codeowners(codeowners_path: str | Path) -> list[tuple[str, list[str]]]
             continue
         # Inline comments (# after whitespace)
         if " #" in line:
-            line = line[: line.index(" #")].strip()
+            line = line.partition(" #")[0].strip()
         parts = line.split()
         if len(parts) < 2:
             # Pattern with no owner = explicitly unowned (clears ownership)
