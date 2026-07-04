@@ -25,6 +25,8 @@ import math
 import sqlite3
 from typing import Iterable, Sequence
 
+from roam.observability import log_swallowed
+
 
 def has_symbol_embeddings(conn: sqlite3.Connection) -> bool:
     """Return ``True`` when the embeddings table exists and is non-empty."""
@@ -164,7 +166,10 @@ def _decode_vector(raw_vector: str, dims: int) -> list[float] | None:
         return None
     try:
         decoded = json.loads(raw_vector)
-    except (TypeError, json.JSONDecodeError):
+    except (TypeError, json.JSONDecodeError) as exc:
+        # A corrupt persisted row must not crash retrieve; surface it via
+        # the opt-in swallow logger so the candidate scores 0 deterministically.
+        log_swallowed("retrieve.semantic:_decode_vector:json_loads", exc)
         return None
     if not isinstance(decoded, list):
         return None
