@@ -729,6 +729,49 @@ _CATEGORIES = {
 _PLUGIN_COMMANDS_LOADED = False
 
 
+# Experimental commands are intentionally kept out of the static _COMMANDS
+# literal so default command counts, help, surface, and command-contract sweeps
+# remain unchanged until the owner opts in with the named environment flag.
+_EXPERIMENTAL_COMMANDS: dict[str, tuple[str, tuple[str, str]]] = {
+    "repair-siblings": (
+        "ROAM_EXPERIMENTAL_REPAIR_SIBLINGS",
+        ("roam.commands.cmd_repair_siblings", "repair_siblings_cmd"),
+    ),
+}
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _experimental_command_target(cmd_name: str) -> tuple[str, str] | None:
+    record = _EXPERIMENTAL_COMMANDS.get(cmd_name)
+    if record is None:
+        return None
+    flag_name, target = record
+    if not _env_flag_enabled(flag_name):
+        return None
+    return target
+
+
+def _available_command_names() -> list[str]:
+    _ensure_plugin_commands_loaded()
+    names = set(_COMMANDS)
+    for name in _EXPERIMENTAL_COMMANDS:
+        if _experimental_command_target(name) is not None:
+            names.add(name)
+    return sorted(names)
+
+
+def _command_target(cmd_name: str) -> tuple[str, str] | None:
+    if cmd_name in _COMMANDS:
+        return _COMMANDS[cmd_name]
+    _ensure_plugin_commands_loaded()
+    if cmd_name in _COMMANDS:
+        return _COMMANDS[cmd_name]
+    return _experimental_command_target(cmd_name)
+
+
 def _ensure_plugin_commands_loaded() -> None:
     """Merge discovered plugin commands into the CLI command map once."""
     global _PLUGIN_COMMANDS_LOADED
@@ -778,9 +821,8 @@ def _bad_command_token(args: list[str]) -> str:
 def _close_command_matches(bad: str) -> list[str]:
     import difflib
 
-    _ensure_plugin_commands_loaded()
     # W1083-followup-2: align to canonical n=2 (5 of 6 sites use n=2; cli.py was the outlier)
-    return difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=2, cutoff=0.6)
+    return difflib.get_close_matches(bad, _available_command_names(), n=2, cutoff=0.6)
 
 
 def _recipe_hint_for_bad_command(bad: str) -> str | None:
@@ -938,8 +980,7 @@ class LazyGroup(click.Group):
         return False
 
     def list_commands(self, ctx):
-        _ensure_plugin_commands_loaded()
-        return sorted(_COMMANDS.keys())
+        return _available_command_names()
 
     def get_command(self, ctx, cmd_name):
         # built-ins resolve without paying the
@@ -947,13 +988,10 @@ class LazyGroup(click.Group):
         # command isn't in the static map do we fall back to plugin
         # discovery. Saves 100ms per CLI invocation for the 99% case
         # of users with no third-party roam plugins installed.
-        if cmd_name in _COMMANDS:
-            module_path, attr_name = _COMMANDS[cmd_name]
-        else:
-            _ensure_plugin_commands_loaded()
-            if cmd_name not in _COMMANDS:
-                return None
-            module_path, attr_name = _COMMANDS[cmd_name]
+        target = _command_target(cmd_name)
+        if target is None:
+            return None
+        module_path, attr_name = target
         import importlib
 
         mod = importlib.import_module(module_path)
@@ -1177,7 +1215,7 @@ def _canonical_mode_command(cmd_name: str) -> str:
 def _mode_gate_should_skip(cmd_name: str, canonical: str) -> bool:
     if canonical in _MODE_ALWAYS_ALLOWED or cmd_name in _MODE_ALWAYS_ALLOWED:
         return True
-    return canonical not in _COMMANDS and cmd_name not in _COMMANDS
+    return _command_target(canonical) is None and _command_target(cmd_name) is None
 
 
 def _mode_gate_dependencies():
@@ -1406,7 +1444,7 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
     Returns ``None`` when the cmd file or expected attribute is absent;
     the caller falls back to the live ``self.get_command()`` path.
     """
-    target = _COMMANDS.get(cmd_name)
+    target = _command_target(cmd_name)
     if not target:
         return None
 
@@ -1545,10 +1583,10 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     """
     if not value or ctx.resilient_parsing:
         return
-    _ensure_plugin_commands_loaded()
+    command_names = _available_command_names()
     click.echo("Usage: roam [OPTIONS] COMMAND [ARGS]...\n")
-    click.echo(f"All {len(_COMMANDS)} invokable command names:\n")
-    for cmd_name in sorted(_COMMANDS):
+    click.echo(f"All {len(command_names)} invokable command names:\n")
+    for cmd_name in command_names:
         help_text = _short_help_via_ast(cmd_name) or ""
         record = _deprecation_record(cmd_name)
         if record and record.get("replacement"):
