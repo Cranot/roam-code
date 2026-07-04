@@ -148,6 +148,36 @@ def _classify_protocol(name, signature):
     return "Export"
 
 
+def _record_unique_entry_point(entries, seen_ids, row, protocol_filter):
+    """Preserve broad discovery while preventing duplicate catalog rows."""
+    if row["id"] in seen_ids:
+        return
+
+    proto = _classify_protocol(row["name"], row["signature"])
+    if protocol_filter and proto.lower() != protocol_filter.lower():
+        return
+
+    seen_ids.add(row["id"])
+    entries.append(
+        {
+            "id": row["id"],
+            "name": row["qualified_name"] or row["name"],
+            "kind": row["kind"],
+            "protocol": proto,
+            "file": row["file_path"],
+            "line": row["line_start"],
+            "fan_out": row["out_degree"] or 0,
+            "is_exported": bool(row["is_exported"]),
+        }
+    )
+
+
+def _signature_promotes_called_symbol_to_entry_point(signature):
+    """Return true when a framework decorator keeps a called symbol public."""
+    sig = signature or ""
+    return any(regex.search(sig) for _proto, regex in _DECORATOR_PATTERNS)
+
+
 # ---------------------------------------------------------------------------
 # Reachability: BFS from an entry point through the call graph
 # ---------------------------------------------------------------------------
@@ -199,37 +229,14 @@ def _find_entry_point_symbols(conn, protocol_filter, limit):
     seen_ids = set()
     entries = []
 
-    def _add(row):
-        if row["id"] in seen_ids:
-            return
-        proto = _classify_protocol(row["name"], row["signature"])
-        if protocol_filter and proto.lower() != protocol_filter.lower():
-            return
-        seen_ids.add(row["id"])
-        entries.append(
-            {
-                "id": row["id"],
-                "name": row["qualified_name"] or row["name"],
-                "kind": row["kind"],
-                "protocol": proto,
-                "file": row["file_path"],
-                "line": row["line_start"],
-                "fan_out": row["out_degree"] or 0,
-                "is_exported": bool(row["is_exported"]),
-            }
-        )
-
     # Phase 1 results
     for r in rows_zero:
-        _add(r)
+        _record_unique_entry_point(entries, seen_ids, r, protocol_filter)
 
     # Phase 2: only add if the signature matches a decorator pattern
     for r in rows_deco:
-        sig = r["signature"] or ""
-        for _proto, regex in _DECORATOR_PATTERNS:
-            if regex.search(sig):
-                _add(r)
-                break
+        if _signature_promotes_called_symbol_to_entry_point(r["signature"]):
+            _record_unique_entry_point(entries, seen_ids, r, protocol_filter)
 
     # Sort by protocol then fan_out descending
     protocol_order = ["HTTP", "CLI", "Event", "Scheduled", "Message", "Main", "Export"]
