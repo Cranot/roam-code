@@ -56,6 +56,7 @@ import bisect
 import math
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -246,7 +247,13 @@ def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
     try:
         parser = get_parser(grammar)
         tree = parser.parse(source)
-    except (LookupError, ValueError):
+    except (LookupError, ValueError) as exc:
+        # Isolated clone scan is best-effort: unsupported/invalid grammars
+        # and unparseable files are skipped rather than failing the whole run.
+        print(
+            f"[rename-invariant-clones] isolated parse failed for {path}: {exc}",
+            file=sys.stderr,
+        )
         return None
     if tree is None:
         return None
