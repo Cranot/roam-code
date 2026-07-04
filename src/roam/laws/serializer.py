@@ -199,7 +199,12 @@ def _law_from_entry(raw: Any) -> Law | None:
             confidence=str(raw.get("confidence", "medium")),
             rule=dict(raw.get("rule") or {}),
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        log.warning(
+            "roam-laws entry skipped after invalid mapping fields (%s: %s); loading remaining laws",
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 
