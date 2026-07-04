@@ -263,6 +263,7 @@ def _parse_adr(project_root: Path, rel_path: str) -> dict | None:
     try:
         content = full_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        # Intentional fail-soft: skip unreadable ADR files so discovery can continue.
         return None
 
     # Parse frontmatter
