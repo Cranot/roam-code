@@ -5046,7 +5046,11 @@ def _resolve_path_comparison_operand(path: str, cwd: str | None) -> tuple[str, s
                 resolved_abs = Path(path).resolve(strict=False)
                 rel = os.path.relpath(resolved_abs, root).replace(os.sep, "/")
                 resolved_abs.relative_to(root)
-            except (OSError, RuntimeError, ValueError):
+            except (OSError, RuntimeError, ValueError) as exc:
+                # absolute operand can't be repo-contained (cross-drive relpath,
+                # traversal, symlink escape, etc.) — fail-soft: refuse to embed
+                # it as a diff operand. Surface the cause rather than swallow.
+                log_swallowed("compile.path_comparison.abs_operand_resolve", exc)
                 return None
             if _path_is_forbidden(rel):
                 return None
