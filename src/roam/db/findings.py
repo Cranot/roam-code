@@ -253,54 +253,97 @@ class FindingQuery:
     limit: int = 1000
 
 
-def emit_finding(conn: sqlite3.Connection, record: FindingRecord) -> int:
-    """Insert (or upsert on ``finding_id_str``) a finding row.
+_FINDING_INSERT_COLUMNS: tuple[str, ...] = (
+    "finding_id_str",
+    "subject_kind",
+    "subject_id",
+    "claim",
+    "evidence_json",
+    "confidence",
+    "source_detector",
+    "source_version",
+    "supersedes_id",
+    "suppressions_json",
+)
 
-    Returns the assigned ``id``. On conflict, the evidence / confidence /
-    source_version columns are refreshed but the row id is preserved so
-    downstream supersedes chains stay intact.
+# Preserve the historical upsert contract: conflict refreshes detector
+# evidence and display text, but not identity, suppression, or supersedes
+# columns.
+_FINDING_CONFLICT_REFRESH_COLUMNS: tuple[str, ...] = (
+    "evidence_json",
+    "confidence",
+    "source_version",
+    "claim",
+)
+
+
+def _finding_upsert_sql() -> str:
+    """Build the findings upsert statement from the write-contract constants."""
+    insert_columns = ", ".join(_FINDING_INSERT_COLUMNS)
+    placeholders = ", ".join("?" for _ in _FINDING_INSERT_COLUMNS)
+    conflict_updates = ",\n            ".join(
+        f"{column} = excluded.{column}" for column in _FINDING_CONFLICT_REFRESH_COLUMNS
+    )
+    return f"""
+        INSERT INTO findings (
+            {insert_columns}
+        ) VALUES ({placeholders})
+        ON CONFLICT(finding_id_str) DO UPDATE SET
+            {conflict_updates}
+        """
+
+
+_FINDING_UPSERT_SQL = _finding_upsert_sql()
+
+
+def _finding_insert_params(record: FindingRecord) -> tuple[Any, ...]:
+    """Return values in ``_FINDING_INSERT_COLUMNS`` order."""
+    return (
+        record.finding_id_str,
+        record.subject_kind,
+        record.subject_id,
+        record.claim,
+        record.evidence_json,
+        record.confidence,
+        record.source_detector,
+        record.source_version,
+        record.supersedes_id,
+        record.suppressions_json,
+    )
+
+
+def _resolve_emitted_finding_id(
+    conn: sqlite3.Connection,
+    cur: sqlite3.Cursor,
+    finding_id_str: str,
+) -> int:
+    """Return the row id after insert/upsert, with a driver-quirk fallback."""
+    rowid = cur.lastrowid
+    if rowid:
+        return int(rowid)
+    row = conn.execute(
+        "SELECT id FROM findings WHERE finding_id_str = ?",
+        (finding_id_str,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _emit_finding_row(conn: sqlite3.Connection, record: FindingRecord) -> int:
+    """Execute the findings upsert and return the assigned row id.
 
     Caller is responsible for transaction management — emit_finding
     issues a single INSERT and does NOT commit.
     """
-    cur = conn.execute(
-        """
-        INSERT INTO findings (
-            finding_id_str, subject_kind, subject_id, claim,
-            evidence_json, confidence, source_detector, source_version,
-            supersedes_id, suppressions_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(finding_id_str) DO UPDATE SET
-            evidence_json = excluded.evidence_json,
-            confidence = excluded.confidence,
-            source_version = excluded.source_version,
-            claim = excluded.claim
-        """,
-        (
-            record.finding_id_str,
-            record.subject_kind,
-            record.subject_id,
-            record.claim,
-            record.evidence_json,
-            record.confidence,
-            record.source_detector,
-            record.source_version,
-            record.supersedes_id,
-            record.suppressions_json,
-        ),
-    )
-    # On INSERT lastrowid is the new id; on UPDATE it's the existing row's
-    # id (SQLite preserves rowid through ON CONFLICT DO UPDATE).
-    rowid = cur.lastrowid
-    if rowid:
-        return int(rowid)
-    # Fallback: lookup by the unique key. Only reached if a driver
-    # quirk loses lastrowid on the UPDATE branch.
-    row = conn.execute(
-        "SELECT id FROM findings WHERE finding_id_str = ?",
-        (record.finding_id_str,),
-    ).fetchone()
-    return int(row[0]) if row else 0
+    cur = conn.execute(_FINDING_UPSERT_SQL, _finding_insert_params(record))
+    return _resolve_emitted_finding_id(conn, cur, record.finding_id_str)
+
+
+# Stable public facade used by detector modules. Returns the assigned ``id``;
+# on conflict, evidence / confidence / source_version / claim refresh while
+# the row id is preserved so downstream supersedes chains stay intact.
+def emit_finding(conn: sqlite3.Connection, record: FindingRecord) -> int:
+    """Insert/upsert one finding row without committing."""
+    return _emit_finding_row(conn, record)
 
 
 def get_finding(conn: sqlite3.Connection, finding_id_str: str) -> Optional[dict[str, Any]]:
