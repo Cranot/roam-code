@@ -301,16 +301,16 @@ def _output_all(
     _w607cl_warnings_out=None,
 ) -> None:
     """Output for full reachability analysis."""
-    # Fallback no-op wrap for callers that bypass the W607-AU closure --
-    # preserves the pre-W607-AU behaviour byte-for-byte when no accumulator
-    # is wired (e.g. unit tests that import _output_all directly).
+    # Fallback no-op wrap for callers that bypass the W607-AU closure.
+    # In _output_all this only protects the final to_json() boundary:
+    # expected serialization faults become markers, unrelated bugs propagate.
     if _run_check_au is None or _w607au_warnings_out is None:
         _w607au_warnings_out = []
 
         def _run_check_au(phase, fn, *args, default=None, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001
+            except (TypeError, ValueError, RecursionError) as exc:
                 _w607au_warnings_out.append(f"vuln_reach_{phase}_failed:{type(exc).__name__}:{exc}")
                 return default
 
