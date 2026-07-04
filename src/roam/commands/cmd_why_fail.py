@@ -26,7 +26,21 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+
+
+def _emit_canonical_agent_envelope(summary: dict, suspects: list[dict]) -> None:
+    """Keep JSON mode on Roam's shared envelope without importing it for text runs."""
+    from roam.output import formatter
+
+    click.echo(
+        formatter.to_json(
+            formatter.json_envelope(
+                "why-fail",
+                summary=summary,
+                suspects=suspects,
+            )
+        )
+    )
 
 
 @roam_capability(
@@ -68,15 +82,7 @@ def why_fail(ctx, target, days, max_hops, limit) -> None:
         if not rows:
             verdict = f"no symbol or file '{target}' in index"
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "why-fail",
-                            summary={"verdict": verdict, "suspect_count": 0},
-                            suspects=[],
-                        )
-                    )
-                )
+                _emit_canonical_agent_envelope({"verdict": verdict, "suspect_count": 0}, [])
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -106,15 +112,7 @@ def why_fail(ctx, target, days, max_hops, limit) -> None:
         if not reach:
             verdict = f"no reachable symbols from '{target}' within {max_hops} hop(s)"
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "why-fail",
-                            summary={"verdict": verdict, "suspect_count": 0},
-                            suspects=[],
-                        )
-                    )
-                )
+                _emit_canonical_agent_envelope({"verdict": verdict, "suspect_count": 0}, [])
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -168,19 +166,14 @@ def why_fail(ctx, target, days, max_hops, limit) -> None:
     )
 
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "why-fail",
-                    summary={
-                        "verdict": verdict,
-                        "suspect_count": len(suspects),
-                        "max_hops": max_hops,
-                        "days": days,
-                    },
-                    suspects=suspects,
-                )
-            )
+        _emit_canonical_agent_envelope(
+            {
+                "verdict": verdict,
+                "suspect_count": len(suspects),
+                "max_hops": max_hops,
+                "days": days,
+            },
+            suspects,
         )
         return
 
