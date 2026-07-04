@@ -562,6 +562,135 @@ def _build_fan_envelope_preserving_warning_contract(
     return fan_envelope
 
 
+def _symbol_fan_predicate(rows_local):
+    """Normalize symbol rows into the shared fan verdict predicate."""
+    top_in_local = max(rows_local, key=lambda r: r["in_degree"] or 0)
+    top_out_local = max(rows_local, key=lambda r: r["out_degree"] or 0)
+    return {
+        "top_in_name": top_in_local["name"],
+        "top_in_value": top_in_local["in_degree"] or 0,
+        "top_out_name": top_out_local["name"],
+        "top_out_value": top_out_local["out_degree"] or 0,
+        "item_count": len(rows_local),
+    }
+
+
+def _file_fan_predicate(rows_local):
+    """Normalize file rows into the shared fan verdict predicate."""
+    top_in_local = max(rows_local, key=lambda r: r["fan_in"])
+    top_out_local = max(rows_local, key=lambda r: r["fan_out"])
+    return {
+        "top_in_name": top_in_local["path"].split("/")[-1],
+        "top_in_value": top_in_local["fan_in"],
+        "top_out_name": top_out_local["path"].split("/")[-1],
+        "top_out_value": top_out_local["fan_out"],
+        "item_count": len(rows_local),
+    }
+
+
+def _fan_score_default(scanned_count: int, *, include_local_only: bool) -> dict:
+    """Preserve degraded score shape for each fan mode."""
+    default_score = {
+        "state": "DEGRADED",
+        "scanned": scanned_count,
+        "high_risk": 0,
+        "hubs": 0,
+        "spreaders": 0,
+        "empty": 0,
+    }
+    if include_local_only:
+        default_score["local_only"] = 0
+    return default_score
+
+
+def _build_fan_verdict_from_predicate(pred):
+    return (
+        f"top fan-in: {pred['top_in_name']}({pred['top_in_value']}), "
+        f"top fan-out: {pred['top_out_name']}({pred['top_out_value']})"
+    )
+
+
+def _emit_fan_json_preserving_mode_parity(
+    *,
+    items,
+    rows,
+    mode,
+    include_tests,
+    test_filtered,
+    token_budget,
+    w607x_warnings_out,
+    include_local_only,
+    caller_metric_definition,
+    predicate_fn,
+):
+    """Emit fan JSON through one warning and summary contract."""
+    w607cy_warnings_out: list[str] = []
+    item_count = len(items)
+
+    def _score_classify(items_local):
+        return _score_fan_flags_for_mode_parity(
+            items_local,
+            include_local_only=include_local_only,
+            scanned_count=len(items_local),
+        )
+
+    score_dict = _run_check_cy(
+        "score_classify",
+        _score_classify,
+        items,
+        _warnings_out=w607cy_warnings_out,
+        default=_fan_score_default(
+            item_count,
+            include_local_only=include_local_only,
+        ),
+    )
+
+    fan_predicate = _run_check_cy(
+        "compute_predicate",
+        predicate_fn,
+        rows,
+        _warnings_out=w607cy_warnings_out,
+        default={
+            "top_in_name": "",
+            "top_in_value": 0,
+            "top_out_name": "",
+            "top_out_value": 0,
+            "item_count": len(rows),
+        },
+    )
+
+    verdict = _run_check_cy(
+        "compute_verdict",
+        _build_fan_verdict_from_predicate,
+        fan_predicate,
+        _warnings_out=w607cy_warnings_out,
+        default="fan analysis completed",
+    )
+
+    summary: dict = {
+        "verdict": verdict,
+        "mode": mode,
+        "items": len(rows),
+        "caller_metric_definition": caller_metric_definition,
+        "test_split": True,
+        "include_tests": include_tests,
+        "production_items": sum(1 for it in items if it["scope"] == "production"),
+        "test_items": sum(1 for it in items if it["scope"] == "test"),
+        "test_filtered": test_filtered,
+        "run_state": score_dict["state"],
+    }
+    return _build_fan_envelope_preserving_warning_contract(
+        mode=mode,
+        item_count=len(rows),
+        items=items,
+        token_budget=token_budget,
+        summary=summary,
+        verdict=verdict,
+        w607x_warnings_out=w607x_warnings_out,
+        w607cy_warnings_out=w607cy_warnings_out,
+    )
+
+
 def _emit_symbol_json(
     symbol_items,
     rows,
@@ -577,94 +706,17 @@ def _emit_symbol_json(
     W607-CY aggregation-phase boundaries (score_classify / compute_predicate
     / compute_verdict / serialize_envelope) run inside this helper.
     """
-    _w607cy_warnings_out: list[str] = []
-
-    _symbol_items_count = len(symbol_items)
-
-    def _score_classify_symbol(items_local):
-        _symbol_items_n = len(items_local)
-        return _score_fan_flags_for_mode_parity(
-            items_local,
-            include_local_only=True,
-            scanned_count=_symbol_items_n,
-        )
-
-    _score_dict = _run_check_cy(
-        "score_classify",
-        _score_classify_symbol,
-        symbol_items,
-        _warnings_out=_w607cy_warnings_out,
-        default={
-            "state": "DEGRADED",
-            "scanned": _symbol_items_count,
-            "high_risk": 0,
-            "hubs": 0,
-            "spreaders": 0,
-            "local_only": 0,
-            "empty": 0,
-        },
-    )
-
-    def _compute_symbol_predicate(rows_local):
-        top_in_local = max(rows_local, key=lambda r: r["in_degree"] or 0)
-        top_out_local = max(rows_local, key=lambda r: r["out_degree"] or 0)
-        return {
-            "top_in_name": top_in_local["name"],
-            "top_in_degree": top_in_local["in_degree"] or 0,
-            "top_out_name": top_out_local["name"],
-            "top_out_degree": top_out_local["out_degree"] or 0,
-            "item_count": len(rows_local),
-        }
-
-    _symbol_predicate = _run_check_cy(
-        "compute_predicate",
-        _compute_symbol_predicate,
-        rows,
-        _warnings_out=_w607cy_warnings_out,
-        default={
-            "top_in_name": "",
-            "top_in_degree": 0,
-            "top_out_name": "",
-            "top_out_degree": 0,
-            "item_count": len(rows),
-        },
-    )
-
-    def _build_symbol_verdict(pred):
-        return (
-            f"top fan-in: {pred['top_in_name']}({pred['top_in_degree']}), "
-            f"top fan-out: {pred['top_out_name']}({pred['top_out_degree']})"
-        )
-
-    _verdict = _run_check_cy(
-        "compute_verdict",
-        _build_symbol_verdict,
-        _symbol_predicate,
-        _warnings_out=_w607cy_warnings_out,
-        default="fan analysis completed",
-    )
-
-    _summary: dict = {
-        "verdict": _verdict,
-        "mode": mode,
-        "items": len(rows),
-        "caller_metric_definition": "direct_in_degree",
-        "test_split": True,
-        "include_tests": include_tests,
-        "production_items": sum(1 for it in symbol_items if it["scope"] == "production"),
-        "test_items": sum(1 for it in symbol_items if it["scope"] == "test"),
-        "test_filtered": _test_filtered,
-        "run_state": _score_dict["state"],
-    }
-    return _build_fan_envelope_preserving_warning_contract(
-        mode=mode,
-        item_count=len(rows),
+    return _emit_fan_json_preserving_mode_parity(
         items=symbol_items,
+        rows=rows,
+        mode=mode,
+        include_tests=include_tests,
+        test_filtered=_test_filtered,
         token_budget=token_budget,
-        summary=_summary,
-        verdict=_verdict,
         w607x_warnings_out=_w607x_warnings_out,
-        w607cy_warnings_out=_w607cy_warnings_out,
+        include_local_only=True,
+        caller_metric_definition="direct_in_degree",
+        predicate_fn=_symbol_fan_predicate,
     )
 
 
@@ -683,93 +735,17 @@ def _emit_file_json(
     Same W607-CY aggregation-phase boundaries as the symbol-mode helper,
     adapted for the file-level flag vocabulary (no local-* flags).
     """
-    _w607cy_warnings_out: list[str] = []
-
-    _file_items_count = len(file_items)
-
-    def _score_classify_file(items_local):
-        _file_items_n = len(items_local)
-        return _score_fan_flags_for_mode_parity(
-            items_local,
-            include_local_only=False,
-            scanned_count=_file_items_n,
-        )
-
-    _score_dict = _run_check_cy(
-        "score_classify",
-        _score_classify_file,
-        file_items,
-        _warnings_out=_w607cy_warnings_out,
-        default={
-            "state": "DEGRADED",
-            "scanned": _file_items_count,
-            "high_risk": 0,
-            "hubs": 0,
-            "spreaders": 0,
-            "empty": 0,
-        },
-    )
-
-    def _compute_file_predicate(rows_local):
-        top_in_local = max(rows_local, key=lambda r: r["fan_in"])
-        top_out_local = max(rows_local, key=lambda r: r["fan_out"])
-        return {
-            "top_in_name": top_in_local["path"].split("/")[-1],
-            "top_in_count": top_in_local["fan_in"],
-            "top_out_name": top_out_local["path"].split("/")[-1],
-            "top_out_count": top_out_local["fan_out"],
-            "item_count": len(rows_local),
-        }
-
-    _file_predicate = _run_check_cy(
-        "compute_predicate",
-        _compute_file_predicate,
-        rows,
-        _warnings_out=_w607cy_warnings_out,
-        default={
-            "top_in_name": "",
-            "top_in_count": 0,
-            "top_out_name": "",
-            "top_out_count": 0,
-            "item_count": len(rows),
-        },
-    )
-
-    def _build_file_verdict(pred):
-        return (
-            f"top fan-in: {pred['top_in_name']}({pred['top_in_count']}), "
-            f"top fan-out: {pred['top_out_name']}({pred['top_out_count']})"
-        )
-
-    _verdict = _run_check_cy(
-        "compute_verdict",
-        _build_file_verdict,
-        _file_predicate,
-        _warnings_out=_w607cy_warnings_out,
-        default="fan analysis completed",
-    )
-
-    _summary: dict = {
-        "verdict": _verdict,
-        "mode": mode,
-        "items": len(rows),
-        "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
-        "test_split": True,
-        "include_tests": include_tests,
-        "production_items": sum(1 for it in file_items if it["scope"] == "production"),
-        "test_items": sum(1 for it in file_items if it["scope"] == "test"),
-        "test_filtered": _file_test_filtered,
-        "run_state": _score_dict["state"],
-    }
-    return _build_fan_envelope_preserving_warning_contract(
-        mode=mode,
-        item_count=len(rows),
+    return _emit_fan_json_preserving_mode_parity(
         items=file_items,
+        rows=rows,
+        mode=mode,
+        include_tests=include_tests,
+        test_filtered=_file_test_filtered,
         token_budget=token_budget,
-        summary=_summary,
-        verdict=_verdict,
         w607x_warnings_out=_w607x_warnings_out,
-        w607cy_warnings_out=_w607cy_warnings_out,
+        include_local_only=False,
+        caller_metric_definition="direct_in_degree (file-level: distinct source files)",
+        predicate_fn=_file_fan_predicate,
     )
 
 
