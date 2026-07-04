@@ -35,35 +35,12 @@ _DEFAULT_MAX_FILES_PER_COMMIT = 5  # was 30 — coordinated edits >5 files are u
 _DEFAULT_MAX_SYMBOLS_PER_FILE = 25  # PageRank-ranked top-N within a file
 
 
-def _build_symbol_cochange(
-    conn,
-    *,
-    exclude_tests: bool = True,
-    max_files_per_commit: int = _DEFAULT_MAX_FILES_PER_COMMIT,
-    max_symbols_per_file: int = _DEFAULT_MAX_SYMBOLS_PER_FILE,
-    since_commit_id: int | None = None,
-) -> tuple[dict, dict]:
-    """Build a cross-file symbol co-change matrix from git history.
+def _load_commit_files(conn, since_commit_id: int | None) -> dict[int, set[int]]:
+    """Load commit_id -> changed file_ids, optionally filtered by recency.
 
-    Returns ``(pair_counts, suppressions)`` where ``suppressions`` records
-    how many entries we filtered (so consumers can surface honest numbers
-    via the ``suppressions`` envelope field).
-
-    The algorithm caps symbols per file per commit by PageRank (which
-    approximates "the actually-architectural symbols") rather than
-    counting every prop/method ever defined in the file. This drops the
-    dominant noise source — a single coordinated edit between two
-    6000-line SFCs no longer produces ~14k spurious pairs.
+    Isolating this query keeps the recency-window branch out of the
+    pair-counting logic so the main algorithm reads as a straight pipeline.
     """
-    suppressions = {
-        "test_files": 0,
-        "mega_commits": 0,
-        "capped_symbols": 0,
-        "since_filtered": 0,
-    }
-
-    # Step 1: gather commit -> list of changed file_ids, optionally filtered
-    # to a recency window (round 4 / feature C).
     if since_commit_id is not None:
         rows = conn.execute(
             "SELECT commit_id, file_id FROM git_file_changes "
@@ -78,9 +55,16 @@ def _build_symbol_cochange(
     commit_files: dict[int, set[int]] = defaultdict(set)
     for r in rows:
         commit_files[r["commit_id"]].add(r["file_id"])
+    return commit_files
 
-    # Step 2: pre-load symbol -> file mapping with PageRank for ranking,
-    # plus the file path so we can drop tests up front.
+
+def _load_file_symbols(conn, exclude_tests: bool) -> tuple[dict[int, list[tuple[int, float]]], set[int]]:
+    """Load symbol metadata with PageRank and separate test files up front.
+
+    Splitting test-file exclusion from ranking lets each stage own one
+    decision: this stage decides *which symbols enter the matrix*, the next
+    decides *how many per file*.
+    """
     sym_rows = conn.execute(
         "SELECT s.id, s.file_id, COALESCE(gm.pagerank, 0) AS pr, f.path "
         "FROM symbols s "
@@ -96,15 +80,20 @@ def _build_symbol_cochange(
             test_file_ids.add(s["file_id"])
             continue
         file_to_syms[s["file_id"]].append((s["id"], s["pr"] or 0))
+    return file_to_syms, test_file_ids
 
-    if exclude_tests:
-        suppressions["test_files"] = len(test_file_ids)
 
-    # Step 3: rank symbols per file by PageRank descending and trim. This
-    # gives every commit the "architecturally important" symbols only.
-    # Large files only need the capped PageRank leaders, so select them with
-    # heapq.nlargest (O(n log k) partial selection) instead of fully sorting
-    # every symbol.
+def _rank_symbols_per_file(
+    file_to_syms: dict[int, list[tuple[int, float]]],
+    max_symbols_per_file: int,
+    suppressions: dict,
+) -> dict[int, list[int]]:
+    """Keep only the top-N PageRank symbols per file.
+
+    This is the noise gate: large files would otherwise spray every
+    prop/method into the pair matrix. Using ``heapq.nlargest`` gives
+    O(n log k) partial selection without fully sorting each file.
+    """
     file_top_syms: dict[int, list[int]] = {}
     for fid, syms in file_to_syms.items():
         if len(syms) > max_symbols_per_file:
@@ -113,8 +102,21 @@ def _build_symbol_cochange(
             file_top_syms[fid] = [s[0] for s in ranked]
         else:
             file_top_syms[fid] = [s[0] for s in syms]
+    return file_top_syms
 
-    # Step 4: for each commit, compute cross-file symbol pairs
+
+def _count_symbol_pairs(
+    commit_files: dict[int, set[int]],
+    file_top_syms: dict[int, list[int]],
+    max_files_per_commit: int,
+    suppressions: dict,
+) -> dict[tuple[int, int], int]:
+    """Build the cross-file symbol co-change count matrix.
+
+    This is the combinatorial core of the algorithm. Extracting it keeps
+    the nested pair explosion in one place and lets the caller treat the
+    matrix as a constructed value rather than incrementally concatenated.
+    """
     pair_count: dict[tuple[int, int], int] = defaultdict(int)
 
     for _cid, fids in commit_files.items():
@@ -137,6 +139,44 @@ def _build_symbol_cochange(
                     for sj in syms_j:
                         key = (min(si, sj), max(si, sj))
                         pair_count[key] += 1
+
+    return pair_count
+
+
+def _build_symbol_cochange(
+    conn,
+    *,
+    exclude_tests: bool = True,
+    max_files_per_commit: int = _DEFAULT_MAX_FILES_PER_COMMIT,
+    max_symbols_per_file: int = _DEFAULT_MAX_SYMBOLS_PER_FILE,
+    since_commit_id: int | None = None,
+) -> tuple[dict, dict]:
+    """Build a cross-file symbol co-change matrix from git history.
+
+    Returns ``(pair_counts, suppressions)`` where ``suppressions`` records
+    how many entries we filtered (so consumers can surface honest numbers
+    via the ``suppressions`` envelope field).
+
+    The algorithm trades completeness for signal fidelity: it caps symbols
+    per file per commit by PageRank (which approximates "the actually
+    architectural symbols") rather than counting every prop/method ever
+    defined in the file. This drops the dominant noise source — a single
+    coordinated edit between two 6000-line SFCs no longer produces ~14k
+    spurious pairs.
+    """
+    suppressions = {
+        "test_files": 0,
+        "mega_commits": 0,
+        "capped_symbols": 0,
+        "since_filtered": 0,
+    }
+
+    commit_files = _load_commit_files(conn, since_commit_id)
+    file_to_syms, test_file_ids = _load_file_symbols(conn, exclude_tests)
+    if exclude_tests:
+        suppressions["test_files"] = len(test_file_ids)
+    file_top_syms = _rank_symbols_per_file(file_to_syms, max_symbols_per_file, suppressions)
+    pair_count = _count_symbol_pairs(commit_files, file_top_syms, max_files_per_commit, suppressions)
 
     return pair_count, suppressions
 
