@@ -62,7 +62,7 @@ import json
 import os
 import re
 import socket
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1485,6 +1485,68 @@ _RUN_LEDGER_AUTHORITY_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _iter_hmac_verified_runs_for_corroboration(
+    repo_root: Path,
+    warnings: list[str],
+    *,
+    warning_prefix: str,
+) -> Iterator[tuple[Any, tuple[Mapping[str, Any], ...]]]:
+    """Yield only run ledgers that are allowed to corroborate evidence.
+
+    Corroboration is stricter than ordinary evidence collection: an
+    unreadable, unsigned, or tampered run contributes nothing, while
+    optional ledger failures still degrade to warnings so packet
+    collection can continue.
+    """
+    try:
+        from roam.runs.ledger import (
+            list_runs,
+            read_run_events,
+        )
+        from roam.runs.signing import ensure_ledger_key, verify_chain
+    except (ImportError, ModuleNotFoundError) as exc:  # noqa: BLE001 - runs module optional
+        warnings.append(f"{warning_prefix}: runs module unavailable ({exc})")
+        return
+
+    try:
+        repo_path = Path(repo_root)
+        runs_root_path = repo_path / ".roam" / "runs"
+    except (OSError, ValueError):
+        return
+    if not runs_root_path.is_dir():
+        return
+
+    try:
+        key = ensure_ledger_key(repo_path)
+    except (OSError, ValueError) as exc:
+        warnings.append(f"{warning_prefix}: ledger key unavailable ({exc})")
+        return
+
+    try:
+        run_metas = list(list_runs(repo_path))
+    except OSError as exc:
+        warnings.append(f"{warning_prefix}: list_runs failed ({exc})")
+        return
+
+    for meta in run_metas:
+        try:
+            events = list(read_run_events(repo_path, meta.run_id))
+        except OSError:
+            # read_run_events is a generator over an on-disk JSONL
+            # ledger; JSONDecodeError is swallowed inside the generator.
+            continue
+        if not events:
+            continue
+        try:
+            result = verify_chain(events, key)
+        except (TypeError, ValueError) as exc:
+            warnings.append(f"{warning_prefix}: verify_chain crashed on {meta.run_id} ({exc})")
+            continue
+        if result.get("state") != "ok":
+            continue
+        yield meta, tuple(events)
+
+
 def _collect_corroborated_authorities_from_runs(
     repo_root: Path,
     warnings: list[str],
@@ -1518,59 +1580,11 @@ def _collect_corroborated_authorities_from_runs(
     into ``warnings``.
     """
     pairs: set[tuple[str, str]] = set()
-    try:
-        from roam.runs.ledger import (
-            list_runs,
-            read_run_events,
-        )
-        from roam.runs.signing import ensure_ledger_key, verify_chain
-    except (ImportError, ModuleNotFoundError) as exc:  # noqa: BLE001 - runs module optional
-        warnings.append(f"authority-corroboration: runs module unavailable ({exc})")
-        return frozenset()
-
-    try:
-        runs_root_path = Path(repo_root) / ".roam" / "runs"
-    except (OSError, ValueError):
-        return frozenset()
-    if not runs_root_path.is_dir():
-        return frozenset()
-
-    try:
-        key = ensure_ledger_key(Path(repo_root))
-    except (OSError, ValueError) as exc:
-        warnings.append(f"authority-corroboration: ledger key unavailable ({exc})")
-        return frozenset()
-
-    try:
-        run_metas = list(list_runs(Path(repo_root)))
-    except OSError as exc:
-        warnings.append(f"authority-corroboration: list_runs failed ({exc})")
-        return frozenset()
-
-    for meta in run_metas:
-        try:
-            events = list(read_run_events(Path(repo_root), meta.run_id))
-        except OSError:
-            # W746: narrowed from bare Exception. read_run_events is a
-            # generator over an on-disk JSONL ledger; the only realistic
-            # raise during iteration is filesystem I/O. JSONDecodeError
-            # is already swallowed inside the generator. Programmer-class
-            # errors (NameError / AttributeError) now propagate per W531.
-            continue
-        if not events:
-            # Empty ledger - no events to corroborate.
-            continue
-        try:
-            result = verify_chain(events, key)
-        except (TypeError, ValueError) as exc:
-            warnings.append(f"authority-corroboration: verify_chain crashed on {meta.run_id} ({exc})")
-            continue
-        if result.get("state") != "ok":
-            # tampered / unsigned / unknown_run -> no corroboration.
-            continue
-
-        # The whole run verified - harvest authority observations from
-        # the run-meta + every event.
+    for meta, events in _iter_hmac_verified_runs_for_corroboration(
+        repo_root,
+        warnings,
+        warning_prefix="authority-corroboration",
+    ):
         meta_mode = getattr(meta, "mode", None)
         if isinstance(meta_mode, str) and meta_mode.strip():
             pairs.add(("mode", meta_mode.strip()))
@@ -2271,61 +2285,14 @@ def _collect_corroborated_ids_from_runs(
     """
     tool_ids: set[str] = set()
     actor_ids: set[str] = set()
-    try:
-        from roam.runs.ledger import (
-            list_runs,
-            read_run_events,
-        )
-        from roam.runs.signing import ensure_ledger_key, verify_chain
-    except (ImportError, ModuleNotFoundError) as exc:  # noqa: BLE001 - runs module optional
-        warnings.append(f"corroboration: runs module unavailable ({exc})")
-        return frozenset(), frozenset()
-
-    try:
-        runs_root = Path(repo_root) / ".roam" / "runs"
-    except (OSError, ValueError):
-        return frozenset(), frozenset()
-    if not runs_root.is_dir():
-        return frozenset(), frozenset()
-
-    try:
-        key = ensure_ledger_key(Path(repo_root))
-    except Exception as exc:  # noqa: BLE001 - key missing / corrupt
-        warnings.append(f"corroboration: ledger key unavailable ({exc})")
-        return frozenset(), frozenset()
-
-    try:
-        run_metas = list(list_runs(Path(repo_root)))
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"corroboration: list_runs failed ({exc})")
-        return frozenset(), frozenset()
-
-    for meta in run_metas:
-        try:
-            events = list(read_run_events(Path(repo_root), meta.run_id))
-        except OSError:
-            # W746: narrowed from bare Exception (same rationale as the
-            # authority-corroboration site above). Filesystem I/O is
-            # the only realistic raise from the generator.
-            continue
-        if not events:
-            # Empty ledger - no events to corroborate. Don't admit the
-            # run-meta agent on its own; that would be a name-based
-            # shortcut (W285 guardrail).
-            continue
-        try:
-            result = verify_chain(events, key)
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"corroboration: verify_chain crashed on {meta.run_id} ({exc})")
-            continue
-        if result.get("state") != "ok":
-            # tampered / unsigned / unknown_run -> no corroboration.
-            continue
-
-        # The whole run verified - harvest tool + actor ids from every
-        # event AND the run-meta agent string.
-        if isinstance(meta.agent, str) and meta.agent.strip():
-            actor_ids.add(meta.agent.strip())
+    for meta, events in _iter_hmac_verified_runs_for_corroboration(
+        repo_root,
+        warnings,
+        warning_prefix="corroboration",
+    ):
+        meta_agent = getattr(meta, "agent", None)
+        if isinstance(meta_agent, str) and meta_agent.strip():
+            actor_ids.add(meta_agent.strip())
         for ev in events:
             if not isinstance(ev, Mapping):
                 continue
