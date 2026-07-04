@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from prompts import TASKS, get_prompt, get_all_combinations
+from prompts import TASKS, get_prompt
 
 
 AGENTS = ["claude-code", "claude-code-sonnet", "codex", "gemini-cli"]
