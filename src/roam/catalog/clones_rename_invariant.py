@@ -52,7 +52,9 @@ LAW-4 anchors used by the verdict / fact strings: ``clones``, ``pairs``,
 
 from __future__ import annotations
 
+import bisect
 import math
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -92,6 +94,20 @@ _BUCKET_EXACT_NODE_COUNT = True
 # small Python functions top out on the same 3 types
 # (``identifier``, ``.``, ``argument_list``), so K=3 alone over-buckets.
 _SIGNATURE_TOP_K = 5
+
+# Keep the catalog detector independent from ``roam.index.parser`` while
+# preserving the grammar spellings the indexed ``files.language`` rows use.
+_CLONE_SCAN_GRAMMAR_ALIASES = {
+    "c_sharp": "csharp",
+    "apex": "java",
+    "aura": "html",
+    "visualforce": "html",
+}
+
+_SFC_SCRIPT_PATTERN = re.compile(
+    r"<script(\s[^>]*)?>.*?</script>",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -172,6 +188,71 @@ def _node_type_vector(node) -> tuple[Counter[str], int]:
     return counts, total
 
 
+def _preserve_sfc_script_lines_for_clone_scan(source: bytes) -> tuple[bytes, str]:
+    """Extract SFC script lines while keeping function locations stable."""
+    text = source.decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    language = "javascript"
+    script_line_flags = [False] * len(lines)
+    newline_offsets = [i for i, ch in enumerate(text) if ch == "\n"]
+
+    for match in _SFC_SCRIPT_PATTERN.finditer(text):
+        attrs = match.group(1) or ""
+        if 'lang="ts"' in attrs or "lang='ts'" in attrs or 'lang="tsx"' in attrs:
+            language = "typescript"
+
+        block = match.group(0)
+        opening_tag_end = block.index(">") + 1
+        closing_tag_start = block.rfind("</script>")
+        content_start = (
+            bisect.bisect_left(newline_offsets, match.start() + opening_tag_end) + 1
+        )
+        content_end = bisect.bisect_left(
+            newline_offsets,
+            match.start() + closing_tag_start,
+        )
+
+        for idx in range(content_start, min(content_end, len(lines))):
+            script_line_flags[idx] = True
+
+    processed = "\n".join(
+        line if script_line_flags[idx] else "" for idx, line in enumerate(lines)
+    )
+    return processed.encode("utf-8"), language
+
+
+def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
+    """Return a tree-sitter tree and source without importing the index parser."""
+    if language is None:
+        return None
+
+    try:
+        source = path.read_bytes()
+    except OSError:
+        return None
+
+    try:
+        source.decode("utf-8")
+    except UnicodeDecodeError:
+        source.decode("latin-1")
+
+    if language in ("vue", "svelte"):
+        source, language = _preserve_sfc_script_lines_for_clone_scan(source)
+
+    grammar = _CLONE_SCAN_GRAMMAR_ALIASES.get(language, language)
+
+    from tree_sitter_language_pack import get_parser
+
+    try:
+        parser = get_parser(grammar)
+        tree = parser.parse(source)
+    except (LookupError, ValueError):
+        return None
+    if tree is None:
+        return None
+    return tree, source
+
+
 def _extract_function_vectors(
     file_path: str,
     language: str | None,
@@ -184,20 +265,16 @@ def _extract_function_vectors(
     ``roam.graph.clone_detect._extract_func_records_pickleable`` so the
     two detectors index the same set of functions.
     """
-    from roam.index.parser import parse_file
-
     path = Path(file_path)
     if not path.is_absolute():
         path = project_root / file_path
     if not path.exists():
         return []
 
-    try:
-        tree, source, _lang = parse_file(path, language)
-    except (LookupError, OSError, RuntimeError, TypeError, ValueError):
+    parsed = _parse_for_catalog_isolated_clone_scan(path, language)
+    if parsed is None:
         return []
-    if tree is None or source is None:
-        return []
+    tree, source = parsed
 
     out: list[_FuncVector] = []
     for fn_node in _find_function_nodes(tree):
@@ -394,9 +471,7 @@ def _vectorise_source(source: str, language: str = "python") -> list[_FuncVector
     """
     from tree_sitter_language_pack import get_parser
 
-    from roam.index.parser import GRAMMAR_ALIASES
-
-    grammar = GRAMMAR_ALIASES.get(language, language)
+    grammar = _CLONE_SCAN_GRAMMAR_ALIASES.get(language, language)
     parser = get_parser(grammar)
     tree = parser.parse(source.encode("utf-8"))
 
