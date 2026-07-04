@@ -396,37 +396,58 @@ def _fallback_dump(doc: Any, indent: int = 0) -> str:
     Mirrors the strategy in :mod:`roam.laws.serializer` so behaviour
     stays consistent across the repo. Not general-purpose.
     """
-    lines: list[str] = []
-    pad = "  " * indent
     if isinstance(doc, dict):
-        for k, v in doc.items():
-            if isinstance(v, dict):
-                if not v:
-                    lines.append(f"{pad}{k}: {{}}")
-                else:
-                    lines.append(f"{pad}{k}:")
-                    lines.append(_fallback_dump(v, indent + 1))
-            elif isinstance(v, list):
-                if not v:
-                    lines.append(f"{pad}{k}: []")
-                else:
-                    lines.append(f"{pad}{k}:")
-                    lines.append(_fallback_dump(v, indent + 1))
-            else:
-                lines.append(f"{pad}{k}: {_yaml_scalar(v)}")
-    elif isinstance(doc, list):
-        for item in doc:
-            if isinstance(item, dict):
-                lines.append(f"{pad}-")
-                lines.append(_fallback_dump(item, indent + 1))
-            elif isinstance(item, list):
-                lines.append(f"{pad}-")
-                lines.append(_fallback_dump(item, indent + 1))
-            else:
-                lines.append(f"{pad}- {_yaml_scalar(item)}")
-    else:
-        lines.append(f"{pad}{_yaml_scalar(doc)}")
+        return _dump_dict_entries(doc, indent)
+    if isinstance(doc, list):
+        return _dump_list_items(doc, indent)
+    return "  " * indent + _yaml_scalar(doc)
+
+
+def _dump_dict_entries(doc: dict, indent: int) -> str:
+    """Serialize every key/value pair of a mapping."""
+    lines: list[str] = []
+    for key, value in doc.items():
+        lines.extend(_dump_mapping_entry(key, value, indent))
     return "\n".join(filter(None, lines))
+
+
+def _dump_mapping_entry(key: Any, value: Any, indent: int) -> list[str]:
+    """Serialize one mapping entry, choosing block or inline shape.
+
+    WHY: a single key's value can be an empty container, a nested
+    container with children, or a scalar — each shape needs a
+    different YAML layout.
+    """
+    pad = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return [f"{pad}{key}: {{}}"]
+        return [f"{pad}{key}:", _fallback_dump(value, indent + 1)]
+    if isinstance(value, list):
+        if not value:
+            return [f"{pad}{key}: []"]
+        return [f"{pad}{key}:", _fallback_dump(value, indent + 1)]
+    return [f"{pad}{key}: {_yaml_scalar(value)}"]
+
+
+def _dump_list_items(doc: list, indent: int) -> str:
+    """Serialize every item of a sequence."""
+    lines: list[str] = []
+    for item in doc:
+        lines.extend(_dump_sequence_item(item, indent))
+    return "\n".join(filter(None, lines))
+
+
+def _dump_sequence_item(item: Any, indent: int) -> list[str]:
+    """Serialize one sequence item, choosing block or inline shape.
+
+    WHY: a list item can be a nested container (introduced by '-') or a
+    scalar (introduced by '- '), and the indent and prefix differ.
+    """
+    pad = "  " * indent
+    if isinstance(item, (dict, list)):
+        return [f"{pad}-", _fallback_dump(item, indent + 1)]
+    return [f"{pad}- {_yaml_scalar(item)}"]
 
 
 def _yaml_scalar(v: Any) -> str:
