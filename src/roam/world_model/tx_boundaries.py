@@ -727,6 +727,27 @@ def _load_body_with_decorators(repo_root: Path, rel_path: str, ls: int, le: int)
     return "".join(lines[eff_start - 1 : le]), eff_start
 
 
+def _repo_root_for_body_reads() -> Path:
+    """Preserve body-read continuity only for filesystem root lookup failures."""
+    try:
+        return find_project_root()
+    except OSError as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # filesystem root-resolution failure downgrades per-symbol body reads to a
+        # CWD-relative path; an unreadable body classifies as ``unknown``,
+        # so a silent fallback would mask real transactions as unknown.
+        # Surface the lineage (mirrors classify_side_effects /
+        # classify_idempotency / classify_causal_graph).
+        warnings.warn(
+            f"find_project_root() failed in classify_tx_boundaries "
+            f"({type(exc).__name__}: {exc}); falling back to Path('.') — "
+            "function bodies may classify as 'unknown' if CWD isn't the repo root",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
+        return Path(".")
+
+
 def classify_tx_boundaries(
     conn,
     symbol_name: Optional[str] = None,
@@ -750,23 +771,7 @@ def classify_tx_boundaries(
     if side_effects is None:
         side_effects = classify_side_effects(conn, symbol_name=symbol_name, limit=limit)
 
-    try:
-        repo_root = find_project_root()
-    except OSError as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-        # filesystem root-resolution failure downgrades per-symbol body reads to a
-        # CWD-relative path; an unreadable body classifies as ``unknown``,
-        # so a silent fallback would mask real transactions as unknown.
-        # Surface the lineage (mirrors classify_side_effects /
-        # classify_idempotency / classify_causal_graph).
-        warnings.warn(
-            f"find_project_root() failed in classify_tx_boundaries "
-            f"({type(exc).__name__}: {exc}); falling back to Path('.') — "
-            "function bodies may classify as 'unknown' if CWD isn't the repo root",
-            category=RuntimeWarning,
-            stacklevel=2,
-        )
-        repo_root = Path(".")
+    repo_root = _repo_root_for_body_reads()
 
     # Group SE records by file so we read each file at most once.
     by_file: dict[str, list[SideEffectClassification]] = {}
