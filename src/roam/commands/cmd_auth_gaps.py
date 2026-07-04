@@ -986,11 +986,30 @@ def _find_service_provider_files(conn) -> list[str]:
     return [r["path"] for r in rows]
 
 
-def _remember_protection_scope_exit(
+def _remember_when_route_scope_stops_protecting(
     auth_depth_stack: list[tuple[int, bool]], brace_depth: int, *, is_auth: bool
 ) -> None:
     """Record the depth where the current route group stops protecting controllers."""
     auth_depth_stack.append((brace_depth, is_auth))
+
+
+def _retire_route_scopes_closed_by_braces(
+    auth_depth_stack: list[tuple[int, bool]], brace_depth: int, closes: int
+) -> int:
+    """Return brace depth after closed braces stop granting route protection."""
+    for _ in range(closes):
+        brace_depth -= 1
+        if brace_depth < 0:
+            brace_depth = 0
+        if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
+            auth_depth_stack.pop()
+    return brace_depth
+
+
+def _controllers_proven_protected_by_route_line(line: str) -> set[str]:
+    """Return controller classes whose route placement proves auth protection."""
+    names = (cm.group(1) or cm.group(2) for cm in _RE_CONTROLLER_REF.finditer(line))
+    return {name for name in names if name}
 
 
 def _analyze_service_provider(file_path: str, source: str) -> set[str]:
@@ -1020,24 +1039,12 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
 
         # Check for auth middleware group opener
         if _RE_PROVIDER_ROUTE_MIDDLEWARE.search(line) and re.search(r"->\s*group\s*\(", line):
-            # Process closes first
-            for _ in range(closes):
-                brace_depth -= 1
-                if brace_depth < 0:
-                    brace_depth = 0
-                if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
-                    auth_depth_stack.pop()
-            _remember_protection_scope_exit(auth_depth_stack, brace_depth, is_auth=True)
+            brace_depth = _retire_route_scopes_closed_by_braces(auth_depth_stack, brace_depth, closes)
+            _remember_when_route_scope_stops_protecting(auth_depth_stack, brace_depth, is_auth=True)
             brace_depth += opens
             continue
 
-        # Process closing braces
-        for _ in range(closes):
-            brace_depth -= 1
-            if brace_depth < 0:
-                brace_depth = 0
-            if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
-                auth_depth_stack.pop()
+        brace_depth = _retire_route_scopes_closed_by_braces(auth_depth_stack, brace_depth, closes)
 
         # Check if currently inside auth group
         currently_protected = any(auth for _, auth in auth_depth_stack)
@@ -1045,10 +1052,7 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
         brace_depth += opens
 
         if currently_protected:
-            for cm in _RE_CONTROLLER_REF.finditer(line):
-                name = cm.group(1) or cm.group(2)
-                if name:
-                    protected_controllers.add(name)
+            protected_controllers.update(_controllers_proven_protected_by_route_line(line))
 
     return protected_controllers
 
