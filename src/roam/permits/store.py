@@ -228,6 +228,23 @@ class PermitRequest:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class _PermitReadContext:
+    """Shared context for fault-tolerant permit readers.
+
+    Bundles the ``repo_root`` / ``warnings_out`` pair that every permit
+    reader threads through its helper chain, removing the W593 data clump
+    between ``list_permits``, ``load_permits_from_disk``, and their
+    internal pipeline helpers.
+    """
+
+    repo_root: Path
+    warnings_out: WarningsOut = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "repo_root", Path(self.repo_root))
+
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -446,12 +463,12 @@ def list_permits(
         the failure mode (``OSError`` / ``JSONDecodeError``). The
         loop ``continue``s past this file (best-effort iteration).
     """
+    read_context = _PermitReadContext(repo_root, warnings_out)
 
     def _emit(kind: str) -> None:
-        if warnings_out is not None:
-            warnings_out.append(kind)
+        _append_permit_load_warning(read_context, kind)
 
-    root = permits_root(repo_root)
+    root = permits_root(read_context.repo_root)
     if not root.exists():
         return []
     try:
@@ -469,14 +486,15 @@ def list_permits(
 # ---------------------------------------------------------------------------
 
 
-def _append_permit_load_warning(warnings_out: WarningsOut, message: str) -> None:
+def _append_permit_load_warning(read_context: _PermitReadContext, message: str) -> None:
     """Disclose why the total permit reader dropped recoverable evidence."""
-    if warnings_out is not None:
-        warnings_out.append(message)
+    if read_context.warnings_out is not None:
+        read_context.warnings_out.append(message)
 
 
-def _permit_children_preserving_empty_contract(permits_dir: Path, warnings_out: WarningsOut) -> list[Path]:
+def _permit_children_preserving_empty_contract(read_context: _PermitReadContext) -> list[Path]:
     """Keep an unreadable permit directory in the reader's empty-state contract."""
+    permits_dir = permits_root(read_context.repo_root)
     try:
         return sorted(permits_dir.iterdir())
     except OSError as exc:
@@ -486,44 +504,44 @@ def _permit_children_preserving_empty_contract(permits_dir: Path, warnings_out: 
         # from per-file W379/W380/W382 warnings without parsing the
         # free-form text. The ``[]`` return is PRESERVED -- the empty-
         # return is the caller contract; the marker just discloses WHY.
-        _append_permit_load_warning(warnings_out, f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
+        _append_permit_load_warning(read_context,f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
         return []
 
 
-def _raw_permit_object_with_repair_warning(child: Path, warnings_out: WarningsOut) -> Optional[dict]:
+def _raw_permit_object_with_repair_warning(child: Path, read_context: _PermitReadContext) -> Optional[dict]:
     """Parse one permit file while naming repairable byte/object failures."""
     try:
         raw = json.loads(child.read_text(encoding="utf-8"))
     except OSError as exc:
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     except UnicodeDecodeError as exc:
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     except json.JSONDecodeError as exc:
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     if not isinstance(raw, dict):
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"permit file {child.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})",
         )
         return None
     return raw
 
 
-def _audit_ready_permit_or_warn(child: Path, seen_ids: dict[str, str], warnings_out: WarningsOut) -> Optional[dict]:
+def _audit_ready_permit_or_warn(
+    child: Path,
+    seen_ids: dict[str, str],
+    read_context: _PermitReadContext,
+) -> Optional[dict]:
     """Accept only schema-valid, first-seen permits for audit consumers."""
-    raw = _raw_permit_object_with_repair_warning(child, warnings_out)
+    raw = _raw_permit_object_with_repair_warning(child, read_context)
     if raw is None:
         return None
     # W380: route through the validator so a permit dict that cannot
@@ -532,8 +550,7 @@ def _audit_ready_permit_or_warn(child: Path, seen_ids: dict[str, str], warnings_
     if record is None:
         raw_pid = raw.get("permit_id")
         id_phrase = f"permit_id={raw_pid!r}" if isinstance(raw_pid, str) and raw_pid else "permit_id=<missing>"
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"permit file {child.name!s} skipped: schema validation "
             f"failed ({id_phrase}); fields missing or invalid per "
             f"PermitRecord contract",
@@ -542,8 +559,7 @@ def _audit_ready_permit_or_warn(child: Path, seen_ids: dict[str, str], warnings_
     # W379: detect duplicate permit_id across files. Keep first-seen.
     pid = record.permit_id
     if pid in seen_ids:
-        _append_permit_load_warning(
-            warnings_out,
+        _append_permit_load_warning(read_context,
             f"duplicate permit_id={pid!r} found in {child.name!s}; "
             f"first occurrence was {seen_ids[pid]!s}; collector will "
             f"keep only the first AuthorityRef",
@@ -555,7 +571,7 @@ def _audit_ready_permit_or_warn(child: Path, seen_ids: dict[str, str], warnings_
 
 def _audit_ready_permit_dicts_preserving_first_seen_ids(
     children: list[Path],
-    warnings_out: WarningsOut,
+    read_context: _PermitReadContext,
 ) -> list[dict]:
     """Preserve first-seen audit evidence while filtering unreadable permits."""
     out: list[dict] = []
@@ -563,7 +579,7 @@ def _audit_ready_permit_dicts_preserving_first_seen_ids(
     for child in children:
         if child.suffix != ".json" or not child.is_file():
             continue
-        raw = _audit_ready_permit_or_warn(child, seen_ids, warnings_out)
+        raw = _audit_ready_permit_or_warn(child, seen_ids, read_context)
         if raw is not None:
             out.append(raw)
     return out
@@ -618,12 +634,13 @@ def load_permits_from_disk(
     """
     if repo_root is None:
         return []
-    permits_dir = permits_root(repo_root)
+    read_context = _PermitReadContext(repo_root, warnings_out)
+    permits_dir = permits_root(read_context.repo_root)
     if not permits_dir.is_dir():
         return []
 
-    children = _permit_children_preserving_empty_contract(permits_dir, warnings_out)
-    return _audit_ready_permit_dicts_preserving_first_seen_ids(children, warnings_out)
+    children = _permit_children_preserving_empty_contract(read_context)
+    return _audit_ready_permit_dicts_preserving_first_seen_ids(children, read_context)
 
 
 # ---------------------------------------------------------------------------
