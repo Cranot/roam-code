@@ -90,6 +90,182 @@ def _to_edge_item(row) -> dict:
     }
 
 
+def _guard_settings(ctx) -> tuple[bool, bool, int, int, int, int, int]:
+    """Extract mode flags and list caps from the Click context.
+
+    Centralizing the ternary defaults keeps ``guard`` focused on risk
+    assessment rather than CLI plumbing.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+
+    caller_cap = _DETAIL_CALLER_CAP if detail else _DEFAULT_CALLER_CAP
+    callee_cap = _DETAIL_CALLEE_CAP if detail else _DEFAULT_CALLEE_CAP
+    test_cap = _DETAIL_TEST_CAP if detail else _DEFAULT_TEST_CAP
+    layer_cap = _DETAIL_LAYER_CAP if detail else _DEFAULT_LAYER_CAP
+    return json_mode, detail, token_budget, caller_cap, callee_cap, test_cap, layer_cap
+
+
+def _handle_unresolved_guard(conn, name: str, json_mode: bool) -> str:
+    """Emit the not-found envelope for ``roam guard``.
+
+    Isolates the JSON/text branch so ``guard`` can focus on the resolved-
+    symbol path.
+    """
+    unresolved_block = resolution_disclosure("unresolved", target=name or "")
+    if json_mode:
+        return to_json(
+            json_envelope(
+                "guard",
+                summary={
+                    "verdict": f"Symbol '{name}' not found",
+                    "partial_success": True,
+                    "state": "not_found",
+                    **unresolved_block,
+                },
+                symbol=name or "",
+                **unresolved_block,
+            )
+        )
+    return symbol_not_found(conn, name, json_mode=False)
+
+
+def _collect_risk_signals_within_caps(
+    conn,
+    sym: dict,
+    task: str,
+    caller_cap: int,
+    callee_cap: int,
+    test_cap: int,
+    layer_cap: int,
+) -> dict:
+    """Gather risk-relevant signals for a symbol while respecting output caps.
+
+    This helper owns the trade-off between signal completeness and envelope
+    budget: every list is capped at the call site so downstream scoring and
+    formatting receive bounded input.
+    """
+    context = gather_symbol_context(conn, sym, task=task, use_propagation=False)
+    callers = [_to_edge_item(r) for r in context["non_test_callers"][:caller_cap]]
+    callees = [_to_edge_item(r) for r in context["callees"][:callee_cap]]
+
+    test_hits = get_affected_tests_bfs(conn, sym["id"], max_hops=8)
+    tests, direct_test_files, total_test_files = _summarize_tests(test_hits, cap=test_cap)
+
+    blast = get_blast_radius(conn, sym["id"])
+    symbol_metrics = get_symbol_metrics(conn, sym["id"])
+    graph_metrics = get_graph_metrics(conn, sym["id"])
+    layers = _layer_analysis(conn, sym["id"], cap=layer_cap)
+
+    risk_score, risk_level, risk_factors = _risk_score(
+        blast=blast,
+        symbol_metrics=symbol_metrics,
+        graph_metrics=graph_metrics,
+        direct_test_files=direct_test_files,
+        total_test_files=total_test_files,
+        layer_violation_count=layers["violation_count"],
+        move_sensitive_count=layers["move_sensitive_count"],
+    )
+    return {
+        "context": context,
+        "callers": callers,
+        "callees": callees,
+        "tests": tests,
+        "direct_test_files": direct_test_files,
+        "total_test_files": total_test_files,
+        "blast": blast,
+        "symbol_metrics": symbol_metrics,
+        "graph_metrics": graph_metrics,
+        "layers": layers,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "risk_factors": risk_factors,
+    }
+
+
+def _format_guard_text(
+    sym: dict,
+    definition: dict,
+    risk_score: int,
+    risk_level: str,
+    signal_summary: list[str],
+    context: dict,
+    callers: list[dict],
+    callees: list[dict],
+    tests: list[dict],
+    layers: dict,
+    blast: dict,
+    direct_test_files: int,
+    total_test_files: int,
+    token_budget: int,
+) -> str:
+    """Render the human-readable GUARD report within the token budget.
+
+    This helper owns the trade-off between human-readable detail and the
+    sub-agent token budget: every section is emitted, then the whole block
+    is truncated to fit.
+    """
+    lines = []
+    lines.append(
+        f"GUARD: {abbrev_kind(sym['kind'])} {sym['qualified_name'] or sym['name']} "
+        f"{loc(sym['file_path'], sym['line_start'])}"
+    )
+    if definition["signature"]:
+        lines.append(f"Signature: {definition['signature']}")
+    lines.append(f"Risk: {risk_score}/100 [{risk_level}]")
+    lines.append(
+        "Signals: "
+        f"blast={blast['dependent_symbols']} syms/{blast['dependent_files']} files, "
+        f"tests={direct_test_files} direct/{total_test_files} total, "
+        f"layers={layers['violation_count']} violations"
+    )
+
+    lines.append("")
+    lines.append(f"Callers ({len(context['non_test_callers'])}, showing {len(callers)}):")
+    if callers:
+        for c in callers:
+            edge = f" [{c['edge_kind']}]" if c["edge_kind"] else ""
+            lines.append(f"  - {abbrev_kind(c['kind'])} {c['name']} {c['location']}{edge}")
+    else:
+        lines.append("  - (none)")
+
+    lines.append("")
+    lines.append(f"Callees ({len(context['callees'])}, showing {len(callees)}):")
+    if callees:
+        for c in callees:
+            edge = f" [{c['edge_kind']}]" if c["edge_kind"] else ""
+            lines.append(f"  - {abbrev_kind(c['kind'])} {c['name']} {c['location']}{edge}")
+    else:
+        lines.append("  - (none)")
+
+    lines.append("")
+    lines.append(f"Tests ({total_test_files}, showing {len(tests)}):")
+    if tests:
+        for t in tests:
+            via = f" via {t['via']}" if t.get("via") else ""
+            lines.append(f"  - {t['kind']} {t['file']} ({t['hops']} hops{via})")
+    else:
+        lines.append("  - (none found)")
+
+    lines.append("")
+    layer_line = "Layer analysis:"
+    if layers["current_layer"] is not None:
+        layer_line += f" current=L{layers['current_layer']}"
+    layer_line += f", violations={layers['violation_count']}, move-sensitive={layers['move_sensitive_count']}"
+    lines.append(layer_line)
+    for v in layers["violations"]:
+        lines.append(
+            f"  - violation: {v['source']} L{v['source_layer']} -> "
+            f"{v['target']} L{v['target_layer']} (dist={v['layer_distance']})"
+        )
+    if not layers["violations"]:
+        lines.append("  - violations: (none)")
+
+    output = "\n".join(lines)
+    return budget_truncate(output, token_budget)
+
+
 # ``_summarize_tests`` is imported from ``context_helpers`` at the top
 # of this module (W856 hoist — was duplicated in cmd_plan_refactor).
 
@@ -328,30 +504,7 @@ def guard(ctx, name):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            # W1280 — Pattern-2c Convention (c): unresolved exits 0 with a
-            # resolution=unresolved + partial_success disclosure so agents
-            # can distinguish a name-typo from a tool/IO failure. Text
-            # mode keeps the FTS suggestion list (most useful next step
-            # for a human staring at a typo).
-            unresolved_block = resolution_disclosure("unresolved", target=name or "")
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "guard",
-                            summary={
-                                "verdict": f"Symbol '{name}' not found",
-                                "partial_success": True,
-                                "state": "not_found",
-                                **unresolved_block,
-                            },
-                            symbol=name or "",
-                            **unresolved_block,
-                        )
-                    )
-                )
-            else:
-                click.echo(symbol_not_found(conn, name, json_mode=False))
+            click.echo(_handle_unresolved_guard(conn, name, json_mode))
             return
 
         # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
@@ -362,27 +515,28 @@ def guard(ctx, name):
         resolution_tier = sym.get("_resolution_tier", "symbol")
         resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
 
-        context = gather_symbol_context(conn, sym, task="review", use_propagation=False)
-        callers = [_to_edge_item(r) for r in context["non_test_callers"][:caller_cap]]
-        callees = [_to_edge_item(r) for r in context["callees"][:callee_cap]]
-
-        test_hits = get_affected_tests_bfs(conn, sym["id"], max_hops=8)
-        tests, direct_test_files, total_test_files = _summarize_tests(test_hits, cap=test_cap)
-
-        blast = get_blast_radius(conn, sym["id"])
-        symbol_metrics = get_symbol_metrics(conn, sym["id"])
-        graph_metrics = get_graph_metrics(conn, sym["id"])
-        layers = _layer_analysis(conn, sym["id"], cap=layer_cap)
-
-        risk_score, risk_level, risk_factors = _risk_score(
-            blast=blast,
-            symbol_metrics=symbol_metrics,
-            graph_metrics=graph_metrics,
-            direct_test_files=direct_test_files,
-            total_test_files=total_test_files,
-            layer_violation_count=layers["violation_count"],
-            move_sensitive_count=layers["move_sensitive_count"],
+        signals = _collect_risk_signals_within_caps(
+            conn,
+            sym,
+            task="review",
+            caller_cap=caller_cap,
+            callee_cap=callee_cap,
+            test_cap=test_cap,
+            layer_cap=layer_cap,
         )
+        context = signals["context"]
+        callers = signals["callers"]
+        callees = signals["callees"]
+        tests = signals["tests"]
+        direct_test_files = signals["direct_test_files"]
+        total_test_files = signals["total_test_files"]
+        blast = signals["blast"]
+        symbol_metrics = signals["symbol_metrics"]
+        graph_metrics = signals["graph_metrics"]
+        layers = signals["layers"]
+        risk_score = signals["risk_score"]
+        risk_level = signals["risk_level"]
+        risk_factors = signals["risk_factors"]
 
         # Keep deterministic ordering for signal summary.
         major_factors = sorted(
@@ -455,61 +609,21 @@ def guard(ctx, name):
             click.echo(to_json(payload))
             return
 
-        lines = []
-        lines.append(
-            f"GUARD: {abbrev_kind(sym['kind'])} {sym['qualified_name'] or sym['name']} "
-            f"{loc(sym['file_path'], sym['line_start'])}"
-        )
-        if definition["signature"]:
-            lines.append(f"Signature: {definition['signature']}")
-        lines.append(f"Risk: {risk_score}/100 [{risk_level}]")
-        lines.append(
-            "Signals: "
-            f"blast={blast['dependent_symbols']} syms/{blast['dependent_files']} files, "
-            f"tests={direct_test_files} direct/{total_test_files} total, "
-            f"layers={layers['violation_count']} violations"
-        )
-
-        lines.append("")
-        lines.append(f"Callers ({len(context['non_test_callers'])}, showing {len(callers)}):")
-        if callers:
-            for c in callers:
-                edge = f" [{c['edge_kind']}]" if c["edge_kind"] else ""
-                lines.append(f"  - {abbrev_kind(c['kind'])} {c['name']} {c['location']}{edge}")
-        else:
-            lines.append("  - (none)")
-
-        lines.append("")
-        lines.append(f"Callees ({len(context['callees'])}, showing {len(callees)}):")
-        if callees:
-            for c in callees:
-                edge = f" [{c['edge_kind']}]" if c["edge_kind"] else ""
-                lines.append(f"  - {abbrev_kind(c['kind'])} {c['name']} {c['location']}{edge}")
-        else:
-            lines.append("  - (none)")
-
-        lines.append("")
-        lines.append(f"Tests ({total_test_files}, showing {len(tests)}):")
-        if tests:
-            for t in tests:
-                via = f" via {t['via']}" if t.get("via") else ""
-                lines.append(f"  - {t['kind']} {t['file']} ({t['hops']} hops{via})")
-        else:
-            lines.append("  - (none found)")
-
-        lines.append("")
-        layer_line = "Layer analysis:"
-        if layers["current_layer"] is not None:
-            layer_line += f" current=L{layers['current_layer']}"
-        layer_line += f", violations={layers['violation_count']}, move-sensitive={layers['move_sensitive_count']}"
-        lines.append(layer_line)
-        for v in layers["violations"]:
-            lines.append(
-                f"  - violation: {v['source']} L{v['source_layer']} -> "
-                f"{v['target']} L{v['target_layer']} (dist={v['layer_distance']})"
+        click.echo(
+            _format_guard_text(
+                sym=sym,
+                definition=definition,
+                risk_score=risk_score,
+                risk_level=risk_level,
+                signal_summary=signal_summary,
+                context=context,
+                callers=callers,
+                callees=callees,
+                tests=tests,
+                layers=layers,
+                blast=blast,
+                direct_test_files=direct_test_files,
+                total_test_files=total_test_files,
+                token_budget=token_budget,
             )
-        if not layers["violations"]:
-            lines.append("  - violations: (none)")
-
-        output = "\n".join(lines)
-        click.echo(budget_truncate(output, token_budget))
+        )
