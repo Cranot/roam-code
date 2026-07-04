@@ -329,55 +329,107 @@ def _detect_likely_moves(
     both sides under a different file is treated as a separate signal — we
     only flag pure move candidates here.
     """
-    # Index added-side by name for quick lookup.
-    added_by_name: dict[str, list[str]] = {}
-    for k in added_keys:
-        meta = after_syms.get(k) or {}
-        nm = meta.get("name") or ""
-        if not nm:
-            continue
-        added_by_name.setdefault(nm, []).append(k)
+    added_by_name = _index_added_by_name(after_syms, added_keys)
 
     moves: list[dict] = []
     used_added: set[str] = set()
     for rkey in sorted(removed_keys):
-        rmeta = before_syms.get(rkey) or {}
-        rname = rmeta.get("name")
-        rkind = rmeta.get("kind")
-        rfile = rmeta.get("file")
-        if not rname:
-            continue
-        candidates = added_by_name.get(rname, [])
-        # Prefer kind matches first.
-        high_match = None
-        med_match = None
-        for ck in candidates:
-            if ck in used_added:
-                continue
-            ameta = after_syms.get(ck) or {}
-            if ameta.get("file") == rfile:
-                # Same file — not a "move" in the structural sense.
-                continue
-            if rkind and ameta.get("kind") == rkind:
-                high_match = ck
-                break
-            if med_match is None:
-                med_match = ck
-        picked = high_match or med_match
-        if picked is None:
-            continue
-        used_added.add(picked)
-        ameta = after_syms.get(picked) or {}
-        moves.append(
-            {
-                "symbol": rname,
-                "kind": rkind,
-                "from_file": rfile,
-                "to_file": ameta.get("file"),
-                "confidence": "high" if picked == high_match else "medium",
-            }
-        )
+        move = _find_move_for_removed(rkey, before_syms, after_syms, added_by_name, used_added)
+        if move:
+            moves.append(move)
     return moves
+
+
+def _index_added_by_name(after_syms: dict, added_keys: set[str]) -> dict[str, list[str]]:
+    """Group added-side symbol ids by their human-readable name.
+
+    Symbol ids are unstable across re-indexes, so move detection must match
+    by name. Indexing once keeps the per-removed-symbol scan cheap.
+    """
+    added_by_name: dict[str, list[str]] = {}
+    for k in added_keys:
+        nm = _symbol_name(after_syms, k)
+        if not nm:
+            continue
+        added_by_name.setdefault(nm, []).append(k)
+    return added_by_name
+
+
+def _symbol_name(syms: dict, key: str) -> str:
+    """Return the human-readable name for a symbol, or an empty string if absent."""
+    meta = syms.get(key) or {}
+    return meta.get("name") or ""
+
+
+def _find_move_for_removed(
+    rkey: str,
+    before_syms: dict,
+    after_syms: dict,
+    added_by_name: dict[str, list[str]],
+    used_added: set[str],
+) -> dict | None:
+    """Return a move record if a unique added symbol matches the removed one."""
+    rmeta = before_syms.get(rkey) or {}
+    rname = _symbol_name(before_syms, rkey)
+    if not rname:
+        return None
+    candidates = added_by_name.get(rname, [])
+    picked = _pick_move_candidate(rmeta, candidates, after_syms, used_added)
+    if picked is None:
+        return None
+    used_added.add(picked)
+    return _build_move_record(rname, rmeta, picked, after_syms)
+
+
+def _pick_move_candidate(
+    rmeta: dict,
+    candidates: list[str],
+    after_syms: dict,
+    used_added: set[str],
+) -> str | None:
+    """Choose the best added candidate, preferring kind + name matches.
+
+    This encodes the specificity/coverage trade-off: a matching kind raises
+    confidence to HIGH; otherwise we accept the first valid name-only match
+    as MEDIUM-confidence evidence.
+    """
+    rfile = rmeta.get("file")
+    med_match: str | None = None
+    for ck in candidates:
+        if ck in used_added:
+            continue
+        ameta = after_syms.get(ck) or {}
+        if ameta.get("file") == rfile:
+            # Same file — not a "move" in the structural sense.
+            continue
+        if _is_kind_match(rmeta, ameta):
+            return ck
+        if med_match is None:
+            med_match = ck
+    return med_match
+
+
+def _is_kind_match(rmeta: dict, ameta: dict) -> bool:
+    """True when both symbols have a kind and the kinds agree."""
+    rkind = rmeta.get("kind")
+    return bool(rkind and ameta.get("kind") == rkind)
+
+
+def _build_move_record(
+    rname: str,
+    rmeta: dict,
+    picked: str,
+    after_syms: dict,
+) -> dict:
+    """Assemble the move verdict from the removed and chosen added symbol."""
+    ameta = after_syms.get(picked) or {}
+    return {
+        "symbol": rname,
+        "kind": rmeta.get("kind"),
+        "from_file": rmeta.get("file"),
+        "to_file": ameta.get("file"),
+        "confidence": "high" if _is_kind_match(rmeta, ameta) else "medium",
+    }
 
 
 def _frozen_cycles(cycles: list[list[str]]) -> set[frozenset[str]]:
