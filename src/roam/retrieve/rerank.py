@@ -30,6 +30,7 @@ from roam.config import get_retrieve_config
 from roam.db.connection import batched_in
 from roam.graph.clone_detect import get_clone_siblings
 from roam.graph.dark_matter import co_change_scores_to_seed_set_bulk
+from roam.retrieve.seeds import extract_tokens
 from roam.runtime.hotspots import runtime_score
 
 #: Default lexical-baseline coefficient when config is unavailable.
@@ -247,14 +248,7 @@ def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
     Magnitude is bounded at ~0.15 so it can lift relevant files into
     top-K without dominating the structural blend.
     """
-    if not task:
-        return {}
-    from roam.retrieve.seeds import extract_tokens
-
-    tokens = extract_tokens(task)
-    if not tokens:
-        return {}
-    lowered = {t.lower() for t in tokens if len(t) >= 3}
+    lowered = _task_path_tokens(task)
     if not lowered:
         return {}
 
@@ -264,32 +258,65 @@ def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
         path = (c.get("file_path") or c.get("file") or "").lower()
         if not path or not sid:
             continue
-        # Split on /, _, ., - so "ruby_lang.py" → {"ruby","lang","py"}
-        parts = set()
-        for piece in path.replace("\\", "/").split("/"):
-            for sub in piece.replace(".", " ").replace("_", " ").replace("-", " ").split():
-                if len(sub) >= 3:
-                    parts.add(sub)
-        # Prefix-match either direction: query token "clone" matches path
-        # component "clones"; query token "extractor" matches path
-        # component "extractors". Cap both sides at length 4 so we don't
-        # over-match short tokens.
-        hits = set()
-        for token in lowered:
-            for part in parts:
-                if (
-                    part == token
-                    or (len(token) >= 4 and part.startswith(token))
-                    or (len(part) >= 4 and token.startswith(part))
-                ):
-                    hits.add(token)
-                    break
+        hits = _token_hits(lowered, _path_parts(path))
         if not hits:
             continue
-        # Up to 0.15 total: 0.075 first-hit, +0.04 each additional, capped.
-        boost = min(0.15, 0.075 + 0.04 * (len(hits) - 1))
-        out[sid] = boost
+        out[sid] = _boost_for_hit_count(len(hits))
     return out
+
+
+def _task_path_tokens(task: str) -> set[str]:
+    """Return lowercased task tokens eligible for path matching."""
+    if not task:
+        return set()
+    tokens = extract_tokens(task)
+    return {t.lower() for t in tokens if len(t) >= 3}
+
+
+def _path_parts(path: str) -> set[str]:
+    """Normalize ``path`` and split it into searchable components.
+
+    Splits on ``/``, ``\\``, ``.``, ``_`` and ``-`` so that
+    ``src/roam/languages/ruby_lang.py`` becomes ``{"src", "roam",
+    "languages", "ruby", "lang", "py"}`` (components under three
+    characters are discarded).
+    """
+    parts: set[str] = set()
+    for piece in path.replace("\\", "/").split("/"):
+        for sub in piece.replace(".", " ").replace("_", " ").replace("-", " ").split():
+            if len(sub) >= 3:
+                parts.add(sub)
+    return parts
+
+
+def _token_hits(tokens: set[str], parts: set[str]) -> set[str]:
+    """Return the subset of ``tokens`` that match at least one path part.
+
+    Prefix-match either direction: query token "clone" matches path
+    component "clones"; query token "extractor" matches path
+    component "extractors". Cap both sides at length 4 so we don't
+    over-match short tokens.
+    """
+    hits: set[str] = set()
+    for token in tokens:
+        for part in parts:
+            if (
+                part == token
+                or (len(token) >= 4 and part.startswith(token))
+                or (len(part) >= 4 and token.startswith(part))
+            ):
+                hits.add(token)
+                break
+    return hits
+
+
+def _boost_for_hit_count(hit_count: int) -> float:
+    """Map the number of matched tokens to a bounded boost magnitude.
+
+    Up to 0.15 total: 0.075 for the first hit, +0.04 for each additional
+    hit, capped.
+    """
+    return min(0.15, 0.075 + 0.04 * (hit_count - 1))
 
 
 def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
