@@ -60,7 +60,7 @@ class ImportRequest:
     symbol_name: str
     target_file: str
 
-    def python_module(self) -> str:
+    def _python_module(self) -> str:
         """Dotted module path of the producer file (Python imports)."""
         return _python_module_path(self.source_file)
 
@@ -80,7 +80,7 @@ def _generate_import(request: ImportRequest) -> str:
     symbol_name = request.symbol_name
 
     if language == "python":
-        return f"from {request.python_module()} import {symbol_name}"
+        return f"from {request._python_module()} import {symbol_name}"
 
     if language in ("javascript", "typescript", "tsx"):
         return f"import {{ {symbol_name} }} from '{request.relative_path()}'"
