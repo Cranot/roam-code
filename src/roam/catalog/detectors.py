@@ -4960,7 +4960,7 @@ def _apply_detector_scopes(conn, scope_ids):
         idiom_reset = set_idiom_scope  # captured for the caller's finally
     except Exception as exc:  # noqa: BLE001 -- optional Python scope should not abort detector runs
         # Optional Python scope should not abort detector runs; unscoped detection is the fallback.
-        log.warning("run_detectors: could not apply idiom scope: %s", exc)
+        log.warning("run_detectors: could not apply idiom scope: %s", exc, exc_info=True)
     # The JS pack keeps its own module-global scope; apply it the same way.
     try:
         from roam.catalog.js_idioms import set_js_idiom_scope
