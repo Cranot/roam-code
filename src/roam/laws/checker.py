@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -596,6 +596,40 @@ def _path_bucket(path: str) -> str:
     return "/".join(dirs[:2])
 
 
+def _is_public_production_symbol(sym: dict, target_kind: str, is_test_file: Callable[[str], bool]) -> bool:
+    """Return True when *sym* is a public, non-test symbol of the target kind.
+
+    This is the eligibility gate that balances test-coverage breadth
+    against false-positive avoidance: we only demand a matching test
+    file for symbols that are (a) of the requested kind, (b) public
+    (no leading underscore), and (c) defined outside an existing test
+    file.
+    """
+    if sym["kind"] != target_kind:
+        return False
+    name = sym["name"]
+    if name.startswith("_"):
+        return False
+    if is_test_file(sym["file"]):
+        return False
+    return True
+
+
+def _collect_test_basenames(parsed: dict, is_test_file: Callable[[str], bool]) -> set[str]:
+    """Build a lowercase-basename index of every test file touched by the diff.
+
+    This normalizes the many framework-specific test-path conventions
+    (``tests/test_*.py``, ``*_test.go``, ``*.test.ts``, …) into a single
+    searchable set so the testing-law checker can answer "was a matching
+    test added?" in O(1) rather than scanning the diff repeatedly.
+    """
+    basenames: set[str] = set()
+    for path in parsed.get("files", {}):
+        if is_test_file(path):
+            basenames.add(path.rsplit("/", 1)[-1].lower())
+    return basenames
+
+
 def _check_testing_law(law: Law, parsed: dict, syms_added: list[dict]) -> list[Violation]:
     """Flag newly-added public symbols of the matching kind when no
     test file with their name is also added in the same diff.
@@ -625,21 +659,13 @@ def _check_testing_law(law: Law, parsed: dict, syms_added: list[dict]) -> list[V
     except ImportError:
         return []
 
-    # Build the set of test-file basenames touched by the diff.
-    diff_test_basenames: set[str] = set()
-    for path in parsed.get("files", {}):
-        if is_test_file(path):
-            diff_test_basenames.add(path.rsplit("/", 1)[-1].lower())
+    diff_test_basenames = _collect_test_basenames(parsed, is_test_file)
 
     violations: list[Violation] = []
     for sym in syms_added:
-        if sym["kind"] != target_kind:
+        if not _is_public_production_symbol(sym, target_kind, is_test_file):
             continue
         name = sym["name"]
-        if name.startswith("_"):
-            continue
-        if is_test_file(sym["file"]):
-            continue
         if _has_matching_test_in_diff(name, diff_test_basenames):
             continue
         violations.append(
