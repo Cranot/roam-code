@@ -56,9 +56,26 @@ def _check_no_circular_imports(conn, G, threshold):
     """Find cycles (SCCs with >= 2 members)."""
     if G is None or len(G) == 0:
         return []
-    from roam.graph.cycles import find_cycle_violations
 
-    return find_cycle_violations(G, conn, min_size=2)
+    cycles = [sorted(component) for component in nx.strongly_connected_components(G) if len(component) >= 2]
+    cycles.sort(key=len, reverse=True)
+    violations = []
+    for cycle in cycles:
+        symbols = [G.nodes[node] for node in cycle]
+        names = [str(symbol.get("name", node)) for node, symbol in zip(cycle, symbols)]
+        files = sorted({symbol.get("file_path", "") for symbol in symbols if symbol.get("file_path")})
+        reason = "cycle of {} symbols: {}".format(len(cycle), ", ".join(names[:5]))
+        if len(names) > 5:
+            reason += " (+{} more)".format(len(names) - 5)
+        violations.append(
+            make_violation(
+                symbol=names[0] if names else "",
+                file=files[0] if files else "",
+                line=None,
+                reason=reason,
+            )
+        )
+    return violations
 
 
 def _check_max_fan_out(conn, G, threshold):
