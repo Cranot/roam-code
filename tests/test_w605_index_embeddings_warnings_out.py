@@ -169,6 +169,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _helpers.repo_root import repo_root  # noqa: E402
 
 from roam.search.index_embeddings import (  # noqa: E402
+    SearchOptions,
     WarningsOut,
     fts5_available,
     fts5_populated,
@@ -245,7 +246,9 @@ def test_clean_search_emits_no_warning(tmp_path: Path) -> None:
     conn = _make_fts5_db(tmp_path)
     try:
         warnings: list[str] = []
-        results = search_stored(conn, "authenticate", top_k=5, warnings_out=warnings)
+        results = search_stored(
+            conn, "authenticate", SearchOptions(top_k=5), warnings_out=warnings
+        )
         assert results, "populated corpus must produce results"
         assert warnings == [], f"clean search must NOT emit warnings; got {warnings!r}"
     finally:
@@ -272,7 +275,9 @@ def test_empty_corpus_silent(tmp_path: Path) -> None:
     ensure_schema(conn)
     try:
         warnings: list[str] = []
-        results = search_stored(conn, "anything", top_k=5, warnings_out=warnings)
+        results = search_stored(
+            conn, "anything", SearchOptions(top_k=5), warnings_out=warnings
+        )
         # Empty results expected; no markers either.
         assert results == [], results
         # Cold-state probes (empty tables, valid schema) must be silent.
@@ -299,7 +304,9 @@ def test_filter_no_matches_silent(tmp_path: Path) -> None:
     try:
         warnings: list[str] = []
         # "zzzzz" doesn't occur in our fixture corpus.
-        _ = search_stored(conn, "zzzzz_no_match", top_k=5, warnings_out=warnings)
+        _ = search_stored(
+            conn, "zzzzz_no_match", SearchOptions(top_k=5), warnings_out=warnings
+        )
         # We don't assert results == [] because hybrid fusion may still
         # return prefix-match hits; we just assert that any markers
         # emitted are NOT from substrate-failure paths.
@@ -542,7 +549,7 @@ def test_default_none_no_crash(tmp_path: Path) -> None:
     # (a) Clean default-args path against populated corpus.
     conn = _make_fts5_db(tmp_path)
     try:
-        results = search_stored(conn, "authenticate", top_k=5)
+        results = search_stored(conn, "authenticate", SearchOptions(top_k=5))
         assert results, "default-args search must still return hits"
     finally:
         conn.close()
@@ -744,8 +751,7 @@ def test_fallback_contract_preserved(tmp_path: Path) -> None:
         results = search_stored(
             conn,
             "authenticate",
-            top_k=5,
-            semantic_backend="tfidf",
+            SearchOptions(top_k=5, semantic_backend="tfidf"),
             warnings_out=warnings,
         )
         # TF-IDF path still produces hits (degraded-but-correct).
@@ -980,8 +986,7 @@ def test_search_stored_threads_warnings_through(tmp_path: Path) -> None:
         _ = search_stored(
             conn,
             "authenticate",
-            top_k=5,
-            semantic_backend="tfidf",
+            SearchOptions(top_k=5, semantic_backend="tfidf"),
             warnings_out=warnings,
         )
         # The corrupt-row marker must surface on the top-level bucket.

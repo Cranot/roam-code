@@ -136,10 +136,12 @@ def test_search_stored_auto_falls_back_to_tfidf(monkeypatch, onnx_project):
         results = search_stored(
             conn,
             "database connection",
-            top_k=5,
-            include_packs=False,
-            semantic_backend="auto",
-            project_root=onnx_project,
+            SearchOptions(
+                top_k=5,
+                include_packs=False,
+                semantic_backend="auto",
+                project_root=onnx_project,
+            ),
         )
 
     assert results
