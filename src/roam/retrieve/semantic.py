@@ -272,7 +272,8 @@ def _load_text_encoder():
     try:
         sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         tokenizer = Tokenizer.from_file(str(tokenizer_path))
-    except _encoder_load_error_types(ort):
+    except _encoder_load_error_types(ort) as exc:
+        log_swallowed("retrieve.semantic:_load_text_encoder:load", exc)
         _ENCODER_LOAD_FAILED = True
         return None
 
