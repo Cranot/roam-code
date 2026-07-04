@@ -444,6 +444,56 @@ def _scope_flag(meta_entry, in_deg, out_deg):
     return ""
 
 
+def _score_fan_flags_for_mode_parity(
+    items_local,
+    *,
+    include_local_only: bool,
+    scanned_count: int,
+) -> dict:
+    """Keep symbol/file run_state classification in one precedence order."""
+    _high_risk = 0
+    _hubs = 0
+    _spreaders = 0
+    _local_only = 0
+    _empty = 0
+    for _it in items_local:
+        _flag = _it["flag"]
+        if _flag == "HIGH-RISK":
+            _high_risk += 1
+        elif _flag == "hub":
+            _hubs += 1
+        elif _flag == "spreader":
+            _spreaders += 1
+        elif include_local_only and _flag in ("local-hub", "local-spreader"):
+            _local_only += 1
+        else:
+            _empty += 1
+    if _high_risk > 0:
+        _state = "HIGH_RISK_DETECTED"
+    elif _hubs > 0 and _spreaders > 0:
+        _state = "HUBS_AND_SPREADERS_DETECTED"
+    elif _hubs > 0:
+        _state = "HUBS_DETECTED"
+    elif _spreaders > 0:
+        _state = "SPREADERS_DETECTED"
+    elif include_local_only and _local_only > 0:
+        _state = "LOCAL_ONLY"
+    else:
+        _state = "BALANCED"
+
+    _score = {
+        "state": _state,
+        "scanned": scanned_count,
+        "high_risk": _high_risk,
+        "hubs": _hubs,
+        "spreaders": _spreaders,
+    }
+    if include_local_only:
+        _score["local_only"] = _local_only
+    _score["empty"] = _empty
+    return _score
+
+
 def _run_check_cy(phase, fn, *args, _warnings_out, default=None, **kwargs):
     """Run one aggregation-phase boundary with W607-CY marker emission.
 
@@ -456,6 +506,60 @@ def _run_check_cy(phase, fn, *args, _warnings_out, default=None, **kwargs):
     except Exception as exc:  # noqa: BLE001 -- top-level disclosure
         _warnings_out.append(f"fan_{phase}_failed:{type(exc).__name__}:{exc}")
         return default
+
+
+def _build_fan_envelope_preserving_warning_contract(
+    *,
+    mode,
+    item_count,
+    items,
+    token_budget,
+    summary,
+    verdict,
+    w607x_warnings_out,
+    w607cy_warnings_out,
+):
+    """Build the JSON envelope while preserving both warning mirrors."""
+    _kwargs: dict = {
+        "budget": token_budget,
+        "summary": summary,
+        "mode": mode,
+        "items": items,
+    }
+    _combined_warnings_out: list[str] = list(w607x_warnings_out) + list(w607cy_warnings_out)
+    if _combined_warnings_out:
+        summary["warnings_out"] = list(_combined_warnings_out)
+        summary["partial_success"] = True
+        _kwargs["warnings_out"] = list(_combined_warnings_out)
+        _kwargs["partial_success"] = True
+
+    _envelope_floor: dict = {
+        "command": "fan",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": verdict,
+            "mode": mode,
+            "items": item_count,
+            "partial_success": True,
+            "warnings_out": list(_combined_warnings_out),
+        },
+        "warnings_out": list(_combined_warnings_out),
+    }
+    fan_envelope = _run_check_cy(
+        "serialize_envelope",
+        json_envelope,
+        "fan",
+        _warnings_out=w607cy_warnings_out,
+        default=_envelope_floor,
+        **_kwargs,
+    )
+    if fan_envelope is _envelope_floor and w607cy_warnings_out:
+        _combined_warnings_out = list(w607x_warnings_out) + list(w607cy_warnings_out)
+        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+        fan_envelope = _envelope_floor
+
+    return fan_envelope
 
 
 def _emit_symbol_json(
@@ -478,44 +582,12 @@ def _emit_symbol_json(
     _symbol_items_count = len(symbol_items)
 
     def _score_classify_symbol(items_local):
-        _high_risk = 0
-        _hubs = 0
-        _spreaders = 0
-        _local_only = 0
-        _empty = 0
-        for _it in items_local:
-            _flag = _it["flag"]
-            if _flag == "HIGH-RISK":
-                _high_risk += 1
-            elif _flag == "hub":
-                _hubs += 1
-            elif _flag == "spreader":
-                _spreaders += 1
-            elif _flag in ("local-hub", "local-spreader"):
-                _local_only += 1
-            else:
-                _empty += 1
-        if _high_risk > 0:
-            _state = "HIGH_RISK_DETECTED"
-        elif _hubs > 0 and _spreaders > 0:
-            _state = "HUBS_AND_SPREADERS_DETECTED"
-        elif _hubs > 0:
-            _state = "HUBS_DETECTED"
-        elif _spreaders > 0:
-            _state = "SPREADERS_DETECTED"
-        elif _local_only > 0:
-            _state = "LOCAL_ONLY"
-        else:
-            _state = "BALANCED"
-        return {
-            "state": _state,
-            "scanned": len(items_local),
-            "high_risk": _high_risk,
-            "hubs": _hubs,
-            "spreaders": _spreaders,
-            "local_only": _local_only,
-            "empty": _empty,
-        }
+        _symbol_items_n = len(items_local)
+        return _score_fan_flags_for_mode_parity(
+            items_local,
+            include_local_only=True,
+            scanned_count=_symbol_items_n,
+        )
 
     _score_dict = _run_check_cy(
         "score_classify",
@@ -584,46 +656,16 @@ def _emit_symbol_json(
         "test_filtered": _test_filtered,
         "run_state": _score_dict["state"],
     }
-    _kwargs: dict = {
-        "budget": token_budget,
-        "summary": _summary,
-        "mode": mode,
-        "items": symbol_items,
-    }
-    _combined_warnings_out: list[str] = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
-    if _combined_warnings_out:
-        _summary["warnings_out"] = list(_combined_warnings_out)
-        _summary["partial_success"] = True
-        _kwargs["warnings_out"] = list(_combined_warnings_out)
-        _kwargs["partial_success"] = True
-
-    _envelope_floor: dict = {
-        "command": "fan",
-        "schema_version": "1.0.0",
-        "summary": {
-            "verdict": _verdict,
-            "mode": mode,
-            "items": len(rows),
-            "partial_success": True,
-            "warnings_out": list(_combined_warnings_out),
-        },
-        "warnings_out": list(_combined_warnings_out),
-    }
-    fan_envelope = _run_check_cy(
-        "serialize_envelope",
-        json_envelope,
-        "fan",
-        _warnings_out=_w607cy_warnings_out,
-        default=_envelope_floor,
-        **_kwargs,
+    return _build_fan_envelope_preserving_warning_contract(
+        mode=mode,
+        item_count=len(rows),
+        items=symbol_items,
+        token_budget=token_budget,
+        summary=_summary,
+        verdict=_verdict,
+        w607x_warnings_out=_w607x_warnings_out,
+        w607cy_warnings_out=_w607cy_warnings_out,
     )
-    if fan_envelope is _envelope_floor and _w607cy_warnings_out:
-        _combined_warnings_out = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
-        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
-        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
-        fan_envelope = _envelope_floor
-
-    return fan_envelope
 
 
 def _emit_file_json(
@@ -646,38 +688,12 @@ def _emit_file_json(
     _file_items_count = len(file_items)
 
     def _score_classify_file(items_local):
-        _high_risk = 0
-        _hubs = 0
-        _spreaders = 0
-        _empty = 0
-        for _it in items_local:
-            _flag = _it["flag"]
-            if _flag == "HIGH-RISK":
-                _high_risk += 1
-            elif _flag == "hub":
-                _hubs += 1
-            elif _flag == "spreader":
-                _spreaders += 1
-            else:
-                _empty += 1
-        if _high_risk > 0:
-            _state = "HIGH_RISK_DETECTED"
-        elif _hubs > 0 and _spreaders > 0:
-            _state = "HUBS_AND_SPREADERS_DETECTED"
-        elif _hubs > 0:
-            _state = "HUBS_DETECTED"
-        elif _spreaders > 0:
-            _state = "SPREADERS_DETECTED"
-        else:
-            _state = "BALANCED"
-        return {
-            "state": _state,
-            "scanned": len(items_local),
-            "high_risk": _high_risk,
-            "hubs": _hubs,
-            "spreaders": _spreaders,
-            "empty": _empty,
-        }
+        _file_items_n = len(items_local)
+        return _score_fan_flags_for_mode_parity(
+            items_local,
+            include_local_only=False,
+            scanned_count=_file_items_n,
+        )
 
     _score_dict = _run_check_cy(
         "score_classify",
@@ -745,46 +761,16 @@ def _emit_file_json(
         "test_filtered": _file_test_filtered,
         "run_state": _score_dict["state"],
     }
-    _kwargs: dict = {
-        "budget": token_budget,
-        "summary": _summary,
-        "mode": mode,
-        "items": file_items,
-    }
-    _combined_warnings_out: list[str] = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
-    if _combined_warnings_out:
-        _summary["warnings_out"] = list(_combined_warnings_out)
-        _summary["partial_success"] = True
-        _kwargs["warnings_out"] = list(_combined_warnings_out)
-        _kwargs["partial_success"] = True
-
-    _envelope_floor: dict = {
-        "command": "fan",
-        "schema_version": "1.0.0",
-        "summary": {
-            "verdict": _verdict,
-            "mode": mode,
-            "items": len(rows),
-            "partial_success": True,
-            "warnings_out": list(_combined_warnings_out),
-        },
-        "warnings_out": list(_combined_warnings_out),
-    }
-    fan_envelope = _run_check_cy(
-        "serialize_envelope",
-        json_envelope,
-        "fan",
-        _warnings_out=_w607cy_warnings_out,
-        default=_envelope_floor,
-        **_kwargs,
+    return _build_fan_envelope_preserving_warning_contract(
+        mode=mode,
+        item_count=len(rows),
+        items=file_items,
+        token_budget=token_budget,
+        summary=_summary,
+        verdict=_verdict,
+        w607x_warnings_out=_w607x_warnings_out,
+        w607cy_warnings_out=_w607cy_warnings_out,
     )
-    if fan_envelope is _envelope_floor and _w607cy_warnings_out:
-        _combined_warnings_out = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
-        _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
-        _envelope_floor["warnings_out"] = list(_combined_warnings_out)
-        fan_envelope = _envelope_floor
-
-    return fan_envelope
 
 
 @roam_capability(
