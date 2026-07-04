@@ -1015,9 +1015,14 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
     # and `roam retrieve` already depend on.
     try:
         _emit_clone_findings(conn, pairs)
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
         # findings table missing (pre-W89 schema) — degrade gracefully.
-        pass
+        log.debug(
+            "clone findings mirror skipped for %d pairs (%s: %s)",
+            len(pairs),
+            type(exc).__name__,
+            exc,
+        )
 
 
 def _batch_resolve_symbol_ids(
