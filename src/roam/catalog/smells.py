@@ -1873,6 +1873,47 @@ def _extract_param_annotation(param: str) -> str | None:
     return None
 
 
+def _primitive_obsession_finding_when_primitives_dominate(r: sqlite3.Row) -> dict | None:
+    """Build a finding only after the signature's typed-param evidence is complete."""
+    # Re-use the dead-params exemption logic: constructors / dataclass
+    # auto-generated / pytest lifecycle hooks all get a pass.
+    if _is_dead_params_exempt(r["name"], r["parent_decorators"]):
+        return None
+
+    params = _split_signature_params(r["signature"])
+    # Only consider params with an explicit type annotation. An un-annotated
+    # param contributes nothing -- we can't tell what the caller is passing.
+    annotations = [
+        ann
+        for param in params
+        if (ann := _extract_param_annotation(param)) is not None
+    ]
+    annotated_total = len(annotations)
+    if annotated_total < 4:
+        return None
+
+    primitive_count = sum(1 for ann in annotations if _is_primitive_annotation(ann))
+    ratio = primitive_count / annotated_total
+    if ratio < 0.75:
+        return None
+
+    loc_str = _loc(r["file_path"], r["line_start"])
+    return _finding(
+        "primitive-obsession",
+        "info",
+        r["name"],
+        r["kind"],
+        loc_str,
+        primitive_count,
+        4,
+        (
+            f"Primitive obsession: {primitive_count}/{annotated_total} "
+            f"params ({ratio:.0%}) are bare primitives -- consider "
+            f"a value object"
+        ),
+    )
+
+
 # Tier: heuristic — name-pattern check over the type annotation (``int`` /
 # ``str`` / ``bool`` / ``float`` / ``Optional<primitive>``). Whether a bare
 # primitive is "the right type" is project-dependent (some domains
@@ -1926,48 +1967,11 @@ def detect_primitive_obsession(conn: sqlite3.Connection) -> list[dict]:
         except sqlite3.OperationalError:
             return []
 
-    results: list[dict] = []
-    for r in rows:
-        # Re-use the dead-params exemption logic: constructors / dataclass
-        # auto-generated / pytest lifecycle hooks all get a pass.
-        if _is_dead_params_exempt(r["name"], r["parent_decorators"]):
-            continue
-        params = _split_signature_params(r["signature"])
-        # Only consider params with an explicit type annotation. An
-        # un-annotated param contributes nothing -- we can't tell what
-        # the caller is passing.
-        annotated_total = 0
-        primitive_count = 0
-        for p in params:
-            ann = _extract_param_annotation(p)
-            if ann is None:
-                continue
-            annotated_total += 1
-            if _is_primitive_annotation(ann):
-                primitive_count += 1
-        if annotated_total < 4:
-            continue
-        ratio = primitive_count / annotated_total
-        if ratio < 0.75:
-            continue
-        loc_str = _loc(r["file_path"], r["line_start"])
-        results.append(
-            _finding(
-                "primitive-obsession",
-                "info",
-                r["name"],
-                r["kind"],
-                loc_str,
-                primitive_count,
-                4,
-                (
-                    f"Primitive obsession: {primitive_count}/{annotated_total} "
-                    f"params ({ratio:.0%}) are bare primitives -- consider "
-                    f"a value object"
-                ),
-            )
-        )
-    return results
+    findings = (
+        _primitive_obsession_finding_when_primitives_dominate(r)
+        for r in rows
+    )
+    return [finding for finding in findings if finding is not None]
 
 
 # ---------------------------------------------------------------------------
