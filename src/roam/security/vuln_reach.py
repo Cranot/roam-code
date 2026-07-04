@@ -22,26 +22,35 @@ def _blast_radius(G: nx.DiGraph, node: int) -> int:
         return 0
 
 
-def _shortest_path_to(G: nx.DiGraph, entries: list[int], target: int) -> list[int] | None:
-    """Find shortest path from any entry point to the target node.
-
-    Returns the path as a list of node IDs, or None if unreachable.
-    """
-    best: list[int] | None = None
-    for entry in entries:
-        try:
-            path = nx.shortest_path(G, entry, target)
-            if best is None or len(path) < len(best):
-                best = path
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            continue
-    return best
-
-
 def _node_name(G: nx.DiGraph, node_id: int) -> str:
     """Get the display name for a graph node."""
     data = G.nodes.get(node_id, {})
     return data.get("qualified_name") or data.get("name", str(node_id))
+
+
+def _preserve_entry_reachability_evidence(G: nx.DiGraph, entries: list[int], target: int) -> dict:
+    """Keep batch and CVE projections using the same graph evidence."""
+    best_path: list[int] | None = None
+    reaching_entries: list[str] = []
+
+    for entry in entries:
+        try:
+            path = nx.shortest_path(G, entry, target)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            continue
+
+        reaching_entries.append(_node_name(G, entry))
+        if best_path is None or len(path) < len(best_path):
+            best_path = path
+
+    path = best_path or []
+    return {
+        "path": path,
+        "path_names": [_node_name(G, n) for n in path],
+        "hop_count": len(path) - 1 if path else 0,
+        "blast_radius": _blast_radius(G, target),
+        "entry_points_reaching": reaching_entries,
+    }
 
 
 def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
@@ -86,16 +95,17 @@ def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
         }
 
         if symbol_id is not None and symbol_id in G:
-            path = _shortest_path_to(G, entries, symbol_id)
-            if path is not None:
+            evidence = _preserve_entry_reachability_evidence(G, entries, symbol_id)
+            path = evidence["path"]
+            if path:
                 result["reachable"] = 1
                 result["path"] = path
-                result["path_names"] = [_node_name(G, n) for n in path]
-                result["hop_count"] = len(path) - 1
+                result["path_names"] = evidence["path_names"]
+                result["hop_count"] = evidence["hop_count"]
             else:
                 result["reachable"] = -1  # unreachable
 
-            result["blast_radius"] = _blast_radius(G, symbol_id)
+            result["blast_radius"] = evidence["blast_radius"]
 
             reachability_updates.append(
                 (
@@ -231,26 +241,15 @@ def reach_for_cve(conn: sqlite3.Connection, G: nx.DiGraph, cve_id: str) -> dict:
         return result
 
     entries = _entry_points(G)
-    result["blast_radius"] = _blast_radius(G, symbol_id)
+    evidence = _preserve_entry_reachability_evidence(G, entries, symbol_id)
+    result["blast_radius"] = evidence["blast_radius"]
 
-    # Check which entry points can reach the vuln
-    best_path: list[int] | None = None
-    reaching_entries: list[str] = []
-
-    for eid in entries:
-        try:
-            path = nx.shortest_path(G, eid, symbol_id)
-            reaching_entries.append(_node_name(G, eid))
-            if best_path is None or len(path) < len(best_path):
-                best_path = path
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            continue
-
-    if best_path is not None:
+    path = evidence["path"]
+    if path:
         result["reachable"] = True
-        result["path"] = best_path
-        result["path_names"] = [_node_name(G, n) for n in best_path]
-        result["hop_count"] = len(best_path) - 1
+        result["path"] = path
+        result["path_names"] = evidence["path_names"]
+        result["hop_count"] = evidence["hop_count"]
 
-    result["entry_points_reaching"] = reaching_entries
+    result["entry_points_reaching"] = evidence["entry_points_reaching"]
     return result
