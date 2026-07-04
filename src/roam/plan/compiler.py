@@ -8247,6 +8247,59 @@ def _is_private_search_root(d: str, cwd: str) -> bool:
     return any(p in _PRIVATE_DIR_NAMES for p in parts)
 
 
+def _named_path_root_preserving_snippet_privacy(raw_path: object, cwd: str) -> str | None:
+    """Accept one named-path root only when it keeps grep snippets public."""
+    if not isinstance(raw_path, str):
+        return None
+    full = raw_path if os.path.isabs(raw_path) else os.path.join(cwd, raw_path)
+    d = full if os.path.isdir(full) else os.path.dirname(full)
+    if not d:
+        return None
+    if not os.path.isdir(d):
+        return None
+    if _is_private_search_root(d, cwd):
+        return None
+    return d
+
+
+def _grep_root_preserving_snippet_privacy(named_paths: list[str], cwd: str) -> str:
+    """Return the first named-path directory that keeps grep snippets public."""
+    for p in named_paths or []:
+        d = _named_path_root_preserving_snippet_privacy(p, cwd)
+        if d:
+            return d
+    return cwd
+
+
+def _grep_patterns_preserving_match_totals(
+    patterns: list[str], search_root: str, cwd: str
+) -> tuple[dict[str, list[dict]], dict[str, int]]:
+    """Run literal grep probes while keeping total counts beside capped hits."""
+    matches: dict[str, list[dict]] = {}
+    total_matches_by_pat: dict[str, int] = {}
+    for pat in patterns:
+        res = _grep_one_pattern(pat, search_root, repo_root=cwd)
+        if not res:
+            continue
+        lines, total = res
+        if total:
+            total_matches_by_pat[pat] = total
+        matches[pat] = lines
+    return matches, total_matches_by_pat
+
+
+def _grep_hit_marker_counts_for_untrusted_framing(
+    matches: dict[str, list[dict]],
+) -> dict[str, int]:
+    """Count prompt-injection markers so grep hits stay framed as data."""
+    injection_markers: dict[str, int] = {}
+    for hits in matches.values():
+        for h in hits:
+            for mid, n in scan_prompt_injection_markers(h.get("content") or "").items():
+                injection_markers[mid] = injection_markers.get(mid, 0) + n
+    return injection_markers
+
+
 def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> dict | None:
     """W196 — pre-run grep for literal patterns mentioned in the task.
     Replaces the 22% of agent tool calls that are Grep."""
@@ -8258,26 +8311,12 @@ def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> 
     # Pick search root: a directory from named_paths if one exists AND is not
     # private (W196 safety — a private named path like `internal/foo` must not
     # become the grep root and leak private snippets), else repo root.
-    search_root = cwd
-    for p in named_paths or []:
-        if isinstance(p, str):
-            full = p if os.path.isabs(p) else os.path.join(cwd, p)
-            d = full if os.path.isdir(full) else os.path.dirname(full)
-            if d and os.path.isdir(d) and not _is_private_search_root(d, cwd):
-                search_root = d
-                break
+    search_root = _grep_root_preserving_snippet_privacy(named_paths, cwd)
     # W196 — `roam grep` per pattern (ripgrep under the hood, ~0.16s,
     # enclosing_symbol per hit, W147 cache, --source-only).
-    matches: dict[str, list[dict]] = {}
-    total_matches_by_pat: dict[str, int] = {}
-    for pat in patterns:
-        res = _grep_one_pattern(pat, search_root, repo_root=cwd)
-        if not res:
-            continue
-        lines, total = res
-        if total:
-            total_matches_by_pat[pat] = total
-        matches[pat] = lines
+    matches, total_matches_by_pat = _grep_patterns_preserving_match_totals(
+        patterns, search_root, cwd
+    )
     if not matches:
         return None
     # Each embedded hit `content` line is verbatim bytes of a REPOSITORY file —
@@ -8288,11 +8327,7 @@ def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> 
     # hit content for markers and frame the whole block as untrusted DATA so the
     # agent treats any directive inside a matched line as code under analysis,
     # never as guidance. (Mirrors _freeform_full_file_body / _read_file_slice.)
-    injection_markers: dict[str, int] = {}
-    for hits in matches.values():
-        for h in hits:
-            for mid, n in scan_prompt_injection_markers(h.get("content") or "").items():
-                injection_markers[mid] = injection_markers.get(mid, 0) + n
+    injection_markers = _grep_hit_marker_counts_for_untrusted_framing(matches)
     out = {
         "grep_results": {
             "patterns": list(matches.keys()),
