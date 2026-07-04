@@ -444,22 +444,7 @@ class RoamPluginContext(_RoamPluginCoreRegistration, _RoamPluginExtensionRegistr
             )
     """
 
-    def declare(
-        self,
-        *,
-        name: str,
-        version: str = "0.1.0",
-        description: str = "",
-    ) -> None:
-        """Declare this plugin's identity.
-
-        Optional — if a plugin doesn't call ``declare()``, we infer the
-        name from the entry-point key. Calling ``declare()`` explicitly
-        is recommended because it lets a single plugin package expose
-        multiple entry points (e.g. ``nextjs`` and ``nextjs-edge``)
-        with distinct metadata.
-        """
-        self._declare_plugin(name=name, version=version, description=description)
+    declare = _RoamPluginCoreRegistration._declare_plugin
 
 
 _PLUGIN_CONTEXT_PUBLIC_METHODS: Mapping[str, Callable[..., None]] = MappingProxyType(
