@@ -1615,6 +1615,120 @@ def _extract_python_version_from_workflow(text: str) -> str | None:
     return match.group(1)
 
 
+def _build_ci_drift_pairs(
+    github_template: str,
+    templates_dir: Path,
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Return template/live pairs and any missing-bundled-template labels.
+
+    The returned ``pairs`` are ``(label, raw_template_text, live_rel_path)``.
+    A registered template whose bundled file is absent is still represented
+    by a pair with empty template text so the caller can record it as
+    ``template_missing`` without a second lookup pass.
+    """
+    pairs: list[tuple[str, str, str]] = [
+        # (label, raw_template_text, live_path_relative)
+        ("roam.yml", github_template, ".github/workflows/roam.yml"),
+    ]
+    template_missing: list[str] = []
+    for template_filename, live_rel in _github_template_registry():
+        template_path = templates_dir / template_filename
+        if not template_path.exists():
+            # Packaging error — record but don't fail the check; the
+            # "Required tables" / installer-level checks cover this.
+            pairs.append((template_filename, "", live_rel))
+            template_missing.append(template_filename)
+            continue
+        pairs.append(
+            (
+                template_filename,
+                template_path.read_text(encoding="utf-8"),
+                live_rel,
+            )
+        )
+    return pairs, template_missing
+
+
+def _compare_one_ci_pair(
+    label: str,
+    raw_template: str,
+    live_rel: str,
+    default_python_version: str,
+    project_root: Path,
+    substitute_vars: Callable[[str, dict[str, str]], str],
+) -> tuple[dict | None, bool]:
+    """Compare one bundled template against its live workflow.
+
+    Returns ``(record, checked)``. ``record`` is ``None`` when the live
+    workflow matches the template; otherwise it carries the drift, missing,
+    or unreadable state. ``checked`` is ``True`` when a live file was
+    examined (it existed and was readable).
+    """
+    live_path = project_root / live_rel
+    if not live_path.exists():
+        return (
+            {
+                "template": label,
+                "live_path": live_rel,
+                "state": "not_emitted",
+            },
+            False,
+        )
+
+    try:
+        live_text = live_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return (
+            {
+                "template": label,
+                "live_path": live_rel,
+                "state": "unreadable",
+                "diff_summary": f"{type(exc).__name__}: {exc}",
+            },
+            True,
+        )
+
+    # W515 — substitute with the live file's own python-version pin if one
+    # is present. Falls back to the bundled default for templates that don't
+    # declare the placeholder or live files without a pin (identical to the
+    # pre-W515 behaviour).
+    live_python_version = _extract_python_version_from_workflow(live_text)
+    rendered = substitute_vars(
+        raw_template,
+        {"python_version": live_python_version or default_python_version},
+    )
+    live_norm = _normalize_workflow_yaml(live_text)
+    tmpl_norm = _normalize_workflow_yaml(rendered)
+    if live_norm == tmpl_norm:
+        return None, True
+
+    # Lightweight diff summary: line counts + first divergence. A full
+    # unified diff would balloon the doctor envelope; we keep it one-line
+    # and let the user re-emit to see the structural diff.
+    live_lines = live_norm.splitlines()
+    tmpl_lines = tmpl_norm.splitlines()
+    first_diverge = 0
+    for i, (a, b) in enumerate(zip(live_lines, tmpl_lines)):
+        if a != b:
+            first_diverge = i + 1  # 1-based
+            break
+    else:
+        first_diverge = min(len(live_lines), len(tmpl_lines)) + 1
+
+    return (
+        {
+            "template": label,
+            "live_path": live_rel,
+            "state": "drifted",
+            "diff_summary": (
+                f"{len(live_lines)} live vs {len(tmpl_lines)} template lines; "
+                f"first divergence at line {first_diverge}"
+            ),
+        },
+        True,
+    )
+
+
 def _check_ci_workflow_drift() -> dict:
     """Detect drift between emitted GitHub workflows and canonical templates.
 
@@ -1656,102 +1770,36 @@ def _check_ci_workflow_drift() -> dict:
 
     # Default substitution variables — match cmd_ci_setup's defaults so the
     # rendered template matches what `ci-setup --write` would produce with
-    # no flags. W515 — we ALSO read the live file's python-version pin and
-    # re-substitute before diffing: a user who passed
-    # `roam ci-setup --python-version 3.11 --write` should not be told they
-    # have drift on every doctor run when the only divergence is the pin
-    # they explicitly chose. Only structural divergence is real drift.
+    # no flags.
     default_python_version = _get_python_version()
 
-    # Carry the raw template text per pair so we can re-render after
-    # reading the live file's pin. Templates without a python_version
-    # placeholder are unaffected (substitution is a no-op).
-    inline_pairs: list[tuple[str, str, str]] = [
-        # (label, raw_template_text, live_path_relative)
-        ("roam.yml", _GITHUB_TEMPLATE, ".github/workflows/roam.yml"),
-    ]
-    file_pairs: list[tuple[str, str, str]] = []
-    for template_filename, live_rel in _github_template_registry():
-        template_path = templates_dir / template_filename
-        if not template_path.exists():
-            # Packaging error — record but don't fail the check; the
-            # "Required tables" / installer-level checks cover this.
-            file_pairs.append((template_filename, "", live_rel))
-            continue
-        file_pairs.append((template_filename, template_path.read_text(encoding="utf-8"), live_rel))
+    all_pairs, template_missing = _build_ci_drift_pairs(
+        _GITHUB_TEMPLATE, templates_dir
+    )
 
-    all_pairs = inline_pairs + file_pairs
-
-    checked = 0
-    drifted: list[dict] = []
-    missing: list[dict] = []
-    template_missing: list[str] = []
-
-    for label, raw_template, live_rel in all_pairs:
-        if not raw_template:
-            template_missing.append(label)
-            continue
-        live_path = project_root / live_rel
-        if not live_path.exists():
-            missing.append(
-                {
-                    "template": label,
-                    "live_path": live_rel,
-                    "state": "not_emitted",
-                }
-            )
-            continue
-        try:
-            live_text = live_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            drifted.append(
-                {
-                    "template": label,
-                    "live_path": live_rel,
-                    "state": "unreadable",
-                    "diff_summary": f"{type(exc).__name__}: {exc}",
-                }
-            )
-            checked += 1
-            continue
-        checked += 1
-        # W515 — substitute with the live file's own python-version pin
-        # if one is present. Falls back to the bundled default for
-        # templates that don't declare the placeholder or live files
-        # without a pin (in which case the result is identical to the
-        # pre-W515 behaviour).
-        live_python_version = _extract_python_version_from_workflow(live_text)
-        rendered = _substitute_vars(
+    pair_results = [
+        _compare_one_ci_pair(
+            label,
             raw_template,
-            {"python_version": live_python_version or default_python_version},
+            live_rel,
+            default_python_version,
+            project_root,
+            _substitute_vars,
         )
-        live_norm = _normalize_workflow_yaml(live_text)
-        tmpl_norm = _normalize_workflow_yaml(rendered)
-        if live_norm == tmpl_norm:
-            continue
-        # Lightweight diff summary: line counts + first divergence. A full
-        # unified diff would balloon the doctor envelope; we keep it
-        # one-line and let the user re-emit to see the structural diff.
-        live_lines = live_norm.splitlines()
-        tmpl_lines = tmpl_norm.splitlines()
-        first_diverge = 0
-        for i, (a, b) in enumerate(zip(live_lines, tmpl_lines)):
-            if a != b:
-                first_diverge = i + 1  # 1-based
-                break
-        else:
-            first_diverge = min(len(live_lines), len(tmpl_lines)) + 1
-        drifted.append(
-            {
-                "template": label,
-                "live_path": live_rel,
-                "state": "drifted",
-                "diff_summary": (
-                    f"{len(live_lines)} live vs {len(tmpl_lines)} template lines; "
-                    f"first divergence at line {first_diverge}"
-                ),
-            }
-        )
+        for label, raw_template, live_rel in all_pairs
+        if raw_template
+    ]
+    checked = sum(was_checked for _, was_checked in pair_results)
+    drifted = [
+        record
+        for record, _ in pair_results
+        if record is not None and record["state"] != "not_emitted"
+    ]
+    missing = [
+        record
+        for record, _ in pair_results
+        if record is not None and record["state"] == "not_emitted"
+    ]
 
     # If no live workflows AND no drifted entries, the feature isn't in
     # use here — advisory pass.
