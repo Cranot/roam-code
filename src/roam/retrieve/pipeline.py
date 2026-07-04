@@ -51,23 +51,12 @@ class RetrieveOptions:
     first_stage_limit: int = 200
     weights: dict[str, float] | None = None
 
-    def with_defaults(self, defaults: "RetrieveOptions") -> "RetrieveOptions":
-        """Return a new options object filling any ``None`` fields from *defaults*."""
-        return RetrieveOptions(
-            budget=self.budget,
-            k=self.k,
-            rerank=self.rerank,
-            first_stage_limit=self.first_stage_limit,
-            weights=self.weights if self.weights is not None else defaults.weights,
-        )
-
 
 def _resolve_options(options: RetrieveOptions | None) -> RetrieveOptions:
     """Return concrete options, applying the built-in defaults."""
-    defaults = RetrieveOptions()
     if options is None:
-        return defaults
-    return options.with_defaults(defaults)
+        return RetrieveOptions()
+    return options
 
 
 def _retrieve_settings(
