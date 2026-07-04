@@ -792,6 +792,83 @@ def _restore_annotations(conn, saved):
     _log(f"  Restored {len(saved)} annotations")
 
 
+def _file_ids_for_paths(conn, paths: list[str]) -> list[int]:
+    """Return existing file IDs for repo-relative paths."""
+    changed_file_ids = []
+    for path in paths:
+        row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+        if row:
+            changed_file_ids.append(row["id"])
+    return changed_file_ids
+
+
+def _clear_nullable_symbol_refs(conn, file_id: int) -> None:
+    """Clear optional references before deleting a file's symbols."""
+    sym_ids = [r[0] for r in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()]
+    if not sym_ids:
+        return
+    ph = ",".join("?" for _ in sym_ids)
+    for cleanup_sql in [
+        f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
+        f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
+    ]:
+        try:
+            conn.execute(cleanup_sql, sym_ids)
+        except Exception as exc:
+            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+            # missing runtime_stats / vulnerabilities table is expected on
+            # older DBs, but a genuine sqlite error silently leaves dangling
+            # symbol_id references after the file's symbols are deleted.
+            # Surface the lineage to distinguish expected-absence from a
+            # broken cascade.
+            log_swallowed("index.indexer:clear_nullable_symbol_refs", exc)
+
+
+def _delete_changed_files(conn, paths: list[str]) -> None:
+    """Delete changed file rows after clearing nullable symbol references."""
+    for path in paths:
+        row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+        if not row:
+            continue
+        fid = row["id"]
+        _clear_nullable_symbol_refs(conn, fid)
+        conn.execute("DELETE FROM files WHERE id = ?", (fid,))
+
+
+def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
+    # W708: also select line_end so the relations resolver's
+    # _closest_symbol fallback can identify the containing
+    # method/function for a reference on incremental reindex
+    # paths (where most symbols come from this merge, not from
+    # _store_symbols).
+    existing_rows = conn.execute(
+        "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
+        "s.is_exported, s.line_start, s.line_end, f.path as file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id"
+    ).fetchall()
+    for row in existing_rows:
+        sid = row["id"]
+        if sid in all_symbol_rows:
+            continue
+        all_symbol_rows[sid] = {
+            "id": sid,
+            "file_id": row["file_id"],
+            "file_path": row["file_path"],
+            "name": row["name"],
+            "qualified_name": row["qualified_name"],
+            "kind": row["kind"],
+            "is_exported": bool(row["is_exported"]),
+            "line_start": row["line_start"],
+            "line_end": row["line_end"],
+        }
+
+
+def _refresh_file_id_map(conn, file_id_by_path: dict) -> None:
+    """Refresh ``{path: file_id}`` after file rows have changed."""
+    for row in conn.execute("SELECT id, path FROM files").fetchall():
+        file_id_by_path[row["path"]] = row["id"]
+
+
 # --- Framework post-resolver plumbing -------------------------------------
 # The four post-resolution passes (django / pytest fixtures / laravel /
 # registry-dispatch) share identical try/except scaffolding around a single
@@ -1455,78 +1532,6 @@ class Indexer:
             if wal.exists():
                 wal.unlink()
         return saved_annotations
-
-    @staticmethod
-    def _file_ids_for_paths(conn, paths: list[str]) -> list[int]:
-        changed_file_ids = []
-        for path in paths:
-            row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-            if row:
-                changed_file_ids.append(row["id"])
-        return changed_file_ids
-
-    @staticmethod
-    def _clear_nullable_symbol_refs(conn, file_id: int) -> None:
-        sym_ids = [r[0] for r in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()]
-        if not sym_ids:
-            return
-        ph = ",".join("?" for _ in sym_ids)
-        for cleanup_sql in [
-            f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
-            f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
-        ]:
-            try:
-                conn.execute(cleanup_sql, sym_ids)
-            except Exception as exc:
-                # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-                # missing runtime_stats / vulnerabilities table is expected on
-                # older DBs, but a genuine sqlite error silently leaves dangling
-                # symbol_id references after the file's symbols are deleted.
-                # Surface the lineage to distinguish expected-absence from a
-                # broken cascade.
-                log_swallowed("index.indexer:clear_nullable_symbol_refs", exc)
-
-    def _delete_changed_files(self, conn, paths: list[str]) -> None:
-        for path in paths:
-            row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-            if not row:
-                continue
-            fid = row["id"]
-            self._clear_nullable_symbol_refs(conn, fid)
-            conn.execute("DELETE FROM files WHERE id = ?", (fid,))
-
-    @staticmethod
-    def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
-        # W708: also select line_end so the relations resolver's
-        # _closest_symbol fallback can identify the containing
-        # method/function for a reference on incremental reindex
-        # paths (where most symbols come from this merge, not from
-        # _store_symbols).
-        existing_rows = conn.execute(
-            "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
-            "s.is_exported, s.line_start, s.line_end, f.path as file_path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id"
-        ).fetchall()
-        for row in existing_rows:
-            sid = row["id"]
-            if sid in all_symbol_rows:
-                continue
-            all_symbol_rows[sid] = {
-                "id": sid,
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-                "name": row["name"],
-                "qualified_name": row["qualified_name"],
-                "kind": row["kind"],
-                "is_exported": bool(row["is_exported"]),
-                "line_start": row["line_start"],
-                "line_end": row["line_end"],
-            }
-
-    @staticmethod
-    def _refresh_file_id_map(conn, file_id_by_path: dict) -> None:
-        for row in conn.execute("SELECT id, path FROM files").fetchall():
-            file_id_by_path[row["path"]] = row["id"]
 
     def _resolve_and_store_edges(self, conn, all_references, all_symbol_rows, file_id_by_path) -> None:
         # Phase header is emitted by ``_do_run`` via ``_begin_phase``; the
@@ -2268,7 +2273,7 @@ class Indexer:
             self._log(f"  {len(added)} added, {len(modified)} modified, {len(removed)} removed")
 
             changed_paths = removed + modified
-            changed_file_ids = self._file_ids_for_paths(conn, changed_paths)
+            changed_file_ids = _file_ids_for_paths(conn, changed_paths)
             affected_file_ids = set()
             if not force and changed_file_ids:
                 # A pure rename (modified=[], removed=[old]) still needs neighbor
@@ -2277,7 +2282,7 @@ class Indexer:
                 # symbol id. Gating on `modified` truthiness skipped that path.
                 affected_file_ids = self._find_affected_neighbor_files(conn, changed_file_ids)
 
-            self._delete_changed_files(conn, changed_paths)
+            _delete_changed_files(conn, changed_paths)
 
             get_extractor = _try_import_get_extractor()
             compute_complexity_fn = _try_import_complexity()
@@ -2295,9 +2300,9 @@ class Indexer:
 
             # Load existing symbols for incremental
             if not force:
-                self._merge_existing_symbols(conn, all_symbol_rows)
+                _merge_existing_symbols(conn, all_symbol_rows)
 
-            self._refresh_file_id_map(conn, file_id_by_path)
+            _refresh_file_id_map(conn, file_id_by_path)
 
             # Fix incremental edge loss: re-extract only affected neighbors
             # instead of all unchanged files (O(affected) vs O(N)).
