@@ -331,6 +331,30 @@ def _render_agent_prompt(describe: dict) -> str:
     return "\n".join(fragments)
 
 
+def _render_sections(audit: dict, describe: dict, bus_factor: dict, map_data: dict) -> dict:
+    """Render the nine narrative-block placeholders from gathered roam output.
+
+    Returns the ``{{...}}`` entries whose values come from the per-section
+    renderers (plus the roam version). The scalar top-line metrics stay
+    inline in ``main``; isolating the renderer fan-out here keeps the entry
+    point's outgoing-call count under the message-chain threshold instead
+    of concentrating all nine renderer calls in one place.
+    """
+    sections = audit.get("sections") or {}
+    health_section = sections.get("health") or {}
+    return {
+        "{{REPO_OVERVIEW}}": _render_overview(describe),
+        "{{ARCHITECTURE_MAP}}": _render_skeleton(map_data, health_section),
+        "{{HEALTH_FINDINGS}}": _render_health(health_section),
+        "{{RISK_FINDINGS}}": _render_risk(sections.get("hotspots_danger") or {}),
+        "{{DEAD_FINDINGS}}": _render_dead(sections.get("dead") or {}),
+        "{{OWNER_FINDINGS}}": _render_bus_factor(bus_factor),
+        "{{TEST_FINDINGS}}": _render_test(sections),
+        "{{AGENT_PROMPT_BLOCK}}": _render_agent_prompt(describe),
+        "{{ROAM_VERSION}}": _detect_roam_version(),
+    }
+
+
 # -------------------------------------------------------------------- main ---
 
 
@@ -390,15 +414,7 @@ def main() -> int:
         "{{API_SURFACE}}": str(summary.get("api_surface") or audit.get("api_count") or "n/a"),
         "{{FILE_TOTAL}}": str(stats_summary.get("file_total") or summary.get("file_total", "n/a")),
         "{{SYMBOL_TOTAL}}": str(stats_summary.get("symbol_total") or summary.get("symbol_total", "n/a")),
-        "{{REPO_OVERVIEW}}": _render_overview(describe),
-        "{{ARCHITECTURE_MAP}}": _render_skeleton(map_data, health_section),
-        "{{HEALTH_FINDINGS}}": _render_health(health_section),
-        "{{RISK_FINDINGS}}": _render_risk(sections.get("hotspots_danger") or {}),
-        "{{DEAD_FINDINGS}}": _render_dead(dead_section),
-        "{{OWNER_FINDINGS}}": _render_bus_factor(bus_factor),
-        "{{TEST_FINDINGS}}": _render_test(sections),
-        "{{AGENT_PROMPT_BLOCK}}": _render_agent_prompt(describe),
-        "{{ROAM_VERSION}}": _detect_roam_version(),
+        **_render_sections(audit, describe, bus_factor, map_data),
     }
 
     rendered = template
