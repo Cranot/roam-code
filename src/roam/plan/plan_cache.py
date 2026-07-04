@@ -96,7 +96,8 @@ def _run_roam_persist_path(cwd: str | None) -> str | None:
         path = os.path.join(roam_dir, "compile-envelope-cache.sqlite")
         _persist_sweep_stale_generation(path, cwd)
         return path
-    except (OSError, TypeError):
+    except (OSError, TypeError) as exc:
+        log_swallowed("compile.run_roam_persist.path", exc)
         return None
 
 
