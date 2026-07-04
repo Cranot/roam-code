@@ -911,6 +911,68 @@ def _row_violation_reasons(row, requires, compiled_regex, conn) -> list[str]:
     return reasons
 
 
+def _build_symbol_match_query_with_filters(
+    conn, kind_filter, exported_filter
+) -> tuple[str, list]:
+    """Return the SQL query and parameters for a symbol_match rule.
+
+    Pushes cheap, SQL-expressible filters (kind, exported) into the query
+    so the Python loop only has to handle pattern-based criteria.
+    """
+    query = _build_symbol_match_query(conn)
+    params: list = []
+    if kind_filter:
+        if isinstance(kind_filter, str):
+            kind_filter = [kind_filter]
+        placeholders = ",".join("?" for _ in kind_filter)
+        query += f" AND s.kind IN ({placeholders})"
+        params.extend(kind_filter)
+    if exported_filter is True:
+        query += " AND s.is_exported = 1"
+    elif exported_filter is False:
+        query += " AND s.is_exported = 0"
+    return query, params
+
+
+def _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt) -> bool:
+    """Apply post-SQL filters that are too expressive for plain SQL."""
+    file_path = row["file_path"]
+    symbol_name = row["name"]
+    in_deg = _as_float_or_none(row["in_degree"]) or 0.0
+
+    if file_glob and not _matches_glob(file_path, file_glob):
+        return False
+    if min_fan_in is not None and in_deg < float(min_fan_in):
+        return False
+    if max_fan_in is not None and in_deg > float(max_fan_in):
+        return False
+    if _is_exempt(symbol_name, file_path, exempt):
+        return False
+    return True
+
+
+def _violation_or_skip_for_row(
+    row, has_requirements: bool, requires: dict, compiled_regex, conn
+) -> dict | None:
+    """Format a violation for a row that survived filters, or None to skip."""
+    if has_requirements:
+        reasons = _row_violation_reasons(row, requires, compiled_regex, conn)
+        if not reasons:
+            return None
+        return {
+            "symbol": row["name"],
+            "file": row["file_path"],
+            "line": row["line_start"],
+            "reason": "; ".join(reasons),
+        }
+    return {
+        "symbol": row["name"],
+        "file": row["file_path"],
+        "line": row["line_start"],
+        "reason": f"{row['name']} matches rule criteria",
+    }
+
+
 def _evaluate_symbol_match(rule: dict, conn) -> dict:
     """Evaluate a symbol_match rule: find symbols matching criteria.
 
@@ -946,19 +1008,9 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
             ],
         }
 
-    query = _build_symbol_match_query(conn)
-    params: list = []
-    if kind_filter:
-        if isinstance(kind_filter, str):
-            kind_filter = [kind_filter]
-        placeholders = ",".join("?" for _ in kind_filter)
-        query += f" AND s.kind IN ({placeholders})"
-        params.extend(kind_filter)
-    if exported_filter is True:
-        query += " AND s.is_exported = 1"
-    elif exported_filter is False:
-        query += " AND s.is_exported = 0"
-
+    query, params = _build_symbol_match_query_with_filters(
+        conn, kind_filter, exported_filter
+    )
     rows = conn.execute(query, params).fetchall()
 
     has_requirements = any(
@@ -976,40 +1028,13 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
     violations: list[dict] = []
     for row in rows:
-        file_path = row["file_path"]
-        symbol_name = row["name"]
-        in_deg = _as_float_or_none(row["in_degree"]) or 0.0
-
-        if file_glob and not _matches_glob(file_path, file_glob):
+        if not _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt):
             continue
-        if min_fan_in is not None and in_deg < float(min_fan_in):
-            continue
-        if max_fan_in is not None and in_deg > float(max_fan_in):
-            continue
-        if _is_exempt(symbol_name, file_path, exempt):
-            continue
-
-        if has_requirements:
-            reasons = _row_violation_reasons(row, requires, compiled_regex, conn)
-            if not reasons:
-                continue
-            violations.append(
-                {
-                    "symbol": symbol_name,
-                    "file": file_path,
-                    "line": row["line_start"],
-                    "reason": "; ".join(reasons),
-                }
-            )
-        else:
-            violations.append(
-                {
-                    "symbol": symbol_name,
-                    "file": file_path,
-                    "line": row["line_start"],
-                    "reason": f"{symbol_name} matches rule criteria",
-                }
-            )
+        violation = _violation_or_skip_for_row(
+            row, has_requirements, requires, compiled_regex, conn
+        )
+        if violation is not None:
+            violations.append(violation)
 
     return {
         "name": rule.get("name", "unnamed"),
