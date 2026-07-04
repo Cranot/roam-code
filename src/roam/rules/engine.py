@@ -1270,6 +1270,68 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# Optional violation fields copied from a dataflow finding when present.
+_DATAFLOW_VIOLATION_OPTIONAL_FIELDS = (
+    "variable",
+    "source",
+    "sink",
+    "confidence",
+    "chain_length",
+)
+
+
+def _resolve_dataflow_patterns(match: dict) -> list | str | None:
+    """Resolve the pattern list for a dataflow_match rule.
+
+    ``patterns`` wins; otherwise fall back to singular ``pattern`` or the
+    legacy ``dataflow`` key.
+    """
+    patterns = match.get("patterns")
+    if patterns is None:
+        # Compatibility aliases:
+        # - singular "pattern"
+        # - "dataflow" value
+        patterns = match.get("pattern", match.get("dataflow"))
+    return patterns
+
+
+def _filter_findings_by_threshold(
+    findings: list[dict],
+    key: str,
+    value,
+    cast,
+    predicate,
+) -> list[dict]:
+    """Apply a numeric threshold filter, ignoring unparseable values."""
+    if value is None:
+        return findings
+    try:
+        bound = cast(value)
+    except (TypeError, ValueError):
+        return findings
+    return [f for f in findings if predicate(f.get(key), bound)]
+
+
+def _violation_from_finding(item: dict, exempt: dict) -> dict | None:
+    """Build a violation dict from a dataflow finding, or None if exempt."""
+    symbol_name = item.get("symbol", "")
+    file_path = item.get("file", "")
+    if _is_exempt(symbol_name, file_path, exempt):
+        return None
+
+    violation = {
+        "symbol": symbol_name,
+        "file": file_path,
+        "line": item.get("line"),
+        "reason": item.get("reason", "dataflow rule matched"),
+        "type": item.get("type"),
+    }
+    violation.update(
+        {field: item[field] for field in _DATAFLOW_VIOLATION_OPTIONAL_FIELDS if field in item}
+    )
+    return violation
+
+
 def _evaluate_dataflow_match(rule: dict, conn) -> dict:
     """Evaluate a dataflow_match rule using intra- and inter-procedural heuristics.
 
@@ -1290,24 +1352,11 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
     match = rule.get("match", {})
     exempt = rule.get("exempt", {})
 
-    patterns = match.get("patterns")
-    if patterns is None:
-        # Compatibility aliases:
-        # - singular "pattern"
-        # - "dataflow" value
-        patterns = match.get("pattern", match.get("dataflow"))
-
+    patterns = _resolve_dataflow_patterns(match)
     file_glob = match.get("file_glob")
     max_matches = int(match.get("max_matches", 0) or 0)
     sources = match.get("sources")
     sinks = match.get("sinks")
-
-    # New inter-procedural keys
-    max_chain_length = match.get("max_chain_length")
-    min_confidence = match.get("min_confidence")
-
-    name = rule.get("name", "unnamed")
-    severity = rule.get("severity", "error")
 
     findings = collect_dataflow_findings(
         conn,
@@ -1318,52 +1367,33 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
         sinks=sinks,
     )
 
-    # Apply inter-procedural filters
-    if max_chain_length is not None:
-        try:
-            mcl = int(max_chain_length)
-            findings = [f for f in findings if f.get("chain_length", 1) <= mcl]
-        except (TypeError, ValueError):
-            pass
-
-    if min_confidence is not None:
-        try:
-            mc = float(min_confidence)
-            findings = [f for f in findings if f.get("confidence", 1.0) >= mc]
-        except (TypeError, ValueError):
-            pass
+    findings = _filter_findings_by_threshold(
+        findings,
+        "chain_length",
+        match.get("max_chain_length"),
+        int,
+        lambda chain_length, bound: chain_length <= bound,
+    )
+    findings = _filter_findings_by_threshold(
+        findings,
+        "confidence",
+        match.get("min_confidence"),
+        float,
+        lambda confidence, bound: confidence >= bound,
+    )
 
     violations: list[dict] = []
     for item in findings:
-        symbol_name = item.get("symbol", "")
-        file_path = item.get("file", "")
-        if _is_exempt(symbol_name, file_path, exempt):
-            continue
-        violation = {
-            "symbol": symbol_name,
-            "file": file_path,
-            "line": item.get("line"),
-            "reason": item.get("reason", "dataflow rule matched"),
-            "type": item.get("type"),
-        }
-        if "variable" in item:
-            violation["variable"] = item["variable"]
-        if "source" in item:
-            violation["source"] = item["source"]
-        if "sink" in item:
-            violation["sink"] = item["sink"]
-        if "confidence" in item:
-            violation["confidence"] = item["confidence"]
-        if "chain_length" in item:
-            violation["chain_length"] = item["chain_length"]
-        violations.append(violation)
+        violation = _violation_from_finding(item, exempt)
+        if violation is not None:
+            violations.append(violation)
 
     if max_matches > 0:
         violations = violations[:max_matches]
 
     return {
-        "name": name,
-        "severity": severity,
+        "name": rule.get("name", "unnamed"),
+        "severity": rule.get("severity", "error"),
         "passed": len(violations) == 0,
         "violations": violations,
     }
