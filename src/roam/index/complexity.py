@@ -664,6 +664,63 @@ def _record_loop_node(node, source: bytes, loop_vars: set[str], string_vars: set
         _record_expression_ops(node, source, state)
 
 
+def _resolve_loop_body(node):
+    """Return the body child of a loop node, or None if not identifiable."""
+    body_node = None
+    try:
+        body_node = node.child_by_field_name("body")
+    except (AttributeError, TypeError):
+        # tree-sitter node API varies by grammar/binding: an alternate
+        # binding may lack ``child_by_field_name`` (AttributeError) or
+        # differ in signature (TypeError). Genuine bugs propagate.
+        body_node = None
+    if body_node is None:
+        # Fallback for grammars that don't expose ``body`` as a
+        # field: take the last block-like child as the body.
+        for child in reversed(node.children):
+            if child.type in (
+                "block",
+                "compound_statement",
+                "statement_block",
+                "do_block",
+                "suite",
+            ):
+                body_node = child
+                break
+    return body_node
+
+
+def _walk_loop_children(node, body_node, new_depth, loop_depth, new_loop_vars, loop_vars, walk):
+    """Walk loop children: body at ``new_depth``; head/iterator at ``loop_depth``.
+
+    ``==`` not ``is`` — tree-sitter returns a fresh Python wrapper from
+    ``child_by_field_name`` even when the underlying C-level node is
+    identical to one in ``.children``. Identity check would always be
+    False and we'd walk the body at the outer depth.
+    """
+    for child in node.children:
+        if child == body_node:
+            walk(child, new_depth, new_loop_vars)
+        else:
+            walk(child, loop_depth, loop_vars)
+
+
+def _record_node_signals(node, ntype: str, source: bytes, loop_depth: int, loop_vars: set[str], string_vars: set[str], state: _MathSignalState) -> None:
+    """Record algorithmic signals for one non-loop, non-function node."""
+    if loop_depth > 0:
+        _record_loop_node(node, source, loop_vars, string_vars, state)
+        # Nested-lookup discriminator: when we see an ``if`` inside a
+        # loop body, check whether its condition compares two
+        # different loop iter vars for equality and whether the
+        # then-branch writes to one of them. This is the structural
+        # tell that separates a real hash-joinable lookup from a
+        # streaming-output O(n*m) (e.g. CSV row*col emission).
+        if ntype == "if_statement" and not state.loop_eq_with_dependent_write:
+            _check_equality_with_dependent_write(node, source, loop_vars, state)
+    if loop_depth == 0 and ntype in ("call_expression", "call"):
+        _record_self_call(node, source, state)
+
+
 def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     """Walk a function AST node once and extract algorithmic signals.
 
@@ -680,49 +737,9 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
 
         if ntype in _LOOP_NODES:
             new_depth, new_loop_vars = _enter_loop(node, source, loop_depth, loop_vars, state)
-            # Loop iterator expression vs loop body: the iterator (e.g.
-            # the ``conn.execute(...).fetchall()`` in
-            # ``for r in conn.execute(...).fetchall():``) is evaluated
-            # ONCE before the loop, not per-iteration. We must not count
-            # calls inside it as "calls in loop body" — that produces
-            # N+1 false positives for the canonical
-            # "for r in conn.execute(...).fetchall(): pure_python_work()"
-            # pattern.  Field-named children (Python: ``body``; Go:
-            # ``body``; JS / Java: a ``statement_block``) are the body;
-            # everything else is the head/iterator and walks at the
-            # OUTER loop depth.
-            body_node = None
-            try:
-                body_node = node.child_by_field_name("body")
-            except (AttributeError, TypeError):
-                # tree-sitter node API varies by grammar/binding: an alternate
-                # binding may lack ``child_by_field_name`` (AttributeError) or
-                # differ in signature (TypeError). Genuine bugs propagate.
-                body_node = None
-            if body_node is None:
-                # Fallback for grammars that don't expose ``body`` as a
-                # field: take the last block-like child as the body.
-                for child in reversed(node.children):
-                    if child.type in (
-                        "block",
-                        "compound_statement",
-                        "statement_block",
-                        "do_block",
-                        "suite",
-                    ):
-                        body_node = child
-                        break
+            body_node = _resolve_loop_body(node)
             if body_node is not None:
-                # ``==`` not ``is`` — tree-sitter returns a fresh Python
-                # wrapper from ``child_by_field_name`` even when the
-                # underlying C-level node is identical to one in
-                # ``.children``. Identity check would always be False
-                # and we'd walk the body at the outer depth.
-                for child in node.children:
-                    if child == body_node:
-                        _walk(child, new_depth, new_loop_vars)
-                    else:
-                        _walk(child, loop_depth, loop_vars)
+                _walk_loop_children(node, body_node, new_depth, loop_depth, new_loop_vars, loop_vars, _walk)
             else:
                 # Last-resort: preserve old behaviour (walk all children
                 # at increased depth) so we don't silently drop signals
@@ -745,18 +762,7 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                 _walk(child, 0, set())
             return
 
-        if loop_depth > 0:
-            _record_loop_node(node, source, loop_vars, string_vars, state)
-            # Nested-lookup discriminator: when we see an ``if`` inside a
-            # loop body, check whether its condition compares two
-            # different loop iter vars for equality and whether the
-            # then-branch writes to one of them. This is the structural
-            # tell that separates a real hash-joinable lookup from a
-            # streaming-output O(n*m) (e.g. CSV row*col emission).
-            if ntype == "if_statement" and not state.loop_eq_with_dependent_write:
-                _check_equality_with_dependent_write(node, source, loop_vars, state)
-        if loop_depth == 0 and ntype in ("call_expression", "call"):
-            _record_self_call(node, source, state)
+        _record_node_signals(node, ntype, source, loop_depth, loop_vars, string_vars, state)
 
         for child in node.children:
             _walk(child, loop_depth, loop_vars)
