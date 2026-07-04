@@ -56,12 +56,13 @@ class CSharpExtractor(LanguageExtractor):
                 break
         return "\n".join(lines) if lines else None
 
+    def _collect_modifiers(self, node, source) -> list[str]:
+        """collect the text of every modifier child node, in source order."""
+        return [self.node_text(c, source) for c in node.children if c.type == "modifier"]
+
     def _get_visibility(self, node, source, parent_kind: str | None = None) -> str:
         """extract visibility, accounting for compound modifiers and context-dependent defaults."""
-        mods = set()
-        for child in node.children:
-            if child.type == "modifier":
-                mods.add(self.node_text(child, source))
+        mods = set(self._collect_modifiers(node, source))
         # compound modifiers (two separate nodes combined)
         if {"private", "protected"} <= mods:
             return "private protected"
@@ -86,20 +87,10 @@ class CSharpExtractor(LanguageExtractor):
     def _get_class_modifiers(self, node, source) -> list[str]:
         """extract class/struct modifiers for signature."""
         relevant = {"static", "sealed", "abstract", "partial", "readonly", "unsafe", "file"}
-        modifiers = []
-        for child in node.children:
-            if child.type == "modifier":
-                text = self.node_text(child, source)
-                if text in relevant:
-                    modifiers.append(text)
-        return modifiers
+        return [m for m in self._collect_modifiers(node, source) if m in relevant]
 
     def _has_modifier(self, node, source, modifier: str) -> bool:
-        for child in node.children:
-            if child.type == "modifier":
-                if self.node_text(child, source) == modifier:
-                    return True
-        return False
+        return modifier in self._collect_modifiers(node, source)
 
     def _get_type_params(self, node, source) -> str:
         """extract generic type parameter list (<T, U>)."""
