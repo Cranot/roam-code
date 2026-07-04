@@ -1121,6 +1121,68 @@ def _extract_python_handlers(source: str) -> list[tuple[int, str]]:
     return handlers
 
 
+@dataclass(slots=True)
+class _BraceScannerState:
+    in_string: str | None = None
+    in_line_comment: bool = False
+    in_block_comment: bool = False
+
+
+def _skip_nonstructural_text_so_braces_stay_balanced(
+    source: str,
+    i: int,
+    state: _BraceScannerState,
+) -> tuple[int, bool]:
+    next_i, skipped = _skip_active_nonstructural_text(source, i, state)
+    if skipped:
+        return next_i, True
+    return _enter_nonstructural_text_so_braces_stay_balanced(source, i, state)
+
+
+def _skip_active_nonstructural_text(
+    source: str,
+    i: int,
+    state: _BraceScannerState,
+) -> tuple[int, bool]:
+    ch = source[i]
+    nxt = source[i + 1] if i + 1 < len(source) else ""
+    if state.in_line_comment:
+        if ch == "\n":
+            state.in_line_comment = False
+        return i + 1, True
+    if state.in_block_comment:
+        if ch == "*" and nxt == "/":
+            state.in_block_comment = False
+            return i + 2, True
+        return i + 1, True
+    if state.in_string is not None:
+        if ch == "\\":
+            return min(i + 2, len(source)), True
+        if ch == state.in_string:
+            state.in_string = None
+        return i + 1, True
+    return i, False
+
+
+def _enter_nonstructural_text_so_braces_stay_balanced(
+    source: str,
+    i: int,
+    state: _BraceScannerState,
+) -> tuple[int, bool]:
+    ch = source[i]
+    nxt = source[i + 1] if i + 1 < len(source) else ""
+    if ch == "/" and nxt == "/":
+        state.in_line_comment = True
+        return i + 2, True
+    if ch == "/" and nxt == "*":
+        state.in_block_comment = True
+        return i + 2, True
+    if ch in ('"', "'", "`"):
+        state.in_string = ch
+        return i + 1, True
+    return i, False
+
+
 def _find_matching_brace(source: str, open_brace_pos: int) -> int:
     """Return the position of the ``}`` matching ``source[open_brace_pos]``.
 
@@ -1129,39 +1191,21 @@ def _find_matching_brace(source: str, open_brace_pos: int) -> int:
     """
     depth = 0
     i = open_brace_pos
-    in_string: str | None = None
-    in_line_comment = False
-    in_block_comment = False
+    state = _BraceScannerState()
     while i < len(source):
+        next_i, skipped_nonstructural = _skip_nonstructural_text_so_braces_stay_balanced(
+            source, i, state
+        )
+        if skipped_nonstructural:
+            i = next_i
+            continue
         ch = source[i]
-        nxt = source[i + 1] if i + 1 < len(source) else ""
-        if in_line_comment:
-            if ch == "\n":
-                in_line_comment = False
-        elif in_block_comment:
-            if ch == "*" and nxt == "/":
-                in_block_comment = False
-                i += 1
-        elif in_string is not None:
-            if ch == "\\":
-                i += 1  # skip escape
-            elif ch == in_string:
-                in_string = None
-        else:
-            if ch == "/" and nxt == "/":
-                in_line_comment = True
-                i += 1
-            elif ch == "/" and nxt == "*":
-                in_block_comment = True
-                i += 1
-            elif ch in ('"', "'", "`"):
-                in_string = ch
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return i
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
         i += 1
     return -1
 
