@@ -41,7 +41,14 @@ def _algconn_cache_path():
         cache_dir = Path(".roam") / "cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir / "algconn.json"
-    except OSError:
+    except OSError as exc:
+        # Cache directory creation failed; algebraics will still compute,
+        # but the cache benefit is silently lost unless we make it loud.
+        warnings.warn(
+            f"algebraic_connectivity cache directory unavailable ({type(exc).__name__}): {exc}",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         return None
 
 
