@@ -3684,7 +3684,8 @@ def _check_llm_smells(target_paths, root):
     for rel in changed:
         try:
             text = (root / rel).read_text(encoding="utf-8", errors="replace")
-        except Exception:  # noqa: BLE001
+        except OSError as exc:
+            _swallow_verify("verify.llm_smells.read", exc)
             continue
         low = text.lower()
         if not any(h in low for h in hints):
