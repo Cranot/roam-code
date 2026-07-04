@@ -780,6 +780,58 @@ def _dead_consumer_meta(conn, candidate_ids):
 
 
 _WORD_RE = re.compile(r"\w+")
+_NONWORD_TRIE_MATCHES = ""
+
+
+def _is_regex_word_char(ch: str) -> bool:
+    return ch == "_" or ch.isalnum()
+
+
+def _has_regex_word_boundary_at(text: str, offset: int) -> bool:
+    left_is_word = offset > 0 and _is_regex_word_char(text[offset - 1])
+    right_is_word = offset < len(text) and _is_regex_word_char(text[offset])
+    return left_is_word != right_is_word
+
+
+def _build_nonword_trie_to_keep_scans_linear(names):
+    root = {}
+    for name in names:
+        if not name:
+            continue
+        node = root
+        for ch in name:
+            node = node.setdefault(ch, {})
+        node.setdefault(_NONWORD_TRIE_MATCHES, []).append(name)
+    return root
+
+
+def _find_nonword_mentions_without_alternation_backtracking(source: str, name_trie) -> set[str]:
+    if not name_trie:
+        return set()
+
+    matched: set[str] = set()
+    source_len = len(source)
+    for start, ch in enumerate(source):
+        node = name_trie.get(ch)
+        if node is None:
+            continue
+
+        pos = start + 1
+        while True:
+            terminal_names = node.get(_NONWORD_TRIE_MATCHES)
+            if terminal_names and _has_regex_word_boundary_at(source, start):
+                for name in terminal_names:
+                    if _has_regex_word_boundary_at(source, start + len(name)):
+                        matched.add(name)
+
+            if pos >= source_len:
+                break
+            node = node.get(source[pos])
+            if node is None:
+                break
+            pos += 1
+
+    return matched
 
 
 def _scan_one_test_file_combined(args):
@@ -792,17 +844,18 @@ def _scan_one_test_file_combined(args):
     pathologically slow at 600+ names over ~20 MB of tests (measured 9.6s ->
     ~1.5s on roam-code). Word-set membership is EQUIVALENT to ``\\b(name)\\b``
     for ``\\w+`` names (a maximal ``\\w`` run is exactly a ``\\b``-bounded token).
-    Rare names containing non-``\\w`` chars are matched by ``fallback_rx``.
+    Rare names containing non-``\\w`` chars are matched by a literal trie so the
+    fallback keeps the same one-pass shape without a giant alternation regex.
     """
-    project_root, path, names_set, fallback_rx = args
+    project_root, path, names_set, nonword_name_trie = args
     try:
         source = (project_root / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return path, set()
     matched = names_set.intersection(_WORD_RE.findall(source))
-    if fallback_rx is not None:
+    if nonword_name_trie:
         matched = set(matched)
-        matched.update(fallback_rx.findall(source))
+        matched.update(_find_nonword_mentions_without_alternation_backtracking(source, nonword_name_trie))
     return path, matched
 
 
@@ -813,16 +866,16 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
     therefore cannot produce symbol edges because the file has no extracted
     source symbol.
 
-    Algorithmic optimisation: build ONE combined alternation regex
-    ``\b(name1|name2|...)\b`` and scan each test file with a single pass,
-    rather than N regexes × M files. That's a ~100x speedup over the naive
-    per-name approach when there are hundreds of names.
+    Algorithmic optimisation: tokenize identifier-shaped names once per file
+    and scan rare non-identifier names with a literal trie, rather than N
+    regexes × M files. That's a ~100x speedup over the naive per-name approach
+    when there are hundreds of names.
 
     On top of that, the per-file scans are parallelised via
     ThreadPoolExecutor — disk reads release the GIL, so even though
-    ``re.findall`` is GIL-bound the overlap with file I/O gives a further
-    ~2-3x. ROAM_NO_PARALLEL forces the serial path (used by tests for
-    output-stability comparisons).
+    regex tokenization is GIL-bound the overlap with file I/O gives a further
+    ~2-3x. ROAM_NO_PARALLEL forces the serial path (used by tests for output-
+    stability comparisons).
     """
     if not rows:
         return
@@ -839,8 +892,8 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
         return
 
     # Build the candidate set. Identifier-shaped names (≈100%) go in a frozenset
-    # matched by O(1) word-set intersection in the worker; rare non-\w names keep
-    # the regex path via `fallback_rx`. Sorted for deterministic fallback order.
+    # matched by O(1) word-set intersection in the worker; rare non-\w names use
+    # a trie fallback so test scans stay linear in the file size.
     name_to_row_ids = {name: [r["id"] for r in name_rows] for name, name_rows in by_name.items()}
     sorted_names = sorted(name_to_row_ids.keys())
     word_names: set[str] = set()
@@ -848,13 +901,8 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
     for n in sorted_names:
         (word_names.add(n) if _WORD_RE.fullmatch(n) else other_names.append(n))
     names_set = frozenset(word_names)
-    fallback_rx = None
-    if other_names:
-        try:
-            fallback_rx = re.compile(r"\b(" + "|".join(re.escape(n) for n in other_names) + r")\b")
-        except re.error:
-            fallback_rx = None
-    if not names_set and fallback_rx is None:
+    nonword_name_trie = _build_nonword_trie_to_keep_scans_linear(other_names)
+    if not names_set and not nonword_name_trie:
         return
 
     use_parallel = not os.environ.get("ROAM_NO_PARALLEL") and len(test_files) >= 50
@@ -866,7 +914,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
             from concurrent.futures import ThreadPoolExecutor
 
             workers = max(1, min(os.cpu_count() or 4, 8))
-            args_iter = ((project_root, path, names_set, fallback_rx) for path in test_files)
+            args_iter = ((project_root, path, names_set, nonword_name_trie) for path in test_files)
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for path, matched in ex.map(_scan_one_test_file_combined, args_iter):
                     if matched:
@@ -877,7 +925,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
 
     if not parallel_ok:
         for path in test_files:
-            path, matched = _scan_one_test_file_combined((project_root, path, names_set, fallback_rx))
+            path, matched = _scan_one_test_file_combined((project_root, path, names_set, nonword_name_trie))
             if matched:
                 per_file_hits.append((path, matched))
 
