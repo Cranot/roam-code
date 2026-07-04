@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import logging
 import os
 import sys
@@ -790,6 +791,74 @@ def _restore_annotations(conn, saved):
     _log(f"  Restored {len(saved)} annotations")
 
 
+# --- Framework post-resolver plumbing -------------------------------------
+# The four post-resolution passes (django / pytest fixtures / laravel /
+# registry-dispatch) share identical try/except scaffolding around a single
+# framework resolver. The spec table below is the data ("which resolvers
+# exist, how to label their output"); _run_one_post_resolver is the mechanism
+# ("run one resolver safely, log + record the step"). Kept at module scope so
+# the Indexer class body holds orchestration, not resolver trivia.
+
+
+class _PostResolverSpec:
+    """One framework post-resolution pass.
+
+    Attributes:
+        module: dotted module path to import lazily inside the try block.
+        attr: resolver callable name on that module.
+        extra_args: positional args to pass after ``conn`` (e.g. ``self.root``).
+        extra_kwargs: keyword args to pass to the resolver (e.g.
+            ``{"quiet": True}`` for the django resolver, which otherwise
+            emits its own log lines duplicating the Indexer's summary).
+        step: stable step id for ``_record_step`` / ``roam doctor``.
+        skip_label: text used in the "<label> skipped" log line on failure.
+        format: callable(result) -> str | None; the success log line (after
+            the shared "  " indent), or None to stay silent on a no-op result.
+    """
+
+    __slots__ = (
+        "module",
+        "attr",
+        "extra_args",
+        "extra_kwargs",
+        "step",
+        "skip_label",
+        "format",
+    )
+
+    def __init__(self, module, attr, extra_args, extra_kwargs, step, skip_label, format):
+        self.module = module
+        self.attr = attr
+        self.extra_args = extra_args
+        self.extra_kwargs = extra_kwargs
+        self.step = step
+        self.skip_label = skip_label
+        self.format = format
+
+
+def _fmt_django_resolver(counts: dict) -> str | None:
+    """Format django resolver counts; None when nothing was updated."""
+    if not counts or not any(counts.values()):
+        return None
+    parts = []
+    if counts.get("models_updated"):
+        parts.append(f"{counts['models_updated']} model(s)")
+    if counts.get("fields_updated"):
+        parts.append(f"{counts['fields_updated']} field(s)")
+    if counts.get("relationships_created"):
+        parts.append(f"{counts['relationships_created']} relationship edge(s)")
+    return f"Django: {', '.join(parts)}" if parts else None
+
+
+def _make_edge_count_formatter(label: str, noun: str):
+    """Build a success-line formatter for an integer edge-count resolver."""
+
+    def fmt(count):
+        return f"{label}: {count} {noun}" if count else None
+
+    return fmt
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
 
@@ -1465,97 +1534,74 @@ class Indexer:
             self._log(f"  Graph metrics failed: {e}")
         return G, _detect_clusters, _label_clusters, _store_clusters
 
-    def _run_django_post_resolver(self, conn) -> None:
-        start = time.monotonic()
-        try:
-            from roam.index.django_post import resolve_all_django
+    def _run_post_resolvers(self, conn) -> None:
+        """Run the framework post-resolution passes in pipeline order.
 
-            django_counts = resolve_all_django(conn, quiet=True)
-            if any(django_counts.values()):
-                parts = []
-                if django_counts.get("models_updated"):
-                    parts.append(f"{django_counts['models_updated']} model(s)")
-                if django_counts.get("fields_updated"):
-                    parts.append(f"{django_counts['fields_updated']} field(s)")
-                if django_counts.get("relationships_created"):
-                    parts.append(f"{django_counts['relationships_created']} relationship edge(s)")
-                if parts:
-                    self._log(f"  Django: {', '.join(parts)}")
-            self._record_step(
+        Each pass runs in isolation: a failure (e.g. an optional resolver
+        module that is missing or raises) is logged and recorded as a failed
+        step but does not abort the remaining passes or the rest of the run.
+        """
+        # Order matters: django/pytest/registry run before laravel, matching
+        # the historical call sequence in _do_run.
+        specs = [
+            _PostResolverSpec(
+                "roam.index.django_post",
+                "resolve_all_django",
+                (),
+                {"quiet": True},
                 "django_post_resolver",
-                "ok",
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
-        except Exception as e:
-            self._log(f"  Django post-resolver skipped: {e}")
-            self._record_step(
-                "django_post_resolver",
-                f"failed:{type(e).__name__}",
-                error=str(e),
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
-
-    def _run_pytest_fixture_resolver(self, conn) -> None:
-        start = time.monotonic()
-        try:
-            from roam.index.pytest_fixtures import resolve_pytest_fixtures
-
-            fixture_edges = resolve_pytest_fixtures(conn)
-            if fixture_edges:
-                self._log(f"  pytest fixtures: {fixture_edges} dependency edge(s)")
-            self._record_step(
+                "Django post-resolver",
+                _fmt_django_resolver,
+            ),
+            _PostResolverSpec(
+                "roam.index.pytest_fixtures",
+                "resolve_pytest_fixtures",
+                (),
+                {},
                 "pytest_fixture_resolver",
-                "ok",
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
-        except Exception as e:
-            self._log(f"  pytest fixture resolver skipped: {e}")
-            self._record_step(
-                "pytest_fixture_resolver",
-                f"failed:{type(e).__name__}",
-                error=str(e),
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
+                "pytest fixture resolver",
+                _make_edge_count_formatter("pytest fixtures", "dependency edge(s)"),
+            ),
+            _PostResolverSpec(
+                "roam.index.registry_dispatch",
+                "resolve_registry_dispatch",
+                (),
+                {},
+                "registry_dispatch_resolver",
+                "registry-dispatch resolver",
+                _make_edge_count_formatter("registry dispatch", "edge(s)"),
+            ),
+            _PostResolverSpec(
+                "roam.index.laravel_post",
+                "resolve_laravel_dispatch",
+                (self.root,),
+                {},
+                "laravel_post_resolver",
+                "Laravel post-resolver",
+                _make_edge_count_formatter("Laravel dispatch", "edge(s)"),
+            ),
+        ]
+        for spec in specs:
+            self._run_one_post_resolver(conn, spec)
 
-    def _run_laravel_post_resolver(self, conn) -> None:
+    def _run_one_post_resolver(self, conn, spec: _PostResolverSpec) -> None:
         start = time.monotonic()
         try:
-            from roam.index.laravel_post import resolve_laravel_dispatch
-
-            laravel_edges = resolve_laravel_dispatch(conn, self.root)
-            if laravel_edges:
-                self._log(f"  Laravel dispatch: {laravel_edges} edge(s)")
+            module = importlib.import_module(spec.module)
+            resolver = getattr(module, spec.attr)
+            result = resolver(conn, *spec.extra_args, **spec.extra_kwargs)
+            message = spec.format(result)
+            if message:
+                self._log(f"  {message}")
             self._record_step(
-                "laravel_post_resolver",
+                spec.step,
                 "ok",
                 duration_ms=(time.monotonic() - start) * 1000.0,
             )
         except Exception as e:
-            self._log(f"  Laravel post-resolver skipped: {e}")
+            self._log(f"  {spec.skip_label} skipped: {e}")
             self._record_step(
-                "laravel_post_resolver",
-                f"failed:{type(e).__name__}",
-                error=str(e),
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
-
-    def _run_registry_dispatch_resolver(self, conn) -> None:
-        start = time.monotonic()
-        try:
-            from roam.index.registry_dispatch import resolve_registry_dispatch
-
-            dispatch_edges = resolve_registry_dispatch(conn)
-            if dispatch_edges:
-                self._log(f"  registry dispatch: {dispatch_edges} edge(s)")
-            self._record_step(
-                "registry_dispatch_resolver",
-                "ok",
-                duration_ms=(time.monotonic() - start) * 1000.0,
-            )
-        except Exception as e:
-            self._log(f"  registry-dispatch resolver skipped: {e}")
-            self._record_step(
-                "registry_dispatch_resolver",
+                spec.step,
                 f"failed:{type(e).__name__}",
                 error=str(e),
                 duration_ms=(time.monotonic() - start) * 1000.0,
@@ -2263,10 +2309,7 @@ class Indexer:
 
             self._begin_phase(2, "Resolving references...")
             self._resolve_and_store_edges(conn, all_references, all_symbol_rows, file_id_by_path)
-            self._run_django_post_resolver(conn)
-            self._run_pytest_fixture_resolver(conn)
-            self._run_registry_dispatch_resolver(conn)
-            self._run_laravel_post_resolver(conn)
+            self._run_post_resolvers(conn)
             if not light:
                 # Incremental effects: on a non-force reindex, only the files
                 # re-parsed this run (added + modified) need re-classification;
