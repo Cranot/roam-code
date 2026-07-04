@@ -664,7 +664,7 @@ def classify_side_effects(
     # 3) Group rows by file so we read each file once.
     try:
         repo_root = find_project_root()
-    except Exception as exc:
+    except OSError as exc:
         # Silent fallback to CWD masks "we couldn't locate the project"
         # behind file-not-found errors downstream. Disclose the lineage
         # (CLAUDE.md §"Make fallback chains loud") so callers see the
