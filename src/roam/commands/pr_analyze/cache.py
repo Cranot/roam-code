@@ -72,24 +72,27 @@ class _CacheKeyInputs:
         return h.hexdigest()
 
 
-def _cache_key(
-    diff_text: object,
-    rules_path: object,
-    block_threshold: object,
-    language_override: object | None,
-) -> str:
+def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
     """Derive a stable cache key from inputs that affect the analysis.
 
-    Thin coercion adapter over the ``_CacheKeyInputs`` value object, which
-    owns the loose-input normalization (``from_loose``) and the digest
-    derivation (``digest``). The 4-param signature is the documented stable
-    boundary (``pr_analyze/__init__.py``: re-exports are kept so callers and
-    tests import ``_cache_key`` without churn); the value object is the
-    canonical type, so hashing + coercion no longer live in loose
-    primitive-param functions.
+    ``_CacheKeyInputs`` is the canonical value object. The variadic branch is a
+    compatibility adapter for the historical ``_cache_key(diff, rules,
+    threshold, language)`` private import boundary used by tests and callers.
     """
+    if isinstance(inputs, _CacheKeyInputs):
+        if legacy_inputs:
+            raise TypeError("_cache_key(_CacheKeyInputs) accepts no extra arguments")
+        return inputs.digest()
+
+    if len(legacy_inputs) != 3:
+        raise TypeError(
+            "_cache_key expects _CacheKeyInputs or "
+            "diff_text, rules_path, block_threshold, language_override"
+        )
+
+    rules_path, block_threshold, language_override = legacy_inputs
     return _CacheKeyInputs.from_loose(
-        diff_text, rules_path, block_threshold, language_override
+        inputs, rules_path, block_threshold, language_override
     ).digest()
 
 
