@@ -118,7 +118,11 @@ class AiRotScore:
     total_issues: int
     files_scanned: int
     patterns: dict = field(default_factory=dict)
-    definition: str = DEFINITION
+    # Default flows through the canonical ``definition()`` accessor so the
+    # public export stays referenced (every sibling quality module —
+    # ``cycles`` / ``health_band`` / ``god_components`` / ``public_symbols``
+    # — exposes the same ``definition()`` API and calls it in production).
+    definition: str = field(default_factory=definition)
 
     def as_envelope_dict(self) -> dict:
         """Render as a dict suitable for embedding in a JSON envelope.
