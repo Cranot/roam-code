@@ -13,6 +13,7 @@ SBOM = "what's in it", VEX = "is it exploitable". AIBOM-with-binding =
 
 from __future__ import annotations
 
+import heapq
 import re
 import sqlite3
 import subprocess
@@ -21,6 +22,7 @@ from pathlib import Path
 from roam.git_utils import worktree_git_env
 
 AIBOM_EXTENSION_VERSION = "0.1"
+_AIBOM_BINDING_FILE_LIMIT = 50
 
 
 # Conservative AI-committer signals — false positives are worse than
@@ -179,6 +181,11 @@ def _files_for_commits_batch(repo_root: Path, shas: list[str]) -> dict[str, list
     return out
 
 
+def _select_bounded_disclosure_files(paths: set[str]) -> list[str]:
+    """Return the stable AIBOM file window without sorting every touched path."""
+    return heapq.nsmallest(_AIBOM_BINDING_FILE_LIMIT, paths)
+
+
 def build_aibom_block(repo_root: Path, conn) -> dict:
     """Build the AIBOM extension block for embedding in a CycloneDX 1.7 SBOM.
 
@@ -240,7 +247,7 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
 
     out_components: list[dict] = []
     for email, entry in by_committer.items():
-        files = sorted(entry["binding"]["files"])[:50]
+        files = _select_bounded_disclosure_files(entry["binding"]["files"])
         symbol_count = 0
         if files and conn is not None:
             placeholders = ",".join("?" * len(files))
