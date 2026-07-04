@@ -136,6 +136,10 @@ class ExtractSymbolRequest:
     new_name: str
 
 
+_EXTRACT_LEGACY_REQUIRED_ARG_COUNT = 3
+_EXTRACT_LEGACY_WITH_DRY_RUN_ARG_COUNT = _EXTRACT_LEGACY_REQUIRED_ARG_COUNT + 1
+
+
 def _normalize_extract_request(
     request: ExtractSymbolRequest | str, request_args: tuple[object, ...], dry_run: bool
 ) -> tuple[ExtractSymbolRequest, bool]:
@@ -147,12 +151,15 @@ def _normalize_extract_request(
 
     if not isinstance(request, str):
         raise TypeError("extract_symbol() expects a source symbol name or ExtractSymbolRequest")
-    if len(request_args) not in (3, 4):
+    if len(request_args) not in (
+        _EXTRACT_LEGACY_REQUIRED_ARG_COUNT,
+        _EXTRACT_LEGACY_WITH_DRY_RUN_ARG_COUNT,
+    ):
         raise TypeError(
             "extract_symbol() expects ExtractSymbolRequest or source_symbol, line_start, line_end, new_name"
         )
 
-    line_start, line_end, new_name = request_args[:3]
+    line_start, line_end, new_name = request_args[:_EXTRACT_LEGACY_REQUIRED_ARG_COUNT]
     if not isinstance(line_start, int) or isinstance(line_start, bool):
         raise TypeError("line_start must be an integer")
     if not isinstance(line_end, int) or isinstance(line_end, bool):
@@ -160,8 +167,8 @@ def _normalize_extract_request(
     if not isinstance(new_name, str):
         raise TypeError("new_name must be a string")
 
-    if len(request_args) == 4:
-        positional_dry_run = request_args[3]
+    if len(request_args) == _EXTRACT_LEGACY_WITH_DRY_RUN_ARG_COUNT:
+        positional_dry_run = request_args[_EXTRACT_LEGACY_REQUIRED_ARG_COUNT]
         if not isinstance(positional_dry_run, bool):
             raise TypeError("dry_run must be a boolean")
         dry_run = positional_dry_run
