@@ -30,27 +30,23 @@ class _CacheKeyInputs:
     block_threshold: int
     language_override: str | None
 
-    @classmethod
-    def from_args(cls, args: tuple[object, ...]) -> "_CacheKeyInputs":
-        if len(args) == 1 and isinstance(args[0], cls):
-            return args[0]
-        if len(args) != 4:
-            raise TypeError(
-                "_cache_key() expects _CacheKeyInputs or diff_text, rules_path, block_threshold, language_override"
-            )
-        diff_text, rules_path, block_threshold, language_override = args
-        normalized_rules_path = rules_path if isinstance(rules_path, Path) else Path(str(rules_path))
-        return cls(
+
+def _cache_key(
+    diff_text: object,
+    rules_path: object,
+    block_threshold: object,
+    language_override: object | None,
+) -> str:
+    """Derive a stable cache key from inputs that affect the analysis."""
+    normalized_rules_path = rules_path if isinstance(rules_path, Path) else Path(str(rules_path))
+    return _cache_key_from_inputs(
+        _CacheKeyInputs(
             diff_text="" if diff_text is None else str(diff_text),
             rules_path=normalized_rules_path,
             block_threshold=int(block_threshold),
             language_override=None if language_override is None else str(language_override),
         )
-
-
-def _cache_key(*args: object) -> str:
-    """Derive a stable cache key from inputs that affect the analysis."""
-    return _cache_key_from_inputs(_CacheKeyInputs.from_args(args))
+    )
 
 
 def _cache_key_from_inputs(inputs: _CacheKeyInputs) -> str:
