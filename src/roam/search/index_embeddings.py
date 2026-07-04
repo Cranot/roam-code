@@ -567,6 +567,49 @@ def _repo_languages(conn) -> set[str]:
     return {str(r[0]).strip().lower() for r in rows if r and r[0]}
 
 
+def _merge_language_relevant_pack_results(
+    conn: sqlite3.Connection,
+    query: str,
+    semantic_results: list[dict],
+    *,
+    top_k: int,
+    options: SearchOptions,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
+    """Add framework-pack hits only when repo languages make them relevant."""
+    if not options.include_packs:
+        return semantic_results
+
+    effective_packs = options.packs
+    if options.packs is None:
+        effective_packs = packs_for_languages(_repo_languages(conn))
+        if not effective_packs:
+            return semantic_results
+
+    try:
+        pack_results = search_pack_symbols(query, top_k=top_k, packs=effective_packs)
+    except _PACK_SEARCH_RECOVERABLE_ERRORS as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")
+        return semantic_results
+
+    if not pack_results:
+        return semantic_results
+
+    # Only the top candidate_k of the merged list is needed; nsmallest
+    # is O(n log candidate_k) and avoids fully sorting the combined
+    # list. The (-score, name, symbol_id) key keeps selection stable.
+    return heapq.nsmallest(
+        top_k,
+        semantic_results + pack_results,
+        key=lambda r: (
+            -r.get("score", 0.0),
+            r.get("name", ""),
+            r.get("symbol_id", 0),
+        ),
+    )
+
+
 def search_stored(
     conn,
     query: str,
@@ -594,8 +637,6 @@ def search_stored(
 
     opts = options if options is not None else SearchOptions()
     top_k = opts.top_k
-    include_packs = opts.include_packs
-    packs = opts.packs
     semantic_backend = opts.semantic_backend
     project_root = opts.project_root
 
@@ -633,36 +674,14 @@ def search_stored(
         top_k=candidate_k,
     )
 
-    # Optional pre-indexed framework/library packs (#96).
-    # When the caller didn't pin specific packs, gate them to the repo's
-    # actual languages so a TypeScript repo never gets Django/pytest noise.
-    effective_packs = packs
-    if include_packs and packs is None:
-        eligible = packs_for_languages(_repo_languages(conn))
-        if not eligible:
-            include_packs = False
-        else:
-            effective_packs = eligible
-    if include_packs:
-        try:
-            pack_results = search_pack_symbols(query, top_k=candidate_k, packs=effective_packs)
-        except _PACK_SEARCH_RECOVERABLE_ERRORS as exc:
-            if warnings_out is not None:
-                warnings_out.append(f"semantic_pack_search_failed:{type(exc).__name__}:{exc}")
-            pack_results = []
-        if pack_results:
-            # Only the top candidate_k of the merged list is needed; nsmallest
-            # is O(n log candidate_k) and avoids fully sorting the combined
-            # list. The (-score, name, symbol_id) key keeps selection stable.
-            semantic_results = heapq.nsmallest(
-                candidate_k,
-                semantic_results + pack_results,
-                key=lambda r: (
-                    -r.get("score", 0.0),
-                    r.get("name", ""),
-                    r.get("symbol_id", 0),
-                ),
-            )
+    semantic_results = _merge_language_relevant_pack_results(
+        conn,
+        query,
+        semantic_results,
+        top_k=candidate_k,
+        options=opts,
+        warnings_out=warnings_out,
+    )
 
     # Hybrid fusion when both signals exist.
     if lexical_results and semantic_results:
