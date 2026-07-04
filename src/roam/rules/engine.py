@@ -973,6 +973,66 @@ def _violation_or_skip_for_row(
     }
 
 
+def _fail_symbol_match_before_scanning_bad_regex(rule: dict, regex_error: str) -> dict:
+    """Return the rule-shaped failure for an invalid name_regex requirement."""
+    return {
+        "name": rule.get("name", "unnamed"),
+        "severity": rule.get("severity", "error"),
+        "passed": False,
+        "violations": [
+            {
+                "symbol": "",
+                "file": rule.get("_file", ""),
+                "line": None,
+                "reason": "invalid require.name_regex: {}".format(regex_error),
+            }
+        ],
+    }
+
+
+def _has_symbol_requirements_that_can_reject_matches(
+    requires: dict, compiled_regex
+) -> bool:
+    """Return True when matching rows still need requirement validation."""
+    return any(
+        [
+            requires["has_test"],
+            compiled_regex is not None,
+            requires["max_params"] is not None,
+            requires["min_params"] is not None,
+            requires["max_symbol_lines"] is not None,
+            requires["min_symbol_lines"] is not None,
+            requires["max_file_lines"] is not None,
+            requires["min_file_lines"] is not None,
+        ]
+    )
+
+
+def _collect_symbol_match_violations_after_candidate_pruning(
+    rows,
+    *,
+    file_glob,
+    min_fan_in,
+    max_fan_in,
+    exempt,
+    has_requirements: bool,
+    requires: dict,
+    compiled_regex,
+    conn,
+) -> list[dict]:
+    """Apply Python-only filters and build violations for surviving rows."""
+    violations: list[dict] = []
+    for row in rows:
+        if not _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt):
+            continue
+        violation = _violation_or_skip_for_row(
+            row, has_requirements, requires, compiled_regex, conn
+        )
+        if violation is not None:
+            violations.append(violation)
+    return violations
+
+
 def _evaluate_symbol_match(rule: dict, conn) -> dict:
     """Evaluate a symbol_match rule: find symbols matching criteria.
 
@@ -994,47 +1054,26 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
     requires, compiled_regex, regex_error = _parse_match_requirements(match)
     if regex_error is not None:
-        return {
-            "name": rule.get("name", "unnamed"),
-            "severity": rule.get("severity", "error"),
-            "passed": False,
-            "violations": [
-                {
-                    "symbol": "",
-                    "file": rule.get("_file", ""),
-                    "line": None,
-                    "reason": "invalid require.name_regex: {}".format(regex_error),
-                }
-            ],
-        }
+        return _fail_symbol_match_before_scanning_bad_regex(rule, regex_error)
 
     query, params = _build_symbol_match_query_with_filters(
         conn, kind_filter, exported_filter
     )
     rows = conn.execute(query, params).fetchall()
-
-    has_requirements = any(
-        [
-            requires["has_test"],
-            compiled_regex is not None,
-            requires["max_params"] is not None,
-            requires["min_params"] is not None,
-            requires["max_symbol_lines"] is not None,
-            requires["min_symbol_lines"] is not None,
-            requires["max_file_lines"] is not None,
-            requires["min_file_lines"] is not None,
-        ]
+    has_requirements = _has_symbol_requirements_that_can_reject_matches(
+        requires, compiled_regex
     )
-
-    violations: list[dict] = []
-    for row in rows:
-        if not _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt):
-            continue
-        violation = _violation_or_skip_for_row(
-            row, has_requirements, requires, compiled_regex, conn
-        )
-        if violation is not None:
-            violations.append(violation)
+    violations = _collect_symbol_match_violations_after_candidate_pruning(
+        rows,
+        file_glob=file_glob,
+        min_fan_in=min_fan_in,
+        max_fan_in=max_fan_in,
+        exempt=exempt,
+        has_requirements=has_requirements,
+        requires=requires,
+        compiled_regex=compiled_regex,
+        conn=conn,
+    )
 
     return {
         "name": rule.get("name", "unnamed"),
