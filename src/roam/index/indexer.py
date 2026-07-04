@@ -21,6 +21,7 @@ from roam.index.parser import (
     detect_language,
     extract_vue_template,
     parse_file,
+    read_source,
     scan_template_references,
 )
 from roam.index.relations import build_file_edges, resolve_references
@@ -1616,46 +1617,60 @@ class Indexer:
         conn.execute(f"DELETE FROM file_edges WHERE source_file_id IN ({ph})", fid_list)
 
         for fid, rel_path in affected_paths.items():
-            full_path = self.root / rel_path
-            language = detect_language(rel_path)
-            tree, parsed_source, lang = parse_file(full_path, language)
-            if tree is None and parsed_source is None:
-                continue
-            extractor = None
-            if get_extractor is not None and lang is not None:
-                try:
-                    extractor = get_extractor(lang)
-                except Exception as e:
-                    if verbose:
-                        self._log(f"  Warning: no extractor for {lang}: {e}")
-            if extractor is None:
-                continue
-            try:
-                symbols = extractor.extract_symbols(tree, parsed_source, rel_path)
-            except Exception as e:
-                symbols = []
-                if verbose:
-                    self._log(f"  Warning: re-extract symbols failed for {rel_path}: {e}")
-
-            # Read raw source for Vue template scanning
-            raw_source = None
-            if rel_path.endswith(".vue"):
-                from roam.index.parser import read_source
-
-                raw_source = read_source(full_path)
-
-            self._extract_file_refs(
+            self._re_extract_single_file(
                 rel_path,
-                full_path,
-                language,
-                raw_source or b"",
-                symbols,
-                tree,
-                parsed_source,
-                extractor,
+                self.root / rel_path,
+                get_extractor,
                 all_references,
                 verbose,
             )
+
+    def _re_extract_single_file(
+        self,
+        rel_path: str,
+        full_path: Path,
+        get_extractor,
+        all_references,
+        verbose,
+    ) -> None:
+        """Rebuild references for one affected neighbor while tolerating per-file failures.
+
+        Mirrors the extraction half of the full-index single-file pipeline without
+        re-inserting symbols or file records (the file itself did not change).
+        """
+        language = detect_language(rel_path)
+        tree, parsed_source, lang = parse_file(full_path, language)
+        if tree is None and parsed_source is None:
+            return
+
+        extractor = self._extractor_for_file(get_extractor, lang, rel_path, verbose)
+        if extractor is None:
+            return
+
+        try:
+            symbols = extractor.extract_symbols(tree, parsed_source, rel_path)
+        except Exception as e:
+            symbols = []
+            if verbose:
+                self._log(f"  Warning: re-extract symbols failed for {rel_path}: {e}")
+
+        # Read raw source for Vue template scanning
+        raw_source = None
+        if rel_path.endswith(".vue"):
+            raw_source = read_source(full_path)
+
+        self._extract_file_refs(
+            rel_path,
+            full_path,
+            language,
+            raw_source or b"",
+            symbols,
+            tree,
+            parsed_source,
+            extractor,
+            all_references,
+            verbose,
+        )
 
     def _reset_index_for_force(self, force: bool) -> list[dict]:
         if not force:
