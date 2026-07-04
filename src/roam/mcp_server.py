@@ -6208,17 +6208,14 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "errors": {},
         }
 
-    # W103: outer try/except guards ONLY the DB/config boundary. Per-symbol
-    # lookup/query database failures are tuple-form errors from _batch_get_one;
-    # programmer-class failures propagate instead of looking like no data.
+    # W103/W607: open_db() and the per-symbol loop are kept in separate blocks
+    # so a connection failure short-circuits with a _fatal payload while
+    # DB-level lookup errors stay isolated inside _batch_get_one's return
+    # value. This also keeps the loop at depth-4 (not depth-5, matching
+    # batch_search). Programmer-class failures propagate instead of looking
+    # like no data.
     try:
-        with open_db(readonly=True) as conn:
-            for sym in symbols_list:
-                details, err = _batch_get_one(conn, sym)
-                if err or details is None:
-                    errors[sym] = err or "not found"
-                else:
-                    results[sym] = details
+        conn_ctx = open_db(readonly=True)
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
@@ -6232,6 +6229,14 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "results": {},
             "errors": {"_fatal": str(exc)},
         }
+
+    with conn_ctx as conn:
+        for sym in symbols_list:
+            details, err = _batch_get_one(conn, sym)
+            if err or details is None:
+                errors[sym] = err or "not found"
+            else:
+                results[sym] = details
 
     resolved = len(results)
     verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
