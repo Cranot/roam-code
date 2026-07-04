@@ -615,6 +615,184 @@ def _precompute_imported_names_for_precise_reuse(
     return imported_names_by_file
 
 
+def _build_qualified_symbols_for_exact_targets(symbols_by_name: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Group qualified names so exact target identity survives name collisions."""
+    symbols_by_qualified: dict[str, list[dict]] = {}
+    for sym_list in symbols_by_name.values():
+        for sym in sym_list:
+            qn = sym.get("qualified_name")
+            if qn:
+                symbols_by_qualified.setdefault(qn, []).append(sym)
+    return symbols_by_qualified
+
+
+def _build_casefolded_symbols_for_language_fallback(symbols_by_name: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Index lower-case names so case-insensitive languages keep resolving."""
+    symbols_by_name_lower: dict[str, list[dict]] = {}
+    for name, sym_list in symbols_by_name.items():
+        lower = name.lower()
+        if lower != name:  # Only add if case differs to save memory
+            symbols_by_name_lower.setdefault(lower, []).extend(sym_list)
+        # Always add lowercase key so lookups work
+        if lower not in symbols_by_name_lower:
+            symbols_by_name_lower[lower] = sym_list
+    return symbols_by_name_lower
+
+
+def _build_import_paths_for_target_disambiguation(references: list[dict]) -> dict[tuple[str, str], str]:
+    """Map written imports so ambiguous names prefer the imported path."""
+    import_map: dict[tuple[str, str], str] = {}
+    for ref in references:
+        if ref.get("kind") == "import" and ref.get("import_path"):
+            key = (ref.get("source_file", ""), ref.get("target_name", ""))
+            if key[0] and key[1]:
+                import_map[key] = ref["import_path"]
+    return import_map
+
+
+def _build_file_symbols_for_scope_fallback(symbols_by_name: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Sort symbols by file/line so module-scope refs keep nearest scope."""
+    file_symbols: dict[str, list[dict]] = {}
+    for sym_list in symbols_by_name.values():
+        for sym in sym_list:
+            fp = sym.get("file_path", "")
+            if fp:
+                file_symbols.setdefault(fp, []).append(sym)
+    for fp in file_symbols:
+        file_symbols[fp].sort(key=lambda s: s.get("line_start") or 0)
+    return file_symbols
+
+
+def _target_for_reference_preserving_specialized_precedence(
+    ref: dict,
+    source_parent: str,
+    hoisted_salesforce_imports: dict[str, dict | None],
+    hoisted_salesforce_names: dict[tuple[str, str], dict | None],
+    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+) -> dict | None:
+    """Pick a target while preserving Salesforce-first resolver precedence."""
+    target_name = ref.get("target_name", "")
+    source_file = ref.get("source_file", "")
+    kind = ref.get("kind", "call")
+
+    import_path = ref.get("import_path", "")
+    target_sym = None
+    if import_path and import_path.startswith("@salesforce/"):
+        target_sym = hoisted_salesforce_imports.get(import_path)
+    elif kind in _SALESFORCE_NAME_KINDS:
+        target_sym = hoisted_salesforce_names.get((target_name, kind))
+
+    if target_sym is None:
+        std_key = (target_name, source_file, source_parent, kind)
+        target_sym = hoisted_standard_targets.get(std_key)
+    return target_sym
+
+
+def _edge_record_preserving_import_verification_metadata(
+    ref: dict,
+    source_id,
+    target_id,
+    files_by_path: dict[str, int],
+) -> dict:
+    """Keep import verification evidence attached only until W167 consumes it."""
+    target_name = ref.get("target_name", "")
+    kind = ref.get("kind", "call")
+    source_file = ref.get("source_file", "")
+
+    edge_record: dict = {
+        "source_id": source_id,
+        "target_id": target_id,
+        "kind": kind,
+        "line": ref.get("line"),
+        "source_file_id": files_by_path.get(source_file),
+    }
+    if kind == "import":
+        # Stash the pre-resolution target name and source path on the
+        # edge so the W167 verification pass can text-check them
+        # against the actual import statements in the source file.
+        # Both keys are popped by ``_verify_import_edges`` before
+        # the edge is returned to the caller.
+        edge_record["_target_name"] = target_name
+        edge_record["_source_path"] = source_file
+    return edge_record
+
+
+def _edge_for_reference_preserving_context_precision(
+    ref: dict,
+    files_by_path: dict[str, int],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    hoisted_salesforce_imports: dict[str, dict | None],
+    hoisted_salesforce_names: dict[tuple[str, str], dict | None],
+    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+    seen: set[tuple[object, object, str]],
+) -> dict | None:
+    """Resolve one ref only when its context, target, and identity agree."""
+    target_name = ref.get("target_name", "")
+    if not target_name:
+        return None
+
+    source_context_key = _source_context_key_for_precise_reuse(ref)
+    source_context = hoisted_source_contexts.get(source_context_key)
+    if source_context is None:
+        return None
+    source_sym, source_parent = source_context
+
+    target_sym = _target_for_reference_preserving_specialized_precedence(
+        ref,
+        source_parent,
+        hoisted_salesforce_imports,
+        hoisted_salesforce_names,
+        hoisted_standard_targets,
+    )
+    if target_sym is None:
+        return None
+
+    source_id = source_sym["id"]
+    target_id = target_sym["id"]
+    if source_id == target_id:
+        return None
+
+    kind = ref.get("kind", "call")
+    edge_key = (source_id, target_id, kind)
+    if edge_key in seen:
+        return None
+    seen.add(edge_key)
+
+    return _edge_record_preserving_import_verification_metadata(
+        ref,
+        source_id,
+        target_id,
+        files_by_path,
+    )
+
+
+def _edges_for_references_preserving_context_precision(
+    references: list[dict],
+    files_by_path: dict[str, int],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    hoisted_salesforce_imports: dict[str, dict | None],
+    hoisted_salesforce_names: dict[tuple[str, str], dict | None],
+    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+) -> list[dict]:
+    """Emit unique edges only after each ref reuses its exact source context."""
+    edges: list[dict] = []
+    seen: set[tuple[object, object, str]] = set()
+
+    for ref in references:
+        edge_record = _edge_for_reference_preserving_context_precision(
+            ref,
+            files_by_path,
+            hoisted_source_contexts,
+            hoisted_salesforce_imports,
+            hoisted_salesforce_names,
+            hoisted_standard_targets,
+            seen,
+        )
+        if edge_record is not None:
+            edges.append(edge_record)
+    return edges
+
+
 def resolve_references(
     references: list[dict],
     symbols_by_name: dict[str, list[dict]],
@@ -643,46 +821,17 @@ def resolve_references(
         List of edge dicts with source_id, target_id, kind, line, source_file_id.
     """
     # Build a lookup: qualified_name -> list of symbols (multiple files may define same qn)
-    symbols_by_qualified: dict[str, list[dict]] = {}
-    for name, sym_list in symbols_by_name.items():
-        for sym in sym_list:
-            qn = sym.get("qualified_name")
-            if qn:
-                symbols_by_qualified.setdefault(qn, []).append(sym)
+    symbols_by_qualified = _build_qualified_symbols_for_exact_targets(symbols_by_name)
 
     # Case-insensitive fallback index for case-insensitive languages (VFP)
-    symbols_by_name_lower: dict[str, list[dict]] = {}
-    for name, sym_list in symbols_by_name.items():
-        lower = name.lower()
-        if lower != name:  # Only add if case differs to save memory
-            symbols_by_name_lower.setdefault(lower, []).extend(sym_list)
-        # Always add lowercase key so lookups work
-        if lower not in symbols_by_name_lower:
-            symbols_by_name_lower[lower] = sym_list
+    symbols_by_name_lower = _build_casefolded_symbols_for_language_fallback(symbols_by_name)
 
     # Build import map: (source_file, imported_name) -> import_path
-    import_map: dict[tuple[str, str], str] = {}
-    for ref in references:
-        if ref.get("kind") == "import" and ref.get("import_path"):
-            key = (ref.get("source_file", ""), ref.get("target_name", ""))
-            if key[0] and key[1]:
-                import_map[key] = ref["import_path"]
+    import_map = _build_import_paths_for_target_disambiguation(references)
 
     # Build fallback map: file_path -> sorted list of symbols for line-based lookup
     # Used when source_name is None/empty (top-level code, e.g. Vue <script setup>)
-    _file_symbols: dict[str, list[dict]] = {}
-    for sym_list in symbols_by_name.values():
-        for sym in sym_list:
-            fp = sym.get("file_path", "")
-            if fp:
-                _file_symbols.setdefault(fp, []).append(sym)
-    # Sort each file's symbols by line_start for binary-search-style lookup
-    for fp in _file_symbols:
-        _file_symbols[fp].sort(key=lambda s: s.get("line_start") or 0)
-
-    # Also index source symbols by name for finding the caller
-    edges = []
-    seen = set()
+    _file_symbols = _build_file_symbols_for_scope_fallback(symbols_by_name)
 
     hoisted_source_contexts = _precompute_contexts_for_precise_reuse(
         references,
@@ -708,64 +857,14 @@ def resolve_references(
         import_map,
     )
 
-    for ref in references:
-        target_name = ref.get("target_name", "")
-        kind = ref.get("kind", "call")
-        line = ref.get("line")
-        source_file = ref.get("source_file", "")
-
-        if not target_name:
-            continue
-
-        source_context_key = _source_context_key_for_precise_reuse(ref)
-        source_context = hoisted_source_contexts[source_context_key]
-        if source_context is None:
-            continue
-        source_sym, source_parent = source_context
-
-        # Salesforce resolution: handle @salesforce/ imports and controller refs
-        import_path = ref.get("import_path", "")
-        target_sym = None
-        if import_path and import_path.startswith("@salesforce/"):
-            target_sym = hoisted_salesforce_imports.get(import_path)
-        elif kind in _SALESFORCE_NAME_KINDS:
-            target_sym = hoisted_salesforce_names.get((target_name, kind))
-
-        # Standard resolution (skip if Salesforce already resolved)
-        if target_sym is None:
-            std_key = (target_name, source_file, source_parent, kind)
-            target_sym = hoisted_standard_targets.get(std_key)
-
-        if target_sym is None:
-            continue
-
-        source_id = source_sym["id"]
-        target_id = target_sym["id"]
-
-        if source_id == target_id:
-            continue
-
-        edge_key = (source_id, target_id, kind)
-        if edge_key in seen:
-            continue
-        seen.add(edge_key)
-
-        edge_record: dict = {
-            "source_id": source_id,
-            "target_id": target_id,
-            "kind": kind,
-            "line": line,
-            "source_file_id": files_by_path.get(source_file),
-        }
-        if kind == "import":
-            # Stash the pre-resolution target name and source path on the
-            # edge so the W167 verification pass can text-check them
-            # against the actual import statements in the source file.
-            # Both keys are popped by ``_verify_import_edges`` before
-            # the edge is returned to the caller.
-            edge_record["_target_name"] = target_name
-            edge_record["_source_path"] = source_file
-        edges.append(edge_record)
+    edges = _edges_for_references_preserving_context_precision(
+        references,
+        files_by_path,
+        hoisted_source_contexts,
+        hoisted_salesforce_imports,
+        hoisted_salesforce_names,
+        hoisted_standard_targets,
+    )
 
     # W167: drop ``kind='import'`` edges whose target name isn't written as
     # an import in the source file. This filters resolver fuzzy-match
