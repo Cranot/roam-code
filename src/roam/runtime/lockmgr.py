@@ -26,6 +26,8 @@ from typing import Iterator, Literal
 
 LockMode = Literal["read", "write", "exclusive"]
 
+__all__ = ["LockMode", "LockMgr", "default_lockmgr"]
+
 
 class LockMgr:
     """RW lock manager with drain semantics.
@@ -118,7 +120,15 @@ def default_lockmgr() -> LockMgr:
         lockmgr = LockMgr()
         _assert_public_acquire_contract(lockmgr)
         _default_lockmgr_singleton = lockmgr
+        _assert_public_default_lockmgr_contract()
     return _default_lockmgr_singleton
+
+
+def _assert_public_default_lockmgr_contract() -> None:
+    """Verify the public singleton API returns the initialized LockMgr."""
+    manager = default_lockmgr()
+    if manager is not _default_lockmgr_singleton:
+        raise RuntimeError("default_lockmgr did not return singleton LockMgr")
 
 
 def _assert_public_acquire_contract(lockmgr: LockMgr) -> None:
