@@ -356,9 +356,9 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
     event["seq"] = seq
 
     prev_sig = _last_event_signature(events_path)
-    # Lazy import keeps a corrupt signing module from breaking the ledger;
-    # signing is additive, not mandatory. sign_event lives in signing.py so
-    # key materialisation, seed constant, and chain math stay colocated.
+    # Keep the ledger boundary narrow: this file only supplies the previous
+    # chain tip and event bytes, while signing.py owns key materialisation,
+    # the seed constant, and the HMAC chain math.
     from roam.runs.signing import sign_event
 
     signature = sign_event(repo_root, prev_sig, event)
