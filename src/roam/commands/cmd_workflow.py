@@ -13,13 +13,20 @@ allowlist + W1145 / W1085 composer audit + W1224-audit memo.
 
 from __future__ import annotations
 
+import importlib
+
 import click
 
 from roam.ask.recipes import RECIPES, Recipe, by_name
 from roam.ask.runner import extract_recipe_symbol, fill_args
 from roam.ask.workflow import recipe_workflow_metadata
 from roam.capability import roam_capability
-from roam.output.formatter import json_envelope, to_json
+
+
+def _emit_workflow_json_contract(summary: dict, **payload: object) -> None:
+    formatter = importlib.import_module("roam.output.formatter")
+    envelope = formatter.json_envelope("workflow", summary=summary, **payload)
+    click.echo(formatter.to_json(envelope))
 
 
 def _recipe_payload(recipe: Recipe, query: str = "") -> dict:
@@ -47,23 +54,18 @@ def _emit_recipe_list(json_mode: bool) -> None:
         sample_recipes = [p["recipe"] for p in payloads[:3]]
         next_commands = ["roam workflow --list"]
         next_commands.extend(f"roam workflow {name}" for name in sample_recipes)
-        click.echo(
-            to_json(
-                json_envelope(
-                    "workflow",
-                    summary={
-                        "verdict": f"{len(payloads)} workflow recipe(s) available",
-                        "recipe_count": len(payloads),
-                    },
-                    recipes=payloads,
-                    agent_contract={
-                        "facts": [
-                            f"{len(payloads)} workflow recipes available",
-                        ],
-                        "next_commands": next_commands,
-                    },
-                )
-            )
+        _emit_workflow_json_contract(
+            summary={
+                "verdict": f"{len(payloads)} workflow recipe(s) available",
+                "recipe_count": len(payloads),
+            },
+            recipes=payloads,
+            agent_contract={
+                "facts": [
+                    f"{len(payloads)} workflow recipes available",
+                ],
+                "next_commands": next_commands,
+            },
         )
         return
 
@@ -89,24 +91,19 @@ def _emit_recipe_detail(recipe: Recipe, query: str, json_mode: bool) -> None:
         for cmd in step_invocations + followups:
             if cmd and cmd not in next_commands:
                 next_commands.append(cmd)
-        click.echo(
-            to_json(
-                json_envelope(
-                    "workflow",
-                    summary={
-                        "verdict": f"workflow recipe '{recipe.name}'",
-                        "recipe": recipe.name,
-                        "phase": recipe.phase,
-                    },
-                    agent_contract={
-                        "facts": [
-                            f"recipe '{recipe.name}' has {len(step_invocations)} commands",
-                        ],
-                        "next_commands": next_commands,
-                    },
-                    **payload,
-                )
-            )
+        _emit_workflow_json_contract(
+            summary={
+                "verdict": f"workflow recipe '{recipe.name}'",
+                "recipe": recipe.name,
+                "phase": recipe.phase,
+            },
+            agent_contract={
+                "facts": [
+                    f"recipe '{recipe.name}' has {len(step_invocations)} commands",
+                ],
+                "next_commands": next_commands,
+            },
+            **payload,
         )
         return
 
@@ -155,18 +152,13 @@ def _emit_next_after(next_after: str, json_mode: bool) -> None:
     )
     if json_mode:
         next_commands = list(suggestions) if suggestions else ["roam workflow --list"]
-        click.echo(
-            to_json(
-                json_envelope(
-                    "workflow",
-                    summary={"verdict": verdict, "after": next_after},
-                    suggestions=suggestions,
-                    agent_contract={
-                        "facts": [verdict],
-                        "next_commands": next_commands,
-                    },
-                )
-            )
+        _emit_workflow_json_contract(
+            summary={"verdict": verdict, "after": next_after},
+            suggestions=suggestions,
+            agent_contract={
+                "facts": [verdict],
+                "next_commands": next_commands,
+            },
         )
         return
     click.echo(f"VERDICT: {verdict}")
@@ -194,21 +186,16 @@ def _unknown_recipe_error(recipe_name: str, json_mode: bool) -> click.ClickExcep
     base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.{frag['verdict_suffix']}"
     if json_mode:
         verdict_unknown = f"unknown workflow recipe {recipe_name!r}"
-        click.echo(
-            to_json(
-                json_envelope(
-                    "workflow",
-                    summary={
-                        "verdict": verdict_unknown + frag["verdict_suffix"],
-                        **to_summary_payload(frag),
-                        "error_code": UNKNOWN_RECIPE,
-                    },
-                    agent_contract={
-                        "facts": frag["facts"],
-                        "next_commands": ["roam workflow --list"],
-                    },
-                )
-            )
+        _emit_workflow_json_contract(
+            summary={
+                "verdict": verdict_unknown + frag["verdict_suffix"],
+                **to_summary_payload(frag),
+                "error_code": UNKNOWN_RECIPE,
+            },
+            agent_contract={
+                "facts": frag["facts"],
+                "next_commands": ["roam workflow --list"],
+            },
         )
     return structured_usage_error(UNKNOWN_RECIPE, base_msg)
 
