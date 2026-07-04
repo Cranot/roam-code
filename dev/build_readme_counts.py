@@ -174,7 +174,7 @@ def _category_count(root: Path) -> int:
                     obj = ast.literal_eval(value)
                     if isinstance(obj, dict):
                         return len(obj)
-                except Exception:
+                except (ValueError, TypeError):
                     pass
     # If _CATEGORIES isn't a plain dict literal, return 0 so callers notice.
     return 0
