@@ -190,6 +190,30 @@ def format_cycles(cycles: list[list[int]], conn: sqlite3.Connection) -> list[dic
     return result
 
 
+def find_cycle_violations(G: nx.DiGraph, conn: sqlite3.Connection, min_size: int = 2) -> list[dict]:
+    """Find cycles in *G* and return them as rule-violation dicts.
+
+    Keeps cycle-specific knowledge (SCC detection, symbol/file lookups,
+    reason formatting) inside the cycles module so rule adapters do not
+    reach into the formatted-cycle structure.
+    """
+    cycles = find_cycles(G, min_size=min_size)
+    if not cycles:
+        return []
+
+    formatted = format_cycles(cycles, conn)
+    violations = []
+    for cyc in formatted:
+        files = cyc.get("files", [])
+        names = [s["name"] for s in cyc.get("symbols", [])]
+        reason = "cycle of {} symbols: {}".format(cyc["size"], ", ".join(names[:5]))
+        if len(names) > 5:
+            reason += " (+{} more)".format(len(names) - 5)
+        fpath = files[0] if files else ""
+        violations.append({"symbol": names[0] if names else "", "file": fpath, "line": None, "reason": reason})
+    return violations
+
+
 def mark_actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
     """Annotate cycles with ``local_only``, ``has_test_file``, ``actionable``.
 
