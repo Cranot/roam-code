@@ -1658,8 +1658,10 @@ def _ci_mode_enabled(ci_mode: bool) -> bool:
 def _warn_mode_gate_skipped() -> None:
     try:
         click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
-    except Exception:  # noqa: BLE001 — the gate must never block a command via its own bug
-        pass
+    except Exception as exc:  # noqa: BLE001 — the gate must never block a command via its own bug
+        import logging
+
+        logging.getLogger(__name__).debug("mode-gate skipped warning failed: %s", exc)
 
 
 def _run_mode_gate_safely(ctx: click.Context) -> None:
