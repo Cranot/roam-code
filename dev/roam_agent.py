@@ -186,6 +186,8 @@ class Session:
             self.mode_history.append(name)
 
     async def consume(self, stream) -> bool:
+        write = sys.stdout.write
+        flush = sys.stdout.flush
         async for msg in stream:
             if isinstance(msg, StreamEvent):
                 evt = msg.event or {}
@@ -193,12 +195,12 @@ class Session:
                 if etype == "content_block_delta":
                     delta = evt.get("delta", {})
                     if delta.get("type") == "text_delta":
-                        sys.stdout.write(delta.get("text", ""))
-                        sys.stdout.flush()
+                        write(delta.get("text", ""))
+                        flush()
                         self._streaming = True
                 elif etype == "content_block_stop" and self._streaming:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
+                    write("\n")
+                    flush()
                     self._streaming = False
             elif isinstance(msg, AssistantMessage):
                 for block in msg.content:
