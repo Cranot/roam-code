@@ -4367,6 +4367,26 @@ def _chunked(values: list[int], size: int = 500):
         yield values[i : i + size]
 
 
+def _empty_symbol_context() -> dict:
+    """Default evidence context consumed by calibration and evidence builders."""
+    return {
+        "signals": [],
+        "loop_depth": 0,
+        "loop_bound_small": 0,
+        "caller_count": 0,
+        "cognitive_complexity": 0.0,
+        "cyclomatic_density": 0.0,
+        "line_count": 0,
+        "complexity_zscore": 0.0,
+        "runtime_call_count": 0,
+        "runtime_p99_latency_ms": None,
+        "runtime_error_rate": 0.0,
+        "runtime_otel_db_system": None,
+        "runtime_otel_db_operation": None,
+        "runtime_otel_db_statement_type": None,
+    }
+
+
 def _complexity_baseline(conn) -> tuple[float, float]:
     """Repo-wide cognitive-complexity baseline (mean, std) for z-score scoring.
 
@@ -4536,25 +4556,7 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
     every key the calibrate / evidence / score consumers read, defaulting to
     zero / None when the underlying row is absent.
     """
-    context: dict[int, dict] = {
-        sid: {
-            "signals": [],
-            "loop_depth": 0,
-            "loop_bound_small": 0,
-            "caller_count": 0,
-            "cognitive_complexity": 0.0,
-            "cyclomatic_density": 0.0,
-            "line_count": 0,
-            "complexity_zscore": 0.0,
-            "runtime_call_count": 0,
-            "runtime_p99_latency_ms": None,
-            "runtime_error_rate": 0.0,
-            "runtime_otel_db_system": None,
-            "runtime_otel_db_operation": None,
-            "runtime_otel_db_statement_type": None,
-        }
-        for sid in symbol_ids
-    }
+    context: dict[int, dict] = {sid: _empty_symbol_context() for sid in symbol_ids}
     if not symbol_ids:
         return context
 
