@@ -275,9 +275,58 @@ class YamlExtractor(LanguageExtractor):
                 in_extends_list = False
                 in_needs_list = False
 
-            # extends: .template  (scalar)
-            m = _RE_EXTENDS_SCALAR.search(line)
-            if m and "[" not in line:
+            in_extends_list = self._collect_extends_refs(
+                line, ln, current_job, refs, in_extends_list
+            )
+            self._collect_reference_refs(line, ln, current_job, refs)
+            in_needs_list = self._collect_needs_refs(
+                line, ln, current_job, refs, in_needs_list
+            )
+
+        return refs
+
+    def _collect_extends_refs(
+        self,
+        line: str,
+        ln: int,
+        current_job: str | None,
+        refs: list[dict],
+        in_extends_list: bool,
+    ) -> bool:
+        """Extract `extends:` references (scalar, inline list, multiline list)."""
+        # extends: .template  (scalar)
+        m = _RE_EXTENDS_SCALAR.search(line)
+        if m and "[" not in line:
+            refs.append(
+                self._make_reference(
+                    target_name=m.group(1),
+                    kind="inherits",
+                    line=ln,
+                    source_name=current_job,
+                )
+            )
+
+        # extends: [.a, .b]
+        m = _RE_EXTENDS_LIST.search(line)
+        if m:
+            for item in m.group(1).split(","):
+                t = item.strip().strip("'\"")
+                if t:
+                    refs.append(
+                        self._make_reference(
+                            target_name=t,
+                            kind="inherits",
+                            line=ln,
+                            source_name=current_job,
+                        )
+                    )
+
+        # extends: followed by multiline list
+        if re.search(r"^\s+extends\s*:\s*$", line):
+            return True
+        if in_extends_list:
+            m = _RE_EXTENDS_MULTILINE_ITEM.match(line)
+            if m:
                 refs.append(
                     self._make_reference(
                         target_name=m.group(1),
@@ -286,54 +335,72 @@ class YamlExtractor(LanguageExtractor):
                         source_name=current_job,
                     )
                 )
+            elif line and not line[0].isspace():
+                return False
+        return in_extends_list
 
-            # extends: [.a, .b]
-            m = _RE_EXTENDS_LIST.search(line)
-            if m:
-                for item in m.group(1).split(","):
-                    t = item.strip().strip("'\"")
-                    if t:
-                        refs.append(
-                            self._make_reference(
-                                target_name=t,
-                                kind="inherits",
-                                line=ln,
-                                source_name=current_job,
-                            )
-                        )
-
-            # extends: followed by multiline list
-            if re.search(r"^\s+extends\s*:\s*$", line):
-                in_extends_list = True
-            elif in_extends_list:
-                m = _RE_EXTENDS_MULTILINE_ITEM.match(line)
-                if m:
-                    refs.append(
-                        self._make_reference(
-                            target_name=m.group(1),
-                            kind="inherits",
-                            line=ln,
-                            source_name=current_job,
-                        )
+    def _collect_reference_refs(
+        self,
+        line: str,
+        ln: int,
+        current_job: str | None,
+        refs: list[dict],
+    ) -> None:
+        """Extract `!reference [job, section]` call references."""
+        for m in _RE_REFERENCE.finditer(line):
+            parts = [p.strip() for p in m.group(1).split(",")]
+            if parts:
+                refs.append(
+                    self._make_reference(
+                        target_name=parts[0],
+                        kind="call",
+                        line=ln,
+                        source_name=current_job,
                     )
-                elif line and not line[0].isspace():
-                    in_extends_list = False
+                )
 
-            # !reference [job, section]
-            for m in _RE_REFERENCE.finditer(line):
-                parts = [p.strip() for p in m.group(1).split(",")]
-                if parts:
+    def _collect_needs_refs(
+        self,
+        line: str,
+        ln: int,
+        current_job: str | None,
+        refs: list[dict],
+        in_needs_list: bool,
+    ) -> bool:
+        """Extract `needs:` references (scalar, inline list, multiline list)."""
+        # needs: job  (scalar)
+        m = _RE_NEEDS_SCALAR.match(line)
+        if m:
+            refs.append(
+                self._make_reference(
+                    target_name=m.group(1),
+                    kind="call",
+                    line=ln,
+                    source_name=current_job,
+                )
+            )
+
+        # needs: [j1, j2]
+        m = _RE_NEEDS_LIST.match(line)
+        if m:
+            for item in m.group(1).split(","):
+                t = item.strip().strip("'\"")
+                if t:
                     refs.append(
                         self._make_reference(
-                            target_name=parts[0],
+                            target_name=t,
                             kind="call",
                             line=ln,
                             source_name=current_job,
                         )
                     )
+            return False
 
-            # needs: job  (scalar)
-            m = _RE_NEEDS_SCALAR.match(line)
+        # needs: followed by multiline list
+        if re.match(r"^\s+needs\s*:\s*$", line):
+            return True
+        if in_needs_list:
+            m = _RE_NEEDS_ITEM.match(line)
             if m:
                 refs.append(
                     self._make_reference(
@@ -343,41 +410,9 @@ class YamlExtractor(LanguageExtractor):
                         source_name=current_job,
                     )
                 )
-
-            # needs: [j1, j2]
-            m = _RE_NEEDS_LIST.match(line)
-            if m:
-                for item in m.group(1).split(","):
-                    t = item.strip().strip("'\"")
-                    if t:
-                        refs.append(
-                            self._make_reference(
-                                target_name=t,
-                                kind="call",
-                                line=ln,
-                                source_name=current_job,
-                            )
-                        )
-                continue
-
-            # needs: followed by multiline list
-            if re.match(r"^\s+needs\s*:\s*$", line):
-                in_needs_list = True
-            elif in_needs_list:
-                m = _RE_NEEDS_ITEM.match(line)
-                if m:
-                    refs.append(
-                        self._make_reference(
-                            target_name=m.group(1),
-                            kind="call",
-                            line=ln,
-                            source_name=current_job,
-                        )
-                    )
-                elif line and not line[0].isspace():
-                    in_needs_list = False
-
-        return refs
+            elif line and not line[0].isspace():
+                return False
+        return in_needs_list
 
     # ------------------------------------------------------------------
     # GitHub Actions
