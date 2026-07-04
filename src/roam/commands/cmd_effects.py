@@ -29,6 +29,22 @@ def _count_symbol_effects(conn) -> int:
         return 0
 
 
+def _symbol_payload_preserving_effect_source(row, effect_rows, file_path):
+    payload = {
+        "name": row["name"],
+        "qualified_name": row["qualified_name"],
+        "kind": row["kind"],
+        "file": file_path,
+        "line": row["line_start"],
+        "direct_effects": [],
+        "transitive_effects": [],
+    }
+    for effect_row in effect_rows:
+        bucket = "direct_effects" if effect_row["source"] == "direct" else "transitive_effects"
+        payload[bucket].append(effect_row["effect_type"])
+    return payload
+
+
 @roam_capability(
     name="effects",
     category="architecture",
@@ -161,8 +177,9 @@ def _show_symbol_effects(ctx, conn, target, transitive, json_mode):
         (sym_id,),
     ).fetchall()
 
-    direct = [e for e in effects if e["source"] == "direct"]
-    inherited = [e for e in effects if e["source"] == "transitive"]
+    symbol_payload = _symbol_payload_preserving_effect_source(row, effects, row["path"])
+    direct = symbol_payload["direct_effects"]
+    inherited = symbol_payload["transitive_effects"]
 
     loc = f"{row['path']}:{row['line_start']}" if row["line_start"] else row["path"]
     kind = abbrev_kind(row["kind"])
@@ -177,17 +194,7 @@ def _show_symbol_effects(ctx, conn, target, transitive, json_mode):
                         "symbols_with_effects": 1,
                         "total_effects": len(effects),
                     },
-                    symbols=[
-                        {
-                            "name": row["name"],
-                            "qualified_name": row["qualified_name"],
-                            "kind": row["kind"],
-                            "file": row["path"],
-                            "line": row["line_start"],
-                            "direct_effects": [e["effect_type"] for e in direct],
-                            "transitive_effects": [e["effect_type"] for e in inherited],
-                        }
-                    ],
+                    symbols=[symbol_payload],
                 )
             )
         )
@@ -199,14 +206,14 @@ def _show_symbol_effects(ctx, conn, target, transitive, json_mode):
 
     if direct:
         click.echo("DIRECT EFFECTS:")
-        for e in direct:
-            click.echo(f"  {e['effect_type']}")
+        for effect_type in direct:
+            click.echo(f"  {effect_type}")
         click.echo()
 
     if inherited:
         click.echo("TRANSITIVE EFFECTS (inherited from callees):")
-        for e in inherited:
-            click.echo(f"  {e['effect_type']}")
+        for effect_type in inherited:
+            click.echo(f"  {effect_type}")
         click.echo()
 
     if not effects:
@@ -256,26 +263,15 @@ def _show_file_effects(ctx, conn, file_path, transitive, json_mode):
         (file_id,),
     ).fetchall()
 
-    # Group by symbol
-    symbols: dict[int, dict] = {}
+    rows_by_symbol: dict[int, list] = {}
     for r in rows:
-        sid = r["id"]
-        if sid not in symbols:
-            symbols[sid] = {
-                "name": r["name"],
-                "qualified_name": r["qualified_name"],
-                "kind": r["kind"],
-                "line": r["line_start"],
-                "direct_effects": [],
-                "transitive_effects": [],
-            }
-        if r["source"] == "direct":
-            symbols[sid]["direct_effects"].append(r["effect_type"])
-        else:
-            symbols[sid]["transitive_effects"].append(r["effect_type"])
+        rows_by_symbol.setdefault(r["id"], []).append(r)
 
     total_effects = len(rows)
-    sym_list = list(symbols.values())
+    sym_list = [
+        _symbol_payload_preserving_effect_source(effect_rows[0], effect_rows, actual_path)
+        for effect_rows in rows_by_symbol.values()
+    ]
 
     if json_mode:
         click.echo(
@@ -288,7 +284,7 @@ def _show_file_effects(ctx, conn, file_path, transitive, json_mode):
                         "total_effects": total_effects,
                     },
                     file=actual_path,
-                    symbols=[{**s, "file": actual_path} for s in sym_list],
+                    symbols=sym_list,
                 )
             )
         )
