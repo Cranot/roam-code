@@ -168,6 +168,20 @@ class LeaseListOptions:
 
 
 @dataclass(frozen=True)
+class LeaseGcOptions:
+    """Option cluster for :func:`gc_expired_leases`.
+
+    Groups the read-side ``warnings_out`` sink so the
+    ``(repo_root, warnings_out)`` parameter pair is not repeated across
+    every fault-tolerant reader's signature (data-clump fix). Mirrors
+    :class:`LeaseListOptions`, which groups the same sink for
+    :func:`list_leases`.
+    """
+
+    warnings_out: WarningsOut = None
+
+
+@dataclass(frozen=True)
 class _LeaseReadContext:
     """Shared context for fault-tolerant lease readers."""
 
@@ -740,8 +754,8 @@ def list_leases(
 
 def gc_expired_leases(
     repo_root: Path,
-    *,
-    warnings_out: WarningsOut = None,
+    options: Optional[LeaseGcOptions] = None,
+    **overrides: object,
 ) -> list[str]:
     """Mark every wall-clock-expired lease as ``state: expired``.
 
@@ -768,7 +782,29 @@ def gc_expired_leases(
         names the failure mode (typically ``PermissionError`` /
         ``FileNotFoundError`` / ``OSError``); ``<detail>`` carries the
         exception's str().
+
+    ``options`` groups the read-side ``warnings_out`` sink
+    (:class:`LeaseGcOptions`). Existing callers may still pass
+    ``warnings_out=``; that keyword is normalized into the options
+    instance at the boundary — same shim pattern as :func:`list_leases`.
     """
+    if options is None:
+        gc_options = LeaseGcOptions()
+    elif isinstance(options, LeaseGcOptions):
+        gc_options = options
+    else:
+        raise TypeError("options must be a LeaseGcOptions instance")
+    if overrides:
+        allowed = {"warnings_out"}
+        unexpected = sorted(set(overrides).difference(allowed))
+        if unexpected:
+            names = ", ".join(unexpected)
+            raise TypeError(f"gc_expired_leases() got unexpected option(s): {names}")
+        gc_options = LeaseGcOptions(
+            warnings_out=overrides.get("warnings_out", gc_options.warnings_out),
+        )
+    warnings_out = gc_options.warnings_out
+
     now = _utc_now()
     transitioned: list[str] = []
     for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
