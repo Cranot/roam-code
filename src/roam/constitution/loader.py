@@ -781,6 +781,44 @@ def _discover_sources(
     return sources
 
 
+def _build_constitution_doc(
+    repo_root: Path, init_options: ConstitutionInitOptions
+) -> dict[str, Any]:
+    """Assemble the constitution document dict from repo state."""
+    sources = _discover_sources(repo_root, init_options)
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    return {
+        "version": CONSTITUTION_SCHEMA_VERSION,
+        "metadata": {
+            "name": _project_name(repo_root),
+            "description": "Constitution for AI agents working on this codebase",
+            "generated_at": now,
+            "generated_by": "roam constitution init",
+        },
+        "sources": sources,
+        "required_checks": _default_required_checks(),
+        "modes": _default_modes(),
+        "policy": _default_policy(),
+        "metadata_signals": _default_metadata_signals(),
+    }
+
+
+def _write_constitution(path: Path, doc: dict[str, Any]) -> None:
+    """Dump *doc* to YAML and write it atomically to *path*."""
+    text = _dump_yaml(doc)
+    # Always end with a trailing newline so the file is POSIX-clean.
+    if not text.endswith("\n"):
+        text += "\n"
+    # Atomic write: a crash mid-write would otherwise leave a torn YAML
+    # file at .roam/constitution.yml — Pattern-1C territory because the
+    # next ``load_constitution`` call would mark it ``unparseable`` and
+    # callers would lose the otherwise-valid prior state. atomic_write_text
+    # uses temp-file + os.replace, so the target file is never half-written.
+    atomic_write_text(path, text)
+
+
 def init_constitution(
     repo_root: Path,
     options: ConstitutionInitOptions | None = None,
@@ -806,35 +844,8 @@ def init_constitution(
     if path.exists() and not init_options.force:
         raise FileExistsError(f"constitution already exists at {path}; pass force=True to overwrite")
 
-    sources = _discover_sources(repo_root, init_options)
-
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-    doc: dict[str, Any] = {
-        "version": CONSTITUTION_SCHEMA_VERSION,
-        "metadata": {
-            "name": _project_name(repo_root),
-            "description": "Constitution for AI agents working on this codebase",
-            "generated_at": now,
-            "generated_by": "roam constitution init",
-        },
-        "sources": sources,
-        "required_checks": _default_required_checks(),
-        "modes": _default_modes(),
-        "policy": _default_policy(),
-        "metadata_signals": _default_metadata_signals(),
-    }
-
-    text = _dump_yaml(doc)
-    # Always end with a trailing newline so the file is POSIX-clean.
-    if not text.endswith("\n"):
-        text += "\n"
-    # Atomic write: a crash mid-write would otherwise leave a torn YAML
-    # file at .roam/constitution.yml — Pattern-1C territory because the
-    # next ``load_constitution`` call would mark it ``unparseable`` and
-    # callers would lose the otherwise-valid prior state. atomic_write_text
-    # uses temp-file + os.replace, so the target file is never half-written.
-    atomic_write_text(path, text)
+    doc = _build_constitution_doc(repo_root, init_options)
+    _write_constitution(path, doc)
     return path
 
 
