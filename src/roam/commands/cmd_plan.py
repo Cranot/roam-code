@@ -83,53 +83,51 @@ def _build_read_order(conn, sym_ids, file_paths, task, depth):
     if not sym_ids:
         return []
 
-    # Collect callee symbols (outgoing edges from target)
-    callees = []
-    for sid in sym_ids:
-        rows = conn.execute(
-            """SELECT e.target_id, s.name, s.kind, s.line_start, s.line_end,
-                      f.path as file_path,
-                      COALESCE(gm.pagerank, 0) as pagerank
-               FROM edges e
-               JOIN symbols s ON e.target_id = s.id
-               JOIN files f ON s.file_id = f.id
-               LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
-               WHERE e.source_id = ?
-               ORDER BY gm.pagerank DESC""",
-            (sid,),
-        ).fetchall()
-        callees.extend(rows)
+    # Collect callee symbols (outgoing edges from all targets) in one query.
+    callees = batched_in(
+        conn,
+        """SELECT e.target_id, s.name, s.kind, s.line_start, s.line_end,
+                  f.path as file_path,
+                  COALESCE(gm.pagerank, 0) as pagerank
+           FROM edges e
+           JOIN symbols s ON e.target_id = s.id
+           JOIN files f ON s.file_id = f.id
+           LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
+           WHERE e.source_id IN ({ph})
+           ORDER BY gm.pagerank DESC""",
+        sym_ids,
+    )
 
-    # Collect caller symbols (incoming edges to target)
-    callers = []
-    for sid in sym_ids:
-        rows = conn.execute(
-            """SELECT e.source_id, s.name, s.kind, s.line_start, s.line_end,
-                      f.path as file_path,
-                      COALESCE(gm.pagerank, 0) as pagerank
-               FROM edges e
-               JOIN symbols s ON e.source_id = s.id
-               JOIN files f ON s.file_id = f.id
-               LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
-               WHERE e.target_id = ?
-               ORDER BY gm.pagerank DESC""",
-            (sid,),
-        ).fetchall()
-        callers.extend(rows)
+    # Collect caller symbols (incoming edges to all targets) in one query.
+    callers = batched_in(
+        conn,
+        """SELECT e.source_id, s.name, s.kind, s.line_start, s.line_end,
+                  f.path as file_path,
+                  COALESCE(gm.pagerank, 0) as pagerank
+           FROM edges e
+           JOIN symbols s ON e.source_id = s.id
+           JOIN files f ON s.file_id = f.id
+           LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
+           WHERE e.target_id IN ({ph})
+           ORDER BY gm.pagerank DESC""",
+        sym_ids,
+    )
 
-    # Build target file entries
+    # Build target file entries in one batched query.
     target_entries = []
-    for fp in file_paths:
-        row = conn.execute(
-            """SELECT f.path, MIN(s.line_start) as line_start, MAX(s.line_end) as line_end,
-                      COALESCE(MAX(gm.pagerank), 0) as pagerank
-               FROM files f
-               JOIN symbols s ON s.file_id = f.id
-               LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
-               WHERE f.path = ?""",
-            (fp,),
-        ).fetchone()
-        if row and row["path"]:
+    target_rows = batched_in(
+        conn,
+        """SELECT f.path, MIN(s.line_start) as line_start, MAX(s.line_end) as line_end,
+                  COALESCE(MAX(gm.pagerank), 0) as pagerank
+           FROM files f
+           JOIN symbols s ON s.file_id = f.id
+           LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
+           WHERE f.path IN ({ph})
+           GROUP BY f.path""",
+        file_paths,
+    )
+    for row in target_rows:
+        if row["path"]:
             target_entries.append(
                 {
                     "file": row["path"],
