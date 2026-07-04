@@ -47,7 +47,7 @@ from roam.output.formatter import json_envelope, to_json
     help="preview the reset (db path + size) without deleting.",
 )
 @click.pass_context
-def reset(ctx, force, root, dry_run):
+def reset_command(ctx, force, root, dry_run):
     """Delete the index DB and rebuild from scratch.
 
     Requires --force to confirm the destructive operation. Unlike ``clean``
@@ -181,3 +181,6 @@ def reset(ctx, force, root, dry_run):
     else:
         click.echo("  Done. Index rebuilt successfully.")
         click.echo("  Run `roam health` to verify the new index.")
+
+
+reset = reset_command
