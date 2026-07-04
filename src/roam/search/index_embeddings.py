@@ -189,6 +189,63 @@ def _get_onnx_embedder(project_root=None, settings=None):
 # ---------------------------------------------------------------------------
 
 
+def _delete_stale_fts_rows(conn: sqlite3.Connection, stale: set[int]) -> None:
+    """Chunk-delete stale rowids from symbol_fts, respecting SQLite limits.
+
+    batched_in is a SELECT helper; for DELETE we chunk ourselves to avoid
+    the SQLite parameter-count limit.
+    """
+    stale_list = list(stale)
+    chunk = 400
+    for i in range(0, len(stale_list), chunk):
+        slice_ = stale_list[i : i + chunk]
+        placeholders = ",".join("?" * len(slice_))
+        conn.execute(
+            f"DELETE FROM symbol_fts WHERE rowid IN ({placeholders})",
+            slice_,
+        )
+
+
+def _build_fts_records(rows: Iterator[sqlite3.Row]) -> list[tuple[Any, ...]]:
+    """Transform symbol rows into FTS5 insert tuples.
+
+    camelCase preprocessing improves tokenization for code identifiers.
+    Docstring is left as-is — natural-language text doesn't benefit from
+    token splitting and porter stemming handles it correctly.
+    """
+    return [
+        (
+            row["id"],
+            _camel_split(row["name"]),
+            _camel_split(row["qualified_name"]),
+            _camel_split(row["signature"]),
+            row["docstring"] or "",
+            row["kind"] or "",
+            row["file_path"] or "",
+        )
+        for row in rows
+    ]
+
+
+def _build_vector_signals(
+    conn: sqlite3.Connection,
+    project_root: str | None,
+    label: str,
+    exc_types: tuple[type[BaseException], ...] = (ImportError, RuntimeError, OSError, sqlite3.Error),
+) -> None:
+    """Build TF-IDF and optional ONNX vector signals, logging ONNX failures loudly.
+
+    ONNX is optional; the TF-IDF path remains authoritative. A genuine ONNX
+    build error (vs documented backend absence) is surfaced so a silently
+    missing semantic index has a discoverable cause.
+    """
+    build_and_store_tfidf(conn)
+    try:
+        build_and_store_onnx_embeddings(conn, project_root=project_root)
+    except exc_types as exc:
+        log_swallowed(f"search.index_embeddings:build_fts:onnx:{label}:{type(exc).__name__}", exc)
+
+
 def build_fts_index(
     conn: sqlite3.Connection,
     project_root: str | None = None,
@@ -216,19 +273,7 @@ def build_fts_index(
     rebuild — useful after schema migrations or `roam index --rebuild`.
     """
     if not fts5_available(conn):
-        build_and_store_tfidf(conn)
-        try:
-            build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except (ImportError, RuntimeError, OSError, sqlite3.Error) as exc:
-            # ImportError/RuntimeError: ONNX backend optional and may be
-            # absent (line 119 of onnx_embeddings.py raises RuntimeError on
-            # missing deps). OSError: missing model/tokenizer files.
-            # sqlite3.Error: embedding table write conflict.
-            # Programmer errors propagate per W531 fail-loud discipline.
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
-            # TF-IDF path stays authoritative, but a genuine ONNX build error
-            # (vs documented absence) gets a discoverable lineage signal.
-            log_swallowed(f"search.index_embeddings:build_fts:onnx:no_fts5:{type(exc).__name__}", exc)
+        _build_vector_signals(conn, project_root, "no_fts5")
         return
 
     # The symbol_fts schema now includes a ``docstring`` column (audit B8); the
@@ -245,33 +290,14 @@ def build_fts_index(
     # 1) DELETE rowids that left the symbols table (file removals, renames).
     stale = fts_rowids - sym_rowids
     if stale:
-        from roam.db.connection import batched_in
-
-        # batched_in is a SELECT helper; for DELETE we chunk ourselves
-        # to avoid the SQLite parameter-count limit.
-        stale_list = list(stale)
-        chunk = 400
-        for i in range(0, len(stale_list), chunk):
-            slice_ = stale_list[i : i + chunk]
-            placeholders = ",".join("?" * len(slice_))
-            conn.execute(
-                f"DELETE FROM symbol_fts WHERE rowid IN ({placeholders})",
-                slice_,
-            )
+        _delete_stale_fts_rows(conn, stale)
 
     # 2) INSERT rowids that exist in symbols but not in FTS5 (new + modified).
     fresh = sym_rowids - fts_rowids
     if not fresh:
         # Sync was already complete — vector signals + ONNX still need rebuild
         # because those are authoritative-no-diff stores.
-        build_and_store_tfidf(conn)
-        try:
-            build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except (ImportError, RuntimeError, OSError, sqlite3.Error) as exc:
-            # See narrowing rationale on the cold-start branch above.
-            # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
-            # genuine ONNX build error is surfaced even on the no-diff path.
-            log_swallowed(f"search.index_embeddings:build_fts:onnx:no_diff:{type(exc).__name__}", exc)
+        _build_vector_signals(conn, project_root, "no_diff")
         return
 
     from roam.db.connection import batched_in
@@ -285,23 +311,9 @@ def build_fts_index(
         list(fresh),
     )
 
-    # Insert with camelCase preprocessing for better tokenization. Docstring
-    # is left as-is (no camel-split) — natural-language text doesn't benefit
-    # from token splitting and porter stemming handles it correctly.
     # Build the full parameter list first so the SQLite write happens as one
     # executemany boundary instead of inside the per-row loop (N+1 I/O).
-    records = [
-        (
-            row["id"],
-            _camel_split(row["name"]),
-            _camel_split(row["qualified_name"]),
-            _camel_split(row["signature"]),
-            row["docstring"] or "",
-            row["kind"] or "",
-            row["file_path"] or "",
-        )
-        for row in rows
-    ]
+    records = _build_fts_records(rows)
     conn.executemany(
         "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, docstring, kind, file_path) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -309,16 +321,7 @@ def build_fts_index(
     )
 
     # Keep vector signals available even when FTS5 exists (hybrid #54).
-    build_and_store_tfidf(conn)
-    # Optional dense local embeddings (ONNX) for semantic search (#56).
-    try:
-        build_and_store_onnx_embeddings(conn, project_root=project_root)
-    except Exception as exc:
-        # ONNX is optional; TF-IDF path remains authoritative fallback.
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a genuine
-        # ONNX build error (vs documented backend absence) is surfaced so a
-        # silently-missing semantic index has a discoverable cause.
-        log_swallowed(f"search.index_embeddings:build_fts:onnx:fts5:{type(exc).__name__}", exc)
+    _build_vector_signals(conn, project_root, "fts5", exc_types=(Exception,))
 
 
 # ---------------------------------------------------------------------------
