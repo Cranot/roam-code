@@ -50,7 +50,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import click
 from click.testing import CliRunner
@@ -3636,6 +3636,402 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# JSON emission helper (extracted from pr_replay_cmd to reduce nesting).
+# ---------------------------------------------------------------------------
+
+
+def _emit_pr_replay_json_output(
+    *,
+    tier: str,
+    commit_range: str,
+    client: str | None,
+    summary: dict,
+    commits: list[dict],
+    by_detector: list[dict],
+    report_md: str,
+    output_path: str | None,
+    rehearsal: bool,
+    rehearsal_dir: str | None,
+    generated_at: str,
+    engagement_record: str | None,
+    pdf_path: str | None,
+    pdf_backend: str | None,
+    review_suggestions: dict | None,
+    evidence_packet: Any,
+    envelope_producer_warnings: list[str],
+    evidence_written_to: str | None,
+    markdown_companion_written_to: str | None,
+    score_classification_state: str,
+    render_markdown_state: str,
+    risk_level_canonical: str,
+    risk_rank: int,
+    verdict_floor: str,
+    run_check_ca: Callable,
+    run_check_dv: Callable,
+    w607ah_warnings_out: list[str],
+    w607ca_warnings_out: list[str],
+    w607dv_warnings_out: list[str],
+) -> None:
+    """Build and emit the pr-replay JSON envelope.
+
+    This helper contains the W607-CA aggregation-phase and W607-DV
+    aggregation-layer probes that were originally nested inside
+    ``pr_replay_cmd``. Moving them out shrinks the command body without
+    changing marker semantics, phase names, or envelope shape.
+    """
+    # Keep local aliases matching the W607 helper names so source-level
+    # AST/text scans continue to count the CA/DV phase wraps correctly.
+    _run_check_ca = run_check_ca
+    _run_check_dv = run_check_dv
+    extra_payload: dict = {
+        "by_detector": by_detector,
+        "commits": commits,
+        "report_markdown": report_md,
+    }
+    if review_suggestions is not None:
+        extra_payload["review_suggestions"] = review_suggestions
+    # W607-AH -- substrate-CALL markers from this command's
+    # ``_run_check_ah`` wraps (orthogonal to W590's producer-level
+    # warnings, which come from the evidence-collector gatherers).
+    # Merge into the existing top-level + summary ``warnings_out``
+    # mirrors below. ``partial_success`` flips on non-empty bucket.
+    # W590: surface producer-level warnings at the envelope level so
+    # silent-fallback markers (e.g. lease policy gatherer's
+    # ``leases: project_root_not_found``) flow into the JSON output
+    # rather than only stderr. Always-emit (Pattern 2) — empty list
+    # means "the producers ran cleanly", absent key means "we
+    # didn't build an evidence packet" (the gatherers were never
+    # invoked).
+    if evidence_packet is not None:
+        extra_payload["warnings_out"] = list(envelope_producer_warnings)
+    # W607-AH + W607-CA: thread substrate-CALL + aggregation-phase
+    # markers onto top-level ``warnings_out`` (combining with the W590
+    # producer-level bucket when present). Empty buckets on the happy
+    # path -> no surface change. Both share the canonical ``pr_replay_*``
+    # family per the marker-prefix discipline; the additive bucket stays
+    # distinguishable in tests + audits via the phase names.
+    _combined_warnings_out: list[str] = (
+        list(w607ah_warnings_out) + list(w607ca_warnings_out) + list(w607dv_warnings_out)
+    )
+    if _combined_warnings_out:
+        existing_top_wo = list(extra_payload.get("warnings_out") or [])
+        extra_payload["warnings_out"] = existing_top_wo + list(_combined_warnings_out)
+
+    # W259 — honest evidence-coverage banner, projected into the
+    # JSON envelope as a top-level ``evidence_coverage`` block so
+    # programmatic consumers (CI gates, dashboards) get the same
+    # signal the Markdown banner conveys. ``None`` when no evidence
+    # packet was built for this invocation (e.g. neither --evidence
+    # nor --markdown / --evidence-bundle was passed).
+    if evidence_packet is not None:
+        extra_payload["evidence_coverage"] = _banner_envelope_block(evidence_packet)
+
+    # W350 — surface ``authority_refs[]`` + permit count in the JSON
+    # envelope so consumers don't have to parse ``report_markdown``
+    # to recover the agentic-assurance authority axis. Permits flow
+    # into the packet via ``authority_refs[authority_kind="permit"]``
+    # (no top-level ``permits[]`` field on ChangeEvidence per W268);
+    # the canonical mapping is enforced by the collector. Both keys
+    # are always emitted when an evidence packet exists (Pattern-2
+    # always-emit; an empty list reads as "no authorities" rather
+    # than "we didn't look").
+    authority_refs_payload: list[dict] = []
+    authority_permits_count = 0
+    if evidence_packet is not None:
+        for ref in evidence_packet.authority_refs or ():
+            row = {
+                "authority_kind": ref.authority_kind,
+                "authority_id": ref.authority_id,
+                "granted_by": ref.granted_by,
+                "source": ref.source,
+                "extra": dict(ref.extra or {}),
+            }
+            authority_refs_payload.append(row)
+            if ref.authority_kind == "permit":
+                authority_permits_count += 1
+        extra_payload["authority_refs"] = authority_refs_payload
+        extra_payload["permits_count"] = authority_permits_count
+
+    # W607-DV -- aggregation-LAYER plumbing for cmd_pr_replay. Sits ON
+    # TOP of the W607-AH substrate-CALL layer + W607-CA aggregation-
+    # phase layer. CA wrapped the risk_level / markdown projection /
+    # auto_log axes; DV wraps the 8-question evidence-completeness
+    # rollup + W276 INSUFFICIENT-tier classification + verdict
+    # synthesis. The 4 DV phases compose without shadowing the 8 AH
+    # substrate phases or the 6 CA aggregation phases.
+    #
+    # W607-DV -- completeness_classify boundary. Buckets the 8-question
+    # evidence-completeness count into one of FOUR W276 tiers. Floor
+    # returns the documented INSUFFICIENT shape so downstream consumers
+    # still find ``state`` + ``complete_count`` on the envelope. W978
+    # 5th-discipline: ``evidence_packet`` passed as raw arg; counting
+    # / iteration lives INSIDE the closure.
+    def _completeness_classify_run(_pkt):
+        # No packet -> INSUFFICIENT (the gatherers were never invoked).
+        if _pkt is None:
+            return {
+                "state": "INSUFFICIENT",
+                "complete_count": 0,
+                "partial_count": 0,
+                "missing_count": 0,
+                "not_applicable_count": 0,
+            }
+        if not hasattr(_pkt, "evidence_completeness"):
+            return {
+                "state": "INSUFFICIENT",
+                "complete_count": 0,
+                "partial_count": 0,
+                "missing_count": 0,
+                "not_applicable_count": 0,
+            }
+        _comp = _pkt.evidence_completeness()
+        _complete = int(_comp.get("complete") or 0)
+        _partial = int(_comp.get("partial") or 0)
+        _missing = int(_comp.get("missing") or 0)
+        _na = int(_comp.get("not_applicable") or 0)
+        # W276 four-tier vocabulary: PASS / WARN / FAIL / INSUFFICIENT.
+        # INSUFFICIENT is reserved for the no-packet / no-method case
+        # above; the PASS / WARN / FAIL tiers map to evidence-completeness
+        # counts. >=6 complete = PASS; >=4 complete = WARN; else FAIL.
+        if _complete >= 6:
+            _state = "PASS"
+        elif _complete >= 4:
+            _state = "WARN"
+        else:
+            _state = "FAIL"
+        return {
+            "state": _state,
+            "complete_count": _complete,
+            "partial_count": _partial,
+            "missing_count": _missing,
+            "not_applicable_count": _na,
+        }
+
+    _dv_completeness = _run_check_dv(
+        "completeness_classify",
+        _completeness_classify_run,
+        evidence_packet,
+        default={
+            "state": "INSUFFICIENT",
+            "complete_count": 0,
+            "partial_count": 0,
+            "missing_count": 0,
+            "not_applicable_count": 0,
+        },
+    )
+
+    # W607-DV -- completeness_rollup boundary. Rollup metrics dict
+    # surfacing aggregate dimensions (banner tier + redaction-count
+    # disclosure) so a downstream refactor of the rollup logic
+    # surfaces a marker rather than crashing. The redaction count is
+    # the W561-spirit "dropped-row disclosure" for the pr_replay
+    # surface -- pr-replay doesn't have OSCAL-style dropped_enum_rows
+    # but DOES carry ``redactions[]`` + producer_warnings as the
+    # equivalent closed-enum drop visibility channel.
+    # W978 5th-discipline: ``evidence_packet`` + ``envelope_producer_warnings``
+    # passed as raw args; counting lives INSIDE the closure.
+    def _completeness_rollup_run(_pkt, _producer_wo):
+        _redaction_count = 0
+        _banner_tier = None
+        _q_states: dict = {}
+        if _pkt is not None:
+            _redactions = getattr(_pkt, "redactions", ()) or ()
+            _redaction_count = len(_redactions)
+            # Re-derive banner tier via the envelope-block helper so
+            # the rollup row STAYS IN AGREEMENT with the W259 banner
+            # the envelope already exposes. The helper is pure /
+            # deterministic; both sites read the same packet.
+            if hasattr(_pkt, "evidence_completeness"):
+                _comp = _pkt.evidence_completeness()
+                for _q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"):
+                    _q_states[_q] = _comp.get(_q, "missing")
+        _producer_warning_count = len(_producer_wo or ())
+        return {
+            "redaction_count": _redaction_count,
+            "producer_warning_count": _producer_warning_count,
+            "q_states": _q_states,
+            "banner_tier": _banner_tier,
+        }
+
+    _dv_rollup = _run_check_dv(
+        "completeness_rollup",
+        _completeness_rollup_run,
+        evidence_packet,
+        envelope_producer_warnings,
+        default={"redaction_count": 0, "producer_warning_count": 0, "q_states": {}, "banner_tier": None},
+    )
+
+    # W607-DV -- evidence_verdict_compose boundary. Synthesises the
+    # canonical "N of 8 evidence questions answered" verdict suffix.
+    # W978 1st-discipline: the floor MUST NOT re-interpolate the
+    # same values that tripped the closure. W978 2nd-discipline:
+    # ``default=`` is the literal LAW-6 floor "pr_replay completed".
+    # LAW 6 standalone-parse: the line works without any other field.
+    def _compose_evidence_verdict(_complete_count):
+        return f"{_complete_count} of 8 evidence questions answered"
+
+    _dv_verdict = _run_check_dv(
+        "evidence_verdict_compose",
+        _compose_evidence_verdict,
+        _dv_completeness["complete_count"],
+        default="pr_replay completed",
+    )
+
+    _pr_replay_env = json_envelope(
+        "pr-replay",
+        summary={
+            "verdict": summary.get("verdict") or "no verdict",
+            "tier": tier,
+            "commit_range": commit_range,
+            "client": client,
+            "commits_scanned": summary.get("commits_scanned", len(commits)),
+            "commits_with_findings": summary.get("commits_with_findings", 0),
+            "top_detector": by_detector[0]["detector"] if by_detector else None,
+            "output_path": output_path,
+            "rehearsal": rehearsal,
+            "rehearsal_dir": rehearsal_dir,
+            "generated_at": generated_at,
+            "engagement_logged_to": str(engagement_record) if engagement_record else None,
+            "pdf_path": pdf_path,
+            "pdf_backend": pdf_backend,
+            "review_suggestions_present": review_suggestions is not None,
+            "evidence_path": evidence_written_to,
+            "markdown_path": markdown_companion_written_to,
+            "evidence_content_hash": (evidence_packet.content_hash if evidence_packet else None),
+            "evidence_coverage_tier": (
+                extra_payload.get("evidence_coverage", {}).get("tier") if evidence_packet is not None else None
+            ),
+            # W350: summary-level authority counters so a
+            # CI gate reading only ``summary`` sees the
+            # P1.10 axis without scanning ``authority_refs``.
+            # ``None`` when no evidence packet was produced.
+            "authority_refs_count": (
+                len(evidence_packet.authority_refs or ()) if evidence_packet is not None else None
+            ),
+            "permits_count": (authority_permits_count if evidence_packet is not None else None),
+            # W607-CA aggregation-phase sentinels (closed-enum). Surface
+            # the score / render projections so downstream consumers
+            # see degradation lineage even when reading only the
+            # summary block. Mirror of cmd_pr_bundle W607-BW
+            # ``score_classification`` discipline.
+            "score_classification": score_classification_state,
+            "render_markdown_state": render_markdown_state,
+            "risk_level_canonical": risk_level_canonical,
+            "risk_rank": risk_rank,
+            "verdict_floor": verdict_floor,
+            # W607-DV aggregation-LAYER sentinels (closed-enum). Surface
+            # the W276 completeness tier + the 8-question rollup +
+            # the evidence-verdict suffix so a downstream consumer
+            # reading ONLY the summary block sees the canonical
+            # evidence-completeness signal. W978 7th-discipline anchor:
+            # bare ``_dv_completeness["state"]`` lookup (floor dict
+            # guarantees the key) -- NOT ``.get("state", expensive_default)``.
+            "completeness_tier": _dv_completeness["state"],
+            "evidence_complete_count": _dv_completeness["complete_count"],
+            "evidence_partial_count": _dv_completeness["partial_count"],
+            "evidence_missing_count": _dv_completeness["missing_count"],
+            "evidence_not_applicable_count": _dv_completeness["not_applicable_count"],
+            "redaction_count": _dv_rollup["redaction_count"],
+            "producer_warning_count": _dv_rollup["producer_warning_count"],
+            "evidence_verdict": _dv_verdict,
+        },
+        **extra_payload,
+    )
+    # W607-AH + W607-CA + W607-DV -- mirror substrate-CALL +
+    # aggregation-phase + aggregation-LAYER markers onto
+    # summary.warnings_out AND flip summary.partial_success when ANY
+    # bucket is non-empty. Empty buckets on the happy path -> no
+    # surface change (byte-identical envelope to the pre-W607
+    # consumer). All three buckets share the canonical ``pr_replay_*``
+    # marker family; the per-phase prefix keeps them distinguishable.
+    _summary_combined: list[str] = (
+        list(w607ah_warnings_out) + list(w607ca_warnings_out) + list(w607dv_warnings_out)
+    )
+    if _summary_combined:
+        _pr_replay_env.setdefault("summary", {})
+        existing_summary_wo = list(_pr_replay_env["summary"].get("warnings_out") or [])
+        _pr_replay_env["summary"]["warnings_out"] = existing_summary_wo + list(_summary_combined)
+        _pr_replay_env["summary"]["partial_success"] = True
+        # Top-level mirror: the initial ``extra_payload["warnings_out"]``
+        # update above ran BEFORE the W607-DV phases executed (DV runs
+        # AFTER the AH+CA bucket snapshot but BEFORE json_envelope).
+        # The W607-DV markers landed in ``_w607dv_warnings_out`` AFTER
+        # the top-level mirror was first set, so we mirror the full
+        # combined bucket onto ``_pr_replay_env["warnings_out"]`` here
+        # to keep top-level + summary parity. Append-only -- preserve
+        # any pre-existing producer warnings already on top-level.
+        existing_top_wo_for_dv = list(_pr_replay_env.get("warnings_out") or [])
+        new_top_markers = [m for m in _summary_combined if m not in existing_top_wo_for_dv]
+        if new_top_markers:
+            _pr_replay_env["warnings_out"] = existing_top_wo_for_dv + new_top_markers
+
+    # W607-CA -- serialize_envelope boundary. Additive ``json_envelope``
+    # re-probe. A downstream schema-shape refactor that breaks the call
+    # would otherwise crash AFTER all substrate + aggregation signals
+    # were already gathered. The probe result is discarded -- the real
+    # envelope is already built; the wrap exists to surface a marker on
+    # raise. Mirror of cmd_pr_bundle W607-BW serialize_envelope discipline.
+    _run_check_ca(
+        "serialize_envelope",
+        json_envelope,
+        "pr-replay",
+        default=None,
+        summary={"verdict": "pr-replay ca-serialize probe"},
+    )
+
+    # W607-DV -- dv_serialize_envelope boundary. Additive
+    # ``json_envelope`` re-projection over the DV-layer signals, with
+    # a DISTINCT phase name from CA's ``serialize_envelope`` so the
+    # per-phase marker prefix stays unambiguous. A future schema-shape
+    # refactor that breaks the call surfaces a marker via
+    # ``pr_replay_dv_serialize_envelope_failed:`` rather than crashing
+    # the replay AFTER all substrate + aggregation signals were
+    # already gathered. The probe result is discarded -- the real
+    # envelope is already built; the wrap exists to surface a marker
+    # on raise. Mirror of cmd_dead W607-DL serialize_envelope discipline.
+    _run_check_dv(
+        "dv_serialize_envelope",
+        json_envelope,
+        "pr-replay",
+        default=None,
+        summary={"verdict": "pr-replay dv-serialize probe"},
+    )
+
+    # W607-CA -- auto_log boundary. Wrap the auto_log call so a HMAC
+    # chain misshape / filesystem failure surfaces a structured marker
+    # rather than crashing the replay AFTER the envelope was already
+    # built. Mirror of cmd_pr_bundle W607-BW + cmd_attest W607-BT
+    # auto_log discipline.
+    _pr_replay_target = (commit_range or "")[:80]
+    _run_check_ca(
+        "auto_log",
+        auto_log,
+        _pr_replay_env,
+        action="pr-replay",
+        target=_pr_replay_target,
+        default=None,
+    )
+
+    # Re-thread the combined warnings_out in case auto_log /
+    # serialize_envelope / dv_serialize_envelope raised AFTER the
+    # marker channel was already snapshotted. Empty bucket (clean
+    # wraps) -> envelope stays byte-identical to the version already
+    # built above (W978: only touch when something actually appended).
+    _post_combined: list[str] = list(w607ah_warnings_out) + list(w607ca_warnings_out) + list(w607dv_warnings_out)
+    if _post_combined and _post_combined != _summary_combined:
+        _pr_replay_env.setdefault("summary", {})
+        _pr_replay_env["summary"]["warnings_out"] = list(_post_combined)
+        _pr_replay_env["summary"]["partial_success"] = True
+        existing_top_wo_post = list(_pr_replay_env.get("warnings_out") or [])
+        # Append only NEW markers (avoid double-emit for the bucket
+        # that was already threaded above).
+        new_markers = [m for m in _post_combined if m not in _summary_combined]
+        _pr_replay_env["warnings_out"] = existing_top_wo_post + new_markers
+
+    click.echo(to_json(_pr_replay_env))
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point.
 # ---------------------------------------------------------------------------
 
@@ -4397,352 +4793,37 @@ def pr_replay_cmd(
     _render_markdown_state = "unknown" if _ca_md_probe is None else "rendered"
 
     if json_mode:
-        extra_payload: dict = {
-            "by_detector": by_detector,
-            "commits": commits,
-            "report_markdown": report_md,
-        }
-        if review_suggestions is not None:
-            extra_payload["review_suggestions"] = review_suggestions
-        # W607-AH -- substrate-CALL markers from this command's
-        # ``_run_check_ah`` wraps (orthogonal to W590's producer-level
-        # warnings, which come from the evidence-collector gatherers).
-        # Merge into the existing top-level + summary ``warnings_out``
-        # mirrors below. ``partial_success`` flips on non-empty bucket.
-        # W590: surface producer-level warnings at the envelope level so
-        # silent-fallback markers (e.g. lease policy gatherer's
-        # ``leases: project_root_not_found``) flow into the JSON output
-        # rather than only stderr. Always-emit (Pattern 2) — empty list
-        # means "the producers ran cleanly", absent key means "we
-        # didn't build an evidence packet" (the gatherers were never
-        # invoked).
-        if evidence_packet is not None:
-            extra_payload["warnings_out"] = list(envelope_producer_warnings)
-        # W607-AH + W607-CA: thread substrate-CALL + aggregation-phase
-        # markers onto top-level ``warnings_out`` (combining with the W590
-        # producer-level bucket when present). Empty buckets on the happy
-        # path -> no surface change. Both share the canonical ``pr_replay_*``
-        # family per the marker-prefix discipline; the additive bucket stays
-        # distinguishable in tests + audits via the phase names.
-        _combined_warnings_out: list[str] = (
-            list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out)
+        _emit_pr_replay_json_output(
+            tier=tier,
+            commit_range=commit_range,
+            client=client,
+            summary=summary,
+            commits=commits,
+            by_detector=by_detector,
+            report_md=report_md,
+            output_path=output_path,
+            rehearsal=rehearsal,
+            rehearsal_dir=rehearsal_dir,
+            generated_at=generated_at,
+            engagement_record=engagement_record,
+            pdf_path=pdf_path,
+            pdf_backend=pdf_backend,
+            review_suggestions=review_suggestions,
+            evidence_packet=evidence_packet,
+            envelope_producer_warnings=envelope_producer_warnings,
+            evidence_written_to=evidence_written_to,
+            markdown_companion_written_to=markdown_companion_written_to,
+            score_classification_state=_score_classification_state,
+            render_markdown_state=_render_markdown_state,
+            risk_level_canonical=_ca_canonical,
+            risk_rank=_ca_rank,
+            verdict_floor=_ca_verdict_floor,
+            run_check_ca=_run_check_ca,
+            run_check_dv=_run_check_dv,
+            w607ah_warnings_out=_w607ah_warnings_out,
+            w607ca_warnings_out=_w607ca_warnings_out,
+            w607dv_warnings_out=_w607dv_warnings_out,
         )
-        if _combined_warnings_out:
-            existing_top_wo = list(extra_payload.get("warnings_out") or [])
-            extra_payload["warnings_out"] = existing_top_wo + list(_combined_warnings_out)
-
-        # W259 — honest evidence-coverage banner, projected into the
-        # JSON envelope as a top-level ``evidence_coverage`` block so
-        # programmatic consumers (CI gates, dashboards) get the same
-        # signal the Markdown banner conveys. ``None`` when no evidence
-        # packet was built for this invocation (e.g. neither --evidence
-        # nor --markdown / --evidence-bundle was passed).
-        if evidence_packet is not None:
-            extra_payload["evidence_coverage"] = _banner_envelope_block(evidence_packet)
-
-        # W350 — surface ``authority_refs[]`` + permit count in the JSON
-        # envelope so consumers don't have to parse ``report_markdown``
-        # to recover the agentic-assurance authority axis. Permits flow
-        # into the packet via ``authority_refs[authority_kind="permit"]``
-        # (no top-level ``permits[]`` field on ChangeEvidence per W268);
-        # the canonical mapping is enforced by the collector. Both keys
-        # are always emitted when an evidence packet exists (Pattern-2
-        # always-emit; an empty list reads as "no authorities" rather
-        # than "we didn't look").
-        authority_refs_payload: list[dict] = []
-        authority_permits_count = 0
-        if evidence_packet is not None:
-            for ref in evidence_packet.authority_refs or ():
-                row = {
-                    "authority_kind": ref.authority_kind,
-                    "authority_id": ref.authority_id,
-                    "granted_by": ref.granted_by,
-                    "source": ref.source,
-                    "extra": dict(ref.extra or {}),
-                }
-                authority_refs_payload.append(row)
-                if ref.authority_kind == "permit":
-                    authority_permits_count += 1
-            extra_payload["authority_refs"] = authority_refs_payload
-            extra_payload["permits_count"] = authority_permits_count
-
-        # W607-DV -- aggregation-LAYER plumbing for cmd_pr_replay. Sits ON
-        # TOP of the W607-AH substrate-CALL layer + W607-CA aggregation-
-        # phase layer. CA wrapped the risk_level / markdown projection /
-        # auto_log axes; DV wraps the 8-question evidence-completeness
-        # rollup + W276 INSUFFICIENT-tier classification + verdict
-        # synthesis. The 4 DV phases compose without shadowing the 8 AH
-        # substrate phases or the 6 CA aggregation phases.
-        #
-        # W607-DV -- completeness_classify boundary. Buckets the 8-question
-        # evidence-completeness count into one of FOUR W276 tiers. Floor
-        # returns the documented INSUFFICIENT shape so downstream consumers
-        # still find ``state`` + ``complete_count`` on the envelope. W978
-        # 5th-discipline: ``evidence_packet`` passed as raw arg; counting
-        # / iteration lives INSIDE the closure.
-        def _completeness_classify_run(_pkt):
-            # No packet -> INSUFFICIENT (the gatherers were never invoked).
-            if _pkt is None:
-                return {
-                    "state": "INSUFFICIENT",
-                    "complete_count": 0,
-                    "partial_count": 0,
-                    "missing_count": 0,
-                    "not_applicable_count": 0,
-                }
-            if not hasattr(_pkt, "evidence_completeness"):
-                return {
-                    "state": "INSUFFICIENT",
-                    "complete_count": 0,
-                    "partial_count": 0,
-                    "missing_count": 0,
-                    "not_applicable_count": 0,
-                }
-            _comp = _pkt.evidence_completeness()
-            _complete = int(_comp.get("complete") or 0)
-            _partial = int(_comp.get("partial") or 0)
-            _missing = int(_comp.get("missing") or 0)
-            _na = int(_comp.get("not_applicable") or 0)
-            # W276 four-tier vocabulary: PASS / WARN / FAIL / INSUFFICIENT.
-            # INSUFFICIENT is reserved for the no-packet / no-method case
-            # above; the PASS / WARN / FAIL tiers map to evidence-completeness
-            # counts. >=6 complete = PASS; >=4 complete = WARN; else FAIL.
-            if _complete >= 6:
-                _state = "PASS"
-            elif _complete >= 4:
-                _state = "WARN"
-            else:
-                _state = "FAIL"
-            return {
-                "state": _state,
-                "complete_count": _complete,
-                "partial_count": _partial,
-                "missing_count": _missing,
-                "not_applicable_count": _na,
-            }
-
-        _dv_completeness = _run_check_dv(
-            "completeness_classify",
-            _completeness_classify_run,
-            evidence_packet,
-            default={
-                "state": "INSUFFICIENT",
-                "complete_count": 0,
-                "partial_count": 0,
-                "missing_count": 0,
-                "not_applicable_count": 0,
-            },
-        )
-
-        # W607-DV -- completeness_rollup boundary. Rollup metrics dict
-        # surfacing aggregate dimensions (banner tier + redaction-count
-        # disclosure) so a downstream refactor of the rollup logic
-        # surfaces a marker rather than crashing. The redaction count is
-        # the W561-spirit "dropped-row disclosure" for the pr_replay
-        # surface -- pr-replay doesn't have OSCAL-style dropped_enum_rows
-        # but DOES carry ``redactions[]`` + producer_warnings as the
-        # equivalent closed-enum drop visibility channel.
-        # W978 5th-discipline: ``evidence_packet`` + ``envelope_producer_warnings``
-        # passed as raw args; counting lives INSIDE the closure.
-        def _completeness_rollup_run(_pkt, _producer_wo):
-            _redaction_count = 0
-            _banner_tier = None
-            _q_states: dict = {}
-            if _pkt is not None:
-                _redactions = getattr(_pkt, "redactions", ()) or ()
-                _redaction_count = len(_redactions)
-                # Re-derive banner tier via the envelope-block helper so
-                # the rollup row STAYS IN AGREEMENT with the W259 banner
-                # the envelope already exposes. The helper is pure /
-                # deterministic; both sites read the same packet.
-                if hasattr(_pkt, "evidence_completeness"):
-                    _comp = _pkt.evidence_completeness()
-                    for _q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"):
-                        _q_states[_q] = _comp.get(_q, "missing")
-            _producer_warning_count = len(_producer_wo or ())
-            return {
-                "redaction_count": _redaction_count,
-                "producer_warning_count": _producer_warning_count,
-                "q_states": _q_states,
-                "banner_tier": _banner_tier,
-            }
-
-        _dv_rollup = _run_check_dv(
-            "completeness_rollup",
-            _completeness_rollup_run,
-            evidence_packet,
-            envelope_producer_warnings,
-            default={"redaction_count": 0, "producer_warning_count": 0, "q_states": {}, "banner_tier": None},
-        )
-
-        # W607-DV -- evidence_verdict_compose boundary. Synthesises the
-        # canonical "N of 8 evidence questions answered" verdict suffix.
-        # W978 1st-discipline: the floor MUST NOT re-interpolate the
-        # same values that tripped the closure. W978 2nd-discipline:
-        # ``default=`` is the literal LAW-6 floor "pr_replay completed".
-        # LAW 6 standalone-parse: the line works without any other field.
-        def _compose_evidence_verdict(_complete_count):
-            return f"{_complete_count} of 8 evidence questions answered"
-
-        _dv_verdict = _run_check_dv(
-            "evidence_verdict_compose",
-            _compose_evidence_verdict,
-            _dv_completeness["complete_count"],
-            default="pr_replay completed",
-        )
-
-        _pr_replay_env = json_envelope(
-            "pr-replay",
-            summary={
-                "verdict": summary.get("verdict") or "no verdict",
-                "tier": tier,
-                "commit_range": commit_range,
-                "client": client,
-                "commits_scanned": summary.get("commits_scanned", len(commits)),
-                "commits_with_findings": summary.get("commits_with_findings", 0),
-                "top_detector": by_detector[0]["detector"] if by_detector else None,
-                "output_path": output_path,
-                "rehearsal": rehearsal,
-                "rehearsal_dir": rehearsal_dir,
-                "generated_at": generated_at,
-                "engagement_logged_to": str(engagement_record) if engagement_record else None,
-                "pdf_path": pdf_path,
-                "pdf_backend": pdf_backend,
-                "review_suggestions_present": review_suggestions is not None,
-                "evidence_path": evidence_written_to,
-                "markdown_path": markdown_companion_written_to,
-                "evidence_content_hash": (evidence_packet.content_hash if evidence_packet else None),
-                "evidence_coverage_tier": (
-                    extra_payload.get("evidence_coverage", {}).get("tier") if evidence_packet is not None else None
-                ),
-                # W350: summary-level authority counters so a
-                # CI gate reading only ``summary`` sees the
-                # P1.10 axis without scanning ``authority_refs``.
-                # ``None`` when no evidence packet was produced.
-                "authority_refs_count": (
-                    len(evidence_packet.authority_refs or ()) if evidence_packet is not None else None
-                ),
-                "permits_count": (authority_permits_count if evidence_packet is not None else None),
-                # W607-CA aggregation-phase sentinels (closed-enum). Surface
-                # the score / render projections so downstream consumers
-                # see degradation lineage even when reading only the
-                # summary block. Mirror of cmd_pr_bundle W607-BW
-                # ``score_classification`` discipline.
-                "score_classification": _score_classification_state,
-                "render_markdown_state": _render_markdown_state,
-                "risk_level_canonical": _ca_canonical,
-                "risk_rank": _ca_rank,
-                "verdict_floor": _ca_verdict_floor,
-                # W607-DV aggregation-LAYER sentinels (closed-enum). Surface
-                # the W276 completeness tier + the 8-question rollup +
-                # the evidence-verdict suffix so a downstream consumer
-                # reading ONLY the summary block sees the canonical
-                # evidence-completeness signal. W978 7th-discipline anchor:
-                # bare ``_dv_completeness["state"]`` lookup (floor dict
-                # guarantees the key) -- NOT ``.get("state", expensive_default)``.
-                "completeness_tier": _dv_completeness["state"],
-                "evidence_complete_count": _dv_completeness["complete_count"],
-                "evidence_partial_count": _dv_completeness["partial_count"],
-                "evidence_missing_count": _dv_completeness["missing_count"],
-                "evidence_not_applicable_count": _dv_completeness["not_applicable_count"],
-                "redaction_count": _dv_rollup["redaction_count"],
-                "producer_warning_count": _dv_rollup["producer_warning_count"],
-                "evidence_verdict": _dv_verdict,
-            },
-            **extra_payload,
-        )
-        # W607-AH + W607-CA + W607-DV -- mirror substrate-CALL +
-        # aggregation-phase + aggregation-LAYER markers onto
-        # summary.warnings_out AND flip summary.partial_success when ANY
-        # bucket is non-empty. Empty buckets on the happy path -> no
-        # surface change (byte-identical envelope to the pre-W607
-        # consumer). All three buckets share the canonical ``pr_replay_*``
-        # marker family; the per-phase prefix keeps them distinguishable.
-        _summary_combined: list[str] = (
-            list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out)
-        )
-        if _summary_combined:
-            _pr_replay_env.setdefault("summary", {})
-            existing_summary_wo = list(_pr_replay_env["summary"].get("warnings_out") or [])
-            _pr_replay_env["summary"]["warnings_out"] = existing_summary_wo + list(_summary_combined)
-            _pr_replay_env["summary"]["partial_success"] = True
-            # Top-level mirror: the initial ``extra_payload["warnings_out"]``
-            # update above ran BEFORE the W607-DV phases executed (DV runs
-            # AFTER the AH+CA bucket snapshot but BEFORE json_envelope).
-            # The W607-DV markers landed in ``_w607dv_warnings_out`` AFTER
-            # the top-level mirror was first set, so we mirror the full
-            # combined bucket onto ``_pr_replay_env["warnings_out"]`` here
-            # to keep top-level + summary parity. Append-only -- preserve
-            # any pre-existing producer warnings already on top-level.
-            existing_top_wo_for_dv = list(_pr_replay_env.get("warnings_out") or [])
-            new_top_markers = [m for m in _summary_combined if m not in existing_top_wo_for_dv]
-            if new_top_markers:
-                _pr_replay_env["warnings_out"] = existing_top_wo_for_dv + new_top_markers
-
-        # W607-CA -- serialize_envelope boundary. Additive ``json_envelope``
-        # re-probe. A downstream schema-shape refactor that breaks the call
-        # would otherwise crash AFTER all substrate + aggregation signals
-        # were already gathered. The probe result is discarded -- the real
-        # envelope is already built; the wrap exists to surface a marker on
-        # raise. Mirror of cmd_pr_bundle W607-BW serialize_envelope discipline.
-        _run_check_ca(
-            "serialize_envelope",
-            json_envelope,
-            "pr-replay",
-            default=None,
-            summary={"verdict": "pr-replay ca-serialize probe"},
-        )
-
-        # W607-DV -- dv_serialize_envelope boundary. Additive
-        # ``json_envelope`` re-projection over the DV-layer signals, with
-        # a DISTINCT phase name from CA's ``serialize_envelope`` so the
-        # per-phase marker prefix stays unambiguous. A future schema-shape
-        # refactor that breaks the call surfaces a marker via
-        # ``pr_replay_dv_serialize_envelope_failed:`` rather than crashing
-        # the replay AFTER all substrate + aggregation signals were
-        # already gathered. The probe result is discarded -- the real
-        # envelope is already built; the wrap exists to surface a marker
-        # on raise. Mirror of cmd_dead W607-DL serialize_envelope discipline.
-        _run_check_dv(
-            "dv_serialize_envelope",
-            json_envelope,
-            "pr-replay",
-            default=None,
-            summary={"verdict": "pr-replay dv-serialize probe"},
-        )
-
-        # W607-CA -- auto_log boundary. Wrap the auto_log call so a HMAC
-        # chain misshape / filesystem failure surfaces a structured marker
-        # rather than crashing the replay AFTER the envelope was already
-        # built. Mirror of cmd_pr_bundle W607-BW + cmd_attest W607-BT
-        # auto_log discipline.
-        _pr_replay_target = (commit_range or "")[:80]
-        _run_check_ca(
-            "auto_log",
-            auto_log,
-            _pr_replay_env,
-            action="pr-replay",
-            target=_pr_replay_target,
-            default=None,
-        )
-
-        # Re-thread the combined warnings_out in case auto_log /
-        # serialize_envelope / dv_serialize_envelope raised AFTER the
-        # marker channel was already snapshotted. Empty bucket (clean
-        # wraps) -> envelope stays byte-identical to the version already
-        # built above (W978: only touch when something actually appended).
-        _post_combined: list[str] = list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out)
-        if _post_combined and _post_combined != _summary_combined:
-            _pr_replay_env.setdefault("summary", {})
-            _pr_replay_env["summary"]["warnings_out"] = list(_post_combined)
-            _pr_replay_env["summary"]["partial_success"] = True
-            existing_top_wo_post = list(_pr_replay_env.get("warnings_out") or [])
-            # Append only NEW markers (avoid double-emit for the bucket
-            # that was already threaded above).
-            new_markers = [m for m in _post_combined if m not in _summary_combined]
-            _pr_replay_env["warnings_out"] = existing_top_wo_post + new_markers
-
-        click.echo(to_json(_pr_replay_env))
         return
 
     if not output_path:
