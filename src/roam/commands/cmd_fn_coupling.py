@@ -11,7 +11,9 @@ plan + W1224-audit memo.
 from __future__ import annotations
 
 import heapq
-from collections import defaultdict
+import itertools
+from collections import Counter, defaultdict
+from collections.abc import Iterator
 
 import click
 
@@ -105,40 +107,48 @@ def _rank_symbols_per_file(
     return file_top_syms
 
 
+def _commit_symbol_pairs(per_file_syms: list[list[int]]) -> Iterator[tuple[int, int]]:
+    """Yield normalized symbol pairs for one commit.
+
+    Uses ``itertools.combinations`` to pick unordered file pairs and
+    ``itertools.product`` to express their symbol Cartesian join.  This
+    is the "join-builder" form: it declares the pair set instead of
+    hand-rolling four nested loops (loop-concat).  Each pair is normalized
+    to ``(min, max)`` so the same co-change relation is counted once
+    regardless of file order in the commit.
+
+    Conservation law: declarative clarity vs. raw loop control.  The
+    helper keeps the counting loop free of index bookkeeping.
+    """
+    for syms_i, syms_j in itertools.combinations(per_file_syms, 2):
+        for si, sj in itertools.product(syms_i, syms_j):
+            yield (si, sj) if si <= sj else (sj, si)
+
+
 def _count_symbol_pairs(
     commit_files: dict[int, set[int]],
     file_top_syms: dict[int, list[int]],
     max_files_per_commit: int,
     suppressions: dict,
-) -> dict[tuple[int, int], int]:
+) -> Counter[tuple[int, int]]:
     """Build the cross-file symbol co-change count matrix.
 
-    This is the combinatorial core of the algorithm. Extracting it keeps
-    the nested pair explosion in one place and lets the caller treat the
-    matrix as a constructed value rather than incrementally concatenated.
+    This is the combinatorial core of the algorithm.  Pair generation is
+    delegated to ``_commit_symbol_pairs`` so this function owns only the
+    commit-level windowing and suppression bookkeeping.
     """
-    pair_count: dict[tuple[int, int], int] = defaultdict(int)
+    pair_count: Counter[tuple[int, int]] = Counter()
 
     for _cid, fids in commit_files.items():
         if len(fids) > max_files_per_commit:
             suppressions["mega_commits"] += 1
             continue
 
-        per_file_syms: list[tuple[int, list[int]]] = []
-        for fid in fids:
-            syms = file_top_syms.get(fid)
-            if syms:
-                per_file_syms.append((fid, syms))
+        per_file_syms = [file_top_syms[fid] for fid in fids if fid in file_top_syms]
+        if len(per_file_syms) < 2:
+            continue
 
-        n = len(per_file_syms)
-        for i in range(n):
-            _fid_i, syms_i = per_file_syms[i]
-            for j in range(i + 1, n):
-                _fid_j, syms_j = per_file_syms[j]
-                for si in syms_i:
-                    for sj in syms_j:
-                        key = (min(si, sj), max(si, sj))
-                        pair_count[key] += 1
+        pair_count.update(_commit_symbol_pairs(per_file_syms))
 
     return pair_count
 
