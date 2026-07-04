@@ -196,7 +196,6 @@ def auto_log(
     action: str,
     target: str = "",
     repo_root: Optional[Path] = None,
-    *,
     extra_event_fields: Optional[Mapping[str, Any]] = None,
 ) -> Optional[int]:
     """Append an event to the active run, derived from a roam envelope.
