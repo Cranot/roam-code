@@ -11,6 +11,7 @@ The check uses the existing ``index_manifest`` table when it exists
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -95,8 +96,6 @@ def check_stale(
 
     # Manifest-aware check: if the manifest table exists, compare git HEAD.
     try:
-        import sqlite3
-
         conn = sqlite3.connect(str(p), timeout=2)
         cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='index_manifest'")
         has_manifest = cur.fetchone() is not None
@@ -117,8 +116,8 @@ def check_stale(
                     )
         else:
             conn.close()
-    except Exception:  # noqa: BLE001 — manifest read is best-effort; fall back to mtime
-        # Manifest not available — fall back to mtime-only result.
+    except (OSError, sqlite3.Error):
+        # Manifest read is best-effort; fall back to mtime-only result.
         pass
 
     return False, None
