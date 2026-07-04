@@ -31,8 +31,10 @@ Design notes
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Snapshot persistence layout
@@ -62,6 +64,110 @@ def _symbol_key(name: str | None, kind: str | None, file_path: str | None) -> st
     return f"{name or '?'}::{kind or '?'}::{file_path or '?'}"
 
 
+def _build_symbol_index(rows: list[sqlite3.Row]) -> tuple[dict[int, str], dict[str, dict]]:
+    """Create a stable identity map and symbol entries from DB rows.
+
+    Collisions (same name + kind + file) are uniquified with a DB id suffix
+    so set-diff operations stay honest across re-indexes.
+    """
+    id_to_key: dict[int, str] = {}
+    symbols: dict[str, dict] = {}
+    for r in rows:
+        sid = r["id"]
+        name = r["name"]
+        kind = r["kind"]
+        file_path = r["file_path"]
+        key = _symbol_key(name, kind, file_path)
+        if key in symbols:
+            key = f"{key}#id={sid}"
+        id_to_key[sid] = key
+        symbols[key] = {
+            "name": name,
+            "kind": kind,
+            "file": file_path,
+            "qualified_name": r["qualified_name"],
+            "db_id": sid,
+            "in_degree": 0,
+            "out_degree": 0,
+        }
+    return id_to_key, symbols
+
+
+def _collect_edges(
+    edge_rows: list[sqlite3.Row],
+    id_to_key: dict[int, str],
+    symbols: dict[str, dict],
+) -> list[dict]:
+    """Translate DB edge rows into portable edges and tally per-symbol degrees.
+
+    Edges that reference a stripped symbol are skipped rather than corrupting
+    the snapshot.
+    """
+    edges: list[dict] = []
+    for er in edge_rows:
+        src_key = id_to_key.get(er["source_id"])
+        tgt_key = id_to_key.get(er["target_id"])
+        if src_key is None or tgt_key is None:
+            continue
+        edges.append({"source": src_key, "target": tgt_key, "kind": er["kind"]})
+        symbols[src_key]["out_degree"] += 1
+        symbols[tgt_key]["in_degree"] += 1
+    return edges
+
+
+def _try_import_networkx() -> Any | None:
+    """Return the networkx module if available, otherwise None."""
+    try:
+        import networkx as nx
+        return nx
+    except ImportError:
+        return None
+
+
+def _extract_cycles(G: Any, id_to_key: dict[int, str]) -> list[list[str]]:
+    """Condense strongly-connected components into sorted symbol-key cycles."""
+    from roam.graph.cycles import find_cycles
+
+    cycles: list[list[str]] = []
+    for scc in find_cycles(G):
+        cycle_keys = sorted({id_to_key[i] for i in scc if i in id_to_key})
+        if len(cycle_keys) >= 2:
+            cycles.append(cycle_keys)
+    return cycles
+
+
+def _extract_layers(G: Any, id_to_key: dict[int, str]) -> dict[str, int]:
+    """Condense topological layer assignments into symbol-key layers."""
+    from roam.graph.layers import detect_layers
+
+    layers: dict[str, int] = {}
+    for sid, layer in detect_layers(G).items():
+        key = id_to_key.get(sid)
+        if key is not None:
+            layers[key] = int(layer)
+    return layers
+
+
+def _enrich_with_graph(
+    conn: sqlite3.Connection,
+    id_to_key: dict[int, str],
+    extractor: Callable[[Any, dict[int, str]], Any],
+    nx: Any,
+) -> Any | None:
+    """Run *extractor* on a freshly-built symbol graph, swallowing graph/DB errors.
+
+    Snapshotting must always succeed, even when optional cycle or layer
+    enrichment cannot be computed.
+    """
+    try:
+        from roam.graph.builder import build_symbol_graph
+
+        G = build_symbol_graph(conn)
+        return extractor(G, id_to_key)
+    except (sqlite3.Error, nx.NetworkXException):
+        return None
+
+
 def snapshot_graph(conn: sqlite3.Connection) -> dict:
     """Snapshot the current DB graph into a portable, JSON-serializable dict.
 
@@ -83,88 +189,24 @@ def snapshot_graph(conn: sqlite3.Connection) -> dict:
     Symbols are keyed by ``_symbol_key`` (stable across re-indexes); raw DB
     ids are kept on each entry so callers can re-resolve to current rows.
     """
-    # Pull every symbol + its file path.
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.qualified_name, f.path AS file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id "
         "ORDER BY s.id"
     ).fetchall()
+    id_to_key, symbols = _build_symbol_index(rows)
 
-    id_to_key: dict[int, str] = {}
-    symbols: dict[str, dict] = {}
-    for r in rows:
-        sid = r["id"]
-        name = r["name"]
-        kind = r["kind"]
-        file_path = r["file_path"]
-        key = _symbol_key(name, kind, file_path)
-        # If a collision happens (same name+kind+file appears twice), keep the
-        # first and uniquify the second with the DB id suffix so set ops stay
-        # honest. In practice this is rare.
-        if key in symbols:
-            key = f"{key}#id={sid}"
-        id_to_key[sid] = key
-        symbols[key] = {
-            "name": name,
-            "kind": kind,
-            "file": file_path,
-            "qualified_name": r["qualified_name"],
-            "db_id": sid,
-            "in_degree": 0,
-            "out_degree": 0,
-        }
+    edge_rows = conn.execute(
+        "SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id"
+    ).fetchall()
+    edges = _collect_edges(edge_rows, id_to_key, symbols)
 
-    # Pull edges and accumulate per-symbol degree counts.
-    edge_rows = conn.execute("SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id").fetchall()
-    edges: list[dict] = []
-    for er in edge_rows:
-        src_id = er["source_id"]
-        tgt_id = er["target_id"]
-        src_key = id_to_key.get(src_id)
-        tgt_key = id_to_key.get(tgt_id)
-        if src_key is None or tgt_key is None:
-            # Edge points at a stripped symbol — skip rather than corrupt the
-            # snapshot. The full set comparison stays honest.
-            continue
-        edges.append({"source": src_key, "target": tgt_key, "kind": er["kind"]})
-        symbols[src_key]["out_degree"] += 1
-        symbols[tgt_key]["in_degree"] += 1
-
-    try:
-        import networkx as nx
-    except ImportError:
-        nx = None
-
-    # Cycles: condense to symbol keys.
+    nx = _try_import_networkx()
     cycles: list[list[str]] = []
-    if nx is not None:
-        try:
-            from roam.graph.builder import build_symbol_graph
-            from roam.graph.cycles import find_cycles
-
-            G = build_symbol_graph(conn)
-            for scc in find_cycles(G):
-                cycle_keys = sorted({id_to_key[i] for i in scc if i in id_to_key})
-                if len(cycle_keys) >= 2:
-                    cycles.append(cycle_keys)
-        except (sqlite3.Error, nx.NetworkXException):
-            # Snapshot must always succeed when optional graph enrichment fails.
-            cycles = []
-
-    # Layers: condense to {sym_key: layer}.
     layers: dict[str, int] = {}
     if nx is not None:
-        try:
-            from roam.graph.builder import build_symbol_graph
-            from roam.graph.layers import detect_layers
-
-            G = build_symbol_graph(conn)
-            for sid, layer in detect_layers(G).items():
-                key = id_to_key.get(sid)
-                if key is not None:
-                    layers[key] = int(layer)
-        except (sqlite3.Error, nx.NetworkXException):
-            layers = {}
+        cycles = _enrich_with_graph(conn, id_to_key, _extract_cycles, nx) or []
+        layers = _enrich_with_graph(conn, id_to_key, _extract_layers, nx) or {}
 
     return {
         "symbols": symbols,
