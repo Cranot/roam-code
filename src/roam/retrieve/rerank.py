@@ -140,6 +140,59 @@ def structural_score(
     runtime_scores = _runtime_scores(conn, candidate_ids)
     semantic_scores = _semantic_scores(conn, candidate_ids, task)
 
+    ctx = _build_scoring_context(
+        candidates,
+        weights,
+        task=task,
+        seeds=seeds,
+        use_personalized=use_personalized,
+        config_root=config_root,
+        lexical_baseline=lexical_baseline,
+        pr_scores=pr_scores,
+        cochange_scores=cochange_scores,
+        runtime_scores=runtime_scores,
+        semantic_scores=semantic_scores,
+        path_token_boost=path_token_boost,
+        rule_yaml_penalty=rule_yaml_penalty,
+        test_file_penalty=test_file_penalty,
+        cmd_companion_boost=cmd_companion_boost,
+        async_query_boost=async_query_boost,
+        recency_boost=recency_boost,
+        clone_tags=clone_tags,
+    )
+
+    out = [_score_and_justify(c, ctx) for c in candidates]
+    out.sort(key=lambda x: -x["score"])
+    return out
+
+
+def _build_scoring_context(
+    candidates: list[dict],
+    weights: dict[str, float],
+    *,
+    task: str,
+    seeds: dict[int, float],
+    use_personalized: bool,
+    config_root: Path | None,
+    lexical_baseline: float | None,
+    pr_scores: dict[int, float],
+    cochange_scores: dict[int, float],
+    runtime_scores: dict[int, float],
+    semantic_scores: dict[int, float],
+    path_token_boost: dict[int, float],
+    rule_yaml_penalty: dict[int, float],
+    test_file_penalty: dict[int, float],
+    cmd_companion_boost: dict[int, float],
+    async_query_boost: dict[int, float],
+    recency_boost: dict[int, float],
+    clone_tags: dict[int, dict],
+) -> dict[str, object]:
+    """Return a read-only context that captures the scoring formula state.
+
+    This separates query-dependent weight adaptation and denominator
+    computation from the per-candidate scoring loop, so ``structural_score``
+    can remain an orchestrator.
+    """
     pr_max = max(pr_scores.values()) if pr_scores else 0.0
     fts_max = max((float(c.get("fts_score", 0.0)) for c in candidates), default=0.0)
     cochange_max = max(cochange_scores.values()) if cochange_scores else 0.0
@@ -152,87 +205,139 @@ def structural_score(
     epsilon = float(weights.get("epsilon", 0.05))
     zeta = float(weights.get("zeta", 0.20))  # v12.2 semantic similarity
 
-    # Lexical baseline: explicit kwarg > config > module default. Independent
-    # of the alpha/beta/... structural weight vector. Without it, candidates
-    # with zero PR (rare — un-imported leaves) drop out even when textually
-    # exact.
     if lexical_baseline is None:
         cfg = get_retrieve_config(config_root)
         lexical_baseline = float(cfg.get("lexical_baseline", DEFAULT_LEXICAL_BASELINE))
 
-    # dogfood — implementation-style queries shift
-    # weight from structural (alpha) toward lexical (lexical_baseline).
-    # The query "where is the symbol resolver" had ``_resolve_file``
-    # (PR=0.99, fts=0.65) ranking #1 over ``find_symbol`` (PR=0.16,
-    # fts=0.88). PR was dominating because alpha=0.40 vs
-    # lexical_baseline=0.50 wasn't enough headroom against a 6× PR
-    # ratio. For "where is X" queries we now down-weight alpha by 30%
-    # and up-weight lexical by 20% — within a single call, no
-    # config change. Only kicks in for the implementation prefixes
-    # ("where", "how", "find", "locate", "show me"); navigation /
-    # planning queries still use the structural-strong default.
-    impl_query = False
-    if task:
-        lowered_task = task.lower().strip()
-        impl_query = any(lowered_task.startswith(p) for p in ("where ", "how ", "find ", "locate ", "show me "))
+    # dogfood — implementation-style queries shift weight from structural
+    # (alpha) toward lexical (lexical_baseline). See structural_score docs.
+    impl_query = _is_impl_style_query(task)
     if impl_query:
         alpha = alpha * 0.70
         lexical_baseline = lexical_baseline * 1.20
 
-    out: list[dict] = []
-    for c in candidates:
-        sid = int(c["symbol_id"])
-        pr_norm = (pr_scores.get(sid, 0.0) / pr_max) if pr_max > 0 else 0.0
-        fts_norm = (float(c.get("fts_score", 0.0)) / fts_max) if fts_max > 0 else 0.0
-        cochange_norm = cochange_scores.get(sid, 0.0) / cochange_max if cochange_max > 0 else 0.0
-        runtime_norm = runtime_scores.get(sid, 0.0) / runtime_max if runtime_max > 0 else 0.0
+    return {
+        "alpha": alpha,
+        "beta": beta,
+        "delta": delta,
+        "epsilon": epsilon,
+        "zeta": zeta,
+        "lexical_baseline": lexical_baseline,
+        "pr_max": pr_max,
+        "fts_max": fts_max,
+        "cochange_max": cochange_max,
+        "runtime_max": runtime_max,
+        "semantic_max": semantic_max,
+        "pr_scores": pr_scores,
+        "cochange_scores": cochange_scores,
+        "runtime_scores": runtime_scores,
+        "semantic_scores": semantic_scores,
+        "path_token_boost": path_token_boost,
+        "rule_yaml_penalty": rule_yaml_penalty,
+        "test_file_penalty": test_file_penalty,
+        "cmd_companion_boost": cmd_companion_boost,
+        "async_query_boost": async_query_boost,
+        "recency_boost": recency_boost,
+        "clone_tags": clone_tags,
+        "seeds": seeds,
+        "use_personalized": use_personalized,
+    }
 
-        clone_info = clone_tags.get(sid)
-        clone_boost = epsilon if clone_info else 0.0
-        # ζ semantic signal — contributes 0 unless the embeddings table is
-        # populated AND the [semantic] extras are installed. Robs from
-        # lexical_baseline implicitly because semantic and lexical compete
-        # for the same "what does this query mean" headroom.
-        semantic_norm = semantic_scores.get(sid, 0.0) / semantic_max if semantic_max > 0 else 0.0
 
-        score = (
-            alpha * pr_norm
-            + beta * cochange_norm
-            + delta * runtime_norm
-            + zeta * semantic_norm
-            + lexical_baseline * fts_norm
-            + clone_boost
-            + path_token_boost.get(sid, 0.0)
-            + cmd_companion_boost.get(sid, 0.0)
-            + async_query_boost.get(sid, 0.0)
-            + recency_boost.get(sid, 0.0)
-            + rule_yaml_penalty.get(sid, 0.0)  # already negative
-            + test_file_penalty.get(sid, 0.0)  # already negative
-        )
+def _is_impl_style_query(task: str) -> bool:
+    """Return True when *task* looks like an implementation lookup."""
+    if not task:
+        return False
+    lowered_task = task.lower().strip()
+    return any(
+        lowered_task.startswith(p)
+        for p in ("where ", "how ", "find ", "locate ", "show me ")
+    )
 
-        justifications: dict[str, object] = {}
-        if pr_norm > 0:
-            justifications["pagerank"] = round(pr_norm, 4)
-            if seeds and use_personalized:
-                justifications["pagerank_kind"] = "personalized"
-            else:
-                justifications["pagerank_kind"] = "global"
-        if fts_norm > 0:
-            justifications["fts"] = round(fts_norm, 4)
-        if cochange_norm > 0:
-            justifications["co_change"] = round(cochange_norm, 4)
-        if runtime_norm > 0:
-            justifications["runtime_hot"] = round(runtime_norm, 4)
-        if semantic_norm > 0:
-            justifications["semantic"] = round(semantic_norm, 4)
-        if clone_info:
-            justifications["clone_cluster"] = clone_info["cluster_id"]
-            justifications["clone_siblings"] = clone_info["sibling_count"]
 
-        out.append({**c, "score": round(score, 4), "justifications": justifications})
+def _score_and_justify(c: dict, ctx: dict[str, object]) -> dict:
+    """Compute the blended structural score and justification for one candidate."""
+    signals, clone_info = _normalized_signals(c, ctx)
+    score = _blend_score(signals, ctx)
+    justifications = _justifications_for_signals(signals, clone_info, ctx)
+    return {**c, "score": round(score, 4), "justifications": justifications}
 
-    out.sort(key=lambda x: -x["score"])
-    return out
+
+def _normalized_signals(c: dict, ctx: dict[str, object]) -> tuple[dict[str, float], dict | None]:
+    """Return normalized signal values and clone membership for one candidate."""
+    sid = int(c["symbol_id"])
+    pr_max = float(ctx["pr_max"])  # type: ignore[arg-type]
+    fts_max = float(ctx["fts_max"])  # type: ignore[arg-type]
+    cochange_max = float(ctx["cochange_max"])  # type: ignore[arg-type]
+    runtime_max = float(ctx["runtime_max"])  # type: ignore[arg-type]
+    semantic_max = float(ctx["semantic_max"])  # type: ignore[arg-type]
+
+    pr_scores = ctx["pr_scores"]  # type: ignore[assignment]
+    cochange_scores = ctx["cochange_scores"]  # type: ignore[assignment]
+    runtime_scores = ctx["runtime_scores"]  # type: ignore[assignment]
+    semantic_scores = ctx["semantic_scores"]  # type: ignore[assignment]
+    clone_tags = ctx["clone_tags"]  # type: ignore[assignment]
+    clone_info = clone_tags.get(sid)
+
+    signals: dict[str, float] = {
+        "pr_norm": (pr_scores.get(sid, 0.0) / pr_max) if pr_max > 0 else 0.0,
+        "fts_norm": (float(c.get("fts_score", 0.0)) / fts_max) if fts_max > 0 else 0.0,
+        "cochange_norm": cochange_scores.get(sid, 0.0) / cochange_max if cochange_max > 0 else 0.0,
+        "runtime_norm": runtime_scores.get(sid, 0.0) / runtime_max if runtime_max > 0 else 0.0,
+        "semantic_norm": semantic_scores.get(sid, 0.0) / semantic_max if semantic_max > 0 else 0.0,
+        "clone_boost": float(ctx["epsilon"]) if clone_info else 0.0,  # type: ignore[arg-type]
+        "path_token_boost": ctx["path_token_boost"].get(sid, 0.0),  # type: ignore[union-attr]
+        "cmd_companion_boost": ctx["cmd_companion_boost"].get(sid, 0.0),  # type: ignore[union-attr]
+        "async_query_boost": ctx["async_query_boost"].get(sid, 0.0),  # type: ignore[union-attr]
+        "recency_boost": ctx["recency_boost"].get(sid, 0.0),  # type: ignore[union-attr]
+        "rule_yaml_penalty": ctx["rule_yaml_penalty"].get(sid, 0.0),  # type: ignore[union-attr]
+        "test_file_penalty": ctx["test_file_penalty"].get(sid, 0.0),  # type: ignore[union-attr]
+    }
+    return signals, clone_info
+
+
+def _blend_score(signals: dict[str, float], ctx: dict[str, object]) -> float:
+    """Blend normalized signals into a single score."""
+    return (
+        float(ctx["alpha"]) * signals["pr_norm"]  # type: ignore[arg-type]
+        + float(ctx["beta"]) * signals["cochange_norm"]  # type: ignore[arg-type]
+        + float(ctx["delta"]) * signals["runtime_norm"]  # type: ignore[arg-type]
+        + float(ctx["zeta"]) * signals["semantic_norm"]  # type: ignore[arg-type]
+        + float(ctx["lexical_baseline"]) * signals["fts_norm"]  # type: ignore[arg-type]
+        + signals["clone_boost"]
+        + signals["path_token_boost"]
+        + signals["cmd_companion_boost"]
+        + signals["async_query_boost"]
+        + signals["recency_boost"]
+        + signals["rule_yaml_penalty"]
+        + signals["test_file_penalty"]
+    )
+
+
+def _justifications_for_signals(
+    signals: dict[str, float],
+    clone_info: dict | None,
+    ctx: dict[str, object],
+) -> dict[str, object]:
+    """Build the human-readable justification dict from normalized signals."""
+    justifications: dict[str, object] = {}
+    if signals["pr_norm"] > 0:
+        justifications["pagerank"] = round(signals["pr_norm"], 4)
+        seeds = ctx["seeds"]  # type: ignore[assignment]
+        use_personalized = ctx["use_personalized"]  # type: ignore[assignment]
+        justifications["pagerank_kind"] = "personalized" if (seeds and use_personalized) else "global"
+    if signals["fts_norm"] > 0:
+        justifications["fts"] = round(signals["fts_norm"], 4)
+    if signals["cochange_norm"] > 0:
+        justifications["co_change"] = round(signals["cochange_norm"], 4)
+    if signals["runtime_norm"] > 0:
+        justifications["runtime_hot"] = round(signals["runtime_norm"], 4)
+    if signals["semantic_norm"] > 0:
+        justifications["semantic"] = round(signals["semantic_norm"], 4)
+    if clone_info:
+        justifications["clone_cluster"] = clone_info["cluster_id"]
+        justifications["clone_siblings"] = clone_info["sibling_count"]
+    return justifications
 
 
 def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
