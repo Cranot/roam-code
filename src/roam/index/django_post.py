@@ -248,30 +248,6 @@ def _target_model_name_for_edge(prop, base_type: str) -> str | None:
     return target_model.split(".")[-1] or None
 
 
-def _relationship_edge(prop, base_type: str, target_name: str, class_ids_by_name: dict[str, int]) -> dict | None:
-    """Build a django_fk/o2o/m2m edge dict for a relationship custom field.
-
-    Returns None unless the property belongs to a parent class symbol and
-    ``target_name`` resolves to a class ID in the pre-loaded map.
-    """
-    parent_id = prop.get("parent_id")
-    if not parent_id:
-        return None
-    edge_kind = _DJANGO_REL_KIND.get(base_type)
-    if not edge_kind:
-        return None
-    target_id = class_ids_by_name.get(target_name)
-    if not target_id:
-        return None
-    return {
-        "source_id": parent_id,
-        "target_id": target_id,
-        "kind": edge_kind,
-        "line": prop["line_start"],
-        "source_file_id": prop["file_id"],
-    }
-
-
 def _load_existing_relationship_keys_to_preserve_idempotency(conn) -> set[tuple[int, int, str]]:
     rows = conn.execute(
         "SELECT source_id, target_id, kind FROM edges WHERE kind IN ('django_fk', 'django_o2o', 'django_m2m')"
@@ -317,6 +293,55 @@ def _load_class_ids_for_relationship_targets(conn, target_names) -> dict[str, in
     return class_ids_by_name
 
 
+def _relationship_edges_after_batch_target_lookup(conn, edge_candidates, existing=None) -> list[dict]:
+    """Build class-level relationship edges after resolving targets once.
+
+    ``existing`` is mutated when provided so the relationship resolver preserves
+    its idempotent class-edge contract across both DB rows and this batch.
+    """
+    target_names = {target_name for _prop, target_name, _edge_kind in edge_candidates}
+    class_ids_by_name = _load_class_ids_for_relationship_targets(conn, target_names)
+    enforce_idempotency = existing is not None
+    if existing is None:
+        existing = set()
+
+    new_edges = []
+    for prop, target_name, edge_kind in edge_candidates:
+        target_id = class_ids_by_name.get(target_name)
+        if not target_id:
+            continue
+        source_id = prop["parent_id"]
+        if not source_id:
+            continue
+
+        edge_key = (source_id, target_id, edge_kind)
+        if enforce_idempotency:
+            if edge_key in existing:
+                continue
+            existing.add(edge_key)
+
+        new_edges.append(
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "kind": edge_kind,
+                "line": prop["line_start"],
+                "source_file_id": prop["file_id"],
+            }
+        )
+    return new_edges
+
+
+def _insert_relationship_edges_to_keep_post_resolvers_atomic(conn, edges) -> None:
+    if not edges:
+        return
+    with conn:
+        conn.executemany(
+            "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
+            [(e["source_id"], e["target_id"], e["kind"], e["line"], e["source_file_id"]) for e in edges],
+        )
+
+
 def resolve_django_custom_fields(conn) -> int:
     """Resolve custom Django field types across all indexed files.
 
@@ -344,7 +369,6 @@ def resolve_django_custom_fields(conn) -> int:
 
     updates = []
     edge_candidates = []
-    target_names = set()
     for prop in props:
         call_name = prop["call_function"]
         if call_name not in custom_field_map:
@@ -359,16 +383,11 @@ def resolve_django_custom_fields(conn) -> int:
         )
         target_name = _target_model_name_for_edge(prop, base_type)
         if target_name:
-            target_names.add(target_name)
-            edge_candidates.append((prop, base_type, target_name))
+            edge_kind = _DJANGO_REL_KIND.get(base_type)
+            if edge_kind:
+                edge_candidates.append((prop, target_name, edge_kind))
 
-    class_ids_by_name = _load_class_ids_for_relationship_targets(conn, target_names)
-
-    new_edges = []
-    for prop, base_type, target_name in edge_candidates:
-        edge = _relationship_edge(prop, base_type, target_name, class_ids_by_name)
-        if edge is not None:
-            new_edges.append(edge)
+    new_edges = _relationship_edges_after_batch_target_lookup(conn, edge_candidates)
 
     # 4. Batch update
     if updates:
@@ -378,12 +397,7 @@ def resolve_django_custom_fields(conn) -> int:
                 [(u["field_type"], u["field_base_type"], u["id"]) for u in updates],
             )
 
-    if new_edges:
-        with conn:
-            conn.executemany(
-                "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
-                [(e["source_id"], e["target_id"], e["kind"], e["line"], e["source_file_id"]) for e in new_edges],
-            )
+    _insert_relationship_edges_to_keep_post_resolvers_atomic(conn, new_edges)
 
     return len(updates)
 
@@ -411,7 +425,6 @@ def resolve_django_relationships(conn) -> int:
     ).fetchall()
 
     edge_candidates = []
-    target_names = set()
     for prop in props:
         # Determine the base relationship type
         rel_type = _relationship_type_from_field_aliases(prop)
@@ -426,38 +439,10 @@ def resolve_django_relationships(conn) -> int:
             continue
         edge_kind = _DJANGO_REL_KIND[rel_type]
 
-        target_names.add(target_name)
         edge_candidates.append((prop, target_name, edge_kind))
 
-    class_ids_by_name = _load_class_ids_for_relationship_targets(conn, target_names)
-
-    new_edges = []
-    for prop, target_name, edge_kind in edge_candidates:
-        if target_name not in class_ids_by_name:
-            continue
-        target_id = class_ids_by_name[target_name]
-        source_id = prop["parent_id"]
-        edge_key = (source_id, target_id, edge_kind)
-        if edge_key in existing:
-            continue
-        existing.add(edge_key)
-
-        new_edges.append(
-            {
-                "source_id": source_id,
-                "target_id": target_id,
-                "kind": edge_kind,
-                "line": prop["line_start"],
-                "source_file_id": prop["file_id"],
-            }
-        )
-
-    if new_edges:
-        with conn:
-            conn.executemany(
-                "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
-                [(e["source_id"], e["target_id"], e["kind"], e["line"], e["source_file_id"]) for e in new_edges],
-            )
+    new_edges = _relationship_edges_after_batch_target_lookup(conn, edge_candidates, existing)
+    _insert_relationship_edges_to_keep_post_resolvers_atomic(conn, new_edges)
 
     return len(new_edges)
 
