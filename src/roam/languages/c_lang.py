@@ -129,40 +129,47 @@ class CExtractor(LanguageExtractor):
             is_exported=is_header,
         )
 
+    def _unwrap_function_declarator(self, declarator):
+        """Iteratively drill through pointer/reference wrappers.
+
+        Returns the inner ``function_declarator`` node, or ``None`` if the
+        declarator is not a function declarator and is not wrapped around one.
+        A visited-node set provides the memoization that prevents cycles from
+        turning bounded declarator nesting into unbounded recursion.
+        """
+        seen = set()
+        while declarator is not None and declarator.type != "function_declarator":
+            node_id = id(declarator)
+            if node_id in seen:
+                return None
+            seen.add(node_id)
+            if declarator.type in ("pointer_declarator", "reference_declarator"):
+                next_decl = None
+                for child in declarator.children:
+                    if child.type == "function_declarator":
+                        next_decl = child
+                        break
+                if next_decl is None:
+                    return None
+                declarator = next_decl
+            else:
+                return None
+        return declarator
+
     def _parse_function_declarator(self, declarator, source) -> tuple[str | None, str]:
         """Extract function name and parameters from a declarator."""
-        if declarator.type == "function_declarator":
-            name_node = declarator.child_by_field_name("declarator")
-            params = declarator.child_by_field_name("parameters")
-            name = None
-            if name_node:
-                if name_node.type == "identifier":
-                    name = self.node_text(name_node, source)
-                elif name_node.type == "qualified_identifier":
-                    name = self.node_text(name_node, source)
-                elif name_node.type == "field_identifier":
-                    name = self.node_text(name_node, source)
-                elif name_node.type == "parenthesized_declarator":
-                    # (*funcptr)(...)
-                    name = self.node_text(name_node, source)
-                else:
-                    name = self.node_text(name_node, source)
-            params_text = self.node_text(params, source) if params else ""
-            # Strip outer parens from params
-            if params_text.startswith("(") and params_text.endswith(")"):
-                params_text = params_text[1:-1]
-            return name, params_text
-        elif declarator.type == "pointer_declarator":
-            for child in declarator.children:
-                if child.type == "function_declarator":
-                    return self._parse_function_declarator(child, source)
+        declarator = self._unwrap_function_declarator(declarator)
+        if declarator is None:
             return None, ""
-        elif declarator.type == "reference_declarator":
-            for child in declarator.children:
-                if child.type == "function_declarator":
-                    return self._parse_function_declarator(child, source)
-            return None, ""
-        return None, ""
+
+        name_node = declarator.child_by_field_name("declarator")
+        params = declarator.child_by_field_name("parameters")
+        name = self.node_text(name_node, source) if name_node else None
+        params_text = self.node_text(params, source) if params else ""
+        # Strip outer parens from params
+        if params_text.startswith("(") and params_text.endswith(")"):
+            params_text = params_text[1:-1]
+        return name, params_text
 
     def _extract_declaration(self, node, source, symbols, parent_name, is_header):
         """Extract variable/function declarations (not definitions)."""
