@@ -1066,6 +1066,59 @@ class _PhaseTimer:
         self._phase_open = None
 
 
+class _ProcessingProgress:
+    """Own the per-file processing progress UI and periodic commits."""
+
+    __slots__ = ("_bar_ctx", "_bar_obj", "_enabled", "_log", "_quiet")
+
+    def __init__(self, enabled: bool, quiet: bool, log: Callable[[str], None]):
+        self._enabled = enabled
+        self._quiet = quiet
+        self._log = log
+        self._bar_ctx = None
+        self._bar_obj = None
+
+    def begin_processing(self, total: int) -> None:
+        """Open the click progress bar when enabled and useful."""
+        if not self._enabled or self._quiet or total <= 0:
+            return
+        try:
+            import click
+
+            self._bar_ctx = click.progressbar(
+                length=total,
+                label="Processing",
+                file=sys.stderr,
+                width=36,
+            )
+            self._bar_obj = self._bar_ctx.__enter__()
+        except Exception:  # noqa: BLE001 -- progress bar is cosmetic; fall back to no bar on any failure
+            self._bar_ctx = None
+            self._bar_obj = None
+
+    def advance_processing(self, conn, index: int, total: int) -> None:
+        """Advance progress display and keep the incremental commit cadence."""
+        if self._bar_obj is not None:
+            self._bar_obj.update(1)
+        elif (index % 100 == 0) or (index == total):
+            self._log(f"  Processing {index}/{total} files...")
+
+        if (index % 100 == 0) or (index == total):
+            conn.commit()
+
+    def finish_processing(self) -> None:
+        """Close the progress bar context, if one was opened."""
+        if self._bar_ctx is None:
+            return
+        try:
+            self._bar_ctx.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001 — see guard rationale below
+            # Intentional silent guard: closing a click progress bar is a
+            # cosmetic UI teardown — a failure here has no effect on the
+            # index result and would only add noise to surface.
+            pass
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
 
@@ -1178,43 +1231,6 @@ class Indexer:
             except Exception as e:
                 if verbose:
                     self._log(f"  Warning: generic extractor failed for {rel_path}: {e}")
-
-    def _start_processing_progress(self, total):
-        if not self._progress_bar or self._quiet or total <= 0:
-            return None, None
-        try:
-            import click
-
-            bar_ctx = click.progressbar(
-                length=total,
-                label="Processing",
-                file=sys.stderr,
-                width=36,
-            )
-            return bar_ctx, bar_ctx.__enter__()
-        except Exception:  # noqa: BLE001 -- progress bar is cosmetic; fall back to no bar on any failure
-            return None, None
-
-    def _advance_processing_progress(self, conn, bar_obj, index: int, total: int) -> None:
-        if bar_obj is not None:
-            bar_obj.update(1)
-        elif (index % 100 == 0) or (index == total):
-            self._log(f"  Processing {index}/{total} files...")
-
-        if (index % 100 == 0) or (index == total):
-            conn.commit()
-
-    @staticmethod
-    def _close_processing_progress(bar_ctx) -> None:
-        if bar_ctx is None:
-            return
-        try:
-            bar_ctx.__exit__(None, None, None)
-        except Exception:  # noqa: BLE001 — see guard rationale below
-            # Intentional silent guard: closing a click progress bar is a
-            # cosmetic UI teardown — a failure here has no effect on the
-            # index result and would only add noise to surface.
-            pass
 
     def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
         # Prefetched cache hit (parallel I/O prefetch).
@@ -1376,11 +1392,12 @@ class Indexer:
         file_id_by_path = {}
         total = len(files_to_process)
         self._prefetch_sources(files_to_process, verbose)
-        bar_ctx, bar_obj = self._start_processing_progress(total)
+        progress = _ProcessingProgress(self._progress_bar, self._quiet, self._log)
+        progress.begin_processing(total)
 
         try:
             for i, rel_path in enumerate(files_to_process, 1):
-                self._advance_processing_progress(conn, bar_obj, i, total)
+                progress.advance_processing(conn, i, total)
                 file_id = self._process_single_file(
                     conn,
                     rel_path,
@@ -1393,7 +1410,7 @@ class Indexer:
                 if file_id is not None:
                     file_id_by_path[rel_path] = file_id
         finally:
-            self._close_processing_progress(bar_ctx)
+            progress.finish_processing()
 
         return all_symbol_rows, all_references, file_id_by_path
 
