@@ -287,7 +287,8 @@ def _load_text_encoder():
                 None,
                 {"input_ids": ids, "attention_mask": mask},
             )
-        except inference_error_types:
+        except inference_error_types as exc:
+            log_swallowed("retrieve.semantic:_load_text_encoder:inference", exc)
             return None
         # First output is typically the last_hidden_state; mean-pool.
         last_hidden = outputs[0][0]
