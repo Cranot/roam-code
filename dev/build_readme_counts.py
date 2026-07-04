@@ -163,19 +163,18 @@ def _category_count(root: Path) -> int:
             targets = node.targets
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id == "_CATEGORIES":
-                value = node.value if isinstance(node, ast.Assign) else node.value
-                # _CATEGORIES is a dict literal; counting keys.
-                if isinstance(value, ast.Dict):
-                    return len(value.keys)
-                # Fallback to literal_eval if it's an expression dict.
-                try:
-                    obj = ast.literal_eval(value)
-                    if isinstance(obj, dict):
-                        return len(obj)
-                except (ValueError, TypeError):
-                    pass
+        if any(isinstance(t, ast.Name) and t.id == "_CATEGORIES" for t in targets):
+            value = node.value
+            # _CATEGORIES is a dict literal; counting keys.
+            if isinstance(value, ast.Dict):
+                return len(value.keys)
+            # Fallback to literal_eval if it's an expression dict.
+            try:
+                obj = ast.literal_eval(value)
+                if isinstance(obj, dict):
+                    return len(obj)
+            except (ValueError, TypeError):
+                pass
     # If _CATEGORIES isn't a plain dict literal, return 0 so callers notice.
     return 0
 
