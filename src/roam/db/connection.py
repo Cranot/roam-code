@@ -825,7 +825,6 @@ def batched_in(
     conn: sqlite3.Connection,
     sql: str,
     ids,
-    *,
     options: _BatchOptions | None = None,
     **batch_options,
 ) -> list:
@@ -862,7 +861,6 @@ def _legacy_batched_scalar_sum(
     conn: sqlite3.Connection,
     sql: str,
     ids,
-    *,
     options: _BatchOptions | None = None,
     **batch_options,
 ) -> int:
