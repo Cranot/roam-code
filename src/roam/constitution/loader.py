@@ -966,37 +966,40 @@ def _resolve_source_path(repo_root: Path, raw: str) -> Path:
     return Path(repo_root) / p
 
 
+def _source_status_for_glob_without_blocking_loader(repo_root: Path, name: str, raw_path: str) -> SourceStatus:
+    """Classify an optional glob source while keeping loader checks non-fatal."""
+    try:
+        rel = raw_path
+        if rel.startswith("./"):
+            rel = rel[2:]
+        elif rel.startswith(".\\"):
+            rel = rel[2:]
+        matches = list(Path(repo_root).glob(rel))
+    except (OSError, ValueError, NotImplementedError):
+        matches = []
+    if matches:
+        return SourceStatus(
+            name=name,
+            path=raw_path,
+            exists=True,
+            state="ok",
+            detail=f"{len(matches)} file(s) match",
+        )
+    return SourceStatus(
+        name=name,
+        path=raw_path,
+        exists=False,
+        state="source_missing",
+        detail="no files match glob",
+    )
+
+
 def _source_status(repo_root: Path, name: str, raw_path: str) -> SourceStatus:
     """Check a single source. Globs (e.g. ``*.yml``) match if ANY file matches."""
     p = _resolve_source_path(repo_root, raw_path)
     raw = str(raw_path)
-    # Glob handling.
     if any(ch in raw for ch in "*?["):
-        try:
-            # Resolve glob against repo_root for robustness.
-            rel = raw
-            if rel.startswith("./"):
-                rel = rel[2:]
-            elif rel.startswith(".\\"):
-                rel = rel[2:]
-            matches = list(Path(repo_root).glob(rel))
-        except (OSError, ValueError, NotImplementedError):
-            matches = []
-        if matches:
-            return SourceStatus(
-                name=name,
-                path=raw_path,
-                exists=True,
-                state="ok",
-                detail=f"{len(matches)} file(s) match",
-            )
-        return SourceStatus(
-            name=name,
-            path=raw_path,
-            exists=False,
-            state="source_missing",
-            detail="no files match glob",
-        )
+        return _source_status_for_glob_without_blocking_loader(repo_root, name, raw)
     if not p.exists():
         return SourceStatus(
             name=name,
