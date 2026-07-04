@@ -301,7 +301,7 @@ def scan_project_for_flags(
             f["file"] = rel_path
         all_findings.extend(file_findings)
 
-    all_findings.sort(key=lambda f: (f["flag_name"], f["file"], f["line"]))
+    all_findings.sort(key=lambda finding: (finding["flag_name"], finding["file"], finding["line"]))
     return all_findings
 
 
