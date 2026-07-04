@@ -3522,9 +3522,9 @@ def _check_clones(conn, target_paths):
     return {"score": 100 if not violations else 80, "violations": violations}
 
 
-def _changed_python_paths_for_magic_number_scan(target_paths):
+def _changed_python_paths_for_magic_number_scan(target_paths) -> set[str]:
     """Changed production Python files where repeated literals can matter."""
-    return sorted(p for p in _verify_changed_set(target_paths) if p.endswith(".py") and not is_test_file(p))
+    return {p for p in _verify_changed_set(target_paths) if p.endswith(".py") and not is_test_file(p)}
 
 
 def _magic_number_occurrences_by_literal(changed_paths, root, scan_python_file):
