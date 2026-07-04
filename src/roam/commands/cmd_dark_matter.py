@@ -227,6 +227,28 @@ def _finding_record_for_stable_pair_identity(p: dict, source_version: str, findi
     )
 
 
+def _emit_finding_records(conn: sqlite3.Connection, records) -> int:
+    """Emit an iterable of FindingRecords into the central findings registry.
+
+    Centralizes the uniform emission mechanics that are duplicated across
+    every detector's persist path: local-import ``emit_finding``, skip
+    ``None`` values, and count rows written. Each caller is still
+    responsible for building its detector-specific ``FindingRecord``;
+    this helper owns only the invariant part.
+    """
+    # Local import keeps the cost out of the read-only path —
+    # callers without --persist never reach here.
+    from roam.db.findings import emit_finding
+
+    emitted = 0
+    for record in records:
+        if record is None:
+            continue
+        emit_finding(conn, record)
+        emitted += 1
+    return emitted
+
+
 def _emit_dark_matter_findings(
     conn: sqlite3.Connection,
     pairs: list[dict],
@@ -248,18 +270,15 @@ def _emit_dark_matter_findings(
     ``(subject_kind = 'file_pair' AND finding_id_str = ?)`` instead.
     Mirrors the W134 pr-risk NULL-subject pattern.
     """
-    # Local import keeps the cost out of the read-only path —
-    # callers without --persist never reach here.
-    from roam.db.findings import FindingRecord, emit_finding
+    from roam.db.findings import FindingRecord
 
-    written = 0
-    for p in pairs:
-        record = _finding_record_for_stable_pair_identity(p, source_version, FindingRecord)
-        if record is None:
-            continue
-        emit_finding(conn, record)
-        written += 1
-    return written
+    return _emit_finding_records(
+        conn,
+        (
+            _finding_record_for_stable_pair_identity(p, source_version, FindingRecord)
+            for p in pairs
+        ),
+    )
 
 
 @roam_capability(
