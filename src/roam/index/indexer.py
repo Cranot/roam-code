@@ -859,6 +859,79 @@ def _make_edge_count_formatter(label: str, noun: str):
     return fmt
 
 
+class _Phase5SourceCache:
+    """Bounded in-memory cache of ``(raw_source_bytes, tree)`` for Phase 5.
+
+    Extracted from ``Indexer`` to localize the Phase 2 -> Phase 5 source/tree
+    handoff. Phase 2 parsing stashes each file's parsed ``(source, tree)`` here
+    via ``capture``; Phase 5 (effects + taint) pulls the whole dict out via
+    ``for_handoff`` so it doesn't re-open + re-parse every file on disk.
+
+    Attributes:
+        _cache: ``{rel_path: (source_bytes, tree)}`` or ``None`` before the
+            first successful capture / after ``clear``. ``None`` => Phase 5
+            takes the original disk-read path.
+        _bytes: running total of cached source bytes.
+        _skipped: count of files rejected for exceeding the cap (diagnostic;
+            not currently surfaced).
+    """
+
+    __slots__ = ("_cache", "_bytes", "_skipped")
+
+    def __init__(self):
+        self._cache = None
+        self._bytes = 0
+        self._skipped = 0
+
+    @staticmethod
+    def _cap_bytes() -> int:
+        """Return the max-bytes ceiling for the cache.
+
+        Default 512 MiB. Override via ``ROAM_PHASE5_CACHE_MAX_BYTES``. A
+        value <= 0 disables the cache entirely (forces Phase 5 to read+parse
+        from disk, matching pre-W440 behaviour — useful for memory-constrained
+        environments).
+        """
+        try:
+            raw = os.environ.get("ROAM_PHASE5_CACHE_MAX_BYTES", "").strip()
+            if not raw:
+                return 512 * 1024 * 1024
+            return int(raw)
+        except (TypeError, ValueError):
+            return 512 * 1024 * 1024
+
+    def capture(self, rel_path: str, source: bytes, tree) -> None:
+        """Stash ``(source, tree)`` for Phase 5 to reuse.
+
+        Bounded by ``_cap_bytes``: once the running total approaches the cap
+        the cache stops growing and the remaining files fall back to disk I/O
+        in Phase 5. Cap is bytes only — tree-sitter Tree objects are opaque C
+        pointers and not counted; on roam-code ~470 files the bytes cost
+        (~5MB) dominates the tree pointer cost (negligible).
+        """
+        if source is None or tree is None:
+            return
+        cap = self._cap_bytes()
+        if cap <= 0:
+            return
+        if self._cache is None:
+            self._cache = {}
+        if self._bytes + len(source) > cap:
+            self._skipped += 1
+            return
+        self._cache[rel_path] = (source, tree)
+        self._bytes += len(source)
+
+    def for_handoff(self) -> dict | None:
+        """Return the cache for Phase 5 (``clear`` releases it after use)."""
+        return self._cache
+
+    def clear(self) -> None:
+        """Release the cache after effects + taint complete."""
+        self._cache = None
+        self._bytes = 0
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
 
@@ -869,6 +942,7 @@ class Indexer:
         self._quiet = False
         self._progress_bar = True
         self.summary: dict | None = None
+        self._phase5_cache = _Phase5SourceCache()
 
     def _log(self, msg: str):
         """Log a message to stderr, respecting quiet mode."""
@@ -1053,62 +1127,6 @@ class Indexer:
         if verbose:
             self._log(f"  Prefetched {len(cache)} source files in parallel")
 
-    # W440: Phase 5 source cache (effects + taint) ----------------------------
-
-    def _phase5_cache_cap_bytes(self) -> int:
-        """Return the max-bytes ceiling for the Phase 5 source cache.
-
-        Default 512 MiB. Override via ``ROAM_PHASE5_CACHE_MAX_BYTES``. A
-        value <=0 disables the cache entirely (forces Phase 5 to read+parse
-        from disk, matching pre-W440 behaviour — useful for memory-constrained
-        environments).
-        """
-        try:
-            raw = os.environ.get("ROAM_PHASE5_CACHE_MAX_BYTES", "").strip()
-            if not raw:
-                return 512 * 1024 * 1024
-            return int(raw)
-        except (TypeError, ValueError):
-            return 512 * 1024 * 1024
-
-    def _capture_phase5_source(self, rel_path: str, source: bytes, tree) -> None:
-        """Stash (raw_source_bytes, tree) for Phase 5 to reuse.
-
-        Bounded by ``_phase5_cache_cap_bytes``: once the running total
-        approaches the cap the cache stops growing and the remaining files
-        fall back to disk I/O in Phase 5. Cap is `bytes only` — tree-sitter
-        Tree objects are opaque C pointers and not counted; on roam-code
-        ~470 files the bytes cost (~5MB) dominates the tree pointer cost
-        (negligible).
-        """
-        if source is None or tree is None:
-            return
-        cap = self._phase5_cache_cap_bytes()
-        if cap <= 0:
-            return
-        cache = getattr(self, "_phase5_source_cache", None)
-        if cache is None:
-            cache = {}
-            self._phase5_source_cache = cache
-            self._phase5_source_bytes = 0
-            self._phase5_source_skipped = 0
-        if self._phase5_source_bytes + len(source) > cap:
-            self._phase5_source_skipped += 1
-            return
-        cache[rel_path] = (source, tree)
-        self._phase5_source_bytes += len(source)
-
-    def _phase5_cache_for_handoff(self) -> dict | None:
-        """Return the Phase 5 cache (and detach it from self) for handoff."""
-        return getattr(self, "_phase5_source_cache", None)
-
-    def _clear_phase5_cache(self) -> None:
-        """Release the Phase 5 cache after effects + taint complete."""
-        if hasattr(self, "_phase5_source_cache"):
-            self._phase5_source_cache = None
-        if hasattr(self, "_phase5_source_bytes"):
-            self._phase5_source_bytes = 0
-
     def _insert_file_record(
         self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
     ) -> int | None:
@@ -1188,7 +1206,7 @@ class Indexer:
         # ROAM_PHASE5_CACHE_MAX_BYTES (default 512MB); when the cap is hit
         # the cache stops growing and Phase 5 falls back to disk I/O for the
         # remainder, preserving correctness on giant repos.
-        self._capture_phase5_source(rel_path, source, tree)
+        self._phase5_cache.capture(rel_path, source, tree)
 
         extractor = self._extractor_for_file(get_extractor, lang, rel_path, verbose)
         if extractor is None:
@@ -1884,7 +1902,7 @@ class Indexer:
             # W440: hand Phase 2's (source, tree) cache to Phase 5 so it
             # doesn't re-open + re-parse every file. ``source_cache`` is
             # backwards-compatible (default None → original disk-read path).
-            source_cache = self._phase5_cache_for_handoff()
+            source_cache = self._phase5_cache.for_handoff()
             # Incremental: only changed files are re-classified; unchanged
             # files reuse their stored direct effects (changed_paths=None on a
             # full / --force run re-classifies everything).
@@ -1916,7 +1934,7 @@ class Indexer:
         start = time.monotonic()
         try:
             # W440: same source cache as effects, fed from Phase 2 parses.
-            source_cache = self._phase5_cache_for_handoff()
+            source_cache = self._phase5_cache.for_handoff()
             taint_fn(conn, self.root, G, source_cache=source_cache)
             taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
             if taint_count:
@@ -2175,7 +2193,7 @@ class Indexer:
         self._run_taint_analysis(conn, G)
         # W440: release the Phase 2 source/tree cache before Phase 6 so peak
         # memory drops back before health + cognitive load.
-        self._clear_phase5_cache()
+        self._phase5_cache.clear()
         self._begin_phase(6, "Computing health & cognitive load...")
         self._compute_health_and_load(conn, G)
         self._begin_phase(7, "Building search indexes...")
@@ -2195,7 +2213,7 @@ class Indexer:
         mtime match, so poisoning the hash alone would be short-circuited; mtime=0
         forces it past the fast-path into the (poisoned) hash comparison.
         """
-        self._clear_phase5_cache()
+        self._phase5_cache.clear()
         if files_to_process:
             conn.executemany(
                 "UPDATE files SET hash = 'roam-light-pending', mtime = 0 WHERE path = ?",
