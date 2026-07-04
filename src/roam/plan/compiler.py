@@ -7833,13 +7833,15 @@ def _get_toml_parser():
         import tomllib  # type: ignore[import-not-found]  # 3.11+ stdlib
 
         return tomllib
-    except ModuleNotFoundError:
-        pass
+    except ModuleNotFoundError as exc:
+        # tomllib is 3.11+; falling back to the tomli backport is expected.
+        log_swallowed("compile.toml_parser.tomllib_fallback", exc)
     try:
         import tomli  # type: ignore[import-not-found]  # 3.10 backport
 
         return tomli
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        log_swallowed("compile.toml_parser.tomli_missing", exc)
         return None
 
 
