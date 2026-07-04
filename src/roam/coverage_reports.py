@@ -38,6 +38,17 @@ def _strip_drive(path: str) -> str:
     return path.lstrip("/")
 
 
+def _path_suffixes(path: str) -> list[str]:
+    """Return all slash-terminated suffixes of a posix path, shortest first.
+
+    For example, ``a/b/c.py`` yields ``['c.py', 'b/c.py', 'a/b/c.py']``.
+    These suffixes are the keys for a hash-join that replaces the
+    candidate x index nested iteration in file-path resolution.
+    """
+    parts = path.split("/")
+    return ["/".join(parts[i:]) for i in range(len(parts))]
+
+
 def _to_int(value) -> int | None:
     try:
         return int(value)
@@ -214,6 +225,7 @@ def _resolve_file_id(
     project_root: Path,
     exact_index: dict[str, dict],
     basename_index: dict[str, list[dict]],
+    suffix_index: dict[str, list[dict]],
 ) -> dict | None:
     """Resolve a report path to an indexed file row (`id`, `path`)."""
     candidates = _candidate_report_paths(report_path, project_root)
@@ -225,14 +237,18 @@ def _resolve_file_id(
         if row:
             return row
 
+    # Hash-join suffix matches instead of iterating candidates x exact_index.
+    # For each candidate we need indexed paths that have `cand` as a suffix
+    # (score = len(cand)) and indexed paths that are themselves a suffix of
+    # `cand` (score = len(indexed_path)).
     suffix_matches: list[tuple[int, dict]] = []
     for cand in candidates:
-        for indexed_path, row in exact_index.items():
-            if indexed_path == cand:
-                suffix_matches.append((len(cand), row))
-                continue
-            if indexed_path.endswith("/" + cand) or cand.endswith("/" + indexed_path):
-                suffix_matches.append((min(len(cand), len(indexed_path)), row))
+        for row in suffix_index.get(cand, []):
+            suffix_matches.append((len(cand), row))
+        for suf in _path_suffixes(cand)[:-1]:
+            row = exact_index.get(suf)
+            if row:
+                suffix_matches.append((len(suf), row))
 
     if suffix_matches:
         suffix_matches.sort(key=lambda t: (-t[0], len(t[1]["path"])))
@@ -294,11 +310,14 @@ def ingest_coverage_reports(
     indexed_rows = conn.execute("SELECT id, path FROM files").fetchall()
     exact_index: dict[str, dict] = {}
     basename_index: dict[str, list[dict]] = {}
+    suffix_index: dict[str, list[dict]] = {}
     for row in indexed_rows:
         norm = _normalise_path(row["path"])
         rec = {"id": row["id"], "path": row["path"]}
         exact_index[norm] = rec
         basename_index.setdefault(Path(norm).name, []).append(rec)
+        for suf in _path_suffixes(norm):
+            suffix_index.setdefault(suf, []).append(rec)
 
     file_cov_by_id: dict[int, dict] = {}
     unmatched_files: list[str] = []
@@ -308,6 +327,7 @@ def ingest_coverage_reports(
             project_root=project_root,
             exact_index=exact_index,
             basename_index=basename_index,
+            suffix_index=suffix_index,
         )
         if not resolved:
             unmatched_files.append(report_file)
