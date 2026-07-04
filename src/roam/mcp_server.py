@@ -6879,6 +6879,35 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
     }
 
 
+def _vp_parse_plan_json(plan_json: str) -> tuple[list | None, dict | None]:
+    """Parse ``plan_json`` (a JSON string) into an operations list.
+
+    Extracted from :func:`validate_plan` to flatten its nesting. Returns
+    ``(operations, None)`` on success, ``(None, error_envelope)`` when
+    ``plan_json`` is not valid JSON, or ``(None, None)`` when the JSON is
+    valid but carries no operations list (the caller then falls through to
+    its own "no operations supplied" error).
+    """
+    import json as _json
+    try:
+        parsed = _json.loads(plan_json)
+    except _json.JSONDecodeError as e:
+        return None, _structured_error(
+            {
+                "error": f"plan_json is not valid JSON: {e}",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass operations=[{...}] or plan_json='{\"operations\":[...]}'",
+                "command": "roam_validate_plan",
+            }
+        )
+    if isinstance(parsed, list):
+        return parsed, None
+    ops = parsed.get("operations") if isinstance(parsed, dict) else None
+    if isinstance(ops, list):
+        return ops, None
+    return None, None
+
+
 @_tool(
     name="roam_validate_plan",
     description="Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation.",
@@ -6927,26 +6956,11 @@ def validate_plan(
     ``needs-review`` (warnings only), or ``blocked`` (any blocker —
     do NOT call mutate until resolved).
     """
-    import json as _json
-
     if not operations and plan_json:
-        try:
-            parsed = _json.loads(plan_json)
-            if isinstance(parsed, list):
-                operations = parsed
-            elif isinstance(parsed, dict):
-                ops = parsed.get("operations")
-                if isinstance(ops, list):
-                    operations = ops
-        except _json.JSONDecodeError as e:
-            return _structured_error(
-                {
-                    "error": f"plan_json is not valid JSON: {e}",
-                    "error_code": "USAGE_ERROR",
-                    "hint": "pass operations=[{...}] or plan_json='{\"operations\":[...]}'",
-                    "command": "roam_validate_plan",
-                }
-            )
+        parsed_ops, parse_err = _vp_parse_plan_json(plan_json)
+        if parse_err is not None:
+            return parse_err
+        operations = parsed_ops
 
     if not operations or not isinstance(operations, list):
         return _structured_error(
