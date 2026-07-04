@@ -14,8 +14,8 @@ officer's dream, supply-chain scanner's contract.
 
 OpenVEX correctness: the status set is the four spec-legal labels;
 the justification set is the five spec-legal labels (never
-``code_not_reachable``). Imported from :mod:`security.taint_engine`
-to keep one source of truth.
+``code_not_reachable``). Kept local so CGA import/verify stays independent
+from the heavier taint-analysis engine.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-from roam.security.taint_engine import OPENVEX_JUSTIFICATIONS, OPENVEX_STATUSES
 
 # Predicate type IRIs are served at https://roam-code.com/spec/... so
 # SLSA / in-toto consumers that dereference the IRI find a real
@@ -53,6 +51,19 @@ _LEGACY_PREDICATE_TYPES = (
 
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 SCHEMA_VERSION = "1"
+
+# OpenVEX justification strings and status labels advertised by CGA predicates.
+# These match the taint engine's emitted labels without importing that engine.
+OPENVEX_JUSTIFICATIONS: frozenset[str] = frozenset(
+    {
+        "component_not_present",
+        "vulnerable_code_not_present",
+        "vulnerable_code_not_in_execute_path",
+        "vulnerable_code_cannot_be_controlled_by_adversary",
+        "inline_mitigations_already_exist",
+    }
+)
+OPENVEX_STATUSES: frozenset[str] = frozenset({"not_affected", "affected", "fixed", "under_investigation"})
 
 
 def _git_commit_sha(root: Path) -> str | None:
