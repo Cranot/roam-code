@@ -901,6 +901,58 @@ def _do_inventory(
     )
 
 
+def _is_reachable_from_entries(G, entries, sid) -> bool:
+    """Return True if ``sid`` is reachable from any graph entry point."""
+    import networkx as nx
+
+    for ep in entries:
+        if nx.has_path(G, ep, sid):
+            return True
+    return False
+
+
+def _mark_vulns_reachable_from_entries(vulns: list[dict], G, entries) -> None:
+    """Mutate ``vulns`` in place, setting ``reachable`` from graph analysis."""
+    for v in vulns:
+        sid = v["matched_symbol_id"]
+        if v["reachable"] != 0 or sid is None:
+            continue
+        if sid not in G:
+            v["reachable"] = -1
+            continue
+        reached = _is_reachable_from_entries(G, entries, sid)
+        v["reachable"] = 1 if reached else -1
+
+
+def _compute_reachability_in_memory(vulns: list[dict], conn: sqlite3.Connection) -> None:
+    """Compute reachability in-memory when the DB cannot be written to.
+
+    Mutates each vuln dict's ``reachable`` field in place:
+    - 1  = reachable from at least one entry point
+    - -1 = not reachable or symbol not in graph
+    """
+    needs_analysis = any(v["reachable"] == 0 and v["matched_symbol_id"] is not None for v in vulns)
+    if not needs_analysis:
+        return
+
+    try:
+        from networkx.exception import NetworkXException
+
+        from roam.graph.builder import build_symbol_graph
+
+        G = build_symbol_graph(conn)
+        entries = [n for n in G.nodes() if G.in_degree(n) == 0]
+        _mark_vulns_reachable_from_entries(vulns, G, entries)
+    except ImportError as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_vulns:reachability", _exc)
+    except (sqlite3.Error, NetworkXException) as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_vulns:reachability", _exc)
+
+
 def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
     """Query vulnerabilities from the DB, optionally filtered by reachability.
 
@@ -922,40 +974,7 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
     if reachable_only:
         # If we don't have reachability data yet, compute it in-memory
         # (the connection may be readonly, so we cannot write back to DB)
-        needs_analysis = any(v["reachable"] == 0 and v["matched_symbol_id"] is not None for v in vulns)
-        if needs_analysis:
-            try:
-                from networkx.exception import NetworkXException
-
-                from roam.graph.builder import build_symbol_graph
-
-                G = build_symbol_graph(conn)
-                # Find entry points (in-degree 0)
-                entries = [n for n in G.nodes() if G.in_degree(n) == 0]
-                import networkx as nx
-
-                for v in vulns:
-                    sid = v["matched_symbol_id"]
-                    if v["reachable"] != 0 or sid is None:
-                        continue
-                    if sid not in G:
-                        v["reachable"] = -1
-                        continue
-                    # Check reachability from any entry point
-                    reached = False
-                    for ep in entries:
-                        if nx.has_path(G, ep, sid):
-                            reached = True
-                            break
-                    v["reachable"] = 1 if reached else -1
-            except ImportError as _exc:
-                from roam.observability import log_swallowed
-
-                log_swallowed("cmd_vulns:reachability", _exc)
-            except (sqlite3.Error, NetworkXException) as _exc:
-                from roam.observability import log_swallowed
-
-                log_swallowed("cmd_vulns:reachability", _exc)
+        _compute_reachability_in_memory(vulns, conn)
 
         # Filter to reachable only
         vulns = [v for v in vulns if v.get("reachable") == 1]
