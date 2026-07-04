@@ -10,6 +10,7 @@ Bucket B propagation plan + W1148 audit memo.
 from __future__ import annotations
 
 from collections import defaultdict
+import heapq
 
 import click
 
@@ -113,21 +114,21 @@ def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, tota
                 d = "."
             dir_syms.setdefault(d, []).append(s)
 
-        sorted_dirs = sorted(dir_syms.items(), key=lambda x: -len(x[1]))
+        top_dirs = heapq.nlargest(8, dir_syms.items(), key=lambda x: len(x[1]))
 
         group_labels = "ABCDEFGH"
         big_groups = []
         click.echo("    Sub-groups:")
-        for idx, (d, syms) in enumerate(sorted_dirs[:8]):
+        for idx, (d, syms) in enumerate(top_dirs):
             dpct = len(syms) * 100 / r["size"] if r["size"] else 0
-            top3 = sorted(syms, key=lambda s: -s["pagerank"])[:3]
+            top3 = heapq.nlargest(3, syms, key=lambda s: s["pagerank"])
             names = ", ".join(f"{s['name']}" for s in top3)
             label = group_labels[idx] if idx < len(group_labels) else str(idx)
             click.echo(f"      {label}: {d + '/':<36s} {len(syms):>4d} ({dpct:>2.0f}%)  {names}")
             if dpct >= 10:
                 big_groups.append((label, d, {s["id"] for s in syms}))
-        if len(sorted_dirs) > 8:
-            click.echo(f"      (+{len(sorted_dirs) - 8} more directories)")
+        if len(dir_syms) > 8:
+            click.echo(f"      (+{len(dir_syms) - 8} more directories)")
 
         _print_coupling_matrix(big_groups, edges)
 
@@ -236,7 +237,7 @@ def _clusters_mermaid(conn, rows, min_size):
     _, _, _, inter_pairs = _compute_cohesion(conn)
     visible_ids = set(rendered_ids)
     visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
-    top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
+    top_inter = heapq.nlargest(10, visible_pairs.items(), key=lambda x: x[1])
     for (ca, cb), cnt in top_inter:
         # Use cluster-level node IDs for inter-cluster edges
         src_sym = next(iter(members_by_cluster.get(ca, [])), None)
@@ -543,7 +544,7 @@ def clusters_cmd(ctx, min_size, mermaid_mode, weak_mode, strong_mode):
         # Top inter-cluster coupling pairs
         if inter_pairs:
             visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
-            top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
+            top_inter = heapq.nlargest(10, visible_pairs.items(), key=lambda x: x[1])
             if top_inter:
                 cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
                 click.echo("\n=== Inter-Cluster Coupling (top pairs) ===")
