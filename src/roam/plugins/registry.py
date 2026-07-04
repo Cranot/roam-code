@@ -39,6 +39,17 @@ if TYPE_CHECKING:
     from roam.languages.base import LanguageExtractor
 
 
+__all__ = [
+    "DetectorSpec",
+    "Finding",
+    "FrameworkProfile",
+    "RoamPlugin",
+    "RoamPluginContext",
+    "get_framework_profile",
+    "get_framework_profiles",
+]
+
+
 # A detector returns a list of finding dicts. We keep ``Finding`` as a
 # permissive ``dict`` alias rather than a dataclass to match the
 # in-repo built-in detector contract — converting to a strict
