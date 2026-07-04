@@ -265,9 +265,13 @@ def _load_cycle_detection_context(conn, status):
 
 
 def _iter_cycles_touching_changed_symbols(sccs, changed_sym_ids):
-    """Yield SCCs that touch changed symbols using one changed-id lookup set."""
+    """Yield SCCs that preserve changed-scope review via set lookup."""
+    changed_lookup = set(changed_sym_ids or ())
+    if not changed_lookup:
+        return
+
     for scc in sccs:
-        overlap = changed_sym_ids.intersection(scc)
+        overlap = changed_lookup.intersection(scc)
         if overlap:
             yield tuple(scc), overlap
 
