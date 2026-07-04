@@ -175,6 +175,58 @@ def _dark_matter_finding_id(path_a: str, path_b: str) -> str:
     return f"dark-matter:arch.dark_matter:{digest}"
 
 
+def _finding_record_for_stable_pair_identity(p: dict, source_version: str, finding_record_cls):
+    """Build one registry record while preserving stable pair identity.
+
+    The hidden tradeoff is identity stability vs evidence fidelity: the
+    file-pair key is canonicalized for deterministic upserts, while the
+    evidence payload preserves the detector's coupling metrics.
+    """
+    path_a = p.get("path_a") or ""
+    path_b = p.get("path_b") or ""
+    if not path_a or not path_b:
+        # Skip malformed engine output — every legitimate row has both
+        # paths populated.
+        return None
+
+    lo, hi = _canonical_pair(path_a, path_b)
+    hyp = p.get("hypothesis") or {}
+    category = hyp.get("category") or "UNKNOWN"
+    detail = hyp.get("detail") or ""
+
+    finding_id = _dark_matter_finding_id(path_a, path_b)
+    qualified_name = f"{lo}::{hi}"
+
+    evidence = {
+        "qualified_name": qualified_name,
+        "path_a": lo,
+        "path_b": hi,
+        "npmi": p.get("npmi"),
+        "lift": p.get("lift"),
+        "strength": p.get("strength"),
+        "cochange_count": p.get("cochange_count"),
+        "hypothesis_category": category,
+        "hypothesis_detail": detail,
+        "hypothesis_confidence": hyp.get("confidence"),
+    }
+    claim = (
+        f"dark-matter coupling: {lo} <-> {hi} "
+        f"(NPMI {p.get('npmi', 0)}, co-changes {p.get('cochange_count', 0)}, "
+        f"hypothesis {category})"
+    )
+    confidence = _dark_matter_confidence_for_category(category)
+    return finding_record_cls(
+        finding_id_str=finding_id,
+        subject_kind="file_pair",
+        subject_id=None,
+        claim=claim,
+        evidence_json=_json.dumps(evidence, sort_keys=True),
+        confidence=confidence,
+        source_detector="dark-matter",
+        source_version=source_version,
+    )
+
+
 def _emit_dark_matter_findings(
     conn: sqlite3.Connection,
     pairs: list[dict],
@@ -202,52 +254,10 @@ def _emit_dark_matter_findings(
 
     written = 0
     for p in pairs:
-        path_a = p.get("path_a") or ""
-        path_b = p.get("path_b") or ""
-        if not path_a or not path_b:
-            # Skip malformed engine output — every legitimate row has
-            # both paths populated.
+        record = _finding_record_for_stable_pair_identity(p, source_version, FindingRecord)
+        if record is None:
             continue
-
-        lo, hi = _canonical_pair(path_a, path_b)
-        hyp = p.get("hypothesis") or {}
-        category = hyp.get("category") or "UNKNOWN"
-        detail = hyp.get("detail") or ""
-
-        finding_id = _dark_matter_finding_id(path_a, path_b)
-        qualified_name = f"{lo}::{hi}"
-
-        evidence = {
-            "qualified_name": qualified_name,
-            "path_a": lo,
-            "path_b": hi,
-            "npmi": p.get("npmi"),
-            "lift": p.get("lift"),
-            "strength": p.get("strength"),
-            "cochange_count": p.get("cochange_count"),
-            "hypothesis_category": category,
-            "hypothesis_detail": detail,
-            "hypothesis_confidence": hyp.get("confidence"),
-        }
-        claim = (
-            f"dark-matter coupling: {lo} <-> {hi} "
-            f"(NPMI {p.get('npmi', 0)}, co-changes {p.get('cochange_count', 0)}, "
-            f"hypothesis {category})"
-        )
-        confidence = _dark_matter_confidence_for_category(category)
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="file_pair",
-                subject_id=None,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=confidence,
-                source_detector="dark-matter",
-                source_version=source_version,
-            ),
-        )
+        emit_finding(conn, record)
         written += 1
     return written
 
