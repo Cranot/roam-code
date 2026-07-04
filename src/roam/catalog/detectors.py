@@ -2576,6 +2576,38 @@ def _demote_dev_gated_level(level: str, dev_gated: bool) -> str:
     return level
 
 
+_LIST_PREPEND_SHIFT_OPS = {"insert", "unshift", "shift"}
+_LIST_PREPEND_DEQUE_OPS = {"popleft", "appendleft", "extendleft"}
+_LIST_PREPEND_FRONT_OPS = _LIST_PREPEND_SHIFT_OPS | _LIST_PREPEND_DEQUE_OPS
+
+
+def _list_prepend_finding_for_row(r: sqlite3.Row) -> dict | None:
+    calls = _iter_loop_calls(r)
+    front_calls = _call_in(calls, _LIST_PREPEND_FRONT_OPS)
+    if front_calls and all(_call_leaf(c) in _LIST_PREPEND_DEQUE_OPS for c in front_calls):
+        return None
+
+    if _row_value(r, "front_ops_in_loop", None) == 1:
+        return _finding(
+            "list-prepend",
+            "insert-front",
+            r,
+            "Front insert/remove inside loop (O(n) shift per operation)",
+            "high",
+        )
+
+    if not _call_in(calls, _LIST_PREPEND_SHIFT_OPS):
+        return None
+
+    return _finding(
+        "list-prepend",
+        "insert-front",
+        r,
+        "Potential front insert/remove inside loop",
+        "medium",
+    )
+
+
 @algorithm_detector(
     task_id="list-prepend",
     languages=(),
@@ -2608,42 +2640,13 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
-    # deque operations are O(1) — suppress when popleft/appendleft are the ops
-    _DEQUE_OPS = {"popleft", "appendleft", "extendleft"}
-
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        calls = _iter_loop_calls(r)
-        # If the only front-ops are deque methods, this is already optimal
-        front_calls = _call_in(calls, {"insert", "unshift", "shift", "popleft", "appendleft", "extendleft"})
-        if front_calls and all(_call_leaf(c) in _DEQUE_OPS for c in front_calls):
-            continue  # Already using deque — no issue
-        # New indexes precompute the exact front-op signal.
-        if _row_value(r, "front_ops_in_loop", None) == 1:
-            results.append(
-                _finding(
-                    "list-prepend",
-                    "insert-front",
-                    r,
-                    "Front insert/remove inside loop (O(n) shift per operation)",
-                    "high",
-                )
-            )
-            continue
-        # Fallback heuristic (conservative): only list front APIs.
-        # Note: appendleft/popleft are deque O(1) ops — do NOT flag those.
-        if _call_in(calls, {"insert", "unshift", "shift"}):
-            results.append(
-                _finding(
-                    "list-prepend",
-                    "insert-front",
-                    r,
-                    "Potential front insert/remove inside loop",
-                    "medium",
-                )
-            )
+        finding = _list_prepend_finding_for_row(r)
+        if finding:
+            results.append(finding)
     return results
 
 
