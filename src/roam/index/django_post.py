@@ -85,6 +85,10 @@ _DJANGO_REL_KIND = {
     "ManyToManyField": "django_m2m",
 }
 
+# Public post-resolver entry point loaded by Indexer._run_post_resolvers via
+# importlib/getattr using the literal name "resolve_all_django".
+__all__ = ["resolve_all_django"]
+
 
 def _load_class_graph(conn, columns: str) -> tuple[dict, dict]:
     """Load class symbols and their cross-file inheritance parent map.
