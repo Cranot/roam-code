@@ -4972,7 +4972,7 @@ def _apply_detector_scopes(conn, scope_ids):
         js_idiom_reset = set_js_idiom_scope  # captured for the caller's finally
     except Exception as exc:  # noqa: BLE001 -- optional JS scope should not abort detector runs
         # Optional JS scope should not abort detector runs; unscoped detection is the fallback.
-        log.warning("run_detectors: could not apply js idiom scope: %s", exc)
+        log.warning("run_detectors: could not apply js idiom scope: %s", exc, exc_info=True)
     # Resolve scope file-ids to paths so the catalog detectors' source-read
     # chokepoint (`_read_symbol_source`) can skip out-of-scope files.
     try:
