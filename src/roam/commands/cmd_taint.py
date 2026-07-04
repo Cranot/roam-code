@@ -111,6 +111,27 @@ def _taint_confidence_tier(finding_dump: dict) -> str:
     return CONFIDENCE_STATIC_ANALYSIS
 
 
+def _existing_forward_pairs_for_path_shape(conn, pairs: list[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Return path-adjacent pairs backed by call/reference edges in one query."""
+    if not pairs:
+        return set()
+    values_sql = ", ".join("(?, ?)" for _ in pairs)
+    params = [value for pair in pairs for value in pair]
+    rows = conn.execute(
+        f"""
+        WITH requested(source_id, target_id) AS (VALUES {values_sql})
+        SELECT DISTINCT e.source_id, e.target_id
+        FROM requested AS r
+        JOIN edges AS e
+          ON e.source_id = r.source_id
+         AND e.target_id = r.target_id
+        WHERE {call_or_ref_in_clause()}
+        """,
+        params,
+    ).fetchall()
+    return {(int(row[0]), int(row[1])) for row in rows}
+
+
 def _classify_flow_shape(conn, path_ids: list[int], path_truncated: bool) -> str:
     """Infer whether a finding came from forward BFS or intraprocedural co-call.
 
@@ -127,8 +148,8 @@ def _classify_flow_shape(conn, path_ids: list[int], path_truncated: bool) -> str
       direction. The middle node has edges TO source and TO sink, not
       FROM them.
 
-    We recover the shape by querying the edges table for every
-    consecutive pair: if every adjacent pair (path[i] -> path[i+1]) is a
+    We recover the shape by batch-querying the edges table for the path's
+    consecutive pairs: if every adjacent pair (path[i] -> path[i+1]) is a
     forward call/reference edge, it's forward BFS; otherwise co-call.
     A truncated forward path is still forward_bfs (its returned path
     edges are real; truncation only means OTHER candidate paths weren't
@@ -140,16 +161,12 @@ def _classify_flow_shape(conn, path_ids: list[int], path_truncated: bool) -> str
         # Defensive — a 1-node path shouldn't normally reach here. Treat
         # as forward_bfs (the safer default; static_analysis tier).
         return "forward_bfs"
-    # Check every consecutive pair has a directed call/reference edge.
-    for src, tgt in zip(path_ids, path_ids[1:]):
-        row = conn.execute(
-            f"SELECT 1 FROM edges WHERE source_id = ? AND target_id = ? AND {call_or_ref_in_clause()} LIMIT 1",
-            (src, tgt),
-        ).fetchone()
-        if row is None:
-            # Missing forward edge between consecutive nodes -> co-call
-            # signature (enclosing calls both but no source->sink chain).
-            return "co_call"
+    pairs = list(zip(path_ids, path_ids[1:]))
+    existing_pairs = _existing_forward_pairs_for_path_shape(conn, pairs)
+    if any(pair not in existing_pairs for pair in pairs):
+        # Missing forward edge between consecutive nodes -> co-call
+        # signature (enclosing calls both but no source->sink chain).
+        return "co_call"
     return "forward_bfs"
 
 
