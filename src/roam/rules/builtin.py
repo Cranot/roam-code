@@ -19,6 +19,9 @@ from typing import Callable
 
 import networkx as nx
 
+from roam.db.connection import batched_in
+from roam.db.edge_kinds import inheritance_in_clause
+
 
 def make_violation(symbol="", file="", line=None, reason=""):
     """Return a standard violation dict."""
@@ -275,8 +278,6 @@ def _check_no_deep_inheritance(conn, G, threshold):
     # hierarchies. W543 promoted the canonical set to
     # :data:`roam.db.edge_kinds.INHERITANCE_EDGE_KINDS` so future readers
     # don't re-introduce the phantom ``'extends'``.
-    from roam.db.edge_kinds import inheritance_in_clause
-
     try:
         edge_rows = conn.execute(
             f"SELECT e.source_id, e.target_id FROM edges e WHERE {inheritance_in_clause('e.kind')}"
@@ -309,8 +310,6 @@ def _check_no_deep_inheritance(conn, G, threshold):
     deep_nodes = [(node, depth) for node, depth in node_depth.items() if depth > limit]
     if not deep_nodes:
         return []
-
-    from roam.db.connection import batched_in
 
     lookup = {}
     try:
