@@ -15,6 +15,7 @@ Architecture-seal mapping:
 
 from __future__ import annotations
 
+import glob
 import json
 import math
 import os
@@ -4642,6 +4643,11 @@ def _suggest_patch_hints(task: str, slices: list[dict]) -> list[dict]:
     return hints[:3]
 
 
+def _first_glob_match_for_stable_probe(pattern: str) -> str | None:
+    """Choose a deterministic glob hit without sorting the full match set."""
+    return min(glob.iglob(pattern), default=None)
+
+
 def _resolve_sibling_test_path(src_path: str, cwd: str | None) -> str | None:
     """W36a — find the conventional test file for `src_path`. Returns
     the FIRST candidate that exists on disk, or None.
@@ -4683,11 +4689,9 @@ def _resolve_sibling_test_path(src_path: str, cwd: str | None) -> str | None:
     # is named like `test_<stem>_consolidation.py`, `test_<stem>_extended.py`,
     # etc. — common when one source file has multiple test modules).
     if ext in (".py", ".pyx"):
-        import glob
-
         pattern = f"tests/test_{stem}*.py"
         base_dir = cwd if cwd else "."
-        chosen = min(glob.iglob(os.path.join(base_dir, pattern)), default=None)
+        chosen = _first_glob_match_for_stable_probe(os.path.join(base_dir, pattern))
         if chosen:
             # Return path relative to cwd if possible
             if cwd and chosen.startswith(cwd):
