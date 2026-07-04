@@ -52,7 +52,10 @@ def log_swallowed(scope: str, exc: BaseException) -> None:
         sys.stderr.write(f"roam[swallow] {scope}: {type(exc).__name__}: {exc}{suffix}\n")
 
 
-def reset() -> None:
+def reset_observability_counters() -> None:
     """Test helper — drop the per-scope rate-limit counters."""
     with _lock:
         _seen.clear()
+
+
+reset = reset_observability_counters
