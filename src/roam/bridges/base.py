@@ -64,15 +64,22 @@ class LanguageBridge(ABC):
         dispatch in ``cmd_xlang.py`` and implemented by every concrete bridge.
         """
 
-    # dead-code REVIEW (Audit A6): same dynamic-dispatch profile as
-    # ``source_extensions`` above -- read via ``bridge.target_extensions``
-    # in ``cmd_xlang.py`` (``_resolve_bridge`` / ``_bridge_files_count``).
-    # Load-bearing interface contract implemented by every concrete bridge,
-    # not dead code.
+    # Audit A6 / dead-code REVIEW: static export analysis sees no direct
+    # call to this abstract property on ``LanguageBridge`` itself because
+    # x-lang resolution consumes it through concrete bridge instances:
+    # ``cmd_xlang.py:_resolve_bridge`` builds target-file candidates from
+    # ``bridge.target_extensions`` and ``_bridge_files_count`` uses the
+    # same contract for scope warnings. Keeping this abstract preserves
+    # the invariant that every bridge declares the generated/linked file
+    # extensions it can resolve to.
     @property
     @abstractmethod
     def target_extensions(self) -> frozenset[str]:
-        """File extensions this bridge generates/links to."""
+        """File extensions this bridge generates/links to.
+
+        This is an interface contract consumed through dynamic dispatch by
+        ``cmd_xlang.py`` and implemented by every concrete bridge.
+        """
 
     @abstractmethod
     def detect(self, file_paths: list[str]) -> bool:
