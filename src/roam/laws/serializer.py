@@ -132,15 +132,7 @@ def load_laws_yaml(text: str) -> list[Law]:
     Tolerates the fallback dump's slightly limited output as well as
     the PyYAML output.
     """
-    try:
-        import yaml  # type: ignore
-    except ImportError:
-        data = _fallback_parse(text)
-    else:
-        try:
-            data = yaml.safe_load(text)
-        except yaml.YAMLError:
-            return []
+    data = _parse_laws_document_without_requiring_pyyaml(text)
 
     if not isinstance(data, dict):
         return []
@@ -151,6 +143,18 @@ def load_laws_yaml(text: str) -> list[Law]:
         if law is not None:
             laws.append(law)
     return laws
+
+
+def _parse_laws_document_without_requiring_pyyaml(text: str) -> Any:
+    """Load YAML while keeping PyYAML optional and parser bugs visible."""
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        return _fallback_parse(text)
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
 
 
 def _law_from_entry(raw: Any) -> Law | None:
