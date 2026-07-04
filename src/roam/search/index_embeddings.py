@@ -610,6 +610,42 @@ def _merge_language_relevant_pack_results(
     )
 
 
+def _collect_available_rank_signals_for_fallback(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    candidate_k: int,
+    backend: str,
+    project_root: object | None,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], list[dict]]:
+    """Probe stored indexes before fallback chooses the ranking shape."""
+    lexical_results: list[dict] = []
+    onnx_results: list[dict] = []
+    tfidf_results: list[dict] = []
+
+    if fts5_populated(conn, warnings_out=warnings_out):
+        lexical_results = search_fts(conn, query, top_k=candidate_k, warnings_out=warnings_out)
+
+    if backend in {"auto", "onnx", "hybrid"} and onnx_populated(conn, warnings_out=warnings_out):
+        onnx_results = _search_onnx_stored(
+            conn,
+            query,
+            top_k=candidate_k,
+            project_root=project_root,
+            warnings_out=warnings_out,
+        )
+
+    if backend in {"auto", "tfidf", "hybrid"} and tfidf_populated(conn, warnings_out=warnings_out):
+        tfidf_results = _search_tfidf_stored(conn, query, top_k=candidate_k, warnings_out=warnings_out)
+
+    return lexical_results, _merge_semantic_results(
+        onnx_results,
+        tfidf_results,
+        top_k=candidate_k,
+    )
+
+
 def search_stored(
     conn,
     query: str,
@@ -645,33 +681,13 @@ def search_stored(
     if backend not in {"auto", "tfidf", "onnx", "hybrid"}:
         backend = "auto"
 
-    lexical_results: list[dict] = []
-    semantic_results: list[dict] = []
-    onnx_results: list[dict] = []
-    tfidf_results: list[dict] = []
-
-    # Fast lexical branch (FTS5/BM25).
-    if fts5_populated(conn, warnings_out=warnings_out):
-        lexical_results = search_fts(conn, query, top_k=candidate_k, warnings_out=warnings_out)
-
-    # Dense ONNX branch.
-    if backend in {"auto", "onnx", "hybrid"} and onnx_populated(conn, warnings_out=warnings_out):
-        onnx_results = _search_onnx_stored(
-            conn,
-            query,
-            top_k=candidate_k,
-            project_root=project_root,
-            warnings_out=warnings_out,
-        )
-
-    # Sparse TF-IDF branch.
-    if backend in {"auto", "tfidf", "hybrid"} and tfidf_populated(conn, warnings_out=warnings_out):
-        tfidf_results = _search_tfidf_stored(conn, query, top_k=candidate_k, warnings_out=warnings_out)
-
-    semantic_results = _merge_semantic_results(
-        onnx_results,
-        tfidf_results,
-        top_k=candidate_k,
+    lexical_results, semantic_results = _collect_available_rank_signals_for_fallback(
+        conn,
+        query,
+        candidate_k=candidate_k,
+        backend=backend,
+        project_root=project_root,
+        warnings_out=warnings_out,
     )
 
     semantic_results = _merge_language_relevant_pack_results(
