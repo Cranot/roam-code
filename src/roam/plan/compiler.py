@@ -5640,7 +5640,8 @@ def _resolve_probe_file_under_cwd(target: str, cwd: str | None) -> Path | None:
         full = candidate if candidate.is_absolute() else root / candidate
         resolved = full.resolve(strict=False)
         resolved.relative_to(root)
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError) as exc:
+        log_swallowed("compile.resolve_probe_file_under_cwd", exc)
         return None
     return resolved
 
