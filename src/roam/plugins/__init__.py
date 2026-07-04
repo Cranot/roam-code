@@ -330,4 +330,16 @@ def _reset_plugin_state_for_tests() -> None:
                     bridge,
                     exc,
                 )
-    state.reset()
+    state.plugins.clear()
+    state.errors.clear()
+    state.commands.clear()
+    state.detectors.clear()
+    state.framework_detectors.clear()
+    state.framework_profiles.clear()
+    state.bridges.clear()
+    state.language_extractors.clear()
+    state.language_extensions.clear()
+    state.language_grammar_aliases.clear()
+    state.current_source = None
+    state.current_plugin_meta = None
+    state.current_capabilities.clear()
