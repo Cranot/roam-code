@@ -1635,7 +1635,7 @@ def _stderr_showwarning(message, category, filename, lineno, file=None, line=Non
                 f'{{"warning": {str(message)!r}, "category": {getattr(category, "__name__", str(category))!r}}}\n'
             )
         except Exception:  # noqa: BLE001 — a warning handler must never crash the command
-            pass
+            sys.__stderr__.write("[roam] warning dropped: serialization failed\n")
 
 
 def _install_structured_warning_handler() -> None:
