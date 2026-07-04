@@ -171,6 +171,17 @@ def _roam_bash_options() -> Any:
     )
 
 
+def _usage_deltas(usage: dict[str, Any] | None) -> tuple[int, int, int, int]:
+    """Return (input, output, cache_creation, cache_read) token deltas."""
+    u = usage or {}
+    return (
+        int(u.get("input_tokens", 0) or 0),
+        int(u.get("output_tokens", 0) or 0),
+        int(u.get("cache_creation_input_tokens", 0) or 0),
+        int(u.get("cache_read_input_tokens", 0) or 0),
+    )
+
+
 async def run_agent(name: str, options: Any, prompt: str) -> AgentRun:
     sdk = _claude_agent_sdk()
     run = AgentRun(name=name)
@@ -187,11 +198,11 @@ async def run_agent(name: str, options: Any, prompt: str) -> AgentRun:
                 run.total_cost += msg.total_cost_usd or 0.0
                 run.total_turns += msg.num_turns
                 run.is_error = bool(msg.is_error)
-                u = msg.usage or {}
-                run.input_tokens += int(u.get("input_tokens", 0) or 0)
-                run.output_tokens += int(u.get("output_tokens", 0) or 0)
-                run.cache_creation_tokens += int(u.get("cache_creation_input_tokens", 0) or 0)
-                run.cache_read_tokens += int(u.get("cache_read_input_tokens", 0) or 0)
+                in_t, out_t, cache_c, cache_r = _usage_deltas(msg.usage)
+                run.input_tokens += in_t
+                run.output_tokens += out_t
+                run.cache_creation_tokens += cache_c
+                run.cache_read_tokens += cache_r
     except Exception as e:
         run.is_error = True
         run.text_output += f"\n[exception: {e}]"
