@@ -153,10 +153,11 @@ def _component_versions() -> dict[str, dict[str, str]]:
             # Laravel post-resolver VERSION dropped out of the drift map; a
             # bridge version bump would then go undetected. Surface the lineage.
             log_swallowed("index.manifest:component_versions:laravel", exc)
-    except Exception as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the entire
-        # bridges drift sub-map is missing (registry import/discovery failed).
-        # A partial map is intentional, but the omission must be discoverable.
+    except (ImportError, AttributeError, TypeError) as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — the
+        # bridges drift sub-map is missing due to registry absence/version skew.
+        # Preserve manifest writes for known discovery-shape failures; let
+        # unexpected bugs propagate so they are not hidden as an empty map.
         log_swallowed("index.manifest:component_versions:bridges", exc)
 
     # Detectors — function-based registry. The version map lives in
