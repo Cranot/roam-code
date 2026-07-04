@@ -43,7 +43,7 @@ def _tool_calls(path: str):
             for line in fh:
                 try:
                     e = json.loads(line)
-                except Exception:
+                except json.JSONDecodeError:
                     continue
                 if e.get("type") != "assistant":
                     continue
