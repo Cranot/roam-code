@@ -668,10 +668,15 @@ def _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
     }
 
 
+def _attestation_report_lines(attestation, evidence, verdict, fmt):
+    """Build the rendered attestation report lines for the given format."""
+    plan = _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
+    return _render_attestation_report(plan, fmt)
+
+
 def _format_markdown(attestation, evidence, verdict):
     """Format attestation as GitHub/GitLab compatible markdown."""
-    plan = _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
-    return "\n".join(_render_attestation_report(plan, "markdown"))
+    return "\n".join(_attestation_report_lines(attestation, evidence, verdict, "markdown"))
 
 
 # ---------------------------------------------------------------------------
@@ -1585,8 +1590,7 @@ def _emit_text(
     output_file,
 ):
     """Emit plain text attestation."""
-    plan = _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
-    text = "\n".join(_render_attestation_report(plan, "text"))
+    text = "\n".join(_attestation_report_lines(attestation, evidence, verdict, "text"))
 
     if output_file:
         # Atomic write — see other attest output branches. Attestation
