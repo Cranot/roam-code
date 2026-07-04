@@ -6040,6 +6040,20 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
     return details, None
 
 
+def _batch_get_many(conn, symbols: list[str]) -> tuple[dict, dict]:
+    results: dict = {}
+    errors: dict = {}
+
+    for sym in symbols:
+        details, err = _batch_get_one(conn, sym)
+        if err or details is None:
+            errors[sym] = err or "not found"
+            continue
+        results[sym] = details
+
+    return results, errors
+
+
 @_tool(
     name="roam_batch_search",
     description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
@@ -6193,9 +6207,6 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 
     symbols_list: list[str] = [str(s) for s in (symbols or [])][:_MAX_BATCH_SYMBOLS]
 
-    results: dict = {}
-    errors: dict = {}
-
     if not symbols_list:
         return {
             "command": "batch-get",
@@ -6211,7 +6222,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     # W103/W607: open_db() and the per-symbol loop are kept in separate blocks
     # so a connection failure short-circuits with a _fatal payload while
     # DB-level lookup errors stay isolated inside _batch_get_one's return
-    # value. This also keeps the loop at depth-4 (not depth-5, matching
+    # value. This also keeps the wrapper shallow, matching
     # batch_search). Programmer-class failures propagate instead of looking
     # like no data.
     try:
@@ -6231,12 +6242,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
         }
 
     with conn_ctx as conn:
-        for sym in symbols_list:
-            details, err = _batch_get_one(conn, sym)
-            if err or details is None:
-                errors[sym] = err or "not found"
-            else:
-                results[sym] = details
+        results, errors = _batch_get_many(conn, symbols_list)
 
     resolved = len(results)
     verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
