@@ -3,8 +3,8 @@ from __future__ import annotations
 from .base import LanguageExtractor
 
 
-class CSharpExtractor(LanguageExtractor):
-    """C# symbol and reference extractor."""
+class _CSharpCommon(LanguageExtractor):
+    """Shared C# extractor state and syntax helpers."""
 
     @property
     def language_name(self) -> str:
@@ -122,7 +122,11 @@ class CSharpExtractor(LanguageExtractor):
                 return self.node_text(child, source)
         return ""
 
-    # ---- Symbol extraction ----
+# ---- Symbol extraction ----
+
+
+class _CSharpTypeSymbolExtractor(_CSharpCommon):
+    """Extract namespace and type symbols for C# code."""
 
     def _walk_symbols(self, node, source, symbols, parent_name):
         current_ns = parent_name
@@ -345,6 +349,10 @@ class CSharpExtractor(LanguageExtractor):
                             )
                         )
 
+
+class _CSharpCallableSymbolExtractor(_CSharpTypeSymbolExtractor):
+    """Extract method-like C# symbols."""
+
     def _extract_method(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -428,6 +436,10 @@ class CSharpExtractor(LanguageExtractor):
         body = node.child_by_field_name("body")
         if body:
             self._find_local_functions(body, source, symbols, qualified)
+
+
+class _CSharpMemberSymbolExtractor(_CSharpCallableSymbolExtractor):
+    """Extract field, property, delegate, event, and indexer symbols."""
 
     def _iter_variable_declarators(self, node, source):
         """yield (name, type_text) for each variable_declarator in a variable_declaration.
@@ -663,6 +675,10 @@ class CSharpExtractor(LanguageExtractor):
             )
         )
 
+
+class _CSharpLocalOperatorSymbolExtractor(_CSharpMemberSymbolExtractor):
+    """Extract local function and operator-family C# symbols."""
+
     def _extract_local_function(self, node, source, symbols, parent_name):
         """extract local function statement as method with is_exported=False."""
         name_node = node.child_by_field_name("name")
@@ -866,7 +882,11 @@ class CSharpExtractor(LanguageExtractor):
             )
             position += 1
 
-    # ---- Reference extraction ----
+# ---- Reference extraction ----
+
+
+class _CSharpReferenceExtractor(_CSharpLocalOperatorSymbolExtractor):
+    """Extract imports, calls, inheritance, and type references."""
 
     def _walk_refs(self, node, source, refs, scope_name):
         """walk AST for references with scope tracking."""
@@ -1204,3 +1224,7 @@ class CSharpExtractor(LanguageExtractor):
                     source_name=scope_name,
                 )
             )
+
+
+class CSharpExtractor(_CSharpReferenceExtractor):
+    """C# symbol and reference extractor."""
