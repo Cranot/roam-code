@@ -53,7 +53,7 @@ def _iter_tool_calls(jsonl_path: str):
             for line in fh:
                 try:
                     e = json.loads(line)
-                except Exception:
+                except json.JSONDecodeError:
                     continue
                 msg = e.get("message", {})
                 if not isinstance(msg, dict):
