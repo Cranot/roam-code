@@ -26,6 +26,11 @@ from roam.index.parser import (
 from roam.index.relations import build_file_edges, resolve_references
 from roam.index.symbols import extract_references, extract_symbols
 from roam.languages.generic_lang import GenericExtractor
+
+# Static reference to the Django post-resolver entry point. It is invoked
+# dynamically by _run_post_resolvers via importlib/getattr; the explicit
+# import gives the dead-export detector a real production edge.
+from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.observability import log_swallowed
 
 
