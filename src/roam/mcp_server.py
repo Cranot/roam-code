@@ -6908,6 +6908,45 @@ def _vp_parse_plan_json(plan_json: str) -> tuple[list | None, dict | None]:
     return None, None
 
 
+def _vp_malformed_op_result(idx: int) -> dict:
+    return {
+        "index": idx,
+        "kind": "unknown",
+        "ok": False,
+        "blockers": [{"code": "MALFORMED_OP", "detail": f"operation {idx} is not an object"}],
+        "warnings": [],
+        "advice": [],
+        "facts": {},
+    }
+
+
+def _vp_validate_operations(operations: list, root: str) -> tuple[list[dict], int, int]:
+    op_results: list[dict] = []
+    total_blockers = 0
+    total_warnings = 0
+
+    for i, op in enumerate(operations):
+        if not isinstance(op, dict):
+            op_results.append(_vp_malformed_op_result(i))
+            total_blockers += 1
+            continue
+
+        result = _vp_validate_one(i, op, root)
+        op_results.append(result)
+        total_blockers += len(result.get("blockers", []))
+        total_warnings += len(result.get("warnings", []))
+
+    return op_results, total_blockers, total_warnings
+
+
+def _vp_plan_verdict(total_blockers: int, total_warnings: int) -> str:
+    if total_blockers:
+        return "blocked"
+    if total_warnings:
+        return "needs-review"
+    return "ok"
+
+
 @_tool(
     name="roam_validate_plan",
     description="Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation.",
@@ -6972,35 +7011,8 @@ def validate_plan(
             }
         )
 
-    op_results: list[dict] = []
-    total_blockers = 0
-    total_warnings = 0
-    for i, op in enumerate(operations):
-        if not isinstance(op, dict):
-            op_results.append(
-                {
-                    "index": i,
-                    "kind": "unknown",
-                    "ok": False,
-                    "blockers": [{"code": "MALFORMED_OP", "detail": f"operation {i} is not an object"}],
-                    "warnings": [],
-                    "advice": [],
-                    "facts": {},
-                }
-            )
-            total_blockers += 1
-            continue
-        result = _vp_validate_one(i, op, root)
-        op_results.append(result)
-        total_blockers += len(result.get("blockers", []))
-        total_warnings += len(result.get("warnings", []))
-
-    if total_blockers:
-        verdict = "blocked"
-    elif total_warnings:
-        verdict = "needs-review"
-    else:
-        verdict = "ok"
+    op_results, total_blockers, total_warnings = _vp_validate_operations(operations, root)
+    verdict = _vp_plan_verdict(total_blockers, total_warnings)
 
     summary_text = (
         f"{verdict}: {len(op_results)} operation(s), {total_blockers} blocker(s), {total_warnings} warning(s)"
