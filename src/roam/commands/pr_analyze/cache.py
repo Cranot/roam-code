@@ -27,7 +27,7 @@ CACHE_VERSION = 1  # bump when the envelope shape changes
 class _CacheKeyInputs:
     """Value object bundling the inputs that affect a ``pr-analyze`` cache key.
 
-    Owns both the loose-input normalization (``from_loose``) and the stable
+    Owns both the loose-input normalization (``_from_loose``) and the stable
     digest derivation (``digest``) so the cache-key logic lives on the bundled
     type rather than scattered across loose primitive-param functions — the
     value-object realization the ``_cache_key`` adapter defers to.
@@ -39,7 +39,7 @@ class _CacheKeyInputs:
     language_override: str | None
 
     @classmethod
-    def from_loose(
+    def _from_loose(
         cls,
         diff_text: object,
         rules_path: object,
@@ -91,7 +91,7 @@ def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
         )
 
     rules_path, block_threshold, language_override = legacy_inputs
-    return _CacheKeyInputs.from_loose(
+    return _CacheKeyInputs._from_loose(
         inputs, rules_path, block_threshold, language_override
     ).digest()
 
