@@ -462,6 +462,36 @@ def _normalize_claim_options_for_legacy_callers(
     )
 
 
+def _normalize_gc_options_for_legacy_callers(
+    options: Optional[LeaseGcOptions],
+    overrides: dict[str, object],
+) -> LeaseGcOptions:
+    """Return GC options while preserving the pre-options call surface.
+
+    The conservation law here is API compatibility versus sweep
+    reliability: legacy keyword callers still work, while
+    ``gc_expired_leases`` keeps the best-effort rewrite loop separate
+    from boundary shims.
+    """
+    if options is None:
+        gc_options = LeaseGcOptions()
+    elif isinstance(options, LeaseGcOptions):
+        gc_options = options
+    else:
+        raise TypeError("options must be a LeaseGcOptions instance")
+    if not overrides:
+        return gc_options
+
+    allowed = {"warnings_out"}
+    unexpected = sorted(set(overrides).difference(allowed))
+    if unexpected:
+        names = ", ".join(unexpected)
+        raise TypeError(f"gc_expired_leases() got unexpected option(s): {names}")
+    return LeaseGcOptions(
+        warnings_out=overrides.get("warnings_out", gc_options.warnings_out),
+    )
+
+
 def _allocate_lease_id_without_overwriting_existing_claim(
     repo_root: Path,
     acquired_at: str,
@@ -685,6 +715,33 @@ def _visible_state_for_lease(
     return effective_state
 
 
+def _expire_lease_without_blocking_sweep(
+    lease: Lease,
+    now: datetime,
+    warnings_out: WarningsOut,
+) -> Optional[str]:
+    """Return the transitioned lease id while preserving best-effort GC.
+
+    The conservation law here is stale-lease accuracy versus sweep
+    continuity: one failed lease rewrite is reported, but it does not
+    stop other expired leases from being reclaimed.
+    """
+    if lease.state != "active":
+        return None
+    if not lease.is_expired_at(now):
+        return None
+    lease.state = "expired"
+    try:
+        _write_lease(lease)
+    except OSError as exc:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"lease_gc_failed:{lease.lease_id}.json:{type(exc).__name__}:{exc}"
+            )
+        return None
+    return lease.lease_id
+
+
 def list_leases(
     repo_root: Path,
     options: Optional[LeaseListOptions] = None,
@@ -791,41 +848,13 @@ def gc_expired_leases(
     ``warnings_out=``; that keyword is normalized into the options
     instance at the boundary — same shim pattern as :func:`list_leases`.
     """
-    if options is None:
-        gc_options = LeaseGcOptions()
-    elif isinstance(options, LeaseGcOptions):
-        gc_options = options
-    else:
-        raise TypeError("options must be a LeaseGcOptions instance")
-    if overrides:
-        allowed = {"warnings_out"}
-        unexpected = sorted(set(overrides).difference(allowed))
-        if unexpected:
-            names = ", ".join(unexpected)
-            raise TypeError(f"gc_expired_leases() got unexpected option(s): {names}")
-        gc_options = LeaseGcOptions(
-            warnings_out=overrides.get("warnings_out", gc_options.warnings_out),
-        )
+    gc_options = _normalize_gc_options_for_legacy_callers(options, overrides)
     warnings_out = gc_options.warnings_out
 
     now = _utc_now()
     transitioned: list[str] = []
     for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
-        if lease.state != "active":
-            continue
-        if not lease.is_expired_at(now):
-            continue
-        lease.state = "expired"
-        try:
-            _write_lease(lease)
-        except OSError as exc:
-            # A write failure shouldn't drop the whole pass — keep going.
-            # W592: surface the per-failure marker so callers can see
-            # WHICH expired lease couldn't be cleaned (Pattern-2 silent
-            # fallback fix). ``continue`` is preserved — best-effort
-            # sweep semantic is the contract.
-            if warnings_out is not None:
-                warnings_out.append(f"lease_gc_failed:{lease.lease_id}.json:{type(exc).__name__}:{exc}")
-            continue
-        transitioned.append(lease.lease_id)
+        lease_id = _expire_lease_without_blocking_sweep(lease, now, warnings_out)
+        if lease_id is not None:
+            transitioned.append(lease_id)
     return transitioned
