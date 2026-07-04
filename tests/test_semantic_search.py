@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.search.framework_packs import available_packs, search_pack_symbols
 from roam.search.index_embeddings import (
+    SearchOptions,
     _fuse_hybrid_results,
     build_and_store_tfidf,
     build_fts_index,
@@ -341,7 +342,7 @@ class TestStoredVectors:
         from roam.db.connection import open_db
 
         with open_db(readonly=True, project_root=semantic_project) as conn:
-            results = search_stored(conn, "django queryset prefetch related", top_k=10)
+            results = search_stored(conn, "django queryset prefetch related", SearchOptions(top_k=10))
             assert len(results) > 0
             assert any(r.get("source") == "pack" and r.get("pack") == "django" for r in results)
 
@@ -350,7 +351,7 @@ class TestStoredVectors:
         from roam.db.connection import open_db
 
         with open_db(readonly=True, project_root=semantic_project) as conn:
-            results = search_stored(conn, "open_database connection", top_k=5)
+            results = search_stored(conn, "open_database connection", SearchOptions(top_k=5))
             assert len(results) > 0
             assert results[0].get("source", "code") == "code"
 
