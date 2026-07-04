@@ -1685,8 +1685,8 @@ def _install_local_telemetry(ctx: click.Context) -> None:
             cmd_name = ctx.invoked_subcommand or "<root>"
             duration_ms = int((_time.perf_counter() - start) * 1000)
             _telemetry_record(cmd_name, duration_ms, exit_code=0)
-        except Exception:  # noqa: BLE001 — telemetry must never break command teardown
-            pass
+        except Exception as exc:  # noqa: BLE001 — telemetry must never break command teardown
+            print("[telemetry] close hook failed: %s" % exc, file=sys.stderr)
 
     ctx.call_on_close(_on_close)
 
