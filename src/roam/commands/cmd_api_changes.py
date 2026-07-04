@@ -353,6 +353,89 @@ _API_KINDS = {
 }
 
 
+def _compare_shared_symbol_api(
+    file_path: str,
+    old_sym: dict,
+    new_sym: dict,
+) -> list[dict]:
+    """Compare API changes for a symbol present in old and new exports."""
+    changes: list[dict] = []
+
+    # Signature changes (for API-relevant kinds)
+    if old_sym["kind"] in _API_KINDS:
+        old_sig = _sig_normalise(old_sym.get("signature"))
+        new_sig = _sig_normalise(new_sym.get("signature"))
+
+        if old_sig and new_sig and old_sig != new_sig:
+            # Determine if it is a breaking signature change or just optional param
+            old_params = _extract_params_with_defaults(old_sig)
+            new_params = _extract_params_with_defaults(new_sig)
+
+            old_names = [p[0] for p in old_params]
+            new_names = [p[0] for p in new_params]
+
+            # Check if only new optional params were added
+            if (
+                len(new_params) > len(old_params)
+                and new_names[: len(old_names)] == old_names
+                and all(has_def for _, has_def in new_params[len(old_params) :])
+            ):
+                # Non-breaking: only added optional params
+                added_param_names = [p[0] for p in new_params[len(old_params) :]]
+                changes.append(
+                    _make_change(
+                        category="PARAM_ADDED_OPTIONAL",
+                        sym=new_sym,
+                        file_path=file_path,
+                        old_sig=old_sym.get("signature"),
+                        new_sig=new_sym.get("signature"),
+                        description=f"Added optional param(s): {', '.join(added_param_names)}",
+                    )
+                )
+            else:
+                # Check for return type changes
+                old_ret = _extract_return_type(old_sig)
+                new_ret = _extract_return_type(new_sig)
+                if old_ret and new_ret and old_ret != new_ret and old_names == new_names:
+                    changes.append(
+                        _make_change(
+                            category="TYPE_CHANGED",
+                            sym=new_sym,
+                            file_path=file_path,
+                            old_sig=old_sym.get("signature"),
+                            new_sig=new_sym.get("signature"),
+                            description=f"Return type: {old_ret} -> {new_ret}",
+                        )
+                    )
+                else:
+                    # General signature change (breaking)
+                    changes.append(
+                        _make_change(
+                            category="SIGNATURE_CHANGED",
+                            sym=new_sym,
+                            file_path=file_path,
+                            old_sig=old_sym.get("signature"),
+                            new_sig=new_sym.get("signature"),
+                            description="Signature changed",
+                        )
+                    )
+
+    # Deprecation detection
+    if not _is_deprecated(old_sym) and _is_deprecated(new_sym):
+        changes.append(
+            _make_change(
+                category="DEPRECATED",
+                sym=new_sym,
+                file_path=file_path,
+                old_sig=old_sym.get("signature"),
+                new_sig=new_sym.get("signature"),
+                description="Symbol marked as deprecated",
+            )
+        )
+
+    return changes
+
+
 def _compare_file_api(
     file_path: str,
     old_symbols: list[dict],
@@ -382,78 +465,7 @@ def _compare_file_api(
     for k in old_keys & new_keys:
         old_sym = old_by_key[k]
         new_sym = new_by_key[k]
-
-        # Signature changes (for API-relevant kinds)
-        if old_sym["kind"] in _API_KINDS:
-            old_sig = _sig_normalise(old_sym.get("signature"))
-            new_sig = _sig_normalise(new_sym.get("signature"))
-
-            if old_sig and new_sig and old_sig != new_sig:
-                # Determine if it is a breaking signature change or just optional param
-                old_params = _extract_params_with_defaults(old_sig)
-                new_params = _extract_params_with_defaults(new_sig)
-
-                old_names = [p[0] for p in old_params]
-                new_names = [p[0] for p in new_params]
-
-                # Check if only new optional params were added
-                if (
-                    len(new_params) > len(old_params)
-                    and new_names[: len(old_names)] == old_names
-                    and all(has_def for _, has_def in new_params[len(old_params) :])
-                ):
-                    # Non-breaking: only added optional params
-                    added_param_names = [p[0] for p in new_params[len(old_params) :]]
-                    changes.append(
-                        _make_change(
-                            category="PARAM_ADDED_OPTIONAL",
-                            sym=new_sym,
-                            file_path=file_path,
-                            old_sig=old_sym.get("signature"),
-                            new_sig=new_sym.get("signature"),
-                            description=f"Added optional param(s): {', '.join(added_param_names)}",
-                        )
-                    )
-                else:
-                    # Check for return type changes
-                    old_ret = _extract_return_type(old_sig)
-                    new_ret = _extract_return_type(new_sig)
-                    if old_ret and new_ret and old_ret != new_ret and old_names == new_names:
-                        changes.append(
-                            _make_change(
-                                category="TYPE_CHANGED",
-                                sym=new_sym,
-                                file_path=file_path,
-                                old_sig=old_sym.get("signature"),
-                                new_sig=new_sym.get("signature"),
-                                description=f"Return type: {old_ret} -> {new_ret}",
-                            )
-                        )
-                    else:
-                        # General signature change (breaking)
-                        changes.append(
-                            _make_change(
-                                category="SIGNATURE_CHANGED",
-                                sym=new_sym,
-                                file_path=file_path,
-                                old_sig=old_sym.get("signature"),
-                                new_sig=new_sym.get("signature"),
-                                description="Signature changed",
-                            )
-                        )
-
-        # Deprecation detection
-        if not _is_deprecated(old_sym) and _is_deprecated(new_sym):
-            changes.append(
-                _make_change(
-                    category="DEPRECATED",
-                    sym=new_sym,
-                    file_path=file_path,
-                    old_sig=old_sym.get("signature"),
-                    new_sig=new_sym.get("signature"),
-                    description="Symbol marked as deprecated",
-                )
-            )
+        changes.extend(_compare_shared_symbol_api(file_path, old_sym, new_sym))
 
     # 2. Missing keys: symbol was in old but not in new exported set
     missing_keys = old_keys - new_keys
