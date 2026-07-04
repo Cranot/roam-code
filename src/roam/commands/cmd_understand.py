@@ -1415,6 +1415,37 @@ def _emit_skeleton_text(directory, by_file, symbols, skeleton_tier):
         click.echo()
 
 
+def _emit_skeleton_json(cmd_name, directory, by_file, symbols, skeleton_tier, token_budget):
+    """Emit the --skeleton success envelope in JSON mode."""
+    skeleton_disclosure = resolution_disclosure(
+        skeleton_tier or "file",
+        target=directory,
+    )
+    verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
+    _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
+    result = _build_skeleton_json_result(by_file)
+    click.echo(
+        to_json(
+            json_envelope(
+                cmd_name,
+                summary={
+                    "verdict": _verdict,
+                    "file_count": len(by_file),
+                    "symbol_count": len(symbols),
+                    "resolution": skeleton_disclosure["resolution"],
+                    "partial_success": skeleton_disclosure["partial_success"],
+                },
+                budget=token_budget,
+                directory=directory,
+                file_count=len(by_file),
+                symbol_count=len(symbols),
+                files=result,
+                resolution=skeleton_disclosure,
+            )
+        )
+    )
+
+
 def _fetch_skeleton_symbols(conn, directory):
     """Fetch exported symbols for --skeleton with exact-prefix → substring fallback."""
     symbols = conn.execute(
@@ -1504,35 +1535,8 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
         for s in symbols:
             by_file[s["file_path"]].append(s)
 
-        skeleton_disclosure = resolution_disclosure(
-            skeleton_tier or "file",
-            target=directory,
-        )
-        verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
-
         if json_mode:
-            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
-            result = _build_skeleton_json_result(by_file)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        cmd_name,
-                        summary={
-                            "verdict": _verdict,
-                            "file_count": len(by_file),
-                            "symbol_count": len(symbols),
-                            "resolution": skeleton_disclosure["resolution"],
-                            "partial_success": skeleton_disclosure["partial_success"],
-                        },
-                        budget=token_budget,
-                        directory=directory,
-                        file_count=len(by_file),
-                        symbol_count=len(symbols),
-                        files=result,
-                        resolution=skeleton_disclosure,
-                    )
-                )
-            )
+            _emit_skeleton_json(cmd_name, directory, by_file, symbols, skeleton_tier, token_budget)
             return
 
         _emit_skeleton_text(directory, by_file, symbols, skeleton_tier)
