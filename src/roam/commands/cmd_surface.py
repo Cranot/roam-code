@@ -54,6 +54,18 @@ _MATURITY: dict[str, str] = {
 }
 
 
+def _ordered_command_items(
+    commands: dict[str, list[str]],
+) -> list[tuple[str, list[str]]]:
+    """Return command items in deterministic name order.
+
+    Sorting is centralized here so callers consume ordered key-value pairs
+    without re-indexing into the source dict (avoids the full-sort + select
+    anti-pattern).
+    """
+    return sorted(commands.items())
+
+
 def _build_surface() -> dict:
     """Build the canonical surface manifest from cli.py + mcp_server.py.
 
@@ -133,15 +145,16 @@ def _build_surface() -> dict:
     from roam.cli import _deprecation_record
 
     commands = []
-    for name in sorted(_commands):
-        target = tuple(_commands[name])
+    for name, target_raw in _ordered_command_items(_commands):
+        module, function = target_raw
+        target = (module, function)
         aliases = sorted(n for n in target_to_names[target] if n != name)
         deprecation = _deprecation_record(name)
         commands.append(
             {
                 "name": name,
-                "module": target[0],
-                "function": target[1],
+                "module": module,
+                "function": function,
                 "category": name_to_category.get(name, "Uncategorized"),
                 "maturity": "deprecated" if deprecation else _MATURITY.get(name, "stable"),
                 "aliases": aliases,
