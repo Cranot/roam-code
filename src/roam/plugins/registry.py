@@ -199,21 +199,14 @@ class _RoamPluginCoreRegistration:
 
     # ---- declaration ----------------------------------------------------
 
-    def declare(
+    def _declare_plugin(
         self,
         *,
         name: str,
         version: str = "0.1.0",
         description: str = "",
     ) -> None:
-        """Declare this plugin's identity.
-
-        Optional — if a plugin doesn't call ``declare()``, we infer the
-        name from the entry-point key. Calling ``declare()`` explicitly
-        is recommended because it lets a single plugin package expose
-        multiple entry points (e.g. ``nextjs`` and ``nextjs-edge``)
-        with distinct metadata.
-        """
+        """Record a plugin identity declaration on the registry state."""
         state = _registry_state()
         clean_name = (name or "").strip()
         if not clean_name:
@@ -450,6 +443,23 @@ class RoamPluginContext(_RoamPluginCoreRegistration, _RoamPluginExtensionRegistr
                 "qml", QmlExtractorFactory, extensions=[".qml"]
             )
     """
+
+    def declare(
+        self,
+        *,
+        name: str,
+        version: str = "0.1.0",
+        description: str = "",
+    ) -> None:
+        """Declare this plugin's identity.
+
+        Optional — if a plugin doesn't call ``declare()``, we infer the
+        name from the entry-point key. Calling ``declare()`` explicitly
+        is recommended because it lets a single plugin package expose
+        multiple entry points (e.g. ``nextjs`` and ``nextjs-edge``)
+        with distinct metadata.
+        """
+        self._declare_plugin(name=name, version=version, description=description)
 
 
 _PLUGIN_CONTEXT_PUBLIC_METHODS: Mapping[str, Callable[..., None]] = MappingProxyType(
