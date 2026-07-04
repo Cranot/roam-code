@@ -82,64 +82,14 @@ def structural_score(
         return []
 
     candidate_ids = {int(c["symbol_id"]) for c in candidates}
-
-    # R.3 — query-token boost. Files whose path contains a query token
-    # (case-insensitive, on path component boundaries) deserve a lift
-    # over structurally-similar peers that don't. The 30-task self-bench
-    # showed ``test_ruby.py`` losing to ``apex_lang.py`` for the query
-    # "Ruby Tier 1 language extractor": both score on "language" via
-    # FTS, but only ``test_ruby.py`` has "ruby" in its path. The boost
-    # is normalised so it can't dwarf the structural blend, but it
-    # consistently lifts the right files into top-K.
-    path_token_boost = _path_token_boost(candidates, task)
-
-    # R.6 (dogfood ) — rule-YAML demotion. For
-    # implementation-style queries ("where is X", "how does Y work"),
-    # the rules/community/*.yaml files clog 30% of top-K because they
-    # contain literal token matches like "clone" or "match" but are
-    # never the answer. Apply a fixed negative score to candidates
-    # in rule-corpus paths *unless* the query is rule-shaped.
-    rule_yaml_penalty = _rule_yaml_penalty(candidates, task)
-
-    # dogfood — test-file demotion. Same family
-    # of false positive: implementation-style queries surfaced
-    # ``test_verify_patch_match`` above the actual
-    # ``check_clones_not_edited`` because the test had higher
-    # PageRank (every conftest fixture is high-fan-in). Demote
-    # tests for "where is X" queries unless the query explicitly
-    # wants tests.
-    test_file_penalty = _test_file_penalty(candidates, task)
-
-    # R.7 (dogfood ) — cmd-companion boost. The
-    # ``commands/cmd_FOO.py`` file is the CLI wrapper for module
-    # ``FOO/``; the two are conceptually linked but share no tokens
-    # in their paths. When a candidate file is a cmd_FOO.py and any
-    # other candidate's path contains FOO as a component, lift the
-    # cmd file so it surfaces alongside its engine module.
-    cmd_companion_boost = _cmd_companion_boost(candidates)
-
-    # R.9 (Python pivot v12.4-iter): when the query mentions async /
-    # await / coroutine / asyncio, boost is_async=True candidates.
-    # The substrate (is_async column) shipped in v12.4; this is the
-    # reranker that uses it. Magnitude 0.10 — same scale as
-    # path_token_boost so it can lift but not dominate.
-    async_query_boost = _async_query_boost(candidates, task, conn=conn)
-
-    # R.10 (Phase-bonus 2026-05-04) — recency boost. Files edited in
-    # the last 14 days are more likely to be the answer to "where is
-    # X" — the user is usually asking about something they're
-    # actively working on. Magnitude up to +0.10, decays linearly to
-    # zero at 14 days. Suppressed when the query is shaped like a
-    # historical / archival question (mentions "old", "legacy",
-    # "deprecated", "history"). Adapts daily without retuning.
-    recency_boost = _recency_boost(conn, candidates, task)
-
-    pr_scores = _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized)
-    clone_tags = _clone_tags(conn, candidates)
-    cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
-    runtime_scores = _runtime_scores(conn, candidate_ids)
-    semantic_scores = _semantic_scores(conn, candidate_ids, task)
-
+    signal_maps = _gather_signal_maps(
+        conn,
+        candidates,
+        candidate_ids,
+        seeds,
+        task=task,
+        use_personalized=use_personalized,
+    )
     ctx = _build_scoring_context(
         candidates,
         weights,
@@ -148,19 +98,46 @@ def structural_score(
         use_personalized=use_personalized,
         config_root=config_root,
         lexical_baseline=lexical_baseline,
-        pr_scores=pr_scores,
-        cochange_scores=cochange_scores,
-        runtime_scores=runtime_scores,
-        semantic_scores=semantic_scores,
-        path_token_boost=path_token_boost,
-        rule_yaml_penalty=rule_yaml_penalty,
-        test_file_penalty=test_file_penalty,
-        cmd_companion_boost=cmd_companion_boost,
-        async_query_boost=async_query_boost,
-        recency_boost=recency_boost,
-        clone_tags=clone_tags,
+        **signal_maps,
     )
+    return _rank_candidates(candidates, ctx)
 
+
+def _gather_signal_maps(
+    conn: sqlite3.Connection,
+    candidates: list[dict],
+    candidate_ids: set[int],
+    seeds: dict[int, float],
+    *,
+    task: str,
+    use_personalized: bool,
+) -> dict[str, object]:
+    """Collect all independently-computed signal maps into one dict.
+
+    Each reranking signal is computed by its own heuristic (path matching,
+    query-shape detection, batched DB lookup). Gathering them in one place
+    lets the scoring formula consume them cohesively without
+    :func:`structural_score` needing to know how each signal is derived.
+    """
+    return {
+        "path_token_boost": _path_token_boost(candidates, task),
+        "rule_yaml_penalty": _rule_yaml_penalty(candidates, task),
+        "test_file_penalty": _test_file_penalty(candidates, task),
+        "cmd_companion_boost": _cmd_companion_boost(candidates),
+        "async_query_boost": _async_query_boost(candidates, task, conn=conn),
+        "recency_boost": _recency_boost(conn, candidates, task),
+        "pr_scores": _pagerank_scores(
+            conn, candidate_ids, seeds, use_personalized=use_personalized
+        ),
+        "clone_tags": _clone_tags(conn, candidates),
+        "cochange_scores": _cochange_scores(conn, candidate_ids, seeds),
+        "runtime_scores": _runtime_scores(conn, candidate_ids),
+        "semantic_scores": _semantic_scores(conn, candidate_ids, task),
+    }
+
+
+def _rank_candidates(candidates: list[dict], ctx: dict[str, object]) -> list[dict]:
+    """Apply the scoring formula to every candidate and sort descending."""
     out = [_score_and_justify(c, ctx) for c in candidates]
     out.sort(key=lambda x: -x["score"])
     return out
