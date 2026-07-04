@@ -28,8 +28,11 @@ on builds without FTS5 support compiled into SQLite).
 from __future__ import annotations
 
 import heapq
+import logging
 import re
 import sqlite3
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Token extraction
@@ -548,8 +551,9 @@ def _accumulate_fts_scores_for_token(
             f"LIMIT ?",
             (fts_query, candidate_limit),
         ).fetchall()
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
         # Malformed FTS5 token; skip rather than break the pipeline.
+        log.debug("Skipping malformed FTS5 token %r: %s", token, exc)
         return
     for row in rows:
         sym_id = int(row[0])
