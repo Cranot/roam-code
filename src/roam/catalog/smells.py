@@ -40,6 +40,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import groupby
+from pathlib import Path
 
 from roam.catalog._shared import find_indexed_source_root as _find_indexed_source_root
 from roam.catalog._shared import is_test_path as _is_test_path
@@ -1446,6 +1447,181 @@ def _extract_method_body(source: str, line_start: int, line_end: int, lang: str)
     return "\n".join(body_lines)
 
 
+def _fetch_refused_bequest_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Pull (child_class, parent_class) inheritance pairs from the graph.
+
+    Limits to in-repo parents (``target_id`` resolves to a known symbol).
+    Unions the canonical inheritance kinds via the shared helper so plugin
+    extractors emitting ``implements`` / ``uses_trait`` (Rust impl-Trait,
+    PHP traits) reach this detector too (W543-followup-C: pre-migration
+    filter was bare ``e.kind = 'inherits'``). Returns ``[]`` on a
+    missing-table OperationalError (un-indexed workspace).
+    """
+    from roam.db.edge_kinds import inheritance_in_clause
+
+    try:
+        return conn.execute(
+            "SELECT s_child.id AS child_id, s_child.name AS child_name, "
+            "s_child.line_start AS child_line_start, s_child.line_end AS child_line_end, "
+            "s_child.file_id AS child_file_id, f_child.path AS child_path, "
+            "f_child.language AS child_lang, "
+            "s_parent.id AS parent_id, s_parent.name AS parent_name "
+            "FROM edges e "
+            "JOIN symbols s_child ON e.source_id = s_child.id "
+            "JOIN symbols s_parent ON e.target_id = s_parent.id "
+            "JOIN files f_child ON s_child.file_id = f_child.id "
+            f"WHERE {inheritance_in_clause('e.kind')} "
+            "AND s_child.kind = 'class' "
+            "AND s_parent.kind = 'class'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def _prefetch_refused_bequest_methods_by_file(
+    conn: sqlite3.Connection, child_file_ids: list[int]
+) -> dict[int, list[sqlite3.Row]]:
+    """Bulk-fetch all methods for the child files, grouped by ``file_id``.
+
+    Ordered by id (rowid) so the later in-Python line-range containment
+    filter yields rows in the same order the original per-file SELECT
+    (no ORDER BY -> rowid order) returned them. W370c perf: hoists this
+    out of the per-edge loop to kill an N+1 pattern.
+    """
+    methods_by_file: dict[int, list[sqlite3.Row]] = {}
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT id, name, line_start, line_end, file_id FROM symbols "
+            "WHERE kind = 'method' AND file_id IN ({ph}) ORDER BY id",
+            child_file_ids,
+        )
+        for m in rows:
+            methods_by_file.setdefault(m["file_id"], []).append(m)
+    except sqlite3.OperationalError:
+        pass
+    return methods_by_file
+
+
+def _prefetch_refused_bequest_parent_names(
+    conn: sqlite3.Connection, parent_ids: list[int]
+) -> dict[int, set[str]]:
+    """Bulk-fetch parent method names grouped by ``parent_id``.
+
+    These are the override-membership sets. W370c perf: hoisted out of the
+    per-edge loop.
+    """
+    parent_names_by_id: dict[int, set[str]] = {}
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT parent_id, name FROM symbols "
+            "WHERE kind = 'method' AND parent_id IN ({ph})",
+            parent_ids,
+        )
+        for r in rows:
+            if r["name"]:
+                parent_names_by_id.setdefault(r["parent_id"], set()).add(r["name"])
+    except sqlite3.OperationalError:
+        pass
+    return parent_names_by_id
+
+
+def _load_refused_bequest_source(
+    workspace: Path, child_path: str, child_file_id: int, source_cache: dict[int, str | None]
+) -> str | None:
+    """Read a child class's source once, caching by file id.
+
+    Returns the cached text, or ``None`` if the file cannot be read so the
+    caller skips the row. A single child class typically has many methods
+    checked, so the cache avoids re-reading per method.
+    """
+    if child_file_id not in source_cache:
+        try:
+            source_cache[child_file_id] = (workspace / child_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            source_cache[child_file_id] = None
+    return source_cache[child_file_id]
+
+
+def _refused_bequest_child_methods_in_range(
+    file_methods: list[sqlite3.Row], c_start: int, c_end: int
+) -> list[sqlite3.Row]:
+    """Filter pre-fetched methods to those contained in the child class body.
+
+    Line-range containment is the universal signal -- ``parent_id`` is not
+    reliably set for methods across all languages. Mirrors the original SQL
+    predicate (``line_start >= c_start AND COALESCE(line_end, line_start)
+    <= c_end``).
+    """
+    return [
+        m
+        for m in file_methods
+        if m["line_start"] is not None
+        and m["line_start"] >= c_start
+        and (m["line_end"] if m["line_end"] is not None else m["line_start"]) <= c_end
+    ]
+
+
+def _refused_bequest_trivial_overrides(
+    child_methods: list[sqlite3.Row],
+    source: str,
+    child_lang: str,
+    parent_method_names: set[str],
+) -> list[tuple[str, int]]:
+    """Count child methods overriding a parent method with a trivial body.
+
+    When the parent has known methods, only name-matched overrides count.
+    When the parent has no known methods (e.g. an un-indexed stdlib base),
+    every trivial child method is a refusal candidate -- noisier but still
+    useful, since the smell really is "this class declares mostly do-nothing
+    methods".
+    """
+    require_override = bool(parent_method_names)
+    trivial_overrides: list[tuple[str, int]] = []
+    for m in child_methods:
+        mname = m["name"]
+        if require_override and mname not in parent_method_names:
+            continue
+        m_start = int(m["line_start"] or 0)
+        m_end = int(m["line_end"] or m_start)
+        body = _extract_method_body(source, m_start, m_end, child_lang)
+        if _is_refusal_body(body, child_lang):
+            trivial_overrides.append((mname, m_start))
+    return trivial_overrides
+
+
+def _refused_bequest_finding(
+    row: sqlite3.Row, trivial_overrides: list[tuple[str, int]]
+) -> dict | None:
+    """Build a refused-bequest finding when ``>= 2`` trivial overrides, else ``None``."""
+    if len(trivial_overrides) < 2:
+        return None
+    child_path = row["child_path"]
+    child_line = int(row["child_line_start"] or 1)
+    loc_str = _loc(child_path, child_line)
+    method_summary = ", ".join(f"{name}()" for name, _ in trivial_overrides[:5])
+    if len(trivial_overrides) > 5:
+        method_summary += f", +{len(trivial_overrides) - 5} more"
+    return _finding(
+        "refused-bequest",
+        "warning",
+        row["child_name"],
+        "class",
+        loc_str,
+        len(trivial_overrides),
+        2,
+        (
+            f"Refused bequest: {row['child_name']} overrides "
+            f"{len(trivial_overrides)} {row['parent_name']} method"
+            f"{'s' if len(trivial_overrides) != 1 else ''} "
+            f"with trivial body ({method_summary})"
+        ),
+    )
+
+
 # Tier: structural — walks ``edges.kind='inherits'`` to find (child, parent)
 # class pairs and inspects override-body shape. The signal is graph (inherits
 # edge) + AST (trivial-body match) combined; the threshold (>= 2 trivial
@@ -1467,165 +1643,50 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
     method bodies into a queryable table.
     """
     results: list[dict] = []
-    # W543-followup-C: source the inheritance-kind IN-clause from the
-    # shared helper so plugin extractors that emit ``implements`` /
-    # ``uses_trait`` (e.g. Rust impl-Trait, PHP traits) reach this
-    # detector too. Pre-migration filter was bare ``e.kind = 'inherits'``
-    # which silently dropped the other two canonical kinds.
-    from roam.db.edge_kinds import inheritance_in_clause
-
-    try:
-        # Pull (child_class, parent_class) pairs from inherits edges. Limit
-        # to in-repo parents (target_id resolves to a known symbol) -- this
-        # is the default for the inherits edge kind, but explicitly named
-        # to make the intent obvious.
-        inherits = conn.execute(
-            "SELECT s_child.id AS child_id, s_child.name AS child_name, "
-            "s_child.line_start AS child_line_start, s_child.line_end AS child_line_end, "
-            "s_child.file_id AS child_file_id, f_child.path AS child_path, "
-            "f_child.language AS child_lang, "
-            "s_parent.id AS parent_id, s_parent.name AS parent_name "
-            "FROM edges e "
-            "JOIN symbols s_child ON e.source_id = s_child.id "
-            "JOIN symbols s_parent ON e.target_id = s_parent.id "
-            "JOIN files f_child ON s_child.file_id = f_child.id "
-            f"WHERE {inheritance_in_clause('e.kind')} "
-            "AND s_child.kind = 'class' "
-            "AND s_parent.kind = 'class'"
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-
+    inherits = _fetch_refused_bequest_edges(conn)
     if not inherits:
-        return []
+        return results
 
     workspace = _find_indexed_source_root()
-    # Cache source reads per file: a single child class typically has many
-    # methods checked; we don't want to re-read the file for each one.
     source_cache: dict[int, str | None] = {}
 
-    # W370c perf: hoist the two per-edge SELECTs out of the loop. The
-    # original ran an N+1 pattern -- 2 serial round-trips per inherits
-    # edge (child_methods by file/line-range, parent_method_names by
-    # parent_id). On a deep OO hierarchy that is 2*N serial queries inside
-    # the hot ``roam smells`` path. Bulk pre-fetch both, then do the
-    # line-range containment / override-membership checks in Python against
-    # in-memory dicts. The per-edge logic and emitted findings (and order)
-    # are byte-identical to the in-loop version.
-    from roam.db.connection import batched_in
-
+    # W370c perf: bulk pre-fetch the two per-edge SELECTs (child methods by
+    # file/line-range, parent method names by parent_id) instead of the
+    # original N+1 pattern (2 serial round-trips per inherits edge). The
+    # per-edge logic and emitted findings (and order) are byte-identical to
+    # the in-loop version.
     child_file_ids = sorted({row["child_file_id"] for row in inherits})
     parent_ids = sorted({row["parent_id"] for row in inherits})
-
-    # All methods grouped by file_id, ordered by id (rowid) so the in-Python
-    # containment filter yields rows in the same order the original
-    # per-file SELECT (no ORDER BY -> rowid order) returned them.
-    methods_by_file: dict[int, list[sqlite3.Row]] = {}
-    try:
-        method_rows = batched_in(
-            conn,
-            "SELECT id, name, line_start, line_end, file_id FROM symbols "
-            "WHERE kind = 'method' AND file_id IN ({ph}) "
-            "ORDER BY id",
-            child_file_ids,
-        )
-        for m in method_rows:
-            methods_by_file.setdefault(m["file_id"], []).append(m)
-    except sqlite3.OperationalError:
-        methods_by_file = {}
-
-    # Parent method names grouped by parent_id (override-membership set).
-    parent_names_by_id: dict[int, set[str]] = {}
-    try:
-        pname_rows = batched_in(
-            conn,
-            "SELECT parent_id, name FROM symbols WHERE kind = 'method' AND parent_id IN ({ph})",
-            parent_ids,
-        )
-        for r in pname_rows:
-            if r["name"]:
-                parent_names_by_id.setdefault(r["parent_id"], set()).add(r["name"])
-    except sqlite3.OperationalError:
-        parent_names_by_id = {}
+    methods_by_file = _prefetch_refused_bequest_methods_by_file(conn, child_file_ids)
+    parent_names_by_id = _prefetch_refused_bequest_parent_names(conn, parent_ids)
 
     for row in inherits:
-        child_path = row["child_path"]
         child_lang = row["child_lang"]
         # Limit to languages where we can reasonably parse a method body.
         if child_lang != "python" and child_lang not in _BRACE_LANGS:
             continue
 
-        # Load the child source.
-        if row["child_file_id"] not in source_cache:
-            try:
-                source_cache[row["child_file_id"]] = (workspace / child_path).read_text(
-                    encoding="utf-8", errors="replace"
-                )
-            except (OSError, ValueError):
-                source_cache[row["child_file_id"]] = None
-        source = source_cache[row["child_file_id"]]
+        source = _load_refused_bequest_source(
+            workspace, row["child_path"], row["child_file_id"], source_cache
+        )
         if not source:
             continue
 
-        # Methods in the child class. Use line-range containment because
-        # parent_id may not be reliably set across all languages for
-        # methods; line-range is the universal containment signal. Apply the
-        # same predicate the SQL used (line_start >= c_start AND
-        # COALESCE(line_end, line_start) <= c_end) in Python over the
-        # pre-fetched per-file method list.
         c_start = int(row["child_line_start"] or 0)
         c_end = int(row["child_line_end"] or c_start)
-        child_methods = [
-            m
-            for m in methods_by_file.get(row["child_file_id"], ())
-            if m["line_start"] is not None
-            and m["line_start"] >= c_start
-            and (m["line_end"] if m["line_end"] is not None else m["line_start"]) <= c_end
-        ]
+        child_methods = _refused_bequest_child_methods_in_range(
+            methods_by_file.get(row["child_file_id"], ()), c_start, c_end
+        )
 
-        # Parent method names (so we only count overrides, not new methods).
-        parent_method_names: set[str] = parent_names_by_id.get(row["parent_id"], set())
-        # If parent has no known methods (e.g. it's a stdlib base class
-        # we didn't index), we can't tell what's an override vs a new
-        # method. Fall back to "every trivial method on the child is a
-        # refusal candidate" -- noisier but still useful, since the smell
-        # really is "this class declares mostly do-nothing methods".
-        require_override = bool(parent_method_names)
-
-        trivial_overrides: list[tuple[str, int]] = []
-        for m in child_methods:
-            mname = m["name"]
-            if require_override and mname not in parent_method_names:
-                continue
-            m_start = int(m["line_start"] or 0)
-            m_end = int(m["line_end"] or m_start)
-            body = _extract_method_body(source, m_start, m_end, child_lang)
-            if _is_refusal_body(body, child_lang):
-                trivial_overrides.append((mname, m_start))
-
-        if len(trivial_overrides) >= 2:
-            child_line = int(row["child_line_start"] or 1)
-            loc_str = _loc(child_path, child_line)
-            method_summary = ", ".join(f"{name}()" for name, _ in trivial_overrides[:5])
-            if len(trivial_overrides) > 5:
-                method_summary += f", +{len(trivial_overrides) - 5} more"
-            results.append(
-                _finding(
-                    "refused-bequest",
-                    "warning",
-                    row["child_name"],
-                    "class",
-                    loc_str,
-                    len(trivial_overrides),
-                    2,
-                    (
-                        f"Refused bequest: {row['child_name']} overrides "
-                        f"{len(trivial_overrides)} {row['parent_name']} method"
-                        f"{'s' if len(trivial_overrides) != 1 else ''} "
-                        f"with trivial body ({method_summary})"
-                    ),
-                )
-            )
+        trivial_overrides = _refused_bequest_trivial_overrides(
+            child_methods,
+            source,
+            child_lang,
+            parent_names_by_id.get(row["parent_id"], set()),
+        )
+        finding = _refused_bequest_finding(row, trivial_overrides)
+        if finding is not None:
+            results.append(finding)
     return results
 
 
