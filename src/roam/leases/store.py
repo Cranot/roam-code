@@ -167,6 +167,17 @@ class LeaseListOptions:
     warnings_out: WarningsOut = None
 
 
+@dataclass(frozen=True)
+class _LeaseReadContext:
+    """Shared context for fault-tolerant lease readers."""
+
+    repo_root: Path
+    warnings_out: WarningsOut = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "repo_root", Path(self.repo_root))
+
+
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -249,9 +260,7 @@ def _write_lease(lease: Lease) -> None:
 
 def _parse_lease_file(
     path: Path,
-    repo_root: Path,
-    *,
-    warnings_out: WarningsOut = None,
+    read_context: _LeaseReadContext,
 ) -> Optional[Lease]:
     """Parse a single lease file and emit one warning per failure path.
 
@@ -263,8 +272,8 @@ def _parse_lease_file(
     """
 
     def _emit_warning(message: str) -> None:
-        if warnings_out is not None:
-            warnings_out.append(message)
+        if read_context.warnings_out is not None:
+            read_context.warnings_out.append(message)
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -277,7 +286,7 @@ def _parse_lease_file(
         )
         return None
     reasons: list[str] = []
-    lease = _lease_from_dict(raw, repo_root, reason_out=reasons)
+    lease = _lease_from_dict(raw, read_context.repo_root, reason_out=reasons)
     if lease is None:
         raw_lid = raw.get("lease_id")
         id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
@@ -312,7 +321,7 @@ def read_lease(
     path = _lease_path(repo_root, lease_id)
     if not path.exists():
         return None
-    return _parse_lease_file(path, repo_root, warnings_out=warnings_out)
+    return _parse_lease_file(path, _LeaseReadContext(repo_root, warnings_out))
 
 
 def _lease_from_dict(
@@ -359,21 +368,17 @@ def _iter_lease_files(repo_root: Path):
             yield child
 
 
-def _iter_leases(
-    repo_root: Path,
-    *,
-    warnings_out: WarningsOut = None,
-):
+def _iter_leases(read_context: _LeaseReadContext):
     """Yield every parseable :class:`Lease` under the repo.
 
-    W425: when *warnings_out* is supplied, every dropped row (malformed
-    JSON / non-dict top-level / schema-invalid dict) appends one
-    actionable warning naming the offending file + the closed-form
-    reason. ``None`` (default) silently drops, preserving the pre-W425
+    W425: when ``read_context.warnings_out`` is supplied, every dropped
+    row (malformed JSON / non-dict top-level / schema-invalid dict)
+    appends one actionable warning naming the offending file + the
+    closed-form reason. ``None`` silently drops, preserving the pre-W425
     behavior for callers that don't care.
     """
-    for path in _iter_lease_files(repo_root):
-        lease = _parse_lease_file(path, repo_root, warnings_out=warnings_out)
+    for path in _iter_lease_files(read_context.repo_root):
+        lease = _parse_lease_file(path, read_context)
         if lease is not None:
             yield lease
 
@@ -399,7 +404,7 @@ def find_conflict(repo_root: Path, subject: list[str]) -> Optional[Lease]:
         return None
     target = set(subject)
     now = _utc_now()
-    for lease in _iter_leases(repo_root):
+    for lease in _iter_leases(_LeaseReadContext(repo_root)):
         if lease.state != "active":
             continue
         if lease.is_expired_at(now):
@@ -676,7 +681,7 @@ def list_leases(
 
     now = _utc_now()
     out: list[Lease] = []
-    for lease in _iter_leases(repo_root, warnings_out=warnings_out):
+    for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
         if agent is not None and lease.agent != agent:
             continue
         effective_state = lease.state
@@ -728,7 +733,7 @@ def gc_expired_leases(
     """
     now = _utc_now()
     transitioned: list[str] = []
-    for lease in _iter_leases(repo_root):
+    for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
         if lease.state != "active":
             continue
         if not lease.is_expired_at(now):
