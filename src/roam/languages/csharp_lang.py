@@ -300,13 +300,14 @@ class _CSharpTypeSymbolExtractor(_CSharpCommon):
         vis = self._get_visibility(node, source, parent_kind)
         qualified = f"{parent_name}.{name}" if parent_name else name
         self._symbol_kinds[qualified] = "enum"
-        sig = f"enum {name}"
+        sig_parts = [f"enum {name}"]
 
         # base type (e.g. enum Foo : byte)
         for child in node.children:
             if child.type == "base_list":
-                sig += f" {self.node_text(child, source)}"
+                sig_parts.append(self.node_text(child, source))
                 break
+        sig = " ".join(sig_parts)
 
         symbols.append(
             self._make_symbol(
