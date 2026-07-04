@@ -1356,11 +1356,65 @@ def _run_agent_mode(json_mode, cmd_name, token_budget=0):
 # ---------------------------------------------------------------------------
 
 
+def _emit_skeleton_text(directory, by_file, symbols, skeleton_tier):
+    """Emit the --skeleton text-mode listing with parent-aware indentation."""
+    from roam.output.formatter import format_signature
+
+    file_count = len(by_file)
+    sym_count = len(symbols)
+    verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
+    _verdict = f"{directory}/: {file_count} files, {sym_count} exported symbols{verdict_suffix}"
+    click.echo(f"VERDICT: {_verdict}\n")
+    click.echo(f"{directory}/ ({file_count} files, {sym_count} exported symbols)")
+    if skeleton_tier == "file_substring":
+        click.echo("  Note: substring match on directory path — input was not an exact directory prefix.")
+    click.echo()
+
+    # Build parent lookup for indentation
+    parent_ids = {s["id"]: s["parent_id"] for s in symbols}
+    parent_set = {s["id"] for s in symbols}
+
+    for file_path in sorted(by_file.keys()):
+        file_syms = by_file[file_path]
+        click.echo(f"  {file_path}")
+
+        for s in file_syms:
+            # Compute indentation level
+            level = 0
+            if s["parent_id"] is not None and s["parent_id"] in parent_set:
+                level = 1
+                pid = s["parent_id"]
+                while pid in parent_ids and parent_ids[pid] is not None and parent_ids[pid] in parent_set:
+                    level += 1
+                    pid = parent_ids[pid]
+
+            prefix = "    " + "  " * level
+            kind = abbrev_kind(s["kind"])
+            sig = format_signature(s["signature"], max_len=40)
+            line_info = f"L{s['line_start']}"
+            if s["line_end"] and s["line_end"] != s["line_start"]:
+                line_info += f"-{s['line_end']}"
+
+            doc_snippet = ""
+            if s["docstring"]:
+                first_line = s["docstring"].strip().split("\n")[0].strip()
+                if len(first_line) > 50:
+                    first_line = first_line[:47] + "..."
+                doc_snippet = f"  {first_line}"
+
+            parts = [f"{kind:<6s}", s["name"]]
+            if sig:
+                parts.append(sig)
+            parts.append(line_info)
+
+            click.echo(f"{prefix}{'  '.join(parts)}{doc_snippet}")
+
+        click.echo()
+
+
 def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
     """Handle the --skeleton DIR flag: emit directory skeleton."""
     from collections import defaultdict
-
-    from roam.output.formatter import format_signature
 
     directory = directory.replace("\\", "/").rstrip("/")
 
@@ -1474,52 +1528,4 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
             )
             return
 
-        file_count = len(by_file)
-        sym_count = len(symbols)
-        _verdict = f"{directory}/: {file_count} files, {sym_count} exported symbols{verdict_suffix}"
-        click.echo(f"VERDICT: {_verdict}\n")
-        click.echo(f"{directory}/ ({file_count} files, {sym_count} exported symbols)")
-        if skeleton_tier == "file_substring":
-            click.echo("  Note: substring match on directory path — input was not an exact directory prefix.")
-        click.echo()
-
-        # Build parent lookup for indentation
-        parent_ids = {s["id"]: s["parent_id"] for s in symbols}
-        parent_set = {s["id"] for s in symbols}
-
-        for file_path in sorted(by_file.keys()):
-            file_syms = by_file[file_path]
-            click.echo(f"  {file_path}")
-
-            for s in file_syms:
-                # Compute indentation level
-                level = 0
-                if s["parent_id"] is not None and s["parent_id"] in parent_set:
-                    level = 1
-                    pid = s["parent_id"]
-                    while pid in parent_ids and parent_ids[pid] is not None and parent_ids[pid] in parent_set:
-                        level += 1
-                        pid = parent_ids[pid]
-
-                prefix = "    " + "  " * level
-                kind = abbrev_kind(s["kind"])
-                sig = format_signature(s["signature"], max_len=40)
-                line_info = f"L{s['line_start']}"
-                if s["line_end"] and s["line_end"] != s["line_start"]:
-                    line_info += f"-{s['line_end']}"
-
-                doc_snippet = ""
-                if s["docstring"]:
-                    first_line = s["docstring"].strip().split("\n")[0].strip()
-                    if len(first_line) > 50:
-                        first_line = first_line[:47] + "..."
-                    doc_snippet = f"  {first_line}"
-
-                parts = [f"{kind:<6s}", s["name"]]
-                if sig:
-                    parts.append(sig)
-                parts.append(line_info)
-
-                click.echo(f"{prefix}{'  '.join(parts)}{doc_snippet}")
-
-            click.echo()
+        _emit_skeleton_text(directory, by_file, symbols, skeleton_tier)
