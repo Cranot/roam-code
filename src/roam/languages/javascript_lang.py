@@ -887,29 +887,10 @@ class JavaScriptExtractor(LanguageExtractor):
             name = self.node_text(func_node, source)
 
         # Special handling for require() - use module name as target
-        if name == "require":
-            args = node.child_by_field_name("arguments")
-            if args:
-                for arg_child in args.children:
-                    if arg_child.type == "string":
-                        path = self.node_text(arg_child, source).strip("'\"")
-                        # Use last path segment as target name
-                        target = path.rsplit("/", 1)[-1] if "/" in path else path
-                        # Strip .js/.json extension
-                        for ext in (".js", ".json", ".mjs", ".cjs"):
-                            if target.endswith(ext):
-                                target = target[: -len(ext)]
-                                break
-                        refs.append(
-                            self._make_reference(
-                                target_name=target,
-                                kind="import",
-                                line=node.start_point[0] + 1,
-                                source_name=scope_name,
-                                import_path=path,
-                            )
-                        )
-                        return
+        if name == "require" and self._record_static_require_import_for_dependency_precision(
+            node, source, refs, scope_name
+        ):
+            return
 
         refs.append(
             self._make_reference(
@@ -924,6 +905,34 @@ class JavaScriptExtractor(LanguageExtractor):
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)
+
+    def _record_static_require_import_for_dependency_precision(self, node, source, refs, scope_name):
+        """Return True when require("path") is emitted as a dependency edge."""
+        args = node.child_by_field_name("arguments")
+        if args is None:
+            return False
+        for arg_child in args.children:
+            if arg_child.type != "string":
+                continue
+            path = self.node_text(arg_child, source).strip("'\"")
+            # Use last path segment as target name
+            target = path.rsplit("/", 1)[-1] if "/" in path else path
+            # Strip .js/.json extension
+            for ext in (".js", ".json", ".mjs", ".cjs"):
+                if target.endswith(ext):
+                    target = target[: -len(ext)]
+                    break
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="import",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                    import_path=path,
+                )
+            )
+            return True
+        return False
 
     def _extract_new(self, node, source, refs, scope_name):
         """Extract new expressions: new Foo(), new module.Foo()."""
