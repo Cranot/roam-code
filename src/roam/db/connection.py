@@ -762,11 +762,19 @@ class _BatchOptions(NamedTuple):
     batch_size: int
 
 
-def _parse_batch_options(function_name: str, batch_options: dict[str, object]) -> _BatchOptions:
+def _parse_batch_options(
+    function_name: str,
+    options: _BatchOptions | None,
+    batch_options: dict[str, object],
+) -> _BatchOptions:
     unexpected = set(batch_options) - _BATCH_OPTION_KEYS
     if unexpected:
         name = sorted(unexpected)[0]
         raise TypeError(f"{function_name}() got an unexpected keyword argument {name!r}")
+    if options is not None and batch_options:
+        raise TypeError(f"{function_name}() accepts either options= or keyword batch options, not both")
+    if options is not None:
+        return options
     return _BatchOptions(
         pre=tuple(batch_options.get("pre", ())),
         post=tuple(batch_options.get("post", ())),
@@ -817,6 +825,8 @@ def batched_in(
     conn: sqlite3.Connection,
     sql: str,
     ids,
+    *,
+    options: _BatchOptions | None = None,
     **batch_options,
 ) -> list:
     """Execute *sql* with ``{ph}`` placeholder(s) in batches.
@@ -836,7 +846,7 @@ def batched_in(
     if *sql* contains no ``{ph}`` marker (misuse formerly re-ran the same
     unbatched query once per chunk, duplicating rows).
     """
-    options = _parse_batch_options("batched_in", batch_options)
+    options = _parse_batch_options("batched_in", options, batch_options)
     if not ids:
         return []
     rows = []
@@ -852,10 +862,12 @@ def _legacy_batched_scalar_sum(
     conn: sqlite3.Connection,
     sql: str,
     ids,
+    *,
+    options: _BatchOptions | None = None,
     **batch_options,
 ) -> int:
     """Compatibility implementation for the removed public count helper."""
-    options = _parse_batch_options(_LEGACY_BATCHED_COUNT_NAME, batch_options)
+    options = _parse_batch_options(_LEGACY_BATCHED_COUNT_NAME, options, batch_options)
     if not ids:
         return 0
     total = 0
