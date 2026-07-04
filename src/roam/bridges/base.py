@@ -77,8 +77,8 @@ class LanguageBridge(ABC):
     def target_extensions(self) -> frozenset[str]:
         """File extensions this bridge generates/links to.
 
-        This is an interface contract consumed through dynamic dispatch by
-        ``cmd_xlang.py`` and implemented by every concrete bridge.
+        See reference: bridge interface contract consumed through dynamic
+        dispatch by ``cmd_xlang.py`` and implemented by every concrete bridge.
         """
 
     @abstractmethod
