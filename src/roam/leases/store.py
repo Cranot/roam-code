@@ -320,7 +320,6 @@ def _parse_lease_file(
 def read_lease(
     repo_root: Path,
     lease_id: str,
-    *,
     warnings_out: WarningsOut = None,
 ) -> Optional[Lease]:
     """Load a lease by id, or ``None`` if missing / unparseable.
