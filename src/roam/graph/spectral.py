@@ -11,6 +11,7 @@ Key functions:
 
 from __future__ import annotations
 
+from bisect import bisect_left
 import math
 import warnings
 
@@ -250,7 +251,9 @@ def spectral_communities(G, k=None):
     merge_map: dict = {}
     while len(counts) > k:
         smallest = min(counts, key=lambda p: (counts[p], order[p]))
-        idx = active.index(smallest)
+        idx = bisect_left(active, smallest)
+        if idx >= len(active) or active[idx] != smallest:
+            raise RuntimeError("active partition ids must include the selected partition")
         target = active[idx + 1] if idx + 1 < len(active) else active[idx - 1]
         counts[target] += counts[smallest]
         order[target] = min(order[target], order[smallest])
