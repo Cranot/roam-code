@@ -396,9 +396,9 @@ class _RoamPluginExtensionRegistration:
         if not name:
             raise ValueError("FrameworkProfile.name must be non-empty")
 
-        state = _registry_state()
-        if name in state.framework_profiles:
+        if get_framework_profile(name) is not None:
             raise ValueError(f"duplicate framework profile: {name}")
+        state = _registry_state()
         state.framework_profiles[name] = profile
 
         # Also wire the detector so legacy consumers
@@ -493,8 +493,8 @@ def get_framework_profile(name: str) -> "FrameworkProfile | None":
     """
     if not name:
         return None
-    state = _registry_state()
-    return state.framework_profiles.get(name)
+    profiles = get_framework_profiles()
+    return profiles.get(name)
 
 
 def get_framework_profiles() -> Mapping[str, FrameworkProfile]:
