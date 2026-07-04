@@ -643,6 +643,31 @@ def release_lease(
     return True
 
 
+def _visible_state_for_lease(
+    lease: Lease,
+    agent: Optional[str],
+    include_expired: bool,
+    include_released: bool,
+    now: datetime,
+) -> Optional[str]:
+    """Return the wall-clock-effective state if *lease* should be listed.
+
+    None means the lease is hidden by the active filters. Active leases
+    that have crossed their expiry wall-clock are promoted to ``expired``
+    so all readers see the same truth that :func:`find_conflict` sees.
+    """
+    if agent is not None and lease.agent != agent:
+        return None
+    effective_state = lease.state
+    if effective_state == "active" and lease.is_expired_at(now):
+        effective_state = "expired"
+    if effective_state == "expired" and not include_expired:
+        return None
+    if effective_state == "released" and not include_released:
+        return None
+    return effective_state
+
+
 def list_leases(
     repo_root: Path,
     options: Optional[LeaseListOptions] = None,
@@ -699,18 +724,14 @@ def list_leases(
     now = _utc_now()
     out: list[Lease] = []
     for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
-        if agent is not None and lease.agent != agent:
-            continue
-        effective_state = lease.state
-        if effective_state == "active" and lease.is_expired_at(now):
-            effective_state = "expired"
-        if effective_state == "expired" and not include_expired:
-            continue
-        if effective_state == "released" and not include_released:
+        visible_state = _visible_state_for_lease(
+            lease, agent, include_expired, include_released, now
+        )
+        if visible_state is None:
             continue
         # Surface the effective (wall-clock) state on the returned record
         # so callers don't have to recompute it.
-        lease.state = effective_state
+        lease.state = visible_state
         out.append(lease)
     # Newest first by acquired_at (ISO timestamps sort lexically).
     out.sort(key=lambda lease_obj: lease_obj.acquired_at, reverse=True)
