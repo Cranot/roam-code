@@ -6,6 +6,7 @@ metric deltas, edge analysis, symbol changes, and footprint.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -31,8 +32,8 @@ def resolve_base_commit(root: Path, base_ref: str) -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logging.debug("resolve_base_commit: git rev-parse failed for %r in %s: %s", base_ref, root, exc)
     return None
 
 
