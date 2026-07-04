@@ -269,9 +269,15 @@ def _build_invariants(conn, sym_ids, task):
     target_rows = batched_in(
         conn,
         """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
-                  (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
+                  COALESCE(ec.caller_count, 0) as caller_count
            FROM symbols s
            JOIN files f ON s.file_id = f.id
+           LEFT JOIN (
+               SELECT target_id, COUNT(*) as caller_count
+               FROM edges
+               WHERE target_id IN ({ph})
+               GROUP BY target_id
+           ) ec ON ec.target_id = s.id
            WHERE s.id IN ({ph})""",
         sym_ids,
     )
@@ -291,10 +297,18 @@ def _build_invariants(conn, sym_ids, task):
     caller_rows = batched_in(
         conn,
         """SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
-                  (SELECT COUNT(*) FROM edges WHERE target_id = s.id) as caller_count
+                  COALESCE(ec.caller_count, 0) as caller_count
            FROM edges e
            JOIN symbols s ON e.source_id = s.id
            JOIN files f ON s.file_id = f.id
+           LEFT JOIN (
+               SELECT target_id, COUNT(*) as caller_count
+               FROM edges
+               WHERE target_id IN (
+                   SELECT source_id FROM edges WHERE target_id IN ({ph})
+               )
+               GROUP BY target_id
+           ) ec ON ec.target_id = s.id
            WHERE e.target_id IN ({ph})""",
         sym_ids,
     )
