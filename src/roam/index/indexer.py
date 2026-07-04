@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -930,6 +931,62 @@ class _Phase5SourceCache:
         """Release the cache after effects + taint complete."""
         self._cache = None
         self._bytes = 0
+
+
+class _PhaseTimer:
+    """Human-facing phase progress + wall-clock timing bookkeeping.
+
+    Owns the ``[n/N] label...`` log lines and the ``phase_timings`` map that
+    is persisted into the index manifest. Kept outside ``Indexer`` so the
+    orchestrator class focuses on pipeline logic, not UI/timing state.
+    """
+
+    _PHASE_COUNT = 7
+    _PHASE_KEYS = (
+        "discover",  # git ls-files + change detection (implicit phase 0)
+        "parse_extract",  # phase 1: Parsing & extracting symbols
+        "resolve",  # phase 2: Resolving references
+        "graph_metrics",  # phase 3: Computing graph metrics
+        "git_analysis",  # phase 4: Analyzing git history
+        "effects_taint",  # phase 5: Computing effects & taint flow
+        "health_load",  # phase 6: Computing health & cognitive load
+        "search_indexes",  # phase 7: Building search indexes
+    )
+
+    def __init__(self, quiet: bool, log: Callable[[str], None]):
+        self._quiet = quiet
+        self._log = log
+        self._phase_timings: dict[str, float] = {}
+        self._phase_open: tuple[str, float] | None = None
+
+    @property
+    def timings(self) -> dict[str, float]:
+        """Return the accumulated phase timings map."""
+        return self._phase_timings
+
+    def record_phase(self, key: str, seconds: float) -> None:
+        """Persist one phase wall-clock into ``_phase_timings``."""
+        prev = float(self._phase_timings.get(key, 0.0))
+        self._phase_timings[key] = round(prev + max(0.0, float(seconds)), 3)
+
+    def begin_phase(self, n: int, label: str) -> None:
+        """Emit a ``[n/N] label...`` line and open the phase timer."""
+        self.close_open_phase()
+        if 1 <= n < len(self._PHASE_KEYS):
+            key = self._PHASE_KEYS[n]
+        else:
+            key = f"phase_{n}"
+        self._phase_open = (key, time.perf_counter())
+        if not self._quiet:
+            self._log(f"  [{n}/{self._PHASE_COUNT}] {label}")
+
+    def close_open_phase(self) -> None:
+        """Close the currently open phase, if any."""
+        if self._phase_open is None:
+            return
+        key, t_start = self._phase_open
+        self.record_phase(key, time.perf_counter() - t_start)
+        self._phase_open = None
 
 
 class Indexer:
@@ -2077,7 +2134,7 @@ class Indexer:
         ]
         step_status = getattr(self, "_step_status", None) or None
         cluster_sig = getattr(self, "_cluster_signature", None)
-        phase_timings = getattr(self, "_phase_timings", None) or None
+        phase_timings = self._phase_timer.timings if self._phase_timer else None
         notes_payload: dict = {}
         if cluster_sig:
             notes_payload["cluster_signature"] = cluster_sig
@@ -2117,86 +2174,23 @@ class Indexer:
             "up_to_date": False,
         }
 
-    # User-facing phase numbering for the inline progress log (G13).
-    # Kept in sync with the order of calls in ``_do_run`` below. The
-    # number is a hint for the user, not a contract — when phases
-    # split or merge, bump _PHASE_COUNT and update the calls below.
-    _PHASE_COUNT = 7
-
-    # Stable phase-key labels used in the ``phase_timings`` manifest map
-    # so consumers (roam doctor, W395-followup perf work) can read a fixed
-    # vocabulary without parsing the human-facing label. Order matches the
-    # ``_begin_phase`` call sequence in ``_do_run``.
-    _PHASE_KEYS = (
-        "discover",  # git ls-files + change detection (implicit phase 0)
-        "parse_extract",  # phase 1: Parsing & extracting symbols
-        "resolve",  # phase 2: Resolving references
-        "graph_metrics",  # phase 3: Computing graph metrics
-        "git_analysis",  # phase 4: Analyzing git history
-        "effects_taint",  # phase 5: Computing effects & taint flow
-        "health_load",  # phase 6: Computing health & cognitive load
-        "search_indexes",  # phase 7: Building search indexes
-    )
-
-    def _begin_phase(self, n: int, label: str) -> None:
-        """Emit a ``[n/N] label...`` line before the next pipeline step.
-
-        Also records the wall-clock elapsed for the *previous* phase into
-        ``self._phase_timings`` (W408). The phase keyed by ``n`` is
-        looked up from ``_PHASE_KEYS`` (index ``n`` since slot 0 is
-        ``discover``); a stable key keeps the persisted timing dict
-        machine-readable across releases.
-
-        Skipped under ``--quiet`` for the *log line* only — timings are
-        always captured so ``roam doctor`` can surface them regardless
-        of how the index was triggered.
-        """
-        # Close the previously open phase, if any.
-        self._close_open_phase()
-        # Open the new phase. ``_PHASE_KEYS[0]`` is reserved for
-        # "discover" which is recorded outside _begin_phase (see _do_run).
-        if 1 <= n < len(self._PHASE_KEYS):
-            key = self._PHASE_KEYS[n]
-        else:
-            key = f"phase_{n}"
-        self._phase_open = (key, time.perf_counter())
-        if not self._quiet:
-            self._log(f"  [{n}/{self._PHASE_COUNT}] {label}")
-
-    def _record_phase(self, key: str, seconds: float) -> None:
-        """Persist one phase wall-clock into ``self._phase_timings``."""
-        if not hasattr(self, "_phase_timings") or self._phase_timings is None:
-            self._phase_timings = {}
-        # Sum so a repeated key (e.g. discover invoked twice for a partial
-        # re-index) accumulates rather than overwrites.
-        prev = float(self._phase_timings.get(key, 0.0))
-        self._phase_timings[key] = round(prev + max(0.0, float(seconds)), 3)
-
-    def _close_open_phase(self) -> None:
-        """Close the currently open phase, if any (W408)."""
-        if getattr(self, "_phase_open", None) is None:
-            return
-        key, t_start = self._phase_open
-        self._record_phase(key, time.perf_counter() - t_start)
-        self._phase_open = None
-
     def _run_metric_phases(self, conn, force: bool, changed_paths=None) -> None:
         """Phases 3-7: graph metrics, git history, effects/taint, health/load,
         search indexes. The O(repo) metric layer — skipped by a light reindex."""
-        self._begin_phase(3, "Computing graph metrics...")
+        self._phase_timer.begin_phase(3, "Computing graph metrics...")
         G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn, force=force)
-        self._begin_phase(4, "Analyzing git history...")
+        self._phase_timer.begin_phase(4, "Analyzing git history...")
         self._run_git_analysis(conn)
         self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters, force=force)
-        self._begin_phase(5, "Computing effects & taint flow...")
+        self._phase_timer.begin_phase(5, "Computing effects & taint flow...")
         self._run_effect_analysis(conn, G, changed_paths=changed_paths)
         self._run_taint_analysis(conn, G)
         # W440: release the Phase 2 source/tree cache before Phase 6 so peak
         # memory drops back before health + cognitive load.
         self._phase5_cache.clear()
-        self._begin_phase(6, "Computing health & cognitive load...")
+        self._phase_timer.begin_phase(6, "Computing health & cognitive load...")
         self._compute_health_and_load(conn, G)
-        self._begin_phase(7, "Building search indexes...")
+        self._phase_timer.begin_phase(7, "Building search indexes...")
         self._build_search_indexes(conn, force=force)
 
     def _finalize_light_reindex(self, conn, files_to_process: list[str]) -> None:
@@ -2223,9 +2217,8 @@ class Indexer:
     def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False, light: bool = False):
         t0 = time.monotonic()
         # W408: phase wall-clock map. Persisted into the manifest ``notes``
-        # JSON under "phase_timings". Stable keys live in ``_PHASE_KEYS``.
-        self._phase_timings: dict[str, float] = {}
-        self._phase_open: tuple[str, float] | None = None
+        # JSON under "phase_timings". Stable keys live in ``_PhaseTimer``.
+        self._phase_timer = _PhaseTimer(self._quiet, self._log)
         t_discover = time.perf_counter()
         self._log("Discovering files...")
         all_files = discover_files(self.root, include_excluded=include_excluded)
@@ -2241,7 +2234,7 @@ class Indexer:
             else:
                 added, modified, removed = get_index_changed_files(conn, all_files, self.root)
             # Discover-phase wallclock covers ls-files + change detection.
-            self._record_phase("discover", time.perf_counter() - t_discover)
+            self._phase_timer.record_phase("discover", time.perf_counter() - t_discover)
 
             total_changed = len(added) + len(modified) + len(removed)
             if total_changed == 0:
@@ -2291,7 +2284,7 @@ class Indexer:
 
             # 3-6. Parse, extract, store
             files_to_process = added + modified
-            self._begin_phase(1, f"Parsing & extracting symbols ({len(files_to_process)} files)...")
+            self._phase_timer.begin_phase(1, f"Parsing & extracting symbols ({len(files_to_process)} files)...")
             all_symbol_rows, all_references, file_id_by_path = self._process_files(
                 conn,
                 files_to_process,
@@ -2325,7 +2318,7 @@ class Indexer:
                     verbose,
                 )
 
-            self._begin_phase(2, "Resolving references...")
+            self._phase_timer.begin_phase(2, "Resolving references...")
             self._resolve_and_store_edges(conn, all_references, all_symbol_rows, file_id_by_path)
             self._run_post_resolvers(conn)
             if not light:
@@ -2339,7 +2332,7 @@ class Indexer:
                 self._finalize_light_reindex(conn, files_to_process)
             self._restore_or_relink_annotations(conn, force, saved_annotations)
             # W408: close the last open phase before any post-phase bookkeeping.
-            self._close_open_phase()
+            self._phase_timer.close_open_phase()
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
             self._record_manifest(conn, force=force, include_excluded=include_excluded)
