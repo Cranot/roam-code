@@ -29,7 +29,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.graph.stats import gini_coefficient as compute_gini
 from roam.output.formatter import json_envelope, to_json
 
@@ -557,14 +557,25 @@ def _get_commits_from_db(conn, since_days: int) -> list[dict]:
     project_root = find_project_root()
     full_messages = _fetch_full_messages(hashes, project_root)
 
+    # Batch-load file changes for all commits to avoid N+1 queries.
+    commit_ids = [cr["id"] for cr in commit_rows]
+    file_rows = batched_in(
+        conn,
+        "SELECT commit_id, path, lines_added, lines_removed FROM git_file_changes WHERE commit_id IN ({ph})",
+        commit_ids,
+    )
+    files_by_commit: dict[int, list[dict]] = {}
+    for fr in file_rows:
+        files_by_commit.setdefault(fr["commit_id"], []).append(
+            {
+                "path": fr["path"],
+                "lines_added": fr["lines_added"] or 0,
+                "lines_removed": fr["lines_removed"] or 0,
+            }
+        )
+
     commits = []
     for cr in commit_rows:
-        cid = cr["id"]
-        files = conn.execute(
-            "SELECT path, lines_added, lines_removed FROM git_file_changes WHERE commit_id = ?",
-            (cid,),
-        ).fetchall()
-
         # Use full message if available, fall back to DB subject
         message = full_messages.get(cr["hash"], cr["message"] or "")
 
@@ -574,14 +585,7 @@ def _get_commits_from_db(conn, since_days: int) -> list[dict]:
                 "author": cr["author"],
                 "timestamp": cr["timestamp"],
                 "message": message,
-                "files": [
-                    {
-                        "path": f["path"],
-                        "lines_added": f["lines_added"] or 0,
-                        "lines_removed": f["lines_removed"] or 0,
-                    }
-                    for f in files
-                ],
+                "files": files_by_commit.get(cr["id"], []),
             }
         )
 
