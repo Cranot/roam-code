@@ -61,7 +61,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 from roam.atomic_io import atomic_write_json
 from roam.leases.store import _is_wall_clock_expired_at
@@ -411,7 +411,7 @@ def _permit_from_dict(raw: dict) -> Optional[PermitRecord]:
 
 def _permit_record_or_warn(
     child: Path,
-    emit: Callable[[str], None],
+    read_context: _PermitReadContext,
 ) -> Optional[PermitRecord]:
     """Parse one permit file; emit closed-enum warnings and return None on failure.
 
@@ -424,7 +424,10 @@ def _permit_record_or_warn(
     try:
         raw = json.loads(child.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        emit(f"permit_corrupt:{child.name}:{type(exc).__name__}")
+        _append_permit_load_warning(
+            read_context,
+            f"permit_corrupt:{child.name}:{type(exc).__name__}",
+        )
         return None
     if not isinstance(raw, dict):
         return None
@@ -463,20 +466,27 @@ def list_permits(
         the failure mode (``OSError`` / ``JSONDecodeError``). The
         loop ``continue``s past this file (best-effort iteration).
     """
-    read_context = _PermitReadContext(repo_root, warnings_out)
+    return _list_permits_from_context(_PermitReadContext(repo_root, warnings_out))
 
-    def _emit(kind: str) -> None:
-        _append_permit_load_warning(read_context, kind)
 
+def _list_permits_from_context(read_context: _PermitReadContext) -> list[PermitRecord]:
+    """Enumerate parseable permits for an already-normalised read context."""
     root = permits_root(read_context.repo_root)
     if not root.exists():
         return []
     try:
         children = sorted(root.iterdir())
     except OSError as exc:
-        _emit(f"permits_root_unreadable:{type(exc).__name__}:{exc}")
+        _append_permit_load_warning(
+            read_context,
+            f"permits_root_unreadable:{type(exc).__name__}:{exc}",
+        )
         return []
-    out = [record for child in children if (record := _permit_record_or_warn(child, _emit)) is not None]
+    out = [
+        record
+        for child in children
+        if (record := _permit_record_or_warn(child, read_context)) is not None
+    ]
     out.sort(key=lambda r: r.issued_at, reverse=True)
     return out
 
