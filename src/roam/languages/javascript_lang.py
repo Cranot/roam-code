@@ -506,6 +506,15 @@ class JavaScriptExtractor(LanguageExtractor):
                 )
             )
 
+    _DESTRUCTURED_LOCAL_NAME_TYPES = frozenset(
+        (
+            "shorthand_property_identifier_pattern",
+            "shorthand_property_identifier",
+            "identifier",
+        )
+    )
+    _DESTRUCTURED_CONTAINER_TYPES = frozenset(("object_pattern", "array_pattern"))
+
     def _collect_pattern_names(self, pattern_node, source, memo=None):
         """Collect all identifier names from a destructuring pattern."""
         if memo is None:
@@ -517,39 +526,50 @@ class JavaScriptExtractor(LanguageExtractor):
 
         names = []
         for child in pattern_node.children:
-            if child.type in (
-                "shorthand_property_identifier_pattern",
-                "shorthand_property_identifier",
-                "identifier",
-            ):
-                names.append(self.node_text(child, source))
-            elif child.type == "pair_pattern":
-                # { key: localVar } — extract the local binding
-                value = child.child_by_field_name("value")
-                if value:
-                    if value.type == "identifier":
-                        names.append(self.node_text(value, source))
-                    elif value.type in ("object_pattern", "array_pattern"):
-                        names.extend(self._collect_pattern_names(value, source, memo))
-            elif child.type == "rest_pattern":
-                for sub in child.children:
-                    if sub.type == "identifier":
-                        names.append(self.node_text(sub, source))
-            elif child.type == "assignment_pattern":
-                # { x = defaultValue } — extract x
-                left = child.child_by_field_name("left")
-                if left:
-                    if left.type == "identifier":
-                        names.append(self.node_text(left, source))
-                    elif left.type in (
-                        "shorthand_property_identifier_pattern",
-                        "shorthand_property_identifier",
-                    ):
-                        names.append(self.node_text(left, source))
-            elif child.type in ("object_pattern", "array_pattern"):
-                names.extend(self._collect_pattern_names(child, source, memo))
+            names.extend(self._declared_names_from_destructuring_child(child, source, memo))
         memo[key] = tuple(names)
         return names
+
+    def _declared_names_from_destructuring_child(self, child, source, memo):
+        """Return only local bindings, not object keys, from one pattern child."""
+        if child.type in self._DESTRUCTURED_LOCAL_NAME_TYPES:
+            return [self.node_text(child, source)]
+
+        if child.type == "pair_pattern":
+            return self._declared_names_from_property_binding_value(child, source, memo)
+
+        if child.type == "rest_pattern":
+            return [
+                self.node_text(sub, source)
+                for sub in child.children
+                if sub.type == "identifier"
+            ]
+
+        if child.type == "assignment_pattern":
+            return self._declared_names_from_default_binding_left(child, source)
+
+        if child.type in self._DESTRUCTURED_CONTAINER_TYPES:
+            return self._collect_pattern_names(child, source, memo)
+
+        return []
+
+    def _declared_names_from_property_binding_value(self, child, source, memo):
+        value = child.child_by_field_name("value")
+        if value is None:
+            return []
+        if value.type == "identifier":
+            return [self.node_text(value, source)]
+        if value.type in self._DESTRUCTURED_CONTAINER_TYPES:
+            return self._collect_pattern_names(value, source, memo)
+        return []
+
+    def _declared_names_from_default_binding_left(self, child, source):
+        left = child.child_by_field_name("left")
+        if left is None:
+            return []
+        if left.type in self._DESTRUCTURED_LOCAL_NAME_TYPES:
+            return [self.node_text(left, source)]
+        return []
 
     # ---- Reference extraction ----
 
