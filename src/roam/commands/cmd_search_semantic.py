@@ -73,13 +73,12 @@ def _compute_embedding_search(conn, query, *, top_k, semantic_backend, warnings_
     retries with ``_cosine_rank_tfidf`` so an ONNX-runtime fault or
     embedding-table corruption still emits lexical results.
     """
-    from roam.search.index_embeddings import search_stored
+    from roam.search.index_embeddings import SearchOptions, search_stored
 
     return search_stored(
         conn,
         query,
-        top_k=top_k,
-        semantic_backend=semantic_backend,
+        SearchOptions(top_k=top_k, semantic_backend=semantic_backend),
         warnings_out=warnings_out,
     )
 

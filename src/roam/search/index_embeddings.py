@@ -9,6 +9,7 @@ import re
 import sqlite3
 from collections import Counter
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any, Callable, TypeAlias
 
 from roam.observability import log_swallowed
@@ -20,7 +21,7 @@ from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarit
 # underscore is preserved to avoid churning the 4 internal call-sites,
 # but ``__all__`` declares it intentionally exported so private-access
 # lints don't flag the cross-module import.
-__all__ = ["_camel_split", "WarningsOut"]
+__all__ = ["_camel_split", "SearchOptions", "WarningsOut"]
 
 # W605: Pattern-2 silent-fallback warnings accumulator type. Mirrors the
 # substrate-floor type contract in ``roam.db.connection`` (W603) and
@@ -34,6 +35,25 @@ __all__ = ["_camel_split", "WarningsOut"]
 # ``^from roam`` returning empty), so the duplication is a cost choice
 # not a false-cycle hedge.
 WarningsOut: TypeAlias = list[str] | None
+
+
+@dataclass(frozen=True)
+class SearchOptions:
+    """Configuration knobs for :func:`search_stored`.
+
+    Bundling the optional search configuration into one object keeps
+    ``search_stored``'s parameter list under the long-params threshold
+    (``roam.catalog.smells.detect_long_params``). Field defaults mirror
+    the legacy per-parameter defaults, so ``SearchOptions()`` reproduces
+    the old all-defaults behaviour exactly.
+    """
+
+    top_k: int = 10
+    include_packs: bool = True
+    packs: list[str] | None = None
+    semantic_backend: str = "auto"
+    project_root: object | None = None
+
 
 # ---------------------------------------------------------------------------
 # camelCase preprocessing for FTS5 tokenizer
@@ -550,11 +570,7 @@ def _repo_languages(conn) -> set[str]:
 def search_stored(
     conn,
     query: str,
-    top_k: int = 10,
-    include_packs: bool = True,
-    packs: list[str] | None = None,
-    semantic_backend: str = "auto",
-    project_root=None,
+    options: SearchOptions | None = None,
     *,
     warnings_out: WarningsOut = None,
 ) -> list[dict]:
@@ -568,9 +584,20 @@ def search_stored(
     loss. ``warnings_out=None`` preserves the legacy silent-empty
     behaviour for ~3 callers (cmd_search_semantic, cmd_retrieve,
     retrieve.seeds) that haven't opted in yet.
+
+    Configuration is bundled in ``options`` (:class:`SearchOptions`) so
+    the signature stays under the long-params threshold; pass
+    ``options=None`` (the default) for the legacy all-defaults behaviour.
     """
     if not query or not query.strip():
         return []
+
+    opts = options if options is not None else SearchOptions()
+    top_k = opts.top_k
+    include_packs = opts.include_packs
+    packs = opts.packs
+    semantic_backend = opts.semantic_backend
+    project_root = opts.project_root
 
     candidate_k = max(top_k * _HYBRID_CANDIDATE_MULTIPLIER, _HYBRID_MIN_CANDIDATES)
     backend = (semantic_backend or "auto").strip().lower()

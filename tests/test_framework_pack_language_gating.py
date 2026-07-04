@@ -70,7 +70,7 @@ def test_search_stored_gates_packs_to_repo_language(monkeypatch):
     monkeypatch.setattr(ie, "search_pack_symbols", _fake_pack)
 
     conn = _conn_with_languages(["typescript"])
-    ie.search_stored(conn, "test coverage", include_packs=True, packs=None)
+    ie.search_stored(conn, "test coverage", ie.SearchOptions(include_packs=True, packs=None))
 
     assert captured, "pack search should have run for a known language"
     eff = set(captured["packs"])
@@ -88,7 +88,7 @@ def test_search_stored_skips_packs_when_no_eligible(monkeypatch):
     monkeypatch.setattr(ie, "search_pack_symbols", _fake_pack)
 
     conn = _conn_with_languages(["go"])
-    ie.search_stored(conn, "anything", include_packs=True, packs=None)
+    ie.search_stored(conn, "anything", ie.SearchOptions(include_packs=True, packs=None))
 
     assert called["n"] == 0, "no language-appropriate packs -> pack search skipped"
 
@@ -104,6 +104,6 @@ def test_search_stored_respects_explicit_packs(monkeypatch):
 
     conn = _conn_with_languages(["typescript"])
     # An explicit packs list must NOT be overridden by language gating.
-    ie.search_stored(conn, "q", include_packs=True, packs=["django"])
+    ie.search_stored(conn, "q", ie.SearchOptions(include_packs=True, packs=["django"]))
 
     assert captured["packs"] == ["django"]
