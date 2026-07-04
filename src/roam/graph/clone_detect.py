@@ -904,6 +904,14 @@ def _resolve_symbol_id(conn, file_path: str, func_name: str, line_start: int) ->
         return int(row[0]) if row is not None else None
     except sqlite3.OperationalError:
         # Pre-W89 schema or symbols table absent — fall back to NULL.
+        # (Pattern-2: no silent fallback.) Debug, not warning: a missing
+        # ``symbols`` table is the expected pre-W89 state, not an error,
+        # so this would fire on every persist for old DBs.
+        log.debug(
+            "symbols table unavailable; clone-finding subject lookup for "
+            "%s:%s falls back to NULL subject_id",
+            file_path, func_name,
+        )
         return None
 
 
