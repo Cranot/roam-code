@@ -150,16 +150,17 @@ def print_mode_comparison(lookup: dict):
     print("  MODE IMPACT — Health score delta (roam mode - vanilla)")
     print(f"{'=' * 80}")
 
-    header = f"{'Agent':<14}"
+    header_parts = [f"{'Agent':<14}"]
     for task in TASKS:
-        header += f" {task[:10]:>12}"
-    header += f" {'AVG':>8}"
+        header_parts.append(f" {task[:10]:>12}")
+    header_parts.append(f" {'AVG':>8}")
+    header = "".join(header_parts)
     print(header)
     print("-" * len(header))
 
     for agent in AGENTS:
         for mode in ["roam-cli", "roam-mcp"]:
-            row = f"{agent:<14}"
+            row_parts = [f"{agent:<14}"]
             deltas = []
             for task in TASKS:
                 vanilla = lookup.get((agent, "vanilla", task), {}).get("health")
@@ -168,15 +169,16 @@ def print_mode_comparison(lookup: dict):
                     delta = enhanced - vanilla
                     deltas.append(delta)
                     sign = "+" if delta > 0 else ""
-                    row += f" {sign}{delta:>10}"
+                    row_parts.append(f" {sign}{delta:>10}")
                 else:
-                    row += f" {'N/A':>12}"
+                    row_parts.append(f" {'N/A':>12}")
             avg_delta = sum(deltas) / len(deltas) if deltas else None
             if avg_delta is not None:
                 sign = "+" if avg_delta > 0 else ""
-                row += f" {sign}{avg_delta:>6.1f}"
+                row_parts.append(f" {sign}{avg_delta:>6.1f}")
             else:
-                row += f" {'N/A':>8}"
+                row_parts.append(f" {'N/A':>8}")
+            row = "".join(row_parts)
             print(f"{row}  ({mode})")
 
 
