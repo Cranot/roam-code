@@ -82,9 +82,9 @@ def print_task_table(task: str, lookup: dict):
     for agent in AGENTS:
         for mode in MODES:
             key = (agent, mode, task)
-            scores = lookup.get(key)
-            if not scores:
+            if key not in lookup:
                 continue
+            scores = lookup[key]
 
             row_parts = [f"{agent:<14} {mode:<10}"]
             for field, _, fmt, _ in SCORE_COLUMNS:
