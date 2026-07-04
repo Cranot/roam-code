@@ -168,6 +168,20 @@ def _enrich_with_graph(
         return None
 
 
+def _preserve_snapshot_availability_with_optional_structure(
+    conn: sqlite3.Connection,
+    id_to_key: dict[int, str],
+) -> tuple[list[list[str]], dict[str, int]]:
+    """Return graph enrichments without making snapshots depend on NetworkX."""
+    nx = _try_import_networkx()
+    if nx is None:
+        return [], {}
+
+    cycles = _enrich_with_graph(conn, id_to_key, _extract_cycles, nx) or []
+    layers = _enrich_with_graph(conn, id_to_key, _extract_layers, nx) or {}
+    return cycles, layers
+
+
 def snapshot_graph(conn: sqlite3.Connection) -> dict:
     """Snapshot the current DB graph into a portable, JSON-serializable dict.
 
@@ -201,12 +215,9 @@ def snapshot_graph(conn: sqlite3.Connection) -> dict:
     ).fetchall()
     edges = _collect_edges(edge_rows, id_to_key, symbols)
 
-    nx = _try_import_networkx()
-    cycles: list[list[str]] = []
-    layers: dict[str, int] = {}
-    if nx is not None:
-        cycles = _enrich_with_graph(conn, id_to_key, _extract_cycles, nx) or []
-        layers = _enrich_with_graph(conn, id_to_key, _extract_layers, nx) or {}
+    cycles, layers = _preserve_snapshot_availability_with_optional_structure(
+        conn, id_to_key
+    )
 
     return {
         "symbols": symbols,
