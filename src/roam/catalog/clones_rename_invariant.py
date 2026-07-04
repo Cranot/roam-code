@@ -229,7 +229,12 @@ def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
 
     try:
         source = path.read_bytes()
-    except OSError:
+    except OSError as exc:
+        # Isolated clone scan is best-effort: unreadable files are skipped.
+        print(
+            f"[rename-invariant-clones] could not read {path}: {exc}",
+            file=sys.stderr,
+        )
         return None
 
     try:
