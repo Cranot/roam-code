@@ -1052,6 +1052,42 @@ def _precompute_standard_targets_for_precise_reuse(
     return hoisted_standard_targets
 
 
+_IMPORT_PATH_EXTENSIONS = (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx")
+
+
+def _strip_extension_for_module_identity(path: str) -> str:
+    """Compare imports by module identity, not by source-file suffix."""
+    for ext in _IMPORT_PATH_EXTENSIONS:
+        if path.endswith(ext):
+            return path[: -len(ext)]
+    return path
+
+
+def _normalize_import_path_for_context_free_matching(import_path: str) -> str:
+    """Preserve suffix semantics when the source file's directory is unknown."""
+    normalized = import_path.replace("\\", "/")
+    if normalized.startswith("@/"):
+        normalized = "src/" + normalized[2:]
+    elif normalized.startswith("./"):
+        normalized = normalized[2:]
+    else:
+        while normalized.startswith("../"):
+            normalized = normalized[3:]
+    return _strip_extension_for_module_identity(normalized)
+
+
+def _candidate_preserves_import_path_identity(candidate_path: str, normalized_import_path: str) -> bool:
+    """Accept direct-file and barrel-export matches without widening to name-only."""
+    fp = candidate_path.replace("\\", "/")
+    fp_no_ext = _strip_extension_for_module_identity(fp)
+    return (
+        fp_no_ext.endswith("/" + normalized_import_path)
+        or fp_no_ext == normalized_import_path
+        or fp.startswith(normalized_import_path + "/")
+        or ("/" + normalized_import_path + "/") in fp
+    )
+
+
 def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     """Filter candidates whose file_path matches an import path string.
 
@@ -1065,44 +1101,12 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     if not import_path:
         return []
 
-    # Normalize import path: strip prefix, normalize separators
-    normalized = import_path.replace("\\", "/")
-    if normalized.startswith("@/"):
-        normalized = "src/" + normalized[2:]
-    elif normalized.startswith("./"):
-        normalized = normalized[2:]
-    elif normalized.startswith("../"):
-        # Preserve suffix semantics for relative imports without requiring
-        # source-file context. "../src/utils/case" should match
-        # "src/utils/case.ts", and "../utils/case" should match any
-        # ".../utils/case.ts" candidate.
-        while normalized.startswith("../"):
-            normalized = normalized[3:]
-
-    # Strip trailing extension from normalized path if present
-    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx"):
-        if normalized.endswith(ext):
-            normalized = normalized[: -len(ext)]
-            break
-
-    matched = []
-    for cand in candidates:
-        fp = cand.get("file_path", "").replace("\\", "/")
-        # Strip file extension from candidate
-        fp_no_ext = fp
-        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx"):
-            if fp_no_ext.endswith(ext):
-                fp_no_ext = fp_no_ext[: -len(ext)]
-                break
-
-        # Direct match: candidate path ends with normalized import path
-        if fp_no_ext.endswith("/" + normalized) or fp_no_ext == normalized:
-            matched.append(cand)
-        # Barrel export: import path is a directory prefix of the candidate
-        elif fp.startswith(normalized + "/") or ("/" + normalized + "/") in fp:
-            matched.append(cand)
-
-    return matched
+    normalized = _normalize_import_path_for_context_free_matching(import_path)
+    return [
+        cand
+        for cand in candidates
+        if _candidate_preserves_import_path_identity(cand.get("file_path", ""), normalized)
+    ]
 
 
 def _bm_pick_class_constructor(candidates: list[dict], source_file: str, name: str, ref_kind: str) -> dict | None:
