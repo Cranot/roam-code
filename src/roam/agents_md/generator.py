@@ -170,6 +170,15 @@ class AgentsMdOptions:
 
 
 @dataclass(frozen=True)
+class _AgentsMdRequest:
+    """Resolved inputs for the public ``generate_agents_md`` wrapper."""
+
+    repo_root: Path
+    conn: Any
+    options: AgentsMdOptions
+
+
+@dataclass(frozen=True)
 class _CurrentModePolicyState:
     """Generator-owned mode-policy view for the Current mode section."""
 
@@ -1013,8 +1022,8 @@ def _populate_capability_and_summary(
 
 
 def generate_agents_md(
-    repo_root: Path,
-    conn,
+    repo_root: Path | str,
+    conn: Any,
     *,
     options: AgentsMdOptions | None = None,
     **legacy_options: Any,
@@ -1048,14 +1057,29 @@ def generate_agents_md(
     AgentsMd
         Structured view; pass to :func:`render_agents_markdown` to get a string.
     """
-    opts = _agents_md_options(options, legacy_options)
+    if not isinstance(repo_root, Path):
+        repo_root = Path(repo_root)
+    if conn is None:
+        raise TypeError("generate_agents_md() missing required argument: 'conn'")
+
+    request = _AgentsMdRequest(
+        repo_root=repo_root,
+        conn=conn,
+        options=_agents_md_options(options, legacy_options),
+    )
     am = AgentsMd()
     am.generated_at = _generated_at_timestamp()
     sources_consulted: dict[str, str] = {}
 
-    _populate_index_sections(am, conn, opts, sources_consulted)
-    _populate_agent_os_sections(am, repo_root, conn, opts, sources_consulted)
-    _populate_capability_and_summary(am, repo_root, sources_consulted)
+    _populate_index_sections(am, request.conn, request.options, sources_consulted)
+    _populate_agent_os_sections(
+        am,
+        request.repo_root,
+        request.conn,
+        request.options,
+        sources_consulted,
+    )
+    _populate_capability_and_summary(am, request.repo_root, sources_consulted)
     am.sources = sources_consulted
     return am
 
