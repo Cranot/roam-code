@@ -205,6 +205,40 @@ class _CheckVerdictInputs:
     unparseable: bool
 
 
+@dataclass(frozen=True)
+class _CheckVerdictCounts:
+    """Derived counts for constitution check verdict synthesis."""
+
+    missing_sources: int
+    unparseable: int
+    unknown_commands: int
+    deprecated_commands: int
+    mode_issues: int
+
+    @classmethod
+    def from_inputs(cls, inputs: _CheckVerdictInputs) -> _CheckVerdictCounts:
+        return cls(
+            missing_sources=sum(1 for source in inputs.sources if not source.exists),
+            unparseable=1 if inputs.unparseable else 0,
+            unknown_commands=sum(
+                1 for command in inputs.commands if command.state == "unknown_command"
+            ),
+            deprecated_commands=sum(
+                1 for command in inputs.commands if command.state == "deprecated_command"
+            ),
+            mode_issues=len(inputs.mode_issues),
+        )
+
+    @property
+    def issue_total(self) -> int:
+        return (
+            self.missing_sources
+            + self.unparseable
+            + self.unknown_commands
+            + self.mode_issues
+        )
+
+
 @dataclass
 class ApplyResult:
     """Single (gate-command, exit-code, verdict) result."""
@@ -993,13 +1027,7 @@ def _check_mode_allow_lists(
 
 def _build_check_verdict(inputs: _CheckVerdictInputs) -> tuple[bool, str, str]:
     """Synthesize the aggregate state, ok flag, and human verdict."""
-    n_missing_sources = sum(1 for s in inputs.sources if not s.exists)
-    n_unparseable = 1 if inputs.unparseable else 0
-    n_unknown_cmds = sum(1 for c in inputs.commands if c.state == "unknown_command")
-    n_deprecated_cmds = sum(1 for c in inputs.commands if c.state == "deprecated_command")
-    n_mode_issues = len(inputs.mode_issues)
-
-    issues_total = n_missing_sources + n_unparseable + n_unknown_cmds + n_mode_issues
+    counts = _CheckVerdictCounts.from_inputs(inputs)
 
     if inputs.unparseable:
         return (
@@ -1007,7 +1035,7 @@ def _build_check_verdict(inputs: _CheckVerdictInputs) -> tuple[bool, str, str]:
             "missing",
             "constitution is unparseable -- re-run `roam constitution init --force`",
         )
-    if issues_total == 0 and n_deprecated_cmds == 0:
+    if counts.issue_total == 0 and counts.deprecated_commands == 0:
         verdict = (
             f"constitution is healthy "
             f"({len(inputs.sources)} source(s), "
@@ -1017,14 +1045,14 @@ def _build_check_verdict(inputs: _CheckVerdictInputs) -> tuple[bool, str, str]:
         return True, "ok", verdict
 
     bits: list[str] = []
-    if n_missing_sources:
-        bits.append(f"{n_missing_sources} missing source(s)")
-    if n_unknown_cmds:
-        bits.append(f"{n_unknown_cmds} unknown command(s)")
-    if n_deprecated_cmds:
-        bits.append(f"{n_deprecated_cmds} deprecated command(s)")
-    if n_mode_issues:
-        bits.append(f"{n_mode_issues} mode allow-list issue(s)")
+    if counts.missing_sources:
+        bits.append(f"{counts.missing_sources} missing source(s)")
+    if counts.unknown_commands:
+        bits.append(f"{counts.unknown_commands} unknown command(s)")
+    if counts.deprecated_commands:
+        bits.append(f"{counts.deprecated_commands} deprecated command(s)")
+    if counts.mode_issues:
+        bits.append(f"{counts.mode_issues} mode allow-list issue(s)")
     return False, "partial", "constitution issues: " + ", ".join(bits)
 
 
