@@ -514,7 +514,7 @@ def main() -> int:
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             print(f"WARN: cannot read {path.relative_to(REPO_ROOT)}: {e}")
             continue
         original = text
