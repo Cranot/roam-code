@@ -1484,6 +1484,38 @@ _RUN_LEDGER_AUTHORITY_FIELDS: tuple[tuple[str, str], ...] = (
     ("rule_id", "policy_rule"),
 )
 
+# Fields grouped by the authority kind they corroborate, used by the
+# shared event-harvest helper so the authority collector and the id
+# collector apply the same corroboration filter.
+_RUN_LEDGER_AUTHORITY_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (kind, tuple(field_name for field_name, k in _RUN_LEDGER_AUTHORITY_FIELDS if k == kind))
+    for kind in dict.fromkeys(k for _, k in _RUN_LEDGER_AUTHORITY_FIELDS)
+)
+
+
+def _extract_corroborated_event_values(
+    events: tuple[Mapping[str, Any], ...],
+    field_groups: tuple[tuple[tuple[str, ...], set[Any], str | None], ...],
+) -> None:
+    """Add stripped, non-empty string values from verified events to ``field_groups``.
+
+    Corroboration only admits values that survive three filters:
+    the event must be a mapping, the field value must be a string,
+    and it must be non-empty after stripping. Centralising this rule
+    keeps the authority and id collectors from drifting apart.
+    """
+    for ev in events:
+        if not isinstance(ev, Mapping):
+            continue
+        for fields, accumulator, pair_key in field_groups:
+            for f in fields:
+                v = ev.get(f)
+                if isinstance(v, str) and v.strip():
+                    if pair_key is None:
+                        accumulator.add(v.strip())
+                    else:
+                        accumulator.add((pair_key, v.strip()))
+
 
 def _iter_hmac_verified_runs_for_corroboration(
     repo_root: Path,
@@ -1580,6 +1612,9 @@ def _collect_corroborated_authorities_from_runs(
     into ``warnings``.
     """
     pairs: set[tuple[str, str]] = set()
+    field_groups = tuple(
+        (fields, pairs, kind) for kind, fields in _RUN_LEDGER_AUTHORITY_FIELD_GROUPS
+    )
     for meta, events in _iter_hmac_verified_runs_for_corroboration(
         repo_root,
         warnings,
@@ -1588,13 +1623,7 @@ def _collect_corroborated_authorities_from_runs(
         meta_mode = getattr(meta, "mode", None)
         if isinstance(meta_mode, str) and meta_mode.strip():
             pairs.add(("mode", meta_mode.strip()))
-        for ev in events:
-            if not isinstance(ev, Mapping):
-                continue
-            for field_name, kind in _RUN_LEDGER_AUTHORITY_FIELDS:
-                v = ev.get(field_name)
-                if isinstance(v, str) and v.strip():
-                    pairs.add((kind, v.strip()))
+        _extract_corroborated_event_values(events, field_groups)
 
     return frozenset(pairs)
 
@@ -2285,6 +2314,10 @@ def _collect_corroborated_ids_from_runs(
     """
     tool_ids: set[str] = set()
     actor_ids: set[str] = set()
+    field_groups = (
+        (_RUN_LEDGER_TOOL_FIELDS, tool_ids, None),
+        (_RUN_LEDGER_ACTOR_FIELDS, actor_ids, None),
+    )
     for meta, events in _iter_hmac_verified_runs_for_corroboration(
         repo_root,
         warnings,
@@ -2293,17 +2326,7 @@ def _collect_corroborated_ids_from_runs(
         meta_agent = getattr(meta, "agent", None)
         if isinstance(meta_agent, str) and meta_agent.strip():
             actor_ids.add(meta_agent.strip())
-        for ev in events:
-            if not isinstance(ev, Mapping):
-                continue
-            for f in _RUN_LEDGER_TOOL_FIELDS:
-                v = ev.get(f)
-                if isinstance(v, str) and v.strip():
-                    tool_ids.add(v.strip())
-            for f in _RUN_LEDGER_ACTOR_FIELDS:
-                v = ev.get(f)
-                if isinstance(v, str) and v.strip():
-                    actor_ids.add(v.strip())
+        _extract_corroborated_event_values(events, field_groups)
 
     return frozenset(tool_ids), frozenset(actor_ids)
 
