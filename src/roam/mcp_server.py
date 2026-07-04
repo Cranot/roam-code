@@ -7206,12 +7206,236 @@ def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None
     return cur, None
 
 
-@_tool(
+def _fetch_handle_section(
+    *,
+    handle: str,
+    payload: object,
+    section: str,
+    top_keys: list[str],
+    total_size: int,
+) -> dict:
+    if not isinstance(payload, dict):
+        return _structured_error(
+            {
+                "error": f"section= requires the stored payload to be a JSON object (got {type(payload).__name__})",
+                "error_code": "USAGE_ERROR",
+                "hint": "use jq= for non-object payloads, or omit section= to get the byte-sliced default.",
+                "command": "roam_fetch_handle",
+            }
+        )
+    if section not in payload:
+        return _structured_error(
+            {
+                "error": f"section {section!r} not found in payload",
+                "error_code": "NO_RESULTS",
+                "hint": f"available top-level keys: {top_keys[:20]!r}",
+                "command": "roam_fetch_handle",
+                "total_keys": top_keys,
+            }
+        )
+    return {
+        "command": "roam_fetch_handle",
+        "summary": {
+            "verdict": f"section {section!r} of handle {handle}",
+            "mode": "section",
+            "section": section,
+            "total_size": total_size,
+            "total_keys": top_keys,
+        },
+        "handle": handle,
+        "section": section,
+        "total_keys": top_keys,
+        "data": payload[section],
+    }
+
+
+def _fetch_handle_jq(
+    *,
+    handle: str,
+    payload: object,
+    jq: str,
+    top_keys: list[str],
+    total_size: int,
+) -> dict:
+    result, err = _apply_jq_projection(payload, jq)
+    if err is not None:
+        return _structured_error(
+            {
+                "error": err,
+                "error_code": "USAGE_ERROR",
+                "hint": (
+                    "supported subset: '.field', '.field.sub', '[N]', '[start:end]'. "
+                    "Install the optional 'jq' Python package for full jq language support."
+                ),
+                "command": "roam_fetch_handle",
+                "jq": jq,
+            }
+        )
+    return {
+        "command": "roam_fetch_handle",
+        "summary": {
+            "verdict": f"jq {jq!r} on handle {handle}",
+            "mode": "jq",
+            "jq": jq,
+            "total_size": total_size,
+            "total_keys": top_keys,
+        },
+        "handle": handle,
+        "jq": jq,
+        "total_keys": top_keys,
+        "data": result,
+    }
+
+
+def _decode_fetch_handle_slice(slice_bytes: bytes) -> str:
+    try:
+        return slice_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return slice_bytes.decode("utf-8", errors="replace")
+
+
+def _parse_fetch_handle_full_slice(slice_text: str) -> object | None:
+    try:
+        return json.loads(slice_text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _fetch_handle_byte_slice(
+    *,
+    handle: str,
+    raw_bytes: bytes,
+    offset: int,
+    limit: int,
+    top_keys: list[str],
+    total_size: int,
+) -> dict:
+    if offset < 0:
+        return _structured_error(
+            {
+                "error": f"offset must be >= 0 (got {offset})",
+                "error_code": "USAGE_ERROR",
+                "hint": "use offset=0 for the start of the payload; chain calls with next_offset to page through.",
+                "command": "roam_fetch_handle",
+            }
+        )
+    if limit < 0:
+        return _structured_error(
+            {
+                "error": f"limit must be >= 0 (got {limit})",
+                "error_code": "USAGE_ERROR",
+                "hint": "use limit=0 for the safe default (20000 bytes), or a positive int for a custom chunk.",
+                "command": "roam_fetch_handle",
+            }
+        )
+
+    effective_limit = _FETCH_HANDLE_DEFAULT_LIMIT if limit == 0 else min(int(limit), _FETCH_HANDLE_MAX_LIMIT)
+    end = min(offset + effective_limit, total_size)
+    slice_bytes = raw_bytes[offset:end]
+    has_more = end < total_size
+    next_offset = end if has_more else None
+
+    slice_text = _decode_fetch_handle_slice(slice_bytes)
+    parsed_full = _parse_fetch_handle_full_slice(slice_text) if offset == 0 and not has_more else None
+
+    envelope: dict = {
+        "command": "roam_fetch_handle",
+        "summary": {
+            "verdict": (
+                f"bytes [{offset}:{end}] of handle {handle} ({total_size:,} bytes total)"
+                + (" — more available" if has_more else " — full payload returned")
+            ),
+            "mode": "byte_slice",
+            "offset": offset,
+            "limit": effective_limit,
+            "end": end,
+            "total_size": total_size,
+            "has_more": has_more,
+            "next_offset": next_offset,
+            "total_keys": top_keys,
+            "partial_success": has_more,
+        },
+        "handle": handle,
+        "offset": offset,
+        "end": end,
+        "total_size": total_size,
+        "has_more": has_more,
+        "next_offset": next_offset,
+        "total_keys": top_keys,
+        "data": slice_text,
+    }
+    if parsed_full is not None:
+        envelope["parsed"] = parsed_full
+    return envelope
+
+
+def _fetch_handle_request_error(handle: str, section: str, jq: str) -> dict | None:
+    if not handle or not re.fullmatch(r"[0-9a-f]{16}", handle):
+        return _structured_error(
+            {
+                "error": "handle must be a 16-char lowercase hex string",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass the handle from a prior tool response — e.g. 'a1b2c3d4...' (16 chars).",
+                "command": "roam_fetch_handle",
+            }
+        )
+    if section and jq:
+        return _structured_error(
+            {
+                "error": "section and jq are mutually exclusive",
+                "error_code": "USAGE_ERROR",
+                "hint": "pick one retrieval mode: section= picks one top-level key, jq= applies a projection.",
+                "command": "roam_fetch_handle",
+            }
+        )
+    return None
+
+
+def _read_fetch_handle_payload(handle: str) -> tuple[str, object, dict | None]:
+    target = _handle_storage_dir() / f"{handle}.json"
+    if not target.is_file():
+        return (
+            "",
+            None,
+            _structured_error(
+                {
+                    "error": f"handle {handle!r} not found in {target.parent}",
+                    "error_code": "NO_RESULTS",
+                    "hint": (
+                        "the response may have been cleaned up. Re-run the original tool call to regenerate the handle."
+                    ),
+                    "command": "roam_fetch_handle",
+                }
+            ),
+        )
+    try:
+        raw_text = target.read_text(encoding="utf-8")
+        payload = json.loads(raw_text)
+    except (OSError, json.JSONDecodeError) as e:
+        return (
+            "",
+            None,
+            _structured_error(
+                {
+                    "error": f"could not read handle file: {type(e).__name__}: {e}",
+                    "error_code": "PERMISSION_DENIED" if isinstance(e, OSError) else "COMMAND_FAILED",
+                    "hint": "check filesystem permissions on .roam/responses/, then retry.",
+                    "command": "roam_fetch_handle",
+                }
+            ),
+        )
+    return raw_text, payload, None
+
+
+_FETCH_HANDLE_TOOL = _tool(
     name="roam_fetch_handle",
     description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
     version="2.0.0",
     output_schema=_SCHEMA_FETCH_HANDLE,
 )
+
+
+@_FETCH_HANDLE_TOOL
 def fetch_handle(
     handle: str = "",
     offset: int = 0,
@@ -7262,52 +7486,13 @@ def fetch_handle(
     plus pagination metadata, or a structured error if the handle is
     unknown / arguments conflict.
     """
-    import json as _json
-    import re as _re
+    request_error = _fetch_handle_request_error(handle, section, jq)
+    if request_error is not None:
+        return request_error
 
-    if not handle or not _re.fullmatch(r"[0-9a-f]{16}", handle):
-        return _structured_error(
-            {
-                "error": "handle must be a 16-char lowercase hex string",
-                "error_code": "USAGE_ERROR",
-                "hint": "pass the handle from a prior tool response — e.g. 'a1b2c3d4...' (16 chars).",
-                "command": "roam_fetch_handle",
-            }
-        )
-    if section and jq:
-        return _structured_error(
-            {
-                "error": "section and jq are mutually exclusive",
-                "error_code": "USAGE_ERROR",
-                "hint": "pick one retrieval mode: section= picks one top-level key, jq= applies a projection.",
-                "command": "roam_fetch_handle",
-            }
-        )
-
-    target = _handle_storage_dir() / f"{handle}.json"
-    if not target.is_file():
-        return _structured_error(
-            {
-                "error": f"handle {handle!r} not found in {target.parent}",
-                "error_code": "NO_RESULTS",
-                "hint": (
-                    "the response may have been cleaned up. Re-run the original tool call to regenerate the handle."
-                ),
-                "command": "roam_fetch_handle",
-            }
-        )
-    try:
-        raw_text = target.read_text(encoding="utf-8")
-        payload = _json.loads(raw_text)
-    except (OSError, _json.JSONDecodeError) as e:
-        return _structured_error(
-            {
-                "error": f"could not read handle file: {type(e).__name__}: {e}",
-                "error_code": "PERMISSION_DENIED" if isinstance(e, OSError) else "COMMAND_FAILED",
-                "hint": "check filesystem permissions on .roam/responses/, then retry.",
-                "command": "roam_fetch_handle",
-            }
-        )
+    raw_text, payload, read_error = _read_fetch_handle_payload(handle)
+    if read_error is not None:
+        return read_error
 
     raw_bytes = raw_text.encode("utf-8")
     total_size = len(raw_bytes)
@@ -7315,142 +7500,33 @@ def fetch_handle(
 
     # --- section pick ----------------------------------------------------
     if section:
-        if not isinstance(payload, dict):
-            return _structured_error(
-                {
-                    "error": f"section= requires the stored payload to be a JSON object (got {type(payload).__name__})",
-                    "error_code": "USAGE_ERROR",
-                    "hint": "use jq= for non-object payloads, or omit section= to get the byte-sliced default.",
-                    "command": "roam_fetch_handle",
-                }
-            )
-        if section not in payload:
-            return _structured_error(
-                {
-                    "error": f"section {section!r} not found in payload",
-                    "error_code": "NO_RESULTS",
-                    "hint": f"available top-level keys: {top_keys[:20]!r}",
-                    "command": "roam_fetch_handle",
-                    "total_keys": top_keys,
-                }
-            )
-        return {
-            "command": "roam_fetch_handle",
-            "summary": {
-                "verdict": f"section {section!r} of handle {handle}",
-                "mode": "section",
-                "section": section,
-                "total_size": total_size,
-                "total_keys": top_keys,
-            },
-            "handle": handle,
-            "section": section,
-            "total_keys": top_keys,
-            "data": payload[section],
-        }
+        return _fetch_handle_section(
+            handle=handle,
+            payload=payload,
+            section=section,
+            top_keys=top_keys,
+            total_size=total_size,
+        )
 
     # --- jq projection ---------------------------------------------------
     if jq:
-        result, err = _apply_jq_projection(payload, jq)
-        if err is not None:
-            return _structured_error(
-                {
-                    "error": err,
-                    "error_code": "USAGE_ERROR",
-                    "hint": (
-                        "supported subset: '.field', '.field.sub', '[N]', '[start:end]'. "
-                        "Install the optional 'jq' Python package for full jq language support."
-                    ),
-                    "command": "roam_fetch_handle",
-                    "jq": jq,
-                }
-            )
-        return {
-            "command": "roam_fetch_handle",
-            "summary": {
-                "verdict": f"jq {jq!r} on handle {handle}",
-                "mode": "jq",
-                "jq": jq,
-                "total_size": total_size,
-                "total_keys": top_keys,
-            },
-            "handle": handle,
-            "jq": jq,
-            "total_keys": top_keys,
-            "data": result,
-        }
+        return _fetch_handle_jq(
+            handle=handle,
+            payload=payload,
+            jq=jq,
+            top_keys=top_keys,
+            total_size=total_size,
+        )
 
     # --- byte slice (default) -------------------------------------------
-    if offset < 0:
-        return _structured_error(
-            {
-                "error": f"offset must be >= 0 (got {offset})",
-                "error_code": "USAGE_ERROR",
-                "hint": "use offset=0 for the start of the payload; chain calls with next_offset to page through.",
-                "command": "roam_fetch_handle",
-            }
-        )
-    if limit < 0:
-        return _structured_error(
-            {
-                "error": f"limit must be >= 0 (got {limit})",
-                "error_code": "USAGE_ERROR",
-                "hint": "use limit=0 for the safe default (20000 bytes), or a positive int for a custom chunk.",
-                "command": "roam_fetch_handle",
-            }
-        )
-    effective_limit = _FETCH_HANDLE_DEFAULT_LIMIT if limit == 0 else min(int(limit), _FETCH_HANDLE_MAX_LIMIT)
-    end = min(offset + effective_limit, total_size)
-    slice_bytes = raw_bytes[offset:end]
-    has_more = end < total_size
-    next_offset = end if has_more else None
-
-    # Decode defensively — split at the offset boundary may produce
-    # half a UTF-8 codepoint. Use replacement so we never crash on a
-    # partial codepoint at the trailing edge.
-    try:
-        slice_text = slice_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        slice_text = slice_bytes.decode("utf-8", errors="replace")
-
-    # If the slice happens to cover the entire payload, also return the
-    # parsed JSON for convenience (parity with the v1 fetch_handle).
-    parsed_full: object | None = None
-    if offset == 0 and not has_more:
-        try:
-            parsed_full = _json.loads(slice_text)
-        except _json.JSONDecodeError:
-            parsed_full = None
-
-    envelope: dict = {
-        "command": "roam_fetch_handle",
-        "summary": {
-            "verdict": (
-                f"bytes [{offset}:{end}] of handle {handle} ({total_size:,} bytes total)"
-                + (" — more available" if has_more else " — full payload returned")
-            ),
-            "mode": "byte_slice",
-            "offset": offset,
-            "limit": effective_limit,
-            "end": end,
-            "total_size": total_size,
-            "has_more": has_more,
-            "next_offset": next_offset,
-            "total_keys": top_keys,
-            "partial_success": has_more,
-        },
-        "handle": handle,
-        "offset": offset,
-        "end": end,
-        "total_size": total_size,
-        "has_more": has_more,
-        "next_offset": next_offset,
-        "total_keys": top_keys,
-        "data": slice_text,
-    }
-    if parsed_full is not None:
-        envelope["parsed"] = parsed_full
-    return envelope
+    return _fetch_handle_byte_slice(
+        handle=handle,
+        raw_bytes=raw_bytes,
+        offset=offset,
+        limit=limit,
+        top_keys=top_keys,
+        total_size=total_size,
+    )
 
 
 # ---------------------------------------------------------------------------
