@@ -314,76 +314,87 @@ def _parse_git_log(
     if result is None:
         return []
 
+    return _commits_from_git_log_to_preserve_order(result.stdout)
+
+
+parse_git_log = _parse_git_log
+
+
+def _commits_from_git_log_to_preserve_order(stdout: str) -> list[dict]:
+    """Parse stdout while preserving git's commit ordering."""
     commits: list[dict] = []
     current: dict | None = None
 
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         line = line.rstrip()
 
         if line.startswith(_COMMIT_SEP):
-            # Flush previous commit
             if current is not None:
                 commits.append(current)
-
-            parts = line[len(_COMMIT_SEP) :].split("|", 3)
-            if len(parts) < 4:
-                current = None
-                continue
-
-            commit_hash, author, ts_str, message = parts
-            try:
-                timestamp = int(ts_str)
-            except ValueError:
-                timestamp = 0
-
-            current = {
-                "hash": commit_hash,
-                "author": author,
-                "timestamp": timestamp,
-                "message": message,
-                "files": [],
-            }
+            current = _commit_from_header_to_keep_stream_resilient(line)
             continue
 
-        # numstat lines: <added>\t<removed>\t<path>
-        if current is None or not line or line.isspace():
+        if current is None:
             continue
 
-        parts = line.split("\t", 2)
-        if len(parts) != 3:
-            continue
+        change = _file_change_from_numstat_to_keep_partial_history(line)
+        if change is not None:
+            current["files"].append(change)
 
-        added_str, removed_str, path = parts
-
-        # Binary files show "-" for both columns
-        try:
-            lines_added = int(added_str)
-        except ValueError:
-            lines_added = 0
-        try:
-            lines_removed = int(removed_str)
-        except ValueError:
-            lines_removed = 0
-
-        # Normalize path separators and handle renames ("{old => new}"")
-        path = _normalize_numstat_path(path)
-        if path:
-            current["files"].append(
-                {
-                    "path": path,
-                    "lines_added": lines_added,
-                    "lines_removed": lines_removed,
-                }
-            )
-
-    # Flush last commit
     if current is not None:
         commits.append(current)
 
     return commits
 
 
-parse_git_log = _parse_git_log
+def _commit_from_header_to_keep_stream_resilient(line: str) -> dict | None:
+    """Return a commit dict, or None when a bad header should reset state."""
+    parts = line[len(_COMMIT_SEP) :].split("|", 3)
+    if len(parts) < 4:
+        return None
+
+    commit_hash, author, ts_str, message = parts
+    try:
+        timestamp = int(ts_str)
+    except ValueError:
+        timestamp = 0
+
+    return {
+        "hash": commit_hash,
+        "author": author,
+        "timestamp": timestamp,
+        "message": message,
+        "files": [],
+    }
+
+
+def _file_change_from_numstat_to_keep_partial_history(line: str) -> dict | None:
+    """Return a file change, or None so one bad row does not drop the commit."""
+    if not line or line.isspace():
+        return None
+
+    parts = line.split("\t", 2)
+    if len(parts) != 3:
+        return None
+
+    added_str, removed_str, path = parts
+    path = _normalize_numstat_path(path)
+    if not path:
+        return None
+
+    return {
+        "path": path,
+        "lines_added": _parse_numstat_count_to_keep_binary_files(added_str),
+        "lines_removed": _parse_numstat_count_to_keep_binary_files(removed_str),
+    }
+
+
+def _parse_numstat_count_to_keep_binary_files(value: str) -> int:
+    """Parse numstat counts while treating binary-file markers as zero."""
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 def _normalize_numstat_path(raw: str) -> str:
