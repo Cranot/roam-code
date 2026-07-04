@@ -1356,10 +1356,44 @@ def _run_agent_mode(json_mode, cmd_name, token_budget=0):
 # ---------------------------------------------------------------------------
 
 
-def _emit_skeleton_text(directory, by_file, symbols, skeleton_tier):
-    """Emit the --skeleton text-mode listing with parent-aware indentation."""
+def _compute_indent_level(s, parent_ids, parent_set):
+    """Return parent-aware indentation level for a skeleton symbol row."""
+    level = 0
+    pid = s["parent_id"]
+    while pid is not None and pid in parent_set:
+        level += 1
+        pid = parent_ids.get(pid)
+    return level
+
+
+def _format_skeleton_symbol(s, level):
+    """Format one --skeleton text-mode symbol row."""
     from roam.output.formatter import format_signature
 
+    prefix = "    " + "  " * level
+    kind = abbrev_kind(s["kind"])
+    sig = format_signature(s["signature"], max_len=40)
+    line_info = f"L{s['line_start']}"
+    if s["line_end"] and s["line_end"] != s["line_start"]:
+        line_info += f"-{s['line_end']}"
+
+    doc_snippet = ""
+    if s["docstring"]:
+        first_line = s["docstring"].strip().split("\n")[0].strip()
+        if len(first_line) > 50:
+            first_line = first_line[:47] + "..."
+        doc_snippet = f"  {first_line}"
+
+    parts = [f"{kind:<6s}", s["name"]]
+    if sig:
+        parts.append(sig)
+    parts.append(line_info)
+
+    return f"{prefix}{'  '.join(parts)}{doc_snippet}"
+
+
+def _emit_skeleton_text(directory, by_file, symbols, skeleton_tier):
+    """Emit the --skeleton text-mode listing with parent-aware indentation."""
     file_count = len(by_file)
     sym_count = len(symbols)
     verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
@@ -1370,46 +1404,86 @@ def _emit_skeleton_text(directory, by_file, symbols, skeleton_tier):
         click.echo("  Note: substring match on directory path — input was not an exact directory prefix.")
     click.echo()
 
-    # Build parent lookup for indentation
     parent_ids = {s["id"]: s["parent_id"] for s in symbols}
     parent_set = {s["id"] for s in symbols}
 
     for file_path in sorted(by_file.keys()):
-        file_syms = by_file[file_path]
         click.echo(f"  {file_path}")
-
-        for s in file_syms:
-            # Compute indentation level
-            level = 0
-            if s["parent_id"] is not None and s["parent_id"] in parent_set:
-                level = 1
-                pid = s["parent_id"]
-                while pid in parent_ids and parent_ids[pid] is not None and parent_ids[pid] in parent_set:
-                    level += 1
-                    pid = parent_ids[pid]
-
-            prefix = "    " + "  " * level
-            kind = abbrev_kind(s["kind"])
-            sig = format_signature(s["signature"], max_len=40)
-            line_info = f"L{s['line_start']}"
-            if s["line_end"] and s["line_end"] != s["line_start"]:
-                line_info += f"-{s['line_end']}"
-
-            doc_snippet = ""
-            if s["docstring"]:
-                first_line = s["docstring"].strip().split("\n")[0].strip()
-                if len(first_line) > 50:
-                    first_line = first_line[:47] + "..."
-                doc_snippet = f"  {first_line}"
-
-            parts = [f"{kind:<6s}", s["name"]]
-            if sig:
-                parts.append(sig)
-            parts.append(line_info)
-
-            click.echo(f"{prefix}{'  '.join(parts)}{doc_snippet}")
-
+        for s in by_file[file_path]:
+            level = _compute_indent_level(s, parent_ids, parent_set)
+            click.echo(_format_skeleton_symbol(s, level))
         click.echo()
+
+
+def _fetch_skeleton_symbols(conn, directory):
+    """Fetch exported symbols for --skeleton with exact-prefix → substring fallback."""
+    symbols = conn.execute(
+        "SELECT s.*, f.path as file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
+        "ORDER BY f.path, s.line_start",
+        (f"{directory}/%",),
+    ).fetchall()
+    skeleton_tier = "file" if symbols else None
+
+    if not symbols:
+        symbols = conn.execute(
+            "SELECT s.*, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
+            "ORDER BY f.path, s.line_start",
+            (f"%{directory}/%",),
+        ).fetchall()
+        if symbols:
+            skeleton_tier = "file_substring"
+
+    return symbols, skeleton_tier
+
+
+def _build_skeleton_json_result(by_file):
+    """Build the JSON-mode files dict for --skeleton output."""
+    result = {}
+    for fp in sorted(by_file.keys()):
+        result[fp] = [
+            {
+                "name": s["name"],
+                "kind": s["kind"],
+                "signature": s["signature"] or "",
+                "line_start": s["line_start"],
+                "line_end": s["line_end"],
+                "docstring": (s["docstring"] or "").strip().split("\n")[0][:80] if s["docstring"] else "",
+            }
+            for s in by_file[fp]
+        ]
+    return result
+
+
+def _emit_skeleton_unresolved(json_mode, cmd_name, directory, token_budget, disclosure):
+    """Emit the --skeleton unresolved envelope (JSON or text)."""
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": f"no symbols found in {directory}/",
+                        "file_count": 0,
+                        "symbol_count": 0,
+                        "resolution": disclosure["resolution"],
+                        "partial_success": disclosure["partial_success"],
+                    },
+                    budget=token_budget,
+                    directory=directory,
+                    files={},
+                    symbol_count=0,
+                    resolution=disclosure,
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: no symbols found in {directory}/\n")
+        click.echo(f"No exported symbols found in: {directory}/")
+        click.echo("Hint: use a path relative to the project root.")
 
 
 def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
@@ -1419,72 +1493,17 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
     directory = directory.replace("\\", "/").rstrip("/")
 
     with open_db(readonly=True) as conn:
-        # W1311: track which resolution tier the skeleton input hit. The
-        # legacy code silently fell back from an exact ``directory/%`` prefix
-        # match to a ``%directory/%`` substring match and emitted the same
-        # success verdict for both tiers — a textbook Pattern-1 Variant D
-        # silent-success-on-degraded-resolution shape. Disclose the tier via
-        # ``resolution_disclosure`` so agents can branch on ``file`` vs
-        # ``file_substring`` vs ``unresolved``.
-        symbols = conn.execute(
-            "SELECT s.*, f.path as file_path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
-            "ORDER BY f.path, s.line_start",
-            (f"{directory}/%",),
-        ).fetchall()
-        skeleton_tier = "file" if symbols else None
-
-        if not symbols:
-            # Try partial match — degraded resolution tier (W1311).
-            symbols = conn.execute(
-                "SELECT s.*, f.path as file_path "
-                "FROM symbols s JOIN files f ON s.file_id = f.id "
-                "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
-                "ORDER BY f.path, s.line_start",
-                (f"%{directory}/%",),
-            ).fetchall()
-            if symbols:
-                skeleton_tier = "file_substring"
+        symbols, skeleton_tier = _fetch_skeleton_symbols(conn, directory)
 
         if not symbols:
             disclosure = resolution_disclosure("unresolved", target=directory)
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            cmd_name,
-                            summary={
-                                "verdict": f"no symbols found in {directory}/",
-                                "file_count": 0,
-                                "symbol_count": 0,
-                                "resolution": disclosure["resolution"],
-                                "partial_success": disclosure["partial_success"],
-                            },
-                            budget=token_budget,
-                            directory=directory,
-                            files={},
-                            symbol_count=0,
-                            resolution=disclosure,
-                        )
-                    )
-                )
-            else:
-                click.echo(f"VERDICT: no symbols found in {directory}/\n")
-                click.echo(f"No exported symbols found in: {directory}/")
-                click.echo("Hint: use a path relative to the project root.")
+            _emit_skeleton_unresolved(json_mode, cmd_name, directory, token_budget, disclosure)
             return
 
-        # Group by file
         by_file = defaultdict(list)
         for s in symbols:
             by_file[s["file_path"]].append(s)
 
-        # W1311 disclosure: stamp the resolved tier ("file" exact-prefix vs
-        # "file_substring" %directory% fallback) onto the success envelope so
-        # the verdict reflects degraded resolution. The text-mode verdict
-        # carries a "[file substring match]" suffix mirroring preflight's
-        # convention.
         skeleton_disclosure = resolution_disclosure(
             skeleton_tier or "file",
             target=directory,
@@ -1493,19 +1512,7 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
 
         if json_mode:
             _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
-            result = {}
-            for fp in sorted(by_file.keys()):
-                result[fp] = [
-                    {
-                        "name": s["name"],
-                        "kind": s["kind"],
-                        "signature": s["signature"] or "",
-                        "line_start": s["line_start"],
-                        "line_end": s["line_end"],
-                        "docstring": (s["docstring"] or "").strip().split("\n")[0][:80] if s["docstring"] else "",
-                    }
-                    for s in by_file[fp]
-                ]
+            result = _build_skeleton_json_result(by_file)
             click.echo(
                 to_json(
                     json_envelope(
