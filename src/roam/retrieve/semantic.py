@@ -175,7 +175,10 @@ def _decode_vector(raw_vector: str, dims: int) -> list[float] | None:
         return None
     try:
         return [float(v) for v in decoded[:dims]]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        # A non-numeric element in a persisted vector must not crash
+        # retrieve; surface it so the candidate scores 0 deterministically.
+        log_swallowed("retrieve.semantic:_decode_vector:float_coerce", exc)
         return None
 
 
