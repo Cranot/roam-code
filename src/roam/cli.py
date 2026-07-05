@@ -737,6 +737,10 @@ _EXPERIMENTAL_COMMANDS: dict[str, tuple[str, tuple[str, str]]] = {
         "ROAM_EXPERIMENTAL_REPAIR_SIBLINGS",
         ("roam.commands.cmd_repair_siblings", "repair_siblings_cmd"),
     ),
+    "sibling-patch": (
+        "ROAM_EXPERIMENTAL_REPAIR_SIBLINGS",
+        ("roam.commands.cmd_sibling_patch", "sibling_patch_cmd"),
+    ),
 }
 
 
