@@ -144,6 +144,7 @@ def _coerce_scalar(value: str) -> Any:
     try:
         return float(v)
     except ValueError:
+        # Intentional fall-through: value is not numeric; try bool/string below.
         pass
     lowered = v.lower()
     if lowered in ("true", "false"):
