@@ -45,7 +45,10 @@ class BuiltinRule:
 
         Public on purpose: ``roam check-rules`` resolves configured
         ``BuiltinRule`` objects, then calls this method so missing callbacks
-        and check exceptions stay normalized by the rule pack.
+        and check exceptions stay normalized by the rule pack. Referenced by
+        ``check_rules_command`` (src/roam/commands/cmd_check_rules.py) and by
+        tests/test_check_rules.py; not dead despite dynamic-dispatch callsites
+        that static unreferenced-export checks cannot resolve.
         """
         if self._fn is None:
             return []
