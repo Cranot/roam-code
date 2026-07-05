@@ -1225,6 +1225,10 @@ def _mode_gate_dependencies():
 
         return find_project_root, check_command_allowed
     except ImportError:  # mode substrate is optional; absent import means gating fails open (no policy)
+        # Log so the intentional fail-open stays observable when tracing why a command was allowed.
+        import logging
+
+        logging.getLogger(__name__).debug("mode-gate dependencies unavailable; gating fails open")
         return None
 
 
