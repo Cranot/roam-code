@@ -491,7 +491,8 @@ def _run_full_message_log(hashes: list[str], project_root):
             encoding="utf-8",
             errors="replace",
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        log.warning("Failed to fetch full commit messages for AI-ratio analysis: %s", exc)
         return None
     return result if result.returncode == 0 else None
 
