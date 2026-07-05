@@ -563,6 +563,35 @@ BUILTIN_PROFILES: dict[str, dict] = {
 }
 
 
+def _load_parent_rules(parent_name: str | None) -> dict[str, dict]:
+    """Recursively resolve a parent profile into a dict keyed by rule ID."""
+    merged_rules: dict[str, dict] = {}
+    if not parent_name:
+        return merged_rules
+    for ov in resolve_profile(parent_name):
+        rid = ov.get("id", "")
+        if rid:
+            merged_rules[rid] = dict(ov)
+    return merged_rules
+
+
+def _disable_all_rules(merged_rules: dict[str, dict]) -> None:
+    """Mark every built-in rule as disabled in the merged rule dict."""
+    for rule in BUILTIN_RULES:
+        if rule.id not in merged_rules:
+            merged_rules[rule.id] = {"id": rule.id, "enabled": False}
+        else:
+            merged_rules[rule.id]["enabled"] = False
+
+
+def _apply_rule_overrides(merged_rules: dict[str, dict], profile_rules: dict) -> None:
+    """Layer a profile's own rule overrides on top of inherited rules."""
+    for rule_id, overrides in profile_rules.items():
+        if rule_id not in merged_rules:
+            merged_rules[rule_id] = {"id": rule_id}
+        merged_rules[rule_id].update(overrides)
+
+
 def resolve_profile(profile_name: str) -> list[dict]:
     """Resolve a named profile into a list of rule override dicts.
 
@@ -590,39 +619,13 @@ def resolve_profile(profile_name: str) -> list[dict]:
         )
 
     profile = BUILTIN_PROFILES[profile_name]
-
-    # Resolve parent first (inheritance chain)
-    merged_rules: dict[str, dict] = {}
-    parent_name = profile.get("extends")
-    if parent_name:
-        parent_overrides = resolve_profile(parent_name)
-        for ov in parent_overrides:
-            rid = ov.get("id", "")
-            if rid:
-                merged_rules[rid] = dict(ov)
-
-    # Apply this profile's rules on top
-    profile_rules = profile.get("rules", {})
+    merged_rules = _load_parent_rules(profile.get("extends"))
 
     if profile_name == "minimal":
-        # Minimal profile: only enable listed rules, disable everything else
-        # Start by disabling all rules
-        for rule in BUILTIN_RULES:
-            if rule.id not in merged_rules:
-                merged_rules[rule.id] = {"id": rule.id, "enabled": False}
-            else:
-                merged_rules[rule.id]["enabled"] = False
-        # Then enable the ones listed
-        for rule_id, overrides in profile_rules.items():
-            if rule_id not in merged_rules:
-                merged_rules[rule_id] = {"id": rule_id}
-            merged_rules[rule_id].update(overrides)
-    else:
-        for rule_id, overrides in profile_rules.items():
-            if rule_id not in merged_rules:
-                merged_rules[rule_id] = {"id": rule_id}
-            merged_rules[rule_id].update(overrides)
+        # Minimal profile: only enable listed rules, disable everything else.
+        _disable_all_rules(merged_rules)
 
+    _apply_rule_overrides(merged_rules, profile.get("rules", {}))
     return list(merged_rules.values())
 
 
