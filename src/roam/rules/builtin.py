@@ -51,7 +51,7 @@ class BuiltinRule:
             return []
         try:
             return self._fn(conn, G, self.threshold)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             return [make_violation(reason="check error: {}".format(exc))]
 
 
