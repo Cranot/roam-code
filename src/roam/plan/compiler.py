@@ -10299,6 +10299,58 @@ def _is_negative_cached(label: str, ctx: ProbeCacheContext, neg_hits: set[str]) 
     return False
 
 
+def _probe_trigger_matches(label: str, task: str) -> bool:
+    """Return True when the probe's task-text trigger matches (or has no trigger).
+
+    WHY: exact-match triggers are a cheap filter that avoids expensive cache
+    key hashing; isolating the callable/lazy-regex resolution keeps the main
+    selection loops flat."""
+    trigger = _PROBE_TRIGGER_BY_LABEL.get(label)
+    if trigger is None:
+        return True
+    if callable(trigger):
+        trigger = trigger()
+    return bool(trigger.search(task))
+
+
+def _probe_label_runnable_now(label: str, ctx: ProbeCacheContext, skip_for_procedure: frozenset[str]) -> bool:
+    """Cheap run/skip gate for a probe label before any cache lookup.
+
+    WHY: enforce the same rejection policy in both cache passes (procedure skip,
+    context disable, prefetched satisfaction, trigger mismatch) without
+    duplicating the nested condition tree."""
+    if label in skip_for_procedure:
+        return False
+    if _probe_ctx_disabled(label):
+        return False
+    if _prefetched_satisfies_probe(label, ctx):
+        return False
+    return _probe_trigger_matches(label, ctx.task)
+
+
+def _collect_probe_candidates(
+    ctx: ProbeCacheContext, skip_for_procedure: frozenset[str]
+) -> tuple[dict[str, dict], list[str]]:
+    """Pass 1: resolve in-memory positive hits and collect labels that still
+    need a persistent lookup.
+
+    WHY: separate the batched-read candidate identification from the final
+    run/skip assembly; keeping the two passes distinct preserves the
+    label-ordered merge invariant without forcing the orchestrator to reason
+    about both at once."""
+    inmem_pos: dict[str, dict] = {}
+    candidates: list[str] = []
+    for label, _fn in _L1_ALWAYS_ON_PROBES:
+        if not _probe_label_runnable_now(label, ctx, skip_for_procedure):
+            continue
+        cached = _probe_pos_cached_hit(label, ctx.task, ctx.named_paths)
+        if cached is not None:
+            inmem_pos[label] = cached
+        else:
+            candidates.append(label)
+    return inmem_pos, candidates
+
+
 def _select_runnable_probes(ctx: ProbeCacheContext) -> list[tuple[str, object]]:
     """W126/W129/W130/W152/W155 — harvest cached positive hits (in-memory then
     persistent) and skip negative-cached / procedure-irrelevant probes, leaving
@@ -10310,32 +10362,7 @@ def _select_runnable_probes(ctx: ProbeCacheContext) -> list[tuple[str, object]]:
     `_probe_persist_lookup_batch` connection serves every candidate label
     (was up to 2·N SQLite opens per compile)."""
     skip_for_procedure = _PROCEDURE_PROBE_SKIPS.get(ctx.procedure, frozenset())
-    # Pass 1 (in-memory only): resolve positive hits that need no disk read,
-    # and collect the labels that still need a persistent lookup. The positive
-    # data is merged in pass 2 to keep a single label-ordered merge.
-    inmem_pos: dict[str, dict] = {}
-    candidates: list[str] = []
-    for label, _fn in _L1_ALWAYS_ON_PROBES:
-        if label in skip_for_procedure or _probe_ctx_disabled(label):
-            continue
-        if _prefetched_satisfies_probe(label, ctx):
-            continue
-        # Cheap task-text trigger BEFORE the cache lookups: when the probe's
-        # own first-line regex doesn't match, the probe returns None, so skip
-        # it now and avoid the sha256 key hash + in-mem/persistent cache
-        # probes the body would never populate. `_PROBE_TRIGGER_BY_LABEL`
-        # only lists labels whose trigger is exact (no-match => None).
-        trigger = _PROBE_TRIGGER_BY_LABEL.get(label)
-        if trigger is not None:
-            if callable(trigger):
-                trigger = trigger()
-            if not trigger.search(ctx.task):
-                continue
-        cached = _probe_pos_cached_hit(label, ctx.task, ctx.named_paths)
-        if cached is not None:
-            inmem_pos[label] = cached
-        else:
-            candidates.append(label)
+    inmem_pos, candidates = _collect_probe_candidates(ctx, skip_for_procedure)
     # ONE connection serves both the persistent positive and negative reads
     # for every candidate label. Empty (and no-op) when cwd is unset.
     pos_hits, neg_hits = _probe_persist_lookup_batch(candidates, ctx.task, ctx.named_paths, ctx.cwd, ctx.head)
@@ -10345,9 +10372,7 @@ def _select_runnable_probes(ctx: ProbeCacheContext) -> list[tuple[str, object]]:
     # named helpers above.
     runnable: list[tuple[str, object]] = []
     for label, fn in _L1_ALWAYS_ON_PROBES:
-        if label in skip_for_procedure or _probe_ctx_disabled(label):
-            continue
-        if _prefetched_satisfies_probe(label, ctx):
+        if not _probe_label_runnable_now(label, ctx, skip_for_procedure):
             continue
         if _consume_positive_cache(label, ctx, inmem_pos, pos_hits):
             continue
