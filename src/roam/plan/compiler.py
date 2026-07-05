@@ -10988,29 +10988,21 @@ class PlanV0:
             "plan": plan_obj,
         }
 
-    def to_l1_probe_envelope(self, cwd: str | None = None) -> dict:
-        """v0.5 L1 PROBE-AND-FILL envelope — embed ANSWERS, not pointers.
+    def _safe_confidence(self) -> float:
+        """Return classifier confidence as a float, defaulting to 0.0."""
+        try:
+            return float(self.classifier_confidence or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
 
-        Per the lever-inventory notes: the highest single
-        lever for cost reduction. Compiler runs roam queries AT COMPILE
-        TIME and embeds results in `prefetched_facts`. Agent collapses
-        from gather+synthesize to synthesize-only — 1-2 turns instead
-        of 4-7, projected 4× cost reduction.
+    def _build_prefetched_facts(
+        self, named_only: list[str], cwd: str | None
+    ) -> tuple[dict, list[str]]:
+        """Resolve module-name shorthand and run all timed L1 probes.
 
-        W42 — decomposed via three registry tables + tiny helpers
-        (`_apply_task_text_probe`, `_apply_backtick_fallback`,
-        `_apply_always_on_extenders`). Was cc=63 brain-method.
+        WHY: Embedding answers at compile time collapses the agent's
+        gather+synthesize loop into synthesize-only.
         """
-        named_only = _resolve_l1_named_paths(self.task, cwd)
-        contract = _PROCEDURE_CONTRACTS.get(self.procedure, _GENERIC_CONTRACT)
-        plan_obj: dict = {
-            "task": self.task,
-            "named_paths": named_only,
-            "forbidden_paths": self._effective_forbidden_paths(),
-            "repo_head": self.repo_head,
-            "answer_contract": list(contract),
-            "output_contract": self._output_contract(),
-        }
         # W43 P3 — time each section so production telemetry can show
         # which probe phase dominates compile latency.
         timings: dict[str, float] = {}
@@ -11065,87 +11057,120 @@ class PlanV0:
         # Stash timings on the plan so the telemetry helper can record them.
         # Uses a private attr to avoid changing the dataclass shape.
         object.__setattr__(self, "_w43_timings_ms", timings)
+        return prefetched, named_only
+
+    def _package_prefetched_facts(self, prefetched: dict) -> tuple[dict, int]:
+        """Trim, budget-cap, and trust-mark prefetched facts for delivery.
+
+        WHY: Repository-derived bytes must fit the target model's capacity
+        without leaking empty or oversized noise.
+        """
+        if not prefetched:
+            return prefetched, 0
+        # W98 — defensive shape validation: drop entries that are None,
+        # empty list, or empty dict. These contribute no value to the
+        # envelope and only add noise/cost. They sometimes leak from
+        # probes when an upstream tool returns sparse data.
+        prefetched = {k: v for k, v in prefetched.items() if v not in (None, "", [], {})}
+        # W162 — per-section budgets. Truncate oversize probe payloads
+        # IN PLACE so individual sections shrink instead of being dropped
+        # wholesale by the W119 global cap. Surface a parallel
+        # `_section_budget_truncated` map naming the affected keys +
+        # their pre-truncation byte size so consumers know what was lost.
+        _w162_truncated = _apply_section_budgets(prefetched)
+        if _w162_truncated:
+            prefetched["_section_budget_truncated"] = _w162_truncated
+        # W119/W151 — envelope budget cap. Cap total size by prelim
+        # recommended model (Haiku 4K / Sonnet 16K / Opus 64K); drop the
+        # largest non-definition fields until under budget.
+        envelope_bytes = _apply_envelope_budget_cap(prefetched, self.procedure, self._safe_confidence())
+        # W201 — whole-payload prompt-injection trust boundary. Scan the
+        # final (capped) payload of embedded repository text and surface
+        # an aggregate marker signal so the agent treats it as untrusted
+        # DATA, not instructions. Runs after the budget cap so it reflects
+        # exactly the bytes that ship.
+        _stamp_prefetched_injection_markers(prefetched)
+        return prefetched, envelope_bytes
+
+    @staticmethod
+    def _maybe_prepend_anti_distract(plan_obj: dict, prefetched: dict) -> None:
+        """Prepend a directive to inspect prefetched facts when the envelope is rich.
+
+        WHY: The W82 holdout showed agents sometimes ignore probe data when
+        the contract opens with "do X first" verb language.
+        """
+        domain_keys = [
+            k
+            for k in prefetched
+            if not k.endswith("_definition")
+            and k not in ("decision_criterion", "output_shape", "scope_lock", "resolved_symbols")
+        ]
+        if len(domain_keys) < 5:
+            return
+        anti_distract = (
+            f"You already have {len(domain_keys)} prefetched facts "
+            f"({', '.join(sorted(domain_keys)[:6])}{'...' if len(domain_keys) > 6 else ''}). "
+            f"INSPECT these first — most questions answer directly "
+            f"from them, no tool calls needed."
+        )
+        existing = plan_obj.get("answer_contract", [])
+        plan_obj["answer_contract"] = [anti_distract, *existing]
+
+    def _enrich_plan_with_prefetched(
+        self, plan_obj: dict, prefetched: dict, envelope_bytes: int
+    ) -> None:
+        """Attach prefetched facts plus consumption metadata to the plan.
+
+        WHY: A rich envelope needs metadata so the agent consumes it
+        correctly instead of ignoring it.
+        """
+        plan_obj["prefetched_facts"] = prefetched
+        # W-SWE — annotate parallel implementations. Scan the WHOLE envelope
+        # (named_paths + likely_files + prefetched) since sibling-impl paths
+        # surface in named_paths/likely_files, not just prefetched_facts.
+        _annotate_parallel_implementations(
+            prefetched,
+            scan={"env": plan_obj, "likely": list(self.likely_files or [])},
+        )
+        # W136 — model recommendation hint. Routes downstream callers
+        # toward the right model: cheap routing for high-confidence
+        # small-payload structural tasks (Haiku safe), default for
+        # medium, escalation for big/low-conf/freeform.
+        conf = self._safe_confidence()
+        plan_obj["recommended_model"] = _recommend_model(self.procedure, conf, envelope_bytes)
+        plan_obj["recommended_model_reason"] = (
+            f"procedure={self.procedure} conf={conf:.2f} envelope_bytes={envelope_bytes}"
+        )
+        # W97 — anti-distract directive when the envelope carries 5+ rich facts.
+        self._maybe_prepend_anti_distract(plan_obj, prefetched)
+
+    def to_l1_probe_envelope(self, cwd: str | None = None) -> dict:
+        """v0.5 L1 PROBE-AND-FILL envelope — embed ANSWERS, not pointers.
+
+        Per the lever-inventory notes: the highest single
+        lever for cost reduction. Compiler runs roam queries AT COMPILE
+        TIME and embeds results in `prefetched_facts`. Agent collapses
+        from gather+synthesize to synthesize-only — 1-2 turns instead
+        of 4-7, projected 4× cost reduction.
+
+        W42 — decomposed via three registry tables + tiny helpers
+        (`_apply_task_text_probe`, `_apply_backtick_fallback`,
+        `_apply_always_on_extenders`). Was cc=63 brain-method.
+        """
+        named_only = _resolve_l1_named_paths(self.task, cwd)
+        contract = _PROCEDURE_CONTRACTS.get(self.procedure, _GENERIC_CONTRACT)
+        plan_obj: dict = {
+            "task": self.task,
+            "named_paths": named_only,
+            "forbidden_paths": self._effective_forbidden_paths(),
+            "repo_head": self.repo_head,
+            "answer_contract": list(contract),
+            "output_contract": self._output_contract(),
+        }
+        prefetched, named_only = self._build_prefetched_facts(named_only, cwd)
+        prefetched, envelope_bytes = self._package_prefetched_facts(prefetched)
         if prefetched:
-            # W98 — defensive shape validation: drop entries that are None,
-            # empty list, or empty dict. These contribute no value to the
-            # envelope and only add noise/cost. They sometimes leak from
-            # probes when an upstream tool returns sparse data.
-            prefetched = {k: v for k, v in prefetched.items() if v not in (None, "", [], {})}
-            # W162 — per-section budgets. Truncate oversize probe payloads
-            # IN PLACE so individual sections shrink instead of being dropped
-            # wholesale by the W119 global cap. Surface a parallel
-            # `_section_budget_truncated` map naming the affected keys +
-            # their pre-truncation byte size so consumers know what was lost.
-            _w162_truncated = _apply_section_budgets(prefetched)
-            if _w162_truncated:
-                prefetched["_section_budget_truncated"] = _w162_truncated
-            # W119 — envelope budget cap. The W105 t25/t28/t32/t33/t41
-            # compile no_output failures correlated with very-large
-            # prefetched_facts (>32 KB serialized). Cap total size at
-            # 32 KB; when over budget, drop the LARGEST single field
-            # (definitions excluded) until under. Definitions are tiny
-            # so the order doesn't matter much.
-            # W135 — use _fast_json_dumps in the hot budget loop (called
-            # up to O(N) times per cap-overshoot envelope).
-            # W151 — multi-budget envelope keyed on prelim recommended_model.
-            # Today a 32KB cap squeezes Opus tasks (hardest, biggest probe
-            # payload) and wastes bytes on Haiku tasks (small input, no
-            # capacity to consume them anyway). Right-sizing per target
-            # compounds quality: Opus gets richer context, Haiku stays lean.
-            _bproc = getattr(self, "procedure", "") or ""
-            try:
-                _bconf = float(getattr(self, "classifier_confidence", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                _bconf = 0.0
-            envelope_bytes = _apply_envelope_budget_cap(prefetched, _bproc, _bconf)
-            # W201 — whole-payload prompt-injection trust boundary. Scan the
-            # final (capped) payload of embedded repository text and surface
-            # an aggregate marker signal so the agent treats it as untrusted
-            # DATA, not instructions. Runs after the budget cap so it reflects
-            # exactly the bytes that ship.
-            _stamp_prefetched_injection_markers(prefetched)
-        else:
-            envelope_bytes = 0
-        if prefetched:
-            plan_obj["prefetched_facts"] = prefetched
-            # W-SWE — annotate parallel implementations. Scan the WHOLE envelope
-            # (named_paths + likely_files + prefetched) since sibling-impl paths
-            # surface in named_paths/likely_files, not just prefetched_facts.
-            _annotate_parallel_implementations(
-                prefetched,
-                scan={"env": plan_obj, "likely": list(self.likely_files or [])},
-            )
-            # W136 — model recommendation hint. Routes downstream callers
-            # toward the right model: cheap routing for high-confidence
-            # small-payload structural tasks (Haiku safe), default for
-            # medium, escalation for big/low-conf/freeform.
-            try:
-                _conf = float(getattr(self, "classifier_confidence", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                _conf = 0.0
-            _proc = getattr(self, "procedure", "") or ""
-            plan_obj["recommended_model"] = _recommend_model(_proc, _conf, envelope_bytes)
-            plan_obj["recommended_model_reason"] = f"procedure={_proc} conf={_conf:.2f} envelope_bytes={envelope_bytes}"
-            # W97 — anti-distract: when the envelope carries 5+ rich
-            # facts, lead the answer_contract with a directive telling
-            # the agent to USE the prefetched data BEFORE tool-calling.
-            # The W82 holdout showed agents sometimes ignore probe data
-            # when the contract opens with "do X first" verb language.
-            domain_keys = [
-                k
-                for k in prefetched
-                if not k.endswith("_definition")
-                and k not in ("decision_criterion", "output_shape", "scope_lock", "resolved_symbols")
-            ]
-            if len(domain_keys) >= 5:
-                anti_distract = (
-                    f"You already have {len(domain_keys)} prefetched facts "
-                    f"({', '.join(sorted(domain_keys)[:6])}{'...' if len(domain_keys) > 6 else ''}). "
-                    f"INSPECT these first — most questions answer directly "
-                    f"from them, no tool calls needed."
-                )
-                existing = plan_obj.get("answer_contract", [])
-                plan_obj["answer_contract"] = [anti_distract, *existing]
+            self._enrich_plan_with_prefetched(plan_obj, prefetched, envelope_bytes)
         # W34b (E10): structured fallback tools — if the prefetched answer
         # turns out to be insufficient (rare; agent can't tell ahead of time),
         # the agent has a programmatic list of which tools would have
