@@ -112,6 +112,13 @@ from roam.runs.helpers import auto_log
     show_default=True,
     help="Maximum number of mined laws shown under Architectural invariants.",
 )
+@click.option(
+    "--attribution/--no-attribution",
+    "attribution",
+    default=True,
+    show_default=True,
+    help="Include a one-line 'generated with roam-code' credit (repo URL + install command) in the header.",
+)
 @click.pass_context
 def agents_md_cmd(
     ctx: click.Context,
@@ -122,6 +129,7 @@ def agents_md_cmd(
     with_constitution: bool,
     top_danger: int,
     top_laws: int,
+    attribution: bool,
 ) -> None:
     """Generate an ``AGENTS.md`` describing this codebase to AI agents.
 
@@ -154,6 +162,7 @@ def agents_md_cmd(
                 with_constitution=with_constitution,
                 top_n_danger=top_danger,
                 top_n_laws=top_laws,
+                attribution=attribution,
             ),
         )
 
