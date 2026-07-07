@@ -1,8 +1,0 @@
-name: py-list-copy-loop
-description: "List slicing inside loop creates unnecessary copies."
-severity: warning
-type: ast_match
-match:
-  ast: "$LIST[:]"
-  language: python
-  file_glob: "**/*.py"

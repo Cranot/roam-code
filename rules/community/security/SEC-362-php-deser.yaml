@@ -1,8 +1,0 @@
-name: SEC-362-php-deser
-description: "Unsafe PHP deserialization via unserialize()."
-severity: error
-type: ast_match
-match:
-  ast: "unserialize($DATA)"
-  language: php
-  file_glob: "**/*.php"

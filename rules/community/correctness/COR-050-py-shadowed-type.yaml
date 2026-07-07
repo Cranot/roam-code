@@ -1,8 +1,0 @@
-name: py-shadowed-type
-description: "Variable shadows builtin type."
-severity: warning
-type: ast_match
-match:
-  ast: "type = $VALUE"
-  language: python
-  file_glob: "**/*.py"

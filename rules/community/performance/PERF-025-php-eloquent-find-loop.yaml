@@ -1,8 +1,0 @@
-name: php-eloquent-find-loop
-description: "Eloquent find inside loop causes N+1 problem."
-severity: warning
-type: ast_match
-match:
-  ast: "$MODEL::find($ID)"
-  language: php
-  file_glob: "**/*.php"

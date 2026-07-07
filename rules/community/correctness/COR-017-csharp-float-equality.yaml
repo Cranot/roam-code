@@ -1,8 +1,0 @@
-name: csharp-float-equality
-description: "Float equality using == is unreliable, use Math.Abs."
-severity: warning
-type: ast_match
-match:
-  ast: "$A == $B"
-  language: c_sharp
-  file_glob: "**/*.cs"

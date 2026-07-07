@@ -1,8 +1,0 @@
-name: COR-192-java-equals-no-hashcode
-description: "equals() without hashCode() violates the contract."
-severity: error
-type: ast_match
-match:
-  ast: "public boolean equals($OBJ)"
-  language: java
-  file_glob: "**/*.java"

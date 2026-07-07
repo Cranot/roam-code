@@ -1,9 +1,0 @@
-name: hex-domain-to-infra-messaging
-description: "Domain layer must not import infrastructure messaging."
-severity: error
-type: path_match
-match:
-  from:
-    file_glob: "**/domain/**"
-  to:
-    file_glob: "**/infrastructure/messaging/**"

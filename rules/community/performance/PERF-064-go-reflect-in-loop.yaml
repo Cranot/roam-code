@@ -1,8 +1,0 @@
-name: go-reflect-in-loop
-description: "reflect.TypeOf in loop is expensive, cache the result."
-severity: warning
-type: ast_match
-match:
-  ast: "reflect.TypeOf($VAL)"
-  language: go
-  file_glob: "**/*.go"

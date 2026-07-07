@@ -1,8 +1,0 @@
-name: COR-274-cs-thread-abort
-description: "Thread.Abort() is dangerous and deprecated."
-severity: error
-type: ast_match
-match:
-  ast: "$THREAD.Abort()"
-  language: csharp
-  file_glob: "**/*.cs"

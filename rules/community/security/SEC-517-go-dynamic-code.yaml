@@ -1,8 +1,0 @@
-name: SEC-517-go-dynamic-code
-description: "Dynamic plugin loading may execute untrusted code."
-severity: warning
-type: ast_match
-match:
-  ast: "plugin.Open($PATH)"
-  language: go
-  file_glob: "**/*.go"

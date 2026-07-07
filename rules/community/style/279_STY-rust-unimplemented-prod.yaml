@@ -1,8 +1,0 @@
-name: STY-rust-unimplemented-prod
-description: "unimplemented!() panics; implement before release."
-severity: warning
-type: ast_match
-match:
-  ast: "unimplemented!()"
-  language: rust
-  file_glob: "**/*.rs"

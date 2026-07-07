@@ -1,8 +1,0 @@
-name: php-empty-catch
-description: "Empty catch block silently swallows exceptions."
-severity: warning
-type: ast_match
-match:
-  ast: "catch (Exception $e) {}"
-  language: php
-  file_glob: "**/*.php"

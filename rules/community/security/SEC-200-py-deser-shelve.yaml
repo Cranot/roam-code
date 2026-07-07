@@ -1,8 +1,0 @@
-name: py-deser-shelve
-description: "shelve.open with untrusted data risks code execution."
-severity: warning
-type: ast_match
-match:
-  ast: "shelve.open($PATH)"
-  language: python
-  file_glob: "**/*.py"

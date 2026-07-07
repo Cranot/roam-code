@@ -1,8 +1,0 @@
-name: SEC-597-py-csrf
-description: "CSRF protection disabled globally."
-severity: warning
-type: ast_match
-match:
-  ast: "WTF_CSRF_ENABLED = False"
-  language: python
-  file_glob: "**/*.py"

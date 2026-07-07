@@ -1,8 +1,0 @@
-name: fw-domain-imports-gin
-description: "Domain layer must not import Gin framework."
-severity: error
-type: ast_match
-match:
-  ast: "\"github.com/gin-gonic/gin\""
-  language: go
-  file_glob: "**/domain/**/*.go"

@@ -1,8 +1,0 @@
-name: go-tls-insecure-skip
-description: "InsecureSkipVerify disables TLS certificate validation."
-severity: error
-type: ast_match
-match:
-  ast: "InsecureSkipVerify: true"
-  language: go
-  file_glob: "**/*.go"

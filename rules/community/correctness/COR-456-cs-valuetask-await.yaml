@@ -1,8 +1,0 @@
-name: COR-456-cs-valuetask-await
-description: "ValueTask should be awaited only once."
-severity: info
-type: ast_match
-match:
-  ast: "await $VT"
-  language: csharp
-  file_glob: "**/*.cs"

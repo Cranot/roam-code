@@ -1,8 +1,0 @@
-name: STY-java-wildcard-import
-description: "Wildcard import; import specific classes."
-severity: info
-type: ast_match
-match:
-  ast: "import $PKG.*"
-  language: java
-  file_glob: "**/*.java"

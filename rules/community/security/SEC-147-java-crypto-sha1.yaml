@@ -1,8 +1,0 @@
-name: java-crypto-sha1
-description: "MessageDigest SHA-1 is cryptographically weak."
-severity: warning
-type: ast_match
-match:
-  ast: "MessageDigest.getInstance(\"SHA-1\")"
-  language: java
-  file_glob: "**/*.java"

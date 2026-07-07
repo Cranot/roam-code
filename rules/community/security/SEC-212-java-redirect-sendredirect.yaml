@@ -1,8 +1,0 @@
-name: java-redirect-sendredirect
-description: "sendRedirect with user input risks open redirect."
-severity: warning
-type: ast_match
-match:
-  ast: "response.sendRedirect(request.getParameter($P))"
-  language: java
-  file_glob: "**/*.java"

@@ -1,8 +1,0 @@
-name: PERF-257-java-arraylist-grow
-description: "ArrayList without initial capacity may resize frequently."
-severity: info
-type: ast_match
-match:
-  ast: "new ArrayList()"
-  language: java
-  file_glob: "**/*.java"

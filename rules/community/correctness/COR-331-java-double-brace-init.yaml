@@ -1,8 +1,0 @@
-name: COR-331-java-double-brace-init
-description: "Double-brace init creates anonymous class; use factory method."
-severity: info
-type: ast_match
-match:
-  ast: "new $TYPE() {{ $BODY }}"
-  language: java
-  file_glob: "**/*.java"

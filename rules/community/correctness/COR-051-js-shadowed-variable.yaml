@@ -1,8 +1,0 @@
-name: js-shadowed-variable
-description: "Inner variable shadows outer scope variable."
-severity: info
-type: ast_match
-match:
-  ast: "var $NAME = $VALUE"
-  language: javascript
-  file_glob: "**/*.{js,mjs}"

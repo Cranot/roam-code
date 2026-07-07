@@ -1,8 +1,0 @@
-name: SEC-603-go-csrf
-description: "Verify CSRF protection covers all state-changing routes."
-severity: warning
-type: ast_match
-match:
-  ast: "csrf.Protect($KEY)"
-  language: go
-  file_glob: "**/*.go"

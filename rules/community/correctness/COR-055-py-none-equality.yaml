@@ -1,8 +1,0 @@
-name: py-none-equality
-description: "Use 'is None' instead of '== None' for identity check."
-severity: warning
-type: ast_match
-match:
-  ast: "$X == None"
-  language: python
-  file_glob: "**/*.py"

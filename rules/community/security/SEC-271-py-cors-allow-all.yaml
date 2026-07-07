@@ -1,8 +1,0 @@
-name: py-cors-allow-all
-description: "CORS allow-all origin is overly permissive."
-severity: warning
-type: ast_match
-match:
-  ast: "CORS(app, origins='*')"
-  language: python
-  file_glob: "**/*.py"

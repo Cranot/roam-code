@@ -1,8 +1,0 @@
-name: PERF-247-go-sql-query-loop
-description: "SQL query in loop; batch queries."
-severity: warning
-type: ast_match
-match:
-  ast: "db.Query($SQL, $ARGS)"
-  language: go
-  file_glob: "**/*.go"

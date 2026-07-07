@@ -1,8 +1,0 @@
-name: js-cmd-exec
-description: "child_process.exec with variable input risks command injection."
-severity: error
-type: ast_match
-match:
-  ast: "child_process.exec($CMD)"
-  language: javascript
-  file_glob: "**/*.{js,mjs}"

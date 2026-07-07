@@ -1,8 +1,0 @@
-name: java-hibernate-get-loop
-description: "Hibernate session.get inside loop causes N+1 problem."
-severity: warning
-type: ast_match
-match:
-  ast: "session.get($CLASS, $ID)"
-  language: java
-  file_glob: "**/*.java"

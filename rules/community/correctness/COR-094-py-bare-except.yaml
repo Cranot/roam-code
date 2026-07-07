@@ -1,8 +1,0 @@
-name: py-bare-except
-description: "Bare except catches SystemExit and KeyboardInterrupt."
-severity: warning
-type: ast_match
-match:
-  ast: "except:"
-  language: python
-  file_glob: "**/*.py"

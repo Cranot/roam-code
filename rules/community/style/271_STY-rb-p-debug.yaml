@@ -1,8 +1,0 @@
-name: STY-rb-p-debug
-description: "p() debug output left in code."
-severity: warning
-type: ast_match
-match:
-  ast: "p($OBJ)"
-  language: ruby
-  file_glob: "**/*.rb"

@@ -1,8 +1,0 @@
-name: SEC-454-rb-xxe
-description: "XXE risk; use NONET flag."
-severity: error
-type: ast_match
-match:
-  ast: "Nokogiri::XML($INPUT)"
-  language: ruby
-  file_glob: "**/*.rb"

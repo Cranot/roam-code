@@ -1,8 +1,0 @@
-name: rust-ssrf-reqwest
-description: "reqwest::get with user URL risks SSRF."
-severity: error
-type: ast_match
-match:
-  ast: "reqwest::get($USER_URL)"
-  language: rust
-  file_glob: "**/*.rs"

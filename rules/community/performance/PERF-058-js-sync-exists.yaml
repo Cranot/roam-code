@@ -1,8 +1,0 @@
-name: js-sync-exists
-description: "existsSync blocks the event loop in async context."
-severity: info
-type: ast_match
-match:
-  ast: "fs.existsSync($PATH)"
-  language: javascript
-  file_glob: "**/*.{js,mjs}"

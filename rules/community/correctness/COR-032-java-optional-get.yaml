@@ -1,8 +1,0 @@
-name: java-optional-get
-description: "Optional.get() without isPresent check risks NoSuchElement."
-severity: error
-type: ast_match
-match:
-  ast: "$OPT.get()"
-  language: java
-  file_glob: "**/*.java"

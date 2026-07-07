@@ -1,8 +1,0 @@
-name: ruby-redirect-to
-description: "redirect_to with params risks open redirect."
-severity: warning
-type: ast_match
-match:
-  ast: "redirect_to(params[$KEY])"
-  language: ruby
-  file_glob: "**/*.rb"

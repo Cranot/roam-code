@@ -1,8 +1,0 @@
-name: go-shadowed-err
-description: "Short variable declaration shadows err in outer scope."
-severity: warning
-type: ast_match
-match:
-  ast: "err := $EXPR"
-  language: go
-  file_glob: "**/*.go"

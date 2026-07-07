@@ -47,6 +47,7 @@ from click.testing import CliRunner
 
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
+from roam.output._severity import severity_rank
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -138,9 +139,6 @@ def _short_finding_summary(critique_payload: dict, *, max_kinds: int = 3) -> lis
     return [f"{k} x{v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])[:max_kinds]]
 
 
-_FINDING_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
-
-
 def _extract_finding_rows(critique_payload: dict, *, cap: int = 8) -> list[dict]:
     """Preserve per-finding detail from a critique envelope.
 
@@ -190,7 +188,7 @@ def _extract_finding_rows(critique_payload: dict, *, cap: int = 8) -> list[dict]
                 "detail": one_line,
             }
         )
-    rows.sort(key=lambda r: _FINDING_SEVERITY_RANK.get(r["severity"].lower(), 4))
+    rows.sort(key=lambda r: -severity_rank(r["severity"]))
     return rows[:cap]
 
 

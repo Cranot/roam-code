@@ -1,8 +1,0 @@
-name: COR-233-rb-puts-in-lib
-description: "puts in library code; use logger instead."
-severity: info
-type: ast_match
-match:
-  ast: "puts($MSG)"
-  language: ruby
-  file_glob: "**/*.rb"

@@ -1,8 +1,0 @@
-name: STY-java-empty-statement
-description: "Empty statement; may be accidental."
-severity: info
-type: ast_match
-match:
-  ast: ";"
-  language: java
-  file_glob: "**/*.java"

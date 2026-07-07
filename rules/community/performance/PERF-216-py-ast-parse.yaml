@@ -1,8 +1,0 @@
-name: PERF-216-py-ast-parse
-description: "ast.parse is slow; cache parsed ASTs."
-severity: info
-type: ast_match
-match:
-  ast: "ast.parse($CODE)"
-  language: python
-  file_glob: "**/*.py"

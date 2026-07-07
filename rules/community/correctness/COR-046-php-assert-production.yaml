@@ -1,8 +1,0 @@
-name: php-assert-production
-description: "assert() can be disabled in production php.ini."
-severity: warning
-type: ast_match
-match:
-  ast: "assert($CONDITION)"
-  language: php
-  file_glob: "**/src/**/*.php"

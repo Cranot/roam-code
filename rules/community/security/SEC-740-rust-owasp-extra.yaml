@@ -1,8 +1,0 @@
-name: SEC-740-rust-owasp-extra
-description: "libc::system is unsafe shell execution."
-severity: warning
-type: ast_match
-match:
-  ast: "libc::system($CMD)"
-  language: rust
-  file_glob: "**/*.rs"

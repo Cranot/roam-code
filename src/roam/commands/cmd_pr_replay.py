@@ -58,6 +58,7 @@ from click.testing import CliRunner
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
+from roam.output._severity import severity_rank
 from roam.output.formatter import json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -3221,9 +3222,6 @@ def _append_detector_breakdown(out: list[str], *, by_detector: list[dict], commi
     out.append("")
 
 
-_FINDING_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
-
-
 def _collect_representative_findings(commits: list[dict], *, cap: int = 8) -> list[dict]:
     """Flatten per-commit finding rows into a bounded, severity-ranked sample.
 
@@ -3247,7 +3245,7 @@ def _collect_representative_findings(commits: list[dict], *, cap: int = 8) -> li
             row = dict(fr)
             row["short_sha"] = c.get("short_sha") or c.get("sha") or "?"
             rows.append(row)
-    rows.sort(key=lambda r: _FINDING_SEVERITY_RANK.get(str(r.get("severity", "")).lower(), 4))
+    rows.sort(key=lambda r: -severity_rank(r.get("severity")))
     return rows[:cap]
 
 

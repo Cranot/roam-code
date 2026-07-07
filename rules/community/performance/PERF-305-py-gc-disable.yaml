@@ -1,8 +1,0 @@
-name: PERF-305-py-gc-disable
-description: "Disabling GC improves short batch jobs but leaks long-running."
-severity: warning
-type: ast_match
-match:
-  ast: "gc.disable()"
-  language: python
-  file_glob: "**/*.py"

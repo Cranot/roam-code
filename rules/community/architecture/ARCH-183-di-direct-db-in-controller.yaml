@@ -1,9 +1,0 @@
-name: di-direct-db-in-controller
-description: "Controller should use injected services, not direct DB access."
-severity: warning
-type: path_match
-match:
-  from:
-    file_glob: "**/controllers/**"
-  to:
-    file_glob: "**/database/**"

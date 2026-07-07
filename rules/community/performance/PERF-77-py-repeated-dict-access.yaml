@@ -1,8 +1,0 @@
-name: PERF-77-py-repeated-dict-access
-description: "Repeated dict access; cache in local variable."
-severity: info
-type: ast_match
-match:
-  ast: "$DICT[$KEY]"
-  language: python
-  file_glob: "**/*.py"

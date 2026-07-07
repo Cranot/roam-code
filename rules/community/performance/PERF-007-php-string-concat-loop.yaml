@@ -1,8 +1,0 @@
-name: php-string-concat-loop
-description: "String concatenation in loop via .= can be slow."
-severity: info
-type: ast_match
-match:
-  ast: "$STR .= $PART"
-  language: php
-  file_glob: "**/*.php"
