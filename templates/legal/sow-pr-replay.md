@@ -155,14 +155,17 @@ the refund clauses in Section 8 apply.
 
 Fifty percent (50%) of the engagement fee — **`[CREDIT_AMOUNT]` USD**
 (`$1,250` for Team, `$3,000` for Deep) — credits toward Client's
-first year of a Roam Review subscription if Client subscribes within
-**60 calendar days** of report delivery.
+first year of a Roam Review subscription. Roam Review is not yet
+generally available; the credit is banked as a founding-customer
+credit and the **60-calendar-day** subscription window starts at Roam
+Review general availability, not at report delivery.
 
 Mechanics:
 - Client mentions this SOW (by `[EFFECTIVE_DATE]` and `[CLIENT_LEGAL_NAME]`) when subscribing.
 - Provider applies the credit to Client's first invoice.
 - Credit is single-use, non-transferable, and non-refundable as cash.
-- Credit expires 60 calendar days after report delivery.
+- The 60-calendar-day window opens at Roam Review general availability
+  and the credit is held until then.
 
 Provider does not guarantee a specific Roam Review pricing tier; the
 credit applies against whichever tier Client selects, capped at the
@@ -181,12 +184,15 @@ governs. The clauses most material to PR Replay engagements:
   14 calendar days of payment per Directive 2011/83/EU. Where Client
   is a business buyer (B2B), the right of withdrawal does not strictly
   apply but Provider honours it in practice.
-- **Zero-findings clause**: If a Team engagement surfaces zero findings
-  worth wiring into CI (Provider's reasonable judgement, narrated in
-  the report), Provider will at Client's choice either (a) re-run the
-  replay on a different range at no additional fee, or (b) refund 50%
-  of the fee. Deep engagements do not carry this clause due to the
-  longer window.
+- **False-positive and material-findings clause**: On the walk-through,
+  Provider and Client review each high- and medium-severity finding.
+  Any finding Client's team calls a false positive is struck from the
+  report and its pro-rata share of the fee refunded. If fewer than half
+  of the high- and medium-severity findings survive that review, Client
+  receives a full refund. If the report surfaces zero material findings,
+  the refund is 100% of the fee (not 50%). Client keeps the delivered
+  report and evidence packet in all cases. This clause applies to Team
+  and Deep engagements alike.
 - **Post-kickoff cancellation (Client request)**: Non-refundable, but
   Provider will deliver the work-in-progress at the time of cancellation
   if Client requests it.

@@ -7,8 +7,8 @@
 
 > **Real sample — FastAPI (a widely-used OSS project we don't maintain).** An actual
 > `roam pr-replay --tier team` report on FastAPI's last 30 merged PRs. On a
-> gold-standard repo Roam stays quiet (few findings) — the point is a low false-alarm
-> rate, not noise. Run `roam pr-replay --tier sample` free on your own repo, or email
+> mature, gold-standard repo Roam stays quiet — only a couple of findings across
+> 30 PRs. Run `roam pr-replay --tier sample` free on your own repo, or email
 > <hello@roam-code.com> for a paid Team or Deep engagement.
 
 This report **supports evidence for** structural-review governance and **maps to**
