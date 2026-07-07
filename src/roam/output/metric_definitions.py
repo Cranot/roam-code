@@ -78,6 +78,10 @@ NESTING_DEPTH_DEFINITION = "max nested block depth in the AST (if/for/while/try)
 HEALTH_SCORE_DEFINITION = (
     "weighted geometric mean (0-100) of 5 sigmoid health factors: tangle_ratio,"
     " god_components, bottlenecks, layer_violations, file_health (+coverage if available)."
+    " CALIBRATION: this is a relative STRUCTURAL-complexity index (coupling / cycles /"
+    " god-components), not a code-quality verdict. Mature, well-maintained frameworks"
+    " with intentional deep coupling routinely score low; read it as 'how tangled', not"
+    " 'how good'. Compare against a baseline (--baseline) rather than the absolute number."
 )
 
 TANGLE_RATIO_DEFINITION = "fraction of symbols inside non-trivial SCCs; higher = more cyclic coupling."

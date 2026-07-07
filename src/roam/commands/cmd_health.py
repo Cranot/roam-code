@@ -2455,6 +2455,17 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         if _idx_status and not _idx_status.get("fresh"):
             click.echo(f"NOTE: {_idx_status['hint']}\n")
         click.echo(f"VERDICT: {verdict}\n")
+        # F13 — calibration disclaimer. A low score on a well-maintained
+        # framework (express scored 7/100 in the D1b battery) is a demo-killer
+        # when read as a quality grade. Contextualise it as a structural index.
+        if isinstance(health_score, (int, float)) and health_score < 60:
+            click.echo(
+                "NOTE: health_score is a relative STRUCTURAL-complexity index "
+                "(coupling / cycles / god-components), not a code-quality grade. "
+                "Mature frameworks with intentional deep coupling can score low — "
+                "read it as 'how tangled', not 'how good', and compare against a "
+                "--baseline rather than the absolute number.\n"
+            )
         # when --explain, decompose the score before everything
         # else so the user understands which factor is dragging it down.
         if explain:
