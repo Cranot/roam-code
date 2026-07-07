@@ -51,18 +51,67 @@ _EXAMPLE_DIRS = (
 
 _DOC_DIRS = (
     "docs",  # by convention not source code
+    # F12 (D1b stranger test): fastapi ships every tutorial as a standalone,
+    # deliberately-untested teaching snippet under ``docs_src/``. Those 375
+    # coverage-gap "violations" + 7/8 top dead-SAFE findings were all
+    # ``docs_src/`` — one role-exclusion kills the whole false-positive class.
+    # ``docs_src`` is the exact name the plain ``docs`` segment match missed
+    # (``docs_src != docs``); ``doc_src`` / ``docs_source`` cover the common
+    # spelling variants of the same convention.
+    "docs_src",
+    "doc_src",
+    "docs_source",
 )
 
 _DEFAULT_EXCLUDED_DIRS: frozenset[str] = frozenset((*_TOOLING_DIRS, *_GENERATED_DIRS, *_EXAMPLE_DIRS, *_DOC_DIRS))
 
 
-def is_excluded_path(path: str | None, *, extra_dirs: frozenset[str] | None = None) -> bool:
+def _split_dir_list(raw: object) -> frozenset[str]:
+    """Parse a comma-separated directory-name list from config into a set."""
+    if not raw or not isinstance(raw, str):
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def configured_role_exclusions(project_root=None) -> tuple[frozenset[str], frozenset[str]]:
+    """Return ``(extra_exclude, re_include)`` from the ``[roles]`` config section.
+
+    F12 config override. ``.roam/config.toml``::
+
+        [roles]
+        extra_exclude = "generated_ts, proto"   # add these dir names
+        include = "examples, docs_src"           # re-admit these defaults
+
+    Both keys are optional comma-separated directory-name lists (the simple
+    scalar TOML the in-tree fallback parser supports). Missing file / section
+    yields two empty sets — the default exclusions apply unchanged. Any config
+    error degrades silently to "no override" so a detector never crashes on a
+    malformed knob.
+    """
+    try:
+        from roam.config import load_config
+
+        roles = load_config(project_root).get("roles", {})
+    except Exception:  # noqa: BLE001 — config is best-effort here
+        return frozenset(), frozenset()
+    return _split_dir_list(roles.get("extra_exclude")), _split_dir_list(roles.get("include"))
+
+
+def is_excluded_path(
+    path: str | None,
+    *,
+    extra_dirs: frozenset[str] | None = None,
+    allow_dirs: frozenset[str] | None = None,
+) -> bool:
     """Return True when ``path`` lives in a directory we exclude from
     headline metrics by default.
 
     Match is "any segment of the path equals one of the excluded
     directory names". Both Unix and Windows separators are normalised.
-    Pass ``extra_dirs`` to add to the default set without redefining it.
+    Pass ``extra_dirs`` to add to the default set without redefining it;
+    pass ``allow_dirs`` to re-admit specific defaults (the config
+    ``[roles] include`` override) so a project that genuinely ships source
+    under ``examples/`` can opt back in.
 
     W1029: ``path`` accepts ``None`` so callers can pass raw
     ``row["file_path"]`` without the cargo-cult ``or ""`` defensive
@@ -73,7 +122,7 @@ def is_excluded_path(path: str | None, *, extra_dirs: frozenset[str] | None = No
         return False
     norm = path.replace("\\", "/")
     segments = {p for p in norm.split("/") if p}
-    excluded = _DEFAULT_EXCLUDED_DIRS | (extra_dirs or frozenset())
+    excluded = (_DEFAULT_EXCLUDED_DIRS | (extra_dirs or frozenset())) - (allow_dirs or frozenset())
     return bool(segments & excluded)
 
 

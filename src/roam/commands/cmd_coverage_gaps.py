@@ -191,11 +191,25 @@ def _evaluate_gate_rules(conn, rules):
         for r in rows:
             test_fn_count[r["path"]] = int(r["cnt"] or 0)
 
+    # F12 — role exclusions. ``docs_src/``, ``examples/``, docs, generated,
+    # tooling etc. are non-production files a coverage gate must not flag
+    # (fastapi's 375 "violations" were all deliberately-untested ``docs_src/``
+    # tutorial snippets). Config-overridable via ``[roles]`` in
+    # ``.roam/config.toml`` (extra_exclude / include).
+    from roam.output.file_role_hints import configured_role_exclusions, is_excluded_path
+
+    _extra_ex, _re_inc = configured_role_exclusions()
+
+    def _role_excluded(fp: str) -> bool:
+        return is_excluded_path(fp, extra_dirs=_extra_ex, allow_dirs=_re_inc)
+
     violations = []
     for rule in rules:
         # Find files matching include patterns
         matched = set()
         for fp in all_files:
+            if _role_excluded(fp):
+                continue
             for pat in rule.include_patterns:
                 if matches_gitignore(fp, pat):
                     matched.add(fp)

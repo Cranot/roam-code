@@ -806,6 +806,30 @@ def duplicates(
         if candidates is None:
             candidates = []
 
+        # F12 — role exclusions. Example/tutorial/docs/generated code that
+        # duplicates itself (express flagged `examples/mvc/*` controller
+        # clusters as production) is not a refactor target a report should
+        # lead with. ``duplicates`` already role-buckets test/fixture corpora
+        # (test_intentional) and offers ``--exclude-fixtures``, so those
+        # test-artifact dirs are RE-ADMITTED here — only the non-source
+        # example/docs/generated classes are dropped. Config-overridable via
+        # ``[roles]`` in .roam/config.toml.
+        from roam.output.file_role_hints import (
+            configured_role_exclusions as _cfg_role_ex,
+        )
+        from roam.output.file_role_hints import (
+            is_excluded_path as _role_excluded_path,
+        )
+
+        _dups_extra_ex, _dups_re_inc = _cfg_role_ex()
+        # Keep the command's existing fixture/sample/workspace handling intact.
+        _dups_allow = frozenset({"fixtures", "samples", "workspaces"}) | _dups_re_inc
+        candidates = [
+            c
+            for c in candidates
+            if not _role_excluded_path(c["file_path"], extra_dirs=_dups_extra_ex, allow_dirs=_dups_allow)
+        ]
+
         if len(candidates) < 2:
             # W805 (Pattern 2: silent fallbacks) — fewer than 2 candidate
             # functions means the duplicate-detection algorithm CANNOT
