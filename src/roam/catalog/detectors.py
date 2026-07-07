@@ -589,6 +589,73 @@ def _call_leaf(name: str) -> str:
     return name.rsplit(".", 1)[-1]
 
 
+def _count_unqualified_self_calls(snippet: str, name: str) -> int:
+    """F5 — count self-calls of *name* that are genuine local recursion.
+
+    The index-time ``self_call_count`` matches a call to *name* by its leaf
+    token, so ``JSON.stringify(...)`` inside a local ``stringify`` is miscounted
+    as a self-call (express: ``stringify`` flagged branching-recursion; its only
+    "self-calls" were ``JSON.stringify``). Likewise ``this.set(...)`` inside
+    ``app.set`` is a call on a receiver, not local recursion, so a config setter
+    gets a bogus "add memoization" recommendation (F7's evidenced cases).
+
+    This counts only occurrences of ``name(`` NOT preceded by ``.`` / a word
+    char / ``$`` (so ``JSON.stringify(``, ``this.set(``, ``obj.name(`` are all
+    excluded), then removes the one definition site. A function keyword prefix
+    is irrelevant — the definition is always exactly one unqualified ``name(``.
+    """
+    if not snippet or not name:
+        return 0
+    esc = re.escape(name)
+    call_hits = len(re.findall(rf"(?<![\w.$]){esc}\s*\(", snippet))
+    return max(call_hits - 1, 0)
+
+
+_LOOP_VAR_PATTERNS = (
+    # JS/TS C-style + for-of/for-in
+    re.compile(r"\bfor\s*\(\s*(?:var|let|const)?\s*([A-Za-z_$][\w$]*)\b"),
+    re.compile(r"\bfor\s*\(\s*(?:var|let|const)?\s*([A-Za-z_$][\w$]*)\s+(?:of|in)\b"),
+    # array-iteration callbacks: .forEach/.map/.filter((x) => ...) or (x, i) =>
+    re.compile(r"\.(?:forEach|map|filter|reduce|some|every|find)\s*\(\s*(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)"),
+    # Python for-loops (incl. tuple targets — first name)
+    re.compile(r"\bfor\s+([A-Za-z_][\w]*)\s*[,\s]"),
+)
+
+
+def _extract_loop_variables(snippet: str) -> set[str]:
+    """Best-effort set of loop-iteration variable names bound in *snippet*."""
+    if not snippet:
+        return set()
+    out: set[str] = set()
+    for pat in _LOOP_VAR_PATTERNS:
+        for m in pat.finditer(snippet):
+            name = m.group(1)
+            if name and name not in ("function",):
+                out.add(name)
+    return out
+
+
+_QUOTE_CHARS = "'\"`"
+
+
+def _lookup_is_string_scan(snippet: str, leaf: str) -> bool:
+    """F8 — True when every ``.leaf(`` call passes a string/char LITERAL first.
+
+    ``str.indexOf(';')`` / ``str.lastIndexOf(';', i)`` is character scanning in a
+    parser, not an O(m) collection membership test (express ``acceptParams`` was
+    flagged loop-lookup for exactly this). If every occurrence of the leaf in the
+    body takes a quoted first argument, it is string parsing — suppress.
+    """
+    if not snippet or not leaf:
+        return False
+    esc = re.escape(leaf)
+    all_calls = re.findall(rf"\.{esc}\s*\(", snippet)
+    if not all_calls:
+        return False
+    str_calls = re.findall(rf"\.{esc}\s*\(\s*[{_QUOTE_CHARS}]", snippet)
+    return len(str_calls) == len(all_calls)
+
+
 def _dedupe(seq: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -3316,11 +3383,31 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
         "IndexOf",
     }
 
+    # F8 — string-parse ``indexOf``/``lastIndexOf`` (arg is a char/string
+    # literal) is character scanning in a parser, not a collection lookup.
+    # Suppress those leaves; a finding survives only if a genuine
+    # collection-argument lookup remains. Reads source lazily, once per row.
+    _STRING_SCANNABLE = {"indexof", "lastindexof", "index", "find"}
+
+    def _filter_string_scans(row, calls: list[str]) -> list[str]:
+        if not calls or not any(_call_leaf(c).lower() in _STRING_SCANNABLE for c in calls):
+            return calls
+        snippet = _read_symbol_source(
+            row["file_path"], _row_value(row, "line_start", None), _row_value(row, "line_end", None)
+        )
+        kept = []
+        for c in calls:
+            leaf = _call_leaf(c)
+            if leaf.lower() in _STRING_SCANNABLE and _lookup_is_string_scan(snippet, leaf):
+                continue  # string parsing, not a collection lookup
+            kept.append(c)
+        return kept
+
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        lookup_calls = _json_list(_row_value(r, "loop_lookup_calls", ""))
+        lookup_calls = _filter_string_scans(r, _json_list(_row_value(r, "loop_lookup_calls", "")))
         if lookup_calls:
             results.append(
                 _finding(
@@ -3334,7 +3421,7 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
             continue
         # Fallback for older indexes: conservative matching only.
         calls = _iter_loop_calls(r)
-        fallback_hits = _call_in(calls, _LOOKUP_CALLS)
+        fallback_hits = _filter_string_scans(r, _call_in(calls, _LOOKUP_CALLS))
         if fallback_hits:
             results.append(
                 _finding(
@@ -3493,6 +3580,13 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
             continue
         if _has_memo_collection(snippet):
             # M2: function carries its own Set/Map/WeakSet — already memoised.
+            continue
+        # F5/F7 — the index-time self_call_count matches by leaf token, so
+        # ``JSON.stringify`` (other receiver) and ``this.set`` (call on self,
+        # not local recursion) inflate it. Require >= 2 genuinely-UNQUALIFIED
+        # self-calls in the body. Kills the express FPs (stringify, app.use,
+        # app.set, app.param) while keeping real branching recursion.
+        if _count_unqualified_self_calls(snippet, r["name"] or "") < 2:
             continue
         # M1: pin the location at the first self-call line if we can find it,
         # not the function declaration. The detector flagged because
@@ -3728,6 +3822,18 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         if _is_test_path(r["file_path"]):
             continue
         inv_calls = json.loads(r["loop_invariant_calls"]) if r["loop_invariant_calls"] else []
+        # F6 — a call is only loop-INVARIANT if neither its receiver nor its
+        # args depend on the loop variable. The index-time signal checks args
+        # but missed the RECEIVER: ``key.toLowerCase()`` where ``key`` is the
+        # loop variable was flagged as hoistable (express res.download). Read
+        # the source once and drop any flagged call whose receiver is a bound
+        # loop variable. (Lazy: only when there is something to filter.)
+        _loop_vars: set[str] | None = None
+        if inv_calls:
+            _lv_snippet = _read_symbol_source(
+                r["file_path"], _row_value(r, "line_start", None), _row_value(r, "line_end", None)
+            )
+            _loop_vars = _extract_loop_variables(_lv_snippet)
         # Filter out intentional per-iteration calls
         flagged = []
         heavyweight_hits = []
@@ -3736,6 +3842,11 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
             call_leaf = _call_leaf(c).lower()
             if call_full in _INTENTIONAL_CALLS or call_leaf in _INTENTIONAL_CALLS:
                 continue
+            # F6 — receiver depends on the loop variable ⇒ not invariant.
+            if _loop_vars and "." in (c or ""):
+                receiver = c.split(".", 1)[0].strip()
+                if receiver in _loop_vars:
+                    continue
             flagged.append(c)
             # V3 — escalate when the call is a parse/deserialize on a
             # known serialisation receiver (json.loads, JSON.parse, etc.).
