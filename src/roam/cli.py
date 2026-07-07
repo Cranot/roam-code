@@ -224,6 +224,7 @@ _COMMANDS = {
     "permit": ("roam.commands.cmd_permit", "permit_cmd"),
     "postmortem": ("roam.commands.cmd_postmortem", "postmortem_cmd"),
     "pr-replay": ("roam.commands.cmd_pr_replay", "pr_replay_cmd"),
+    "service-report": ("roam.commands.cmd_service_report", "service_report_cmd"),
     "article-12-check": ("roam.commands.cmd_article_12_check", "article_12_check_cmd"),
     "capabilities": ("roam.commands.cmd_capabilities", "capabilities_cmd"),
     "skill-generate": ("roam.commands.cmd_skill_generate", "skill_generate_cmd"),
@@ -492,6 +493,7 @@ _CATEGORIES = {
         "permit",
         "postmortem",
         "pr-replay",
+        "service-report",
         "guard",
         # Roam Guard family (Wave 11-20): the PR-gating surface.
         "guard-pr",
