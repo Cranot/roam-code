@@ -672,6 +672,8 @@ def test_critique_different_diff_gets_fresh_finding_id(indexed_project):
     assert first_count >= 1
 
     # Second diff: touch a different file (utils.py instead).
+    # F1: the added line must land INSIDE format_name's body so the symbol is
+    # attributed (a trailing add past the function end is — correctly — not).
     second_diff = textwrap.dedent(
         """\
         --- a/src/utils.py
@@ -679,8 +681,8 @@ def test_critique_different_diff_gets_fresh_finding_id(indexed_project):
         @@ -1,3 +1,4 @@ def format_name(first, last):
          def format_name(first, last):
              \"\"\"Format a full name.\"\"\"
-             return f"{first} {last}"
         +    # new comment
+             return f"{first} {last}"
         """
     )
 

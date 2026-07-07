@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import json as _json
 import sqlite3
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -560,21 +559,12 @@ def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) ->
     duplicating the check setup.
     """
     regions = parse_diff(diff_text)
+    # F4 — the intent check ABSTAINS without an explicit ``--intent``. Silently
+    # defaulting to HEAD's commit subject manufactured false signals on every
+    # ``<diff> | roam critique`` workflow (D1: two zod findings were pure
+    # artifacts — the piped commit said "docs: remove ..." while HEAD said
+    # "chore: add ..."). Abstention is honest; a guessed intent is not.
     effective_intent = intent_text
-    if effective_intent is None:
-        try:
-            proc = subprocess.run(
-                ["git", "log", "-1", "--pretty=%s"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                effective_intent = proc.stdout.strip() or None
-        except (OSError, subprocess.SubprocessError):
-            effective_intent = None
     with open_db(readonly=True) as conn:
         changed_symbols = find_changed_symbols(conn, regions)
         findings, check_status = _run_checks_with_status(
@@ -748,8 +738,9 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
     help=(
         "PR title or commit subject to check for alignment with the diff's "
         "semantic shape (e.g. 'fix login bug', 'rename UserSession -> "
-        "Session'). Falls back to the latest git commit subject if a git "
-        "repo is detected and this flag is omitted."
+        "Session'). When omitted the intent check is SKIPPED (it never guesses "
+        "from HEAD's subject — on a piped non-HEAD diff that would compare the "
+        "wrong commit's title and manufacture false findings)."
     ),
 )
 @click.option(
@@ -930,22 +921,12 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
 
     regions = _run_check("parse_diff", parse_diff, diff_text, default=[]) or []
 
-    # Auto-pick up latest commit subject if --intent wasn't passed.
+    # F4 — abstain without an explicit ``--intent``. Do NOT fall back to HEAD's
+    # commit subject: on a piped diff that is not HEAD (any ``git show <sha> |
+    # roam critique`` sweep) HEAD's subject describes a DIFFERENT change, which
+    # manufactured false "PR title says X but diff has no X" findings (D1 zod
+    # 9195250 / b8dffe9). No intent text ⇒ the intent check is skipped.
     effective_intent = intent_text
-    if effective_intent is None:
-        try:
-            proc = subprocess.run(
-                ["git", "log", "-1", "--pretty=%s"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                effective_intent = proc.stdout.strip() or None
-        except (OSError, subprocess.SubprocessError):
-            effective_intent = None
 
     with open_db(readonly=not persist) as conn:
         changed_symbols = _run_check("find_changed_symbols", find_changed_symbols, conn, regions, default=[]) or []

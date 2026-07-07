@@ -25,12 +25,23 @@ class ChangedRegion:
     Line numbers refer to the **new** side of the diff. Multiple hunks per
     file are collapsed into a list of (start, length) tuples for efficient
     symbol lookup.
+
+    ``changed_lines`` (F1) is the set of new-side line numbers that were
+    *actually* touched — added lines plus the new-side anchor(s) of every
+    deletion. Unchanged **context** lines inside a hunk are NOT included.
+    This is the load-bearing distinction for attribution: a symbol that
+    merely shares a hunk with an edit (appearing only as a context line —
+    e.g. ``var send = require('send')`` three lines above the real add)
+    must not be reported as "changed". See the D1 stranger test (express
+    ``send``, requests ``httpbin``, zod ``pipe``, fastapi ``write_file``):
+    all four were context-line false positives that this field removes.
     """
 
     file_path: str
     hunks: tuple[tuple[int, int], ...]  # ((new_start, new_length), ...)
     additions: int = 0
     deletions: int = 0
+    changed_lines: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -90,18 +101,27 @@ def parse_diff(text: str) -> list[ChangedRegion]:
 
     by_file: dict[str, list[tuple[int, int]]] = {}
     counts: dict[str, list[int]] = {}  # file → [adds, dels]
+    changed_lines: dict[str, set[int]] = {}  # file → {new-side line numbers actually touched}
     current_file: str | None = None
+    # ``new_line`` tracks the current new-side line number as we walk a hunk
+    # body; ``None`` outside a hunk. ``hunk_new_start`` bounds deletion
+    # anchors so a deletion at the very top of a hunk never anchors before
+    # the hunk's first line.
+    new_line: int | None = None
+    hunk_new_start = 0
 
     for line in text.splitlines():
         m = _DIFF_FILE_RE.match(line)
         if m:
             path = m.group(1).strip()
+            new_line = None
             if path == "/dev/null":
                 current_file = None
                 continue
             current_file = path
             by_file.setdefault(current_file, [])
             counts.setdefault(current_file, [0, 0])
+            changed_lines.setdefault(current_file, set())
             continue
 
         m = _DIFF_HUNK_RE.match(line)
@@ -110,12 +130,36 @@ def parse_diff(text: str) -> list[ChangedRegion]:
             new_length = int(m.group(2)) if m.group(2) else 1
             if new_length > 0:
                 by_file[current_file].append((new_start, new_length))
+            new_line = new_start
+            hunk_new_start = new_start
             continue
 
-        if current_file is not None and line[:1] == "+" and not line.startswith("+++"):
+        if current_file is None:
+            continue
+
+        first = line[:1]
+        if first == "+" and not line.startswith("+++"):
             counts[current_file][0] += 1
-        elif current_file is not None and line[:1] == "-" and not line.startswith("---"):
+            if new_line is not None:
+                # An added line occupies this new-side position.
+                changed_lines[current_file].add(new_line)
+                new_line += 1
+        elif first == "-" and not line.startswith("---"):
             counts[current_file][1] += 1
+            if new_line is not None:
+                # A deleted line has no new-side position of its own; anchor
+                # it to the new-side line that now sits at the gap and to the
+                # line just above (so a deletion inside a symbol body is
+                # attributed to that symbol regardless of which boundary the
+                # symbol spans). The deletion does NOT advance ``new_line``.
+                changed_lines[current_file].add(new_line)
+                if new_line - 1 >= hunk_new_start:
+                    changed_lines[current_file].add(new_line - 1)
+        elif new_line is not None and (first == " " or line == ""):
+            # Context line — unchanged; advance the cursor but do NOT mark it.
+            new_line += 1
+        # Any other line inside a hunk ("\ No newline at end of file", or
+        # stray metadata) neither advances nor marks.
 
     regions = []
     for path, hunks in by_file.items():
@@ -126,6 +170,7 @@ def parse_diff(text: str) -> list[ChangedRegion]:
                 hunks=tuple(hunks),
                 additions=adds,
                 deletions=dels,
+                changed_lines=frozenset(changed_lines.get(path, set())),
             )
         )
     return regions
@@ -249,7 +294,17 @@ def find_changed_symbols(
     for sym in sym_rows:
         by_fid.setdefault(int(sym["file_id"]), []).append(sym)
 
-    # Step 5 — per-region hunk overlap (no DB queries here).
+    # Step 5 — per-region overlap against ACTUALLY-CHANGED lines (F1).
+    #
+    # A symbol is "changed" only when at least one added/deleted new-side line
+    # falls inside its [line_start, line_end] window. Overlapping the raw hunk
+    # *range* (the pre-F1 behaviour) counted context lines and produced the D1
+    # false-positive class (a symbol three lines above the real edit reported
+    # as changed). We fall back to hunk-range overlap only when a region has no
+    # line-level signal (defensive: a real hunk always has ≥1 +/- line, so this
+    # keeps behaviour intact for exotic diffs while the common path is exact).
+    import bisect
+
     out: list[ChangedSymbol] = []
     for region, path in zip(regions, region_to_path):
         if not path:
@@ -257,24 +312,34 @@ def find_changed_symbols(
         fid = path_to_fid.get(path)
         if fid is None:
             continue
+        sorted_changed = sorted(region.changed_lines)
         for sym in by_fid.get(fid, ()):
             sym_start = int(sym["line_start"])
             sym_end = int(sym["line_end"]) if sym["line_end"] is not None else sym_start
-            for hunk_start, hunk_len in region.hunks:
-                hunk_end = hunk_start + max(hunk_len - 1, 0)
-                if sym_end >= hunk_start and sym_start <= hunk_end:
-                    out.append(
-                        ChangedSymbol(
-                            symbol_id=int(sym["id"]),
-                            name=sym["name"],
-                            qualified_name=sym["qualified_name"],
-                            kind=sym["kind"],
-                            file_path=sym["file_path"],
-                            line_start=sym_start,
-                            line_end=sym_end,
-                        )
+            hit = False
+            if sorted_changed:
+                # First changed line >= sym_start; symbol is touched iff that
+                # line is also <= sym_end.
+                idx = bisect.bisect_left(sorted_changed, sym_start)
+                hit = idx < len(sorted_changed) and sorted_changed[idx] <= sym_end
+            else:
+                for hunk_start, hunk_len in region.hunks:
+                    hunk_end = hunk_start + max(hunk_len - 1, 0)
+                    if sym_end >= hunk_start and sym_start <= hunk_end:
+                        hit = True
+                        break
+            if hit:
+                out.append(
+                    ChangedSymbol(
+                        symbol_id=int(sym["id"]),
+                        name=sym["name"],
+                        qualified_name=sym["qualified_name"],
+                        kind=sym["kind"],
+                        file_path=sym["file_path"],
+                        line_start=sym_start,
+                        line_end=sym_end,
                     )
-                    break  # one hunk overlap is enough
+                )
 
     # Deduplicate by symbol_id while preserving order.
     seen: set[int] = set()
@@ -420,6 +485,18 @@ def check_impact(
 
     from roam.runtime.hotspots import runtime_score_max_for_symbols
 
+    # F2 — test-only symbols (fixtures, helpers) get their impact demoted. A
+    # test helper's "N callers" are other tests; changing it does not ripple
+    # through production. On the D1 sample write_file / httpbin were 3-line test
+    # helpers reported as high-blast — F1 already stops attributing them, and
+    # this demotes any test-only symbol that does legitimately change.
+    try:
+        from roam.index.file_roles import is_test as _is_test_file
+    except Exception:  # noqa: BLE001 — degrade gracefully if the helper moves
+        _is_test_file = lambda _p: False  # noqa: E731
+
+    _demote = {"high": "medium", "medium": "low", "low": "info", "info": "info"}
+
     findings: list[Finding] = []
     callers_by_symbol = _load_callers_for_impact_gate(
         conn,
@@ -439,6 +516,11 @@ def check_impact(
             hot_score = runtime_score_max_for_symbols(conn, caller_ids)
             if hot_score >= 0.5 and severity == "medium":
                 severity = "high"
+            # F2 — demote test-only symbols one severity notch; their callers
+            # are the suite, not production.
+            test_only = bool(_is_test_file(sym.file_path))
+            if test_only:
+                severity = _demote.get(severity, severity)
             findings.append(
                 Finding(
                     check="impact",
@@ -448,6 +530,7 @@ def check_impact(
                         f"Changing {sym.name} ({sym.kind} at {sym.file_path}:"
                         f"{sym.line_start}) ripples through at least "
                         f"{callers} call sites. "
+                        + ("This is a test-only symbol; its callers are the test suite. " if test_only else "")
                         + (
                             f"At least one caller is on a hot runtime path (runtime_score={hot_score:.2f})."
                             if hot_score >= 0.5
@@ -460,6 +543,7 @@ def check_impact(
                         "file": sym.file_path,
                         "line": sym.line_start,
                         "max_caller_runtime_score": round(hot_score, 4),
+                        "test_only": test_only,
                     },
                 )
             )
