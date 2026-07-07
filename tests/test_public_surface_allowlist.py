@@ -15,9 +15,10 @@ Regenerate the baseline (after vetting) with::
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from tests._helpers.repo_root import repo_root
+
+_REPO_ROOT = repo_root()
 _ALLOWLIST = _REPO_ROOT / "dev" / "PUBLIC_ALLOWLIST.txt"
 
 
