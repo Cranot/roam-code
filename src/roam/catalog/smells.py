@@ -3440,8 +3440,10 @@ def detect_speculative_generality(conn: sqlite3.Connection) -> list[dict]:
             try:
                 if _surf.is_external_facing(r["name"], None, r["file_path"]):
                     continue
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                from roam.observability import log_swallowed
+
+                log_swallowed("smells:speculative_generality_surface", exc)
         loc_str = _loc(r["file_path"], r["line_start"])
         total_refs = r["total_refs"]
         results.append(

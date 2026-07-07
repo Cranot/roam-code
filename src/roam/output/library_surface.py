@@ -235,8 +235,10 @@ def detect_library(project_root) -> LibrarySurface:
                     d = cand.parent.name
                     if d not in ("tests", "test", "docs", "examples", "build"):
                         py_prefixes.append((d, ""))
-    except OSError:
-        pass
+    except OSError as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("library_surface:python_detect", exc)
 
     # --- JS -----------------------------------------------------------------
     try:
@@ -257,8 +259,10 @@ def detect_library(project_root) -> LibrarySurface:
                         if key and key != "." and "/" not in key:
                             extra.add(key)
                 js_names = frozenset(extra)
-    except (OSError, json.JSONDecodeError, ValueError):
-        pass
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("library_surface:js_detect", exc)
 
     return LibrarySurface(
         is_library=is_library,
