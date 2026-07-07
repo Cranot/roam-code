@@ -29,9 +29,7 @@ def test_intent_skipped_without_intent_text() -> None:
     changed = [ChangedSymbol(1, "Bronze", "Bronze", "function", "bronze.tsx", 1, 5)]
     regions = [ChangedRegion("bronze.tsx", ((1, 5),), additions=0, deletions=6)]
 
-    findings, status = _run_checks_with_status(
-        conn, changed, regions, high_callers=10, effective_intent=None
-    )
+    findings, status = _run_checks_with_status(conn, changed, regions, high_callers=10, effective_intent=None)
     assert status["intent"] == "skipped:no_intent_text"
     assert not any(f.check == "intent" for f in findings)
 

@@ -200,13 +200,7 @@ def test_deletion_inside_symbol_is_attributed() -> None:
     # A pure-deletion inside a symbol body must still attribute (the removed
     # lines were part of that symbol).
     diff = (
-        "--- a/mod.py\n"
-        "+++ b/mod.py\n"
-        "@@ -10,5 +10,3 @@ def foo():\n"
-        "     a = 1\n"
-        "-    b = 2\n"
-        "-    c = 3\n"
-        "     return a\n"
+        "--- a/mod.py\n+++ b/mod.py\n@@ -10,5 +10,3 @@ def foo():\n     a = 1\n-    b = 2\n-    c = 3\n     return a\n"
     )
     conn = _make_conn([(1, "foo", "foo", "function", "mod.py", 9, 12)])
     assert "foo" in _names(conn, diff)
@@ -222,7 +216,9 @@ def test_f2_test_only_symbol_impact_demoted() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE edges (source_id INTEGER, target_id INTEGER, kind TEXT)")
-    conn.execute("CREATE TABLE runtime_stats (symbol_id INTEGER, call_count INTEGER, p99_latency_ms REAL, error_rate REAL)")
+    conn.execute(
+        "CREATE TABLE runtime_stats (symbol_id INTEGER, call_count INTEGER, p99_latency_ms REAL, error_rate REAL)"
+    )
     # 25 callers of the test helper (target_id=100)
     for src in range(1, 26):
         conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (?, 100, 'call')", (src,))

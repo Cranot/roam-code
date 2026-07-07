@@ -29,7 +29,9 @@ def _requests_like(root: Path) -> None:
     # as `requests.adapters.HTTPAdapter` (public submodule), the exact case the
     # naive "__all__ / re-export only" heuristic misses.
     (pkg / "__init__.py").write_text("from .sessions import Session\n", encoding="utf-8")
-    (pkg / "adapters.py").write_text("class HTTPAdapter:\n    def init_poolmanager(self):\n        pass\n", encoding="utf-8")
+    (pkg / "adapters.py").write_text(
+        "class HTTPAdapter:\n    def init_poolmanager(self):\n        pass\n", encoding="utf-8"
+    )
     (pkg / "_internal_utils.py").write_text("def to_native_string(s):\n    return s\n", encoding="utf-8")
 
 

@@ -62,10 +62,6 @@ import click
 from click.testing import CliRunner
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
-from roam.exit_codes import EXIT_SUCCESS
-from roam.output.formatter import json_envelope, to_json
-from roam.runs.helpers import auto_log
 
 # Reuse pr-replay's render/output infrastructure — genuine sibling reuse,
 # not duplication. ``_render_pdf`` is a generic markdown→PDF renderer;
@@ -77,6 +73,10 @@ from roam.commands.cmd_pr_replay import (
     _render_pdf,
     _run_postmortem,
 )
+from roam.commands.resolve import ensure_index
+from roam.exit_codes import EXIT_SUCCESS
+from roam.output.formatter import json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Report-type registry — single source of truth for what each type means.
@@ -240,7 +240,9 @@ _DISCLAIMER_BANNER = (
 )
 
 
-def _header(*, type_meta: dict, report_type: str, client: str | None, index_sha: str | None, generated_at: str, subject: str) -> list[str]:
+def _header(
+    *, type_meta: dict, report_type: str, client: str | None, index_sha: str | None, generated_at: str, subject: str
+) -> list[str]:
     """Build the shared report header block."""
     out: list[str] = []
     if client:
@@ -290,8 +292,7 @@ def _footer(*, report_type: str, generated_at: str, extra_scope: list[str]) -> l
         "**Semantic correctness** — whether the code does the right thing. "
         "Roam surfaces structural and evidence signals; it does not replace "
         "human or LLM semantic review.",
-        "**Legal, financial, or valuation opinion.** This is engineering "
-        "evidence only.",
+        "**Legal, financial, or valuation opinion.** This is engineering evidence only.",
     ]
     for item in extra_scope + base_scope:
         out.append(f"- {item}")
@@ -419,8 +420,10 @@ def _render_due_diligence(*, env: dict, meta: dict) -> str:
     out.append("## 5. Dead code & duplication (`roam dead`, `roam clones`)")
     out.append("")
     out.append(f"- Dead code: {_verdict(dead)}")
-    out.append(f"  - Files affected: {_cell(_g(dead, 'files_affected'))}, "
-               f"estimated remediation: {_cell(_g(dead, 'total_effort_hours'))} hours")
+    out.append(
+        f"  - Files affected: {_cell(_g(dead, 'files_affected'))}, "
+        f"estimated remediation: {_cell(_g(dead, 'total_effort_hours'))} hours"
+    )
     out.append(f"- Duplication: {_verdict(clones)}")
     reducible = _g(clones, "estimated_reducible_lines")
     if reducible is not None:
@@ -479,10 +482,8 @@ def _render_due_diligence(*, env: dict, meta: dict) -> str:
             report_type="due-diligence",
             generated_at=meta["generated_at"],
             extra_scope=[
-                "**Penetration testing.** Section 8 surfaces structural and "
-                "reachability signals, not exploit paths.",
-                "**Runtime performance profiling.** Complexity is static; it is "
-                "not a benchmark run.",
+                "**Penetration testing.** Section 8 surfaces structural and reachability signals, not exploit paths.",
+                "**Runtime performance profiling.** Complexity is static; it is not a benchmark run.",
             ],
         )
     )
@@ -796,7 +797,9 @@ def _render_post_incident(*, env: dict, meta: dict, commit_range: str) -> str:
         "surfaced before the change merged?"
     )
     out.append("")
-    flagged = [c for c in commits if isinstance(c, dict) and (int(c.get("high", 0) or 0) + int(c.get("medium", 0) or 0)) > 0]
+    flagged = [
+        c for c in commits if isinstance(c, dict) and (int(c.get("high", 0) or 0) + int(c.get("medium", 0) or 0)) > 0
+    ]
     if flagged:
         out.append("| Date | SHA | Subject | High | Medium | Top hits |")
         out.append("|---|---|---|---:|---:|---|")
@@ -832,8 +835,8 @@ def _render_post_incident(*, env: dict, meta: dict, commit_range: str) -> str:
     out.append(
         "A verified chain means the run ledger for this window has not been "
         "tampered with — the attribution below rests on a signed record. A "
-        "commit with no run record is itself a finding (\"shipped without "
-        "ledger coverage\")."
+        'commit with no run record is itself a finding ("shipped without '
+        'ledger coverage").'
     )
     out.append("")
 

@@ -150,10 +150,22 @@ _CANNED: dict[str, dict] = {
             "label": "FAIR",
         },
         "dimensions": [
-            {"label": "Naming consistency", "name": "naming_consistency", "score": 100, "weight": 15, "contribution": 15.0},
+            {
+                "label": "Naming consistency",
+                "name": "naming_consistency",
+                "score": 100,
+                "weight": 15,
+                "contribution": 15.0,
+            },
             {"label": "Module coupling", "name": "module_coupling", "score": 100, "weight": 20, "contribution": 20.0},
             {"label": "Dead code noise", "name": "dead_code_noise", "score": 0, "weight": 15, "contribution": 0.0},
-            {"label": "Test signal strength", "name": "test_signal_strength", "score": 9, "weight": 20, "contribution": 1.8},
+            {
+                "label": "Test signal strength",
+                "name": "test_signal_strength",
+                "score": 9,
+                "weight": 20,
+                "contribution": 1.8,
+            },
         ],
         "recommendations": [
             "Remove 469 dead exports to reduce agent confusion",
