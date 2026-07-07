@@ -63,7 +63,7 @@
     "@type": "FAQPage",
     "mainEntity": [
       {"@type": "Question", "name": "How do I get the report on a private repo without giving you direct access?", "acceptedAnswer": {"@type": "Answer", "text": "We offer two paths: (1) you grant us a read-only deploy key on a temporary clone we delete on completion, or (2) you run roam pr-replay locally and send us the JSON envelope plus the markdown — we add the founder review and ship the polished deliverable. Both paths sign the DPA and a one-page SOW."}},
-      {"@type": "Question", "name": "What if you find nothing material on my repo?", "acceptedAnswer": {"@type": "Answer", "text": "If a Team engagement surfaces zero findings worth wiring into CI, we'll either run it on a different range at no extra cost (if you want broader coverage) or refund 50% of the fee. The whole point is that you'd have shipped the same incidents knowing what Roam would have flagged — if you wouldn't have, the engagement underdelivered."}},
+      {"@type": "Question", "name": "What if the report is noise, or finds nothing material?", "acceptedAnswer": {"@type": "Answer", "text": "You never pay for noise. On the walk-through, any finding your team calls a false positive is struck and refunded pro-rata. If fewer than half the high/medium findings survive as worth acting on, that is a full refund. A Team engagement that surfaces zero material findings is a 100% refund, not 50%. The guarantee is on the usefulness of the findings, not just their count."}},
       {"@type": "Question", "name": "Can I share the report with my CTO, board, or auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The report is yours. You own the IP and can redistribute internally without restriction. External attribution is appreciated but not required."}},
       {"@type": "Question", "name": "Why this and not just running roam critique ourselves?", "acceptedAnswer": {"@type": "Answer", "text": "You can. The CLI is Apache 2.0 and free forever. The paid engagement adds: founder review of the patterns that matter for your codebase specifically, a ranked recommendation of which detector classes to wire into CI first, a polished narrative artefact you can hand to leadership or auditors, and a 30 or 90-minute walk-through call."}},
       {"@type": "Question", "name": "How fast is the turnaround?", "acceptedAnswer": {"@type": "Answer", "text": "Five business days from kickoff for Team, ten business days for Deep. Kickoff happens the day we receive payment confirmation and the agreed-on commit range or repo access. We'll usually move faster on small repos."}},
@@ -500,14 +500,14 @@
         </p>
       </details>
       <details>
-        <summary>What if you find nothing material on my repo?</summary>
+        <summary>What if the report is noise, or finds nothing material?</summary>
         <p>
-          If a Team engagement surfaces zero findings worth wiring into
-          CI, we'll either run it on a different range at no extra cost
-          (if you want broader coverage) or refund 50% of the fee. The
-          point is to know whether you'd have shipped the same incidents
-          knowing what Roam would have flagged — if you wouldn't have,
-          the engagement underdelivered and we own that.
+          You never pay for noise. On the walk-through, any finding your
+          team calls a false positive is struck and refunded pro-rata. If
+          fewer than half the high/medium findings survive as worth acting
+          on, that's a full refund. And if a Team engagement surfaces zero
+          material findings, that's a 100% refund — not 50%. The guarantee
+          is on the usefulness of the findings, not just their count.
         </p>
       </details>
       <details>
