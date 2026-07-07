@@ -3221,6 +3221,70 @@ def _append_detector_breakdown(out: list[str], *, by_detector: list[dict], commi
     out.append("")
 
 
+_FINDING_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
+
+
+def _collect_representative_findings(commits: list[dict], *, cap: int = 8) -> list[dict]:
+    """Flatten per-commit finding rows into a bounded, severity-ranked sample.
+
+    Each commit carries a ``findings`` list of ``{detector, severity,
+    location, detail}`` rows preserved by
+    ``cmd_postmortem._extract_finding_rows`` — the per-finding detail the
+    per-PR table rolls up into ``"detector xN"`` counts. We annotate each
+    row with its originating short SHA, rank by severity (high first), and
+    return at most ``cap`` rows.
+
+    Pure + defensive: a commit with no ``findings`` key, or a malformed
+    row, contributes nothing rather than raising.
+    """
+    rows: list[dict] = []
+    for c in commits:
+        if not isinstance(c, dict):
+            continue
+        for fr in c.get("findings") or []:
+            if not isinstance(fr, dict):
+                continue
+            row = dict(fr)
+            row["short_sha"] = c.get("short_sha") or c.get("sha") or "?"
+            rows.append(row)
+    rows.sort(key=lambda r: _FINDING_SEVERITY_RANK.get(str(r.get("severity", "")).lower(), 4))
+    return rows[:cap]
+
+
+def _append_representative_findings(out: list[str], *, commits: list[dict]) -> None:
+    """Surface individual per-finding detail behind the per-PR counts.
+
+    The per-PR table rolls findings up into ``"detector xN"`` counts; this
+    section shows a bounded, severity-ranked sample of the individual hits
+    (PR + location + detector + severity + one-line rationale) so the report
+    shows *what* was found, not only *how many*.
+    """
+    representative = _collect_representative_findings(commits, cap=8)
+    if not representative:
+        return
+    out.append("## Representative findings")
+    out.append("")
+    out.append(
+        "A sample of the individual findings behind the counts above — "
+        "each row is one detector hit with its location and a one-line "
+        "rationale. These rows **support evidence for** structural-review "
+        "triage and **map to** change-management controls; they are "
+        "observations for a reviewer, not a correctness verdict."
+    )
+    out.append("")
+    out.append("| PR | Location | Detector | Severity | Detail |")
+    out.append("|---|---|---|---|---|")
+    for r in representative:
+        out.append(
+            f"| `{_escape_cell_code(r.get('short_sha'))}` "
+            f"| `{_escape_cell_code(r.get('location'))}` "
+            f"| `{_escape_cell_code(r.get('detector'))}` "
+            f"| {_escape_cell_text(r.get('severity'))} "
+            f"| {_escape_cell_text(r.get('detail'))} |"
+        )
+    out.append("")
+
+
 def _append_per_pr_breakdown(
     out: list[str],
     *,
@@ -3349,13 +3413,15 @@ def _append_subscription_credit(out: list[str], *, tier: str) -> None:
     out.append("")
     credit_amount = "$1,250" if tier == "team" else "$3,000"
     out.append(
-        f"50% of the engagement fee — **{credit_amount}** — credits toward your "
-        f"first year of [Roam Review](https://roam-code.com/pricing) if you "
-        f"subscribe within **60 days** of report delivery. Roam Review runs the "
-        f"same detectors on every pull request automatically, with a sticky PR "
-        f"comment, BLOCK / REVIEW / APPROVE verdict, and exit-code-5 CI gating. "
-        f"Mention this report when subscribing and we apply the credit to the "
-        f"first invoice."
+        f"50% of the engagement fee — **{credit_amount}** — banks as a "
+        f"founding-customer credit toward your first year of "
+        f"[Roam Review](https://roam-code.com/pricing). Roam Review is not yet "
+        f"generally available; the credit is held for you and the **60-day** "
+        f"subscription window starts at Review GA, not at report delivery. "
+        f"Roam Review runs the same detectors on every pull request "
+        f"automatically, with a sticky PR comment, BLOCK / REVIEW / APPROVE "
+        f"verdict, and exit-code-5 CI gating. Mention this report when "
+        f"subscribing and we apply the credit to the first invoice."
     )
     out.append("")
 
@@ -3437,6 +3503,9 @@ def _render_report(
 
     # -- Per-PR breakdown --------------------------------------------------
     _append_per_pr_breakdown(out, tier=tier, tier_meta=tier_meta, commits=commits)
+
+    # -- Representative findings (per-finding detail behind the counts) -----
+    _append_representative_findings(out, commits=commits)
 
     # -- Per-detector deep-dive (Deep tier only, only when there are hits) -
     _append_deep_detector_breakdown(out, tier=tier, by_detector=by_detector, commits=commits)

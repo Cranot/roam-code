@@ -138,6 +138,62 @@ def _short_finding_summary(critique_payload: dict, *, max_kinds: int = 3) -> lis
     return [f"{k} x{v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])[:max_kinds]]
 
 
+_FINDING_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
+
+
+def _extract_finding_rows(critique_payload: dict, *, cap: int = 8) -> list[dict]:
+    """Preserve per-finding detail from a critique envelope.
+
+    ``_short_finding_summary`` rolls the critique ``findings`` list down to
+    ``"<detector> x<count>"`` strings for the per-PR table. That rollup
+    discards the location + one-line detail of each individual finding —
+    the exact per-finding evidence a buyer wants to see in a report. This
+    helper keeps a bounded, severity-ranked slice of the underlying rows so
+    the PR-Replay renderer can surface representative findings instead of
+    only counts.
+
+    Each row is ``{detector, severity, location, detail}``. ``location`` is
+    a ``file:line`` anchor when the finding carries positional evidence,
+    else the changed symbol name, else ``"diff-wide"`` for whole-diff
+    findings (e.g. intent drift). Defensive throughout — a malformed
+    finding is skipped, never raised on.
+    """
+    findings = critique_payload.get("findings") or critique_payload.get("checks") or []
+    rows: list[dict] = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        detector = f.get("check") or f.get("kind") or f.get("rule") or "?"
+        severity = f.get("severity") or "info"
+        title = (f.get("title") or "").strip()
+        detail = (f.get("detail") or "").strip()
+        evidence = f.get("evidence") if isinstance(f.get("evidence"), dict) else {}
+        changed = evidence.get("changed_symbol") if isinstance(evidence.get("changed_symbol"), dict) else {}
+        file_path = evidence.get("file") or (changed.get("file") if changed else "") or ""
+        line = evidence.get("line")
+        symbol = (changed.get("name") if changed else "") or evidence.get("symbol") or ""
+        if file_path and line:
+            location = f"{file_path}:{line}"
+        elif file_path:
+            location = str(file_path)
+        elif symbol:
+            location = str(symbol)
+        else:
+            location = "diff-wide"
+        # One-sentence detail: prefer the concise title, else first line of detail.
+        one_line = title or detail.split("\n", 1)[0].strip()
+        rows.append(
+            {
+                "detector": str(detector),
+                "severity": str(severity),
+                "location": location,
+                "detail": one_line,
+            }
+        )
+    rows.sort(key=lambda r: _FINDING_SEVERITY_RANK.get(r["severity"].lower(), 4))
+    return rows[:cap]
+
+
 from roam.capability import roam_capability
 
 
@@ -508,6 +564,15 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
                 )
                 or []
             )
+            finding_rows = (
+                _run_check_an(
+                    "extract_finding_rows",
+                    _extract_finding_rows,
+                    critique,
+                    default=[],
+                )
+                or []
+            )
             per_commit.append(
                 {
                     "sha": _fields["sha"],
@@ -518,6 +583,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
                     "high": high,
                     "medium": medium,
                     "kinds": kinds,
+                    "findings": finding_rows,
                 }
             )
 
