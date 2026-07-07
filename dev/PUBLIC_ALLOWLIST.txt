@@ -8,13 +8,16 @@
 # add its path below and re-run the test. Lines starting with # and blank
 # lines are ignored.
 #
-dev/BACKLOG.md
-dev/CHANGELOG.md
+dev/.gitignore
 dev/MCP-SECURITY-POSTURE.md
 dev/PUBLIC_ALLOWLIST.txt
-dev/ROADMAP.md
-dev/SPRINT-2026-05-12-FINAL.md
-dev/SPRINT-2026-05-13-W21-W38.md
+dev/agent_compare.py
+dev/agent_compare_focus.py
+dev/agent_compare_focus_scoreboard.py
+dev/agent_compare_multirepo_scoreboard.py
+dev/agent_compare_scoreboard.py
+dev/agent_compare_wide.py
+dev/audit_session_tool_usage.py
 dev/build_command_reference.py
 dev/build_readme_counts.py
 dev/command_audit.py
@@ -35,5 +38,6 @@ dev/profile-mcp-import.py
 dev/quality_baseline.ps1
 dev/repo_hygiene.py
 dev/roam-bench.py
+dev/roam_agent.py
 dev/roam_smoke.py
 dev/todo_guard.py
