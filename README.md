@@ -4,6 +4,10 @@
 
 **The local codebase intelligence layer that lets AI coding agents earn the right to change code — with evidence for what was checked.**
 
+**Semantic reviewers read what the code _does_. Roam reads what it _touches_.**
+
+[See a real sample report](templates/audit-report/sample-pr-replay-roam-selfaudit.md) — roam auditing its own last 30 merged PRs.
+
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)

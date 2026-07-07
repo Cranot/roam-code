@@ -1,8 +1,11 @@
 """R27 — Codebase-law mining and enforcement.
 
 This package implements the *self-installing constitution* concept from the
-backlog: a tool that infers a repo's unwritten rules from its own code +
-tests + git history, then enforces them against future PRs.
+backlog: a tool that infers a repo's current unwritten conventions from
+its own code + tests, then enforces them against future PRs. (The git
+co-change and error-handling strategies are v1 stubs returning ``[]`` —
+see ``miner.py`` strategies D and E — so the shipped miner reads the
+current index snapshot, not git history.)
 
 Public surface
 --------------
@@ -10,8 +13,8 @@ Public surface
   carries an ``id``, ``kind``, ``description``, ``evidence`` dict,
   ``severity`` / ``confidence`` labels, and a machine-readable ``rule``
   dict that other tooling (notably R18's policy DSL) can re-use.
-* :func:`roam.laws.miner.mine_laws` — the entry point that walks the
-  indexed DB + git history and returns the discovered laws.
+* :func:`roam.laws.miner.mine_laws` — the entry point that reads the
+  indexed codebase's current conventions and returns the discovered laws.
 * :func:`roam.laws.checker.check_laws` — runs a list of laws against a
   diff (working / staged / pr / file) and returns violations.
 * :func:`roam.laws.serializer.dump_laws_yaml` /

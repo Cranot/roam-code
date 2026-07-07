@@ -2,7 +2,7 @@
 
 Four subcommands:
 
-* ``roam laws mine``    -- discover laws from index / tests / git history
+* ``roam laws mine``    -- discover laws from the current code + tests index
 * ``roam laws check``   -- enforce laws against a diff
 * ``roam laws list``    -- print law id + description for browsing
 * ``roam laws explain`` -- show the full evidence for one law
@@ -233,8 +233,8 @@ def _emit_laws_findings(
     name="laws",
     category="workflow",
     summary=(
-        "Self-installing constitution: mine a repo's unwritten rules"
-        " from code + tests + git history, then enforce them."
+        "Self-installing constitution: mine a repo's current unwritten"
+        " conventions from its code + tests, then enforce them."
     ),
     inputs=[],
     outputs=["laws", "violations"],
@@ -261,11 +261,11 @@ def _emit_laws_findings(
 def laws_group(ctx):
     """Self-installing constitution.
 
-    ``roam laws mine`` walks your index + git history and emits a list
-    of inferred rules. ``roam laws check`` enforces those rules against
-    the current diff (or any saved diff). Output is a
-    ``roam-laws.yml`` checked into the repo, so future PRs are gated
-    against the same rules.
+    ``roam laws mine`` reads your codebase's current unwritten
+    conventions (naming, imports, testing) and emits a list of inferred
+    rules. ``roam laws check`` enforces those rules against the current
+    diff (or any saved diff). Output is a ``roam-laws.yml`` checked into
+    the repo, so future PRs are gated against the same rules.
     """
     ctx.ensure_object(dict)
 
@@ -334,7 +334,7 @@ def laws_group(ctx):
 )
 @click.pass_context
 def laws_mine(ctx, top, min_confidence, out_path, persist):
-    """Discover laws from the indexed codebase + tests + git history.
+    """Discover laws from your codebase's current unwritten conventions (indexed code + tests).
 
     Examples:
 
