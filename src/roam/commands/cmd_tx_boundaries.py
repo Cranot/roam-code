@@ -67,6 +67,24 @@ _TX_CLASSIFICATION_RANK: dict[str, int] = {
 # anything that's an outright bug OR a latent bug worth surfacing.
 _HIGH_SEVERITY_KINDS = frozenset({"unmatched_begin", "unmatched_commit", "unsafe_mutation"})
 
+# F10 — the kinds that PROVE the codebase has a transaction context. If none of
+# these appear, "mutation outside a transaction scope" is a category error.
+_TX_CONTEXT_KINDS = ("transactional", "partial_transactional", "unmatched_begin", "unmatched_commit")
+
+
+def _tx_domain_is_na(by_classification, classification) -> bool:
+    """F10 — True when tx-boundary analysis is N/A for this codebase.
+
+    The default headline abstains (returns True) when there is zero transaction
+    context anywhere yet ``unsafe_mutation`` symbols exist — an HTTP response
+    writer is not a DB mutation (express res.json). An explicit
+    ``--classification`` filter opts back into the raw bucket.
+    """
+    if classification:
+        return False
+    has_ctx = any(by_classification.get(k, 0) for k in _TX_CONTEXT_KINDS)
+    return (not has_ctx) and by_classification.get("unsafe_mutation", 0) > 0
+
 
 @roam_capability(
     name="tx-boundaries",
@@ -144,12 +162,33 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
 
     by_classification: Counter = Counter(c.classification for c in all_results)
 
+    # F10 — domain gate. When the codebase has NO transaction context at all
+    # (no BEGIN/commit/rollback markers, no transactional or partial-
+    # transactional functions anywhere), "mutation outside a transaction scope"
+    # is meaningless — an HTTP response writer (express ``res.json``) is not a
+    # DB mutation. Emit an honest N/A zero, the same discipline n1 / missing-
+    # index apply when there are no models / migrations, instead of confidently
+    # flagging by-design non-transactional code. Config-overridable is not
+    # needed: an explicit ``--classification unsafe_mutation`` still shows the
+    # raw bucket for the curious, but the default headline abstains.
+    tx_domain_na = _tx_domain_is_na(by_classification, classification)
+    if tx_domain_na:
+        filtered = []
+
     # Verdict prioritises the high-severity bucket — pattern from
     # the dogfood synthesis notes (LAW 6: compression forces
     # domain neutrality — verdict must stand on its own).
     high_sev = sum(by_classification.get(k, 0) for k in _HIGH_SEVERITY_KINDS)
 
-    if symbol and not filtered:
+    if tx_domain_na:
+        verdict = (
+            "no transaction context found (no BEGIN/commit/rollback or ORM "
+            "session markers anywhere); tx-boundary detection requires a "
+            "DB/transaction layer — N/A for this codebase"
+        )
+        state = "no_tx_context"
+        partial_success = True
+    elif symbol and not filtered:
         verdict = f"No function/method/constructor named '{symbol}' classified."
         state = "no_data"
         partial_success = True
@@ -204,7 +243,12 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
             f"(mutations_outside={worst.mutations_outside}, "
             f"confidence={worst.confidence})"
         )
-    if by_classification.get("unsafe_mutation"):
+    if tx_domain_na:
+        facts.append(
+            "no transaction/DB layer detected; unsafe_mutation bucket suppressed as N/A "
+            "(pass --classification unsafe_mutation to inspect the raw bucket)"
+        )
+    if by_classification.get("unsafe_mutation") and not tx_domain_na:
         facts.append(f"tx-boundaries flagged {by_classification['unsafe_mutation']} unsafe_mutation symbols")
     if by_classification.get("unmatched_begin"):
         facts.append(
@@ -224,7 +268,11 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
         facts.append("tx-boundaries scan found no functions to classify")
 
     next_commands: list[str] = []
-    if by_classification.get("unsafe_mutation") and (not classification or classification != "unsafe_mutation"):
+    if (
+        by_classification.get("unsafe_mutation")
+        and not tx_domain_na
+        and (not classification or classification != "unsafe_mutation")
+    ):
         next_commands.append("roam tx-boundaries --classification unsafe_mutation --top 10")
     if by_classification.get("unmatched_begin") and (not classification or classification != "unmatched_begin"):
         next_commands.append("roam tx-boundaries --classification unmatched_begin --top 10")

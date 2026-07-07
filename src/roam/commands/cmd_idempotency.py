@@ -35,6 +35,17 @@ from roam.output.formatter import format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 from roam.world_model.idempotency import IDEMPOTENCY_KINDS, classify_idempotency
 
+# F10 (idempotency) — SCAFFOLDED, not gated. Unlike tx-boundaries (which cleanly
+# abstains when there is zero transaction context), idempotency's io_write
+# signal is legitimate WITHOUT a DB: file writes, network posts, and cache
+# mutations are genuine retry hazards a stateless app can still have. A blanket
+# "no DB ⇒ N/A" gate over-suppresses those (it broke a real io_write test). The
+# narrow FP is specifically HTTP RESPONSE writers (express res.json/res.jsonp),
+# which needs a response-object-aware classifier in
+# roam.world_model.idempotency, not a repo-level domain gate. Deferred so we do
+# not trade a false positive for a false negative. See dev/STRANGER-TP-TEST.md
+# F10 note.
+
 
 @roam_capability(
     name="idempotency",
