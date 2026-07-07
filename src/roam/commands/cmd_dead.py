@@ -478,6 +478,29 @@ def _scaffolding_signals(docstring: str | None) -> dict | None:
     }
 
 
+# F9 — library public-surface awareness. Set once per ``dead`` run (in
+# ``_analyze_dead``) so ``_dead_action`` / ``_dead_reason`` can cap a would-be
+# SAFE verdict for a symbol on a distributable library's public API. ``None``
+# ⇒ not computed (unit tests calling ``_dead_action`` directly, or a repo that
+# is not a library) ⇒ behaviour is unchanged.
+_ACTIVE_LIB_SURFACE = None  # type: ignore[assignment]
+
+
+def _row_external_facing(r) -> bool:
+    """True when symbol *r* is on the active library's public surface (F9)."""
+    surf = _ACTIVE_LIB_SURFACE
+    if surf is None or not getattr(surf, "is_library", False):
+        return False
+    try:
+        qname = r["qualified_name"]
+    except (KeyError, IndexError):
+        qname = None
+    try:
+        return bool(surf.is_external_facing(r["name"], qname, r["file_path"]))
+    except Exception:  # noqa: BLE001 — never let surface logic break the scan
+        return False
+
+
 def _dead_action(r, file_imported, tested=False):
     """Compute actionable verdict and confidence % for a dead symbol.
 
@@ -561,6 +584,16 @@ def _dead_action(r, file_imported, tested=False):
     # Barrel/index file → likely re-exported for public API
     if base.startswith("index.") or base == "__init__.py":
         return "REVIEW", 70
+
+    # F9 — public library surface. A public symbol in a public module of a
+    # distributable package (requests: HTTPAdapter.init_poolmanager/cert_verify)
+    # cannot be proven dead from "no internal/production consumers" alone —
+    # external importers and, in Python, dynamic dispatch / subclassing consume
+    # it invisibly to the static call graph. Never SAFE-to-delete; downgrade to
+    # REVIEW with capped confidence. (Private ``_x`` names never reach here as
+    # external-facing, so genuinely-internal helpers still score SAFE below.)
+    if _row_external_facing(r):
+        return "REVIEW", 50
 
     # Imported file but symbol unused — could be externally consumed
     if file_imported:
@@ -1001,9 +1034,14 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
     cmeta = consumer_meta.get(r["id"], {})
     fmeta = file_import_meta.get(r["file_id"], {})
     smeta = sibling_meta.get(r["file_id"], {})
+    # F9 — prefix the reason for public-library-surface symbols so the label
+    # travels with the finding wherever the reason string is rendered.
+    ext_prefix = ""
+    if _row_external_facing(r):
+        ext_prefix = "external-facing (public library API — external importers / dynamic dispatch invisible to static analysis); "
     test_consumers = cmeta.get("test_consumers", 0)
     if test_consumers:
-        return f"no production consumers; used by {test_consumers} test consumer(s)"
+        return f"{ext_prefix}no production consumers; used by {test_consumers} test consumer(s)"
 
     module_importers = fmeta.get("module_path_importers", 0)
     prod_module_importers = fmeta.get("production_module_path_importers", 0)
@@ -1016,18 +1054,18 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
     )
     if module_importers and siblings:
         return (
-            f"file is imported by {module_importers} place(s) "
+            f"{ext_prefix}file is imported by {module_importers} place(s) "
             f"({prod_module_importers} production, {consumer_importers} real consumers"
             f"{barrel_clause}); this export has no production consumers "
             f"while {siblings} sibling export(s) are used"
         )
     if module_importers:
         return (
-            f"file is imported by {module_importers} place(s) "
+            f"{ext_prefix}file is imported by {module_importers} place(s) "
             f"({prod_module_importers} production, {consumer_importers} real consumers"
             f"{barrel_clause}); this export has no production consumers"
         )
-    return "file has no module importers; may be an entry point or consumed by unparsed code"
+    return f"{ext_prefix}file has no module importers; may be an entry point or consumed by unparsed code"
 
 
 # ---------------------------------------------------------------------------
@@ -1109,6 +1147,17 @@ def _analyze_dead(conn):
     anywhere". Test-only consumers are preserved as metadata so output can
     distinguish deletion candidates from tested-but-unused public surface.
     """
+    # F9 — resolve the library public surface once per run so ``_dead_action``
+    # can cap SAFE verdicts for public API symbols (requests HTTPAdapter.*).
+    global _ACTIVE_LIB_SURFACE
+    try:
+        from roam.db.connection import find_project_root
+        from roam.output.library_surface import detect_library
+
+        _ACTIVE_LIB_SURFACE = detect_library(find_project_root())
+    except Exception:  # noqa: BLE001 — never let surface detection break dead
+        _ACTIVE_LIB_SURFACE = None
+
     rows = _fetch_exported_candidates(conn)
     if not rows:
         return [], [], set(), {}, {}, {}

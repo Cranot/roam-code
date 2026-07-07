@@ -3421,8 +3421,27 @@ def detect_speculative_generality(conn: sqlite3.Connection) -> list[dict]:
           AND sf.file_role != 'test'
         """
     ).fetchall()
+    # F9 — suppress symbols on a distributable library's public surface. A
+    # public export referenced "only by tests" is a public API / test seam, not
+    # speculative over-engineering (express: exports.raw / exports.text are the
+    # documented public middleware surface, flagged here as speculative-generality).
+    _surf = None
+    try:
+        from roam.db.connection import find_project_root
+        from roam.output.library_surface import detect_library
+
+        _surf = detect_library(find_project_root())
+    except Exception:  # noqa: BLE001 — best-effort; never break the detector
+        _surf = None
+
     results: list[dict] = []
     for r in rows:
+        if _surf is not None and _surf.is_library:
+            try:
+                if _surf.is_external_facing(r["name"], None, r["file_path"]):
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
         loc_str = _loc(r["file_path"], r["line_start"])
         total_refs = r["total_refs"]
         results.append(
