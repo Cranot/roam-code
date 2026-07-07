@@ -5,7 +5,7 @@ to delete" is *wrong* for an export on a distributable library's **public
 surface**: external code imports it, and in Python dynamic dispatch +
 subclassing consume it invisibly to static call-graph analysis. Shipping
 "safely delete ``HTTPAdapter.init_poolmanager``" to the requests team is
-credibility death (D1b stranger battery, ``dev/STRANGER-TP-TEST.md``).
+credibility death.
 
 This module answers two questions with no LLM and no network:
 

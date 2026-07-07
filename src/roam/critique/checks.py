@@ -32,9 +32,10 @@ class ChangedRegion:
     This is the load-bearing distinction for attribution: a symbol that
     merely shares a hunk with an edit (appearing only as a context line —
     e.g. ``var send = require('send')`` three lines above the real add)
-    must not be reported as "changed". See the D1 stranger test (express
-    ``send``, requests ``httpbin``, zod ``pipe``, fastapi ``write_file``):
-    all four were context-line false positives that this field removes.
+    must not be reported as "changed". Validated against real third-party
+    diffs (express ``send``, requests ``httpbin``, zod ``pipe``, fastapi
+    ``write_file``): all four were context-line false positives that this
+    field removes.
     """
 
     file_path: str
@@ -487,8 +488,8 @@ def check_impact(
 
     # F2 — test-only symbols (fixtures, helpers) get their impact demoted. A
     # test helper's "N callers" are other tests; changing it does not ripple
-    # through production. On the D1 sample write_file / httpbin were 3-line test
-    # helpers reported as high-blast — F1 already stops attributing them, and
+    # through production. In cross-library validation, write_file / httpbin were
+    # 3-line test helpers reported as high-blast — F1 already stops attributing them, and
     # this demotes any test-only symbol that does legitimately change.
     try:
         from roam.index.file_roles import is_test as _is_test_file

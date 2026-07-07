@@ -43,8 +43,7 @@ from roam.world_model.idempotency import IDEMPOTENCY_KINDS, classify_idempotency
 # narrow FP is specifically HTTP RESPONSE writers (express res.json/res.jsonp),
 # which needs a response-object-aware classifier in
 # roam.world_model.idempotency, not a repo-level domain gate. Deferred so we do
-# not trade a false positive for a false negative. See dev/STRANGER-TP-TEST.md
-# F10 note.
+# not trade a false positive for a false negative.
 
 
 @roam_capability(

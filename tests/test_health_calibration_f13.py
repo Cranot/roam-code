@@ -1,6 +1,6 @@
 """F13 regression — health-score calibration disclaimer.
 
-D1b battery: express (a best-maintained repo) scored 7/100 "Unhealthy" — a
+Cross-library validation: express (a best-maintained repo) scored 7/100 "Unhealthy" — a
 demo-killer when read as a quality grade. A band rename cascades across the
 ``understand`` parity command + an exact-match service-report assertion, so the
 sanctioned minimum is a calibration disclaimer: the score travels with a caveat

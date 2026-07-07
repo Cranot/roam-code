@@ -51,7 +51,7 @@ _EXAMPLE_DIRS = (
 
 _DOC_DIRS = (
     "docs",  # by convention not source code
-    # F12 (D1b stranger test): fastapi ships every tutorial as a standalone,
+    # F12: fastapi ships every tutorial as a standalone,
     # deliberately-untested teaching snippet under ``docs_src/``. Those 375
     # coverage-gap "violations" + 7/8 top dead-SAFE findings were all
     # ``docs_src/`` — one role-exclusion kills the whole false-positive class.

@@ -2456,8 +2456,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             click.echo(f"NOTE: {_idx_status['hint']}\n")
         click.echo(f"VERDICT: {verdict}\n")
         # F13 — calibration disclaimer. A low score on a well-maintained
-        # framework (express scored 7/100 in the D1b battery) is a demo-killer
-        # when read as a quality grade. Contextualise it as a structural index.
+        # framework (express scored 7/100 in cross-library validation) is a
+        # demo-killer when read as a quality grade. Contextualise it as a
+        # structural index.
         if isinstance(health_score, (int, float)) and health_score < 60:
             click.echo(
                 "NOTE: health_score is a relative STRUCTURAL-complexity index "

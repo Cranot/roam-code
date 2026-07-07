@@ -924,8 +924,8 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     # F4 — abstain without an explicit ``--intent``. Do NOT fall back to HEAD's
     # commit subject: on a piped diff that is not HEAD (any ``git show <sha> |
     # roam critique`` sweep) HEAD's subject describes a DIFFERENT change, which
-    # manufactured false "PR title says X but diff has no X" findings (D1 zod
-    # 9195250 / b8dffe9). No intent text ⇒ the intent check is skipped.
+    # manufactured false "PR title says X but diff has no X" findings (observed
+    # on piped non-HEAD zod commits). No intent text ⇒ the intent check is skipped.
     effective_intent = intent_text
 
     with open_db(readonly=not persist) as conn:

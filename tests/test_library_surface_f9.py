@@ -1,6 +1,6 @@
 """F9 regression — library public-surface detection.
 
-D1b stranger battery: requests' ``HTTPAdapter.init_poolmanager`` /
+Cross-library validation: requests' ``HTTPAdapter.init_poolmanager`` /
 ``cert_verify`` / ``proxy_manager_for`` were flagged dead-SAFE at confidence 80
 ("no production consumers") — the most-subclassed adapter methods in the Python
 ecosystem. Shipping "safely delete" for those to the requests team is

@@ -1,6 +1,6 @@
 """F12 regression — default role exclusions for docs_src/ and friends.
 
-D1b stranger battery: fastapi shipped every tutorial as a deliberately
+Cross-library validation: fastapi shipped every tutorial as a deliberately
 standalone, untested teaching snippet under ``docs_src/``. Those 375
 coverage-gap "violations" + 7/8 top dead-SAFE findings were ALL ``docs_src/``.
 The plain ``docs`` segment match missed ``docs_src`` (``docs_src != docs``).

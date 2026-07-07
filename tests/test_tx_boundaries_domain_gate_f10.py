@@ -1,6 +1,6 @@
 """F10 regression — tx-boundaries domain gate.
 
-D1b express battery: tx-boundaries classified ``res.json`` = "mutation outside
+Cross-library validation: on express, tx-boundaries classified ``res.json`` = "mutation outside
 transaction scope" and flagged 13 unsafe_mutation symbols on a stateless HTTP
 framework with NO transaction layer. Like n1 (no models) / missing-index (no
 migrations), the honest response is N/A — not a confident false positive.

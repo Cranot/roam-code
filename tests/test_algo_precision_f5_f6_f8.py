@@ -1,4 +1,4 @@
-"""F5 / F6 / F8 regression — algo detector precision (D1b express battery).
+"""F5 / F6 / F8 regression — algo detector precision (validated on express).
 
 express `algo` top-8: 0 report-worthy, 4 distinct FP classes. These pin the
 deterministic post-filter helpers that remove them:

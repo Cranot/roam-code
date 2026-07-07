@@ -2,9 +2,9 @@
 lines a hunk *actually* added or deleted, never unchanged **context** lines.
 
 Every fixture below is a minimal, self-contained extract of a real hunk from
-the D1 stranger true-positive test (``dev/STRANGER-TP-TEST.md`` + the frozen
-``stranger-dossier`` clones). Each of the four false positives shared ONE root
-cause: ``impact`` attributed "change" to a symbol that appeared only as a
+third-party library repositories (express, requests, zod, fastapi). Each of
+the four false positives shared ONE root cause: ``impact`` attributed
+"change" to a symbol that appeared only as a
 context line in the same hunk as the real edit. F1 fixes the diff→symbol
 mapping (``parse_diff`` now records ``changed_lines``; ``find_changed_symbols``
 only attributes symbols overlapping those lines).
