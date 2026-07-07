@@ -192,6 +192,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "changelog",  # commit buckets (small window)
         "breaking",  # removed/renamed/changed (small)
         "pr-comment-render",  # markdown emit (one composite blob)
+        "service-report",  # client report generator — fixed-shape envelope (metadata + one report_markdown blob), like pr-comment-render; budget= would corrupt the deliverable
         # --- Servers / generators (no JSON envelope at all) ------------------
         "lsp",  # server entry point
         "mcp",  # server entry point
