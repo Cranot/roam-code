@@ -251,6 +251,7 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "pr-risk",
         "pr-diff",
         "pr-comment-render",
+        "service-report",
         # Note: ``commit`` was a phantom verb here — roam itself does
         # not run git commits. Removed in W37.1 once materialisation
         # surfaced it via the constitution check. The ``pre-commit``

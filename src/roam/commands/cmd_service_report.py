@@ -33,10 +33,10 @@ Usage::
     roam service-report --type post-incident --range v1.0..main --output incident.md
 
 Output formats: Markdown by default; ``roam --json service-report``
-returns the full envelope (summary + sections + report_markdown). SARIF
-is deliberately NOT emitted — service-report outputs are invocation-
-scoped buyer-facing report envelopes composed from the individual
-commands' aggregations, not per-location violations. The composed
+returns the full envelope (summary + sections + report_markdown).
+SARIF is deliberately NOT emitted — service-report outputs are
+invocation-scoped buyer-facing report envelopes composed from the
+individual commands' aggregations, not per-location violations. The composed
 subcommands emit their own ``--sarif`` when applicable; this command
 rolls them up into a narrative report (same rationale as
 ``cmd_pr_replay``).
