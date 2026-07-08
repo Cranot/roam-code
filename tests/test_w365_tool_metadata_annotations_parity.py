@@ -170,12 +170,23 @@ def test_annotations_passed_to_wrapper_registration():
 
     import roam.mcp_server as mcp
 
-    src = inspect.getsource(mcp._tool)
-    assert "_tool_annotations(name)" in src, (
-        "The ``_tool`` decorator no longer calls ``_tool_annotations(name)``. "
-        "ToolAnnotations are no longer reaching FastMCP — on-the-wire hints will "
-        "fall back to fastmcp defaults and silently disagree with _TOOL_METADATA. "
-        "Re-wire ``kwargs['annotations'] = _tool_annotations(name)`` in src/roam/mcp_server.py."
+    # The registration kwargs were factored out of ``_tool`` into
+    # ``_build_registration_kwargs`` — follow the delegation chain: the
+    # decorator must still call the builder, and the builder must still
+    # wire ``_tool_annotations(name)``. Checking both legs preserves the
+    # original drift protection across the refactor.
+    tool_src = inspect.getsource(mcp._tool)
+    wired_inline = "_tool_annotations(name)" in tool_src
+    delegates = "_build_registration_kwargs(" in tool_src
+    builder_wired = hasattr(mcp, "_build_registration_kwargs") and (
+        "_tool_annotations(name)" in inspect.getsource(mcp._build_registration_kwargs)
+    )
+    assert wired_inline or (delegates and builder_wired), (
+        "The ``_tool`` decorator no longer wires ``_tool_annotations(name)`` "
+        "(neither inline nor via ``_build_registration_kwargs``). ToolAnnotations "
+        "are no longer reaching FastMCP — on-the-wire hints will fall back to "
+        "fastmcp defaults and silently disagree with _TOOL_METADATA. Re-wire "
+        "``kwargs['annotations'] = _tool_annotations(name)`` in src/roam/mcp_server.py."
     )
 
 

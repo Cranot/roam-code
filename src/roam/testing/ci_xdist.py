@@ -96,6 +96,13 @@ def _suppress_bytecode_writes_under_ci_xdist(env) -> bool:
     # I/O — slightly slower, no giant mapping to exhaust). setdefault so an
     # explicit override still wins.
     env.setdefault("ROAM_SQLITE_MMAP_SIZE", "0")
+    # Residual pressure after the mmap fix (crashes 4-5 -> 0-2 but not zero):
+    # bound the OTHER per-connection memory PRAGMAs the same way. 64 MB page
+    # cache x many open connections x N workers, plus temp_store=MEMORY
+    # sort/b-tree spill, still spike a memory-limited runner. 8 MB cache +
+    # FILE temp spill are correctness-neutral (slower, bounded).
+    env.setdefault("ROAM_SQLITE_CACHE_KB", "8000")
+    env.setdefault("ROAM_SQLITE_TEMP_STORE", "FILE")
     return True
 
 

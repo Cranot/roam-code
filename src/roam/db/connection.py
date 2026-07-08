@@ -247,9 +247,19 @@ def _apply_base_pragmas(conn: sqlite3.Connection) -> None:
       guarantee. On 32-bit builds SQLite silently maps less.
     """
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-64000")  # 64 MB
+    # 64 MB page cache per connection. Env-tunable (digits-only KB,
+    # injection-safe) so CI can shrink it: many concurrently-open connections
+    # x 64 MB across xdist workers contributes to the runner memory pressure
+    # behind the Bus-error flake (see ROAM_SQLITE_MMAP_SIZE below). ci_xdist
+    # sets ROAM_SQLITE_CACHE_KB=8000 on CI.
+    _cache_kb = os.environ.get("ROAM_SQLITE_CACHE_KB", "64000")
+    conn.execute(f"PRAGMA cache_size=-{_cache_kb if _cache_kb.isdigit() and _cache_kb != '0' else '64000'}")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA temp_store=MEMORY")
+    # temp_store=MEMORY keeps temp b-trees/sorts in RAM (fast, more pressure).
+    # ROAM_SQLITE_TEMP_STORE=FILE spills them to disk — ci_xdist sets it on CI
+    # to further bound aggregate memory under parallel workers.
+    _temp = os.environ.get("ROAM_SQLITE_TEMP_STORE", "MEMORY").upper()
+    conn.execute(f"PRAGMA temp_store={_temp if _temp in ('MEMORY', 'FILE', 'DEFAULT') else 'MEMORY'}")
     conn.execute("PRAGMA busy_timeout=30000")
     # 1 GB default. Env-tunable (digits-only, injection-safe) so CI can shrink
     # it: under pytest-xdist each worker mmaps up to this per connection, and
