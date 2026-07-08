@@ -167,19 +167,46 @@ def test_w39_c2_blast_backtick_returns_none_without_backticks():
     assert out is None
 
 
-def test_w39_c2_blast_backtick_routes_l1_for_backticked_symbol(monkeypatch):
-    """End-to-end: backticked symbol triggers L1 envelope routing."""
-    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.exists(os.path.join(repo, ".roam", "index.db")):
-        # Skip when not running in roam-indexed repo
-        import pytest
+def test_w39_c2_blast_backtick_routes_l1_for_backticked_symbol(tmp_path):
+    """End-to-end: backticked symbol triggers L1 envelope routing + blast facts.
 
-        pytest.skip("requires .roam/index.db in cwd")
-    plan = compile_plan("what's the blast radius of `compile_plan`")
-    env, label = compile_for_artifact(plan, cwd=repo)
+    Self-contained (W39-c2 hardening): builds + indexes a small fixture repo
+    with a KNOWN caller relationship (``target_helper`` called by two consumers
+    -> blast >= 2), so ``impact_count`` is deterministic and does NOT depend on
+    the ambient repo ``.roam`` index — which varies by environment (this passed
+    locally but failed on CI, where a fresh index lacked the queried symbol's
+    call-edges). The routing invariants (structural_blast + l1_probe) plus a
+    non-zero blast are what's actually under test.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).parent))
+    from conftest import git_init, index_in_process  # noqa: E402
+
+    proj = tmp_path / "blast_fixture"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    src = proj / "src"
+    src.mkdir()
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "core.py").write_text("def target_helper():\n    return 1\n", encoding="utf-8")
+    (src / "a.py").write_text(
+        "from src.core import target_helper\n\n\ndef use_a():\n    return target_helper()\n",
+        encoding="utf-8",
+    )
+    (src / "b.py").write_text(
+        "from src.core import target_helper\n\n\ndef use_b():\n    return target_helper()\n",
+        encoding="utf-8",
+    )
+    git_init(proj)
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"index failed:\n{out}"
+
+    plan = compile_plan("what's the blast radius of `target_helper`")
+    env, label = compile_for_artifact(plan, cwd=str(proj))
     assert plan.procedure == "structural_blast"
     pre = env["plan"].get("prefetched_facts", {})
-    # Must have impact data via backtick fallback
     assert "impact_count" in pre, f"expected impact_count, got: {sorted(pre.keys())}"
     assert pre["impact_count"] > 0
     assert label == "l1_probe", f"expected l1_probe routing, got {label}"

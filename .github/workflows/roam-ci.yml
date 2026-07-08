@@ -65,7 +65,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ --maxfail=40 -q -m "not slow"
+        run: pytest tests/ -x -q -m "not slow"
 
   # -- No-optional-deps lane: actually exercise fallback paths --------------
   # The 2026-05-01 CI session caught a class of latent bugs where ImportError

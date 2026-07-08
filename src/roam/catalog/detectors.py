@@ -4286,6 +4286,11 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
 _CONFIDENCE_ORDER = ["low", "medium", "high"]
 
 _DETECTOR_METADATA = {
+    "async-fire-and-forget-task": {"precision": "medium", "impact": "high", "tags": ["async", "correctness"]},
+    "async-nested-run": {"precision": "medium", "impact": "medium", "tags": ["async"]},
+    "chained-collection-walk": {"precision": "medium", "impact": "low", "tags": ["collections", "performance"]},
+    "defer-in-loop": {"precision": "high", "impact": "medium", "tags": ["resource", "correctness"]},
+    "spread-accumulator": {"precision": "medium", "impact": "medium", "tags": ["quadratic", "performance"]},
     "sorting": {"precision": "high", "impact": "medium", "tags": ["ordering", "nested-loop"]},
     "search-sorted": {"precision": "low", "impact": "medium", "tags": ["search", "sorted-data"]},
     "membership": {"precision": "medium", "impact": "high", "tags": ["collections", "n2"]},

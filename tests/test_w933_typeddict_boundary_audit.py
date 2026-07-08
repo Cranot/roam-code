@@ -57,6 +57,12 @@ APPROVED_TYPEDDICTS: dict[str, str] = {
         "_AlertBase via _make_alert (sealed W959); inherits W973 assert "
         "and W959 cast-narrow discipline"
     ),
+    "graph/clusters.py:_SymbolLabelInfo": (
+        "internal cluster-label view (name/kind/pagerank/path) built via "
+        "controlled construction in clusters.py from already-indexed graph "
+        "rows — not unvalidated boundary input; fields are populated in-code, "
+        "never deserialized from an external source"
+    ),
 }
 
 # Every tight-typed ``dict[..., <ClassName>]`` return currently in
