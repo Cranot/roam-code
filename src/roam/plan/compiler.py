@@ -2400,8 +2400,8 @@ def _roam_invoke_inproc(args: list[str], cwd: str | None) -> tuple[int, str] | N
 # stands alone. Any dash-leading token NOT in either set is treated as an
 # untrusted positional and pushed past the `--` marker — fail-safe, since a
 # genuine task value like "-foo" then lands where it belongs.
-_ROAM_VALUE_FLAGS = frozenset({"--mode", "-n", "--files"})
-_ROAM_BOOL_FLAGS = frozenset({"--multi", "--no-decay", "--source-only"})
+_ROAM_VALUE_FLAGS = frozenset({"--mode", "-n", "--files", "--path"})
+_ROAM_BOOL_FLAGS = frozenset({"--multi", "--no-decay", "--source-only", "--fixed-string"})
 
 
 def _partition_trusted_roam_flags(tokens: list[str]) -> tuple[list[str], list[str]]:
@@ -2412,6 +2412,14 @@ def _partition_trusted_roam_flags(tokens: list[str]) -> tuple[list[str], list[st
     n = len(tokens)
     while i < n:
         tok = tokens[i]
+        if tok == "--":
+            # An explicit end-of-options marker: everything after it is a
+            # positional literal. `_safe_roam_argv` re-inserts its own `--`
+            # guard, so we consume this redundant one and force the rest to
+            # positionals (never re-parsed as flags — a literal search term
+            # like "-n" must not be reinterpreted as an option).
+            positionals.extend(tokens[i + 1 :])
+            break
         if tok in _ROAM_VALUE_FLAGS:
             flags.append(tok)
             if i + 1 < n:
