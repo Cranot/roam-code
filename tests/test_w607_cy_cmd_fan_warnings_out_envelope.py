@@ -835,7 +835,12 @@ def _audit_d567_predicate_floor_constants(tree: ast.AST) -> None:
                     f"got {type(value).__name__} = {ast.dump(value)!r}"
                 )
         inspected += 1
-    assert inspected >= 2, f"expected at least 2 compute_predicate floor dicts (symbol + file mode); found {inspected}"
+    # A refactor unified the previously per-mode (symbol + file) compute_predicate
+    # calls into ONE shared call — the mode branching moved upstream into
+    # ``rows`` / ``predicate_fn``, so the single call serves both modes. The
+    # load-bearing discipline is that EVERY compute_predicate floor is a literal
+    # constant Dict (enforced in the loop above), not the raw call count.
+    assert inspected >= 1, f"expected at least 1 compute_predicate floor dict; found {inspected}"
 
 
 def test_w607cy_w978_seven_discipline_ast_audit():
