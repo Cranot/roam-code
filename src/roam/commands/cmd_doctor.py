@@ -1721,8 +1721,7 @@ def _compare_one_ci_pair(
             "live_path": live_rel,
             "state": "drifted",
             "diff_summary": (
-                f"{len(live_lines)} live vs {len(tmpl_lines)} template lines; "
-                f"first divergence at line {first_diverge}"
+                f"{len(live_lines)} live vs {len(tmpl_lines)} template lines; first divergence at line {first_diverge}"
             ),
         },
         True,
@@ -1773,9 +1772,7 @@ def _check_ci_workflow_drift() -> dict:
     # no flags.
     default_python_version = _get_python_version()
 
-    all_pairs, template_missing = _build_ci_drift_pairs(
-        _GITHUB_TEMPLATE, templates_dir
-    )
+    all_pairs, template_missing = _build_ci_drift_pairs(_GITHUB_TEMPLATE, templates_dir)
 
     pair_results = [
         _compare_one_ci_pair(
@@ -1790,16 +1787,8 @@ def _check_ci_workflow_drift() -> dict:
         if raw_template
     ]
     checked = sum(was_checked for _, was_checked in pair_results)
-    drifted = [
-        record
-        for record, _ in pair_results
-        if record is not None and record["state"] != "not_emitted"
-    ]
-    missing = [
-        record
-        for record, _ in pair_results
-        if record is not None and record["state"] == "not_emitted"
-    ]
+    drifted = [record for record, _ in pair_results if record is not None and record["state"] != "not_emitted"]
+    missing = [record for record, _ in pair_results if record is not None and record["state"] == "not_emitted"]
 
     # If no live workflows AND no drifted entries, the feature isn't in
     # use here — advisory pass.

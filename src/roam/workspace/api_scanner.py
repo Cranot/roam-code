@@ -534,9 +534,7 @@ def _backend_route_lookup_for_locality(backend_routes: list[dict[str, Any]]) -> 
     )
 
 
-def _route_candidate_ids_without_backend_scan(
-    normalized_url: str, backend_lookup: _BackendRouteLookup
-) -> set[int]:
+def _route_candidate_ids_without_backend_scan(normalized_url: str, backend_lookup: _BackendRouteLookup) -> set[int]:
     """Preserve fuzzy URL coverage without comparing against every route."""
     exact_ids = backend_lookup.exact_route_ids.get(normalized_url, set())
     if exact_ids:

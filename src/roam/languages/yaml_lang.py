@@ -286,13 +286,9 @@ class YamlExtractor(LanguageExtractor):
                 in_extends_list = False
                 in_needs_list = False
 
-            in_extends_list = self._collect_extends_refs(
-                line, ln, current_job, refs, in_extends_list
-            )
+            in_extends_list = self._collect_extends_refs(line, ln, current_job, refs, in_extends_list)
             self._collect_reference_refs(line, ln, current_job, refs)
-            in_needs_list = self._collect_needs_refs(
-                line, ln, current_job, refs, in_needs_list
-            )
+            in_needs_list = self._collect_needs_refs(line, ln, current_job, refs, in_needs_list)
 
         return refs
 

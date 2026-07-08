@@ -19,6 +19,7 @@ default-off and intentionally not part of the static command surface. Scoped
 (falsifier verdict) to DEFECT-shaped repairs (deletion/replacement); pure
 additions are a structural no-op and are reported as out-of-scope.
 """
+
 from __future__ import annotations
 
 import json

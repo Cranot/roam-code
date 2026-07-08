@@ -3944,9 +3944,7 @@ def _emit_pr_replay_json_output(
     # surface change (byte-identical envelope to the pre-W607
     # consumer). All three buckets share the canonical ``pr_replay_*``
     # marker family; the per-phase prefix keeps them distinguishable.
-    _summary_combined: list[str] = (
-        list(w607ah_warnings_out) + list(w607ca_warnings_out) + list(w607dv_warnings_out)
-    )
+    _summary_combined: list[str] = list(w607ah_warnings_out) + list(w607ca_warnings_out) + list(w607dv_warnings_out)
     if _summary_combined:
         _pr_replay_env.setdefault("summary", {})
         existing_summary_wo = list(_pr_replay_env["summary"].get("warnings_out") or [])

@@ -234,7 +234,9 @@ def test_sibling_patch_apply_out_of_scope_addition(cli_runner, transfer_project,
     monkeypatch.setenv("ROAM_EXPERIMENTAL_REPAIR_SIBLINGS", "1")
     # An addition-only patch: the schema still needs a green attestation, but the
     # command's scope-gate reports it out of scope and proposes nothing.
-    add_patch = "--- a/users.py\n+++ b/users.py\n@@ -1,2 +1,3 @@\n def get_user(cfg):\n     return cfg[\"user\"]\n+    # audit\n"
+    add_patch = (
+        '--- a/users.py\n+++ b/users.py\n@@ -1,2 +1,3 @@\n def get_user(cfg):\n     return cfg["user"]\n+    # audit\n'
+    )
     rt = _repair_transfer(candidate_patch=add_patch, kind="replacement")  # schema kind stays defect-shaped
     claim = KnowledgeClaim.create(**_BASE_CLAIM, repair_transfer=rt)
     claim_path = tmp_path / "claim_add.json"

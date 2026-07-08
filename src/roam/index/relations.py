@@ -1103,9 +1103,7 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
 
     normalized = _normalize_import_path_for_context_free_matching(import_path)
     return [
-        cand
-        for cand in candidates
-        if _candidate_preserves_import_path_identity(cand.get("file_path", ""), normalized)
+        cand for cand in candidates if _candidate_preserves_import_path_identity(cand.get("file_path", ""), normalized)
     ]
 
 

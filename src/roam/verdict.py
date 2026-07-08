@@ -20,13 +20,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from roam.guard_enums import (
+    VERDICTS as VERDICTS,
+)
+
 # Centralized closed enums — single source of truth lives in guard_enums.
 # `VERDICTS` is re-exported here (explicit `as` alias) for external consumers
 # that import it from `roam.verdict`.
 from roam.guard_enums import exit_code_for
-from roam.guard_enums import (
-    VERDICTS as VERDICTS,
-)
 
 
 def compute_verdict(
@@ -175,8 +176,7 @@ def _collect_review_gates_that_preserve_human_judgment(
                 "paths": paths,
                 "reasons": risk.get("reasons", []),
                 "suggested_command": (
-                    f"review high-risk paths ({len(paths)} files); accept via "
-                    f"`roam permit <path>` after human review"
+                    f"review high-risk paths ({len(paths)} files); accept via `roam permit <path>` after human review"
                 ),
             }
         )

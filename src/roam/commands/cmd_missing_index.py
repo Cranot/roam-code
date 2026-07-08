@@ -1503,9 +1503,7 @@ def _name_missing_index_scan_state(
     if low_n:
         parts.append(f"{low_n} low")
     verdict = (
-        f"{total_findings} potential missing index"
-        f"{'es' if total_findings != 1 else ''} found"
-        f" ({', '.join(parts)})"
+        f"{total_findings} potential missing index{'es' if total_findings != 1 else ''} found ({', '.join(parts)})"
     )
     return "scanned", False, verdict
 

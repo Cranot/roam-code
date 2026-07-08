@@ -19,6 +19,7 @@ Ported verbatim (semantics-preserving) from
 The graph scorers, git/blob loaders, and the ``forkb_eligibility_ours`` symbol
 gate are intentionally left behind.
 """
+
 from __future__ import annotations
 
 import collections
@@ -28,20 +29,58 @@ import re
 from typing import Any, Sequence
 
 # --- tokenization primitives (fork-B) --------------------------------------
-TOKEN_RE = re.compile(
-    r"[A-Za-z_$][A-Za-z0-9_$]*|==|!=|<=|>=|=>|[-+*/%]=|&&|\|\||[0-9]+(?:\.[0-9]+)?"
-)
+TOKEN_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*|==|!=|<=|>=|=>|[-+*/%]=|&&|\|\||[0-9]+(?:\.[0-9]+)?")
 CALL_RE = re.compile(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
 STRING_RE = re.compile(r"(['\"])(?:\\.|(?!\1).)*\1|`(?:\\.|[^`])*`")
 NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
 IDENT_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 PY_JS_KEYWORDS = {
-    "False", "None", "True", "and", "as", "async", "await", "break", "case",
-    "catch", "class", "const", "continue", "def", "default", "del", "do",
-    "elif", "else", "except", "export", "extends", "finally", "for", "from",
-    "function", "if", "import", "in", "let", "new", "not", "null", "of", "or",
-    "pass", "raise", "return", "switch", "this", "throw", "try", "var", "while",
-    "with", "yield",
+    "False",
+    "None",
+    "True",
+    "and",
+    "as",
+    "async",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "def",
+    "default",
+    "del",
+    "do",
+    "elif",
+    "else",
+    "except",
+    "export",
+    "extends",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "import",
+    "in",
+    "let",
+    "new",
+    "not",
+    "null",
+    "of",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "switch",
+    "this",
+    "throw",
+    "try",
+    "var",
+    "while",
+    "with",
+    "yield",
 }
 
 # Scoped verdict: SPN v1 admits only DEFECT-shaped repairs. Pure additions and
@@ -124,9 +163,7 @@ class ScorerCandidate:
 
     @classmethod
     def from_body(cls, meta: dict[str, Any], body: str) -> "ScorerCandidate":
-        normalized = tuple(
-            line for line in (_canonical_line(raw) for raw in body.splitlines()) if line
-        )
+        normalized = tuple(line for line in (_canonical_line(raw) for raw in body.splitlines()) if line)
         return cls(
             meta=dict(meta),
             normalized_lines=normalized,

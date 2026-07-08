@@ -687,7 +687,9 @@ def repair_siblings_cmd(ctx, input_path, diff_path, anchor_ref, top_n, candidate
     ensure_index()
     root = find_project_root()
     with open_db(readonly=True) as conn:
-        anchor = _resolve_anchor_ref(conn, root, anchor_ref) if anchor_ref else _resolve_anchor_from_patch(conn, root, patch)
+        anchor = (
+            _resolve_anchor_ref(conn, root, anchor_ref) if anchor_ref else _resolve_anchor_from_patch(conn, root, patch)
+        )
         raw_candidates = _load_candidate_symbols(conn, root, anchor)
 
     lexical_candidates = lexical_candidate_generation(
@@ -744,13 +746,12 @@ def repair_siblings_cmd(ctx, input_path, diff_path, anchor_ref, top_n, candidate
     click.echo(f"Flag: {_FLAG_ENV}=1")
     click.echo(f"Anchor: {anchor.file_path}:{anchor.line_start or '?'} {anchor.label}")
     click.echo(
-        "Intent: "
-        f"kind={intent.kind}; "
-        f"deleted={intent.deleted_pattern or '-'}; "
-        f"added={intent.added_pattern or '-'}"
+        f"Intent: kind={intent.kind}; deleted={intent.deleted_pattern or '-'}; added={intent.added_pattern or '-'}"
     )
     click.echo()
     if result_dicts:
-        click.echo(format_table(["rank", "score", "applic", "location", "symbol", "reason"], _result_rows(result_dicts)))
+        click.echo(
+            format_table(["rank", "score", "applic", "location", "symbol", "reason"], _result_rows(result_dicts))
+        )
     else:
         click.echo("(no repair-applicable candidates in lexical pool)")

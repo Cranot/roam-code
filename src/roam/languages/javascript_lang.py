@@ -539,11 +539,7 @@ class JavaScriptExtractor(LanguageExtractor):
             return self._declared_names_from_property_binding_value(child, source, memo)
 
         if child.type == "rest_pattern":
-            return [
-                self.node_text(sub, source)
-                for sub in child.children
-                if sub.type == "identifier"
-            ]
+            return [self.node_text(sub, source) for sub in child.children if sub.type == "identifier"]
 
         if child.type == "assignment_pattern":
             return self._declared_names_from_default_binding_left(child, source)
