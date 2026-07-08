@@ -158,8 +158,12 @@ def canonical_cli_commands() -> list[str]:
     for (mod_name, attr_name), names in by_target.items():
         if not names:
             continue
-        # Prefer the name matching the Click function attr (primary), else first alphabetically
-        primary = attr_name.replace("_", "-")
+        # Prefer the name matching the Click function attr (primary), else first
+        # alphabetically. Strip the conventional ``_cmd`` suffix first so
+        # ``understand_cmd`` resolves to the ``understand`` command name -- without
+        # it the primary was ``understand-cmd`` (never a match) and the group
+        # collapsed to the alphabetically-earlier *deprecated* alias ``onboard``.
+        primary = attr_name.removesuffix("_cmd").replace("_", "-")
         canonical.append(primary if primary in names else sorted(names)[0])
     return sorted(canonical)
 
