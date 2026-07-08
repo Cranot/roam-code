@@ -124,6 +124,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "next",  # next-step suggestion
         "brief",  # brief summary (small composite)
         "report",  # preset dispatch (small composite)
+        "service-report",  # client report generator -> file deliverable; aggregates fixed sub-envelopes into a narrative, not an agent-budgeted list (sibling of report/audit/postmortem)
         "workflow",  # recipe dispatch
         "recommend",  # short recommendation list
         "suppress",  # single suppression op
