@@ -6418,7 +6418,7 @@ async def roam_reindex(
     output_schema=_SCHEMA_UNDERSTAND,
     task_mode="required",
 )
-async def roam_understand(
+async def understand(
     root: str = ".",
     summarize: bool | None = None,
     ctx: _Context | None = None,
