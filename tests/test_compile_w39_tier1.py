@@ -167,44 +167,37 @@ def test_w39_c2_blast_backtick_returns_none_without_backticks():
     assert out is None
 
 
-def test_w39_c2_blast_backtick_routes_l1_for_backticked_symbol(tmp_path):
-    """End-to-end: backticked symbol triggers L1 envelope routing + blast facts.
+def test_w39_c2_blast_backtick_routes_l1_for_backticked_symbol(monkeypatch):
+    """Backticked symbol -> structural_blast routing + L1 probe + blast facts wired.
 
-    Self-contained (W39-c2 hardening): builds + indexes a small fixture repo
-    with a KNOWN caller relationship (``target_helper`` called by two consumers
-    -> blast >= 2), so ``impact_count`` is deterministic and does NOT depend on
-    the ambient repo ``.roam`` index — which varies by environment (this passed
-    locally but failed on CI, where a fresh index lacked the queried symbol's
-    call-edges). The routing invariants (structural_blast + l1_probe) plus a
-    non-zero blast are what's actually under test.
+    W39-c2 hardening: the blast lookup (``roam impact <sym>`` via ``_run_roam``)
+    is STUBBED, so the test is deterministic, does NOT depend on the ambient
+    ``.roam`` index (which varies by env — passed locally but returned empty on a
+    fresh CI index that lacked the symbol's call-edges), and does NOT build an
+    index (an in-test index build adds a concurrent tree-sitter grammar-mmap
+    spike under xdist -> SIGBUS). The real invariants under test are the ROUTING
+    (compile_plan -> structural_blast), the LABEL (l1_probe), and that
+    compile_for_artifact wires the probe's impact_count into prefetched_facts.
+    ``_run_roam`` is resolved from module globals at call time, so patching it
+    reaches the probe even though the probe is captured by-reference in the
+    procedure registry.
     """
-    import sys as _sys
-    from pathlib import Path as _Path
+    from roam.plan import compiler as _compiler
 
-    _sys.path.insert(0, str(_Path(__file__).parent))
-    from conftest import git_init, index_in_process  # noqa: E402
+    _orig_run_roam = _compiler._run_roam
 
-    proj = tmp_path / "blast_fixture"
-    proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
-    src = proj / "src"
-    src.mkdir()
-    (src / "__init__.py").write_text("", encoding="utf-8")
-    (src / "core.py").write_text("def target_helper():\n    return 1\n", encoding="utf-8")
-    (src / "a.py").write_text(
-        "from src.core import target_helper\n\n\ndef use_a():\n    return target_helper()\n",
-        encoding="utf-8",
-    )
-    (src / "b.py").write_text(
-        "from src.core import target_helper\n\n\ndef use_b():\n    return target_helper()\n",
-        encoding="utf-8",
-    )
-    git_init(proj)
-    out, rc = index_in_process(proj, "--force")
-    assert rc == 0, f"index failed:\n{out}"
+    def _fake_run_roam(args, cwd, timeout=8.0, detail=False):
+        if args and args[0] == "impact":
+            return {
+                "affected_files_total": 3,
+                "affected_file_list": ["src/a.py", "src/b.py", "src/c.py"],
+            }
+        return _orig_run_roam(args, cwd, timeout=timeout, detail=detail)
+
+    monkeypatch.setattr(_compiler, "_run_roam", _fake_run_roam)
 
     plan = compile_plan("what's the blast radius of `target_helper`")
-    env, label = compile_for_artifact(plan, cwd=str(proj))
+    env, label = compile_for_artifact(plan, cwd=".")
     assert plan.procedure == "structural_blast"
     pre = env["plan"].get("prefetched_facts", {})
     assert "impact_count" in pre, f"expected impact_count, got: {sorted(pre.keys())}"
