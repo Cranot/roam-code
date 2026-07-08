@@ -87,6 +87,7 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "doctor",
         "health",
         "tour",
+        "service-report",  # client report generator; reads the graph + writes a report artifact, no source edits (sibling of tour/describe)
         "next",
         "explain-command",
         "surface",
