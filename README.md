@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>267 commands · 242 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>267 commands · 243 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -515,7 +515,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 242)</strong></summary>
+<summary><strong>MCP tool list (all 243)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -614,6 +614,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_expand_toolset` | List available tool presets or show contents of a preset. Presets: core (15), review (73), refactor (73), debug (72), architecture (74), compliance (13), full (227). |
 | `roam_explore` | Codebase exploration bundle: understand overview + optional symbol deep-dive in one call. |
 | `roam_fan` | Show fan-in / fan-out: the most-connected symbols or files. Flags hub / spreader / HIGH-RISK structural hotspots based on cross-file import / call edges. Different from coupling (co-change frequency) -- this measures structural connectivity. |
+| `roam_fetch_handle` | Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection. |
 | `roam_file_info` | File skeleton: all symbols with signatures, kinds, line ranges. |
 | `roam_findings_count` | Show per-detector finding counts. Useful for spotting which detectors have migrated to the central registry vs which are still only emitting to their detector-specific tables. |
 | `roam_findings_list` | List rows from the central findings registry, optionally filtered by detector or subject. Cross-detector view -- every migrated detector (clones, dead, complexity, smells, n1, missing-index, ...) emits here behind one schema. |

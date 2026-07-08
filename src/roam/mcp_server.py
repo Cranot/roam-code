@@ -7444,15 +7444,12 @@ def _read_fetch_handle_payload(handle: str) -> tuple[str, object, dict | None]:
     return raw_text, payload, None
 
 
-_FETCH_HANDLE_TOOL = _tool(
+@_tool(
     name="roam_fetch_handle",
     description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
     version="2.0.0",
     output_schema=_SCHEMA_FETCH_HANDLE,
 )
-
-
-@_FETCH_HANDLE_TOOL
 def fetch_handle(
     handle: str = "",
     offset: int = 0,
