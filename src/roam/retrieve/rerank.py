@@ -126,9 +126,7 @@ def _gather_signal_maps(
         "cmd_companion_boost": _cmd_companion_boost(candidates),
         "async_query_boost": _async_query_boost(candidates, task, conn=conn),
         "recency_boost": _recency_boost(conn, candidates, task),
-        "pr_scores": _pagerank_scores(
-            conn, candidate_ids, seeds, use_personalized=use_personalized
-        ),
+        "pr_scores": _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized),
         "clone_tags": _clone_tags(conn, candidates),
         "cochange_scores": _cochange_scores(conn, candidate_ids, seeds),
         "runtime_scores": _runtime_scores(conn, candidate_ids),
@@ -226,10 +224,7 @@ def _is_impl_style_query(task: str) -> bool:
     if not task:
         return False
     lowered_task = task.lower().strip()
-    return any(
-        lowered_task.startswith(p)
-        for p in ("where ", "how ", "find ", "locate ", "show me ")
-    )
+    return any(lowered_task.startswith(p) for p in ("where ", "how ", "find ", "locate ", "show me "))
 
 
 def _score_and_justify(c: dict, ctx: dict[str, object]) -> dict:

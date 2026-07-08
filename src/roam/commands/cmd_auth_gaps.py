@@ -1313,6 +1313,7 @@ def _run_auth_gaps_phase_preserving_failure_provenance(
         warnings_out.append(f"auth_gaps_{phase}_failed:{type(exc).__name__}:{exc}")
         return default
 
+
 def _emit_auth_gaps_json(
     all_findings,
     route_findings,
@@ -1646,6 +1647,7 @@ def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
     histogram construction so the command body stays at orchestration
     altitude.
     """
+
     def _apply_confidence_filter():
         return [f for f in all_findings if severity_rank(f["confidence"]) >= min_conf_rank]
 
@@ -1978,6 +1980,4 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         return
 
     # --- Text output ---
-    _emit_auth_gaps_text(
-        total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit
-    )
+    _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit)

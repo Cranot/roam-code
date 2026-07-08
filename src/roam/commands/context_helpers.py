@@ -1454,8 +1454,7 @@ def _task_bundle_summary(bundle):
     affected_test_files = affected_tests.get("total_files", 0)
     dependent_symbols = blast_radius.get("dependent_symbols", 0)
     verdict = (
-        f"{symbol_name}: {files_to_read} files, "
-        f"{affected_test_files} test files, {dependent_symbols} dependent symbols"
+        f"{symbol_name}: {files_to_read} files, {affected_test_files} test files, {dependent_symbols} dependent symbols"
     )
 
     summary = {

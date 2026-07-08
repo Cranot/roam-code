@@ -909,9 +909,9 @@ def _resolve_symbol_id(conn, file_path: str, func_name: str, line_start: int) ->
         if "no such table" not in str(exc):
             raise
         log.debug(
-            "symbols table unavailable; clone-finding subject lookup for "
-            "%s:%s falls back to NULL subject_id",
-            file_path, func_name,
+            "symbols table unavailable; clone-finding subject lookup for %s:%s falls back to NULL subject_id",
+            file_path,
+            func_name,
         )
         return None
 

@@ -188,9 +188,7 @@ class _DjangoUrlResolver:
             return edges
 
         for sym in source_symbols:
-            edges.extend(
-                self._route_edges_visible_from_url_symbol(sym, target_files, symbol_index)
-            )
+            edges.extend(self._route_edges_visible_from_url_symbol(sym, target_files, symbol_index))
 
         return edges
 
@@ -750,9 +748,7 @@ class DjangoBridge(LanguageBridge):
         qname = sym.get("qualified_name", sym.get("name", ""))
 
         for m in _DRF_ROUTER_RE.finditer(sig):
-            edges.extend(
-                self._drf_edges_preserving_list_detail_resolution(qname, m, symbol_index)
-            )
+            edges.extend(self._drf_edges_preserving_list_detail_resolution(qname, m, symbol_index))
 
         return edges
 

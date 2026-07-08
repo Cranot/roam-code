@@ -220,12 +220,8 @@ class _CheckVerdictCounts:
         return cls(
             missing_sources=sum(1 for source in inputs.sources if not source.exists),
             unparseable=1 if inputs.unparseable else 0,
-            unknown_commands=sum(
-                1 for command in inputs.commands if command.state == "unknown_command"
-            ),
-            deprecated_commands=sum(
-                1 for command in inputs.commands if command.state == "deprecated_command"
-            ),
+            unknown_commands=sum(1 for command in inputs.commands if command.state == "unknown_command"),
+            deprecated_commands=sum(1 for command in inputs.commands if command.state == "deprecated_command"),
             mode_issues=len(inputs.mode_issues),
         )
 
@@ -238,12 +234,7 @@ class _CheckVerdictCounts:
         because it does not resolve ``@property`` reads to the underlying
         method; verified referenced, 2026-07-04.
         """
-        return (
-            self.missing_sources
-            + self.unparseable
-            + self.unknown_commands
-            + self.mode_issues
-        )
+        return self.missing_sources + self.unparseable + self.unknown_commands + self.mode_issues
 
 
 @dataclass
@@ -746,9 +737,7 @@ def _default_metadata_signals() -> dict[str, Any]:
     }
 
 
-def _discover_sources(
-    repo_root: Path, init_options: ConstitutionInitOptions
-) -> dict[str, str]:
+def _discover_sources(repo_root: Path, init_options: ConstitutionInitOptions) -> dict[str, str]:
     """Probe the repo for the supporting substrate files.
 
     Returns the ``sources`` mapping (relative ``./``-prefixed paths) for
@@ -781,9 +770,7 @@ def _discover_sources(
     return sources
 
 
-def _build_constitution_doc(
-    repo_root: Path, init_options: ConstitutionInitOptions
-) -> dict[str, Any]:
+def _build_constitution_doc(repo_root: Path, init_options: ConstitutionInitOptions) -> dict[str, Any]:
     """Assemble the constitution document dict from repo state."""
     sources = _discover_sources(repo_root, init_options)
 

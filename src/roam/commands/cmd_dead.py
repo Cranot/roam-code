@@ -1815,9 +1815,7 @@ def _resolve_side_effect_candidate_ids(conn, unused_return_findings: list[dict])
     )
     rows = batched_in(
         conn,
-        "SELECT id, name, qualified_name FROM symbols "
-        "WHERE qualified_name IN ({ph}) OR name IN ({ph}) "
-        "ORDER BY id",
+        "SELECT id, name, qualified_name FROM symbols WHERE qualified_name IN ({ph}) OR name IN ({ph}) ORDER BY id",
         symbol_names,
     )
     ids_by_symbol: dict[str, int] = {}

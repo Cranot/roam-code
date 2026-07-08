@@ -911,9 +911,7 @@ def _row_violation_reasons(row, requires, compiled_regex, conn) -> list[str]:
     return reasons
 
 
-def _build_symbol_match_query_with_filters(
-    conn, kind_filter, exported_filter
-) -> tuple[str, list]:
+def _build_symbol_match_query_with_filters(conn, kind_filter, exported_filter) -> tuple[str, list]:
     """Return the SQL query and parameters for a symbol_match rule.
 
     Pushes cheap, SQL-expressible filters (kind, exported) into the query
@@ -951,9 +949,7 @@ def _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt) -> bool
     return True
 
 
-def _violation_or_skip_for_row(
-    row, has_requirements: bool, requires: dict, compiled_regex, conn
-) -> dict | None:
+def _violation_or_skip_for_row(row, has_requirements: bool, requires: dict, compiled_regex, conn) -> dict | None:
     """Format a violation for a row that survived filters, or None to skip."""
     if has_requirements:
         reasons = _row_violation_reasons(row, requires, compiled_regex, conn)
@@ -990,9 +986,7 @@ def _fail_symbol_match_before_scanning_bad_regex(rule: dict, regex_error: str) -
     }
 
 
-def _has_symbol_requirements_that_can_reject_matches(
-    requires: dict, compiled_regex
-) -> bool:
+def _has_symbol_requirements_that_can_reject_matches(requires: dict, compiled_regex) -> bool:
     """Return True when matching rows still need requirement validation."""
     return any(
         [
@@ -1025,9 +1019,7 @@ def _collect_symbol_match_violations_after_candidate_pruning(
     for row in rows:
         if not _row_matches_filters(row, file_glob, min_fan_in, max_fan_in, exempt):
             continue
-        violation = _violation_or_skip_for_row(
-            row, has_requirements, requires, compiled_regex, conn
-        )
+        violation = _violation_or_skip_for_row(row, has_requirements, requires, compiled_regex, conn)
         if violation is not None:
             violations.append(violation)
     return violations
@@ -1056,13 +1048,9 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
     if regex_error is not None:
         return _fail_symbol_match_before_scanning_bad_regex(rule, regex_error)
 
-    query, params = _build_symbol_match_query_with_filters(
-        conn, kind_filter, exported_filter
-    )
+    query, params = _build_symbol_match_query_with_filters(conn, kind_filter, exported_filter)
     rows = conn.execute(query, params).fetchall()
-    has_requirements = _has_symbol_requirements_that_can_reject_matches(
-        requires, compiled_regex
-    )
+    has_requirements = _has_symbol_requirements_that_can_reject_matches(requires, compiled_regex)
     violations = _collect_symbol_match_violations_after_candidate_pruning(
         rows,
         file_glob=file_glob,
@@ -1390,9 +1378,7 @@ def _violation_from_finding(item: dict, exempt: dict) -> dict | None:
         "reason": item.get("reason", "dataflow rule matched"),
         "type": item.get("type"),
     }
-    violation.update(
-        {field: item[field] for field in _DATAFLOW_VIOLATION_OPTIONAL_FIELDS if field in item}
-    )
+    violation.update({field: item[field] for field in _DATAFLOW_VIOLATION_OPTIONAL_FIELDS if field in item})
     return violation
 
 

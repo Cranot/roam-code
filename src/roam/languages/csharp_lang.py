@@ -122,6 +122,7 @@ class _CSharpCommon(LanguageExtractor):
                 return self.node_text(child, source)
         return ""
 
+
 # ---- Symbol extraction ----
 
 
@@ -882,6 +883,7 @@ class _CSharpLocalOperatorSymbolExtractor(_CSharpMemberSymbolExtractor):
                 }
             )
             position += 1
+
 
 # ---- Reference extraction ----
 

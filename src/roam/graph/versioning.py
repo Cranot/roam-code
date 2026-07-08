@@ -119,6 +119,7 @@ def _try_import_networkx() -> Any | None:
     """Return the networkx module if available, otherwise None."""
     try:
         import networkx as nx
+
         return nx
     except ImportError:
         return None
@@ -210,14 +211,10 @@ def snapshot_graph(conn: sqlite3.Connection) -> dict:
     ).fetchall()
     id_to_key, symbols = _build_symbol_index(rows)
 
-    edge_rows = conn.execute(
-        "SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id"
-    ).fetchall()
+    edge_rows = conn.execute("SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id").fetchall()
     edges = _collect_edges(edge_rows, id_to_key, symbols)
 
-    cycles, layers = _preserve_snapshot_availability_with_optional_structure(
-        conn, id_to_key
-    )
+    cycles, layers = _preserve_snapshot_availability_with_optional_structure(conn, id_to_key)
 
     return {
         "symbols": symbols,
@@ -374,9 +371,7 @@ def _find_move_for_removed(
     if not rname:
         return None
     candidates = added_by_name.get(rname, [])
-    picked = _balance_move_specificity_and_recall(
-        rmeta, candidates, after_syms, used_added
-    )
+    picked = _balance_move_specificity_and_recall(rmeta, candidates, after_syms, used_added)
     if picked is None:
         return None
     used_added.add(picked)

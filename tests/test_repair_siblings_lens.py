@@ -16,7 +16,6 @@ from roam.commands.cmd_repair_siblings import (
 )
 from tests.conftest import index_in_process, invoke_cli
 
-
 _PATCH = """\
 diff --git a/app.py b/app.py
 --- a/app.py
@@ -85,9 +84,22 @@ def test_repair_intent_extraction_prefers_added_guard():
 
 
 def test_lexical_candidate_generation_orders_similar_bodies():
-    anchor = SymbolBody(1, "app.py", "handle_user", None, "function", 1, 4, "def handle_user(user):\n    return normalize(user.email)")
-    sibling = SymbolBody(2, "app.py", "handle_account", None, "function", 6, 7, "def handle_account(user):\n    return normalize(user.email)")
-    other = SymbolBody(3, "app.py", "parse_count", None, "function", 9, 10, "def parse_count(raw):\n    return int(raw)")
+    anchor = SymbolBody(
+        1, "app.py", "handle_user", None, "function", 1, 4, "def handle_user(user):\n    return normalize(user.email)"
+    )
+    sibling = SymbolBody(
+        2,
+        "app.py",
+        "handle_account",
+        None,
+        "function",
+        6,
+        7,
+        "def handle_account(user):\n    return normalize(user.email)",
+    )
+    other = SymbolBody(
+        3, "app.py", "parse_count", None, "function", 9, 10, "def parse_count(raw):\n    return int(raw)"
+    )
 
     candidates = lexical_candidate_generation(anchor, [sibling, other], limit=10, min_score=0.01)
 

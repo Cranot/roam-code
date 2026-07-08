@@ -332,9 +332,7 @@ def _run_hook_operation_preserving_cli_contract(
         click.echo(secondary_tip)
 
 
-def _verdict_for_git_reindex_install(
-    installed: list[str], skipped: list[str], errors: list[dict[str, str]]
-) -> str:
+def _verdict_for_git_reindex_install(installed: list[str], skipped: list[str], errors: list[dict[str, str]]) -> str:
     """Summarize install outcomes around refreshing git-triggered indexing."""
     if errors:
         return f"Installed {len(installed)} hook(s) with {len(errors)} error(s)."

@@ -24,6 +24,7 @@ Deterministic (Rule 10): the gate has no learned state; identical inputs and a
 identical repo HEAD produce the identical attestation (modulo the validation
 command's own determinism).
 """
+
 from __future__ import annotations
 
 import dataclasses

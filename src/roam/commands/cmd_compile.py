@@ -315,7 +315,7 @@ def _tail_jsonl(path: str, n: int = 64) -> list[dict]:
     # we read the whole file (offset 0).
     if chunk != size and lines:
         lines = lines[1:]
-    return _parse_jsonl_lines(lines[-(n * 2):])[-n:]
+    return _parse_jsonl_lines(lines[-(n * 2) :])[-n:]
 
 
 def _compile_failure_signals(row: dict) -> list[str]:
@@ -376,9 +376,7 @@ def _next_evidence_hint(failure: dict) -> str:
     # freeform fall-through already implies "name the target" — subsume the
     # low-confidence clause when both fire, but keep the confidence number.
     if "freeform_explore" in signals:
-        parts.append(
-            f"name the target symbol or file path so a specialized procedure matches{conf_txt}"
-        )
+        parts.append(f"name the target symbol or file path so a specialized procedure matches{conf_txt}")
     elif "low_confidence" in signals:
         parts.append(f"pin the target symbol or file path; classifier was unsure{conf_txt}")
     if "slow_uncached" in signals:
@@ -408,9 +406,7 @@ def _next_evidence_for_compile(cwd: str | None, current_task: str | None = None)
     if current_task:
         import hashlib
 
-        exclude_task_hash = hashlib.sha256(
-            current_task.encode("utf-8", "replace")
-        ).hexdigest()[:12]
+        exclude_task_hash = hashlib.sha256(current_task.encode("utf-8", "replace")).hexdigest()[:12]
     failure = _latest_compile_failure(cwd, exclude_task_hash=exclude_task_hash)
     if not failure:
         return {"state": "no_recent_failure", "hint": None}

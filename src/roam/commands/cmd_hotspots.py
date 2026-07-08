@@ -714,9 +714,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         marker via ``_w607cp_warnings_out`` and return *default* -- the
         envelope still emits cleanly with the remaining substrates.
         """
-        return make_run_check("hotspots", _w607cp_warnings_out)(
-            phase, fn, *args, default=default, **kwargs
-        )
+        return make_run_check("hotspots", _w607cp_warnings_out)(phase, fn, *args, default=default, **kwargs)
 
     # W607-EN -- AGGREGATION-layer plumbing on top of W607-CP substrate
     # layer. The two buckets are disjoint and merged at envelope-emit
@@ -770,9 +768,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         the floor remains a literal pass-through.
         """
         try:
-            return make_run_check("hotspots", _w607en_warnings_out)(
-                phase, fn, *args, default=default, **kwargs
-            )
+            return make_run_check("hotspots", _w607en_warnings_out)(phase, fn, *args, default=default, **kwargs)
         except Exception:  # noqa: BLE001 -- safety-net fallback; helper already discloses
             return default
 

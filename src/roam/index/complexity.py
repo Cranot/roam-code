@@ -705,7 +705,15 @@ def _walk_loop_children(node, body_node, new_depth, loop_depth, new_loop_vars, l
             walk(child, loop_depth, loop_vars)
 
 
-def _record_node_signals(node, ntype: str, source: bytes, loop_depth: int, loop_vars: set[str], string_vars: set[str], state: _MathSignalState) -> None:
+def _record_node_signals(
+    node,
+    ntype: str,
+    source: bytes,
+    loop_depth: int,
+    loop_vars: set[str],
+    string_vars: set[str],
+    state: _MathSignalState,
+) -> None:
     """Record algorithmic signals for one non-loop, non-function node."""
     if loop_depth > 0:
         _record_loop_node(node, source, loop_vars, string_vars, state)

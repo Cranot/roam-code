@@ -246,9 +246,7 @@ def test_clean_search_emits_no_warning(tmp_path: Path) -> None:
     conn = _make_fts5_db(tmp_path)
     try:
         warnings: list[str] = []
-        results = search_stored(
-            conn, "authenticate", SearchOptions(top_k=5), warnings_out=warnings
-        )
+        results = search_stored(conn, "authenticate", SearchOptions(top_k=5), warnings_out=warnings)
         assert results, "populated corpus must produce results"
         assert warnings == [], f"clean search must NOT emit warnings; got {warnings!r}"
     finally:
@@ -275,9 +273,7 @@ def test_empty_corpus_silent(tmp_path: Path) -> None:
     ensure_schema(conn)
     try:
         warnings: list[str] = []
-        results = search_stored(
-            conn, "anything", SearchOptions(top_k=5), warnings_out=warnings
-        )
+        results = search_stored(conn, "anything", SearchOptions(top_k=5), warnings_out=warnings)
         # Empty results expected; no markers either.
         assert results == [], results
         # Cold-state probes (empty tables, valid schema) must be silent.
@@ -304,9 +300,7 @@ def test_filter_no_matches_silent(tmp_path: Path) -> None:
     try:
         warnings: list[str] = []
         # "zzzzz" doesn't occur in our fixture corpus.
-        _ = search_stored(
-            conn, "zzzzz_no_match", SearchOptions(top_k=5), warnings_out=warnings
-        )
+        _ = search_stored(conn, "zzzzz_no_match", SearchOptions(top_k=5), warnings_out=warnings)
         # We don't assert results == [] because hybrid fusion may still
         # return prefix-match hits; we just assert that any markers
         # emitted are NOT from substrate-failure paths.

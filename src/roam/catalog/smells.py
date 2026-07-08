@@ -1193,9 +1193,7 @@ def _find_matching_brace(source: str, open_brace_pos: int) -> int:
     i = open_brace_pos
     state = _BraceScannerState()
     while i < len(source):
-        next_i, skipped_nonstructural = _skip_nonstructural_text_so_braces_stay_balanced(
-            source, i, state
-        )
+        next_i, skipped_nonstructural = _skip_nonstructural_text_so_braces_stay_balanced(source, i, state)
         if skipped_nonstructural:
             i = next_i
             continue
@@ -1555,9 +1553,7 @@ def _prefetch_refused_bequest_methods_by_file(
     return methods_by_file
 
 
-def _prefetch_refused_bequest_parent_names(
-    conn: sqlite3.Connection, parent_ids: list[int]
-) -> dict[int, set[str]]:
+def _prefetch_refused_bequest_parent_names(conn: sqlite3.Connection, parent_ids: list[int]) -> dict[int, set[str]]:
     """Bulk-fetch parent method names grouped by ``parent_id``.
 
     These are the override-membership sets. W370c perf: hoisted out of the
@@ -1567,8 +1563,7 @@ def _prefetch_refused_bequest_parent_names(
     try:
         rows = batched_in(
             conn,
-            "SELECT parent_id, name FROM symbols "
-            "WHERE kind = 'method' AND parent_id IN ({ph})",
+            "SELECT parent_id, name FROM symbols WHERE kind = 'method' AND parent_id IN ({ph})",
             parent_ids,
         )
         for r in rows:
@@ -1594,9 +1589,7 @@ def _load_refused_bequest_source(
     """
     if child_file_id not in source_cache:
         try:
-            source_cache[child_file_id] = (workspace / child_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source_cache[child_file_id] = (workspace / child_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             source_cache[child_file_id] = None
     return source_cache[child_file_id]
@@ -1649,9 +1642,7 @@ def _refused_bequest_trivial_overrides(
     return trivial_overrides
 
 
-def _refused_bequest_finding(
-    row: sqlite3.Row, trivial_overrides: list[tuple[str, int]]
-) -> dict | None:
+def _refused_bequest_finding(row: sqlite3.Row, trivial_overrides: list[tuple[str, int]]) -> dict | None:
     """Build a refused-bequest finding when ``>= 2`` trivial overrides, else ``None``."""
     if len(trivial_overrides) < 2:
         return None
@@ -1723,9 +1714,7 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
         if child_lang != "python" and child_lang not in _BRACE_LANGS:
             continue
 
-        source = _load_refused_bequest_source(
-            workspace, row["child_path"], row["child_file_id"], source_cache
-        )
+        source = _load_refused_bequest_source(workspace, row["child_path"], row["child_file_id"], source_cache)
         if not source:
             continue
 
@@ -1939,11 +1928,7 @@ def _primitive_obsession_finding_when_primitives_dominate(r: sqlite3.Row) -> dic
     params = _split_signature_params(r["signature"])
     # Only consider params with an explicit type annotation. An un-annotated
     # param contributes nothing -- we can't tell what the caller is passing.
-    annotations = [
-        ann
-        for param in params
-        if (ann := _extract_param_annotation(param)) is not None
-    ]
+    annotations = [ann for param in params if (ann := _extract_param_annotation(param)) is not None]
     annotated_total = len(annotations)
     if annotated_total < 4:
         return None
@@ -2023,10 +2008,7 @@ def detect_primitive_obsession(conn: sqlite3.Connection) -> list[dict]:
         except sqlite3.OperationalError:
             return []
 
-    findings = (
-        _primitive_obsession_finding_when_primitives_dominate(r)
-        for r in rows
-    )
+    findings = (_primitive_obsession_finding_when_primitives_dominate(r) for r in rows)
     return [finding for finding in findings if finding is not None]
 
 

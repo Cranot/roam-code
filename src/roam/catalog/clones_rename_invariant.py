@@ -205,9 +205,7 @@ def _preserve_sfc_script_lines_for_clone_scan(source: bytes) -> tuple[bytes, str
         block = match.group(0)
         opening_tag_end = block.index(">") + 1
         closing_tag_start = block.rfind("</script>")
-        content_start = (
-            bisect.bisect_left(newline_offsets, match.start() + opening_tag_end) + 1
-        )
+        content_start = bisect.bisect_left(newline_offsets, match.start() + opening_tag_end) + 1
         content_end = bisect.bisect_left(
             newline_offsets,
             match.start() + closing_tag_start,
@@ -216,9 +214,7 @@ def _preserve_sfc_script_lines_for_clone_scan(source: bytes) -> tuple[bytes, str
         for idx in range(content_start, min(content_end, len(lines))):
             script_line_flags[idx] = True
 
-    processed = "\n".join(
-        line if script_line_flags[idx] else "" for idx, line in enumerate(lines)
-    )
+    processed = "\n".join(line if script_line_flags[idx] else "" for idx, line in enumerate(lines))
     return processed.encode("utf-8"), language
 
 
@@ -231,7 +227,7 @@ def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
         source = path.read_bytes()
     except OSError as exc:
         # Isolated clone scan is best-effort: unreadable files are skipped.
-        print(
+        print(  # noqa: T201
             f"[rename-invariant-clones] could not read {path}: {exc}",
             file=sys.stderr,
         )
@@ -255,7 +251,7 @@ def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
     except (LookupError, ValueError) as exc:
         # Isolated clone scan is best-effort: unsupported/invalid grammars
         # and unparseable files are skipped rather than failing the whole run.
-        print(
+        print(  # noqa: T201
             f"[rename-invariant-clones] isolated parse failed for {path}: {exc}",
             file=sys.stderr,
         )

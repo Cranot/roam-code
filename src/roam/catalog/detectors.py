@@ -713,11 +713,7 @@ _REGEX_MODULE_PREFIXES = ("re.", "regexp.", "regex.", "Pattern.")
 def _regex_module_convenience_calls(row) -> list[str]:
     """Return loop calls that use module-level regex convenience APIs."""
     qcalls = _json_list(_row_value(row, "calls_in_loops_qualified", ""))
-    return [
-        c
-        for c in qcalls
-        if c.startswith(_REGEX_MODULE_PREFIXES) and _call_leaf(c) in _REGEX_CONVENIENCE_CALLS
-    ]
+    return [c for c in qcalls if c.startswith(_REGEX_MODULE_PREFIXES) and _call_leaf(c) in _REGEX_CONVENIENCE_CALLS]
 
 
 def _regex_loop_finding(row) -> dict | None:

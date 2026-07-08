@@ -482,11 +482,7 @@ def _list_permits_from_context(read_context: _PermitReadContext) -> list[PermitR
             f"permits_root_unreadable:{type(exc).__name__}:{exc}",
         )
         return []
-    out = [
-        record
-        for child in children
-        if (record := _permit_record_or_warn(child, read_context)) is not None
-    ]
+    out = [record for child in children if (record := _permit_record_or_warn(child, read_context)) is not None]
     out.sort(key=lambda r: r.issued_at, reverse=True)
     return out
 
@@ -514,7 +510,7 @@ def _permit_children_preserving_empty_contract(read_context: _PermitReadContext)
         # from per-file W379/W380/W382 warnings without parsing the
         # free-form text. The ``[]`` return is PRESERVED -- the empty-
         # return is the caller contract; the marker just discloses WHY.
-        _append_permit_load_warning(read_context,f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
+        _append_permit_load_warning(read_context, f"permits_dir_unreadable:{type(exc).__name__}:{exc}")
         return []
 
 
@@ -523,22 +519,26 @@ def _raw_permit_object_with_repair_warning(child: Path, read_context: _PermitRea
     try:
         raw = json.loads(child.read_text(encoding="utf-8"))
     except OSError as exc:
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     except UnicodeDecodeError as exc:
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     except json.JSONDecodeError as exc:
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})",
         )
         return None
     if not isinstance(raw, dict):
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"permit file {child.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})",
         )
         return None
@@ -560,7 +560,8 @@ def _audit_ready_permit_or_warn(
     if record is None:
         raw_pid = raw.get("permit_id")
         id_phrase = f"permit_id={raw_pid!r}" if isinstance(raw_pid, str) and raw_pid else "permit_id=<missing>"
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"permit file {child.name!s} skipped: schema validation "
             f"failed ({id_phrase}); fields missing or invalid per "
             f"PermitRecord contract",
@@ -569,7 +570,8 @@ def _audit_ready_permit_or_warn(
     # W379: detect duplicate permit_id across files. Keep first-seen.
     pid = record.permit_id
     if pid in seen_ids:
-        _append_permit_load_warning(read_context,
+        _append_permit_load_warning(
+            read_context,
             f"duplicate permit_id={pid!r} found in {child.name!s}; "
             f"first occurrence was {seen_ids[pid]!s}; collector will "
             f"keep only the first AuthorityRef",

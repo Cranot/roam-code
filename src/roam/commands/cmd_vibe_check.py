@@ -1365,11 +1365,7 @@ _COPY_PASTE_GROUP_SENTINELS = frozenset({"clone_group_size"})
 def _file_issue_contributions_preserving_detector_shape(detail: dict) -> list[tuple[str, int]]:
     """Normalize one detector detail into per-file issue counts."""
     if _COPY_PASTE_GROUP_SENTINELS <= detail.keys():
-        return [
-            (fn.get("file", ""), 1)
-            for fn in detail.get("functions", [])
-            if fn.get("file", "")
-        ]
+        return [(fn.get("file", ""), 1) for fn in detail.get("functions", []) if fn.get("file", "")]
 
     file_path = detail.get("file", "")
     if not file_path:
@@ -1566,8 +1562,7 @@ def _preserve_dead_export_symbol_identity(rec: dict) -> _VibeFindingPayload:
     line_start = rec.get("line_start")
     finding_id = _vibe_finding_id("dead_exports", f"{file_path}:{rec.get('name')}", line_start)
     claim = (
-        f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at "
-        f"{file_path}:{line_start} — zero incoming edges"
+        f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at {file_path}:{line_start} — zero incoming edges"
     )
     evidence = {
         "name": rec.get("name"),
@@ -1575,10 +1570,7 @@ def _preserve_dead_export_symbol_identity(rec: dict) -> _VibeFindingPayload:
         "file_path": file_path,
         "line_start": line_start,
         "pattern": "dead_exports",
-        "note": (
-            "Coarser than `roam dead` — uses raw edges only, "
-            "no test-consumer / barrel / scaffolding filters."
-        ),
+        "note": ("Coarser than `roam dead` — uses raw edges only, no test-consumer / barrel / scaffolding filters."),
     }
     return subject_kind, subject_id, finding_id, claim, evidence
 

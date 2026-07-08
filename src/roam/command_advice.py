@@ -482,12 +482,28 @@ _INTENT_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
         "file/module coupling replaces manual import grepping",
     ),
     (
-        ("safe to delete", "can i delete", "can i remove", "is it safe to remove", "unused", "dead code", "remove this"),
+        (
+            "safe to delete",
+            "can i delete",
+            "can i remove",
+            "is it safe to remove",
+            "unused",
+            "dead code",
+            "remove this",
+        ),
         ("safe-delete", "delete-check", "dead"),
         "deletion-safety gates replace guessing about surviving references",
     ),
     (
-        ("what breaks", "blast radius", "impact of changing", "refactor", "if i change", "before editing", "before i change"),
+        (
+            "what breaks",
+            "blast radius",
+            "impact of changing",
+            "refactor",
+            "if i change",
+            "before editing",
+            "before i change",
+        ),
         ("impact", "preflight", "uses"),
         "blast-radius gates run before an edit instead of after",
     ),
@@ -577,9 +593,7 @@ def _build_advice_suggestion(command: str, why: str) -> dict | None:
     }
 
 
-def _collect_advice_suggestions(
-    ranked: list[tuple[int, int, tuple[str, ...], str]], limit: int
-) -> list[dict]:
+def _collect_advice_suggestions(ranked: list[tuple[int, int, tuple[str, ...], str]], limit: int) -> list[dict]:
     """Expand ranked rules into deduplicated suggestions, capped at ``limit``."""
     suggestions: list[dict] = []
     seen: set[str] = set()

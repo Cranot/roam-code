@@ -734,9 +734,7 @@ def _expire_lease_without_blocking_sweep(
         _write_lease(lease)
     except OSError as exc:
         if warnings_out is not None:
-            warnings_out.append(
-                f"lease_gc_failed:{lease.lease_id}.json:{type(exc).__name__}:{exc}"
-            )
+            warnings_out.append(f"lease_gc_failed:{lease.lease_id}.json:{type(exc).__name__}:{exc}")
         return None
     return lease.lease_id
 
@@ -797,9 +795,7 @@ def list_leases(
     now = _utc_now()
     out: list[Lease] = []
     for lease in _iter_leases(_LeaseReadContext(repo_root, warnings_out)):
-        visible_state = _visible_state_for_lease(
-            lease, agent, include_expired, include_released, now
-        )
+        visible_state = _visible_state_for_lease(lease, agent, include_expired, include_released, now)
         if visible_state is None:
             continue
         # Surface the effective (wall-clock) state on the returned record

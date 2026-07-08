@@ -11,9 +11,9 @@ Key functions:
 
 from __future__ import annotations
 
-from bisect import bisect_left
 import math
 import warnings
+from bisect import bisect_left
 
 import networkx as nx
 

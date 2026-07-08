@@ -76,9 +76,7 @@ def get_repo_paths(config: dict[str, Any], root: Path) -> list[dict[str, Any]]:
     return results
 
 
-def _repo_metadata_with_workspace_defaults(
-    repo: dict[str, Any], default_name: str
-) -> tuple[Any, Any]:
+def _repo_metadata_with_workspace_defaults(repo: dict[str, Any], default_name: str) -> tuple[Any, Any]:
     """Return optional repo metadata without loop-local get() lookups."""
     name = repo["name"] if "name" in repo else default_name
     role = repo["role"] if "role" in repo else ""

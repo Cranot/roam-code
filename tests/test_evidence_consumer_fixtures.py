@@ -67,10 +67,7 @@ from roam.evidence.consumer_fixtures import (
 
 def test_consumer_fixtures_registry_non_empty() -> None:
     """The published contract must list at least one fixture."""
-    assert CONSUMER_FIXTURES, (
-        "CONSUMER_FIXTURES registry is empty - no published consumer "
-        "contract to pin."
-    )
+    assert CONSUMER_FIXTURES, "CONSUMER_FIXTURES registry is empty - no published consumer contract to pin."
 
 
 @pytest.mark.parametrize("name", CONSUMER_FIXTURES)
@@ -134,19 +131,14 @@ def test_consumer_fixtures_dir_matches_registry() -> None:
     pkg_dir = files("roam.evidence.consumer_fixtures")
     on_disk = sorted(p.name for p in pkg_dir.iterdir() if str(p.name).endswith(".json"))
     listed = sorted(f"{n}.json" for n in CONSUMER_FIXTURES)
-    assert on_disk == listed, (
-        f"consumer_fixtures directory / registry drift: "
-        f"on_disk={on_disk} registry={listed}"
-    )
+    assert on_disk == listed, f"consumer_fixtures directory / registry drift: on_disk={on_disk} registry={listed}"
 
 
 def test_iter_consumer_fixtures_covers_registry() -> None:
     """``iter_consumer_fixtures`` yields exactly the registry, in order."""
     pairs = list(iter_consumer_fixtures())
     names = [name for name, _ in pairs]
-    assert names == list(CONSUMER_FIXTURES), (
-        f"iter_consumer_fixtures order drift: {names} != {list(CONSUMER_FIXTURES)}"
-    )
+    assert names == list(CONSUMER_FIXTURES), f"iter_consumer_fixtures order drift: {names} != {list(CONSUMER_FIXTURES)}"
     # Every yielded text must itself parse (defence in depth).
     for name, text in pairs:
         ChangeEvidence.from_canonical_json(text)

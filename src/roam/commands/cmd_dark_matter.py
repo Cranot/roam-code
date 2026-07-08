@@ -274,10 +274,7 @@ def _emit_dark_matter_findings(
 
     return _emit_finding_records(
         conn,
-        (
-            _finding_record_for_stable_pair_identity(p, source_version, FindingRecord)
-            for p in pairs
-        ),
+        (_finding_record_for_stable_pair_identity(p, source_version, FindingRecord) for p in pairs),
     )
 
 

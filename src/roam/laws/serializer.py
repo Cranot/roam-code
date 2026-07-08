@@ -121,7 +121,6 @@ def _fallback_dump_sequence_item(item: Any, indent: int, pad: str) -> list[str]:
     return [f"{pad}- {_scalar(item)}"]
 
 
-
 def _scalar(v: Any) -> str:
     if v is None:
         return "null"

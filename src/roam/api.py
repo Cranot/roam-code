@@ -14,8 +14,9 @@ from typing import Iterator
 
 from click.testing import CliRunner
 
-from .db.connection import find_project_root, open_db
 from roam.exit_codes import EXIT_GATE_FAILURE
+
+from .db.connection import find_project_root, open_db
 
 
 class RoamAPIError(RuntimeError):

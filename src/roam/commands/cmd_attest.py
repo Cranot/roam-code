@@ -1475,9 +1475,7 @@ def _append_attestation_breaking_section(lines, plan, is_md):
             if breaking["removed"]:
                 lines.append(f"  {breaking['removed']} removed")
                 for r in plan["removed_preview"]:
-                    lines.append(
-                        f"    {abbrev_kind(r.get('kind', ''))} {r['name']}  {r.get('file', '')}"
-                    )
+                    lines.append(f"    {abbrev_kind(r.get('kind', ''))} {r['name']}  {r.get('file', '')}")
             if breaking["signature_changed"]:
                 lines.append(f"  {breaking['signature_changed']} signature changed")
             if breaking["renamed"]:
@@ -1506,9 +1504,7 @@ def _append_attestation_budget_section(lines, plan, is_md):
                 lines.append(f"- [{status}] {name}")
             lines.append("")
         else:
-            lines.append(
-                f"BUDGET ({budget['passed']} pass, {budget['failed']} fail, {budget['skipped']} skip):"
-            )
+            lines.append(f"BUDGET ({budget['passed']} pass, {budget['failed']} fail, {budget['skipped']} skip):")
             for r in plan["budget_rules"]:
                 status = r.get("status", "?")
                 name = r.get("name", "unnamed")
