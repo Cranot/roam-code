@@ -211,18 +211,19 @@ class TestBatchSearchOne:
         names = [r["name"] for r in rows]
         assert "authenticate" in names
 
-    def test_like_fallback(self, tmp_db):
-        """Even without FTS5, LIKE fallback should find symbols."""
+    def test_like_sql_error_is_graceful(self, tmp_db):
+        """The batch search moved to LIKE-only (FTS removed). A broken LIKE
+        query must degrade gracefully to a tuple-form error, never raise."""
         from roam.mcp_server import _batch_search_one
 
         conn = self._conn(tmp_db)
-        # Force FTS5 path to fail by patching the SQL constant
-        with patch("roam.mcp_server._BATCH_FTS_SQL", "SELECT invalid"):
+        # Force the (only) SQL path to fail by patching the LIKE constant.
+        with patch("roam.mcp_server._BATCH_LIKE_SQL", "SELECT invalid"):
             rows, err = _batch_search_one(conn, "user", 5)
         conn.close()
-        # LIKE fallback should still produce results
-        assert err is None
-        assert len(rows) >= 1
+        # Graceful: empty rows + a captured error string, not an exception.
+        assert rows == []
+        assert err is not None
 
     def test_no_results(self, tmp_db):
         from roam.mcp_server import _batch_search_one
@@ -527,7 +528,7 @@ class TestBatchSearch:
         from roam.mcp_server import batch_search
 
         with (
-            patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")),
+            patch("roam.db.connection.open_db", side_effect=OSError("db offline")),
             patch("roam.commands.resolve.db_exists", return_value=True),
         ):
             result = batch_search(queries=["user"], root=".")
@@ -680,7 +681,7 @@ class TestBatchGet:
         from roam.mcp_server import batch_get
 
         with (
-            patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")),
+            patch("roam.db.connection.open_db", side_effect=OSError("db offline")),
             patch("roam.commands.resolve.db_exists", return_value=True),
         ):
             result = batch_get(symbols=["User"], root=".")
