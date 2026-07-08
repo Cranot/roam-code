@@ -1381,7 +1381,7 @@ def _save_short_help_cache_if_dirty() -> None:
         # Cache is best-effort: a write failure means the next CLI
         # invocation will re-parse the AST. Never fail the parent
         # command on a cache hiccup.
-        print(f"[short-help-cache] write failed: {exc}", file=sys.stderr)
+        print(f"[short-help-cache] write failed: {exc}", file=sys.stderr)  # noqa: T201
 
 
 def _short_help_source_path(module_path: str) -> str:
@@ -1414,7 +1414,7 @@ def _parse_short_help_source(src_path: str):
         # Best-effort: a missing/unparseable file means the caller falls
         # back to the live Click get_command() path. Never fail help
         # rendering on a parse hiccup — but surface it so it's not silent.
-        print(f"[short-help-cache] parse failed for {src_path}: {exc}", file=sys.stderr)
+        print(f"[short-help-cache] parse failed for {src_path}: {exc}", file=sys.stderr)  # noqa: T201
         return None
 
 
@@ -1732,7 +1732,7 @@ def _install_local_telemetry(ctx: click.Context) -> None:
             duration_ms = int((_time.perf_counter() - start) * 1000)
             _telemetry_record(cmd_name, duration_ms, exit_code=0)
         except Exception as exc:  # noqa: BLE001 — telemetry must never break command teardown
-            print("[telemetry] close hook failed: %s" % exc, file=sys.stderr)
+            print("[telemetry] close hook failed: %s" % exc, file=sys.stderr)  # noqa: T201
 
     ctx.call_on_close(_on_close)
 

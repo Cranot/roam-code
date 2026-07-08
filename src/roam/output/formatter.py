@@ -5,8 +5,8 @@ from __future__ import annotations
 import json as _json
 import os
 import time
-from datetime import datetime, timezone
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any, Literal, Mapping, TypeAlias
 
 # Envelope schema versioning (semver: major.minor.patch)
@@ -263,9 +263,7 @@ def render_catalog(
         "  ".join("-" * width for _, width in headers),
     ]
     text_lines.extend(format_row(it) for it in items)
-    return format_catalog_output(
-        json_mode, command_name, verdict, items, field_name, text_lines, footer
-    )
+    return format_catalog_output(json_mode, command_name, verdict, items, field_name, text_lines, footer)
 
 
 def to_json(data) -> str:

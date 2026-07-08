@@ -9,8 +9,8 @@ Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
-from collections import defaultdict
 import heapq
+from collections import defaultdict
 
 import click
 

@@ -6905,6 +6905,7 @@ def _vp_parse_plan_json(plan_json: str) -> tuple[list | None, dict | None]:
     its own "no operations supplied" error).
     """
     import json as _json
+
     try:
         parsed = _json.loads(plan_json)
     except _json.JSONDecodeError as e:

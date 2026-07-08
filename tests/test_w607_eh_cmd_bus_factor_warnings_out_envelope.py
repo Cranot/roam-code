@@ -1022,9 +1022,7 @@ def test_both_helpers_use_bus_factor_marker_family():
     ``make_run_check`` call site.
     """
     cmd_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
-    helper_src_path = (
-        Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
-    )
+    helper_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
     cmd_src = cmd_src_path.read_text(encoding="utf-8")
     helper_src = helper_src_path.read_text(encoding="utf-8")
 
@@ -1036,5 +1034,5 @@ def test_both_helpers_use_bus_factor_marker_family():
     assert cmd_src.count('make_run_check("bus_factor",') >= 2, (
         "Both ``_run_check_cq`` and ``_run_check_eh`` must emit markers "
         "under the canonical bus_factor_<phase>_failed:<exc>:<detail> "
-        "family; expected both wrappers to call make_run_check(\"bus_factor\", ...)."
+        'family; expected both wrappers to call make_run_check("bus_factor", ...).'
     )

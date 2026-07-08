@@ -86,14 +86,11 @@ def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
 
     if len(legacy_inputs) != 3:
         raise TypeError(
-            "_cache_key expects _CacheKeyInputs or "
-            "diff_text, rules_path, block_threshold, language_override"
+            "_cache_key expects _CacheKeyInputs or diff_text, rules_path, block_threshold, language_override"
         )
 
     rules_path, block_threshold, language_override = legacy_inputs
-    return _CacheKeyInputs._from_loose(
-        inputs, rules_path, block_threshold, language_override
-    ).digest()
+    return _CacheKeyInputs._from_loose(inputs, rules_path, block_threshold, language_override).digest()
 
 
 def _cache_path(cache_dir: Path, key: str) -> Path:

@@ -15,6 +15,11 @@ log = logging.getLogger(__name__)
 
 from roam.db.connection import batched_in, find_project_root, get_db_path, open_db
 from roam.index.discovery import discover_files
+
+# Static reference to the Django post-resolver entry point. It is invoked
+# dynamically by _run_post_resolvers via importlib/getattr; the explicit
+# import gives the dead-export detector a real production edge.
+from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.index.file_roles import classify_file
 from roam.index.incremental import file_hash, get_index_changed_files
 from roam.index.parser import (
@@ -27,11 +32,6 @@ from roam.index.parser import (
 from roam.index.relations import build_file_edges, resolve_references
 from roam.index.symbols import extract_references, extract_symbols
 from roam.languages.generic_lang import GenericExtractor
-
-# Static reference to the Django post-resolver entry point. It is invoked
-# dynamically by _run_post_resolvers via importlib/getattr; the explicit
-# import gives the dead-export detector a real production edge.
-from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.observability import log_swallowed
 
 

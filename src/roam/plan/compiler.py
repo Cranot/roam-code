@@ -8324,9 +8324,7 @@ def _probe_grep_for_task(task: str, named_paths: list[str], cwd: str | None) -> 
     search_root = _grep_root_preserving_snippet_privacy(named_paths, cwd)
     # W196 — `roam grep` per pattern (ripgrep under the hood, ~0.16s,
     # enclosing_symbol per hit, W147 cache, --source-only).
-    matches, total_matches_by_pat = _grep_patterns_preserving_match_totals(
-        patterns, search_root, cwd
-    )
+    matches, total_matches_by_pat = _grep_patterns_preserving_match_totals(patterns, search_root, cwd)
     if not matches:
         return None
     # Each embedded hit `content` line is verbatim bytes of a REPOSITORY file —
@@ -11028,9 +11026,7 @@ class PlanV0:
         except (TypeError, ValueError):
             return 0.0
 
-    def _build_prefetched_facts(
-        self, named_only: list[str], cwd: str | None
-    ) -> tuple[dict, list[str]]:
+    def _build_prefetched_facts(self, named_only: list[str], cwd: str | None) -> tuple[dict, list[str]]:
         """Resolve module-name shorthand and run all timed L1 probes.
 
         WHY: Embedding answers at compile time collapses the agent's
@@ -11149,9 +11145,7 @@ class PlanV0:
         existing = plan_obj.get("answer_contract", [])
         plan_obj["answer_contract"] = [anti_distract, *existing]
 
-    def _enrich_plan_with_prefetched(
-        self, plan_obj: dict, prefetched: dict, envelope_bytes: int
-    ) -> None:
+    def _enrich_plan_with_prefetched(self, plan_obj: dict, prefetched: dict, envelope_bytes: int) -> None:
         """Attach prefetched facts plus consumption metadata to the plan.
 
         WHY: A rich envelope needs metadata so the agent consumes it
@@ -12341,10 +12335,7 @@ def _task_text_promises_probe_answer(task: str) -> bool:
     return bool(
         task
         and (
-            any(
-                regex.search(task) is not None
-                for regex in (_API_SURFACE_RE, _REFACTOR_MOVE_RE, _W196_LITERAL_RE)
-            )
+            any(regex.search(task) is not None for regex in (_API_SURFACE_RE, _REFACTOR_MOVE_RE, _W196_LITERAL_RE))
             or _w201_import_re().search(task) is not None
         )
     )
@@ -12389,22 +12380,10 @@ def _task_text_justifies_l1_despite_facts_policy(task_text: str) -> bool:
             _TEST_IMPACT_RE.search(task_text)
             or _OWNER_RE.search(task_text)
             or _TODO_AUDIT_RE.search(task_text)
-            or (
-                _task_has_any(task_lower, _SECURITY_TAINT_TOKENS)
-                and _compile_security_taint_re().search(task_text)
-            )
-            or (
-                _task_has_any(task_lower, _ALGO_PERF_TOKENS)
-                and _compile_algo_perf_re().search(task_text)
-            )
-            or (
-                _task_has_any(task_lower, _WORLD_MODEL_TOKENS)
-                and _compile_world_model_re().search(task_text)
-            )
-            or (
-                _task_has_any(task_lower, _DESIGN_PATTERN_TOKENS)
-                and _compile_design_pattern_re().search(task_text)
-            )
+            or (_task_has_any(task_lower, _SECURITY_TAINT_TOKENS) and _compile_security_taint_re().search(task_text))
+            or (_task_has_any(task_lower, _ALGO_PERF_TOKENS) and _compile_algo_perf_re().search(task_text))
+            or (_task_has_any(task_lower, _WORLD_MODEL_TOKENS) and _compile_world_model_re().search(task_text))
+            or (_task_has_any(task_lower, _DESIGN_PATTERN_TOKENS) and _compile_design_pattern_re().search(task_text))
         )
     )
 
@@ -12484,9 +12463,7 @@ def _emit_result_after_required_compile_side_effects(
     return env_obj, label
 
 
-def _cached_compile_result_if_fresh(
-    plan: "PlanV0", cwd: str | None, started_at: float
-) -> tuple[dict, str] | None:
+def _cached_compile_result_if_fresh(plan: "PlanV0", cwd: str | None, started_at: float) -> tuple[dict, str] | None:
     """Return a cached compile result and record cache-hit telemetry."""
     cached = _envelope_cache_lookup(plan, cwd)
     if cached is None:

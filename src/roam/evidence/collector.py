@@ -1612,9 +1612,7 @@ def _collect_corroborated_authorities_from_runs(
     into ``warnings``.
     """
     pairs: set[tuple[str, str]] = set()
-    field_groups = tuple(
-        (fields, pairs, kind) for kind, fields in _RUN_LEDGER_AUTHORITY_FIELD_GROUPS
-    )
+    field_groups = tuple((fields, pairs, kind) for kind, fields in _RUN_LEDGER_AUTHORITY_FIELD_GROUPS)
     for meta, events in _iter_hmac_verified_runs_for_corroboration(
         repo_root,
         warnings,

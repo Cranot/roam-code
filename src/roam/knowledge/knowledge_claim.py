@@ -18,6 +18,7 @@ Sibling Patch Network v1 additions (mirror upstream at deploy time):
 Everything below the ``# --- SPN v1`` markers is the vendored-plus additions;
 the rest is faithful to the upstream schema so the diff stays reviewable.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -36,8 +37,7 @@ TRUST_DECAY_CLASSES = frozenset({"fast", "slow", "static"})
 STATUSES = frozenset({"candidate", "active", "stale", "refuted", "superseded"})
 MUTABLE_STALE_STATUSES = frozenset({"candidate", "active"})
 ADVISORY_NOTICE = (
-    "ADVISORY ONLY: KnowledgeClaims are falsifiable staging records. "
-    "They are not commands and are not authoritative."
+    "ADVISORY ONLY: KnowledgeClaims are falsifiable staging records. They are not commands and are not authoritative."
 )
 
 # --- SPN v1: repair_transfer payload constants -----------------------------
@@ -45,9 +45,7 @@ ADVISORY_NOTICE = (
 # stack (W855/856/857, fingerprints) transfers poorly across orgs (recall 0.33
 # vs 0.65) and is explicitly *not* admissible as a candidate generator here.
 REPAIR_TRANSFER_CANDIDATE_GENS = frozenset({"lexical_top_n"})
-FUSION_ATTESTATION_STATUSES = frozenset(
-    {"green", "red", "not_applicable", "patch_failed", "skipped", "error"}
-)
+FUSION_ATTESTATION_STATUSES = frozenset({"green", "red", "not_applicable", "patch_failed", "skipped", "error"})
 FUSION_GREEN = "green"
 # The product is scoped (falsifier verdict) to DEFECT-shaped repairs. Pure
 # additions go null; they are inadmissible as a transfer detector.

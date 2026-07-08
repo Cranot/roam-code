@@ -300,10 +300,7 @@ def _collapse_index_aliases_for_agent_rows(
         entry["duplicates"] += 1
         entry["has_edge"] = entry["has_edge"] or has_edge
 
-    collapsed = [
-        (e["sa"], e["sb"], e["count"], e["has_edge"], e["duplicates"])
-        for e in merged.values()
-    ]
+    collapsed = [(e["sa"], e["sb"], e["count"], e["has_edge"], e["duplicates"]) for e in merged.values()]
     return heapq.nlargest(limit, collapsed, key=lambda x: x[2])
 
 
@@ -318,10 +315,7 @@ def _verdict_for_strongest_pair(
     ib0 = sym_info.get(sb0, {})
     name_a0 = ia0.get("name", f"sym_{sa0}")
     name_b0 = ib0.get("name", f"sym_{sb0}")
-    return (
-        f"{hidden_count} coupled function pairs, strongest: "
-        f"{name_a0}+{name_b0} ({cnt0} co-changes)"
-    )
+    return f"{hidden_count} coupled function pairs, strongest: {name_a0}+{name_b0} ({cnt0} co-changes)"
 
 
 def _json_pair_rows_preserve_symbol_context(
@@ -386,10 +380,7 @@ def _emit_threshold_without_pairs(json_mode: bool, min_count: int) -> None:
             )
         )
     else:
-        click.echo(
-            f"No symbol pairs with >= {min_count} co-changes across files. "
-            "Try --min-count 2."
-        )
+        click.echo(f"No symbol pairs with >= {min_count} co-changes across files. Try --min-count 2.")
 
 
 def _emit_connected_pairs_explain_hidden_absence(
@@ -412,10 +403,7 @@ def _emit_connected_pairs_explain_hidden_absence(
             )
         )
     else:
-        click.echo(
-            f"No hidden coupling found (all {connected_count} co-changing pairs "
-            "have direct edges)."
-        )
+        click.echo(f"No hidden coupling found (all {connected_count} co-changing pairs have direct edges).")
 
 
 def _emit_json_coupling_rows(
@@ -476,15 +464,11 @@ def _emit_text_coupling_rows(
 
     shown = len(results)
     click.echo(
-        f"Showing {shown} pairs | {hidden_count} hidden, {connected_count} connected "
-        f"(min co-changes: {min_count})"
+        f"Showing {shown} pairs | {hidden_count} hidden, {connected_count} connected (min co-changes: {min_count})"
     )
     suppressed_parts = [f"{v} {k}" for k, v in suppressions.items() if v]
     if suppressed_parts:
-        click.echo(
-            f"Suppressed: {', '.join(suppressed_parts)} "
-            "(use --include-tests / raise caps to inspect)"
-        )
+        click.echo(f"Suppressed: {', '.join(suppressed_parts)} (use --include-tests / raise caps to inspect)")
 
 
 # ---------------------------------------------------------------------------

@@ -903,9 +903,7 @@ def test_w607cq_marker_shape_documented_in_source():
     recipe in cmd_bus_factor.
     """
     cmd_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
-    helper_src_path = (
-        Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
-    )
+    helper_src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "boundary_helpers.py"
     cmd_src = cmd_src_path.read_text(encoding="utf-8")
     helper_src = helper_src_path.read_text(encoding="utf-8")
     # The generic marker template lives in the shared helper.

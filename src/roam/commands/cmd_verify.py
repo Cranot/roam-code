@@ -3008,11 +3008,7 @@ def _changed_public_signatures_for_caller_gate(
         return []
     new_symbols = get_current_symbols(conn, path)
     _removed, sig_changed, _renamed = compare_file(path, old_symbols, new_symbols)
-    return [
-        sym
-        for sym in sig_changed
-        if _is_public_breaking_contract_name(str(sym.get("name") or ""))
-    ]
+    return [sym for sym in sig_changed if _is_public_breaking_contract_name(str(sym.get("name") or ""))]
 
 
 def _external_caller_files_for_contract(conn, path: str, name: str, changed_paths: set[str]) -> list[str]:
@@ -3036,8 +3032,7 @@ def _breaking_contract_violation(path: str, sym: dict, external: list[str]) -> d
             f"({sample}) — they will break"
         ),
         "fix": (
-            "Update the callers in this same change, keep the old "
-            "signature back-compatible, or stage a deprecation"
+            "Update the callers in this same change, keep the old signature back-compatible, or stage a deprecation"
         ),
     }
 
@@ -3098,9 +3093,7 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
             get_current_symbols=_get_current_symbols,
             compare_file=_compare_file,
         )
-        violations.extend(
-            _breaking_contract_violations_for_file(conn, path, changed_paths, min_callers, sig_changed)
-        )
+        violations.extend(_breaking_contract_violations_for_file(conn, path, changed_paths, min_callers, sig_changed))
     return {"score": 0 if violations else 100, "violations": violations}
 
 
