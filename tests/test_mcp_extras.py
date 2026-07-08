@@ -459,9 +459,9 @@ class TestMCPServerIntegration:
         # silently no-ops without an MCP client.
         import inspect
 
-        from roam.mcp_server import explore, health, repo_map, understand
+        from roam.mcp_server import explore, health, repo_map, roam_understand
 
-        for fn in (explore, understand, health, repo_map):
+        for fn in (explore, roam_understand, health, repo_map):
             sig = inspect.signature(fn)
             assert "summarize" in sig.parameters
             # Accept either explicit-False or auto-decide-None; reject True.
