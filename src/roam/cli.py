@@ -193,6 +193,7 @@ _COMMANDS = {
     "auth-gaps": ("roam.commands.cmd_auth_gaps", "auth_gaps_cmd"),
     "coverage-gaps": ("roam.commands.cmd_coverage_gaps", "coverage_gaps"),
     "report": ("roam.commands.cmd_report", "report"),
+    "service-report": ("roam.commands.cmd_service_report", "service_report_cmd"),
     "understand": ("roam.commands.cmd_understand", "understand_cmd"),
     "onboard": ("roam.commands.cmd_understand", "understand_cmd"),
     "affected-tests": ("roam.commands.cmd_affected_tests", "affected_tests_cmd"),
@@ -492,6 +493,7 @@ _CATEGORIES = {
         "permit",
         "postmortem",
         "pr-replay",
+        "service-report",
         "guard",
         # Roam Guard family (Wave 11-20): the PR-gating surface.
         "guard-pr",
