@@ -8134,9 +8134,7 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
 
     def _run_check_aj(phase, fn, *args, default=None, **kwargs):
         """Run W607-AJ substrate marker for ``for_security_review_{phase}_failed``."""
-        return _run_substrate(
-            "for_security_review", _w607aj_warnings_out, phase, fn, *args, default=default, **kwargs
-        )
+        return _run_substrate("for_security_review", _w607aj_warnings_out, phase, fn, *args, default=default, **kwargs)
 
     # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
     # ``vulns``) can never come back. ``vulns list`` is the
