@@ -391,6 +391,13 @@ def test_callers_unmodified() -> None:
         repo_root() / "src" / "roam" / "runs" / "ledger.py",
         repo_root() / "src" / "roam" / "evidence" / "collector.py",
         repo_root() / "src" / "roam" / "commands" / "cmd_runs.py",
+        # A caller was refactored INTO signing.py itself (a lazy-signing
+        # wrapper calls ensure_ledger_key at ~line 303, loud-fallback on
+        # failure). The W601 contract — callers must not thread
+        # ``warnings_out`` — applies to the internal caller equally, so the
+        # defining module joins the consumer scan (its ``def`` lines are not
+        # ast.Call nodes and don't inflate the count).
+        repo_root() / "src" / "roam" / "runs" / "signing.py",
     ]
     target_funcs = {"ensure_ledger_key", "key_file_mode"}
     total_calls = 0
