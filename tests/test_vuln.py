@@ -366,19 +366,62 @@ class TestVulnStoreInputGuards:
             VALUES
                 (1, 1, 'foo', 'src.foo'),
                 (2, 1, 'bar', 'src.bar'),
-                (3, 1, 'foo_bar', 'src.foo_bar');
+                (3, 1, 'foo_bar', 'src.foo_bar'),
+                (4, 1, 'x', 'pkg._.x');
             CREATE TABLE edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT);
             """
         )
-        # package_name = "_" — the LIKE wildcard. Without ESCAPE, this
-        # would match every symbol whose qname has any character (i.e. all
-        # three). With ESCAPE, only literal underscores match — so just
-        # `src.foo_bar`.
+        # package_name = "_" — the LIKE wildcard. Two guards must both hold:
+        # (a) ESCAPE keeps '_' a literal, so it does NOT match every symbol;
+        # (b) dotted-segment anchoring means it only matches where '_' is a
+        # FULL path segment (``pkg._.x``), never a mid-identifier substring
+        # (``src.foo_bar``). Old behaviour matched ``src.foo_bar`` — that was
+        # the substring bug this test now pins closed.
         matches = match_vuln_to_symbols(conn, "_")
         qnames = {m["qualified_name"] for m in matches}
-        assert qnames == {"src.foo_bar"}, (
-            f"LIKE wildcard match-explode: a package_name of '_' should only "
-            f"match qnames containing a literal underscore, got {qnames}"
+        assert qnames == {"pkg._.x"}, (
+            f"package '_' must match only where it is a literal, full dotted "
+            f"segment — not a wildcard, not a mid-identifier substring; got {qnames}"
+        )
+
+    def test_short_package_name_matches_dotted_segments_not_substrings(self, vuln_project):
+        """A short package name (e.g. ``os``) must match dotted-path SEGMENTS
+        only -- ``os``, ``os.path.join`` -- and must NOT substring-match
+        unrelated symbols like ``positions`` / ``close`` / ``host``. That
+        false-positive class would poison a reachability report on a buyer's
+        repo (the exact deliverable being sold), so it is a correctness guard
+        on the paid product, not just a lint.
+        """
+        import sqlite3
+
+        from roam.security.vuln_store import match_vuln_to_symbols
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(
+            """
+            CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, qualified_name TEXT
+            );
+            INSERT INTO files (id, path) VALUES (1, 'src/a.py');
+            INSERT INTO symbols (id, file_id, name, qualified_name)
+            VALUES
+                (1, 1, 'positions', 'src.positions'),
+                (2, 1, 'close', 'src.close'),
+                (3, 1, 'host', 'net.host_pool'),
+                (4, 1, 'os', 'os'),
+                (5, 1, 'join', 'os.path.join'),
+                (6, 1, 'getenv', 'pkg.os.getenv');
+            CREATE TABLE edges (
+                id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT
+            );
+            """
+        )
+        qnames = {m["qualified_name"] for m in match_vuln_to_symbols(conn, "os")}
+        assert qnames == {"os", "os.path.join", "pkg.os.getenv"}, (
+            f"short package name 'os' must match dotted segments only, not "
+            f"substrings like 'positions'/'close'/'host_pool'; got {qnames}"
         )
 
     def test_load_json_refuses_oversized_report(self, tmp_path):

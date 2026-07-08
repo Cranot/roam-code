@@ -57,13 +57,30 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
     matches: list[dict] = []
     seen_ids: set[int] = set()
 
-    # Direct symbol name match. ESCAPE clause + escaped LIKE pattern means
-    # a package_name like ``_`` or ``foo%`` matches itself, not every symbol.
+    # Direct symbol name match. The qualified_name match is anchored to
+    # DOTTED-SEGMENT boundaries, not a naked substring: a short package name
+    # like ``os`` must appear as a full path segment (``os``, ``os.path``,
+    # ``pkg.os``, ``pkg.os.sub``) and must NOT substring-match unrelated
+    # symbols such as ``positions`` / ``close`` / ``host`` -- the false-positive
+    # class that would poison a reachability report on a buyer's repo. The
+    # ESCAPE clause keeps a literal ``_`` / ``%`` in the name from acting as a
+    # SQL wildcard.
+    esc = _escape_like(package_name)
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, f.path AS file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.name = ? OR s.qualified_name LIKE ? ESCAPE '\\'",
-        (package_name, f"%{_escape_like(package_name)}%"),
+        "WHERE s.name = ? "
+        "   OR s.qualified_name = ? "
+        "   OR s.qualified_name LIKE ? ESCAPE '\\' "  # pkg.something
+        "   OR s.qualified_name LIKE ? ESCAPE '\\' "  # something.pkg
+        "   OR s.qualified_name LIKE ? ESCAPE '\\'",  # something.pkg.something
+        (
+            package_name,
+            package_name,
+            f"{esc}.%",
+            f"%.{esc}",
+            f"%.{esc}.%",
+        ),
     ).fetchall()
     for r in rows:
         if r["id"] not in seen_ids:
