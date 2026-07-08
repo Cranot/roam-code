@@ -58,7 +58,7 @@ def test_light_run_refreshes_symbols_and_edges_but_skips_metrics(tmp_path):
         ).fetchone()
         assert edge is not None, "light run must resolve edges (phase 2) so impact/uses/cycles stay correct"
 
-    timings = idx._phase_timings or {}
+    timings = idx._phase_timer.timings or {}
     assert "parse_extract" in timings and "resolve" in timings, (
         f"light run must still parse + resolve (the cheap structural phases): {timings}"
     )
@@ -94,7 +94,7 @@ def test_light_then_full_index_recomputes_skipped_metrics(tmp_path):
     assert idx2.summary is not None and idx2.summary["up_to_date"] is False, (
         "poisoned file must force the next full index to reprocess, not short-circuit up_to_date"
     )
-    timings = idx2._phase_timings or {}
+    timings = idx2._phase_timer.timings or {}
     assert "effects_taint" in timings, f"the follow-up full index must recompute the metrics light skipped: {timings}"
 
 
@@ -111,7 +111,7 @@ def test_default_run_still_computes_all_phases(tmp_path):
         idx.run(force=True, quiet=True, progress_bar=False)
     finally:
         os.chdir(old)
-    timings = idx._phase_timings or {}
+    timings = idx._phase_timer.timings or {}
     assert "effects_taint" in timings and "graph_metrics" in timings, (
         f"default run must compute all metric phases (light=False unchanged): {timings}"
     )
