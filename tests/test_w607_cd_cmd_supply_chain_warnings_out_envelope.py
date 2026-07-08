@@ -177,7 +177,7 @@ def test_cmd_supply_chain_carries_w607cd_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cd_warnings_out" in src, (
+    assert "w607cd_warnings_out" in src, (
         "W607-CD accumulator missing from cmd_supply_chain; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -198,7 +198,7 @@ def test_cmd_supply_chain_carries_w607cd_accumulator():
     )
 
     # W607-AK must still be present (additive layer does NOT replace it)
-    assert "_w607ak_warnings_out" in src, (
+    assert "w607ak_warnings_out" in src, (
         "W607-AK accumulator vanished alongside the W607-CD add; the "
         "additive plumbing must preserve the W607-AK substrate-CALL layer."
     )

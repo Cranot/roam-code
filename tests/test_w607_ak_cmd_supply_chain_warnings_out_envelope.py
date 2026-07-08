@@ -395,7 +395,7 @@ def test_cmd_supply_chain_carries_w607ak_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_supply_chain.py"
     assert src_path.exists(), f"cmd_supply_chain.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ak_warnings_out" in src, (
+    assert "w607ak_warnings_out" in src, (
         "W607-AK accumulator missing from cmd_supply_chain; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ak" in src, (

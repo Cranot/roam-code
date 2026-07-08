@@ -506,7 +506,7 @@ def test_w607_n_cmd_doctor_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_doctor.py"
     assert src_path.exists(), f"cmd_doctor.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607n_warnings_out" in src, (
+    assert "w607n_warnings_out" in src, (
         "W607-N accumulator removed from cmd_doctor; W607-O must not regress the sibling instrumentation."
     )
     assert "doctor_" in src, (

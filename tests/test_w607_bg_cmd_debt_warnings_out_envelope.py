@@ -428,7 +428,7 @@ def test_cmd_debt_carries_w607bg_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_debt.py"
     assert src_path.exists(), f"cmd_debt.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bg_warnings_out" in src, (
+    assert "w607bg_warnings_out" in src, (
         "W607-BG accumulator missing from cmd_debt; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bg" in src, (

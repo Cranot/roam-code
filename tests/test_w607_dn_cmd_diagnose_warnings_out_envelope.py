@@ -189,7 +189,7 @@ def test_cmd_diagnose_carries_w607dn_accumulator():
     assert src_path.exists(), f"cmd_diagnose.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607dn_warnings_out" in src, (
+    assert "w607dn_warnings_out" in src, (
         "W607-DN accumulator missing from cmd_diagnose; the additive pre-substrate marker plumbing has been removed."
     )
     assert "_run_check_dn" in src, (
@@ -208,11 +208,11 @@ def test_cmd_diagnose_carries_w607dn_accumulator():
     )
 
     # W607-S + W607-BH must still be present (additive layer does NOT replace)
-    assert "_w607s_warnings_out" in src, (
+    assert "w607s_warnings_out" in src, (
         "W607-S accumulator vanished alongside the W607-DN add; the "
         "additive plumbing must preserve the W607-S substrate-CALL layer."
     )
-    assert "_w607bh_warnings_out" in src, (
+    assert "w607bh_warnings_out" in src, (
         "W607-BH accumulator vanished alongside the W607-DN add; the "
         "additive plumbing must preserve the W607-BH aggregation-phase layer."
     )

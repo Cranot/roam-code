@@ -553,7 +553,7 @@ def test_cmd_search_semantic_carries_w607bo_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_search_semantic.py"
     assert src_path.exists(), f"cmd_search_semantic.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bo_warnings_out" in src, (
+    assert "w607bo_warnings_out" in src, (
         "W607-BO accumulator missing from cmd_search_semantic; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bo" in src, (

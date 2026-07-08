@@ -458,7 +458,7 @@ def test_cmd_simulate_carries_w607ef_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_simulate.py"
     assert src_path.exists(), f"cmd_simulate.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ef_warnings_out" in src, (
+    assert "w607ef_warnings_out" in src, (
         "W607-EF accumulator missing from cmd_simulate; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ef" in src, (
@@ -798,7 +798,7 @@ def test_architecture_prediction_pentagon_5way_pairing():
     simulate_src = (root / "cmd_simulate.py").read_text(encoding="utf-8")
 
     # cmd_orchestrate carries W607-DS
-    assert "_w607ds_warnings_out" in orchestrate_src, (
+    assert "w607ds_warnings_out" in orchestrate_src, (
         "pentagon pairing pin: cmd_orchestrate has lost its "
         "W607-DS substrate-CALL accumulator -- the pentagon is no longer "
         "closed."
@@ -808,7 +808,7 @@ def test_architecture_prediction_pentagon_5way_pairing():
     )
 
     # cmd_partition carries W607-DU
-    assert "_w607du_warnings_out" in partition_src, (
+    assert "w607du_warnings_out" in partition_src, (
         "pentagon pairing pin: cmd_partition has lost its "
         "W607-DU substrate-CALL accumulator -- the pentagon is no longer "
         "closed."
@@ -818,7 +818,7 @@ def test_architecture_prediction_pentagon_5way_pairing():
     )
 
     # cmd_agent_plan carries W607-DY
-    assert "_w607dy_warnings_out" in agent_plan_src, (
+    assert "w607dy_warnings_out" in agent_plan_src, (
         "pentagon pairing pin: cmd_agent_plan has lost its "
         "W607-DY substrate-CALL accumulator -- the pentagon is no longer "
         "closed."
@@ -828,7 +828,7 @@ def test_architecture_prediction_pentagon_5way_pairing():
     )
 
     # cmd_fleet carries W607-EB
-    assert "_w607eb_warnings_out" in fleet_src, (
+    assert "w607eb_warnings_out" in fleet_src, (
         "pentagon pairing pin: cmd_fleet has lost its "
         "W607-EB substrate-CALL accumulator -- the pentagon is no longer "
         "closed."
@@ -838,7 +838,7 @@ def test_architecture_prediction_pentagon_5way_pairing():
     )
 
     # cmd_simulate carries W607-EF
-    assert "_w607ef_warnings_out" in simulate_src, (
+    assert "w607ef_warnings_out" in simulate_src, (
         "pentagon pairing pin: cmd_simulate has lost its "
         "W607-EF substrate-CALL accumulator -- the pentagon is no longer "
         "closed."

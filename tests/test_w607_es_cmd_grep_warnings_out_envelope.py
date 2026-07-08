@@ -236,7 +236,7 @@ def test_w607es_no_w607es_accumulator_exists():
     test fires and forces a reconciliation with the existing buckets.
     """
     src = _module_source()
-    assert "_w607es_warnings_out" not in src, (
+    assert "w607es_warnings_out" not in src, (
         "W607-ES is CLOSE-AS-DUPLICATE; do NOT introduce a third bucket "
         "alongside _w607bv_warnings_out / warnings_out. "
         "Use the existing _run_check_bv helper instead."
@@ -632,9 +632,9 @@ def test_w607es_text_search_family_w607_coverage_matrix():
     history_grep_src = _CMD_HISTORY_GREP_PATH.read_text(encoding="utf-8")
 
     # cmd_grep IS plumbed (W607-BV)
-    assert "_w607bv_warnings_out" in grep_src, "cmd_grep should carry W607-BV plumbing"
+    assert "w607bv_warnings_out" in grep_src, "cmd_grep should carry W607-BV plumbing"
     # cmd_trace IS plumbed (W607-EQ)
-    assert "_w607eq_warnings_out" in trace_src, "cmd_trace should carry W607-EQ plumbing"
+    assert "w607eq_warnings_out" in trace_src, "cmd_trace should carry W607-EQ plumbing"
     # The other 3 are GREENFIELD as of W607-ES. If a future wave plumbs
     # one of them, update this docstring + relax the assertion.
     assert "_w607" not in refs_text_src, (
@@ -766,7 +766,7 @@ def test_w607es_helper_template_appends_to_w607bv_bucket():
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr == "append":
-                if isinstance(func.value, ast.Name) and func.value.id == "_w607bv_warnings_out":
+                if isinstance(func.value, ast.Name) and func.value.id == "w607bv_warnings_out":
                     found_append = True
     assert found_append, "_run_check_bv must append to _w607bv_warnings_out (not a sibling bucket)"
 

@@ -372,7 +372,7 @@ def test_cmd_minimap_carries_w607az_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_minimap.py"
     assert src_path.exists(), f"cmd_minimap.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607az_warnings_out" in src, (
+    assert "w607az_warnings_out" in src, (
         "W607-AZ accumulator missing from cmd_minimap; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_az" in src, (
@@ -475,7 +475,7 @@ def test_w607l_and_w607az_coexist_in_cmd_minimap():
         "W607-AZ ``_run_check_az`` per-phase helper missing from cmd_minimap; the W607-AZ plumbing has been removed."
     )
     # Both bucket names must coexist
-    assert "warnings_out" in src and "_w607az_warnings_out" in src, (
+    assert "warnings_out" in src and "w607az_warnings_out" in src, (
         "cmd_minimap must carry BOTH the W607-L ``warnings_out`` bucket "
         "AND the W607-AZ ``_w607az_warnings_out`` per-phase bucket; one "
         "of the two has been removed."

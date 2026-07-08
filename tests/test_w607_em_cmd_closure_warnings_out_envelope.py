@@ -454,7 +454,7 @@ def test_cmd_closure_carries_w607em_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_closure.py"
     assert src_path.exists(), f"cmd_closure.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607em_warnings_out" in src, (
+    assert "w607em_warnings_out" in src, (
         "W607-EM accumulator missing from cmd_closure; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_em" in src, (
@@ -832,9 +832,9 @@ def test_structural_analysis_3_family_w607_pairing_pin():
     """
     base = Path(__file__).parent.parent / "src" / "roam" / "commands"
     family = (
-        ("cmd_simulate.py", "_w607ef_warnings_out", "_run_check_ef"),
-        ("cmd_cut.py", "_w607ei_warnings_out", "_run_check_ei"),
-        ("cmd_closure.py", "_w607em_warnings_out", "_run_check_em"),
+        ("cmd_simulate.py", "w607ef_warnings_out", "_run_check_ef"),
+        ("cmd_cut.py", "w607ei_warnings_out", "_run_check_ei"),
+        ("cmd_closure.py", "w607em_warnings_out", "_run_check_em"),
     )
     for filename, accumulator, helper in family:
         src_path = base / filename

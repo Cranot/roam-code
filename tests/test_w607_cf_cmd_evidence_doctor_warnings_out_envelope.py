@@ -282,7 +282,7 @@ def test_cmd_evidence_doctor_carries_w607cf_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cf_warnings_out" in src, (
+    assert "w607cf_warnings_out" in src, (
         "W607-CF accumulator missing from cmd_evidence_doctor; the "
         "additive aggregation-phase marker plumbing has been removed."
     )
@@ -304,7 +304,7 @@ def test_cmd_evidence_doctor_carries_w607cf_accumulator():
     )
 
     # W607-AT must still be present (additive does NOT replace it)
-    assert "_w607at_warnings_out" in src, (
+    assert "w607at_warnings_out" in src, (
         "W607-AT accumulator vanished alongside the W607-CF add; the "
         "additive plumbing must preserve the W607-AT substrate-CALL layer."
     )

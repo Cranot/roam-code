@@ -193,7 +193,7 @@ def test_cmd_clones_carries_w607dc_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607dc_warnings_out" in src, (
+    assert "w607dc_warnings_out" in src, (
         "W607-DC accumulator missing from cmd_clones; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_dc" in src, (
@@ -214,7 +214,7 @@ def test_cmd_clones_carries_w607dc_accumulator():
     )
 
     # W607-BQ must still be present (additive layer does NOT replace it)
-    assert "_w607bq_warnings_out" in src, (
+    assert "w607bq_warnings_out" in src, (
         "W607-BQ accumulator vanished alongside the W607-DC add; the "
         "additive plumbing must preserve the W607-BQ substrate-CALL "
         "layer."
@@ -772,10 +772,10 @@ def test_w607dc_coexists_with_pre_existing_marker_families():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-BQ substrate-CALL family
-    assert "_w607bq_warnings_out" in src, "W607-BQ substrate-CALL accumulator has been removed."
+    assert "w607bq_warnings_out" in src, "W607-BQ substrate-CALL accumulator has been removed."
     assert "_run_check_bq" in src, "W607-BQ helper has been removed."
     # W607-DC aggregation-phase family (THIS wave)
-    assert "_w607dc_warnings_out" in src, "W607-DC aggregation-phase accumulator has been removed."
+    assert "w607dc_warnings_out" in src, "W607-DC aggregation-phase accumulator has been removed."
     assert "_run_check_dc" in src, "W607-DC helper has been removed."
 
     # Both families share the clones_* prefix discipline -- the

@@ -448,7 +448,7 @@ def test_cmd_over_fetch_carries_w607ce_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_over_fetch.py"
     assert src_path.exists(), f"cmd_over_fetch.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ce_warnings_out" in src, (
+    assert "w607ce_warnings_out" in src, (
         "W607-CE accumulator missing from cmd_over_fetch; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ce" in src, (

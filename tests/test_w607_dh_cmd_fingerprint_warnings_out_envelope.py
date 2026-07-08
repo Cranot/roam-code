@@ -458,7 +458,7 @@ def test_cmd_fingerprint_carries_w607dh_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_fingerprint.py"
     assert src_path.exists(), f"cmd_fingerprint.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607dh_warnings_out" in src, (
+    assert "w607dh_warnings_out" in src, (
         "W607-DH accumulator missing from cmd_fingerprint; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dh" in src, (

@@ -435,7 +435,7 @@ def test_cmd_agent_plan_carries_w607dy_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_agent_plan.py"
     assert src_path.exists(), f"cmd_agent_plan.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607dy_warnings_out" in src, (
+    assert "w607dy_warnings_out" in src, (
         "W607-DY accumulator missing from cmd_agent_plan; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dy" in src, (
@@ -785,7 +785,7 @@ def test_multi_agent_triad_3way_pairing():
     agent_plan_src = (root / "cmd_agent_plan.py").read_text(encoding="utf-8")
 
     # cmd_orchestrate carries W607-DS
-    assert "_w607ds_warnings_out" in orchestrate_src, (
+    assert "w607ds_warnings_out" in orchestrate_src, (
         "multi-agent triad pairing pin: cmd_orchestrate has lost its "
         "W607-DS substrate-CALL accumulator -- the triad is no longer "
         "closed."
@@ -795,7 +795,7 @@ def test_multi_agent_triad_3way_pairing():
     )
 
     # cmd_partition carries W607-DU
-    assert "_w607du_warnings_out" in partition_src, (
+    assert "w607du_warnings_out" in partition_src, (
         "multi-agent triad pairing pin: cmd_partition has lost its "
         "W607-DU substrate-CALL accumulator -- the triad is no longer "
         "closed."
@@ -805,7 +805,7 @@ def test_multi_agent_triad_3way_pairing():
     )
 
     # cmd_agent_plan carries W607-DY
-    assert "_w607dy_warnings_out" in agent_plan_src, (
+    assert "w607dy_warnings_out" in agent_plan_src, (
         "multi-agent triad pairing pin: cmd_agent_plan has lost its "
         "W607-DY substrate-CALL accumulator -- the triad is no longer "
         "closed."

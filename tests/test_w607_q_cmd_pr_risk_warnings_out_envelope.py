@@ -533,7 +533,7 @@ def test_w607_p_cmd_audit_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_audit.py"
     assert src_path.exists(), f"cmd_audit.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607p_warnings_out" in src, (
+    assert "w607p_warnings_out" in src, (
         "W607-P accumulator removed from cmd_audit; W607-Q must not regress the sibling instrumentation."
     )
     assert "audit_" in src, (
@@ -643,7 +643,7 @@ def test_cmd_pr_risk_carries_w607q_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_risk.py"
     assert src_path.exists(), f"cmd_pr_risk.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607q_warnings_out" in src, (
+    assert "w607q_warnings_out" in src, (
         "W607-Q accumulator missing from cmd_pr_risk; the substrate-CALL marker plumbing has been removed."
     )
     assert "pr_risk_" in src, (

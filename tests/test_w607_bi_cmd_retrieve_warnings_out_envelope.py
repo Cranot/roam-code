@@ -498,7 +498,7 @@ def test_cmd_retrieve_carries_w607bi_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_retrieve.py"
     assert src_path.exists(), f"cmd_retrieve.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bi_warnings_out" in src, (
+    assert "w607bi_warnings_out" in src, (
         "W607-BI accumulator missing from cmd_retrieve; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bi" in src, (

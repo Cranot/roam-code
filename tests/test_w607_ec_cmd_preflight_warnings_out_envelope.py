@@ -409,7 +409,7 @@ def test_cmd_preflight_carries_w607ec_accumulator():
     """AST-level guard: cmd_preflight source carries the W607-EC accumulator."""
     assert _SRC_PATH.exists(), f"cmd_preflight.py missing at {_SRC_PATH}"
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607ec_warnings_out" in src, (
+    assert "w607ec_warnings_out" in src, (
         "W607-EC accumulator missing from cmd_preflight; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ec" in src, (
@@ -439,15 +439,15 @@ def test_cmd_preflight_carries_w607r_w607aw_w607ec_accumulators():
     never replace.
     """
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607r_warnings_out" in src, (
+    assert "w607r_warnings_out" in src, (
         "W607-R substrate-CALL accumulator missing from cmd_preflight; "
         "layer preservation broken — W607-EC must LAYER on top, not replace."
     )
-    assert "_w607aw_warnings_out" in src, (
+    assert "w607aw_warnings_out" in src, (
         "W607-AW aggregation accumulator missing from cmd_preflight; "
         "layer preservation broken — W607-EC must LAYER on top, not replace."
     )
-    assert "_w607ec_warnings_out" in src, "W607-EC post-capture accumulator missing from cmd_preflight."
+    assert "w607ec_warnings_out" in src, "W607-EC post-capture accumulator missing from cmd_preflight."
     assert "_run_check" in src and "_run_check_aw" in src and "_run_check_ec" in src, (
         "All three helpers (``_run_check`` for W607-R, ``_run_check_aw`` "
         "for W607-AW, ``_run_check_ec`` for W607-EC) must coexist in "

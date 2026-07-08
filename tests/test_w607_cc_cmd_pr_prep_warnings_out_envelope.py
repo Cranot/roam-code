@@ -220,7 +220,7 @@ def test_cmd_pr_prep_carries_w607cc_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cc_warnings_out" in src, (
+    assert "w607cc_warnings_out" in src, (
         "W607-CC accumulator missing from cmd_pr_prep; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_cc" in src, (
@@ -240,7 +240,7 @@ def test_cmd_pr_prep_carries_w607cc_accumulator():
     )
 
     # W607-AC must still be present (additive does NOT replace it)
-    assert "_w607ac_warnings_out" in src, (
+    assert "w607ac_warnings_out" in src, (
         "W607-AC accumulator vanished alongside the W607-CC add; the additive "
         "plumbing must preserve the W607-AC substrate-CALL layer."
     )

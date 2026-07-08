@@ -257,7 +257,7 @@ def test_cmd_smells_carries_w607df_accumulator():
     assert src_path.exists(), f"cmd_smells.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607df_warnings_out" in src, (
+    assert "w607df_warnings_out" in src, (
         "W607-DF accumulator missing from cmd_smells; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_df" in src, (
@@ -276,7 +276,7 @@ def test_cmd_smells_carries_w607df_accumulator():
     )
 
     # W607-BN must still be present (additive layer does NOT replace it)
-    assert "_w607bn_warnings_out" in src, (
+    assert "w607bn_warnings_out" in src, (
         "W607-BN accumulator vanished alongside the W607-DF add; the "
         "additive plumbing must preserve the W607-BN substrate-CALL layer."
     )
@@ -706,13 +706,13 @@ def test_w805_structural_debt_4way_aggregation_pairing_CLOSURE():
     # Each member of the W805 4-way carries (substrate accumulator,
     # aggregation accumulator) source anchors.
     members = (
-        ("cmd_clones.py", "_w607bq_warnings_out", "_w607dc_warnings_out"),
-        ("cmd_duplicates.py", "_w607bm_warnings_out", "_w607dd_warnings_out"),
-        ("cmd_smells.py", "_w607bn_warnings_out", "_w607df_warnings_out"),
+        ("cmd_clones.py", "w607bq_warnings_out", "w607dc_warnings_out"),
+        ("cmd_duplicates.py", "w607bm_warnings_out", "w607dd_warnings_out"),
+        ("cmd_smells.py", "w607bn_warnings_out", "w607df_warnings_out"),
         (
             "cmd_dark_matter.py",
-            "_w607bk_warnings_out",
-            "_w607cz_warnings_out",
+            "w607bk_warnings_out",
+            "w607cz_warnings_out",
         ),
     )
 
@@ -727,8 +727,8 @@ def test_w805_structural_debt_4way_aggregation_pairing_CLOSURE():
 
     # cmd_smells (THIS wave) is the closing member -- it MUST have both.
     smells_src = (repo_root / "cmd_smells.py").read_text(encoding="utf-8")
-    assert "_w607bn_warnings_out" in smells_src, "cmd_smells must carry the W607-BN substrate-CALL accumulator"
-    assert "_w607df_warnings_out" in smells_src, (
+    assert "w607bn_warnings_out" in smells_src, "cmd_smells must carry the W607-BN substrate-CALL accumulator"
+    assert "w607df_warnings_out" in smells_src, (
         "cmd_smells must carry the W607-DF aggregation-phase accumulator (THIS wave's closure)"
     )
 
@@ -758,10 +758,10 @@ def test_w607df_coexists_with_pre_existing_marker_families():
     # Pre-existing W987 warnings_list accumulator
     assert "warnings_list" in src, "Pre-existing W987 warnings_list accumulator has been removed."
     # W607-BN substrate-CALL family
-    assert "_w607bn_warnings_out" in src, "W607-BN substrate-CALL accumulator has been removed."
+    assert "w607bn_warnings_out" in src, "W607-BN substrate-CALL accumulator has been removed."
     assert "_run_check_bn" in src, "W607-BN helper has been removed."
     # W607-DF aggregation-phase family (THIS wave)
-    assert "_w607df_warnings_out" in src, "W607-DF aggregation-phase accumulator has been removed."
+    assert "w607df_warnings_out" in src, "W607-DF aggregation-phase accumulator has been removed."
     assert "_run_check_df" in src, "W607-DF helper has been removed."
 
     # All three accumulator sources merged via _merged_warnings()

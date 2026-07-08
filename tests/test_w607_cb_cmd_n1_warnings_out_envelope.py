@@ -442,7 +442,7 @@ def test_cmd_n1_carries_w607cb_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_n1.py"
     assert src_path.exists(), f"cmd_n1.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cb_warnings_out" in src, (
+    assert "w607cb_warnings_out" in src, (
         "W607-CB accumulator missing from cmd_n1; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cb" in src, (

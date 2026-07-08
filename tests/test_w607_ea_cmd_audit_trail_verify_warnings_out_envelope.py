@@ -257,7 +257,7 @@ def test_cmd_audit_trail_verify_carries_w607ea_accumulator():
     assert src_path.exists()
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607ea_warnings_out" in src
+    assert "w607ea_warnings_out" in src
     assert "_run_check_ea" in src
 
     tree = ast.parse(src)
@@ -269,9 +269,9 @@ def test_cmd_audit_trail_verify_carries_w607ea_accumulator():
     assert found_run_check_ea
 
     # W607-AI must still be present (additive layer does NOT replace it)
-    assert "_w607ai_warnings_out" in src
+    assert "w607ai_warnings_out" in src
     # W607-CN must still be present (additive layer does NOT replace it)
-    assert "_w607cn_warnings_out" in src
+    assert "w607cn_warnings_out" in src
 
 
 # ---------------------------------------------------------------------------
@@ -749,11 +749,11 @@ def test_all_three_warnings_out_accumulators_present_in_ast():
             continue
         if not isinstance(node.target, ast.Name):
             continue
-        if node.target.id == "_w607ai_warnings_out":
+        if node.target.id == "w607ai_warnings_out":
             found_ai = True
-        elif node.target.id == "_w607cn_warnings_out":
+        elif node.target.id == "w607cn_warnings_out":
             found_cn = True
-        elif node.target.id == "_w607ea_warnings_out":
+        elif node.target.id == "w607ea_warnings_out":
             found_ea = True
 
     assert found_ai, "W607-AI accumulator missing"
@@ -982,9 +982,9 @@ def test_ledger_reader_three_way_triple_layered_w607():
     commands_dir = Path(__file__).parent.parent / "src" / "roam" / "commands"
 
     expected = {
-        "cmd_postmortem.py": ("_w607an_warnings_out", "_w607cv_warnings_out", "_w607dr_warnings_out"),
-        "cmd_pr_replay.py": ("_w607ah_warnings_out", "_w607ca_warnings_out", "_w607dv_warnings_out"),
-        "cmd_audit_trail_verify.py": ("_w607ai_warnings_out", "_w607cn_warnings_out", "_w607ea_warnings_out"),
+        "cmd_postmortem.py": ("w607an_warnings_out", "w607cv_warnings_out", "w607dr_warnings_out"),
+        "cmd_pr_replay.py": ("w607ah_warnings_out", "w607ca_warnings_out", "w607dv_warnings_out"),
+        "cmd_audit_trail_verify.py": ("w607ai_warnings_out", "w607cn_warnings_out", "w607ea_warnings_out"),
     }
 
     for filename, accumulators in expected.items():

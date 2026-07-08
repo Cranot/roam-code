@@ -194,7 +194,7 @@ def test_cmd_duplicates_carries_w607dd_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607dd_warnings_out" in src, (
+    assert "w607dd_warnings_out" in src, (
         "W607-DD accumulator missing from cmd_duplicates; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -216,7 +216,7 @@ def test_cmd_duplicates_carries_w607dd_accumulator():
     )
 
     # W607-BM must still be present (additive layer does NOT replace it)
-    assert "_w607bm_warnings_out" in src, (
+    assert "w607bm_warnings_out" in src, (
         "W607-BM accumulator vanished alongside the W607-DD add; the "
         "additive plumbing must preserve the W607-BM substrate-CALL "
         "layer."
@@ -772,10 +772,10 @@ def test_w607dd_coexists_with_pre_existing_w607bm_family():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-BM substrate-CALL family
-    assert "_w607bm_warnings_out" in src, "W607-BM substrate-CALL accumulator has been removed."
+    assert "w607bm_warnings_out" in src, "W607-BM substrate-CALL accumulator has been removed."
     assert "_run_check_bm" in src, "W607-BM helper has been removed."
     # W607-DD aggregation-phase family (THIS wave)
-    assert "_w607dd_warnings_out" in src, "W607-DD aggregation-phase accumulator has been removed."
+    assert "w607dd_warnings_out" in src, "W607-DD aggregation-phase accumulator has been removed."
     assert "_run_check_dd" in src, "W607-DD helper has been removed."
 
     # Both families share the duplicates_* prefix discipline -- the

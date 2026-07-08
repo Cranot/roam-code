@@ -502,7 +502,7 @@ def test_w607_o_cmd_dashboard_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_dashboard.py"
     assert src_path.exists(), f"cmd_dashboard.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607o_warnings_out" in src, (
+    assert "w607o_warnings_out" in src, (
         "W607-O accumulator removed from cmd_dashboard; W607-P must not regress the sibling instrumentation."
     )
     assert "dashboard_" in src, (

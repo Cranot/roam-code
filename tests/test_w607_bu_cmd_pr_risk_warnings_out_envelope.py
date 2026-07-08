@@ -234,7 +234,7 @@ def test_cmd_pr_risk_carries_w607bu_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607bu_warnings_out" in src, (
+    assert "w607bu_warnings_out" in src, (
         "W607-BU accumulator missing from cmd_pr_risk; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_bu" in src, (
@@ -254,11 +254,11 @@ def test_cmd_pr_risk_carries_w607bu_accumulator():
     )
 
     # W607-Q + W607-AB must still be present (additive does NOT replace them)
-    assert "_w607q_warnings_out" in src, (
+    assert "w607q_warnings_out" in src, (
         "W607-Q accumulator vanished alongside the W607-BU add; the additive "
         "plumbing must preserve the W607-Q substrate-CALL layer."
     )
-    assert "_w607ab_warnings_out" in src, (
+    assert "w607ab_warnings_out" in src, (
         "W607-AB accumulator vanished alongside the W607-BU add; the additive "
         "plumbing must preserve the W607-AB findings-emission layer."
     )

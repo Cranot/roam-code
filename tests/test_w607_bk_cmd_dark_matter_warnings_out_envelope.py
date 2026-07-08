@@ -394,7 +394,7 @@ def test_cmd_dark_matter_carries_w607bk_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_dark_matter.py"
     assert src_path.exists(), f"cmd_dark_matter.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bk_warnings_out" in src, (
+    assert "w607bk_warnings_out" in src, (
         "W607-BK accumulator missing from cmd_dark_matter; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bk" in src, (
@@ -485,7 +485,7 @@ def test_w607bk_coexists_with_unknown_severity_family():
         "marker family has been removed from cmd_dark_matter."
     )
     # New W607-BK family (substrate-CALL markers).
-    assert "_w607bk_warnings_out" in src, "W607-BK substrate-CALL accumulator has been removed."
+    assert "w607bk_warnings_out" in src, "W607-BK substrate-CALL accumulator has been removed."
     # Both families share the dark_matter_* prefix discipline -- the
     # marker-prefix test above pins the runtime invariant.
 

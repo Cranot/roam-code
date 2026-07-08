@@ -429,7 +429,7 @@ def test_cmd_auth_gaps_carries_w607cm_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_auth_gaps.py"
     assert src_path.exists(), f"cmd_auth_gaps.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cm_warnings_out" in src, (
+    assert "w607cm_warnings_out" in src, (
         "W607-CM accumulator missing from cmd_auth_gaps; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cm" in src, (

@@ -395,7 +395,7 @@ def test_cmd_alerts_carries_w607cx_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_alerts.py"
     assert src_path.exists(), f"cmd_alerts.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cx_warnings_out" in src, (
+    assert "w607cx_warnings_out" in src, (
         "W607-CX accumulator missing from cmd_alerts; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cx" in src, (

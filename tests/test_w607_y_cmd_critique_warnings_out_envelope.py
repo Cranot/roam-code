@@ -469,7 +469,7 @@ def test_w607_w_cmd_relate_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_relate.py"
     assert src_path.exists(), f"cmd_relate.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607w_warnings_out" in src, (
+    assert "w607w_warnings_out" in src, (
         "W607-W accumulator removed from cmd_relate; W607-Y must not regress the sibling instrumentation."
     )
     assert "relate_{phase}_failed" in src, (
@@ -493,7 +493,7 @@ def test_cmd_critique_carries_w607y_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_critique.py"
     assert src_path.exists(), f"cmd_critique.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607y_warnings_out" in src, (
+    assert "w607y_warnings_out" in src, (
         "W607-Y accumulator missing from cmd_critique; the substrate-CALL marker plumbing has been removed."
     )
     assert "critique_{phase}_failed" in src, (

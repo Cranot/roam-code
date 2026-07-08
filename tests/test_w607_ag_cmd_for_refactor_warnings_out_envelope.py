@@ -460,7 +460,7 @@ def test_for_refactor_carries_w607ag_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "mcp_server.py"
     assert src_path.exists(), f"mcp_server.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ag_warnings_out" in src, (
+    assert "w607ag_warnings_out" in src, (
         "W607-AG accumulator missing from mcp_server.py; the "
         "substrate-CALL marker plumbing for for_refactor has been removed."
     )
@@ -625,7 +625,7 @@ def test_w607_ac_cmd_pr_prep_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_prep.py"
     assert src_path.exists(), f"cmd_pr_prep.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ac_warnings_out" in src, (
+    assert "w607ac_warnings_out" in src, (
         "W607-AC accumulator removed from cmd_pr_prep; W607-AG must not regress the sibling instrumentation."
     )
     assert "pr_prep_{phase}_failed" in src, (

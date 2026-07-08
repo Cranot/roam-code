@@ -405,7 +405,7 @@ def test_cmd_pr_risk_carries_w607ab_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_risk.py"
     assert src_path.exists(), f"cmd_pr_risk.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ab_warnings_out" in src, (
+    assert "w607ab_warnings_out" in src, (
         "W607-AB accumulator missing from cmd_pr_risk; the substrate-CALL "
         "marker plumbing for findings-emission has been removed."
     )
@@ -481,7 +481,7 @@ def test_w607_q_accumulator_still_present():
     """
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_risk.py"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607q_warnings_out" in src, (
+    assert "w607q_warnings_out" in src, (
         "W607-Q accumulator removed from cmd_pr_risk; W607-AB must NOT regress the prior W607-Q instrumentation."
     )
     assert "pr_risk_" in src, (

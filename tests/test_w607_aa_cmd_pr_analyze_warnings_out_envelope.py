@@ -510,7 +510,7 @@ def test_w607_z_cmd_diff_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_diff.py"
     assert src_path.exists(), f"cmd_diff.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607z_warnings_out" in src, (
+    assert "w607z_warnings_out" in src, (
         "W607-Z accumulator removed from cmd_diff; W607-AA must not regress the sibling instrumentation."
     )
     assert "diff_{phase}_failed" in src, (
@@ -534,7 +534,7 @@ def test_cmd_pr_analyze_carries_w607aa_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_analyze.py"
     assert src_path.exists(), f"cmd_pr_analyze.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607aa_warnings_out" in src, (
+    assert "w607aa_warnings_out" in src, (
         "W607-AA accumulator missing from cmd_pr_analyze; the substrate-CALL marker plumbing has been removed."
     )
     assert "pr_analyze_{phase}_failed" in src, (

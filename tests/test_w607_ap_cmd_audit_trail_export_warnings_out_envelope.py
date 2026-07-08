@@ -544,7 +544,7 @@ def test_cmd_audit_trail_export_carries_w607ap_accumulator():
     """
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_audit_trail_export.py"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ap_warnings_out" in src, (
+    assert "w607ap_warnings_out" in src, (
         "W607-AP accumulator missing from cmd_audit_trail_export; the substrate-CALL marker plumbing has been removed."
     )
     assert "audit_trail_export_{phase}_failed" in src, (
@@ -656,11 +656,11 @@ def test_quartet_closure_marker_templates_present():
         assert same_line or multi_line, f"export phase {ph!r} missing"
 
     # Sibling parity guards: conformance and verify accumulators unchanged.
-    assert "_w607al_warnings_out" in conformance_src, (
+    assert "w607al_warnings_out" in conformance_src, (
         "W607-AL accumulator removed from cmd_audit_trail_conformance; "
         "W607-AP must not regress the sibling instrumentation."
     )
-    assert "_w607ai_warnings_out" in verify_src, (
+    assert "w607ai_warnings_out" in verify_src, (
         "W607-AI accumulator removed from cmd_audit_trail_verify; W607-AP must not regress the sibling instrumentation."
     )
 
@@ -688,7 +688,7 @@ def test_w607_ai_and_al_sources_unaffected():
     conformance_src = conformance_src_path.read_text(encoding="utf-8")
 
     # W607-AI sibling: verify
-    assert "_w607ai_warnings_out" in verify_src, (
+    assert "w607ai_warnings_out" in verify_src, (
         "W607-AI accumulator removed from cmd_audit_trail_verify; W607-AP must not regress the sibling instrumentation."
     )
     assert "audit_trail_verify_{phase}_failed" in verify_src, (
@@ -697,7 +697,7 @@ def test_w607_ai_and_al_sources_unaffected():
     )
 
     # W607-AL sibling: conformance
-    assert "_w607al_warnings_out" in conformance_src, (
+    assert "w607al_warnings_out" in conformance_src, (
         "W607-AL accumulator removed from cmd_audit_trail_conformance; "
         "W607-AP must not regress the sibling instrumentation."
     )

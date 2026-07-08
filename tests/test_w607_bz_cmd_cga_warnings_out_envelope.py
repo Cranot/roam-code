@@ -200,7 +200,7 @@ def test_cmd_cga_carries_w607bz_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607bz_warnings_out" in src, (
+    assert "w607bz_warnings_out" in src, (
         "W607-BZ accumulator missing from cmd_cga; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_bz" in src, (
@@ -220,7 +220,7 @@ def test_cmd_cga_carries_w607bz_accumulator():
     )
 
     # W607-AF must still be present (additive layer does NOT replace it)
-    assert "_w607af_warnings_out" in src, (
+    assert "w607af_warnings_out" in src, (
         "W607-AF accumulator vanished alongside the W607-BZ add; the "
         "additive plumbing must preserve the W607-AF substrate-CALL layer."
     )

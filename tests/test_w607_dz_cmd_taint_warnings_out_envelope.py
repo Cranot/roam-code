@@ -187,7 +187,7 @@ def test_w607dz_accumulator_absent_from_cmd_taint():
     assert _TAINT_SRC.exists(), f"cmd_taint.py missing at {_TAINT_SRC}"
     src = _TAINT_SRC.read_text(encoding="utf-8")
 
-    assert "_w607dz_warnings_out" not in src, (
+    assert "w607dz_warnings_out" not in src, (
         "W607-DZ accumulator unexpectedly present in cmd_taint. "
         "cmd_taint's aggregation layer is W607-CJ "
         "(``_w607cj_warnings_out`` + ``_run_check_cj``); W607-DZ on "
@@ -220,7 +220,7 @@ def test_cmd_taint_aggregation_layer_is_w607cj():
     """
     src = _TAINT_SRC.read_text(encoding="utf-8")
 
-    assert "_w607cj_warnings_out" in src, (
+    assert "w607cj_warnings_out" in src, (
         "W607-CJ accumulator missing from cmd_taint; the aggregation-"
         "layer role for cmd_taint has regressed. The CJ layer is the "
         "canonical aggregation surface (the role cmd_missing_index "
@@ -228,7 +228,7 @@ def test_cmd_taint_aggregation_layer_is_w607cj():
         "only (AY) coverage."
     )
     assert "_run_check_cj" in src, "W607-CJ helper ``_run_check_cj`` missing from cmd_taint."
-    assert "_w607ay_warnings_out" in src, "W607-AY substrate-CALL accumulator missing from cmd_taint."
+    assert "w607ay_warnings_out" in src, "W607-AY substrate-CALL accumulator missing from cmd_taint."
     assert "_run_check_ay" in src, "W607-AY helper ``_run_check_ay`` missing from cmd_taint."
 
 
@@ -936,7 +936,7 @@ def test_w978_phase_name_collision_would_block_dz_layer():
     # And confirm no W607-DZ counterpart exists (would be a collision).
     # The accumulator/helper names are the structural anchors; if they
     # appear in the same module, the layers collide.
-    assert "_w607dz_warnings_out" not in src, (
+    assert "w607dz_warnings_out" not in src, (
         "W978 4th-discipline collision risk: _w607dz_warnings_out "
         "present alongside _w607cj_warnings_out in cmd_taint. Either "
         "rename one set's phase names OR remove the duplicate layer. "
@@ -1016,12 +1016,12 @@ def test_security_axis_1st_leg_closure_substrate_plus_aggregation():
     """
     src = _TAINT_SRC.read_text(encoding="utf-8")
     # W607-AY substrate-CALL family
-    assert "_w607ay_warnings_out" in src, (
+    assert "w607ay_warnings_out" in src, (
         "Security-axis 1st-leg regression: cmd_taint lost W607-AY substrate-CALL accumulator."
     )
     assert "_run_check_ay" in src, "Security-axis 1st-leg regression: cmd_taint lost W607-AY substrate-CALL helper."
     # W607-CJ aggregation-phase family (plays the W607-DZ role)
-    assert "_w607cj_warnings_out" in src, (
+    assert "w607cj_warnings_out" in src, (
         "Security-axis 1st-leg regression: cmd_taint lost W607-CJ aggregation-phase accumulator."
     )
     assert "_run_check_cj" in src, "Security-axis 1st-leg regression: cmd_taint lost W607-CJ aggregation-phase helper."

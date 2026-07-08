@@ -329,7 +329,7 @@ def test_cmd_over_fetch_carries_w607dt_accumulator():
     assert src_path.exists(), f"cmd_over_fetch.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607dt_warnings_out" in src, (
+    assert "w607dt_warnings_out" in src, (
         "W607-DT accumulator missing from cmd_over_fetch; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -349,7 +349,7 @@ def test_cmd_over_fetch_carries_w607dt_accumulator():
     )
 
     # W607-CE must still be present (additive layer does NOT replace it)
-    assert "_w607ce_warnings_out" in src, (
+    assert "w607ce_warnings_out" in src, (
         "W607-CE accumulator vanished alongside the W607-DT add; the "
         "additive plumbing must preserve the W607-CE substrate-CALL layer."
     )
@@ -798,10 +798,10 @@ def test_w607dt_coexists_with_w607ce_in_source():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-CE substrate-CALL family
-    assert "_w607ce_warnings_out" in src, "W607-CE substrate-CALL accumulator has been removed."
+    assert "w607ce_warnings_out" in src, "W607-CE substrate-CALL accumulator has been removed."
     assert "_run_check_ce" in src, "W607-CE helper has been removed."
     # W607-DT aggregation-phase family (THIS wave)
-    assert "_w607dt_warnings_out" in src, "W607-DT aggregation-phase accumulator has been removed."
+    assert "w607dt_warnings_out" in src, "W607-DT aggregation-phase accumulator has been removed."
     assert "_run_check_dt" in src, "W607-DT helper has been removed."
 
 

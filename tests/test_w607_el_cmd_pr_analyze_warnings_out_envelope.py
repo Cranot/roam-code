@@ -213,7 +213,7 @@ def test_w607el_no_w607el_accumulator_exists():
     test fires and forces a reconciliation with the existing buckets.
     """
     src = _module_source()
-    assert "_w607el_warnings_out" not in src, (
+    assert "w607el_warnings_out" not in src, (
         "W607-EL is CLOSE-AS-DUPLICATE; do NOT introduce a third bucket "
         "alongside _w607aa_warnings_out / _w607by_warnings_out. "
         "Use the existing _run_check / _run_check_by helpers instead."

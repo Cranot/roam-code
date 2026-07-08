@@ -378,7 +378,7 @@ def test_cmd_dogfood_carries_w607av_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_dogfood.py"
     assert src_path.exists(), f"cmd_dogfood.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607av_warnings_out" in src, (
+    assert "w607av_warnings_out" in src, (
         "W607-AV accumulator missing from cmd_dogfood; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_av" in src, (
@@ -476,7 +476,7 @@ def test_w607d_and_w607av_coexist_in_cmd_dogfood():
         "W607-AV ``_run_check_av`` per-phase helper missing from cmd_dogfood; the W607-AV plumbing has been removed."
     )
     # Both bucket names must coexist
-    assert "warnings_out" in src and "_w607av_warnings_out" in src, (
+    assert "warnings_out" in src and "w607av_warnings_out" in src, (
         "cmd_dogfood must carry BOTH the W607-D ``warnings_out`` bucket "
         "AND the W607-AV ``_w607av_warnings_out`` per-phase bucket; one "
         "of the two has been removed."

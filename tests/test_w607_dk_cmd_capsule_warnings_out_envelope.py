@@ -431,7 +431,7 @@ def test_cmd_capsule_carries_w607dk_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_capsule.py"
     assert src_path.exists(), f"cmd_capsule.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607dk_warnings_out" in src, (
+    assert "w607dk_warnings_out" in src, (
         "W607-DK accumulator missing from cmd_capsule; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dk" in src, (
@@ -648,7 +648,7 @@ def test_architecture_export_2way_pairing_dh_and_dk():
     cap_src = (base / "cmd_capsule.py").read_text(encoding="utf-8")
 
     # cmd_fingerprint side: W607-DH plumbing present.
-    assert "_w607dh_warnings_out" in fp_src, (
+    assert "w607dh_warnings_out" in fp_src, (
         "cmd_fingerprint missing _w607dh_warnings_out; architecture-export 2-way is broken on the topology-HASH side."
     )
     assert "_run_check_dh" in fp_src, (
@@ -656,7 +656,7 @@ def test_architecture_export_2way_pairing_dh_and_dk():
     )
 
     # cmd_capsule side: W607-DK plumbing present.
-    assert "_w607dk_warnings_out" in cap_src, (
+    assert "w607dk_warnings_out" in cap_src, (
         "cmd_capsule missing _w607dk_warnings_out; architecture-export 2-way is broken on the graph-EXPORT side."
     )
     assert "_run_check_dk" in cap_src, (

@@ -481,7 +481,7 @@ def test_cmd_metrics_push_carries_w607di_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_metrics_push.py"
     assert src_path.exists(), f"cmd_metrics_push.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607di_warnings_out" in src, (
+    assert "w607di_warnings_out" in src, (
         "W607-DI accumulator missing from cmd_metrics_push; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_di" in src, (

@@ -210,14 +210,14 @@ def test_w607dj_extends_w607cy_accumulator_no_new_bucket():
     channel and break the brief.
     """
     src = _src_path().read_text(encoding="utf-8")
-    assert "_w607cy_warnings_out" in src, (
+    assert "w607cy_warnings_out" in src, (
         "W607-CY accumulator must still be the single bucket for the 4-phase aggregation layer"
     )
     assert "_run_check_cy" in src, (
         "W607-CY helper must still be the single wrap-helper for the 4-phase aggregation layer"
     )
     forbidden_twins = (
-        "_w607dj_warnings_out",
+        "w607dj_warnings_out",
         "_run_check_dj",
         "_w607dj_helper",
     )
@@ -567,7 +567,7 @@ def test_w607x_substrate_layer_still_wraps_after_dj_extension(cli_runner, fan_pr
     still be reachable.
     """
     src = _src_path().read_text(encoding="utf-8")
-    assert "_w607x_warnings_out" in src, (
+    assert "w607x_warnings_out" in src, (
         "W607-X accumulator vanished after W607-DJ extension; the "
         "additive plumbing must preserve the substrate-CALL layer"
     )

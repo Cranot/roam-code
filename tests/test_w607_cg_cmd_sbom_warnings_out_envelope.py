@@ -189,7 +189,7 @@ def test_cmd_sbom_carries_w607cg_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cg_warnings_out" in src, (
+    assert "w607cg_warnings_out" in src, (
         "W607-CG accumulator missing from cmd_sbom; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_cg" in src, (
@@ -209,7 +209,7 @@ def test_cmd_sbom_carries_w607cg_accumulator():
     )
 
     # W607-AM must still be present (additive layer does NOT replace it)
-    assert "_w607am_warnings_out" in src, (
+    assert "w607am_warnings_out" in src, (
         "W607-AM accumulator vanished alongside the W607-CG add; the "
         "additive plumbing must preserve the W607-AM substrate-CALL layer."
     )

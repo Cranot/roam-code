@@ -357,7 +357,7 @@ def test_cmd_mutate_carries_w607eg_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_mutate.py"
     assert src_path.exists(), f"cmd_mutate.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607eg_warnings_out" in src, (
+    assert "w607eg_warnings_out" in src, (
         "W607-EG accumulator missing from cmd_mutate; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_eg" in src, (
@@ -543,7 +543,7 @@ def test_transform_axis_2way_pairing():
     mutate_src = (root / "cmd_mutate.py").read_text(encoding="utf-8")
 
     # cmd_simulate carries W607-EF (counterfactual transform on cloned graph)
-    assert "_w607ef_warnings_out" in simulate_src, (
+    assert "w607ef_warnings_out" in simulate_src, (
         "transform-axis pairing pin: cmd_simulate has lost its "
         "W607-EF substrate-CALL accumulator -- the axis is no longer "
         "closed."
@@ -553,7 +553,7 @@ def test_transform_axis_2way_pairing():
     )
 
     # cmd_mutate carries W607-EG (real transform that writes files)
-    assert "_w607eg_warnings_out" in mutate_src, (
+    assert "w607eg_warnings_out" in mutate_src, (
         "transform-axis pairing pin: cmd_mutate has lost its "
         "W607-EG substrate-CALL accumulator -- the axis is no longer "
         "closed."

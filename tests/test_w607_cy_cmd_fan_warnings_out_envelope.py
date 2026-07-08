@@ -892,12 +892,12 @@ def test_w607cy_does_not_introduce_other_w607_buckets(cli_runner, fan_project):
     src = src_path.read_text(encoding="utf-8")
 
     foreign_accumulators = (
-        "_w607af_warnings_out",
-        "_w607ae_warnings_out",
-        "_w607ad_warnings_out",
-        "_w607bt_warnings_out",
-        "_w607bw_warnings_out",
-        "_w607bz_warnings_out",
+        "w607af_warnings_out",
+        "w607ae_warnings_out",
+        "w607ad_warnings_out",
+        "w607bt_warnings_out",
+        "w607bw_warnings_out",
+        "w607bz_warnings_out",
     )
     for foreign in foreign_accumulators:
         assert foreign not in src, (

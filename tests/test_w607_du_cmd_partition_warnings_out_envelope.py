@@ -430,7 +430,7 @@ def test_cmd_partition_carries_w607du_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_partition.py"
     assert src_path.exists(), f"cmd_partition.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607du_warnings_out" in src, (
+    assert "w607du_warnings_out" in src, (
         "W607-DU accumulator missing from cmd_partition; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_du" in src, (
@@ -771,7 +771,7 @@ def test_multi_agent_partition_family_2way_pairing():
     partition_src = (root / "cmd_partition.py").read_text(encoding="utf-8")
 
     # cmd_orchestrate carries W607-DS
-    assert "_w607ds_warnings_out" in orchestrate_src, (
+    assert "w607ds_warnings_out" in orchestrate_src, (
         "multi-agent-partition family pairing pin: cmd_orchestrate has lost "
         "its W607-DS substrate-CALL accumulator -- the family is no longer "
         "closed."
@@ -782,7 +782,7 @@ def test_multi_agent_partition_family_2way_pairing():
     assert "orchestrate_" in orchestrate_src, orchestrate_src[:200]
 
     # cmd_partition carries W607-DU
-    assert "_w607du_warnings_out" in partition_src, (
+    assert "w607du_warnings_out" in partition_src, (
         "multi-agent-partition family pairing pin: cmd_partition has lost "
         "its W607-DU substrate-CALL accumulator -- the family is no longer "
         "closed."

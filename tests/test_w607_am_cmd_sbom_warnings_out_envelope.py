@@ -420,7 +420,7 @@ def test_cmd_sbom_carries_w607am_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_sbom.py"
     assert src_path.exists(), f"cmd_sbom.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607am_warnings_out" in src, (
+    assert "w607am_warnings_out" in src, (
         "W607-AM accumulator missing from cmd_sbom; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_am" in src, (

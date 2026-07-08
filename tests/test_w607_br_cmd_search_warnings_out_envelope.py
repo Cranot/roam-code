@@ -689,7 +689,7 @@ def test_cmd_search_carries_w607br_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_search.py"
     assert src_path.exists(), f"cmd_search.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607br_warnings_out" in src, (
+    assert "w607br_warnings_out" in src, (
         "W607-BR accumulator missing from cmd_search; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_br" in src, (

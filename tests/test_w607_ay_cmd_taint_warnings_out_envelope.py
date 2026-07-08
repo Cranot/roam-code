@@ -373,7 +373,7 @@ def test_cmd_taint_carries_w607ay_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_taint.py"
     assert src_path.exists(), f"cmd_taint.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ay_warnings_out" in src, (
+    assert "w607ay_warnings_out" in src, (
         "W607-AY accumulator missing from cmd_taint; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ay" in src, (

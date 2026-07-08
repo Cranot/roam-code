@@ -188,7 +188,7 @@ def test_cmd_taint_carries_w607cj_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cj_warnings_out" in src, (
+    assert "w607cj_warnings_out" in src, (
         "W607-CJ accumulator missing from cmd_taint; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_cj" in src, (
@@ -208,7 +208,7 @@ def test_cmd_taint_carries_w607cj_accumulator():
     )
 
     # W607-AY must still be present (additive layer does NOT replace it)
-    assert "_w607ay_warnings_out" in src, (
+    assert "w607ay_warnings_out" in src, (
         "W607-AY accumulator vanished alongside the W607-CJ add; the "
         "additive plumbing must preserve the W607-AY substrate-CALL layer."
     )

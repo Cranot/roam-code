@@ -210,7 +210,7 @@ def test_cmd_deps_carries_w607db_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607db_warnings_out" in src, (
+    assert "w607db_warnings_out" in src, (
         "W607-DB accumulator missing from cmd_deps; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_db" in src, (
@@ -231,7 +231,7 @@ def test_cmd_deps_carries_w607db_accumulator():
     )
 
     # W607-V must still be present (additive layer does NOT replace it)
-    assert "_w607v_warnings_out" in src, (
+    assert "w607v_warnings_out" in src, (
         "W607-V accumulator vanished alongside the W607-DB add; the "
         "additive plumbing must preserve the W607-V substrate-CALL "
         "layer."
@@ -927,13 +927,13 @@ def test_w607db_does_not_introduce_other_w607_buckets():
     src = src_path.read_text(encoding="utf-8")
 
     foreign_accumulators = (
-        "_w607af_warnings_out",
-        "_w607ae_warnings_out",
-        "_w607ad_warnings_out",
-        "_w607bt_warnings_out",
-        "_w607bw_warnings_out",
-        "_w607bz_warnings_out",
-        "_w607cy_warnings_out",
+        "w607af_warnings_out",
+        "w607ae_warnings_out",
+        "w607ad_warnings_out",
+        "w607bt_warnings_out",
+        "w607bw_warnings_out",
+        "w607bz_warnings_out",
+        "w607cy_warnings_out",
     )
     for foreign in foreign_accumulators:
         assert foreign not in src, (
@@ -974,12 +974,12 @@ def test_symbol_relations_trio_marker_families_coexist():
     src_root = Path(__file__).parent.parent / "src" / "roam" / "commands"
 
     expected = (
-        ("cmd_deps.py", "deps_", "_w607v_warnings_out"),
-        ("cmd_deps.py", "deps_", "_w607db_warnings_out"),
-        ("cmd_uses.py", "uses_", "_w607u_warnings_out"),
-        ("cmd_relate.py", "relate_", "_w607w_warnings_out"),
-        ("cmd_fan.py", "fan_", "_w607x_warnings_out"),
-        ("cmd_fan.py", "fan_", "_w607cy_warnings_out"),
+        ("cmd_deps.py", "deps_", "w607v_warnings_out"),
+        ("cmd_deps.py", "deps_", "w607db_warnings_out"),
+        ("cmd_uses.py", "uses_", "w607u_warnings_out"),
+        ("cmd_relate.py", "relate_", "w607w_warnings_out"),
+        ("cmd_fan.py", "fan_", "w607x_warnings_out"),
+        ("cmd_fan.py", "fan_", "w607cy_warnings_out"),
     )
 
     for filename, prefix_anchor, accumulator in expected:

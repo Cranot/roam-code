@@ -430,7 +430,7 @@ def test_cmd_smells_carries_w607bn_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_smells.py"
     assert src_path.exists(), f"cmd_smells.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bn_warnings_out" in src, (
+    assert "w607bn_warnings_out" in src, (
         "W607-BN accumulator missing from cmd_smells; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bn" in src, (

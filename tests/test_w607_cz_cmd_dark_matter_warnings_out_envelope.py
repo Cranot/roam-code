@@ -165,7 +165,7 @@ def test_cmd_dark_matter_carries_w607cz_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cz_warnings_out" in src, (
+    assert "w607cz_warnings_out" in src, (
         "W607-CZ accumulator missing from cmd_dark_matter; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -187,7 +187,7 @@ def test_cmd_dark_matter_carries_w607cz_accumulator():
     )
 
     # W607-BK must still be present (additive layer does NOT replace it)
-    assert "_w607bk_warnings_out" in src, (
+    assert "w607bk_warnings_out" in src, (
         "W607-BK accumulator vanished alongside the W607-CZ add; the "
         "additive plumbing must preserve the W607-BK substrate-CALL "
         "layer."
@@ -757,10 +757,10 @@ def test_w607cz_coexists_with_pre_existing_marker_families():
         "marker family has been removed from cmd_dark_matter."
     )
     # W607-BK substrate-CALL family
-    assert "_w607bk_warnings_out" in src, "W607-BK substrate-CALL accumulator has been removed."
+    assert "w607bk_warnings_out" in src, "W607-BK substrate-CALL accumulator has been removed."
     assert "_run_check_bk" in src, "W607-BK helper has been removed."
     # W607-CZ aggregation-phase family (THIS wave)
-    assert "_w607cz_warnings_out" in src, "W607-CZ aggregation-phase accumulator has been removed."
+    assert "w607cz_warnings_out" in src, "W607-CZ aggregation-phase accumulator has been removed."
     assert "_run_check_cz" in src, "W607-CZ helper has been removed."
 
     # All three families share the dark_matter_* prefix discipline -- the

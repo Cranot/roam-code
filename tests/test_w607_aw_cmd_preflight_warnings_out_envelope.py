@@ -184,7 +184,7 @@ def test_cmd_preflight_carries_w607aw_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607aw_warnings_out" in src, (
+    assert "w607aw_warnings_out" in src, (
         "W607-AW accumulator missing from cmd_preflight; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -205,7 +205,7 @@ def test_cmd_preflight_carries_w607aw_accumulator():
     )
 
     # W607-R must still be present (additive layer does NOT replace it)
-    assert "_w607r_warnings_out" in src, (
+    assert "w607r_warnings_out" in src, (
         "W607-R accumulator vanished alongside the W607-AW add; the "
         "additive plumbing must preserve the W607-R substrate-CALL layer."
     )

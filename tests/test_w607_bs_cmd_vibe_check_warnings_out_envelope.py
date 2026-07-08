@@ -429,7 +429,7 @@ def test_cmd_vibe_check_carries_w607bs_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_vibe_check.py"
     assert src_path.exists(), f"cmd_vibe_check.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bs_warnings_out" in src, (
+    assert "w607bs_warnings_out" in src, (
         "W607-BS accumulator missing from cmd_vibe_check; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bs" in src, (

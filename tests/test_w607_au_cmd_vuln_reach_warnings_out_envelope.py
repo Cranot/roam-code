@@ -415,7 +415,7 @@ def test_cmd_vuln_reach_carries_w607au_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_vuln_reach.py"
     assert src_path.exists(), f"cmd_vuln_reach.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607au_warnings_out" in src, (
+    assert "w607au_warnings_out" in src, (
         "W607-AU accumulator missing from cmd_vuln_reach; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_au" in src, (

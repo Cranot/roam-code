@@ -439,7 +439,7 @@ def test_cmd_trace_carries_w607eq_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_trace.py"
     assert src_path.exists(), f"cmd_trace.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607eq_warnings_out" in src, (
+    assert "w607eq_warnings_out" in src, (
         "W607-EQ accumulator missing from cmd_trace; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_eq" in src, (
@@ -761,10 +761,10 @@ def test_pathfinding_family_4_w607_pairing_pin():
     """
     base = Path(__file__).parent.parent / "src" / "roam" / "commands"
     family = (
-        ("cmd_simulate.py", "_w607ef_warnings_out", "_run_check_ef"),
-        ("cmd_cut.py", "_w607ei_warnings_out", "_run_check_ei"),
-        ("cmd_closure.py", "_w607em_warnings_out", "_run_check_em"),
-        ("cmd_trace.py", "_w607eq_warnings_out", "_run_check_eq"),
+        ("cmd_simulate.py", "w607ef_warnings_out", "_run_check_ef"),
+        ("cmd_cut.py", "w607ei_warnings_out", "_run_check_ei"),
+        ("cmd_closure.py", "w607em_warnings_out", "_run_check_em"),
+        ("cmd_trace.py", "w607eq_warnings_out", "_run_check_eq"),
     )
     for filename, accumulator, helper in family:
         src_path = base / filename

@@ -273,7 +273,7 @@ def test_cmd_evidence_diff_carries_w607ck_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607ck_warnings_out" in src, (
+    assert "w607ck_warnings_out" in src, (
         "W607-CK accumulator missing from cmd_evidence_diff; the "
         "additive aggregation-phase marker plumbing has been removed."
     )
@@ -295,7 +295,7 @@ def test_cmd_evidence_diff_carries_w607ck_accumulator():
     )
 
     # W607-AX must still be present (additive does NOT replace it)
-    assert "_w607ax_warnings_out" in src, (
+    assert "w607ax_warnings_out" in src, (
         "W607-AX accumulator vanished alongside the W607-CK add; the "
         "additive plumbing must preserve the W607-AX substrate-CALL layer."
     )

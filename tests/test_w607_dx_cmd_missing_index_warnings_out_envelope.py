@@ -281,7 +281,7 @@ def test_cmd_missing_index_carries_w607dx_accumulator():
     assert src_path.exists(), f"cmd_missing_index.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607dx_warnings_out" in src, (
+    assert "w607dx_warnings_out" in src, (
         "W607-DX accumulator missing from cmd_missing_index; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -302,7 +302,7 @@ def test_cmd_missing_index_carries_w607dx_accumulator():
     )
 
     # W607-CI must still be present (additive layer does NOT replace it)
-    assert "_w607ci_warnings_out" in src, (
+    assert "w607ci_warnings_out" in src, (
         "W607-CI accumulator vanished alongside the W607-DX add; the "
         "additive plumbing must preserve the W607-CI substrate-CALL layer."
     )
@@ -753,10 +753,10 @@ def test_w607dx_coexists_with_w607ci_in_source():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-CI substrate-CALL family
-    assert "_w607ci_warnings_out" in src, "W607-CI substrate-CALL accumulator has been removed."
+    assert "w607ci_warnings_out" in src, "W607-CI substrate-CALL accumulator has been removed."
     assert "_run_check_ci" in src, "W607-CI helper has been removed."
     # W607-DX aggregation-phase family (THIS wave)
-    assert "_w607dx_warnings_out" in src, "W607-DX aggregation-phase accumulator has been removed."
+    assert "w607dx_warnings_out" in src, "W607-DX aggregation-phase accumulator has been removed."
     assert "_run_check_dx" in src, "W607-DX helper has been removed."
 
 
@@ -903,9 +903,9 @@ def test_orm_3way_pairing_substrate_plus_aggregation():
     # (cmd path, substrate-CALL accumulator, aggregation-phase
     # accumulator, substrate-helper, aggregation-helper)
     triple = [
-        ("cmd_n1.py", "_w607cb_warnings_out", "_w607dq_warnings_out", "_run_check_cb", "_run_check_dq"),
-        ("cmd_over_fetch.py", "_w607ce_warnings_out", "_w607dt_warnings_out", "_run_check_ce", "_run_check_dt"),
-        ("cmd_missing_index.py", "_w607ci_warnings_out", "_w607dx_warnings_out", "_run_check_ci", "_run_check_dx"),
+        ("cmd_n1.py", "w607cb_warnings_out", "w607dq_warnings_out", "_run_check_cb", "_run_check_dq"),
+        ("cmd_over_fetch.py", "w607ce_warnings_out", "w607dt_warnings_out", "_run_check_ce", "_run_check_dt"),
+        ("cmd_missing_index.py", "w607ci_warnings_out", "w607dx_warnings_out", "_run_check_ci", "_run_check_dx"),
     ]
 
     for path, sub_acc, agg_acc, sub_helper, agg_helper in triple:

@@ -430,7 +430,7 @@ def test_cmd_adversarial_carries_w607ek_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_adversarial.py"
     assert src_path.exists(), f"cmd_adversarial.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ek_warnings_out" in src, (
+    assert "w607ek_warnings_out" in src, (
         "W607-EK accumulator missing from cmd_adversarial; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ek" in src, (
@@ -709,19 +709,19 @@ def test_w607ek_unique_prefix_in_cmd_adversarial_source():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_adversarial.py"
     src = src_path.read_text(encoding="utf-8")
     # The EK accumulator is the only W607 accumulator allowed in this file.
-    assert "_w607ek_warnings_out" in src
+    assert "w607ek_warnings_out" in src
     # No sibling-wave accumulator should appear (we sample a representative set
     # of recently shipped waves so a copy-paste regression fires loudly).
     forbidden_accumulators = (
-        "_w607ef_warnings_out",  # cmd_simulate
-        "_w607eg_warnings_out",  # cmd_mutate
-        "_w607ej_warnings_out",  # cmd_critique
-        "_w607ds_warnings_out",  # cmd_orchestrate
-        "_w607du_warnings_out",  # cmd_partition
-        "_w607dy_warnings_out",  # cmd_agent_plan
-        "_w607eb_warnings_out",  # cmd_fleet
-        "_w607ec_warnings_out",  # cmd_preflight
-        "_w607ed_warnings_out",  # cmd_auth_gaps
+        "w607ef_warnings_out",  # cmd_simulate
+        "w607eg_warnings_out",  # cmd_mutate
+        "w607ej_warnings_out",  # cmd_critique
+        "w607ds_warnings_out",  # cmd_orchestrate
+        "w607du_warnings_out",  # cmd_partition
+        "w607dy_warnings_out",  # cmd_agent_plan
+        "w607eb_warnings_out",  # cmd_fleet
+        "w607ec_warnings_out",  # cmd_preflight
+        "w607ed_warnings_out",  # cmd_auth_gaps
     )
     for forbidden in forbidden_accumulators:
         assert forbidden not in src, (

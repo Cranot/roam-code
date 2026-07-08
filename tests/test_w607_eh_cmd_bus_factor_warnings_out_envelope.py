@@ -259,7 +259,7 @@ def test_cmd_bus_factor_carries_w607eh_accumulator():
     assert src_path.exists(), f"cmd_bus_factor.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607eh_warnings_out" in src, (
+    assert "w607eh_warnings_out" in src, (
         "W607-EH accumulator missing from cmd_bus_factor; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -279,7 +279,7 @@ def test_cmd_bus_factor_carries_w607eh_accumulator():
     )
 
     # W607-CQ must still be present (additive layer does NOT replace it)
-    assert "_w607cq_warnings_out" in src, (
+    assert "w607cq_warnings_out" in src, (
         "W607-CQ accumulator vanished alongside the W607-EH add; the "
         "additive plumbing must preserve the W607-CQ substrate-CALL layer."
     )
@@ -711,9 +711,9 @@ def test_w607eh_coexists_with_w607cq_in_source():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607cq_warnings_out" in src, "W607-CQ substrate-CALL accumulator has been removed."
+    assert "w607cq_warnings_out" in src, "W607-CQ substrate-CALL accumulator has been removed."
     assert "_run_check_cq" in src, "W607-CQ helper has been removed."
-    assert "_w607eh_warnings_out" in src, "W607-EH aggregation-phase accumulator has been removed."
+    assert "w607eh_warnings_out" in src, "W607-EH aggregation-phase accumulator has been removed."
     assert "_run_check_eh" in src, "W607-EH helper has been removed."
 
 
@@ -985,16 +985,16 @@ def test_ast_audit_both_accumulators_present_in_bus_factor_function():
                 if isinstance(sub, ast.Assign):
                     for tgt in sub.targets:
                         if isinstance(tgt, ast.Name):
-                            if tgt.id == "_w607cq_warnings_out":
+                            if tgt.id == "w607cq_warnings_out":
                                 cq_found = True
-                            elif tgt.id == "_w607eh_warnings_out":
+                            elif tgt.id == "w607eh_warnings_out":
                                 eh_found = True
                 continue
             tgt = sub.target
             if isinstance(tgt, ast.Name):
-                if tgt.id == "_w607cq_warnings_out":
+                if tgt.id == "w607cq_warnings_out":
                     cq_found = True
-                elif tgt.id == "_w607eh_warnings_out":
+                elif tgt.id == "w607eh_warnings_out":
                     eh_found = True
 
     assert cq_found, (

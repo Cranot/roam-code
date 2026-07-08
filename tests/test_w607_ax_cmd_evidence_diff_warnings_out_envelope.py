@@ -575,7 +575,7 @@ def test_cmd_evidence_diff_carries_w607ax_accumulator():
     """
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_evidence_diff.py"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ax_warnings_out" in src, (
+    assert "w607ax_warnings_out" in src, (
         "W607-AX accumulator missing from cmd_evidence_diff; the substrate-CALL marker plumbing has been removed."
     )
     assert "evidence_diff_{phase}_failed" in src, (
@@ -769,7 +769,7 @@ def test_w607_at_source_unaffected():
 
     doctor_src = doctor_src_path.read_text(encoding="utf-8")
 
-    assert "_w607at_warnings_out" in doctor_src, (
+    assert "w607at_warnings_out" in doctor_src, (
         "W607-AT accumulator removed from cmd_evidence_doctor; W607-AX must not regress the sibling instrumentation."
     )
     assert "evidence_doctor_{phase}_failed" in doctor_src, (

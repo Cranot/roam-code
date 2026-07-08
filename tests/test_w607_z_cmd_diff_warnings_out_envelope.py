@@ -443,7 +443,7 @@ def test_w607_y_cmd_critique_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_critique.py"
     assert src_path.exists(), f"cmd_critique.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607y_warnings_out" in src, (
+    assert "w607y_warnings_out" in src, (
         "W607-Y accumulator removed from cmd_critique; W607-Z must not regress the sibling instrumentation."
     )
     assert "critique_{phase}_failed" in src, (
@@ -467,7 +467,7 @@ def test_cmd_diff_carries_w607z_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_diff.py"
     assert src_path.exists(), f"cmd_diff.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607z_warnings_out" in src, (
+    assert "w607z_warnings_out" in src, (
         "W607-Z accumulator missing from cmd_diff; the substrate-CALL marker plumbing has been removed."
     )
     assert "diff_{phase}_failed" in src, (

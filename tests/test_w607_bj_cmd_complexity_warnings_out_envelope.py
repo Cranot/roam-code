@@ -416,7 +416,7 @@ def test_cmd_complexity_carries_w607bj_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_complexity.py"
     assert src_path.exists(), f"cmd_complexity.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bj_warnings_out" in src, (
+    assert "w607bj_warnings_out" in src, (
         "W607-BJ accumulator missing from cmd_complexity; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bj" in src, (

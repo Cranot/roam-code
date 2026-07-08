@@ -450,7 +450,7 @@ def test_cmd_health_carries_w607ba_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_health.py"
     assert src_path.exists(), f"cmd_health.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ba_warnings_out" in src, (
+    assert "w607ba_warnings_out" in src, (
         "W607-BA accumulator missing from cmd_health; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ba" in src, (
@@ -556,11 +556,11 @@ def test_w607m_and_w607ba_coexist_in_cmd_health():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_health.py"
     src = src_path.read_text(encoding="utf-8")
     # W607-M bucket name
-    assert "_w607m_warnings_out" in src, (
+    assert "w607m_warnings_out" in src, (
         "W607-M ``_w607m_warnings_out`` bucket missing from cmd_health; the W607-M plumbing has been removed."
     )
     # W607-BA bucket name
-    assert "_w607ba_warnings_out" in src, (
+    assert "w607ba_warnings_out" in src, (
         "W607-BA ``_w607ba_warnings_out`` bucket missing from cmd_health; the W607-BA plumbing has been removed."
     )
     # W607-M per-phase markers (e.g. graph_build, cycles, propagation_cost)

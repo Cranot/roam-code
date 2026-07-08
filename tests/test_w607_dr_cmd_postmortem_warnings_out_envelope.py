@@ -220,7 +220,7 @@ def test_cmd_postmortem_carries_w607dr_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607dr_warnings_out" in src, (
+    assert "w607dr_warnings_out" in src, (
         "W607-DR accumulator missing from cmd_postmortem; the additive substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dr" in src, (
@@ -241,13 +241,13 @@ def test_cmd_postmortem_carries_w607dr_accumulator():
     )
 
     # W607-AN must still be present (additive layer does NOT replace it)
-    assert "_w607an_warnings_out" in src, (
+    assert "w607an_warnings_out" in src, (
         "W607-AN accumulator vanished alongside the W607-DR add; the "
         "additive plumbing must preserve the W607-AN substrate-CALL "
         "layer."
     )
     # W607-CV must still be present (additive layer does NOT replace it)
-    assert "_w607cv_warnings_out" in src, (
+    assert "w607cv_warnings_out" in src, (
         "W607-CV accumulator vanished alongside the W607-DR add; the "
         "additive plumbing must preserve the W607-CV aggregation-phase "
         "layer."
@@ -511,11 +511,11 @@ def test_all_three_warnings_out_accumulators_present_in_ast():
             continue
         if not isinstance(node.target, ast.Name):
             continue
-        if node.target.id == "_w607an_warnings_out":
+        if node.target.id == "w607an_warnings_out":
             found_an = True
-        elif node.target.id == "_w607cv_warnings_out":
+        elif node.target.id == "w607cv_warnings_out":
             found_cv = True
-        elif node.target.id == "_w607dr_warnings_out":
+        elif node.target.id == "w607dr_warnings_out":
             found_dr = True
 
     assert found_an, "W607-AN substrate-CALL accumulator (``_w607an_warnings_out``) missing from cmd_postmortem AST."

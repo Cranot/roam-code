@@ -210,7 +210,7 @@ def test_cmd_postmortem_carries_w607cv_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cv_warnings_out" in src, (
+    assert "w607cv_warnings_out" in src, (
         "W607-CV accumulator missing from cmd_postmortem; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -232,7 +232,7 @@ def test_cmd_postmortem_carries_w607cv_accumulator():
     )
 
     # W607-AN must still be present (additive layer does NOT replace it)
-    assert "_w607an_warnings_out" in src, (
+    assert "w607an_warnings_out" in src, (
         "W607-AN accumulator vanished alongside the W607-CV add; the "
         "additive plumbing must preserve the W607-AN substrate-CALL "
         "layer."

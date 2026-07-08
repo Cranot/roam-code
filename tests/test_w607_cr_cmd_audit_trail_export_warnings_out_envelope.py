@@ -182,7 +182,7 @@ def test_cmd_audit_trail_export_carries_w607cr_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cr_warnings_out" in src, (
+    assert "w607cr_warnings_out" in src, (
         "W607-CR accumulator missing from cmd_audit_trail_export; the "
         "additive aggregation-phase marker plumbing has been removed."
     )
@@ -205,7 +205,7 @@ def test_cmd_audit_trail_export_carries_w607cr_accumulator():
     )
 
     # W607-AP must still be present (additive layer does NOT replace it)
-    assert "_w607ap_warnings_out" in src, (
+    assert "w607ap_warnings_out" in src, (
         "W607-AP accumulator vanished alongside the W607-CR add; the "
         "additive plumbing must preserve the W607-AP substrate-CALL layer."
     )

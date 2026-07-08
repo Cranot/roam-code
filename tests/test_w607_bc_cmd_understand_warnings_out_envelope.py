@@ -387,7 +387,7 @@ def test_cmd_understand_carries_w607bc_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_understand.py"
     assert src_path.exists(), f"cmd_understand.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bc_warnings_out" in src, (
+    assert "w607bc_warnings_out" in src, (
         "W607-BC accumulator missing from cmd_understand; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bc" in src, (

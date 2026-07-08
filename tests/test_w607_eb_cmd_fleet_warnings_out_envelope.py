@@ -422,7 +422,7 @@ def test_cmd_fleet_carries_w607eb_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_fleet.py"
     assert src_path.exists(), f"cmd_fleet.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607eb_warnings_out" in src, (
+    assert "w607eb_warnings_out" in src, (
         "W607-EB accumulator missing from cmd_fleet; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_eb" in src, (
@@ -772,7 +772,7 @@ def test_multi_agent_quad_4way_pairing():
     fleet_src = (root / "cmd_fleet.py").read_text(encoding="utf-8")
 
     # cmd_orchestrate carries W607-DS
-    assert "_w607ds_warnings_out" in orchestrate_src, (
+    assert "w607ds_warnings_out" in orchestrate_src, (
         "multi-agent quad pairing pin: cmd_orchestrate has lost its "
         "W607-DS substrate-CALL accumulator -- the quad is no longer "
         "closed."
@@ -782,7 +782,7 @@ def test_multi_agent_quad_4way_pairing():
     )
 
     # cmd_partition carries W607-DU
-    assert "_w607du_warnings_out" in partition_src, (
+    assert "w607du_warnings_out" in partition_src, (
         "multi-agent quad pairing pin: cmd_partition has lost its "
         "W607-DU substrate-CALL accumulator -- the quad is no longer "
         "closed."
@@ -792,7 +792,7 @@ def test_multi_agent_quad_4way_pairing():
     )
 
     # cmd_agent_plan carries W607-DY
-    assert "_w607dy_warnings_out" in agent_plan_src, (
+    assert "w607dy_warnings_out" in agent_plan_src, (
         "multi-agent quad pairing pin: cmd_agent_plan has lost its "
         "W607-DY substrate-CALL accumulator -- the quad is no longer "
         "closed."
@@ -802,7 +802,7 @@ def test_multi_agent_quad_4way_pairing():
     )
 
     # cmd_fleet carries W607-EB
-    assert "_w607eb_warnings_out" in fleet_src, (
+    assert "w607eb_warnings_out" in fleet_src, (
         "multi-agent quad pairing pin: cmd_fleet has lost its "
         "W607-EB substrate-CALL accumulator -- the quad is no longer "
         "closed."

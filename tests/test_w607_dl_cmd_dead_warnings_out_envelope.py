@@ -403,7 +403,7 @@ def test_cmd_dead_carries_w607dl_accumulator():
     assert src_path.exists(), f"cmd_dead.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607dl_warnings_out" in src, (
+    assert "w607dl_warnings_out" in src, (
         "W607-DL accumulator missing from cmd_dead; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_dl" in src, (
@@ -422,7 +422,7 @@ def test_cmd_dead_carries_w607dl_accumulator():
     )
 
     # W607-BX must still be present (additive layer does NOT replace it)
-    assert "_w607bx_warnings_out" in src, (
+    assert "w607bx_warnings_out" in src, (
         "W607-BX accumulator vanished alongside the W607-DL add; the "
         "additive plumbing must preserve the W607-BX substrate-CALL layer."
     )
@@ -845,10 +845,10 @@ def test_w607dl_coexists_with_w607bx_in_source():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-BX substrate-CALL family
-    assert "_w607bx_warnings_out" in src, "W607-BX substrate-CALL accumulator has been removed."
+    assert "w607bx_warnings_out" in src, "W607-BX substrate-CALL accumulator has been removed."
     assert "_run_check_bx" in src, "W607-BX helper has been removed."
     # W607-DL aggregation-phase family (THIS wave)
-    assert "_w607dl_warnings_out" in src, "W607-DL aggregation-phase accumulator has been removed."
+    assert "w607dl_warnings_out" in src, "W607-DL aggregation-phase accumulator has been removed."
     assert "_run_check_dl" in src, "W607-DL helper has been removed."
 
 

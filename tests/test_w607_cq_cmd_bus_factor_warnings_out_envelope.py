@@ -459,7 +459,7 @@ def test_cmd_bus_factor_carries_w607cq_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_bus_factor.py"
     assert src_path.exists(), f"cmd_bus_factor.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cq_warnings_out" in src, (
+    assert "w607cq_warnings_out" in src, (
         "W607-CQ accumulator missing from cmd_bus_factor; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cq" in src, (

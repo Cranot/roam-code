@@ -560,7 +560,7 @@ def test_cmd_orphan_imports_carries_w607cr_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_orphan_imports.py"
     assert src_path.exists(), f"cmd_orphan_imports.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cr_warnings_out" in src, (
+    assert "w607cr_warnings_out" in src, (
         "W607-CR accumulator missing from cmd_orphan_imports; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cr" in src, (

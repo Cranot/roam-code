@@ -500,7 +500,7 @@ def test_w607_s_cmd_diagnose_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_diagnose.py"
     assert src_path.exists(), f"cmd_diagnose.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607s_warnings_out" in src, (
+    assert "w607s_warnings_out" in src, (
         "W607-S accumulator removed from cmd_diagnose; W607-T must not regress the sibling instrumentation."
     )
     assert "diagnose_" in src, (
@@ -601,7 +601,7 @@ def test_cmd_impact_carries_w607t_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_impact.py"
     assert src_path.exists(), f"cmd_impact.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607t_warnings_out" in src, (
+    assert "w607t_warnings_out" in src, (
         "W607-T accumulator missing from cmd_impact; the substrate-CALL marker plumbing has been removed."
     )
     assert "impact_" in src, (

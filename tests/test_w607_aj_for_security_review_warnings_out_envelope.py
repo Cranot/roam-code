@@ -475,7 +475,7 @@ def test_for_security_review_carries_w607aj_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "mcp_server.py"
     assert src_path.exists(), f"mcp_server.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607aj_warnings_out" in src, (
+    assert "w607aj_warnings_out" in src, (
         "W607-AJ accumulator missing from mcp_server.py; the "
         "substrate-CALL marker plumbing for for_security_review has been "
         "removed."
@@ -627,7 +627,7 @@ def test_w607_ag_for_refactor_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "mcp_server.py"
     assert src_path.exists(), f"mcp_server.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ag_warnings_out" in src, (
+    assert "w607ag_warnings_out" in src, (
         "W607-AG accumulator removed from mcp_server.py; W607-AJ must not regress the sibling instrumentation."
     )
     assert "for_refactor_{phase}_failed" in src, (

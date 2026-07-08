@@ -561,7 +561,7 @@ def test_cmd_conventions_carries_w607cw_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_conventions.py"
     assert src_path.exists(), f"cmd_conventions.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607cw_warnings_out" in src, (
+    assert "w607cw_warnings_out" in src, (
         "W607-CW accumulator missing from cmd_conventions; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_cw" in src, (

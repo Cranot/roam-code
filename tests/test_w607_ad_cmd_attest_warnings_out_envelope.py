@@ -449,7 +449,7 @@ def test_cmd_attest_carries_w607ad_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_attest.py"
     assert src_path.exists(), f"cmd_attest.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ad_warnings_out" in src, (
+    assert "w607ad_warnings_out" in src, (
         "W607-AD accumulator missing from cmd_attest; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ad" in src, (

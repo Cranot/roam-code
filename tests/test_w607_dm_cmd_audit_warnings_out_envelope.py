@@ -408,7 +408,7 @@ def test_cmd_audit_carries_w607dm_accumulator():
     """AST-level guard: cmd_audit source carries the W607-DM accumulator."""
     assert _SRC_PATH.exists(), f"cmd_audit.py missing at {_SRC_PATH}"
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607dm_warnings_out" in src, (
+    assert "w607dm_warnings_out" in src, (
         "W607-DM accumulator missing from cmd_audit; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dm" in src, (
@@ -560,14 +560,14 @@ def test_metrics_emission_2way_producer_consumer_pairing():
     )
 
     # Producer side: W607-P + W607-DM both present.
-    assert "_w607p_warnings_out" in audit_src, (
+    assert "w607p_warnings_out" in audit_src, (
         "cmd_audit lost its W607-P accumulator — the capture-layer plumbing has been removed; 2-way pair is broken."
     )
-    assert "_w607dm_warnings_out" in audit_src, (
+    assert "w607dm_warnings_out" in audit_src, (
         "cmd_audit lost its W607-DM accumulator — the post-capture plumbing has been removed; 2-way pair is broken."
     )
     # Consumer side: W607-DI present.
-    assert "_w607di_warnings_out" in mp_src, (
+    assert "w607di_warnings_out" in mp_src, (
         "cmd_metrics_push lost its W607-DI accumulator — the consumer side of the 2-way pair is broken."
     )
     assert "_run_check_di" in mp_src, (

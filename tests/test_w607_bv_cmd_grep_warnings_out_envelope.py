@@ -725,7 +725,7 @@ def test_cmd_grep_carries_w607bv_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_grep.py"
     assert src_path.exists(), f"cmd_grep.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bv_warnings_out" in src, (
+    assert "w607bv_warnings_out" in src, (
         "W607-BV accumulator missing from cmd_grep; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bv" in src, (

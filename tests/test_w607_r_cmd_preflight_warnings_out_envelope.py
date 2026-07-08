@@ -502,7 +502,7 @@ def test_w607_q_cmd_pr_risk_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_risk.py"
     assert src_path.exists(), f"cmd_pr_risk.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607q_warnings_out" in src, (
+    assert "w607q_warnings_out" in src, (
         "W607-Q accumulator removed from cmd_pr_risk; W607-R must not regress the sibling instrumentation."
     )
     assert "pr_risk_" in src, (
@@ -601,7 +601,7 @@ def test_cmd_preflight_carries_w607r_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_preflight.py"
     assert src_path.exists(), f"cmd_preflight.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607r_warnings_out" in src, (
+    assert "w607r_warnings_out" in src, (
         "W607-R accumulator missing from cmd_preflight; the substrate-CALL marker plumbing has been removed."
     )
     assert "preflight_" in src, (

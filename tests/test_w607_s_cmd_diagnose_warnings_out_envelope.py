@@ -502,7 +502,7 @@ def test_w607_r_cmd_preflight_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_preflight.py"
     assert src_path.exists(), f"cmd_preflight.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607r_warnings_out" in src, (
+    assert "w607r_warnings_out" in src, (
         "W607-R accumulator removed from cmd_preflight; W607-S must not regress the sibling instrumentation."
     )
     assert "preflight_" in src, (
@@ -601,7 +601,7 @@ def test_cmd_diagnose_carries_w607s_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_diagnose.py"
     assert src_path.exists(), f"cmd_diagnose.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607s_warnings_out" in src, (
+    assert "w607s_warnings_out" in src, (
         "W607-S accumulator missing from cmd_diagnose; the substrate-CALL marker plumbing has been removed."
     )
     assert "diagnose_" in src, (

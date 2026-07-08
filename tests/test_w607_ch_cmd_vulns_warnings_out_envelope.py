@@ -224,7 +224,7 @@ def test_cmd_vulns_carries_w607ch_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607ch_warnings_out" in src, (
+    assert "w607ch_warnings_out" in src, (
         "W607-CH accumulator missing from cmd_vulns; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_ch" in src, (
@@ -244,7 +244,7 @@ def test_cmd_vulns_carries_w607ch_accumulator():
     )
 
     # W607-AQ must still be present (additive layer does NOT replace it)
-    assert "_w607aq_warnings_out" in src, (
+    assert "w607aq_warnings_out" in src, (
         "W607-AQ accumulator vanished alongside the W607-CH add; the "
         "additive plumbing must preserve the W607-AQ substrate-CALL layer."
     )

@@ -510,7 +510,7 @@ def test_cmd_dashboard_carries_w607dp_accumulator():
     """AST-level guard: cmd_dashboard source carries the W607-DP accumulator."""
     assert _SRC_PATH.exists(), f"cmd_dashboard.py missing at {_SRC_PATH}"
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607dp_warnings_out" in src, (
+    assert "w607dp_warnings_out" in src, (
         "W607-DP accumulator missing from cmd_dashboard; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dp" in src, (
@@ -539,11 +539,11 @@ def test_cmd_dashboard_carries_both_w607o_and_w607dp_accumulators():
     cmd_dashboard — the layers compose, never replace.
     """
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607o_warnings_out" in src, (
+    assert "w607o_warnings_out" in src, (
         "W607-O capture-layer accumulator missing from cmd_dashboard; "
         "layer preservation broken — W607-DP must LAYER on top, not replace."
     )
-    assert "_w607dp_warnings_out" in src, "W607-DP post-capture accumulator missing from cmd_dashboard."
+    assert "w607dp_warnings_out" in src, "W607-DP post-capture accumulator missing from cmd_dashboard."
     assert "_run_check" in src and "_run_check_dp" in src, (
         "Both helpers (``_run_check`` for W607-O and ``_run_check_dp`` for W607-DP) must coexist in cmd_dashboard."
     )

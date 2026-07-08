@@ -480,7 +480,7 @@ def test_for_bug_fix_carries_w607ao_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "mcp_server.py"
     assert src_path.exists(), f"mcp_server.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ao_warnings_out" in src, (
+    assert "w607ao_warnings_out" in src, (
         "W607-AO accumulator missing from mcp_server.py; the "
         "substrate-CALL marker plumbing for for_bug_fix has been "
         "removed."
@@ -633,14 +633,14 @@ def test_sibling_w607_compound_recipes_unaffected():
     assert src_path.exists(), f"mcp_server.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
     # W607-AG sibling
-    assert "_w607ag_warnings_out" in src, (
+    assert "w607ag_warnings_out" in src, (
         "W607-AG accumulator removed from mcp_server.py; W607-AO must not regress the sibling instrumentation."
     )
     assert "for_refactor_{phase}_failed" in src, (
         "W607-AG marker prefix removed from mcp_server.py; W607-AO must not regress the sibling marker family."
     )
     # W607-AJ sibling
-    assert "_w607aj_warnings_out" in src, (
+    assert "w607aj_warnings_out" in src, (
         "W607-AJ accumulator removed from mcp_server.py; W607-AO must not regress the sibling instrumentation."
     )
     assert "for_security_review_{phase}_failed" in src, (

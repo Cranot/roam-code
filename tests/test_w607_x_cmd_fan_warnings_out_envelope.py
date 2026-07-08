@@ -471,7 +471,7 @@ def test_cmd_fan_carries_w607x_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_fan.py"
     assert src_path.exists(), f"cmd_fan.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607x_warnings_out" in src, (
+    assert "w607x_warnings_out" in src, (
         "W607-X accumulator missing from cmd_fan; the substrate-CALL marker plumbing has been removed."
     )
     assert "fan_{phase}_failed" in src, (
@@ -552,7 +552,7 @@ def test_w607_w_cmd_relate_surface_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_relate.py"
     assert src_path.exists(), f"cmd_relate.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607w_warnings_out" in src, (
+    assert "w607w_warnings_out" in src, (
         "W607-W accumulator removed from cmd_relate; W607-X must not regress the sibling instrumentation."
     )
     assert "relate_{phase}_failed" in src, (

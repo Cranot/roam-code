@@ -489,7 +489,7 @@ def test_w607_ad_cmd_attest_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_attest.py"
     assert src_path.exists(), f"cmd_attest.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ad_warnings_out" in src, (
+    assert "w607ad_warnings_out" in src, (
         "W607-AD accumulator removed from cmd_attest; W607-AI must not regress the sibling instrumentation."
     )
     assert "attest_{phase}_failed" in src, (
@@ -507,7 +507,7 @@ def test_w607_ae_cmd_pr_bundle_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_bundle.py"
     assert src_path.exists(), f"cmd_pr_bundle.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ae_warnings_out" in src, (
+    assert "w607ae_warnings_out" in src, (
         "W607-AE accumulator removed from cmd_pr_bundle; W607-AI must not regress the sibling instrumentation."
     )
     assert "pr_bundle_{phase}_failed" in src, (
@@ -531,7 +531,7 @@ def test_cmd_audit_trail_verify_carries_w607ai_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_audit_trail_verify.py"
     assert src_path.exists(), f"cmd_audit_trail_verify.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ai_warnings_out" in src, (
+    assert "w607ai_warnings_out" in src, (
         "W607-AI accumulator missing from cmd_audit_trail_verify; the substrate-CALL marker plumbing has been removed."
     )
     assert "audit_trail_verify_{phase}_failed" in src, (

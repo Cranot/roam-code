@@ -482,7 +482,7 @@ def test_cmd_cut_carries_w607ei_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_cut.py"
     assert src_path.exists(), f"cmd_cut.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ei_warnings_out" in src, (
+    assert "w607ei_warnings_out" in src, (
         "W607-EI accumulator missing from cmd_cut; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_ei" in src, (

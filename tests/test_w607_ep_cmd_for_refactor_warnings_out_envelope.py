@@ -257,7 +257,7 @@ def test_w607ep_no_w607ep_accumulator_in_source():
     and forces a reconciliation with the existing AG bucket.
     """
     src = _module_source()
-    assert "_w607ep_warnings_out" not in src, (
+    assert "w607ep_warnings_out" not in src, (
         "W607-EP is CLOSE-AS-DUPLICATE; do NOT introduce a second bucket "
         "alongside _w607ag_warnings_out. Use the existing _run_check "
         "helper inside the for_refactor() body instead."

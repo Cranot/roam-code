@@ -352,7 +352,7 @@ def test_cmd_n1_carries_w607dq_accumulator():
     assert src_path.exists(), f"cmd_n1.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607dq_warnings_out" in src, (
+    assert "w607dq_warnings_out" in src, (
         "W607-DQ accumulator missing from cmd_n1; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_dq" in src, (
@@ -371,7 +371,7 @@ def test_cmd_n1_carries_w607dq_accumulator():
     )
 
     # W607-CB must still be present (additive layer does NOT replace it)
-    assert "_w607cb_warnings_out" in src, (
+    assert "w607cb_warnings_out" in src, (
         "W607-CB accumulator vanished alongside the W607-DQ add; the "
         "additive plumbing must preserve the W607-CB substrate-CALL layer."
     )
@@ -802,10 +802,10 @@ def test_w607dq_coexists_with_w607cb_in_source():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-CB substrate-CALL family
-    assert "_w607cb_warnings_out" in src, "W607-CB substrate-CALL accumulator has been removed."
+    assert "w607cb_warnings_out" in src, "W607-CB substrate-CALL accumulator has been removed."
     assert "_run_check_cb" in src, "W607-CB helper has been removed."
     # W607-DQ aggregation-phase family (THIS wave)
-    assert "_w607dq_warnings_out" in src, "W607-DQ aggregation-phase accumulator has been removed."
+    assert "w607dq_warnings_out" in src, "W607-DQ aggregation-phase accumulator has been removed."
     assert "_run_check_dq" in src, "W607-DQ helper has been removed."
 
 

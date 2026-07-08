@@ -538,7 +538,7 @@ def test_cmd_doctor_carries_w607dw_accumulator():
     """AST-level guard: cmd_doctor source carries the W607-DW accumulator."""
     assert _SRC_PATH.exists(), f"cmd_doctor.py missing at {_SRC_PATH}"
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607dw_warnings_out" in src, (
+    assert "w607dw_warnings_out" in src, (
         "W607-DW accumulator missing from cmd_doctor; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_dw" in src, (
@@ -567,15 +567,15 @@ def test_cmd_doctor_carries_w607n_w607be_w607dw_accumulators():
     never replace.
     """
     src = _SRC_PATH.read_text(encoding="utf-8")
-    assert "_w607n_warnings_out" in src, (
+    assert "w607n_warnings_out" in src, (
         "W607-N capture-layer accumulator missing from cmd_doctor; "
         "layer preservation broken — W607-DW must LAYER on top, not replace."
     )
-    assert "_w607be_warnings_out" in src, (
+    assert "w607be_warnings_out" in src, (
         "W607-BE persist-side accumulator missing from cmd_doctor; "
         "layer preservation broken — W607-DW must LAYER on top, not replace."
     )
-    assert "_w607dw_warnings_out" in src, "W607-DW post-capture accumulator missing from cmd_doctor."
+    assert "w607dw_warnings_out" in src, "W607-DW post-capture accumulator missing from cmd_doctor."
     assert "_run_check" in src and "_run_check_be" in src and "_run_check_dw" in src, (
         "All three helpers (``_run_check`` for W607-N, ``_run_check_be`` "
         "for W607-BE, ``_run_check_dw`` for W607-DW) must coexist in "

@@ -411,7 +411,7 @@ def test_cmd_clones_carries_w607bq_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_clones.py"
     assert src_path.exists(), f"cmd_clones.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bq_warnings_out" in src, (
+    assert "w607bq_warnings_out" in src, (
         "W607-BQ accumulator missing from cmd_clones; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bq" in src, (

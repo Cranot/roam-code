@@ -214,7 +214,7 @@ def test_cmd_vuln_reach_carries_w607cl_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607cl_warnings_out" in src, (
+    assert "w607cl_warnings_out" in src, (
         "W607-CL accumulator missing from cmd_vuln_reach; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -235,7 +235,7 @@ def test_cmd_vuln_reach_carries_w607cl_accumulator():
     )
 
     # W607-AU must still be present (additive layer does NOT replace it)
-    assert "_w607au_warnings_out" in src, (
+    assert "w607au_warnings_out" in src, (
         "W607-AU accumulator vanished alongside the W607-CL add; the "
         "additive plumbing must preserve the W607-AU substrate-CALL layer."
     )
@@ -309,7 +309,7 @@ def test_compute_predicate_failure_marker_format(cli_runner, vuln_reach_project,
         # save us... we need the function to take the floor path.
         # Instead: provide a _run_check_cl that does the canonical
         # try/except behaviour but ALWAYS raises for the inner fn.
-        accumulator = kwargs.get("_w607cl_warnings_out", [])
+        accumulator = kwargs.get("w607cl_warnings_out", [])
 
         def _wrapped(phase, fn, *a, default=None, **kw):
             if phase == "compute_predicate":

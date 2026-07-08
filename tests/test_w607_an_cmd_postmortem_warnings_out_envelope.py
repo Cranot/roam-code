@@ -470,7 +470,7 @@ def test_w607_ah_cmd_pr_replay_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_pr_replay.py"
     assert src_path.exists(), f"cmd_pr_replay.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607ah_warnings_out" in src, (
+    assert "w607ah_warnings_out" in src, (
         "W607-AH accumulator removed from cmd_pr_replay; W607-AN must not regress the sibling instrumentation."
     )
     assert "pr_replay_{phase}_failed" in src, (
@@ -494,7 +494,7 @@ def test_cmd_postmortem_carries_w607an_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_postmortem.py"
     assert src_path.exists(), f"cmd_postmortem.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607an_warnings_out" in src, (
+    assert "w607an_warnings_out" in src, (
         "W607-AN accumulator missing from cmd_postmortem; the substrate-CALL marker plumbing has been removed."
     )
     assert "postmortem_{phase}_failed" in src, (

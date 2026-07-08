@@ -441,7 +441,7 @@ def test_cmd_dead_carries_w607bx_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_dead.py"
     assert src_path.exists(), f"cmd_dead.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bx_warnings_out" in src, (
+    assert "w607bx_warnings_out" in src, (
         "W607-BX accumulator missing from cmd_dead; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bx" in src, (

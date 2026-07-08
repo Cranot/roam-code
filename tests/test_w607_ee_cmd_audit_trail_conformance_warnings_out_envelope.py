@@ -206,7 +206,7 @@ def test_w607ee_accumulator_absent_from_cmd_audit_trail_conformance():
     assert _CONFORMANCE_SRC.exists(), f"cmd_audit_trail_conformance.py missing at {_CONFORMANCE_SRC}"
     src = _CONFORMANCE_SRC.read_text(encoding="utf-8")
 
-    assert "_w607ee_warnings_out" not in src, (
+    assert "w607ee_warnings_out" not in src, (
         "W607-EE accumulator unexpectedly present in cmd_audit_trail_conformance. "
         "The aggregation layer is W607-CO "
         "(``_w607co_warnings_out`` + ``_run_check_co``); W607-EE on "
@@ -238,14 +238,14 @@ def test_cmd_audit_trail_conformance_aggregation_layer_is_w607co():
     """
     src = _CONFORMANCE_SRC.read_text(encoding="utf-8")
 
-    assert "_w607co_warnings_out" in src, (
+    assert "w607co_warnings_out" in src, (
         "W607-CO accumulator missing from cmd_audit_trail_conformance; the "
         "aggregation-layer role has regressed. The CO layer is the canonical "
         "aggregation surface; removing it leaves cmd_audit_trail_conformance "
         "with substrate-only (AL) coverage."
     )
     assert "_run_check_co" in src, "W607-CO helper ``_run_check_co`` missing from cmd_audit_trail_conformance."
-    assert "_w607al_warnings_out" in src, "W607-AL substrate-CALL accumulator missing from cmd_audit_trail_conformance."
+    assert "w607al_warnings_out" in src, "W607-AL substrate-CALL accumulator missing from cmd_audit_trail_conformance."
     assert "_run_check_al" in src, "W607-AL helper ``_run_check_al`` missing from cmd_audit_trail_conformance."
 
 
@@ -626,26 +626,26 @@ def test_audit_trail_triad_carries_w607_plumbing():
     # verify leg
     assert _VERIFY_SRC.exists(), "cmd_audit_trail_verify.py missing"
     verify_src = _VERIFY_SRC.read_text(encoding="utf-8")
-    assert "_w607ai_warnings_out" in verify_src, "verify W607-AI substrate missing"
+    assert "w607ai_warnings_out" in verify_src, "verify W607-AI substrate missing"
     assert "_run_check_ai" in verify_src, "verify W607-AI helper missing"
-    assert "_w607cn_warnings_out" in verify_src, "verify W607-CN aggregation missing"
+    assert "w607cn_warnings_out" in verify_src, "verify W607-CN aggregation missing"
     assert "_run_check_cn" in verify_src, "verify W607-CN helper missing"
-    assert "_w607ea_warnings_out" in verify_src, "verify W607-EA agg-layer missing (just-landed wave)"
+    assert "w607ea_warnings_out" in verify_src, "verify W607-EA agg-layer missing (just-landed wave)"
 
     # export leg
     assert _EXPORT_SRC.exists(), "cmd_audit_trail_export.py missing"
     export_src = _EXPORT_SRC.read_text(encoding="utf-8")
-    assert "_w607ap_warnings_out" in export_src, "export W607-AP substrate missing"
+    assert "w607ap_warnings_out" in export_src, "export W607-AP substrate missing"
     assert "_run_check_ap" in export_src, "export W607-AP helper missing"
-    assert "_w607cr_warnings_out" in export_src, "export W607-CR aggregation missing"
+    assert "w607cr_warnings_out" in export_src, "export W607-CR aggregation missing"
     assert "_run_check_cr" in export_src, "export W607-CR helper missing"
 
     # conformance leg (this wave's pin)
     assert _CONFORMANCE_SRC.exists(), "cmd_audit_trail_conformance.py missing"
     conformance_src = _CONFORMANCE_SRC.read_text(encoding="utf-8")
-    assert "_w607al_warnings_out" in conformance_src, "conformance W607-AL substrate missing"
+    assert "w607al_warnings_out" in conformance_src, "conformance W607-AL substrate missing"
     assert "_run_check_al" in conformance_src, "conformance W607-AL helper missing"
-    assert "_w607co_warnings_out" in conformance_src, "conformance W607-CO aggregation missing"
+    assert "w607co_warnings_out" in conformance_src, "conformance W607-CO aggregation missing"
     assert "_run_check_co" in conformance_src, "conformance W607-CO helper missing"
 
 

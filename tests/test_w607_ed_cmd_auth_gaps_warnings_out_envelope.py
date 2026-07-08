@@ -271,7 +271,7 @@ def test_cmd_auth_gaps_carries_w607ed_accumulator():
     assert src_path.exists(), f"cmd_auth_gaps.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607ed_warnings_out" in src, (
+    assert "w607ed_warnings_out" in src, (
         "W607-ED accumulator missing from cmd_auth_gaps; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -291,7 +291,7 @@ def test_cmd_auth_gaps_carries_w607ed_accumulator():
     )
 
     # W607-CM must still be present (additive layer does NOT replace it)
-    assert "_w607cm_warnings_out" in src, (
+    assert "w607cm_warnings_out" in src, (
         "W607-CM accumulator vanished alongside the W607-ED add; the "
         "additive plumbing must preserve the W607-CM substrate-CALL layer."
     )
@@ -768,10 +768,10 @@ def test_w607ed_coexists_with_w607cm_in_source():
     src = src_path.read_text(encoding="utf-8")
 
     # W607-CM substrate-CALL family
-    assert "_w607cm_warnings_out" in src, "W607-CM substrate-CALL accumulator has been removed."
+    assert "w607cm_warnings_out" in src, "W607-CM substrate-CALL accumulator has been removed."
     assert "_run_check_cm" in src, "W607-CM helper has been removed."
     # W607-ED aggregation-phase family (THIS wave)
-    assert "_w607ed_warnings_out" in src, "W607-ED aggregation-phase accumulator has been removed."
+    assert "w607ed_warnings_out" in src, "W607-ED aggregation-phase accumulator has been removed."
     assert "_run_check_ed" in src, "W607-ED helper has been removed."
 
 
@@ -917,9 +917,9 @@ def test_security_detector_3way_pairing_substrate_plus_aggregation():
     # (cmd path, substrate-CALL accumulator, aggregation-phase
     # accumulator, substrate-helper, aggregation-helper)
     triple = [
-        ("cmd_taint.py", "_w607ay_warnings_out", "_w607cj_warnings_out", "_run_check_ay", "_run_check_cj"),
-        ("cmd_vulns.py", "_w607aq_warnings_out", "_w607ch_warnings_out", "_run_check_aq", "_run_check_ch"),
-        ("cmd_auth_gaps.py", "_w607cm_warnings_out", "_w607ed_warnings_out", "_run_check_cm", "_run_check_ed"),
+        ("cmd_taint.py", "w607ay_warnings_out", "w607cj_warnings_out", "_run_check_ay", "_run_check_cj"),
+        ("cmd_vulns.py", "w607aq_warnings_out", "w607ch_warnings_out", "_run_check_aq", "_run_check_ch"),
+        ("cmd_auth_gaps.py", "w607cm_warnings_out", "w607ed_warnings_out", "_run_check_cm", "_run_check_ed"),
     ]
 
     for path, sub_acc, agg_acc, sub_helper, agg_helper in triple:

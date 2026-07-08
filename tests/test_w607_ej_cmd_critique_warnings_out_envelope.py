@@ -166,7 +166,7 @@ def test_w607ej_accumulator_absent_from_cmd_critique():
     pointing them at the Y + BL layers.
     """
     src = _read_src()
-    assert "_w607ej_warnings_out" not in src, (
+    assert "w607ej_warnings_out" not in src, (
         "W607-EJ accumulator unexpectedly present in cmd_critique. "
         "cmd_critique's layers are W607-Y (``_w607y_warnings_out`` + "
         "``_run_check``) AND W607-BL (``_w607bl_warnings_out`` + "
@@ -204,7 +204,7 @@ def test_cmd_critique_substrate_layer_is_w607y():
     silently demotes cmd_critique to aggregation-only coverage.
     """
     src = _read_src()
-    assert "_w607y_warnings_out" in src, (
+    assert "w607y_warnings_out" in src, (
         "W607-Y accumulator missing from cmd_critique; the substrate-"
         "CALL layer for cmd_critique has regressed. Removing it leaves "
         "cmd_critique with aggregation-only (BL) coverage."
@@ -220,7 +220,7 @@ def test_cmd_critique_aggregation_layer_is_w607bl():
     layer silently demotes cmd_critique to substrate-only coverage.
     """
     src = _read_src()
-    assert "_w607bl_warnings_out" in src, (
+    assert "w607bl_warnings_out" in src, (
         "W607-BL accumulator missing from cmd_critique; the "
         "aggregation-phase layer for cmd_critique has regressed. "
         "Removing it leaves cmd_critique with substrate-only (Y) "
@@ -458,8 +458,8 @@ def test_combined_warnings_out_merges_three_buckets():
     # The combine expression should reference all three buckets.
     for bucket in (
         "_critique_warnings_out",
-        "_w607y_warnings_out",
-        "_w607bl_warnings_out",
+        "w607y_warnings_out",
+        "w607bl_warnings_out",
     ):
         assert f"list({bucket})" in src, (
             f"Combined-warnings list does not include {bucket!r}; the three-bucket merge has regressed."
@@ -684,8 +684,8 @@ def test_pre_existing_w607_layers_intact():
     """
     src = _read_src()
     layer_markers = (
-        "_w607y_warnings_out",  # W607-Y accumulator
-        "_w607bl_warnings_out",  # W607-BL accumulator
+        "w607y_warnings_out",  # W607-Y accumulator
+        "w607bl_warnings_out",  # W607-BL accumulator
         "_critique_warnings_out",  # W641-followup-B unknown-severity
         "def _run_check(phase",  # W607-Y helper
         "def _run_check_bl(phase",  # W607-BL helper

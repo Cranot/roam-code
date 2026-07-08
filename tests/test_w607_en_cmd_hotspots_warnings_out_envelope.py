@@ -303,7 +303,7 @@ def test_cmd_hotspots_carries_w607en_accumulator():
     assert src_path.exists(), f"cmd_hotspots.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607en_warnings_out" in src, (
+    assert "w607en_warnings_out" in src, (
         "W607-EN accumulator missing from cmd_hotspots; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -323,7 +323,7 @@ def test_cmd_hotspots_carries_w607en_accumulator():
     )
 
     # W607-CP must still be present (additive layer does NOT replace it)
-    assert "_w607cp_warnings_out" in src, (
+    assert "w607cp_warnings_out" in src, (
         "W607-CP accumulator vanished alongside the W607-EN add; the "
         "additive plumbing must preserve the W607-CP substrate-CALL layer."
     )
@@ -753,9 +753,9 @@ def test_w607en_coexists_with_w607cp_in_source():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_hotspots.py"
     src = src_path.read_text(encoding="utf-8")
 
-    assert "_w607cp_warnings_out" in src, "W607-CP substrate-CALL accumulator has been removed."
+    assert "w607cp_warnings_out" in src, "W607-CP substrate-CALL accumulator has been removed."
     assert "_run_check_cp" in src, "W607-CP helper has been removed."
-    assert "_w607en_warnings_out" in src, "W607-EN aggregation-phase accumulator has been removed."
+    assert "w607en_warnings_out" in src, "W607-EN aggregation-phase accumulator has been removed."
     assert "_run_check_en" in src, "W607-EN helper has been removed."
 
 
@@ -1019,16 +1019,16 @@ def test_ast_audit_both_accumulators_present_in_hotspots_function():
                 if isinstance(sub, ast.Assign):
                     for tgt in sub.targets:
                         if isinstance(tgt, ast.Name):
-                            if tgt.id == "_w607cp_warnings_out":
+                            if tgt.id == "w607cp_warnings_out":
                                 cp_found = True
-                            elif tgt.id == "_w607en_warnings_out":
+                            elif tgt.id == "w607en_warnings_out":
                                 en_found = True
                 continue
             tgt = sub.target
             if isinstance(tgt, ast.Name):
-                if tgt.id == "_w607cp_warnings_out":
+                if tgt.id == "w607cp_warnings_out":
                     cp_found = True
-                elif tgt.id == "_w607en_warnings_out":
+                elif tgt.id == "w607en_warnings_out":
                     en_found = True
 
     assert cp_found, (

@@ -516,7 +516,7 @@ def test_w607_u_cmd_uses_xfails_unaffected():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_uses.py"
     assert src_path.exists(), f"cmd_uses.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607u_warnings_out" in src, (
+    assert "w607u_warnings_out" in src, (
         "W607-U accumulator removed from cmd_uses; W607-V must not regress the sibling instrumentation."
     )
     assert "uses_" in src, (
@@ -610,7 +610,7 @@ def test_cmd_deps_carries_w607v_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_deps.py"
     assert src_path.exists(), f"cmd_deps.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607v_warnings_out" in src, (
+    assert "w607v_warnings_out" in src, (
         "W607-V accumulator missing from cmd_deps; the substrate-CALL marker plumbing has been removed."
     )
     assert "deps_{phase}_failed" in src, (

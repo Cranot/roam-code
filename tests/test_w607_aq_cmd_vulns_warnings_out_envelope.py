@@ -384,7 +384,7 @@ def test_cmd_vulns_carries_w607aq_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_vulns.py"
     assert src_path.exists(), f"cmd_vulns.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607aq_warnings_out" in src, (
+    assert "w607aq_warnings_out" in src, (
         "W607-AQ accumulator missing from cmd_vulns; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_aq" in src, (

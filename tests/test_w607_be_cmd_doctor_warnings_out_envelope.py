@@ -103,7 +103,7 @@ def test_cmd_doctor_carries_w607be_accumulator():
     """
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_doctor.py"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607be_warnings_out" in src, (
+    assert "w607be_warnings_out" in src, (
         "W607-BE accumulator missing from cmd_doctor; the registry-side "
         "substrate-CALL marker plumbing has been removed."
     )

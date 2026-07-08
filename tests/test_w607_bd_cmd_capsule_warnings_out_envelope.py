@@ -370,7 +370,7 @@ def test_cmd_capsule_carries_w607bd_accumulator():
     src_path = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_capsule.py"
     assert src_path.exists(), f"cmd_capsule.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
-    assert "_w607bd_warnings_out" in src, (
+    assert "w607bd_warnings_out" in src, (
         "W607-BD accumulator missing from cmd_capsule; the substrate-CALL marker plumbing has been removed."
     )
     assert "_run_check_bd" in src, (

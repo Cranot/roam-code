@@ -302,7 +302,7 @@ def test_cmd_critique_carries_w607bl_accumulator():
     src = src_path.read_text(encoding="utf-8")
 
     # Source-level anchors
-    assert "_w607bl_warnings_out" in src, (
+    assert "w607bl_warnings_out" in src, (
         "W607-BL accumulator missing from cmd_critique; the additive "
         "aggregation-phase marker plumbing has been removed."
     )
@@ -323,7 +323,7 @@ def test_cmd_critique_carries_w607bl_accumulator():
     )
 
     # W607-Y must still be present (additive layer does NOT replace it)
-    assert "_w607y_warnings_out" in src, (
+    assert "w607y_warnings_out" in src, (
         "W607-Y accumulator vanished alongside the W607-BL add; the "
         "additive plumbing must preserve the W607-Y substrate-CALL layer."
     )
