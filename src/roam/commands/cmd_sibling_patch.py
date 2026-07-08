@@ -18,6 +18,11 @@ Gate: set ``ROAM_EXPERIMENTAL_REPAIR_SIBLINGS=1`` to expose the command. It is
 default-off and intentionally not part of the static command surface. Scoped
 (falsifier verdict) to DEFECT-shaped repairs (deletion/replacement); pure
 additions are a structural no-op and are reported as out-of-scope.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT emitted --
+sibling-patch is a propose-only patch-transfer command, not a findings analyzer:
+its deliverable is a proposed patch plus a replay verdict, not per-location
+static-analysis violations.
 """
 
 from __future__ import annotations
