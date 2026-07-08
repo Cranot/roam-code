@@ -280,7 +280,7 @@ def _run_tiny_parser_branch(
                 return False, empty
     try:
         data = tiny_parser(text) if tiny_parser is not None else None
-    except ValueError as exc2:
+    except Exception as exc2:  # noqa: BLE001 -- module mandate: callers never see parser exceptions; ANY tiny_parser failure (not just ValueError) becomes a structured warning + empty container
         append_warning(
             warnings_out,
             config_label,
