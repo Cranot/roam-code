@@ -117,6 +117,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -565,18 +566,12 @@ def test_all_substrate_phases_wrapped_in_source():
     for phase in expected_phases:
         # Accept either same-line ``_run_check_ar("phase",`` or a
         # multi-line block where the phase string is the first argument
-        # on the next line -- both are legitimate refactor shapes.
-        # Indent depths 8/12/16/20/24 cover the canonical Click-command
-        # nesting levels.
-        same_line = f'_run_check_ar("{phase}"' in src
-        multi_line = (
-            f'_run_check_ar(\n        "{phase}"' in src
-            or f'_run_check_ar(\n            "{phase}"' in src
-            or f'_run_check_ar(\n                "{phase}"' in src
-            or f'_run_check_ar(\n                    "{phase}"' in src
-            or f'_run_check_ar(\n                        "{phase}"' in src
-        )
-        assert same_line or multi_line, (
+        # on the next line -- both are legitimate refactor shapes at ANY
+        # nesting depth (a hardcoded indent list broke when the search
+        # phase moved one level deeper inside
+        # ``_materialize_compound_sections_preserving_recipe_order``).
+        wrapped = re.search(rf'_run_check_ar\(\s*"{phase}"', src) is not None
+        assert wrapped, (
             f"W607-AR _run_check_ar wrap missing for phase {phase!r}; substrate boundary is no longer caught."
         )
 

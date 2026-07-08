@@ -8122,51 +8122,103 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
     Returns: compound envelope with sections {taint, vuln, critique,
     adversarial}.
     """
-    # W607-AJ -- the child-command boundary is already ``_safe_run``:
-    # command failures become structured child ``error`` dictionaries and
-    # _compound_envelope marks the recipe partial. Let unexpected Python
-    # defects in this recipe or the aggregator propagate so they are not
-    # misreported as successful partial data.
+    # W607-AJ — the substrate boundary mirrors the sibling compounds
+    # (for_refactor / for_bug_fix / for_new_feature): every phase runs
+    # through ``_run_substrate`` so recoverable boundary failures emit a
+    # ``for_security_review_<phase>_failed:<exc>:<detail>`` marker into the
+    # accumulator, while ``_safe_run`` keeps absorbing subcommand failures
+    # into child ``error`` dicts. (An automated hygiene batch disconnected
+    # this recipe from the marker layer — the only compound out of step
+    # with its siblings; restored to the shared pattern.)
+    _w607aj_warnings_out: list[str] = []
+
+    def _run_check_aj(phase, fn, *args, default=None, **kwargs):
+        """Run W607-AJ substrate marker for ``for_security_review_{phase}_failed``."""
+        return _run_substrate(
+            "for_security_review", _w607aj_warnings_out, phase, fn, *args, default=default, **kwargs
+        )
 
     # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
     # ``vulns``) can never come back. ``vulns list`` is the
-    # subcommand-style invocation the CLI expects.
-    _taint_result = _safe_run(
-        [_cr("taint")],
-        root,
-    ) or {"error": "taint_w607aj_default"}
-    _vulns_result = _safe_run(
-        [_cr("vulns"), "list"],
-        root,
-    ) or {"error": "vulns_w607aj_default"}
-    # ``critique`` reads the working-tree diff (and is a no-op if
-    # nothing's staged); it pairs naturally here because the agent
-    # is often reviewing a PR's worth of changes.
-    _critique_result = _safe_run(
-        [_cr("critique")],
-        root,
-    ) or {"error": "critique_w607aj_default"}
+    # subcommand-style invocation the CLI expects. ``critique`` reads the
+    # working-tree diff (no-op if nothing's staged); it pairs naturally
+    # here because the agent is often reviewing a PR's worth of changes.
     adv_args = [_cr("adversarial")]
     if symbol:
         adv_args.append(symbol)
-    _adversarial_result = _safe_run(
-        adv_args,
-        root,
-    ) or {"error": "adversarial_w607aj_default"}
-
-    sections = [
-        ("taint", _taint_result),
-        ("vulns", _vulns_result),
-        ("critique", _critique_result),
-        ("adversarial", _adversarial_result),
-    ]
-    envelope = _compound_envelope(
+    sections = _materialize_compound_sections_preserving_recipe_order(
+        [
+            (
+                "taint",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_aj(
+                        "taint",
+                        _safe_run,
+                        [_cr("taint")],
+                        root,
+                        default=_compound_child_default("taint_w607aj_default"),
+                    ),
+                    "taint_w607aj_default",
+                ),
+            ),
+            (
+                "vulns",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_aj(
+                        "vulns",
+                        _safe_run,
+                        [_cr("vulns"), "list"],
+                        root,
+                        default=_compound_child_default("vulns_w607aj_default"),
+                    ),
+                    "vulns_w607aj_default",
+                ),
+            ),
+            (
+                "critique",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_aj(
+                        "critique",
+                        _safe_run,
+                        [_cr("critique")],
+                        root,
+                        default=_compound_child_default("critique_w607aj_default"),
+                    ),
+                    "critique_w607aj_default",
+                ),
+            ),
+            (
+                "adversarial",
+                lambda: _compound_phase_result_or_default(
+                    _run_check_aj(
+                        "adversarial",
+                        _safe_run,
+                        adv_args,
+                        root,
+                        default=_compound_child_default("adversarial_w607aj_default"),
+                    ),
+                    "adversarial_w607aj_default",
+                ),
+            ),
+        ]
+    )
+    envelope = _run_check_aj(
+        "compound_envelope",
+        _compound_envelope,
         "for-security-review",
         sections,
         situation="security_review",
         target=symbol or "(full repo)",
+        default=None,
     )
-    return envelope
+    return _finalize_compound_recipe(
+        envelope,
+        "for-security-review",
+        sections,
+        _w607aj_warnings_out,
+        situation="security_review",
+        target=symbol or "(full repo)",
+    )
 
 
 @_tool(
