@@ -94,5 +94,61 @@ def test_value_flag_at_tail_without_value_does_not_crash():
     assert _safe_roam_argv(["search", "--mode"]) == ["search", "--mode"]
 
 
+def test_path_value_flag_kept_before_marker():
+    # Regression: `--path` was omitted from the value-flag table, so the algo
+    # probe's `--path <file>` was pushed past the `--` guard and parsed as a
+    # positional — roam algo errored (exit 2) and the probe returned {}. This
+    # was the CI-red `test_probe_embeds_scoped_findings` failure.
+    assert _safe_roam_argv(["algo", "-n", "5", "--path", "src/loader.py"]) == [
+        "algo",
+        "-n",
+        "5",
+        "--path",
+        "src/loader.py",
+    ]
+
+
+def test_fixed_string_bool_flag_kept_before_marker():
+    # Regression: `--fixed-string` (grep literal mode) was unregistered, so it
+    # landed after the guard as a positional and the grep probes went dark.
+    assert _safe_roam_argv(["grep", "-n", "10", "--fixed-string", "name"]) == [
+        "grep",
+        "-n",
+        "10",
+        "--fixed-string",
+        "--",
+        "name",
+    ]
+
+
+def test_explicit_end_of_options_marker_is_not_doubled():
+    # A call site that already passes its own `--` must not yield `-- --`
+    # (which would push the real guard's positionals one slot too far).
+    assert _safe_roam_argv(["grep", "-n", "10", "--fixed-string", "--", "name"]) == [
+        "grep",
+        "-n",
+        "10",
+        "--fixed-string",
+        "--",
+        "name",
+    ]
+    assert _safe_roam_argv(["search-semantic", "--", "task"]) == [
+        "search-semantic",
+        "--",
+        "task",
+    ]
+
+
+def test_token_after_explicit_marker_forced_positional():
+    # After an explicit `--`, even a flag-looking token (`-n`) is a literal
+    # search term and must stay a guarded positional, never re-parsed.
+    assert _safe_roam_argv(["grep", "--fixed-string", "--", "-n"]) == [
+        "grep",
+        "--fixed-string",
+        "--",
+        "-n",
+    ]
+
+
 def test_flag_tables_are_disjoint():
     assert _ROAM_VALUE_FLAGS.isdisjoint(_ROAM_BOOL_FLAGS)
