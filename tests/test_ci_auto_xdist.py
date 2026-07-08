@@ -17,7 +17,7 @@ import textwrap
 
 from roam.testing.ci_xdist import xdist_args_to_inject
 
-INJECT = ["-n", "auto", "--dist", "loadgroup"]
+INJECT = ["-n", "2", "--dist", "loadgroup"]
 CI = {"CI": "true"}
 
 
