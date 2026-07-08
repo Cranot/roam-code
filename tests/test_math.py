@@ -16,6 +16,14 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
+# CI SIGBUS mitigation: this module's detector tests each build a full
+# tree-sitter index (grammar mmaps + SQLite). Under pytest-xdist two such
+# index builds running concurrently spike the runner's memory and trip
+# "Fatal Python error: Bus error". The xdist_group (honored by the CI's
+# ``--dist loadgroup``) pins every test here onto ONE worker so they run
+# serially relative to each other — the concurrent-build spike can't form.
+pytestmark = pytest.mark.xdist_group("grammar_heavy")
+
 # ============================================================================
 # Catalog tests
 # ============================================================================

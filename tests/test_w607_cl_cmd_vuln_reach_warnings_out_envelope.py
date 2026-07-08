@@ -309,7 +309,7 @@ def test_compute_predicate_failure_marker_format(cli_runner, vuln_reach_project,
         # save us... we need the function to take the floor path.
         # Instead: provide a _run_check_cl that does the canonical
         # try/except behaviour but ALWAYS raises for the inner fn.
-        accumulator = kwargs.get("w607cl_warnings_out", [])
+        accumulator = kwargs.get("_w607cl_warnings_out", [])
 
         def _wrapped(phase, fn, *a, default=None, **kw):
             if phase == "compute_predicate":
