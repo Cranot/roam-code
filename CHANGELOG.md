@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.7.0] — 2026-07-08
+
+### Sibling-patch network, first-class attestation staleness, and a large reliability wave
+
+- **Sibling Patch Network v1** (flag-gated, default-off) — a repair-intent-scored lens that finds the same fix's siblings across a codebase and applies them through an isolated replay gate.
+- **Attestation staleness is now first-class** — `roam attest` emits a stable `stale_if` contract (seven canonical conditions with baselines), an honest `not_checked` list, a `verification_command`, a `privacy` block, and promotes `indexed_commit`/`head_commit` into the durable body, so a downstream agent reading an attestation later can decide whether to trust it or re-run the evidence. It stays off the signed `content_hash` so tamper and freshness remain separate axes.
+- **Reliability wave** — restored the compiler argv-guard (five silently-dark cross-tool probes fire again), per-item batch resilience so one bad query no longer sinks a whole batch, a worker cap for the native xdist crash, and graceful degradation when an optional tool import is missing.
+
 ## [13.6.1] — 2026-06-12
 
 ### The algo command grows teeth — and goes cross-language

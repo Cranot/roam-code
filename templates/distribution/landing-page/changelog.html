@@ -76,6 +76,13 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.7.0] — 2026-07-08</h2>
+<h3>Sibling-patch network, first-class attestation staleness, and a large reliability wave</h3>
+<ul>
+<li><strong>Sibling Patch Network v1</strong> (flag-gated, default-off) — a repair-intent-scored lens that finds the same fix's siblings across a codebase and applies them through an isolated replay gate.</li>
+<li><strong>Attestation staleness is now first-class</strong> — <code>roam attest</code> emits a stable <code>stale_if</code> contract (seven canonical conditions with baselines), an honest <code>not_checked</code> list, a <code>verification_command</code>, a <code>privacy</code> block, and promotes <code>indexed_commit</code>/<code>head_commit</code> into the durable body, so a downstream agent reading an attestation later can decide whether to trust it or re-run the evidence. It stays off the signed <code>content_hash</code> so tamper and freshness remain separate axes.</li>
+<li><strong>Reliability wave</strong> — restored the compiler argv-guard (five silently-dark cross-tool probes fire again), per-item batch resilience so one bad query no longer sinks a whole batch, a worker cap for the native xdist crash, and graceful degradation when an optional tool import is missing.</li>
+</ul>
 <h2>[13.6.1] — 2026-06-12</h2>
 <h3>The algo command grows teeth — and goes cross-language</h3>
 <ul>
