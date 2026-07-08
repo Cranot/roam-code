@@ -732,9 +732,9 @@ class TestPathTruncation:
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
-        conn.execute("CREATE TABLE edges(source_id INT, target_id INT, kind TEXT)")
+        conn.execute("CREATE TABLE edges(id INTEGER PRIMARY KEY, source_id INT, target_id INT, kind TEXT)")
         # Direct edge: source 1 → sink 2.
-        conn.execute("INSERT INTO edges VALUES (1, 2, 'calls')")
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'calls')")
         conn.commit()
 
         path, has_san, truncated = _bfs_path(conn, {1}, {2}, set(), max_hops=6)
@@ -753,10 +753,10 @@ class TestPathTruncation:
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
-        conn.execute("CREATE TABLE edges(source_id INT, target_id INT, kind TEXT)")
+        conn.execute("CREATE TABLE edges(id INTEGER PRIMARY KEY, source_id INT, target_id INT, kind TEXT)")
         # Long chain: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 (7 hops).
         for i in range(1, 8):
-            conn.execute("INSERT INTO edges VALUES (?, ?, 'calls')", (i, i + 1))
+            conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'calls')", (i, i + 1))
         conn.commit()
 
         # max_hops=3 means we can only see the first 3 hops; the actual
