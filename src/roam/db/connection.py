@@ -251,7 +251,13 @@ def _apply_base_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA mmap_size=1073741824")  # 1 GB
+    # 1 GB default. Env-tunable (digits-only, injection-safe) so CI can shrink
+    # it: under pytest-xdist each worker mmaps up to this per connection, and
+    # N workers x 1 GB x several index DBs exhausts a memory-limited runner ->
+    # "Fatal Python error: Bus error". ci_xdist sets ROAM_SQLITE_MMAP_SIZE=0
+    # (mmap off, plain I/O) on CI to bound it.
+    _mmap = os.environ.get("ROAM_SQLITE_MMAP_SIZE", "1073741824")
+    conn.execute(f"PRAGMA mmap_size={_mmap if _mmap.isdigit() else '1073741824'}")
 
 
 def _install_query_timeout(

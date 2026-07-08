@@ -88,6 +88,14 @@ def _suppress_bytecode_writes_under_ci_xdist(env) -> bool:
     import sys
 
     sys.dont_write_bytecode = True
+    # THE primary SIGBUS fix: roam sets ``PRAGMA mmap_size=1 GB`` per SQLite
+    # connection. Under xdist each worker mmaps that per connection, and N
+    # workers x 1 GB x several index DBs blows past a memory-limited runner ->
+    # "Fatal Python error: Bus error" mid-test (concentrated on index-heavy
+    # tests like test_math). Disable SQLite mmap on CI+xdist (plain read/write
+    # I/O — slightly slower, no giant mapping to exhaust). setdefault so an
+    # explicit override still wins.
+    env.setdefault("ROAM_SQLITE_MMAP_SIZE", "0")
     return True
 
 
