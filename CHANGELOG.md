@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`roam service-report`** — restored the one-command reachability-triage deliverable
+  (SBOM → supply-chain → vulns → vuln-reach → taint → secrets) that was dropped in a
+  history reconcile.
+- **`docs/COMMANDS.md`** — the full command index (268 commands across 7 categories,
+  243 MCP tools), regenerated from `roam surface` and guarded by a CI invariant so it
+  cannot be silently dropped again.
+
+### Fixed
+- **`vuln-reach`** — package-name matching now anchors to dotted path segments instead
+  of a naked substring, eliminating false matches on short package names. This unblocks
+  accurate vulnerability-reachability triage.
+- **`for_security_review`** — reconnected to the W607 substrate marker layer so
+  degradation markers surface correctly.
+- MCP binding corrections (`understand`, `fetch_handle`) + surface-count sync (243 MCP tools).
+- `yaml-loader` tiny-parser fallback now catches all exceptions, not just `ValueError`.
+- **CI reliability** — eliminated an intermittent native `Bus error` under pytest-xdist
+  (bounded SQLite `mmap`/`cache`/`temp_store` + serialized grammar-heavy index builds)
+  and a monkeypatch import-capture flake; full suite is green across Python 3.10–3.13.
+
+### Security
+- Bumped `joserfc` 1.6.5 → 1.7.3 (HMAC empty-key verify bypass + JWS payload-size bypass)
+  and `pydantic-settings` 2.14.1 → 2.14.2 (nested-secrets symlink escape) — clears 3
+  Dependabot alerts. Both are transitive and not reached by roam's own code.
+
 ## [13.7.0] — 2026-07-08
 
 ### Sibling-patch network, first-class attestation staleness, and a large reliability wave

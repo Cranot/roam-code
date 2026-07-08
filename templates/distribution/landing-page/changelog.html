@@ -76,6 +76,23 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Added</h3>
+<ul>
+<li><strong><code>roam service-report</code></strong> — restored the one-command reachability-triage deliverable (SBOM → supply-chain → vulns → vuln-reach → taint → secrets) that was dropped in a history reconcile.</li>
+<li><strong><code>docs/COMMANDS.md</code></strong> — the full command index (268 commands across 7 categories, 243 MCP tools), regenerated from <code>roam surface</code> and guarded by a CI invariant so it cannot be silently dropped again.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><strong><code>vuln-reach</code></strong> — package-name matching now anchors to dotted path segments instead of a naked substring, eliminating false matches on short package names. This unblocks accurate vulnerability-reachability triage.</li>
+<li><strong><code>for_security_review</code></strong> — reconnected to the W607 substrate marker layer so degradation markers surface correctly.</li>
+<li>MCP binding corrections (<code>understand</code>, <code>fetch_handle</code>) + surface-count sync (243 MCP tools).</li>
+<li><code>yaml-loader</code> tiny-parser fallback now catches all exceptions, not just <code>ValueError</code>.</li>
+<li><strong>CI reliability</strong> — eliminated an intermittent native <code>Bus error</code> under pytest-xdist (bounded SQLite <code>mmap</code>/<code>cache</code>/<code>temp_store</code> + serialized grammar-heavy index builds) and a monkeypatch import-capture flake; full suite is green across Python 3.10–3.13.</li>
+</ul>
+<h3>Security</h3>
+<ul>
+<li>Bumped <code>joserfc</code> 1.6.5 → 1.7.3 (HMAC empty-key verify bypass + JWS payload-size bypass) and <code>pydantic-settings</code> 2.14.1 → 2.14.2 (nested-secrets symlink escape) — clears 3 Dependabot alerts. Both are transitive and not reached by roam's own code.</li>
+</ul>
 <h2>[13.7.0] — 2026-07-08</h2>
 <h3>Sibling-patch network, first-class attestation staleness, and a large reliability wave</h3>
 <ul>
