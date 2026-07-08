@@ -54,7 +54,14 @@ def xdist_args_to_inject(args, env, xdist_available):
             return []
         if a == "-pno:xdist":
             return []
-    return ["-n", "auto", "--dist", "loadgroup"]
+    # ``-n auto`` spawns one worker per core; on CI runners each worker loads
+    # the tree-sitter native grammars (28 languages) + per-worker SQLite temp
+    # files, and the aggregate mmap / ``/dev/shm`` pressure triggers SIGBUS
+    # ("Fatal Python error: Bus error") during parallel test-module import,
+    # crashing workers and reddening the whole test lane. Cap the worker count
+    # to keep memory bounded (override via ``ROAM_XDIST_WORKERS``).
+    workers = env.get("ROAM_XDIST_WORKERS", "2")
+    return ["-n", workers, "--dist", "loadgroup"]
 
 
 def pytest_load_initial_conftests(early_config, parser, args):

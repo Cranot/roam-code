@@ -411,9 +411,11 @@ def _load_mcp_tool_names() -> frozenset[str]:
                     elif isinstance(deco, ast.Name) and deco.id == "_tool":
                         collected.add(node.name)
                         break
-    except (OSError, SyntaxError, ValueError, AttributeError, TypeError):
-        # File IO, AST parse, or attribute/type issues during traversal —
-        # none of these should break the dead command's readonly path.
+    except (ImportError, OSError, SyntaxError, ValueError, AttributeError, TypeError):
+        # Import (ast / mcp_server unavailable on a stripped wheel), file IO,
+        # AST parse, or attribute/type issues during traversal — none of these
+        # should break the dead command's readonly path; degrade to empty per
+        # the docstring's all-sources-down contract.
         pass
 
     _MCP_TOOL_NAMES_CACHE = frozenset(collected)
