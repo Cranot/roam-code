@@ -561,7 +561,7 @@ class TestInternalFunctions:
         """parse_codeowners should return empty list when file is missing."""
         from roam.commands.cmd_simulate_departure import parse_codeowners
 
-        result = parse_codeowners(tmp_path)
+        result = parse_codeowners(tmp_path / "CODEOWNERS")
         assert result == []
 
     def test_parse_codeowners_format(self, tmp_path):
@@ -569,7 +569,7 @@ class TestInternalFunctions:
         from roam.commands.cmd_simulate_departure import parse_codeowners
 
         (tmp_path / "CODEOWNERS").write_text("# Comment line\n*.py @alice @bob\ndocs/ @carol\n\n/src/core/ @alice\n")
-        rules = parse_codeowners(tmp_path)
+        rules = parse_codeowners(tmp_path / "CODEOWNERS")
         assert len(rules) == 3
         assert rules[0] == ("*.py", ["@alice", "@bob"])
         assert rules[1] == ("docs/", ["@carol"])
@@ -583,7 +583,7 @@ class TestInternalFunctions:
         )
 
         (tmp_path / "CODEOWNERS").write_text("* @default\nsrc/ @alice\n")
-        rules = parse_codeowners(tmp_path)
+        rules = parse_codeowners(tmp_path / "CODEOWNERS")
         # src/app.py should match the src/ rule
         owners = resolve_codeowner("src/app.py", rules)
         assert "@alice" in owners
