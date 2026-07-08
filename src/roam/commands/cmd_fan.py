@@ -634,15 +634,17 @@ def _emit_fan_json_preserving_mode_parity(
             scanned_count=len(items_local),
         )
 
+    # Precompute the fallback score into a var (W978 discipline 2: ``default=``
+    # must not be an inline ``ast.Call`` — the eager evaluation defeats the
+    # failure-only intent of the wrapper's default). Matches the sibling
+    # ``default=_envelope_floor`` shape above.
+    _score_floor = _fan_score_default(item_count, include_local_only=include_local_only)
     score_dict = _run_check_cy(
         "score_classify",
         _score_classify,
         items,
         _warnings_out=w607cy_warnings_out,
-        default=_fan_score_default(
-            item_count,
-            include_local_only=include_local_only,
-        ),
+        default=_score_floor,
     )
 
     fan_predicate = _run_check_cy(

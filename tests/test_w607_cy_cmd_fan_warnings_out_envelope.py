@@ -233,8 +233,11 @@ def test_cmd_fan_carries_w607cy_accumulator():
     assert src_path.exists(), f"cmd_fan.py missing at {src_path}"
     src = src_path.read_text(encoding="utf-8")
 
-    # Source-level anchors
-    assert "_w607cy_warnings_out" in src, (
+    # Source-level anchors. Match without the leading underscore so the
+    # accumulator is found whether it's a local ``_w607cy_warnings_out`` or,
+    # after a clone-extraction refactor, a helper PARAMETER
+    # ``w607cy_warnings_out`` — both are the same accumulator.
+    assert "w607cy_warnings_out" in src, (
         "W607-CY accumulator missing from cmd_fan; the additive aggregation-phase marker plumbing has been removed."
     )
     assert "_run_check_cy" in src, (
@@ -253,8 +256,9 @@ def test_cmd_fan_carries_w607cy_accumulator():
         "the additive aggregation-phase wrapper has been refactored away."
     )
 
-    # W607-X must still be present (additive layer does NOT replace it)
-    assert "_w607x_warnings_out" in src, (
+    # W607-X must still be present (additive layer does NOT replace it) —
+    # underscore-optional for the same local-vs-parameter refactor reason.
+    assert "w607x_warnings_out" in src, (
         "W607-X accumulator vanished alongside the W607-CY add; the "
         "additive plumbing must preserve the W607-X substrate-CALL layer."
     )
