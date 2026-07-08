@@ -64,11 +64,43 @@ def xdist_args_to_inject(args, env, xdist_available):
     return ["-n", workers, "--dist", "loadgroup"]
 
 
-def pytest_load_initial_conftests(early_config, parser, args):
+def _suppress_bytecode_writes_under_ci_xdist(env) -> bool:
+    """Under xdist on CI, the pytest assertion-rewrite ``.pyc`` cache is shared
+    across workers. Concurrent write + mmap of the SAME rewritten pyc races: one
+    worker truncates/rewrites the file while another has it mmapped, so the
+    mapped pages vanish and accessing them raises SIGBUS ("Fatal Python error:
+    Bus error") inside ``_pytest/assertion/rewrite.py`` ``exec_module`` — on a
+    different test module each run, crashing a worker and reddening the lane.
+
+    Suppressing bytecode writes makes every worker rewrite in-memory (assertion
+    introspection is fully preserved — only the on-disk cache is skipped), so
+    there is no shared file to race on. Applied to controller AND workers: it is
+    keyed on the environment (CI + xdist), not on whether THIS process injects
+    ``-n`` (workers inherit ``-n`` from the controller and skip injection).
+    """
+    xdist_available = _xdist_importable()
+    if not xdist_available:
+        return False
+    if not env.get("CI"):
+        return False
+    if env.get("ROAM_AUTO_XDIST", "1") == "0":
+        return False
+    import sys
+
+    sys.dont_write_bytecode = True
+    return True
+
+
+def _xdist_importable() -> bool:
     try:
         import xdist  # noqa: F401
 
-        xdist_available = True
+        return True
     except ImportError:
-        xdist_available = False
+        return False
+
+
+def pytest_load_initial_conftests(early_config, parser, args):
+    xdist_available = _xdist_importable()
+    _suppress_bytecode_writes_under_ci_xdist(os.environ)
     args[:] = xdist_args_to_inject(args, os.environ, xdist_available) + args
