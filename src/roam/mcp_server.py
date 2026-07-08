@@ -6045,7 +6045,14 @@ def _batch_get_many(conn, symbols: list[str]) -> tuple[dict, dict]:
     errors: dict = {}
 
     for sym in symbols:
-        details, err = _batch_get_one(conn, sym)
+        # W103-loud: isolate a single symbol's crash so it never aborts the
+        # whole batch (the tool's contract), but capture it loudly.
+        try:
+            details, err = _batch_get_one(conn, sym)
+        except Exception as exc:  # noqa: BLE001 -- isolated + logged, not silent
+            log_swallowed("mcp_server:batch_get_symbol", exc)
+            errors[sym] = f"lookup crashed: {type(exc).__name__}: {exc}"
+            continue
         if err or details is None:
             errors[sym] = err or "not found"
             continue
@@ -6163,7 +6170,16 @@ def batch_search(
     # Unexpected programming errors now propagate instead of being swallowed.
     with conn_ctx as conn:
         for q in queries_list:
-            rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
+            # W103-loud: a batch tool must isolate a single query's failure, not
+            # abort the whole batch (its documented contract: "remaining queries
+            # still run"). A raised exception is captured per-query but LOUD --
+            # log_swallowed surfaces it, so W607's "don't swallow silently" holds.
+            try:
+                rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
+            except Exception as exc:  # noqa: BLE001 -- isolated + logged, not silent
+                log_swallowed("mcp_server:batch_search_query", exc)
+                errors[q] = f"query crashed: {type(exc).__name__}: {exc}"
+                continue
             if err:
                 errors[q] = err
             else:
