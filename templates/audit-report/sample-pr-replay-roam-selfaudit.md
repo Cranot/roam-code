@@ -1,7 +1,7 @@
 # PR Replay Report — Showcase — roam-code self-audit
 
-**Tier:** Team — 30 PRs  
-**Commit range:** `HEAD~30..HEAD`  
+**Tier:** Team  
+**Commit range:** `HEAD~30..HEAD` — 53 merged PRs replayed  
 **Generated:** 2026-07-07 22:11 UTC  
 **Tool:** `roam pr-replay` — `postmortem` + `critique` engine
 
@@ -18,7 +18,7 @@ the EU AI Act, or any other framework — the conformity assessment remains with
 ---
 
 
-Thirty most-recent merged PRs on the target branch, scored against the current Roam detector set. Includes founder review of the top findings on a 30-minute call.
+The most-recent merged PRs on the target branch in this commit range (53 replayed), scored against the current Roam detector set. Includes founder review of the top findings on a 30-minute call.
 
 > **Evidence framing.** PR Replay produces a structural-review report that **supports evidence for** governance review and **maps to** change-management controls. It does not certify compliance with SOC 2, ISO 42001, the EU AI Act, or any other framework; the control mapping and conformity assessment stay with the customer.
 
