@@ -766,7 +766,7 @@ def test_w607es_helper_template_appends_to_w607bv_bucket():
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr == "append":
-                if isinstance(func.value, ast.Name) and func.value.id == "w607bv_warnings_out":
+                if isinstance(func.value, ast.Name) and func.value.id == "_w607bv_warnings_out":
                     found_append = True
     assert found_append, "_run_check_bv must append to _w607bv_warnings_out (not a sibling bucket)"
 

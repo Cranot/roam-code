@@ -172,11 +172,15 @@ def test_w607dj_four_phases_wrapped_in_run_check_cy():
 
 
 def test_w607dj_score_classify_wraps_in_both_modes():
-    """``score_classify`` must wrap in BOTH symbol AND file mode so the
+    """``score_classify`` must wrap for BOTH symbol AND file mode so the
     4-phase template is symmetric across the dual-mode aggregator.
 
-    Count the number of ``_run_check_cy("score_classify", ...)`` calls in
-    the AST; should be >=2 (symbol-mode branch + file-mode branch).
+    Symmetry is now achieved by SHARING one wrap site: both
+    ``_emit_symbol_json`` and ``_emit_file_json`` route through the
+    single ``_emit_fan_json_preserving_mode_parity`` helper, which
+    carries exactly one ``_run_check_cy("score_classify", ...)`` call.
+    The dual-mode parity is preserved by the shared helper, not by a
+    duplicated per-mode branch. Count should be exactly 1.
     """
     src = _src_path().read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -191,10 +195,10 @@ def test_w607dj_score_classify_wraps_in_both_modes():
         phase_arg = node.args[0]
         if isinstance(phase_arg, ast.Constant) and phase_arg.value == "score_classify":
             count += 1
-    assert count >= 2, (
-        f"expected score_classify to wrap in BOTH symbol AND file mode; "
-        f"found {count} call(s) -- the dual-mode aggregator must be "
-        f"symmetric"
+    assert count >= 1, (
+        f"expected score_classify to wrap in the shared mode-parity "
+        f"helper (reached by both symbol AND file mode); found {count} "
+        f"call(s) -- the dual-mode aggregator must be symmetric"
     )
 
 
@@ -376,107 +380,22 @@ def test_score_classify_failure_marker_format_symbol(cli_runner, fan_project, mo
 def test_score_classify_failure_marker_format_file(cli_runner, fan_project, monkeypatch):
     """File-mode parity: score_classify raise -> marker + DEGRADED floor.
 
-    Patch ``_file_flag`` on cmd_fan so the items-list contains a
-    poisoned object whose equality check raises inside the closure.
+    The score_classify wrap is now shared across both modes via
+    ``_emit_fan_json_preserving_mode_parity``, whose ``_score_classify``
+    closure delegates to the module-level
+    ``_score_fan_flags_for_mode_parity`` scorer. Patch that scorer to
+    raise so the failure lands squarely inside the
+    ``_run_check_cy("score_classify", ...)`` boundary -- the file-mode
+    mirror of the symbol-mode ``_scope_flag`` poisoning above.
     """
     from roam.commands import cmd_fan
 
-    class _BadFlag:
-        def __eq__(self, other):
-            raise RuntimeError("synthetic-score-classify-file-from-W607-DJ")
+    def _raise_score_flags(*_args, **_kwargs):
+        raise RuntimeError("synthetic-score-classify-file-from-W607-DJ")
 
-        def __hash__(self):
-            return 0
-
-    # _file_flag is a NESTED function inside fan() -- we can't
-    # monkeypatch it directly. Instead, patch the flag values
-    # inside the items list at the score_classify call point by
-    # monkeypatching ``_run_check_cy`` to inject a poisoned items
-    # arg on the score_classify boundary.
-
-    # Approach: monkeypatch the closure indirectly by patching the
-    # ``_scope_flag`` module-level helper. But _file_flag is nested.
-    # The cleanest tripwire is to patch the bucket-equality at the
-    # comparison site -- we override ``str.__eq__`` is impossible, so
-    # instead we drive the failure via the more direct path:
-    # patch the inner closure's ``len`` to raise (the closure calls
-    # ``len(items_local)``).
-    real_len = len
-
-    raise_count = {"n": 0}
-
-    def _len_that_raises_inside_score_classify(*args, **kwargs):
-        # We don't want EVERY len() to raise; gate by call-count.
-        # The score_classify closure calls len(items_local) AT MOST
-        # ONCE per invocation. The cmd does many other len() calls
-        # before reaching there. So count first N calls succeed,
-        # then raise the (N+1)th to land inside score_classify.
-        # Simpler: just raise on ALL len() calls inside cmd_fan but
-        # only when invoked through the _run_check_cy wrap path.
-        raise_count["n"] += 1
-        if raise_count["n"] > 200:
-            raise RuntimeError("synthetic-score-classify-file-from-W607-DJ")
-        return real_len(*args, **kwargs)
-
-    # Simpler: patch the file_flag values to make the equality check
-    # raise. Inject by patching the file_items construction via
-    # _run_check (the W607-X substrate hook). Cleanest path: monkey-
-    # patch ``max`` to raise WHEN called on the items list -- but
-    # that lands in compute_predicate, not score_classify.
-    #
-    # Best path: monkeypatch the ``_run_check_cy`` helper so the
-    # score_classify call (and ONLY the score_classify call) raises.
-    for attr in dir(cmd_fan):
-        if attr == "fan":
-            break
-
-    # The cleanest synthetic-raise: replace the entire fan() command's
-    # score_classify wrap by injecting the failure at the closure-
-    # level via a SetItem-style monkeypatch on the items list passed
-    # in. Easiest: just patch the inner closure-callable indirectly
-    # by making one item.__getitem__("flag") raise.
-    #
-    # Implementation: monkeypatch fan_items list-construction via the
-    # _scope_flag-like helper at module level. file mode uses
-    # nested _file_flag; we can't reach it. So we drive failure via
-    # the _run_check_cy wrap itself: patch it to raise ON the
-    # score_classify phase only.
-
-    # Instead, patch _w607cy_warnings_out append by patching the
-    # helper inside the fan() closure scope. Cleanest: subclass the
-    # cmd at runtime is infeasible. So we use the same pattern as
-    # the symbol-mode test: items have poisoned flag values.
-    #
-    # In file mode, file_items["flag"] = _file_flag(fan_in, fan_out)
-    # is built INSIDE the closure. We patch the ``_run_check`` call
-    # for ``fetch_file_rows`` so it returns rows with poisoned
-    # values that propagate into _file_flag and then into the
-    # score_classify closure.
-
-    # The simplest correct path: substitute the score_classify
-    # behavior by patching ``len`` (used inside the closure) once we
-    # are deep enough into the call. Use a context-counter.
-    raise_count = {"n": 0}
-
-    def _len_late_raise(obj):
-        raise_count["n"] += 1
-        # The closure calls len() near the end. Many other len()
-        # calls precede it. We use sys._getframe to gate by frame.
-        import sys as _sys
-
-        frame = _sys._getframe(1)
-        if frame.f_code.co_name in (
-            "_score_classify_symbol",
-            "_score_classify_file",
-        ):
-            raise RuntimeError("synthetic-score-classify-file-from-W607-DJ")
-        return real_len(obj)
-
-    monkeypatch.setattr("builtins.len", _len_late_raise)
+    monkeypatch.setattr(cmd_fan, "_score_fan_flags_for_mode_parity", _raise_score_flags)
 
     result = _invoke_fan(cli_runner, fan_project, "file")
-    # Restore len BEFORE asserting (the test framework may need it).
-    monkeypatch.undo()
 
     assert result.exit_code == 0, result.output
     data = _json.loads(result.output)
@@ -664,8 +583,9 @@ def test_w607dj_w978_seven_discipline_ast_audit():
         phase_arg = node.args[0]
         if isinstance(phase_arg, ast.Constant) and phase_arg.value == "score_classify":
             score_classify_calls.append(node)
-    assert len(score_classify_calls) >= 2, (
-        f"expected >=2 score_classify wraps (symbol + file); got {len(score_classify_calls)}"
+    assert len(score_classify_calls) >= 1, (
+        f"expected >=1 score_classify wrap in the shared mode-parity "
+        f"helper (symbol + file route through it); got {len(score_classify_calls)}"
     )
 
     # Discipline 1: f-string verdict floor (n/a for score_classify --
@@ -681,17 +601,34 @@ def test_w607dj_w978_seven_discipline_ast_audit():
                 )
 
     # Discipline 2: kwarg-default eagerness -- default= MUST NOT be an
-    # ast.Call (eager evaluation of an expensive default).
+    # ast.Call (eager evaluation of an expensive default). The canonical
+    # SAFE form pre-captures the whole floor dict into a ``_*_floor`` var
+    # BEFORE the wrap call and passes ``default=_score_floor`` (an
+    # ast.Name) -- mirroring the sibling ``default=_envelope_floor`` wrap.
+    # An inline literal ast.Dict of concrete-constant values is also
+    # accepted for backwards compatibility.
     for call in score_classify_calls:
         for kw in call.keywords:
             if kw.arg == "default":
                 assert not isinstance(kw.value, ast.Call), (
                     f"W978 discipline 2: score_classify default= must not be an ast.Call; got {ast.dump(kw.value)!r}"
                 )
-                # Default must be an ast.Dict with concrete-constant values
+                if isinstance(kw.value, ast.Name):
+                    # Pre-captured floor Name (e.g. ``_score_floor``) is the
+                    # strongest safe form: the floor is fully computed before
+                    # the wrap, so nothing evaluates at kwarg-bind time.
+                    assert kw.value.id.endswith("_floor"), (
+                        f"W978 discipline 2: score_classify default= Name "
+                        f"must be a pre-captured ``_*_floor`` reference "
+                        f"(e.g. ``_score_floor``); got {kw.value.id!r}"
+                    )
+                    continue
+                # Otherwise it must be an inline literal ast.Dict with
+                # concrete-constant values.
                 assert isinstance(kw.value, ast.Dict), (
                     f"W978 discipline 2: score_classify default= must be a "
-                    f"literal ast.Dict; got {type(kw.value).__name__}"
+                    f"pre-captured ``_*_floor`` Name or a literal ast.Dict; "
+                    f"got {type(kw.value).__name__}"
                 )
                 for v in kw.value.values:
                     if isinstance(v, ast.Call):

@@ -749,11 +749,11 @@ def test_all_three_warnings_out_accumulators_present_in_ast():
             continue
         if not isinstance(node.target, ast.Name):
             continue
-        if node.target.id == "w607ai_warnings_out":
+        if node.target.id == "_w607ai_warnings_out":
             found_ai = True
-        elif node.target.id == "w607cn_warnings_out":
+        elif node.target.id == "_w607cn_warnings_out":
             found_cn = True
-        elif node.target.id == "w607ea_warnings_out":
+        elif node.target.id == "_w607ea_warnings_out":
             found_ea = True
 
     assert found_ai, "W607-AI accumulator missing"

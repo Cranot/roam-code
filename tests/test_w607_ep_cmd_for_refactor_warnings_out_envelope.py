@@ -280,16 +280,24 @@ def test_w607ep_no_w607ep_marker_family_in_source():
     The marker family ``for_refactor_<phase>_failed:`` IS in the source
     (from W607-AG), but it should be the ONLY one. A future W607-EP
     plumbing attempt would introduce a duplicate emit line.
+
+    The emit itself was hoisted into the shared ``_run_substrate`` helper,
+    where the marker template is recipe-agnostic
+    (``f"{recipe_name}_{phase}_failed:..."``). The ``for_refactor`` marker
+    family is minted by binding ``recipe_name="for_refactor"`` at the
+    single ``_run_substrate("for_refactor", ...)`` call inside the
+    ``for_refactor()`` body's ``_run_check`` wrapper. A duplicate W607-EP
+    bucket would introduce a SECOND such binding.
     """
     src = _module_source()
-    # The single legitimate emit f-string in mcp_server.py for this
-    # marker family. Anchored on the exact W607-AG template shape.
-    needle = 'f"for_refactor_{phase}_failed:{type(exc).__name__}:{exc}"'
+    # The single ``for_refactor`` recipe-name binding into the shared
+    # substrate helper (the marker-family root for this compound).
+    needle = '_run_substrate("for_refactor",'
     count = src.count(needle)
     assert count == 1, (
-        f"expected exactly 1 ``for_refactor_<phase>_failed:`` emit "
-        f"f-string in mcp_server.py (W607-AG); got {count}. If a second "
-        "emit appears, W607-EP plumbing has been added by mistake."
+        f"expected exactly 1 ``for_refactor`` substrate binding in "
+        f"mcp_server.py (W607-AG); got {count}. If a second "
+        "binding appears, W607-EP plumbing has been added by mistake."
     )
 
 
@@ -323,23 +331,23 @@ def test_w607ep_w607ag_helper_present():
 
 
 def test_w607ep_w607ag_helper_returns_default_verbatim():
-    """Pin: ``_run_check`` except-handler returns ``default`` verbatim.
+    """Pin: the substrate except-handler returns ``default`` verbatim.
 
     Helper-template discipline -- the W607 template mandates
     ``return default`` (NOT ``return None``, NOT ``raise``, NOT
-    ``return default()``). AST-walk the helper body and assert the
-    except-block returns the bare ``default`` name.
+    ``return default()``). The except-handler was hoisted from the
+    inline ``_run_check`` into the shared module-level ``_run_substrate``
+    helper (``_run_check`` inside ``for_refactor()`` now delegates to it).
+    AST-walk ``_run_substrate`` and assert the except-block returns the
+    bare ``default`` name.
     """
     tree = ast.parse(_module_source())
     helper = None
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "for_refactor":
-            for inner in node.body:
-                if isinstance(inner, ast.FunctionDef) and inner.name == "_run_check":
-                    helper = inner
-                    break
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_substrate":
+            helper = node
             break
-    assert helper is not None, "_run_check helper not found"
+    assert helper is not None, "_run_substrate helper not found"
 
     found_default_return = False
     for node in ast.walk(helper):
@@ -350,7 +358,7 @@ def test_w607ep_w607ag_helper_returns_default_verbatim():
                         if stmt.value.id == "default":
                             found_default_return = True
     assert found_default_return, (
-        "_run_check except-handler must `return default` verbatim (W607 helper-template discipline)"
+        "_run_substrate except-handler must `return default` verbatim (W607 helper-template discipline)"
     )
 
 
@@ -477,17 +485,23 @@ def test_w607ep_w607ag_invokes_helper_through_run_check(helper):
 
 
 def test_w607ep_w607ag_bucket_mirrors_to_summary_warnings_out():
-    """Pin: ``_w607ag_warnings_out`` threads onto summary.warnings_out."""
+    """Pin: the AG bucket threads onto summary.warnings_out.
+
+    The bucket-merge was hoisted into the shared
+    ``_finalize_compound_recipe`` helper, which receives the
+    ``_w607ag_warnings_out`` bucket as its ``warnings_out`` parameter and
+    merges it into both mirrors.
+    """
     src = _module_source()
-    assert 'summary["warnings_out"] = existing_summary_wo + list(_w607ag_warnings_out)' in src, (
+    assert 'summary["warnings_out"] = existing_summary_wo + list(warnings_out)' in src, (
         "summary.warnings_out mirror missing -- W607-AG bucket-merge discipline may have drifted"
     )
 
 
 def test_w607ep_w607ag_bucket_mirrors_to_top_level_warnings_out():
-    """Pin: ``_w607ag_warnings_out`` also threads onto envelope.warnings_out."""
+    """Pin: the AG bucket also threads onto envelope.warnings_out."""
     src = _module_source()
-    assert 'envelope["warnings_out"] = existing_top_wo + list(_w607ag_warnings_out)' in src, (
+    assert 'envelope["warnings_out"] = existing_top_wo + list(warnings_out)' in src, (
         "top-level warnings_out mirror missing -- W607-AG bucket-merge discipline may have drifted"
     )
 
@@ -495,9 +509,10 @@ def test_w607ep_w607ag_bucket_mirrors_to_top_level_warnings_out():
 def test_w607ep_w607ag_bucket_flips_partial_success():
     """Pin: non-empty AG bucket -> ``partial_success: True`` on summary."""
     src = _module_source()
-    # Find the AG-specific partial_success flip near the bucket-merge block.
-    # The flip is inside the ``if _w607ag_warnings_out:`` block.
-    idx = src.find("if _w607ag_warnings_out:")
+    # Find the partial_success flip inside the bucket-merge block of the
+    # shared ``_finalize_compound_recipe`` helper. The merge is guarded by
+    # ``if warnings_out:`` (the AG bucket is passed as this parameter).
+    idx = src.find("if warnings_out:")
     assert idx >= 0, "AG bucket-merge block not found"
     block = src[idx : idx + 800]
     assert "partial_success" in block and "True" in block, (
@@ -662,16 +677,19 @@ def test_w607ep_per_substrate_isolation(
 
 
 def test_w607ep_cross_prefix_isolation_in_for_refactor_source():
-    """Only one ``for_refactor_<phase>_failed:`` emit f-string in mcp_server.py.
+    """Only one ``for_refactor`` substrate binding in mcp_server.py.
 
     cmd_for_refactor markers (``for_refactor_*``) must NOT appear in
-    sibling W607 plumbing (pr_analyze_*, pr_prep_*, attest_*, etc.).
-    Pinned via emit-line count.
+    sibling W607 plumbing (pr_analyze_*, pr_prep_*, attest_*, etc.). The
+    emit template is recipe-agnostic (shared ``_run_substrate``); the
+    ``for_refactor`` marker family is minted at the single
+    ``_run_substrate("for_refactor", ...)`` binding. Pinned via
+    binding-count.
     """
     src = _module_source()
-    needle = 'f"for_refactor_{phase}_failed:{type(exc).__name__}:{exc}"'
+    needle = '_run_substrate("for_refactor",'
     count = src.count(needle)
-    assert count == 1, f"expected exactly 1 for_refactor emit f-string in mcp_server.py; got {count}"
+    assert count == 1, f"expected exactly 1 for_refactor substrate binding in mcp_server.py; got {count}"
 
 
 def test_w607ep_cross_prefix_marker_runtime_purity(for_refactor_project, monkeypatch):

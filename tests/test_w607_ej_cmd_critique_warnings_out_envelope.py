@@ -458,8 +458,8 @@ def test_combined_warnings_out_merges_three_buckets():
     # The combine expression should reference all three buckets.
     for bucket in (
         "_critique_warnings_out",
-        "w607y_warnings_out",
-        "w607bl_warnings_out",
+        "_w607y_warnings_out",
+        "_w607bl_warnings_out",
     ):
         assert f"list({bucket})" in src, (
             f"Combined-warnings list does not include {bucket!r}; the three-bucket merge has regressed."

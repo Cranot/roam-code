@@ -674,11 +674,11 @@ def test_all_three_warnings_out_accumulators_present_in_ast():
             continue
         if not isinstance(node.target, ast.Name):
             continue
-        if node.target.id == "w607ah_warnings_out":
+        if node.target.id == "_w607ah_warnings_out":
             found_ah = True
-        elif node.target.id == "w607ca_warnings_out":
+        elif node.target.id == "_w607ca_warnings_out":
             found_ca = True
-        elif node.target.id == "w607dv_warnings_out":
+        elif node.target.id == "_w607dv_warnings_out":
             found_dv = True
 
     assert found_ah, "W607-AH substrate-CALL accumulator (``_w607ah_warnings_out``) missing from cmd_pr_replay AST."

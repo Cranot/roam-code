@@ -1019,16 +1019,16 @@ def test_ast_audit_both_accumulators_present_in_hotspots_function():
                 if isinstance(sub, ast.Assign):
                     for tgt in sub.targets:
                         if isinstance(tgt, ast.Name):
-                            if tgt.id == "w607cp_warnings_out":
+                            if tgt.id == "_w607cp_warnings_out":
                                 cp_found = True
-                            elif tgt.id == "w607en_warnings_out":
+                            elif tgt.id == "_w607en_warnings_out":
                                 en_found = True
                 continue
             tgt = sub.target
             if isinstance(tgt, ast.Name):
-                if tgt.id == "w607cp_warnings_out":
+                if tgt.id == "_w607cp_warnings_out":
                     cp_found = True
-                elif tgt.id == "w607en_warnings_out":
+                elif tgt.id == "_w607en_warnings_out":
                     en_found = True
 
     assert cp_found, (
