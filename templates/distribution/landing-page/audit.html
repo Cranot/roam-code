@@ -40,8 +40,8 @@
     "description": "Roam replays the current detector set against a buyer's last 5, 30, or 90 merged PRs and ships a written structural-review report covering findings the detectors would have flagged pre-merge, an aggregated by-detector breakdown, and recommended CI gates.",
     "offers": [
       {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "5-PR self-serve sample, watermarked, no founder review."},
-      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "30-PR report, 30-min founder walk-through. 50% of fee credits toward a Roam Review subscription within 60 days."},
-      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee credits toward a Roam Review subscription within 60 days."}
+      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "30-PR report, 30-min founder walk-through. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."},
+      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."}
     ]
   }
   </script>
@@ -63,7 +63,7 @@
     "@type": "FAQPage",
     "mainEntity": [
       {"@type": "Question", "name": "How do I get the report on a private repo without giving you direct access?", "acceptedAnswer": {"@type": "Answer", "text": "We offer two paths: (1) you grant us a read-only deploy key on a temporary clone we delete on completion, or (2) you run roam pr-replay locally and send us the JSON envelope plus the markdown — we add the founder review and ship the polished deliverable. Both paths sign the DPA and a one-page SOW."}},
-      {"@type": "Question", "name": "What if you find nothing material on my repo?", "acceptedAnswer": {"@type": "Answer", "text": "If a Team engagement surfaces zero findings worth wiring into CI, we'll either run it on a different range at no extra cost (if you want broader coverage) or refund 50% of the fee. The whole point is that you'd have shipped the same incidents knowing what Roam would have flagged — if you wouldn't have, the engagement underdelivered."}},
+      {"@type": "Question", "name": "What if the report is noise, or finds nothing material?", "acceptedAnswer": {"@type": "Answer", "text": "You never pay for noise. On the walk-through, any finding your team calls a false positive is struck and refunded pro-rata. If fewer than half the high/medium findings survive as worth acting on, that is a full refund. A Team engagement that surfaces zero material findings is a 100% refund, not 50%. The guarantee is on the usefulness of the findings, not just their count."}},
       {"@type": "Question", "name": "Can I share the report with my CTO, board, or auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The report is yours. You own the IP and can redistribute internally without restriction. External attribution is appreciated but not required."}},
       {"@type": "Question", "name": "Why this and not just running roam critique ourselves?", "acceptedAnswer": {"@type": "Answer", "text": "You can. The CLI is Apache 2.0 and free forever. The paid engagement adds: founder review of the patterns that matter for your codebase specifically, a ranked recommendation of which detector classes to wire into CI first, a polished narrative artefact you can hand to leadership or auditors, and a 30 or 90-minute walk-through call."}},
       {"@type": "Question", "name": "How fast is the turnaround?", "acceptedAnswer": {"@type": "Answer", "text": "Five business days from kickoff for Team, ten business days for Deep. Kickoff happens the day we receive payment confirmation and the agreed-on commit range or repo access. We'll usually move faster on small repos."}},
@@ -116,7 +116,7 @@
         an AI-assisted change.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See the sample report</a>
+        <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See a real sample report</a>
         <a class="btn-secondary" href="#tiers">See the tiers</a>
       </div>
       <p class="hero-trust-strip">
@@ -221,7 +221,8 @@
       <p class="how-it-works-foot">
         After delivery: temporary clone is deleted, the git ledger we kept
         of the engagement is yours on request, and the optional 50% credit
-        toward Roam Review activates if you subscribe within 60 days.
+        toward Roam Review is banked as a founding-customer credit — the
+        60-day redemption window starts when Roam Review ships, not now.
       </p>
     </div>
   </section>
@@ -262,9 +263,9 @@
             Thirty most-recent merged PRs scored against the current
             detector set. Aggregated detector-class breakdown, per-PR
             ranking, recommended CI gates, written narrative, founder
-            walk-through. <strong>$1,250 credits toward Roam Review</strong>
-            if you subscribe within 60 days.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
+            walk-through. <strong>$1,250 banked toward Roam Review</strong>
+            — redeemable within 60 days of its launch, not before.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See sample output</a>.
           </p>
           <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
                Payment Link URL is ready, replace the primary button's
@@ -286,9 +287,9 @@
             Everything in Team plus a per-detector deep-dive section, a
             written 90-day remediation plan against the highest-impact
             CI gates, and a 90-minute walk-through call.
-            <strong>$3,000 credits toward Roam Review</strong> if you
-            subscribe within 60 days.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample (Team format; Deep adds the deep-dive section)</a>.
+            <strong>$3,000 banked toward Roam Review</strong> — redeemable
+            within 60 days of its launch, not before.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See sample (Team format; Deep adds the deep-dive section)</a>.
           </p>
           <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
                Payment Link URL is ready, replace the primary button's
@@ -368,7 +369,7 @@
       </div>
       <p class="how-it-works-foot" style="margin-top: 24px;">
         Markdown + PDF. You can preview the Team-tier shape on
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">GitHub</a>
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">GitHub</a>
         before commissioning.
       </p>
     </div>
@@ -445,8 +446,9 @@
     <div class="audit-upsell-inner">
       <h2>Apply this fee toward Roam Review</h2>
       <p class="lede">
-        Half of the engagement fee credits toward your first year of Roam
-        Review if you subscribe within 60 days of report delivery.
+        Half of the engagement fee is banked toward your first year of Roam
+        Review — the 60-day redemption window starts when Roam Review ships
+        (it's in development), so the credit can't expire before you can use it.
       </p>
       <table class="compare-table" style="max-width: 760px; margin: 24px auto 0;">
         <caption class="visually-hidden">Roam Review credit math by PR Replay tier and Roam Review subscription tier.</caption>
@@ -500,14 +502,14 @@
         </p>
       </details>
       <details>
-        <summary>What if you find nothing material on my repo?</summary>
+        <summary>What if the report is noise, or finds nothing material?</summary>
         <p>
-          If a Team engagement surfaces zero findings worth wiring into
-          CI, we'll either run it on a different range at no extra cost
-          (if you want broader coverage) or refund 50% of the fee. The
-          point is to know whether you'd have shipped the same incidents
-          knowing what Roam would have flagged — if you wouldn't have,
-          the engagement underdelivered and we own that.
+          You never pay for noise. On the walk-through, any finding your
+          team calls a false positive is struck and refunded pro-rata. If
+          fewer than half the high/medium findings survive as worth acting
+          on, that's a full refund. And if a Team engagement surfaces zero
+          material findings, that's a 100% refund — not 50%. The guarantee
+          is on the usefulness of the findings, not just their count.
         </p>
       </details>
       <details>
