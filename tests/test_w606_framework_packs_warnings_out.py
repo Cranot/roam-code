@@ -466,31 +466,43 @@ def test_search_stored_owns_pack_failure_disclosure() -> None:
         "the caller-layer disclosure being intact."
     )
     # The try/except wrap MUST be present in search_stored.
+    # The pack-search wrap was factored out of ``search_stored`` into a
+    # helper (``_merge_language_relevant_pack_results``) — the W605 contract
+    # is delegation-shaped now. Follow the chain: find the function whose
+    # Try body calls ``search_pack_symbols`` (wherever it lives), then
+    # assert ``search_stored`` reaches it (directly or via that helper).
     tree = ast.parse(source)
-    found_wrap = False
+
+    def _call_names(node) -> set[str]:
+        names = set()
+        for stmt in ast.walk(node):
+            if isinstance(stmt, ast.Call):
+                fn = stmt.func
+                if isinstance(fn, ast.Name):
+                    names.add(fn.id)
+                elif isinstance(fn, ast.Attribute):
+                    names.add(fn.attr)
+        return names
+
+    wrap_owner = None
+    search_stored_calls: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "search_stored":
-            for inner in ast.walk(node):
-                if isinstance(inner, ast.Try):
-                    # Look for a Call to search_pack_symbols inside the try body.
-                    for stmt in ast.walk(inner):
-                        if isinstance(stmt, ast.Call):
-                            fn = stmt.func
-                            name = None
-                            if isinstance(fn, ast.Name):
-                                name = fn.id
-                            elif isinstance(fn, ast.Attribute):
-                                name = fn.attr
-                            if name == "search_pack_symbols":
-                                found_wrap = True
-                                break
-                    if found_wrap:
-                        break
-            break
-    assert found_wrap, (
-        "search_stored must wrap search_pack_symbols in a try/except — "
-        "W605 caller-layer plumb is the disclosure boundary for pack "
-        "failures. If this regressed, restore the W605 try/except."
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name == "search_stored":
+            search_stored_calls = _call_names(node)
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Try) and "search_pack_symbols" in _call_names(inner):
+                wrap_owner = node.name
+    assert wrap_owner is not None, (
+        "No function wraps search_pack_symbols in a try/except — W605 "
+        "caller-layer plumb is the disclosure boundary for pack failures. "
+        "If this regressed, restore the W605 try/except."
+    )
+    assert wrap_owner == "search_stored" or wrap_owner in search_stored_calls, (
+        f"The try/except wrap lives in {wrap_owner!r} but search_stored "
+        f"does not call it — the W605 disclosure boundary is disconnected "
+        f"from the search_stored path. Re-wire the helper call."
     )
 
 
