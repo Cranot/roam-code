@@ -1,12 +1,10 @@
 """True positives for the Flask detector triad.
 
-Routes get inventoried, and the literal SECRET_KEY fires
-py-flask-secret-key-literal.
+Routes get inventoried, debug=True fires py-flask-debug-true, the
+literal SECRET_KEY fires py-flask-secret-key-literal.
 """
 
 from __future__ import annotations
-
-import os
 
 from flask import Flask
 
@@ -28,7 +26,7 @@ def create_app():
 
 def run():
     app = create_app()
-    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
+    app.run(host="0.0.0.0", port=5000, debug=True)  # py-flask-debug-true
 
 
 if __name__ == "__main__":
