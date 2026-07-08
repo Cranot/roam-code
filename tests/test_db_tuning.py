@@ -56,11 +56,18 @@ def test_mmap_size_is_1gb(tmp_path):
     finally:
         conn.close()
 
-    expected = 1_073_741_824  # 1 GB
+    # 1 GB default, but env-tunable: ci_xdist sets ROAM_SQLITE_MMAP_SIZE=0 under
+    # xdist to bound aggregate mmap (the Bus-error fix). Expect the configured
+    # value so this sentinel still guards the DEFAULT locally while tolerating
+    # the deliberate CI override.
+    import os
+
+    _env = os.environ.get("ROAM_SQLITE_MMAP_SIZE", "1073741824")
+    expected = int(_env) if _env.isdigit() else 1_073_741_824
     assert live == expected, (
-        f"PRAGMA mmap_size = {live}; expected {expected} (1 GB). "
-        f"If this is a deliberate retuning, update the constant in "
-        f"src/roam/db/connection.py AND this test in the same commit."
+        f"PRAGMA mmap_size = {live}; expected {expected} "
+        f"(ROAM_SQLITE_MMAP_SIZE={_env!r}, default 1 GB). If this is a deliberate "
+        f"retuning, update the constant in src/roam/db/connection.py AND this test."
     )
 
 
