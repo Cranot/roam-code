@@ -549,6 +549,121 @@ def _get_git_hashes(root, base_ref, head_ref):
     return hashes
 
 
+def _build_staleness_contract(root, hashes, tool_version, conn, evidence, budget, tests):
+    """Issue #58: record the evidence baseline INSIDE the attestation so a
+    downstream agent/reviewer reading it LATER can answer "can I still use this
+    as authority, or must I re-run the evidence?" -- without parsing prose.
+
+    Every signal here is already computed by roam (``index_status``, the index
+    manifest, the rule/config hashes); this promotes them into one stable,
+    named contract. It lives on the ``attestation`` dict, NOT ``evidence`` -- so
+    the ``--sign`` ``content_hash`` (which hashes only ``evidence``) stays
+    byte-stable and the two axes stay clean: content_hash = tamper, stale_if =
+    freshness. Every lookup is best-effort: staleness metadata must never crash
+    the attestation build.
+    """
+    from roam.observability import log_swallowed
+
+    idx = {}
+    try:
+        from roam.commands.resolve import index_status
+
+        idx = index_status() or {}
+    except Exception as exc:  # noqa: BLE001 -- best-effort freshness, never fatal
+        log_swallowed("attest.staleness.index_status", exc)
+    indexed_commit = idx.get("indexed_commit")
+    head_commit = hashes.get("head") or idx.get("head_commit")
+    base_commit = hashes.get("base")
+
+    man = {}
+    try:
+        from roam.index.manifest import latest_manifest
+
+        man = latest_manifest(conn) or {}
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("attest.staleness.manifest", exc)
+    config_hash = man.get("config_hash")
+    schema_version = man.get("schema_version")
+    enabled_extras = man.get("enabled_extras")
+    baseline_version = man.get("roam_version") or tool_version
+
+    rule_hashes = {}
+    try:
+        from roam.evidence import config_hashes
+
+        rule_hashes = config_hashes.stamp_all(root) or {}
+    except Exception as exc:  # noqa: BLE001
+        log_swallowed("attest.staleness.config_hashes", exc)
+
+    stale_if = [
+        {
+            "condition": "head_commit_changed",
+            "baseline": head_commit,
+            "check": "current git HEAD differs from baseline",
+        },
+        {
+            "condition": "indexed_commit_behind_head",
+            "baseline": {"indexed_commit": indexed_commit, "head_commit": head_commit},
+            "already_true": bool(
+                idx.get("fresh") is False and indexed_commit and head_commit and indexed_commit != head_commit
+            ),
+        },
+        {
+            "condition": "working_tree_dirty",
+            "baseline": {"dirty_files": idx.get("dirty_files")},
+            "check": "git status --porcelain is non-empty",
+        },
+        {
+            "condition": "rule_config_hash_changed",
+            "baseline": {"index_config_hash": config_hash, **rule_hashes},
+            "check": "recompute config/rule hashes and compare",
+        },
+        {
+            "condition": "roam_version_major_changed",
+            "baseline": baseline_version,
+            "check": "major component of the running roam version differs",
+        },
+        {
+            "condition": "coverage_import_changed",
+            "baseline": {"enabled_extras": enabled_extras, "schema_version": schema_version},
+            "check": "graph extras (e.g. networkx) or the index schema changed",
+        },
+        {
+            "condition": "target_branch_moved",
+            "baseline": base_commit,
+            "check": "the resolved base ref now points at a different commit",
+        },
+    ]
+
+    not_checked = []
+    if evidence.get("risk") is None:
+        not_checked += ["risk_score", "blast_radius"]
+    if not (isinstance(budget, dict) and budget.get("rules_checked")):
+        not_checked.append("budget_rules")
+    if not (isinstance(tests, dict) and tests.get("selected")):
+        not_checked.append("affected_tests")
+
+    git_range = f"{base_commit or ''}..{head_commit or ''}"
+    return {
+        "indexed_commit": indexed_commit,
+        "head_commit": head_commit,
+        "stale_if": stale_if,
+        "not_checked": not_checked,
+        "verification_command": f"roam attest {git_range} --format json",
+        "privacy": {
+            "source_code_included": False,
+            "identifiers_included": True,
+            "content": (
+                "sha256 hashes, counts, and symbol/identifier names only "
+                "-- no source bodies, prompts, transcripts, or secrets"
+            ),
+            "telemetry": "none",
+            "network_required": False,
+            "remote_url_credentials_stripped": True,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Verdict computation
 # ---------------------------------------------------------------------------
@@ -1194,6 +1309,12 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "git_range": f"{hashes.get('base', base_ref)}..{hashes.get('head', head_ref)}",
         }
+
+        # Issue #58: promote roam's scattered freshness signals (index_status,
+        # the index manifest, config hashes) into one stable, first-class
+        # staleness contract on the attestation body -- so a downstream agent
+        # reading this later can decide whether to trust it or re-run.
+        attestation.update(_build_staleness_contract(root, hashes, tool_version, conn, evidence, budget, tests))
 
         if sign:
             # W607-AD: signing boundary -- the CRYPTOGRAPHIC core. A

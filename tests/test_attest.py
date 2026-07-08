@@ -410,3 +410,60 @@ class TestComputeVerdict:
         budget = {"passed": 3, "failed": 0, "skipped": 0, "rules": []}
         v = _compute_verdict(risk, breaking, fitness, budget)
         assert any("CRITICAL" in w for w in v["warnings"])
+
+
+class TestAttestStalenessContract:
+    """Issue #58: the attestation must carry a first-class staleness contract
+    so a downstream agent reading it later can decide whether it is still
+    authoritative or the evidence must be re-run."""
+
+    CANONICAL = {
+        "head_commit_changed",
+        "indexed_commit_behind_head",
+        "working_tree_dirty",
+        "rule_config_hash_changed",
+        "roam_version_major_changed",
+        "coverage_import_changed",
+        "target_branch_moved",
+    }
+
+    def _attestation(self, cli_runner, project):
+        result = invoke_cli(cli_runner, ["attest"], cwd=project, json_mode=True)
+        return parse_json_output(result, "attest")["attestation"]
+
+    def test_stale_if_contract_present(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        a = self._attestation(cli_runner, attest_project)
+        assert isinstance(a.get("stale_if"), list) and a["stale_if"]
+        conds = {c["condition"] for c in a["stale_if"]}
+        assert self.CANONICAL <= conds, f"missing conditions: {self.CANONICAL - conds}"
+        for c in a["stale_if"]:
+            assert "condition" in c and "baseline" in c
+
+    def test_commits_promoted_unconditionally(self, cli_runner, attest_project, monkeypatch):
+        # Regression vs the old only-when-stale behaviour: both commits are in
+        # the durable body even when the index is fresh at emit time.
+        monkeypatch.chdir(attest_project)
+        a = self._attestation(cli_runner, attest_project)
+        assert "indexed_commit" in a and "head_commit" in a
+
+    def test_verification_command_runnable(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        a = self._attestation(cli_runner, attest_project)
+        assert a["verification_command"].startswith("roam attest ")
+        assert "--format json" in a["verification_command"]
+
+    def test_privacy_block_is_honest(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        a = self._attestation(cli_runner, attest_project)
+        p = a["privacy"]
+        assert p["source_code_included"] is False
+        # honesty guard: symbol/identifier names ARE embedded, so we say so
+        assert p["identifiers_included"] is True
+        assert p["network_required"] is False
+        assert p["telemetry"] == "none"
+
+    def test_not_checked_is_a_list(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        a = self._attestation(cli_runner, attest_project)
+        assert isinstance(a.get("not_checked"), list)

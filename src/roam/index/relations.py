@@ -1052,6 +1052,8 @@ def _precompute_standard_targets_for_precise_reuse(
     return hoisted_standard_targets
 
 
+# 8 import-resolvable source extensions: the JS/TS family (.ts/.js/.vue/.tsx/.jsx),
+# Python (.py), and FoxPro (.prg/.scx) — the languages whose import edges resolve to a path.
 _IMPORT_PATH_EXTENSIONS = (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx")
 
 
