@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from tests._helpers.repo_root import repo_root
+
+sys.path.insert(0, str(repo_root() / "scripts"))
 
 import build_commands_doc as bcd  # noqa: E402
 
