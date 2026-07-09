@@ -121,6 +121,19 @@ def _slug_for_path(value: str | None, fallback: str) -> str:
     return slug or fallback
 
 
+def _reported_path(p: Path) -> str:
+    """Render a path for the JSON summary / operator echo.
+
+    Repo-relative artefact paths (the rehearsal defaults) are surfaced in the
+    JSON envelope consumed by automation and echoed to the operator; they must
+    be canonical POSIX so a Windows host reports ``a/b/c``, not ``a\\b\\c``.
+    User-supplied absolute paths (e.g. ``--evidence C:\\out\\ev.json``) are
+    left in their native form — rewriting a drive-letter path to POSIX would
+    be lossy — so only relative paths are normalised.
+    """
+    return p.as_posix() if not p.is_absolute() else str(p)
+
+
 def _default_rehearsal_paths(*, tier: str, client: str | None) -> dict[str, Path]:
     """Build the default private paths for a PR Replay delivery rehearsal."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -4484,14 +4497,20 @@ def pr_replay_cmd(
         track_engagement = False
         rehearsal_paths = _default_rehearsal_paths(tier=tier, client=client)
         used_rehearsal_default = False
+        # These repo-relative paths are surfaced in the JSON summary (consumed
+        # by automation) and echoed to the operator. Emit canonical POSIX
+        # (`as_posix`) so a Windows host reports
+        # `internal/engagements/rehearsals/...`, not the `\`-separated form —
+        # Python's `open`/`Path` accept `/` on Windows, so the on-disk writes
+        # below are unaffected.
         if output_path is None:
-            output_path = str(rehearsal_paths["report"])
+            output_path = rehearsal_paths["report"].as_posix()
             used_rehearsal_default = True
         if evidence_bundle_dir is None and not (evidence_path and markdown_path):
-            evidence_bundle_dir = str(rehearsal_paths["evidence_bundle"])
+            evidence_bundle_dir = rehearsal_paths["evidence_bundle"].as_posix()
             used_rehearsal_default = True
         if used_rehearsal_default:
-            rehearsal_dir = str(rehearsal_paths["root"])
+            rehearsal_dir = rehearsal_paths["root"].as_posix()
 
     report_md = (
         _run_check_ah(
@@ -4660,7 +4679,7 @@ def pr_replay_cmd(
             )
             if _canonical_json is not None:
                 evidence_json_target.write_text(_canonical_json, encoding="utf-8")
-                evidence_written_to = str(evidence_json_target)
+                evidence_written_to = _reported_path(evidence_json_target)
                 if not json_mode:
                     click.echo(f"Wrote ChangeEvidence JSON to {evidence_written_to}")
         if markdown_companion_target and evidence_packet is not None:
@@ -4679,7 +4698,7 @@ def pr_replay_cmd(
             if companion_md:
                 markdown_companion_target.parent.mkdir(parents=True, exist_ok=True)
                 markdown_companion_target.write_text(companion_md, encoding="utf-8")
-                markdown_companion_written_to = str(markdown_companion_target)
+                markdown_companion_written_to = _reported_path(markdown_companion_target)
                 if not json_mode:
                     click.echo(f"Wrote Markdown companion to {markdown_companion_written_to}")
 

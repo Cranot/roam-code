@@ -4672,19 +4672,29 @@ def _resolve_sibling_test_path(src_path: str, cwd: str | None) -> str | None:
     stem, ext = os.path.splitext(base)
     candidates: list[str] = []
     src_dir = os.path.dirname(src_path)
+
+    def _rel(*parts: str) -> str:
+        # Repo-relative test paths are LLM-facing (stamped into the compile
+        # envelope as `test_path`) and MUST be canonical POSIX on every OS —
+        # `os.path.join` emits `\` on Windows, which corrupts the envelope
+        # (and broke the sibling probe's cross-platform contract). Join with
+        # `/` directly so a Windows host emits `pkg/foo_test.go`, not
+        # `pkg\foo_test.go`.
+        return "/".join(p for p in parts if p)
+
     if ext in (".py", ".pyx"):
         candidates.append(f"tests/test_{stem}.py")
         if "src/" in src_path:
             mirror = src_path.replace("src/", "tests/", 1)
             mirror_dir = os.path.dirname(mirror)
             if mirror_dir:
-                candidates.append(os.path.join(mirror_dir, f"test_{stem}.py"))
-        candidates.append(os.path.join(src_dir, f"test_{stem}.py"))
+                candidates.append(_rel(mirror_dir, f"test_{stem}.py"))
+        candidates.append(_rel(src_dir, f"test_{stem}.py"))
     elif ext == ".go":
-        candidates.append(os.path.join(src_dir, f"{stem}_test.go"))
+        candidates.append(_rel(src_dir, f"{stem}_test.go"))
     elif ext in (".js", ".ts", ".tsx", ".jsx"):
-        candidates.append(os.path.join(src_dir, f"{stem}.test{ext}"))
-        candidates.append(os.path.join(src_dir, "__tests__", f"{stem}.test{ext}"))
+        candidates.append(_rel(src_dir, f"{stem}.test{ext}"))
+        candidates.append(_rel(src_dir, "__tests__", f"{stem}.test{ext}"))
         candidates.append(f"tests/{stem}.test{ext}")
     elif ext == ".rb":
         candidates.append(f"spec/{stem}_spec.rb")
@@ -4704,7 +4714,9 @@ def _resolve_sibling_test_path(src_path: str, cwd: str | None) -> str | None:
             # Return path relative to cwd if possible
             if cwd and chosen.startswith(cwd):
                 chosen = os.path.relpath(chosen, cwd)
-            return chosen
+            # `os.path.relpath` emits OS-native separators — normalize to
+            # POSIX so the envelope `test_path` stays canonical on Windows.
+            return chosen.replace(os.sep, "/")
     return None
 
 
@@ -5343,6 +5355,11 @@ def _probe_module_name_for_task(task: str, named_paths: list[str], cwd: str | No
     ):
         for hit in _glob.glob(os.path.join(base, pat), recursive=True):
             rel = os.path.relpath(hit, base) if cwd else hit
+            # `os.path.relpath` emits OS-native separators; the downstream
+            # `_repo_contained_path` funnel splits on `/` only, and these paths
+            # are stitched into named_paths (LLM-facing). Normalise to POSIX so
+            # a Windows host yields `src/roam/auth.py`, not `src\roam\auth.py`.
+            rel = rel.replace(os.sep, "/")
             if rel not in candidates:
                 candidates.append(rel)
         if candidates:
