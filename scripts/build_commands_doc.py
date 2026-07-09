@@ -25,7 +25,14 @@ def _surface() -> dict:
 
     from roam.cli import cli
 
-    res = CliRunner().invoke(cli, ["surface", "--json"])
+    # Documentation generation needs the complete registry. The normal JSON
+    # envelope budget may truncate the large command list for interactive
+    # consumers, which would silently produce an incomplete index.
+    res = CliRunner().invoke(
+        cli,
+        ["surface", "--json"],
+        env={"ROAM_DEFAULT_JSON_BUDGET": "0"},
+    )
     if res.exit_code != 0:
         raise SystemExit(f"roam surface failed: {res.output[:300]}")
     return json.loads(res.output)

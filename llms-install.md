@@ -4,7 +4,7 @@ roam-code is the local CLI that runs pre-change gates before every agent edit
 and compiles tamper-evident, content-hashed evidence packets after every change.
 100% local, no API keys, no telemetry.
 <!-- BEGIN auto-count:llms-install-headline -->
-268 commands, 243 MCP tools, 28 languages, 100% local, zero API keys.
+269 commands, 243 MCP tools, 28 languages, 100% local, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Cross-references
@@ -262,5 +262,5 @@ and `roam surface --json` for the machine-readable inventory.
   <https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163>
 
 <!-- BEGIN auto-count:llms-install-footer -->
-Run `roam --help` for all 268 commands (+ alias pairs).
+Run `roam --help` for all 269 commands (+ alias pairs).
 <!-- END auto-count:llms-install-footer -->
