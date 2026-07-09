@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
+
 
 def _classify(proj, symbol):
     from roam.db.connection import open_db
@@ -113,3 +119,55 @@ def test_restore_loss_detects_explicit_delete_order_loop(project_factory, monkey
 
     assert findings, "Expected a restore-loss finding from delete-order loop"
     assert findings[0].lost_tables == ["t3"], f"Expected only t3 lost, got {findings[0].lost_tables}"
+
+
+def test_restore_loss_is_reachable_through_verify(project_factory, cli_runner, monkeypatch):
+    """``verify --checks restore_loss`` surfaces a silent data-loss finding."""
+    proj = project_factory(
+        {
+            "src/restore.py": (
+                "def restore_subset(conn, rows1, rows2):\n"
+                "    DELETE_ORDER = ['t1', 't2', 't3']\n"
+                "    for table in DELETE_ORDER:\n"
+                '        conn.execute(f"DELETE FROM {table}")\n'
+                '    conn.execute("INSERT INTO t1 VALUES (?)", rows1)\n'
+                '    conn.execute("INSERT INTO t2 VALUES (?)", rows2)\n'
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+
+    result = invoke_cli(cli_runner, ["verify", "--checks", "restore_loss", "src/restore.py"], cwd=proj, json_mode=True)
+    data = parse_json_output(result, "verify")
+    assert_json_envelope(data, "verify")
+    assert data["summary"]["checks_run"] == ["restore_loss"]
+    violations = data["categories"]["restore_loss"]["violations"]
+    assert len(violations) == 1
+    violation = violations[0]
+    assert violation["symbol"] == "restore_subset"
+    assert violation["lost_tables"] == ["t3"]
+    assert violation["file"] == "src/restore.py"
+
+
+def test_restore_loss_verify_passes_when_tables_are_reinserted(project_factory, cli_runner, monkeypatch):
+    """``verify --checks restore_loss`` stays clean when delete and insert sets match."""
+    proj = project_factory(
+        {
+            "src/restore.py": (
+                "def restore_all(conn, rows1, rows2, rows3):\n"
+                "    DELETE_ORDER = ['t1', 't2', 't3']\n"
+                "    for table in DELETE_ORDER:\n"
+                '        conn.execute(f"DELETE FROM {table}")\n'
+                '    conn.execute("INSERT INTO t1 VALUES (?)", rows1)\n'
+                '    conn.execute("INSERT INTO t2 VALUES (?)", rows2)\n'
+                '    conn.execute("INSERT INTO t3 VALUES (?)", rows3)\n'
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+
+    result = invoke_cli(cli_runner, ["verify", "--checks", "restore_loss", "src/restore.py"], cwd=proj, json_mode=True)
+    data = parse_json_output(result, "verify")
+    assert_json_envelope(data, "verify")
+    assert data["categories"]["restore_loss"]["violations"] == []
+    assert data["summary"]["violation_count"] == 0

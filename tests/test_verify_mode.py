@@ -97,6 +97,15 @@ def test_structural_checks_available_and_opt_in():
     assert "complexity" in sel and "cycles" in sel
 
 
+def test_restore_loss_check_is_opt_in_only():
+    # restore_loss is an advisory structural detector: available when asked
+    # for, but never part of the default verify surface.
+    sel = auto_select_checks(["src/foo.py"])
+    assert "restore_loss" in _ALL_CHECKS
+    assert "restore_loss" not in _DEFAULT_CHECKS
+    assert "restore_loss" not in sel
+
+
 def test_tests_check_auto_on_by_default_env_reversible(monkeypatch):
     # the EXECUTABLE-signal check is available, NOT in the always-on default
     # set, but auto-selected by default on a Python edit (the impacted-test run

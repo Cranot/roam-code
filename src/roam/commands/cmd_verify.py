@@ -62,6 +62,8 @@ _CATEGORY_WEIGHTS = {
     # roam-code; _compute_composite renormalizes so the relative weight is what
     # matters). Catches "importing this module mutates the world".
     "import_side_effects": 0.15,
+    # Restore-loss — advisory, opt-in structural data-loss detector.
+    "restore_loss": 0.15,
     # Richer STRUCTURAL checks (opt-in via --checks/--auto/--all/config): higher
     # signal than style — KISS (complexity) + architecture (import cycles).
     "complexity": 0.20,
@@ -446,6 +448,7 @@ _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     "tests",
     "command_examples",
     "claims",
+    "restore_loss",
     # Guardrail gates (env-flagged; see _verify_env_flag). Selectable via
     # --checks/--all/config; auto-selected by default on Python edits.
     _VERIFY_BREAKING_CATEGORY,
@@ -1392,7 +1395,7 @@ def _has_noqa(line_text: str, codes: tuple[str, ...]) -> bool:
     m = re.search(r"#\s*noqa(?::\s*([A-Z0-9, ]+))?", line_text or "")
     if not m:
         return False
-    if m.group(1) is None:  # bare `# noqa` suppresses all codes
+    if m.group(1) is None:  # bare noqa suppresses all codes
         return True
     listed = {c.strip().upper() for c in m.group(1).split(",") if c.strip()}
     return any(c.upper() in listed for c in codes)
@@ -2255,6 +2258,48 @@ def _check_import_side_effects(conn, file_ids: list[int], root: Path) -> dict:
         checked += 1
         violations.extend(_import_side_effect_violations(r["path"], src))
     score = 100 if checked == 0 else max(0, 100 - 8 * len(violations))
+    return {"score": score, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
+# Restore-loss check
+# ---------------------------------------------------------------------------
+
+
+def _check_restore_loss(conn, file_ids: list[int]) -> dict:
+    """Flag symbols that delete tables without restoring them in the same body."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.restore_loss import classify_restore_loss
+
+    violations: list[dict] = []
+    for finding in classify_restore_loss(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        message = f"silent data loss: {finding.symbol} deletes {', '.join(finding.lost_tables)} without reinserting"
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": "restore_loss",
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": message,
+                "fix": (
+                    f"Reinsert {', '.join(finding.lost_tables)} before returning, or stop "
+                    f"deleting tables that are not restored in `{finding.symbol}`"
+                ),
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
     return {"score": score, "violations": violations}
 
 
@@ -4120,6 +4165,7 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
         "import_side_effects": _maybe_run_verify_check(
             selected, "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
         ),
+        "restore_loss": _maybe_run_verify_check(selected, "restore_loss", lambda: _check_restore_loss(conn, file_ids)),
         "secrets": _maybe_run_verify_check(selected, "secrets", lambda: _check_secrets(target_paths, root)),
         "command_examples": _maybe_run_verify_check(
             selected, "command_examples", lambda: _check_command_examples(target_paths, root)
@@ -4552,6 +4598,7 @@ def _emit_verify_text(
         ("SYNTAX", "syntax"),
         ("COMPLEXITY", "complexity"),
         ("CYCLES", "cycles"),
+        ("RESTORE LOSS", "restore_loss"),
         ("TESTS", "tests"),
         ("COMMAND EXAMPLES", "command_examples"),
         ("CLAIMS", "claims"),
@@ -4850,7 +4897,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "command_examples,claims. Default: all (or .roam/verify.yaml)."
+        "restore_loss,command_examples,claims. Default: all (or .roam/verify.yaml)."
     ),
 )
 @click.option(
