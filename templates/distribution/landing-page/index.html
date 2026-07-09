@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Roam — Check AI-written changes before they merge</title>
-  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, and tamper-evident evidence — credential-free, zero-egress.">
+  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, and tamper-evident evidence — credential-free, zero network egress by default.">
 
   <meta property="og:title" content="Roam — Check AI-written changes before they merge">
   <meta property="og:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
@@ -157,7 +157,7 @@
         <a class="btn-secondary" href="#audit">Replay your last 5 PRs</a>
       </div>
       <p class="hero-trust-strip">
-        Free CLI · Apache 2.0 · 28 languages · 16 core agent tools · 243 total MCP tools · 7,731 PyPI installs/month (as of 2026-05-09)
+        Free CLI · Apache 2.0 · 28 languages · 16 core agent tools · 243 total MCP tools · 495 GitHub stars
       </p>
     </div>
   </header>
@@ -205,7 +205,6 @@
             <tr><td>Agent turns (nav/comprehension)</td><td>6</td><td>1</td><td><strong>−83%</strong></td></tr>
             <tr><td>Input tokens</td><td>271K</td><td>53K</td><td><strong>−80%</strong></td></tr>
             <tr><td>Cost</td><td>$1.30</td><td>$0.48</td><td><strong>−63%</strong></td></tr>
-            <tr><td>Wall time</td><td>—</td><td>—</td><td><strong>−50%</strong></td></tr>
           </tbody>
         </table>
       </div>
@@ -348,9 +347,10 @@
         Roam catches three classes of structural consequence the agent
         and the reviewer both tend to miss.
         <span class="lede-source">
-          Source: <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a>
+          Source: <a href="https://www.faros.ai/research">Faros AI, <em>The Acceleration Whiplash</em> (2026)</a>
+          — two years of telemetry across 22,000 developers and 4,000+ teams
           (exact figures: bugs/dev +54%, incidents/PR +242.7%;
-          <a class="archive-link" href="https://web.archive.org/web/20260507124644/https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025" rel="external">archive</a>).
+          <a class="archive-link" href="https://adtmag.com/articles/2026/04/22/more-code-more-bugs.aspx" rel="external">independent coverage</a>).
         </span>
       </p>
 
@@ -368,7 +368,7 @@
 <span class="t-line">  reaches: 3 entry points, 1 destructive op</span>
 <span class="t-line">  runtime: 1,247 calls/day in trace_ingest</span>
 <span class="t-line">  flag: DELETE without LIMIT</span></pre>
-          <p class="tie-back">→ Nine seconds vs nine months of backups.</p>
+          <p class="tie-back">→ Nine seconds vs three months of backups.</p>
         </article>
 
         <article class="scenario">
@@ -398,7 +398,7 @@
 <span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
 <span class="t-line">  diff: response shape changed</span>
 <span class="t-line">  downstream: 4 mobile clients, 2 webhooks</span></pre>
-          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — by reviewing structural impact at machine speed.</p>
+          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — it's fixed by reviewing structural impact at machine speed.</p>
         </article>
 
       </div>
@@ -503,10 +503,10 @@
         <div class="num-cell"><strong>zero</strong><span>network egress at analysis time</span></div>
         <div class="num-cell"><strong>tamper-evident</strong><span>HMAC-chained evidence packets</span></div>
         <div class="num-cell"><strong>28</strong><span>language families</span></div>
-        <div class="num-cell"><strong>459</strong><span>GitHub stars</span></div>
-        <div class="num-cell"><strong>7,731</strong><span>PyPI installs / month</span></div>
+        <div class="num-cell"><strong>495</strong><span>GitHub stars</span></div>
+        <div class="num-cell"><strong>243</strong><span>MCP tools for your agent</span></div>
       </div>
-      <p class="numbers-date">snapshot as of <time datetime="2026-05-09">2026-05-09</time></p>
+      <p class="numbers-date">snapshot as of <time datetime="2026-07-10">2026-07-10</time></p>
 
       <p class="install-cmd" id="install">
         <code>pip install roam-code &amp;&amp; roam init</code>

@@ -253,9 +253,10 @@
           <span>
             CGA-signed event records covering every command an agent or
             human ran against the local repo. Forwards-compatible with
-            cryptographic signature schemes; today the bundles are signed
-            with in-toto v1 + cosign so reviewers can verify integrity
-            without contacting us.
+            cryptographic signature schemes; today the bundles carry
+            in-toto v1 attestations so reviewers can verify integrity
+            without contacting us (cosign keyless signing of per-run
+            bundles is on the roadmap).
           </span>
         </div>
         <div class="verb-cell">
