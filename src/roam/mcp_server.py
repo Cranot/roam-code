@@ -8719,10 +8719,18 @@ def oracle_batch(items: list, root: str = ".") -> dict:
     ensure_index()
     results: list[dict] = []
     project_root_path = Path(root) if isinstance(root, str) else Path(".")
+
+    def _error_row(item, message: str) -> dict:
+        return {
+            "status": "error",
+            "error": message,
+            "input": item,
+        }
+
     with open_db(readonly=True, project_root=project_root_path) as conn:
         for item in items:
             if not isinstance(item, dict):
-                results.append({"error": "item must be a dict", "input": item})
+                results.append(_error_row(item, "item must be a dict"))
                 continue
             oracle_name = (item.get("oracle") or "").strip()
             target = item.get("name") or item.get("path") or ""
@@ -8738,10 +8746,10 @@ def oracle_batch(items: list, root: str = ".") -> dict:
                 elif oracle_name == "is-clone-of":
                     r = _is_clone_of(conn, target)
                 else:
-                    results.append({"error": f"unknown oracle '{oracle_name}'", "input": item})
+                    results.append(_error_row(item, f"unknown oracle '{oracle_name}'"))
                     continue
             except Exception as exc:
-                results.append({"error": f"{oracle_name} crashed: {exc}", "input": item})
+                results.append(_error_row(item, f"{oracle_name} crashed: {exc}"))
                 continue
             results.append(
                 {
