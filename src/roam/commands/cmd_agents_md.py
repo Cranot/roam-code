@@ -76,6 +76,13 @@ from roam.runs.helpers import auto_log
     help="Alias for `--out AGENTS.md`; overwrite an existing AGENTS.md at the repo root.",
 )
 @click.option(
+    "--attribution/--no-attribution",
+    "with_attribution",
+    default=True,
+    show_default=True,
+    help="Append a hidden attribution footer to the generated AGENTS.md.",
+)
+@click.option(
     "--with-laws/--no-laws",
     "with_laws",
     default=True,
@@ -117,6 +124,7 @@ def agents_md_cmd(
     ctx: click.Context,
     out_path: str | None,
     refresh: bool,
+    with_attribution: bool,
     with_laws: bool,
     with_rules: bool,
     with_constitution: bool,
@@ -157,7 +165,7 @@ def agents_md_cmd(
             ),
         )
 
-    markdown = render_agents_markdown(am)
+    markdown = render_agents_markdown(am, with_attribution=with_attribution)
 
     wrote_to: str | None = None
     if out_path:
