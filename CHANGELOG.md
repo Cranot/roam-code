@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.7.1] — 2026-07-09
+
 ### Added
+- **`roam suggest-refactoring` extraction hints** — an `extract` recommendation now
+  names the exact block, line range, and estimated cognitive-complexity delta
+  (parent → after) via the deterministic `complexity_extract` analyzer, in both the
+  text output and the JSON envelope. Safe no-op when no hint is available.
+- **Self-propagating attribution footer** in generated `AGENTS.md` — a single
+  invisible HTML comment crediting roam; on by default, opt out with
+  `roam agents-md --no-attribution`, idempotent across `--refresh`.
 - **`roam service-report`** — restored the one-command reachability-triage deliverable
   (SBOM → supply-chain → vulns → vuln-reach → taint → secrets) that was dropped in a
   history reconcile.
@@ -16,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   cannot be silently dropped again.
 
 ### Fixed
+- **Complexity gate no longer re-flags a freshly-extracted helper** — a helper landing
+  exactly on the cognitive-complexity threshold is no longer emitted as a new finding
+  (`<=` skip), so refactoring a hotspot toward the ceiling is not punished. Real
+  above-threshold hotspots still emit.
 - **`vuln-reach`** — package-name matching now anchors to dotted path segments instead
   of a naked substring, eliminating false matches on short package names. This unblocks
   accurate vulnerability-reachability triage.
@@ -28,6 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and a monkeypatch import-capture flake; full suite is green across Python 3.10–3.13.
 
 ### Security
+- **Default-deny executing a repo-local `.roam-leak-patterns.py`** (hostile-repo RCE
+  fix). The verify secrets gate previously imported/executed this file from the target
+  repo with no trust gate, so running `roam verify` on an untrusted repo — including the
+  auto-fired Claude Code Stop hook — was arbitrary code execution. It is now gated behind
+  the `ROAM_ALLOW_REPO_LEAK_PATTERNS` environment variable (read from the environment
+  only, so a repo cannot set its own trust flag); default-deny returns a disclosed note
+  and the built-in credential patterns still run.
+- **Client-side pre-push secret scan** — `.githooks/pre-push` now scans the commits being
+  pushed for credential shapes (reusing roam's own patterns, with placeholder / env-var /
+  `secretsallow` exemptions), blocking a leaked credential locally before it reaches the
+  remote where a later force-push cannot un-compromise it.
+- **Default-deny `PUBLIC_ALLOWLIST` CI test** — every tracked file must match an explicit
+  publishable-path allowlist, so a new internal-only file at the repo root fails CI
+  instead of shipping (a leak-shield that survives a history reconcile).
 - Bumped `joserfc` 1.6.5 → 1.7.3 (HMAC empty-key verify bypass + JWS payload-size bypass)
   and `pydantic-settings` 2.14.1 → 2.14.2 (nested-secrets symlink escape) — clears 3
   Dependabot alerts. Both are transitive and not reached by roam's own code.

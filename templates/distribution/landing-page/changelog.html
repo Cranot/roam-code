@@ -76,13 +76,17 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.7.1] — 2026-07-09</h2>
 <h3>Added</h3>
 <ul>
+<li><strong><code>roam suggest-refactoring</code> extraction hints</strong> — an <code>extract</code> recommendation now names the exact block, line range, and estimated cognitive-complexity delta (parent → after) via the deterministic <code>complexity_extract</code> analyzer, in both the text output and the JSON envelope. Safe no-op when no hint is available.</li>
+<li><strong>Self-propagating attribution footer</strong> in generated <code>AGENTS.md</code> — a single invisible HTML comment crediting roam; on by default, opt out with <code>roam agents-md --no-attribution</code>, idempotent across <code>--refresh</code>.</li>
 <li><strong><code>roam service-report</code></strong> — restored the one-command reachability-triage deliverable (SBOM → supply-chain → vulns → vuln-reach → taint → secrets) that was dropped in a history reconcile.</li>
 <li><strong><code>docs/COMMANDS.md</code></strong> — the full command index (268 commands across 7 categories, 243 MCP tools), regenerated from <code>roam surface</code> and guarded by a CI invariant so it cannot be silently dropped again.</li>
 </ul>
 <h3>Fixed</h3>
 <ul>
+<li><strong>Complexity gate no longer re-flags a freshly-extracted helper</strong> — a helper landing exactly on the cognitive-complexity threshold is no longer emitted as a new finding (<code>&lt;=</code> skip), so refactoring a hotspot toward the ceiling is not punished. Real above-threshold hotspots still emit.</li>
 <li><strong><code>vuln-reach</code></strong> — package-name matching now anchors to dotted path segments instead of a naked substring, eliminating false matches on short package names. This unblocks accurate vulnerability-reachability triage.</li>
 <li><strong><code>for_security_review</code></strong> — reconnected to the W607 substrate marker layer so degradation markers surface correctly.</li>
 <li>MCP binding corrections (<code>understand</code>, <code>fetch_handle</code>) + surface-count sync (243 MCP tools).</li>
@@ -91,6 +95,9 @@
 </ul>
 <h3>Security</h3>
 <ul>
+<li><strong>Default-deny executing a repo-local <code>.roam-leak-patterns.py</code></strong> (hostile-repo RCE fix). The verify secrets gate previously imported/executed this file from the target repo with no trust gate, so running <code>roam verify</code> on an untrusted repo — including the auto-fired Claude Code Stop hook — was arbitrary code execution. It is now gated behind the <code>ROAM_ALLOW_REPO_LEAK_PATTERNS</code> environment variable (read from the environment only, so a repo cannot set its own trust flag); default-deny returns a disclosed note and the built-in credential patterns still run.</li>
+<li><strong>Client-side pre-push secret scan</strong> — <code>.githooks/pre-push</code> now scans the commits being pushed for credential shapes (reusing roam's own patterns, with placeholder / env-var / <code>secretsallow</code> exemptions), blocking a leaked credential locally before it reaches the remote where a later force-push cannot un-compromise it.</li>
+<li><strong>Default-deny <code>PUBLIC_ALLOWLIST</code> CI test</strong> — every tracked file must match an explicit publishable-path allowlist, so a new internal-only file at the repo root fails CI instead of shipping (a leak-shield that survives a history reconcile).</li>
 <li>Bumped <code>joserfc</code> 1.6.5 → 1.7.3 (HMAC empty-key verify bypass + JWS payload-size bypass) and <code>pydantic-settings</code> 2.14.1 → 2.14.2 (nested-secrets symlink escape) — clears 3 Dependabot alerts. Both are transitive and not reached by roam's own code.</li>
 </ul>
 <h2>[13.7.0] — 2026-07-08</h2>
