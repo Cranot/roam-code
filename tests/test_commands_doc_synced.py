@@ -9,12 +9,29 @@ so a future drop/rename cannot pass CI silently. Regenerate on failure:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import build_commands_doc as bcd  # noqa: E402
+
+
+def _canonicalize_version(text: str) -> str:
+    """Neutralize the volatile ``roam v<version>`` stamp in the doc header.
+
+    W169 is a *surface*-sync invariant — it guards that every command stays
+    documented, not the release number. The header version comes from
+    ``importlib.metadata.version('roam-code')`` (INSTALLED package metadata),
+    which legitimately differs across environments: a fresh CI install, a stale
+    editable install, and a cached wheel each report a different version. That
+    made this test pass locally yet fail on CI purely because the committed doc
+    was stamped with one version and CI regenerated another — a false red with
+    an identical command surface. Canonicalizing the version token keeps the
+    real invariant (the surface) while dropping the incidental release string.
+    """
+    return re.sub(r"roam v[0-9][^\s|]*", "roam vX", text)
 
 
 def test_commands_doc_exists():
@@ -28,7 +45,7 @@ def test_commands_doc_in_sync_with_surface():
     surface = bcd._surface()
     want = bcd.render(surface)
     have = bcd.DOC.read_text(encoding="utf-8")
-    assert have == want, (
+    assert _canonicalize_version(have) == _canonicalize_version(want), (
         "docs/COMMANDS.md is OUT OF SYNC with `roam surface` "
         f"({surface.get('command_count')} commands). "
         "Regenerate: python scripts/build_commands_doc.py"
