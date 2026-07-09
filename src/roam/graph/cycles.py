@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import warnings
 from collections import Counter
+from itertools import combinations
 
 import networkx as nx
 
@@ -147,6 +148,38 @@ def find_cycles(G: nx.DiGraph, min_size: int = 2) -> list[list[int]]:
     sccs = [sorted(c) for c in nx.strongly_connected_components(G) if len(c) >= min_size]
     sccs.sort(key=len, reverse=True)
     return sccs
+
+
+def find_minimum_cycle_break_edge_sets(
+    G: nx.DiGraph,
+    scc_members: list[int],
+    *,
+    max_internal_edges: int = 14,
+) -> list[list[tuple[int, int]]]:
+    """Return every minimum edge set that makes one SCC acyclic.
+
+    The exact feedback-edge search is deliberately bounded.  Small SCCs get
+    a provably minimal result; larger tangles return no candidates rather than
+    a heuristic recommendation that may overstate how little must move.
+    """
+    member_set = set(scc_members)
+    internal_edges = sorted(
+        (source, target) for source, target in G.edges() if source in member_set and target in member_set
+    )
+    if not internal_edges or len(internal_edges) > max_internal_edges:
+        return []
+
+    subgraph = G.subgraph(member_set).copy()
+    for size in range(1, len(internal_edges) + 1):
+        candidates = []
+        for removed in combinations(internal_edges, size):
+            candidate = subgraph.copy()
+            candidate.remove_edges_from(removed)
+            if nx.is_directed_acyclic_graph(candidate):
+                candidates.append(list(removed))
+        if candidates:
+            return candidates
+    return []
 
 
 def format_cycles(cycles: list[list[int]], conn: sqlite3.Connection) -> list[dict]:
