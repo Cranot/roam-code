@@ -13,7 +13,11 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ImportError:  # Python 3.10 — tomli backport (a dependency)
+    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402
