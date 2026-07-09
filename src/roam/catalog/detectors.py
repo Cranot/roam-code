@@ -1730,6 +1730,27 @@ _IO_WRAPPER_NAMES = {
     "for_each_repo",
 }
 
+# Batch writes are the anti-N+1 shape. Keep them out of the loop-I/O
+# detector even when they appear lexically inside a loop body.
+_IO_BATCH_CALLS = {
+    "executemany",
+    "executebatch",
+    "executescript",
+    "bulkcreate",
+    "bulkinsert",
+    "bulkupdate",
+    "insertmany",
+    "copyfrom",
+    "addall",
+    "writerows",
+}
+
+
+def _is_batch_io_call(call: str) -> bool:
+    """Return True for batched writes that should not trip N+1 I/O."""
+    return _call_leaf(call).lower().replace("_", "") in _IO_BATCH_CALLS
+
+
 # D body-level signals that the loop iterates CHUNKS, not
 # individual items. When any of these patterns appear in the function body,
 # the inner I/O calls operate on a batch (WHERE IN (...) form), not per-item,
@@ -2230,6 +2251,8 @@ def _io_classify_call(
     though the leaf matches a cache identifier; user feedback called
     out the Promise<T> vs T distinction explicitly.
     """
+    if _is_batch_io_call(c):
+        return None, None
     # D2: if call name matches cache allowlist BUT is awaited in the body,
     # the await says it really IS asynchronous I/O — escalate to medium.
     memory_result = _classify_known_in_memory_call(c, snippet)

@@ -814,6 +814,48 @@ class TestDetectors:
             assert len(hits) >= 1
             assert hits[0]["task_id"] == "io-in-loop"
 
+    def test_detect_io_in_loop_skips_batch_flush_but_flags_per_row_execute(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "batch_writer.py": (
+                    "def flush_users(conn, rows):\n"
+                    "    batch = []\n"
+                    "    for row in rows:\n"
+                    "        batch.append((row['id'], row['name']))\n"
+                    "        if len(batch) == 100:\n"
+                    "            conn.executemany(\n"
+                    "                'INSERT INTO users (id, name) VALUES (?, ?)',\n"
+                    "                batch,\n"
+                    "            )\n"
+                    "            batch.clear()\n"
+                    "    if batch:\n"
+                    "        conn.executemany(\n"
+                    "            'INSERT INTO users (id, name) VALUES (?, ?)',\n"
+                    "            batch,\n"
+                    "        )\n"
+                    "    return len(rows)\n"
+                ),
+                "row_writer.py": (
+                    "def write_users(conn, rows):\n"
+                    "    for row in rows:\n"
+                    "        conn.execute(\n"
+                    "            'INSERT INTO users (id, name) VALUES (?, ?)',\n"
+                    "            (row['id'], row['name']),\n"
+                    "        )\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_io_in_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+
+        locations = {Path(hit["location"].rsplit(":", 1)[0]).name for hit in hits}
+        assert "row_writer.py" in locations
+        assert "batch_writer.py" not in locations
+
     def test_detect_io_in_loop_requests_get(self, project_factory, monkeypatch):
         proj = project_factory(
             {
