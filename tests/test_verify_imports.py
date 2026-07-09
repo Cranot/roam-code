@@ -395,7 +395,7 @@ class TestJavaScriptPatterns:
         from roam.commands.cmd_verify_imports import _extract_import_names_from_line
 
         names = _extract_import_names_from_line("const helper = require('./utils/helper')", "javascript")
-        assert "helper" in names
+        assert names == ["./utils/helper"]
 
 
 # ===========================================================================
@@ -612,6 +612,54 @@ class TestJavaScriptProject:
         assert data["command"] == "verify-imports"
         assert data["summary"]["total_imports"] >= 0
 
+    def test_js_resolver_builtins_dependencies_and_relative_paths(self, project_factory):
+        project = project_factory(
+            {
+                "packages/app/package.json": json.dumps(
+                    {
+                        "dependencies": {"lodash": "^4"},
+                        "devDependencies": {"vitest": "^1"},
+                        "peerDependencies": {"react": "^18"},
+                    }
+                ),
+                "packages/app/src/main.ts": (
+                    'import nodeFs from "node:fs";\n'
+                    'import bareFs from "fs";\n'
+                    'import lodash from "lodash";\n'
+                    'import merge from "lodash/merge";\n'
+                    'import vitest from "vitest";\n'
+                    'import jsxRuntime from "react/jsx-runtime";\n'
+                    'import helper from "./helper";\n'
+                    'import shared from "../shared";\n'
+                    'import missingPackage from "genuinely-missing";\n'
+                    'import missingRelative from "./missing";\n'
+                ),
+                "packages/app/src/helper.ts": "export default 1;\n",
+                "packages/app/shared/index.ts": "export default 2;\n",
+                # Prove relative and bare imports do not resolve by basename elsewhere.
+                "other/missing.ts": "export default 3;\n",
+                "other/genuinely-missing.ts": "export default 4;\n",
+            }
+        )
+
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        imports = {row["name"]: row["status"] for row in json.loads(result.output)["imports"]}
+
+        for name in (
+            "node:fs",
+            "fs",
+            "lodash",
+            "lodash/merge",
+            "vitest",
+            "react/jsx-runtime",
+            "./helper",
+            "../shared",
+        ):
+            assert imports[name] == "resolved", name
+        assert imports["genuinely-missing"] == "unresolved"
+        assert imports["./missing"] == "unresolved"
+
 
 # ===========================================================================
 # 12. Empty / edge case tests
@@ -716,6 +764,7 @@ class TestJsFirewallSemantics:
 
         for mod in ("crypto", "node:crypto", "fs", "fs/promises", "path", "os"):
             assert _is_node_builtin(mod), mod
+        assert _is_node_builtin("node:future-built-in")
         assert not _is_node_builtin("totally-fake-package")
         assert not _is_node_builtin("./crypto")  # relative path, not a builtin
 

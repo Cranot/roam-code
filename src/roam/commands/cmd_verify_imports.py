@@ -150,7 +150,7 @@ def _declared_dependency_modules(project_root: str) -> frozenset[str]:
     return frozenset(name.lower() for req in reqs if (name := _import_name_for_requirement(req)))
 
 
-# Node.js built-in modules — the JS analog of _PYTHON_STDLIB. 41 entries
+# Node.js built-in modules — the JS analog of _PYTHON_STDLIB. 42 entries
 # (the stable core set; both bare and `node:`-prefixed forms are accepted).
 # Dogfooded on a Node/TS server repo: without this, `import crypto from
 # "crypto"` FAILed as a hallucination in every server file.
@@ -195,6 +195,7 @@ _NODE_BUILTINS: frozenset[str] = frozenset(
         "util",
         "v8",
         "vm",
+        "wasi",
         "worker_threads",
         "zlib",
     }
@@ -204,7 +205,9 @@ _NODE_BUILTINS: frozenset[str] = frozenset(
 def _is_node_builtin(module_path: str) -> bool:
     """True for Node built-ins, bare (``crypto``) or prefixed (``node:crypto``),
     including subpaths (``fs/promises``)."""
-    name = module_path[5:] if module_path.startswith("node:") else module_path
+    if module_path.startswith("node:"):
+        return True
+    name = module_path
     return name.split("/")[0] in _NODE_BUILTINS
 
 
@@ -299,6 +302,35 @@ def _dep_section_names(data: dict) -> set[str]:
     for key in _JS_DEP_SECTIONS:
         names.update((data.get(key) or {}).keys())
     return names
+
+
+@functools.lru_cache(maxsize=128)
+def _dependency_packages_from_package_json(package_json: str) -> frozenset[str]:
+    """Read one package.json dependency set, cached across importing files."""
+    data = _read_package_json(package_json, "verify_imports.declared_deps.package_json")
+    return frozenset(_dep_section_names(data)) if data is not None else frozenset()
+
+
+def _nearest_js_dependency_packages(project_root: str, file_path: str) -> frozenset[str]:
+    """Return dependencies from the nearest package.json above *file_path*."""
+    root = os.path.abspath(project_root)
+    directory = os.path.dirname(os.path.abspath(os.path.join(root, file_path)))
+    try:
+        if os.path.commonpath((root, directory)) != root:
+            return frozenset()
+    except ValueError:
+        return frozenset()
+
+    while True:
+        package_json = os.path.join(directory, "package.json")
+        if os.path.isfile(package_json):
+            return _dependency_packages_from_package_json(package_json)
+        if directory == root:
+            return frozenset()
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return frozenset()
+        directory = parent
 
 
 def _consume_string_char(text: str, i: int, out: list[str]) -> tuple[int, bool]:
@@ -531,8 +563,7 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
 
         m = _JS_REQUIRE.search(line)
         if m:
-            module_path = m.group(1)
-            names.append(module_path.split("/")[-1])
+            names.append(m.group(1))
             return names
         # JS-like files don't fall through to the Python regex.
         return names
@@ -935,6 +966,29 @@ def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bo
     }
 
 
+_JS_RESOLUTION_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".json")
+
+
+def _js_relative_import_resolves(project_root: str, file_path: str, specifier: str) -> bool:
+    """Resolve a relative JS/TS specifier from the importing file's directory."""
+    if not specifier.startswith(("./", "../")):
+        return False
+
+    root = os.path.abspath(project_root)
+    importer_dir = os.path.dirname(os.path.abspath(os.path.join(root, file_path)))
+    base = os.path.normpath(os.path.join(importer_dir, specifier))
+    try:
+        if os.path.commonpath((root, base)) != root:
+            return False
+    except ValueError:
+        return False
+
+    candidates = [base]
+    candidates.extend(base + extension for extension in _JS_RESOLUTION_EXTENSIONS)
+    candidates.extend(os.path.join(base, f"index{extension}") for extension in _JS_RESOLUTION_EXTENSIONS)
+    return any(os.path.isfile(candidate) for candidate in candidates)
+
+
 def _js_directory_import_resolves(conn: sqlite3.Connection, probe: str) -> bool:
     """True when a JS path specifier resolves to an indexed directory."""
     return (
@@ -984,6 +1038,7 @@ def _scan_import_entry(
     line_num: int,
     name: str,
     *,
+    project_root: str,
     is_py: bool,
     js_deps: frozenset[str] | None,
     js_aliases: dict[str, list[str]],
@@ -995,6 +1050,13 @@ def _scan_import_entry(
     """Validate one extracted import name and return its scan row."""
     if is_py and _is_stdlib_module(name):
         return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    if js_deps is not None and name.startswith(("./", "../")):
+        resolved = _js_relative_import_resolves(project_root, file_path, name)
+        entry = _import_scan_entry(file_path, line_num, name, resolved=resolved)
+        if not resolved:
+            entry["suggestions"] = _fts_suggestions(conn, name)
+        return entry
 
     if js_deps is not None and (_is_node_builtin(name) or _js_module_is_declared(name, js_deps)):
         return _import_scan_entry(file_path, line_num, name, resolved=True)
@@ -1008,6 +1070,11 @@ def _scan_import_entry(
         file_index=file_index,
     ):
         return _import_scan_entry(file_path, line_num, name, resolved=True)
+
+    if js_deps is not None and not name.startswith("/"):
+        entry = _import_scan_entry(file_path, line_num, name, resolved=False)
+        entry["suggestions"] = _fts_suggestions(conn, name)
+        return entry
 
     probe_name = _probe_name_for_import(name, js_deps)
     if declared_deps and is_py and name.split(".")[0].lower() in declared_deps:
@@ -1052,9 +1119,8 @@ def _scan_file_imports(
     language = _get_file_language(conn, file_path, lang_by_path=lang_by_path)
     lang_lower = (language or "").lower()
     is_js_like = lang_lower in ("javascript", "typescript", "tsx", "jsx", "vue", "svelte")
-    # Both helpers are lru_cached on project_root, so the per-file call sites
-    # cost one dict/frozenset lookup after the first scanned JS file.
-    js_deps = _declared_js_dependency_packages(project_root) if is_js_like else None
+    # Manifest contents and path aliases are cached across scanned JS files.
+    js_deps = _nearest_js_dependency_packages(project_root, file_path) if is_js_like else None
     js_aliases = _js_path_aliases(project_root) if is_js_like else {}
     results: list[dict] = []
     seen: set[tuple[str, int]] = set()
@@ -1109,6 +1175,7 @@ def _scan_file_imports(
                             file_path,
                             line_num,
                             name,
+                            project_root=project_root,
                             is_py=is_py,
                             js_deps=js_deps,
                             js_aliases=js_aliases,
