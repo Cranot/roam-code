@@ -2,10 +2,12 @@
 
 ``roam verify`` gains a ``secrets`` category: built-in credential shapes
 (``roam.security.redact.SECRET_PATTERNS``) at FAIL severity plus the
-optional repo-local ``.roam-leak-patterns.py`` catalogue at WARN. It is in
-``_DEFAULT_CHECKS`` and the ``--auto`` set, so the Claude Code Stop hook
-installed by `roam hooks claude` / `compile wire claude` runs it on every
-edit round with zero configuration.
+optional repo-local ``.roam-leak-patterns.py`` catalogue. The repo-local
+catalogue is default-denied unless ``ROAM_ALLOW_REPO_LEAK_PATTERNS=1`` is
+present in the process environment. That var is read from ``os.environ``
+only, so a repo cannot set its own trust flag — a trusted checkout opts in
+by exporting it, an untrusted/cloned repo never does, and the catalogue is
+therefore never executed by default (untrusted-repo RCE fix).
 """
 
 from __future__ import annotations
@@ -17,8 +19,21 @@ from roam.commands.cmd_verify import (
     SEVERITY_FAIL,
     SEVERITY_WARN,
     _check_secrets,
+    _load_repo_leak_patterns,
     auto_select_checks,
 )
+
+_REPO_LEAK_PATTERNS_ENVVAR = "ROAM_ALLOW_REPO_LEAK_PATTERNS"
+
+
+def _write_repo_catalogue(tmp_path: Path, sentinel: Path, pattern: str = "ProjectNimbus") -> None:
+    tmp_path.joinpath(".roam-leak-patterns.py").write_text(
+        "from pathlib import Path\n"
+        "import re\n"
+        f"Path({str(sentinel)!r}).write_text('executed', encoding='utf-8')\n"
+        f"FORBIDDEN_PATTERNS = [('codename', re.compile(r'{pattern}'))]\n",
+        encoding="utf-8",
+    )
 
 
 def test_secrets_in_default_and_auto_sets():
@@ -28,9 +43,40 @@ def test_secrets_in_default_and_auto_sets():
     assert "secrets" in auto_select_checks(["tests/test_app.py"])
 
 
-def test_builtin_credential_shape_is_fail(tmp_path: Path):
+def test_repo_local_catalogue_requires_explicit_opt_in(tmp_path: Path, monkeypatch):
+    sentinel = tmp_path / "executed.txt"
+    _write_repo_catalogue(tmp_path, sentinel)
+
+    monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
+    patterns, should_scan, err = _load_repo_leak_patterns(tmp_path)
+    assert patterns == []
+    assert should_scan is None
+    assert err == (
+        ".roam-leak-patterns.py present but not executed "
+        "(untrusted repo config; set ROAM_ALLOW_REPO_LEAK_PATTERNS=1 to enable)"
+    )
+    assert not sentinel.exists()
+
+    result = _check_secrets(["notes.md"], tmp_path)
+    assert result["violations"] == []
+    assert result["repo_patterns_error"] == err
+    assert not sentinel.exists()
+
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
+    patterns, should_scan, err = _load_repo_leak_patterns(tmp_path)
+    assert err is None
+    assert len(patterns) == 1
+    assert should_scan is None
+    assert sentinel.exists()
+
+
+def test_builtin_credential_shape_is_fail_with_repo_catalogue_gated_off(tmp_path: Path, monkeypatch):
+    sentinel = tmp_path / "executed.txt"
+    _write_repo_catalogue(tmp_path, sentinel)
     bad = tmp_path / "config.py"
-    bad.write_text('TOKEN = "ghp_' + "a" * 36 + '"\n')
+    bad.write_text('TOKEN = "ghp_' + "a" * 36 + '"\n', encoding="utf-8")
+
+    monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
     result = _check_secrets(["config.py"], tmp_path)
     assert result["violations"], result
     v = result["violations"][0]
@@ -38,59 +84,62 @@ def test_builtin_credential_shape_is_fail(tmp_path: Path):
     assert v["severity"] == SEVERITY_FAIL
     assert "github_pat_classic" in v["message"]
     assert result["score"] < 100
+    assert result["repo_patterns_error"].startswith(".roam-leak-patterns.py present but not executed")
+    assert not sentinel.exists()
 
 
-def test_clean_file_scores_100(tmp_path: Path):
-    ok = tmp_path / "app.py"
-    ok.write_text("def main():\n    return 0\n")
-    result = _check_secrets(["app.py"], tmp_path)
-    assert result["violations"] == []
-    assert result["score"] == 100
-
-
-def test_repo_local_catalogue_is_warn(tmp_path: Path):
-    (tmp_path / ".roam-leak-patterns.py").write_text(
-        "import re\nFORBIDDEN_PATTERNS = [('codename', re.compile(r'ProjectNimbus'))]\n"
-    )
+def test_repo_local_catalogue_is_warn_when_explicitly_opted_in(tmp_path: Path, monkeypatch):
+    sentinel = tmp_path / "executed.txt"
+    _write_repo_catalogue(tmp_path, sentinel)
     f = tmp_path / "notes.md"
-    f.write_text("status update for ProjectNimbus rollout\n")
+    f.write_text("status update for ProjectNimbus rollout\n", encoding="utf-8")
+
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
     result = _check_secrets(["notes.md"], tmp_path)
     assert result["violations"], result
     v = result["violations"][0]
     assert v["severity"] == SEVERITY_WARN
     assert "codename" in v["message"]
     assert result["repo_pattern_count"] == 1
+    assert "repo_patterns_error" not in result
+    assert sentinel.exists()
 
 
-def test_repo_catalogue_should_scan_exemptions(tmp_path: Path):
+def test_repo_catalogue_should_scan_exemptions(tmp_path: Path, monkeypatch):
     (tmp_path / ".roam-leak-patterns.py").write_text(
         "import re\n"
         "FORBIDDEN_PATTERNS = [('codename', re.compile(r'ProjectNimbus'))]\n"
         "def should_scan(rel):\n"
-        "    return rel != 'docs/allowed.md'\n"
+        "    return rel != 'docs/allowed.md'\n",
+        encoding="utf-8",
     )
     allowed = tmp_path / "docs"
     allowed.mkdir()
-    (allowed / "allowed.md").write_text("ProjectNimbus is exempt here\n")
+    (allowed / "allowed.md").write_text("ProjectNimbus is exempt here\n", encoding="utf-8")
+
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
     result = _check_secrets(["docs/allowed.md"], tmp_path)
     assert result["violations"] == [], result
 
 
-def test_broken_repo_catalogue_fails_open_with_disclosure(tmp_path: Path):
-    (tmp_path / ".roam-leak-patterns.py").write_text("raise RuntimeError('boom')\n")
+def test_broken_repo_catalogue_fails_open_with_disclosure(tmp_path: Path, monkeypatch):
+    (tmp_path / ".roam-leak-patterns.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
     f = tmp_path / "app.py"
-    f.write_text("x = 1\n")
+    f.write_text("x = 1\n", encoding="utf-8")
+
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
     result = _check_secrets(["app.py"], tmp_path)
     # Never crashes the gate; the failure is disclosed, not silent.
     assert "repo_patterns_error" in result
     assert result["violations"] == []
 
 
-def test_roam_codes_own_shim_loads():
+def test_roam_codes_own_shim_loads(monkeypatch):
     """The repo's own .roam-leak-patterns.py exposes the shared catalogue."""
     from roam.commands.cmd_verify import _load_repo_leak_patterns
     from tests._helpers.repo_root import repo_root
 
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
     patterns, should_scan, err = _load_repo_leak_patterns(repo_root())
     assert err is None
     assert len(patterns) >= 20  # the full internal-language catalogue
@@ -100,14 +149,14 @@ def test_roam_codes_own_shim_loads():
     assert should_scan("tests/test_leak_gate_exemplars.py") is False
 
 
-def test_credential_fail_floors_verdict_below_pass(tmp_path: Path, monkeypatch):
+def test_credential_fail_floors_verdict_below_pass(tmp_path, monkeypatch):
     """A FAIL credential can never be averaged into a quiet PASS."""
     import json as _json
 
     proj = tmp_path / "leakrepo"
     proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text("def main():\n    return 0\n")
+    (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+    (proj / "app.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     import sys as _sys
 
     _sys.path.insert(0, str(Path(__file__).parent))
@@ -116,7 +165,7 @@ def test_credential_fail_floors_verdict_below_pass(tmp_path: Path, monkeypatch):
 
     git_init(proj)
     index_in_process(proj)
-    (proj / "app.py").write_text('def main():\n    return 0\nTOKEN = "ghp_' + "a" * 36 + '"\n')
+    (proj / "app.py").write_text('def main():\n    return 0\nTOKEN = "ghp_' + "a" * 36 + '"\n', encoding="utf-8")
     monkeypatch.chdir(proj)
     res = invoke_cli(CliRunner(), ["--json", "verify", "--auto"], cwd=proj)
     assert res.exit_code in (0, 1, 5), res.output
@@ -136,7 +185,7 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
 
     hook = tmp_path / "stop.py"
-    hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT)
+    hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
 
     envelope = {
         "summary": {"verdict": "WARN 79/100"},
@@ -159,7 +208,7 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir()
     stub = stub_dir / "roam"
-    stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{_json.dumps(envelope)}\nEOF\n")
+    stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{_json.dumps(envelope)}\nEOF\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stub_dir}:{os.environ['PATH']}")
 
@@ -184,4 +233,4 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
         text=True,
         timeout=30,
     )
-    assert proc2.stdout.strip() == ""
+    assert proc2.returncode == 0 and proc2.stdout == ""

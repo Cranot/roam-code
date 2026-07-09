@@ -434,9 +434,10 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     "syntax",
     "import_side_effects",
     # The leak gate rides the default loop: built-in credential shapes plus
-    # the optional repo-local `.roam-leak-patterns.py` catalogue. Cheap
-    # (regex over changed files only) and the cost of missing one is a
-    # public credential / internal-language leak.
+    # the optional repo-local `.roam-leak-patterns.py` catalogue, which is
+    # only executed when ROAM_ALLOW_REPO_LEAK_PATTERNS is set in the process
+    # environment. Cheap (regex over changed files only) and the cost of
+    # missing one is a public credential / internal-language leak.
     "secrets",
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
@@ -2341,6 +2342,11 @@ _SECRETS_SCAN_EXTENSIONS = (
 )
 _SECRETS_MAX_PER_FILE = 5
 _LEAK_PATTERNS_FILENAME = ".roam-leak-patterns.py"
+_REPO_LEAK_PATTERNS_ENVVAR = "ROAM_ALLOW_REPO_LEAK_PATTERNS"
+
+
+def _env_truthy(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | None]:
@@ -2356,6 +2362,13 @@ def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | Non
     cat_path = root / _LEAK_PATTERNS_FILENAME
     if not cat_path.is_file():
         return [], None, None
+    if not _env_truthy(_REPO_LEAK_PATTERNS_ENVVAR):
+        return (
+            [],
+            None,
+            f"{_LEAK_PATTERNS_FILENAME} present but not executed "
+            f"(untrusted repo config; set {_REPO_LEAK_PATTERNS_ENVVAR}=1 to enable)",
+        )
     try:
         import importlib.util
 
@@ -2485,7 +2498,9 @@ def _check_secrets(changed_paths: list[str], root: Path) -> dict:
       — severity FAIL: a credential in a tracked file is never intended.
     * Optional repo-local catalogue ``.roam-leak-patterns.py`` (internal
       codenames, private doc references — whatever the project must never
-      publish) — severity WARN.
+      publish) — severity WARN, but only when
+      ``ROAM_ALLOW_REPO_LEAK_PATTERNS=1`` is present in the process
+      environment.
 
     Operates on raw changed paths (not the index) so brand-new files are
     covered before they're ever indexed. This is the leak gate riding the
