@@ -13,9 +13,15 @@ A/B was polluted by this — see project_compiler_eval_multiphase_2026-05-30.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from roam.plan.compiler import _extract_file_paths, _repo_contained_path
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import SYMLINK_SKIP_REASON  # noqa: E402
+
+from roam.plan.compiler import _extract_file_paths, _repo_contained_path  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -195,11 +201,17 @@ def _make_repo_with_escaping_symlink(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "passwd").write_text("SECRET")
-    # repo-tracked symlink that escapes the repo
-    os.symlink(outside / "passwd", repo / "src" / "link.py")
-    # in-repo real file + an in-repo symlink pointing at it (must be allowed)
-    (repo / "src" / "real.py").write_text("ok")
-    os.symlink(repo / "src" / "real.py", repo / "src" / "innerlink.py")
+    # repo-tracked symlink that escapes the repo. On Windows without
+    # Developer-Mode/admin, os.symlink raises OSError (WinError 1314); skip
+    # rather than fail — the resolver logic under test is fully cross-platform
+    # and runs in full on Linux CI where symlink creation is unprivileged.
+    try:
+        os.symlink(outside / "passwd", repo / "src" / "link.py")
+        # in-repo real file + an in-repo symlink pointing at it (must be allowed)
+        (repo / "src" / "real.py").write_text("ok")
+        os.symlink(repo / "src" / "real.py", repo / "src" / "innerlink.py")
+    except (OSError, NotImplementedError):
+        pytest.skip(SYMLINK_SKIP_REASON)
     return repo
 
 
@@ -255,11 +267,16 @@ def _make_repo_with_symlink_into_forbidden(tmp_path):
     (repo / "src").mkdir(parents=True)
     (repo / "internal").mkdir()
     (repo / "internal" / "private.py").write_text("PRIVATE")
-    # allowed name, in-repo target, but resolves inside the forbidden tree
-    os.symlink("../internal/private.py", repo / "src" / "public.py")
-    # an in-repo symlink at an allowed target — must still pass
-    (repo / "src" / "real.py").write_text("ok")
-    os.symlink("../real.py", repo / "src" / "innerlink.py")
+    # allowed name, in-repo target, but resolves inside the forbidden tree.
+    # os.symlink needs privilege on Windows (WinError 1314) — skip there; the
+    # resolver logic is cross-platform and runs in full on Linux CI.
+    try:
+        os.symlink("../internal/private.py", repo / "src" / "public.py")
+        # an in-repo symlink at an allowed target — must still pass
+        (repo / "src" / "real.py").write_text("ok")
+        os.symlink("../real.py", repo / "src" / "innerlink.py")
+    except (OSError, NotImplementedError):
+        pytest.skip(SYMLINK_SKIP_REASON)
     return repo
 
 

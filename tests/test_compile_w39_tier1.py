@@ -17,8 +17,13 @@ pytestmark = pytest.mark.xdist_group("mainrepo_compile")
 
 import json
 import os
+import sys
+from pathlib import Path
 
-from roam.plan.compiler import (
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import SYMLINK_SKIP_REASON, symlink_supported  # noqa: E402
+
+from roam.plan.compiler import (  # noqa: E402
     _PROCEDURE_CONTRACTS,
     _probe_blast_backtick_for_task,
     _probe_sibling_test_for_task,
@@ -125,7 +130,7 @@ def test_w39_b2_no_conftest_still_embeds_other_two(tmp_path):
     assert "conftest_excerpt" not in out
 
 
-@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symlink support")
+@pytest.mark.skipif(not symlink_supported(), reason=SYMLINK_SKIP_REASON)
 def test_w39_b2_conftest_symlink_pointing_outside_repo_is_not_embedded(tmp_path, tmp_path_factory):
     """W-TRUST containment — a repo-tracked symlink at tests/conftest.py whose
     real path escapes the repo root must NOT be followed. Without the gate,

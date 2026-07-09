@@ -8,9 +8,15 @@ resolved to a unique repo file at dispatch time via _resolve_module_names.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from roam.plan.compiler import (
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import SYMLINK_SKIP_REASON  # noqa: E402
+
+from roam.plan.compiler import (  # noqa: E402
     _classify,
     _extract_describe_module,
 )
@@ -96,7 +102,13 @@ class TestModuleNameResolution:
         (src_dir / "widget.py").write_text("# safe module\n")
         outside = tmp_path.parent / "escape_target.py"
         outside.write_text("# outside the repo\n")
-        os.symlink(str(outside), str(src_dir / "escape.py"))
+        # os.symlink needs privilege on Windows (WinError 1314) — skip there;
+        # `_resolve_module_names`' realpath gate is cross-platform and runs in
+        # full on Linux CI where symlink creation is unprivileged.
+        try:
+            os.symlink(str(outside), str(src_dir / "escape.py"))
+        except (OSError, NotImplementedError):
+            pytest.skip(SYMLINK_SKIP_REASON)
 
         conn = sqlite3.connect(str(roam_dir / "index.db"))
         conn.execute("CREATE TABLE files(path TEXT)")

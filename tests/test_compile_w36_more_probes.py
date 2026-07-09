@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+from pathlib import Path
 
-from roam.plan.compiler import (
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import SYMLINK_SKIP_REASON  # noqa: E402
+
+from roam.plan.compiler import (  # noqa: E402
     _COMPARE_RE,
     _SYMBOL_PICKAXE_RE,
     _TEST_WRITE_RE,
@@ -155,8 +162,13 @@ def test_w36a_symlink_sibling_outside_repo_is_not_read(tmp_path):
     outside.write_text("TOP_SECRET_LEAKED_LINE = 1\n" * 80)
     tests = tmp_path / "tests"
     tests.mkdir()
-    # Repo-local symlink that points outside the repo.
-    os.symlink(outside, tests / "test_x.py")
+    # Repo-local symlink that points outside the repo. os.symlink needs
+    # privilege on Windows (WinError 1314) — skip there; the probe's
+    # containment gate is cross-platform and runs in full on Linux CI.
+    try:
+        os.symlink(outside, tests / "test_x.py")
+    except (OSError, NotImplementedError):
+        pytest.skip(SYMLINK_SKIP_REASON)
 
     out = _probe_sibling_test_for_task(
         "write a pytest for src/x.py",

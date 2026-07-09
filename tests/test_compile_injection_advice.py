@@ -11,10 +11,43 @@ UserPromptSubmit hook injects nothing when it says skip. Explicit
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
 from roam.plan.compiler import injection_advice
+
+
+def _install_roam_stub(tmp_path, monkeypatch, envelope: dict) -> None:
+    """Put a fake ``roam`` on PATH that prints ``envelope`` as JSON.
+
+    Cross-platform: the hook shells out to ``roam --json compile ...`` via a
+    bare-name PATH lookup, so the stub must be launchable by name on every OS.
+    On POSIX we drop a ``#!/bin/sh`` script + chmod; on Windows (which has no
+    shebang support and won't execute an extensionless file) we drop a
+    ``roam.bat`` that Windows finds via PATHEXT. PATH is prepended with
+    ``os.pathsep`` (``:`` on POSIX, ``;`` on Windows), not a hardcoded ``:``.
+    """
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    payload = json.dumps(envelope)
+    if sys.platform == "win32":
+        # No shebang support and an extensionless file won't execute, so drop a
+        # roam.bat (found via PATHEXT). It cats a payload file to stdout through
+        # the real interpreter — avoids batch-quoting the JSON inline.
+        payload_file = stub_dir / "envelope.json"
+        payload_file.write_text(payload, encoding="utf-8")
+        (stub_dir / "roam.bat").write_text(
+            f'@echo off\r\n"{sys.executable}" -c '
+            "\"import sys;sys.stdout.write(open(sys.argv[1],encoding='utf-8').read())\" "
+            f'"{payload_file}"\r\n',
+            encoding="utf-8",
+        )
+    else:
+        stub = stub_dir / "roam"
+        stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{payload}\nEOF\n", encoding="utf-8")
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
 
 
 class TestInjectionAdvice:
@@ -46,18 +79,16 @@ class TestHookHonorsAdvice:
         from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
 
         hook = tmp_path / "hook.py"
-        hook.write_text(_CLAUDE_UPS_HOOK_SCRIPT)
+        # The hook script contains a non-ASCII em-dash; on Windows the default
+        # write_text encoding is the system codepage (not UTF-8), which corrupts
+        # it and makes the subprocess fail to parse the file. Force UTF-8.
+        hook.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
 
         envelope = {
             "summary": {"procedure": "synthesis_query", "injection_advice": "skip_generation_task"},
             "artifact": {"plan": {"named_paths": ["a.py"], "prefetched_facts": {"x": 1}}},
         }
-        stub_dir = tmp_path / "bin"
-        stub_dir.mkdir()
-        stub = stub_dir / "roam"
-        stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(envelope)}\nEOF\n")
-        stub.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{stub_dir}:{__import__('os').environ['PATH']}")
+        _install_roam_stub(tmp_path, monkeypatch, envelope)
 
         proc = subprocess.run(
             [sys.executable, str(hook)],
@@ -73,18 +104,13 @@ class TestHookHonorsAdvice:
         from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
 
         hook = tmp_path / "hook.py"
-        hook.write_text(_CLAUDE_UPS_HOOK_SCRIPT)
+        hook.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
 
         envelope = {
             "summary": {"procedure": "structural_callers", "injection_advice": "inject"},
             "artifact": {"plan": {"named_paths": ["a.py"], "prefetched_facts": {"callers": [1]}}},
         }
-        stub_dir = tmp_path / "bin"
-        stub_dir.mkdir()
-        stub = stub_dir / "roam"
-        stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(envelope)}\nEOF\n")
-        stub.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{stub_dir}:{__import__('os').environ['PATH']}")
+        _install_roam_stub(tmp_path, monkeypatch, envelope)
 
         proc = subprocess.run(
             [sys.executable, str(hook)],

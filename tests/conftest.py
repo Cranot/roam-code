@@ -54,6 +54,67 @@ def git_commit(path, msg="update"):
 
 
 # ===========================================================================
+# Symlink-capability probe (Windows portability)
+# ===========================================================================
+#
+# ``os.symlink`` EXISTS on Windows but raises ``OSError`` (WinError 1314,
+# "a required privilege is not held") unless the process has Developer Mode
+# or admin rights. The escaping-symlink containment tests build their
+# scenarios with ``os.symlink`` at fixture-time, so on a stock Windows dev box
+# they errored out at setup rather than exercising the (fully cross-platform)
+# resolver logic. Guard those tests with ``skipif(not symlink_supported())``
+# so they run in full on Linux CI (where symlink creation is unprivileged) and
+# skip cleanly on privilege-less Windows — NOT ``skipif(sys.platform ==
+# "win32")``, which would also skip on a Dev-Mode Windows box that CAN create
+# symlinks.
+
+
+def _probe_symlink_support() -> bool:
+    """Return True iff this process can actually create a symlink.
+
+    Uses a real ``symlink_to`` in a throwaway temp dir rather than
+    ``hasattr(os, "symlink")`` — the attribute is present on Windows but the
+    call fails without privilege, so the attribute check is not sufficient.
+    """
+    import pathlib
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        base = pathlib.Path(d)
+        link = base / "_symlink_probe"
+        try:
+            link.symlink_to(base)
+            link.unlink()
+            return True
+        except (OSError, NotImplementedError):
+            return False
+
+
+_SYMLINK_SUPPORTED: bool | None = None
+
+
+def symlink_supported() -> bool:
+    """Cached wrapper over :func:`_probe_symlink_support`.
+
+    Import in a test module and use with a module-level marker::
+
+        from conftest import symlink_supported
+        pytestmark = pytest.mark.skipif(
+            not symlink_supported(),
+            reason="symlink creation requires privilege (Windows Dev-Mode/admin)",
+        )
+    """
+    global _SYMLINK_SUPPORTED
+    if _SYMLINK_SUPPORTED is None:
+        _SYMLINK_SUPPORTED = _probe_symlink_support()
+    return _SYMLINK_SUPPORTED
+
+
+# Reason string reused across the symlink-containment tests.
+SYMLINK_SKIP_REASON = "symlink creation requires privilege (Windows Dev-Mode/admin)"
+
+
+# ===========================================================================
 # In-process index helper (faster than subprocess)
 # ===========================================================================
 
