@@ -15390,12 +15390,13 @@ def roam_why_slow(
 @_tool(
     name="roam_doc_staleness",
     description=(
-        "Detect stale docstrings: docs whose body has drifted since "
-        "the comment was written. Uses ``git blame`` to compare "
-        "docstring timestamps against code body timestamps. Different "
+        "Run a semantic docstring-drift audit: flag documented "
+        "parameters, returns, or raises that no longer match code. "
+        "Pass ``include_prose_drift`` to include optional blame-only "
+        "summary drift. Different "
         "from ``roam_docs_coverage`` (missing docs ranked by PageRank) "
         "and ``roam_stale_refs`` (dangling doc links) -- this audits "
-        "what existing docs SAY."
+        "concrete claims in existing docs."
     ),
 )
 def roam_doc_staleness(
@@ -15404,7 +15405,7 @@ def roam_doc_staleness(
     include_prose_drift: bool = False,
     root: str = ".",
 ) -> dict:
-    """Detect stale docstrings via git-blame drift.
+    """Run AST-backed semantic docstring-drift checks.
 
     WHEN TO USE: audit existing comments before a release or
     refactor pass. Pair with ``roam_docs_coverage`` for the inverse

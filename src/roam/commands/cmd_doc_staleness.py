@@ -1,4 +1,4 @@
-"""Detect stale docstrings whose code body has drifted since the docs were written.
+"""Detect docstrings whose concrete claims no longer match the code.
 
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because doc-staleness outputs are invocation-scoped
@@ -10,12 +10,14 @@ W1224-audit memo.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -95,97 +97,199 @@ def _parse_blame(blame_output):
 # Semantic drift detection
 # ---------------------------------------------------------------------------
 
-# Common docstring patterns that name parameters explicitly. We treat any
-# identifier in these positions as a "documented param", then compare
-# against the signature to detect renames or removals.
-_DOC_PARAM_PATTERNS = (
-    re.compile(r":param\s+(\w+)\s*:"),
-    re.compile(r"@param\s+(?:\w+\s+)?(\w+)\b"),
-    re.compile(r"^\s{0,8}(\w+)\s*\([^)]*\)\s*:", re.MULTILINE),  # Sphinx-style "name (type): desc"
-    re.compile(r"^\s{0,8}(\w+)\s*:\s*[A-Z]", re.MULTILINE),  # Google-style "name: Description starting with capital"
+_DOC_SECTION_RE = re.compile(
+    r"^\s*(Args?|Arguments?|Parameters?|Keyword Arguments?|Returns?|Raises?|Yields?)\s*:?\s*$",
+    re.IGNORECASE,
 )
-_DOC_RETURNS_RE = re.compile(r"\b(?:Returns?|@returns?|:returns?:|:rtype:)\b", re.IGNORECASE)
-_DOC_BEHAVIOUR_CITATION_RE = re.compile(r"\b(?:returns?|raises?|throws?)\s+`[^`]+`", re.IGNORECASE)
-_SIGNATURE_PARAM_RE = re.compile(r"def\s+\w+\s*\(([^)]*)\)|\(([^)]*)\)\s*=>|\bfunction\s+\w*\s*\(([^)]*)\)")
-_SIGNATURE_HAS_RETURN_RE = re.compile(r"->\s*\S|:\s*\S+\s*=>")
+_NUMPY_SECTION_RE = re.compile(
+    r"^\s*(Args?|Arguments?|Parameters?|Returns?|Raises?|Yields?)\s*$",
+    re.IGNORECASE,
+)
+_SECTION_UNDERLINE_RE = re.compile(r"^\s*-{3,}\s*$")
+_REST_TAG_RE = re.compile(
+    r"^\s*:(param(?:eter)?|return|returns?|rtype|raise|raises?)(?:\s+([^:]+))?\s*:\s*.*$",
+    re.IGNORECASE,
+)
+_AT_TAG_RE = re.compile(r"^\s*@(param|return|returns?|raise|raises?|throws?)\b\s*(.*)$", re.IGNORECASE)
 
 
-def _signature_param_names(signature: str | None) -> set[str]:
-    """Extract parameter identifiers from a stored function signature."""
-    if not signature:
+def _identifiers(value: str) -> set[str]:
+    """Return identifier-like names from a compact docstring field."""
+    return {part.lstrip("*").strip() for part in value.split(",") if part.lstrip("*").strip().isidentifier()}
+
+
+def _section_entry_names(line: str) -> set[str]:
+    """Extract names from a Google- or NumPy-style section entry."""
+    if ":" not in line:
         return set()
-    match = _SIGNATURE_PARAM_RE.search(signature)
-    if not match:
-        return set()
-    raw = next((g for g in match.groups() if g), "")
-    names = set()
-    for part in raw.split(","):
-        part = part.strip().split("=", 1)[0].strip()
-        if not part or part in ("self", "cls"):
-            continue
-        # Strip type annotation: "name: int" → "name"
-        ident = part.split(":", 1)[0].strip().lstrip("*")
-        if ident.isidentifier():
-            names.add(ident)
-    return names
+    head = line.split(":", 1)[0].strip()
+    head = re.sub(r"\s*\([^)]*\)\s*$", "", head)
+    return _identifiers(head)
 
 
 def _docstring_facts(docstring: str | None, signature: str | None) -> dict:
-    """Extract testable claims from a docstring.
+    """Extract structured parameter, return, and raises claims.
 
-    Returns a dict describing what the docstring documents:
-      - ``params``: identifier names referenced as parameters
-      - ``has_returns_clause``: True when the docstring discusses a
-        return value (Returns:, @return, :returns:, :rtype:)
-      - ``has_specific_facts``: True if any of the above is non-empty —
-        used to distinguish "documents implementation details" from
-        "pure prose summary"
+    Only section/tag syntax is treated as a concrete claim.  Free-form prose
+    is deliberately ignored so a summary cannot become stale merely because
+    its function body changed later.
     """
-    if not docstring:
-        return {"params": set(), "has_returns_clause": False, "has_specific_facts": False, "behaviour_citations": []}
-
-    sig_params = _signature_param_names(signature)
-    documented_params: set[str] = set()
-    for pat in _DOC_PARAM_PATTERNS:
-        for match in pat.finditer(docstring):
-            ident = match.group(1)
-            # Google-style "name: Description" must look like a real param
-            # to qualify — restrict to identifiers that look param-shaped
-            # OR that already appear in the signature so we don't pick up
-            # field names from the prose ("Note: ...").
-            if ident.isidentifier() and (ident in sig_params or pat.pattern.startswith((":param", "@param"))):
-                documented_params.add(ident)
-
-    has_returns_clause = bool(_DOC_RETURNS_RE.search(docstring))
-    behaviour_citations = [m.group(0) for m in _DOC_BEHAVIOUR_CITATION_RE.finditer(docstring)]
-    has_facts = bool(documented_params or has_returns_clause or behaviour_citations)
-    return {
-        "params": documented_params,
-        "has_returns_clause": has_returns_clause,
-        "has_specific_facts": has_facts,
-        "behaviour_citations": behaviour_citations,
+    facts = {
+        "params": set(),
+        "has_returns_clause": False,
+        "raises": set(),
+        "has_specific_facts": False,
     }
+    if not docstring:
+        return facts
+
+    section = None
+    lines = docstring.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        rest_match = _REST_TAG_RE.match(line)
+        if rest_match:
+            kind, value = rest_match.groups()
+            kind = kind.lower()
+            if kind.startswith("param"):
+                tokens = (value or "").strip().split()
+                if tokens and tokens[-1].isidentifier():
+                    facts["params"].add(tokens[-1])
+            elif kind.startswith("return") or kind == "rtype":
+                facts["has_returns_clause"] = True
+            else:
+                facts["raises"].update(_identifiers((value or "").split()[0] if value else ""))
+            continue
+
+        at_match = _AT_TAG_RE.match(line)
+        if at_match:
+            kind, value = at_match.groups()
+            kind = kind.lower()
+            if kind == "param":
+                tokens = value.split()
+                if tokens and tokens[0].isidentifier():
+                    facts["params"].add(tokens[0])
+            elif kind.startswith("return"):
+                facts["has_returns_clause"] = True
+            elif kind.startswith(("raise", "throw")):
+                facts["raises"].update(_identifiers(value.split()[0] if value.split() else ""))
+            continue
+
+        section_match = _DOC_SECTION_RE.match(line)
+        numpy_section = (
+            _NUMPY_SECTION_RE.match(line) and index + 1 < len(lines) and _SECTION_UNDERLINE_RE.match(lines[index + 1])
+        )
+        if section_match or numpy_section:
+            section = (section_match or numpy_section).group(1).lower().rstrip(":")
+            continue
+
+        if section in {"args", "arg", "arguments", "parameter", "parameters", "keyword argument", "keyword arguments"}:
+            facts["params"].update(_section_entry_names(line))
+        elif section in {"returns", "return", "yields", "yield"}:
+            if stripped:
+                facts["has_returns_clause"] = True
+        elif section in {"raises", "raise"}:
+            facts["raises"].update(_section_entry_names(line))
+
+    facts["has_specific_facts"] = bool(facts["params"] or facts["has_returns_clause"] or facts["raises"])
+    return facts
 
 
-def _semantic_drift(facts: dict, signature: str | None) -> dict:
-    """Return per-symbol semantic drift: doc claims that the signature contradicts.
+def _ast_parameter_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    args = node.args
+    parameters = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    if args.vararg:
+        parameters.append(args.vararg)
+    if args.kwarg:
+        parameters.append(args.kwarg)
+    return {arg.arg for arg in parameters if arg.arg not in {"self", "cls"}}
 
-    - ``phantom_params``: docstring names a param that no longer exists
-    - ``return_signature_mismatch``: docstring promises a return value
-      while the signature has no return annotation (only flagged for
-      function/method symbols where a return arrow is structurally
-      possible — silent for non-callable kinds)
-    """
-    sig_params = _signature_param_names(signature)
+
+class _BodyFacts(ast.NodeVisitor):
+    """Collect only the current function's direct return and raise behavior."""
+
+    def __init__(self):
+        self.returns = []
+        self.raises = []
+
+    def visit_Return(self, node):  # noqa: N802
+        self.returns.append(node.value)
+
+    def visit_Raise(self, node):  # noqa: N802
+        self.raises.append(node.exc)
+
+    def visit_FunctionDef(self, node):  # noqa: N802
+        return
+
+    def visit_AsyncFunctionDef(self, node):  # noqa: N802
+        return
+
+    def visit_ClassDef(self, node):  # noqa: N802
+        return
+
+    def visit_Lambda(self, node):  # noqa: N802
+        return
+
+
+def _body_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _BodyFacts:
+    facts = _BodyFacts()
+    for statement in node.body:
+        facts.visit(statement)
+    return facts
+
+
+def _returns_value(value: ast.expr | None) -> bool:
+    return value is not None and not (isinstance(value, ast.Constant) and value.value is None)
+
+
+def _semantic_drift(facts: dict, signature: str | None = None, function_node=None) -> dict:
+    """Return concrete doc/code mismatches, using Python AST when available."""
+    if isinstance(signature, (ast.FunctionDef, ast.AsyncFunctionDef)) and function_node is None:
+        function_node = signature
+    sig_params = _ast_parameter_names(function_node) if function_node is not None else set()
     phantom_params = sorted(facts["params"] - sig_params)
-    sig_has_return = bool(_SIGNATURE_HAS_RETURN_RE.search(signature or ""))
-    return_mismatch = facts["has_returns_clause"] and signature is not None and not sig_has_return
-    has_drift = bool(phantom_params) or return_mismatch
+
+    return_mismatch = False
+    missing_raises = []
+    if function_node is not None:
+        body = _body_facts(function_node)
+        return_mismatch = facts["has_returns_clause"] and not any(_returns_value(value) for value in body.returns)
+        if facts["raises"] and not body.raises:
+            missing_raises = sorted(facts["raises"])
+
+    has_drift = bool(phantom_params or return_mismatch or missing_raises)
     return {
         "phantom_params": phantom_params,
         "return_signature_mismatch": return_mismatch,
+        "missing_raises": missing_raises,
         "has_drift": has_drift,
     }
+
+
+def _python_functions(project_root: Path, file_path: str) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Parse Python functions for one file; unsupported files fail closed."""
+    path = Path(file_path)
+    if path.suffix not in {".py", ".pyi"}:
+        return []
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, UnicodeError):
+        return []
+    return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _find_python_function(functions, symbol: dict):
+    """Match an indexed Python symbol, including decorator-covered ranges."""
+    candidates = [
+        node
+        for node in functions
+        if node.name == symbol["name"] and node.lineno >= symbol["line_start"] and node.end_lineno <= symbol["line_end"]
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda node: (node.end_lineno - node.lineno, node.lineno))
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +335,25 @@ def _estimate_docstring_lines(line_start, line_end, docstring_text):
     return doc_start, doc_end, body_start, body_end
 
 
+def _semantic_record(symbol, drift_info):
+    return {
+        "name": symbol["name"],
+        "kind": symbol["kind"],
+        "file": symbol["file_path"],
+        "line": symbol["line_start"],
+        "doc_date": "unknown",
+        "doc_author": "?",
+        "body_date": "unknown",
+        "body_author": "?",
+        "drift_days": 0,
+        "reasons": ["semantic_mismatch"],
+        "phantom_params": drift_info["phantom_params"],
+        "return_mismatch": drift_info["return_signature_mismatch"],
+        "missing_raises": drift_info["missing_raises"],
+        "has_specific_facts": True,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Core staleness analysis
 # ---------------------------------------------------------------------------
@@ -242,13 +365,11 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
     Two paths into the stale list:
 
     * **semantic_mismatch** — docstring claims contradict the signature
-      (phantom params, return clause without return annotation). Always
-      flagged.
-    * **commit_drift** — body changed long after the docstring last
-      changed AND the docstring contains specific testable claims
-      (param names, return clause, behaviour citations). Pure-prose
-      summaries on commit drift are skipped by default; pass
-      ``include_prose_drift=True`` to keep the historic behaviour.
+      or Python AST body (phantom params, missing returns, or clearly absent
+      explicit raises). Always flagged.
+    * **commit_drift_prose** — pure-prose body drift, only when
+      ``include_prose_drift=True``. Structured claims without a concrete
+      mismatch are intentionally not findings.
     """
     threshold_seconds = threshold_days * 86400
     stale = []
@@ -270,26 +391,29 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
             ):
                 blame_by_file[fp] = out
 
+    python_functions_by_file = {file_path: _python_functions(Path(project_root), file_path) for file_path in file_paths}
+
     for file_path, symbols in symbols_by_file.items():
         blame_output = blame_by_file.get(file_path)
-        if not blame_output:
-            continue
-
-        blame_map = _parse_blame(blame_output)
-        if not blame_map:
-            continue
+        blame_map = _parse_blame(blame_output) if blame_output else {}
 
         for sym in symbols:
+            function_node = _find_python_function(python_functions_by_file.get(file_path, []), sym)
+            facts = _docstring_facts(sym["docstring"], sym.get("signature"))
+            drift_info = _semantic_drift(facts, sym.get("signature"), function_node)
             ranges = _estimate_docstring_lines(
                 sym["line_start"],
                 sym["line_end"],
                 sym["docstring"],
             )
             if ranges is None:
+                if drift_info["has_drift"]:
+                    stale.append(_semantic_record(sym, drift_info))
                 continue
-
-            facts = _docstring_facts(sym["docstring"], sym.get("signature"))
-            drift_info = _semantic_drift(facts, sym.get("signature"))
+            if not blame_map:
+                if drift_info["has_drift"]:
+                    stale.append(_semantic_record(sym, drift_info))
+                continue
 
             doc_start, doc_end, body_start, body_end = ranges
 
@@ -313,6 +437,8 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
                     body_authors[ts] = author
 
             if not doc_timestamps or not body_timestamps:
+                if drift_info["has_drift"]:
+                    stale.append(_semantic_record(sym, drift_info))
                 continue
 
             doc_latest = max(doc_timestamps)
@@ -324,11 +450,8 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
             reasons = []
             if drift_info["has_drift"]:
                 reasons.append("semantic_mismatch")
-            if commit_drift:
-                if facts["has_specific_facts"]:
-                    reasons.append("commit_drift")
-                elif include_prose_drift:
-                    reasons.append("commit_drift_prose")
+            if commit_drift and include_prose_drift and not facts["has_specific_facts"]:
+                reasons.append("commit_drift_prose")
 
             if not reasons:
                 # Pure prose docstring with commit drift only is no longer
@@ -355,6 +478,7 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include
                     "reasons": reasons,
                     "phantom_params": drift_info["phantom_params"],
                     "return_mismatch": drift_info["return_signature_mismatch"],
+                    "missing_raises": drift_info["missing_raises"],
                     "has_specific_facts": facts["has_specific_facts"],
                 }
             )
@@ -394,7 +518,7 @@ ORDER BY f.path, s.line_start
 @roam_capability(
     name="doc-staleness",
     category="refactoring",
-    summary="Detect stale docstrings where the code body changed long after the docs",
+    summary="Detect docstrings whose concrete claims no longer match the code",
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
@@ -411,7 +535,7 @@ ORDER BY f.path, s.line_start
     "--days",
     default=90,
     show_default=True,
-    help="Staleness threshold in days (body changed N+ days after docstring).",
+    help="Staleness threshold for optional prose drift (body changed N+ days after docstring).",
 )
 @click.option(
     "--include-prose-drift",
@@ -426,10 +550,11 @@ ORDER BY f.path, s.line_start
 )
 @click.pass_context
 def doc_staleness(ctx, limit, days, include_prose_drift):
-    """Detect stale docstrings where the code body changed long after the docs.
+    """Detect concrete docstring claims that no longer match the code.
 
-    Scans ALL symbols with docstrings (including private/internal) and uses
-    ``git blame`` to compare docstring timestamps against code body timestamps.
+    Scans ALL symbols with docstrings (including private/internal). Python
+    functions use AST-backed parameter, return, and explicit-raise checks.
+    Pure-prose blame drift is opt-in via ``--include-prose-drift``.
 
     Unlike ``docs-coverage`` (which reports missing docs for exported public
     symbols, ranked by PageRank), this command focuses on existing docs that
@@ -524,7 +649,9 @@ def doc_staleness(ctx, limit, days, include_prose_drift):
         if item.get("phantom_params"):
             click.echo(f"    Phantom params: {', '.join(item['phantom_params'])}")
         if item.get("return_mismatch"):
-            click.echo("    Documents return value but signature has no return annotation")
+            click.echo("    Documents a return value but the body returns nothing")
+        if item.get("missing_raises"):
+            click.echo(f"    Documents raises that the body no longer raises: {', '.join(item['missing_raises'])}")
         click.echo(f"    Docstring: last updated {item['doc_date']} (by {item['doc_author']})")
         click.echo(f"    Body:      last updated {item['body_date']} (by {item['body_author']})")
         click.echo(f"    Drift: {item['drift_days']} days")

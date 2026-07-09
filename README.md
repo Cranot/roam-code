@@ -597,7 +597,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_diff` | Show the blast radius of your edits BEFORE you commit. Run after Edit/Write tools to see affected symbols, files, tests, plus coupling and fitness warnings. Use when user asks 'what did my change break?', 'safe to commit?'. Replaces ad-hoc `git diff --stat` inspection with graph-aware impact data. For PR-level risk verdict, use roam_pr_risk. |
 | `roam_disambiguate` | List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload. |
 | `roam_doc_intent` | Link documentation to code: find drift, dead refs, undocumented symbols. |
-| `roam_doc_staleness` | Detect stale docstrings: docs whose body has drifted since the comment was written. Uses ``git blame`` to compare docstring timestamps against code body timestamps. Different from ``roam_docs_coverage`` (missing docs ranked by PageRank) and ``roam_stale_refs`` (dangling doc links) -- this audits what existing docs SAY. |
+| `roam_doc_staleness` | Run a semantic docstring-drift audit: flag documented parameters, returns, or raises that no longer match code. Pass ``include_prose_drift`` to include optional blame-only summary drift. Different from ``roam_docs_coverage`` (missing docs ranked by PageRank) and ``roam_stale_refs`` (dangling doc links) -- this audits concrete claims in existing docs. |
 | `roam_docs_coverage` | Doc coverage + stale-doc drift with PageRank-ranked missing docs. |
 | `roam_doctor` | Setup diagnostics: Python version, tree-sitter, git, index existence, freshness, SQLite. |
 | `roam_dogfood` | One-shot full-stack run: audit + pr-analyze + audit-trail + conformance. |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -383,7 +384,7 @@ def test_doc_staleness_flags_phantom_param():
     docstring = ":param missing_param: gone\n:param real: kept\n"
     sig = "def f(real: int) -> None"
     facts = _docstring_facts(docstring, sig)
-    drift = _semantic_drift(facts, sig)
+    drift = _semantic_drift(facts, sig, ast.parse("def f(real: int):\n    return real\n").body[0])
     assert "missing_param" in drift["phantom_params"]
     assert drift["has_drift"] is True
 
