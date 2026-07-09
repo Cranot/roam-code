@@ -64,7 +64,7 @@ def _emit_complexity_findings(conn, rows) -> None:
     """Mirror each high-complexity symbol row into the findings registry.
 
     ``rows`` is the filtered ranking from the ``symbol_metrics`` JOIN
-    (same shape used by the JSON envelope). Rows below
+    (same shape used by the JSON envelope). Rows at or below
     ``COMPLEXITY_FINDING_THRESHOLD`` are skipped — the registry
     documents hotspots, not the long tail.
 
@@ -83,7 +83,7 @@ def _emit_complexity_findings(conn, rows) -> None:
         if symbol_id is None:
             continue
         score = float(r["cognitive_complexity"] or 0)
-        if score < COMPLEXITY_FINDING_THRESHOLD:
+        if score <= COMPLEXITY_FINDING_THRESHOLD:
             continue
         severity = _severity(score)
         name = r["qualified_name"] or r["name"] or ""

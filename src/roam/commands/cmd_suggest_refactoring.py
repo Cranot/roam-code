@@ -226,6 +226,86 @@ def _suggest_action(row: dict, smells: dict) -> str:
     return "extract"
 
 
+def _format_extraction_hint(hint: dict) -> str:
+    """Format the top extraction hint for text output."""
+    reduction = float(hint.get("reduction") or 0.0)
+    parent_after = float(hint.get("parent_after") or 0.0)
+    parent_before = parent_after + reduction
+    helper_cc = float(hint.get("helper_cc") or 0.0)
+    return (
+        f"extract {hint.get('block')} "
+        f"(L{int(hint.get('line_start') or 0)}-{int(hint.get('line_end') or 0)}, "
+        f"CC {parent_before:.0f}->{parent_after:.0f} (-{reduction:.0f}), "
+        f"helper ~{helper_cc:.0f})"
+    )
+
+
+def _attach_extraction_hints(recommendations: list[dict]) -> None:
+    """Attach a cached top extraction hint to qualifying recommendations."""
+    from roam.commands.changed_files import parse_source_with_grammar
+    from roam.index.complexity import _FUNCTION_NODES, _find_function_node
+    from roam.index.complexity_extract import suggest_extractions
+    from roam.index.parser import detect_language
+
+    parsed: dict[str, tuple] = {}
+    for rec in recommendations:
+        if rec.get("action") != "extract" or rec.get("kind") not in {"function", "method"}:
+            continue
+
+        path = rec.get("file")
+        line_start = rec.get("line")
+        line_end = rec.get("line_end")
+        if not path or line_start is None or line_end is None:
+            continue
+
+        if path not in parsed:
+            try:
+                with open(path, "rb") as handle:
+                    source = handle.read()
+                lang = detect_language(path)
+                parsed[path] = parse_source_with_grammar(source, lang)[:2] if lang else (None, None)
+            except OSError:
+                parsed[path] = (None, None)
+
+        tree, source = parsed[path]
+        if tree is None or source is None:
+            continue
+
+        func_node = _find_function_node(tree, int(line_start), int(line_end))
+        if func_node is None:
+            start_target = int(line_start)
+            best = None
+            best_delta = None
+            stack = [tree.root_node]
+            while stack:
+                node = stack.pop()
+                if node.type in _FUNCTION_NODES:
+                    node_start = node.start_point[0] + 1
+                    delta = abs(node_start - start_target)
+                    if delta <= 3 and (best_delta is None or delta < best_delta):
+                        best = node
+                        best_delta = delta
+                stack.extend(node.children)
+            func_node = best
+        if func_node is None:
+            continue
+
+        hints = suggest_extractions(func_node, source, max_hints=1)
+        if not hints:
+            continue
+
+        h = hints[0]
+        rec["extraction_hint"] = {
+            "block": h.label,
+            "line_start": h.line_start,
+            "line_end": h.line_end,
+            "line_count": h.line_count,
+            "reduction": h.reduction,
+            "parent_after": h.parent_after,
+            "helper_cc": h.helper_cc,
+        }
+
+
 def _effort_bucket(row: dict, smells: dict, coverage_gap: float) -> str:
     points = 0
     cc = float(row.get("cognitive_complexity") or 0.0)
@@ -436,6 +516,7 @@ def suggest_refactoring(ctx, limit, min_score):
                 "kind": row["kind"],
                 "file": row["file_path"],
                 "line": int(row.get("line_start") or 1),
+                "line_end": int(row.get("line_end") or row.get("line_start") or 1),
                 "score": score,
                 "effort": effort,
                 "action": action,
@@ -469,6 +550,9 @@ def suggest_refactoring(ctx, limit, min_score):
 
     filtered = [item for item in scored if item["score"] >= int(min_score)]
     shown = filtered[: int(limit)]
+    _attach_extraction_hints(shown)
+    for item in shown:
+        item.pop("line_end", None)
 
     top_score = shown[0]["score"] if shown else 0
     verdict = (
@@ -512,7 +596,11 @@ def suggest_refactoring(ctx, limit, min_score):
     headers = ["Score", "Eff", "Action", "Symbol", "Location", "Reasons"]
     rows: list[list[str]] = []
     for item in shown:
-        reasons = item["reasons"] if detail else item["reasons"][:2]
+        reasons = list(item["reasons"])
+        hint = item.get("extraction_hint")
+        if hint:
+            reasons.insert(0, _format_extraction_hint(hint))
+        reasons = reasons if detail else reasons[:2]
         rows.append(
             [
                 str(item["score"]),

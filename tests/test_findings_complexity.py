@@ -93,6 +93,37 @@ def _hotspot_project(tmp_path):
     )
 
 
+def _threshold_hysteresis_project(tmp_path):
+    """Project with one real hotspot and one helper landing on the floor."""
+    return _make_project(
+        tmp_path,
+        {
+            "complex.py": """def parent(items):
+    total = 0
+    for i in items:
+        if i:
+            for j in items:
+                if j:
+                    if j > 2:
+                        total += 1
+    if total:
+        return total
+    return 0
+
+def freshly_extracted_helper(x):
+    for i in x:
+        if i:
+            if i > 1:
+                if i > 2:
+                    return i
+    if x:
+        return 0
+    return 0
+""",
+        },
+    )
+
+
 def _persist_complexity(proj):
     """Index the project and run ``complexity --persist``.
 
@@ -276,6 +307,27 @@ def test_complexity_below_threshold_not_flagged(tmp_path):
             for r in scores:
                 ev = json.loads(r["evidence_json"])
                 assert ev["cognitive_complexity"] >= COMPLEXITY_FINDING_THRESHOLD
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_complexity_exact_threshold_helper_is_not_reflagged(tmp_path):
+    """A helper landing exactly on the floor stays out of findings."""
+    proj = _threshold_hysteresis_project(tmp_path)
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        result = runner.invoke(cli, ["complexity", "--persist"])
+        assert result.exit_code == 0, result.output
+
+        with open_db(readonly=True) as conn:
+            rows = conn.execute("SELECT claim FROM findings WHERE source_detector = 'complexity'").fetchall()
+        assert rows, "expected the real hotspot to still emit a finding"
+        assert not any("freshly_extracted_helper" in (r["claim"] or "") for r in rows), (
+            "exact-threshold helper was re-flagged as a new complexity finding"
+        )
     finally:
         os.chdir(old_cwd)
 
