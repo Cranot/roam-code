@@ -354,8 +354,23 @@ def _severity_icon(sev: str) -> str:
         "a smaller --top doesn't truncate the registry."
     ),
 )
+@click.option(
+    "--suggest",
+    "suggest",
+    is_flag=True,
+    default=False,
+    help=(
+        "For each hotspot, suggest the smallest control-flow block to extract "
+        "into a helper and the estimated cognitive-complexity drop (parent → "
+        "after, plus the new helper's score). Deterministic AST analysis — it "
+        "prescribes WHERE to cut, it does not rewrite code. Parses the shown "
+        "files on demand (opt-in cost; off by default)."
+    ),
+)
 @click.pass_context
-def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling, no_framework, no_imports, persist):
+def complexity(
+    ctx, target, limit, threshold, by_file, bumpy_road, include_tooling, no_framework, no_imports, persist, suggest
+):
     """Show cognitive complexity metrics for functions and methods.
 
     Unlike ``health`` (which scores the whole codebase) and ``debt`` (which
@@ -689,6 +704,11 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             _by_file_output(conn, rows, json_mode, warnings=_merged_warnings())
             return
 
+        # --suggest: deterministic helper-extraction hints for each hotspot.
+        # Opt-in — parses the shown files on demand — so it's off the happy
+        # path and the envelope stays byte-identical when the flag is absent.
+        hint_map = _complexity_extraction_hints(rows) if suggest else {}
+
         # Compute distribution stats (W607-BJ: substrate boundary).
         # When a `target`/`threshold` filter is active, the distribution must
         # be scoped to the SAME filter as `rows` — otherwise a per-file query
@@ -757,6 +777,9 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                     "halstead_effort": _safe_metric(r, "halstead_effort"),
                     "halstead_bugs": _safe_metric(r, "halstead_bugs"),
                     "severity": _severity(r["cognitive_complexity"]),
+                    # --suggest only: extraction hints. Key omitted entirely
+                    # when the flag is off so the envelope is byte-identical.
+                    **({"extraction_hints": hint_map.get(r["symbol_id"], [])} if suggest else {}),
                 }
                 for r in rows
             ]
@@ -859,6 +882,72 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             factor_str = f" ({', '.join(factors)})" if factors else ""
 
             click.echo(f"  {icon}{r['cognitive_complexity']:5.0f}  {name:<45s} {kind} {location}{factor_str}")
+
+            for h in hint_map.get(r["symbol_id"], []):
+                click.echo(
+                    f"         ↳ extract {h['block']} "
+                    f"(L{h['line_start']}–{h['line_end']}, {h['line_count']} lines) "
+                    f"→ CC ~{h['parent_after']:.0f} + helper ~{h['helper_cc']:.0f}"
+                )
+        if suggest and not any(hint_map.get(r["symbol_id"]) for r in rows):
+            click.echo(
+                "\n  (no single-block extraction found — complexity is diffuse; "
+                "simplify conditionals / flatten branches instead)"
+            )
+
+
+def _complexity_extraction_hints(rows, *, max_per: int = 2) -> dict:
+    """Compute deterministic helper-extraction hints for each ranked row.
+
+    Parses each distinct file at most once (hotspots cluster in the same
+    files), locates each symbol's function node, and asks
+    :func:`roam.index.complexity_extract.suggest_extractions` where the
+    cheapest high-value cut is. Returns ``{symbol_id: [hint_dict, ...]}``;
+    symbols whose file can't be parsed or whose node can't be located are
+    simply absent (best-effort — never raises).
+    """
+    from roam.commands.changed_files import parse_source_with_grammar
+    from roam.index.complexity import _find_function_node
+    from roam.index.complexity_extract import suggest_extractions
+    from roam.index.parser import detect_language
+
+    parsed: dict[str, tuple] = {}
+    out: dict = {}
+    for r in rows:
+        path = r["file_path"]
+        line_start = r["line_start"]
+        line_end = r["line_end"]
+        if not path or line_start is None or line_end is None:
+            continue
+        if path not in parsed:
+            try:
+                with open(path, "rb") as handle:
+                    src = handle.read()
+                lang = detect_language(path)
+                parsed[path] = parse_source_with_grammar(src, lang)[:2] if lang else (None, None)
+            except OSError:
+                parsed[path] = (None, None)
+        tree, source = parsed[path]
+        if tree is None or source is None:
+            continue
+        func_node = _find_function_node(tree, line_start, line_end)
+        if func_node is None:
+            continue
+        hints = suggest_extractions(func_node, source, max_hints=max_per)
+        if hints:
+            out[r["symbol_id"]] = [
+                {
+                    "block": h.label,
+                    "line_start": h.line_start,
+                    "line_end": h.line_end,
+                    "line_count": h.line_count,
+                    "reduction": h.reduction,
+                    "parent_after": h.parent_after,
+                    "helper_cc": h.helper_cc,
+                }
+                for h in hints
+            ]
+    return out
 
 
 def _persist_complexity_findings(
