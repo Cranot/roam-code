@@ -318,17 +318,30 @@ def _recompute_content_hash(packet: dict[str, Any]) -> str | None:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _classify_banner(totals: Mapping[str, int]) -> tuple[str, str, str]:
+def _classify_banner(
+    totals: Mapping[str, int],
+    *,
+    producer_not_available: bool = False,
+) -> tuple[str, str, str]:
     """Apply the W259 threshold table to per-question totals.
 
     Returns ``(tier_id, label, rationale)``. Duplicates the logic in
     :func:`roam.evidence.banner.classify_evidence_coverage` so the
     doctor works without constructing a ``ChangeEvidence`` instance.
+
+    W261 STRONG cap — parity with the banner classifier: when the packet
+    carries a ``producer_not_available`` redaction, a producer never
+    actually ran, so the buyer-facing tier must not advertise STRONG even
+    if ``complete >= 7``. The tier is capped at PARTIAL (which the count
+    gate below always satisfies when ``complete >= 7``). Keeps the doctor
+    surface consistent with the pr-replay report banner. See
+    tests/test_evidence_pr_replay.py::
+      test_pr_replay_bare_bundle_does_not_claim_strong_coverage.
     """
     complete = int(totals.get("complete", 0))
     partial = int(totals.get("partial", 0))
     missing = int(totals.get("missing", 0))
-    if complete >= 7:
+    if complete >= 7 and not producer_not_available:
         return (
             "strong",
             "Strong evidence coverage",
@@ -869,9 +882,15 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         default=({}, dict(_EMPTY_TOTALS)),
     )
     q_results, totals = completeness_result if completeness_result is not None else ({}, dict(_EMPTY_TOTALS))
+    # W261: read the ``producer_not_available`` redaction marker BEFORE
+    # classifying the banner so the STRONG cap (parity with
+    # :func:`roam.evidence.banner.classify_evidence_coverage`) can demote a
+    # producer-gapped packet out of STRONG. Recomputed below into
+    # ``has_producer_not_available`` for the honesty-signals readout.
+    _pna_for_banner = "producer_not_available" in [r for r in (payload.get("redactions") or []) if isinstance(r, str)]
     banner_result = _run_check_at(
         "classify_banner",
-        _classify_banner,
+        lambda t: _classify_banner(t, producer_not_available=_pna_for_banner),
         totals,
         default=("insufficient", "Insufficient evidence", "banner classification raised; see warnings_out"),
     )

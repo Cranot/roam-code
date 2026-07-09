@@ -104,10 +104,25 @@ def classify_evidence_coverage(packet: Any) -> tuple[str, str, str]:
     partial = int(scores.get("partial", 0))
     missing = int(scores.get("missing", 0))
 
+    # W261 STRONG cap — a ``producer_not_available`` redaction means an
+    # evidence-question producer never actually ran (e.g. pr-replay's bare
+    # merged-history bundle has no acceptance/validation harvester, so Q8
+    # carries this marker). The per-question completeness stays honest —
+    # the structurally-answered questions really are ``complete`` — but the
+    # buyer-facing TIER must not advertise STRONG, because STRONG governance
+    # evidence requires the producer to have run. Advertising "Strong
+    # evidence coverage" on top of a producer gap is an over-claim, and this
+    # product's discipline is "name the gap, do not hide it". So we cap the
+    # tier at PARTIAL whenever this reason is present.
+    # See tests/test_evidence_pr_replay.py::
+    #   test_pr_replay_bare_bundle_does_not_claim_strong_coverage.
+    redactions = getattr(packet, "redactions", ()) or ()
+    producer_not_available = "producer_not_available" in redactions
+
     # Tier 1 — STRONG. The "missing acknowledged below" wording
     # presumes the Evidence-limitations section is rendered below
     # the banner, which is enforced by the renderer.
-    if complete >= 7:
+    if complete >= 7 and not producer_not_available:
         return (
             TIER_STRONG,
             TIER_LABELS[TIER_STRONG],
