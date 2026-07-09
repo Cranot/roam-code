@@ -57,7 +57,7 @@ from roam.rules.dataflow import collect_dataflow_findings
 # older dead-export classifier shape (e.g. before scaffolding was
 # recognised). Bump per the rules in roam.catalog.versions when the
 # classifier or action verdict mapping changes meaningfully.
-DEAD_DETECTOR_VERSION: str = "1.0.0"
+DEAD_DETECTOR_VERSION: str = "1.1.0"
 
 
 def _dead_finding_id(symbol_id: int, file_path: str, kind: str) -> str:
@@ -480,7 +480,7 @@ def _scaffolding_signals(docstring: str | None) -> dict | None:
     }
 
 
-def _dead_action(r, file_imported, tested=False):
+def _dead_action(r, file_imported, tested=False, external_facing=False):
     """Compute actionable verdict and confidence % for a dead symbol.
 
     Uses tiered confidence scoring (inspired by Vulture and Meta's dead
@@ -534,6 +534,12 @@ def _dead_action(r, file_imported, tested=False):
     # Test-only public surface is not production-consumed, but deleting it
     # breaks the suite and may remove intentionally preserved API behavior.
     if tested:
+        return "REVIEW", 70
+
+    # Explicit package surfaces have legitimate consumers outside the
+    # indexed repository. Internal call-graph silence alone cannot make
+    # these symbols safe to delete.
+    if external_facing:
         return "REVIEW", 70
 
     # CLI command functions — loaded dynamically via LazyGroup/importlib
@@ -1052,6 +1058,12 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
     fmeta = file_import_meta.get(r["file_id"], {})
     smeta = sibling_meta.get(r["file_id"], {})
     test_consumers = cmeta.get("test_consumers", 0)
+    public_surface_reason = cmeta.get("public_surface_reason")
+    if public_surface_reason:
+        test_clause = f"; used by {test_consumers} test consumer(s)" if test_consumers else ""
+        return (
+            f"external-facing public surface ({public_surface_reason}); no internal production consumers{test_clause}"
+        )
     if test_consumers:
         return f"no production consumers; used by {test_consumers} test consumer(s)"
 
@@ -1164,6 +1176,10 @@ def _analyze_dead(conn):
         return [], [], set(), {}, {}, {}
 
     consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
+    from roam.commands.dead_public_surface import public_surface_reasons
+
+    for symbol_id, reason in public_surface_reasons(rows, find_project_root()).items():
+        consumer_meta[symbol_id]["public_surface_reason"] = reason
     rows = [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0]
     if not rows:
         return [], [], set(), consumer_meta, {}, {}
@@ -2439,6 +2455,7 @@ def dead(
                     r,
                     r["file_id"] in imported_files,
                     consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0,
+                    bool(consumer_meta.get(r["id"], {}).get("public_surface_reason")),
                 ),
             )
             for r in all_items
@@ -2632,6 +2649,7 @@ def dead(
                         r,
                         r["file_id"] in imported_files,
                         consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0,
+                        bool(consumer_meta.get(r["id"], {}).get("public_surface_reason")),
                     )[0]
                     for r in items
                 ]
@@ -2658,7 +2676,7 @@ def dead(
                 fmeta = file_import_meta.get(r["file_id"], {})
                 smeta = sibling_meta.get(r["file_id"], {})
                 tested = cmeta.get("test_consumers", 0) > 0
-                action, confidence = _dead_action(r, file_imported, tested)
+                action, confidence = _dead_action(r, file_imported, tested, bool(cmeta.get("public_surface_reason")))
                 scaffolding_evidence = _scaffolding_signals(r["docstring"] if "docstring" in r.keys() else None)
                 d = {
                     "name": r["name"],
@@ -2943,7 +2961,12 @@ def dead(
                 click.echo("Top dead symbols (high confidence):")
                 for r in high[:5]:
                     tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
-                    action, confidence = _dead_action(r, True, tested)
+                    action, confidence = _dead_action(
+                        r,
+                        True,
+                        tested,
+                        bool(consumer_meta.get(r["id"], {}).get("public_surface_reason")),
+                    )
                     click.echo(
                         f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}"
                     )
@@ -3072,7 +3095,12 @@ def dead(
             table_rows = []
             for r in high:
                 tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
-                action, confidence = _dead_action(r, True, tested)
+                action, confidence = _dead_action(
+                    r,
+                    True,
+                    tested,
+                    bool(consumer_meta.get(r["id"], {}).get("public_surface_reason")),
+                )
                 row = [
                     f"{action} {confidence}%",
                     r["name"],
@@ -3125,7 +3153,12 @@ def dead(
             table_rows = []
             for r in low:
                 tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
-                action, confidence = _dead_action(r, False, tested)
+                action, confidence = _dead_action(
+                    r,
+                    False,
+                    tested,
+                    bool(consumer_meta.get(r["id"], {}).get("public_surface_reason")),
+                )
                 row = [
                     f"{action} {confidence}%",
                     r["name"],

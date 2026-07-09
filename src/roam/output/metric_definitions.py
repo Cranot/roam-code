@@ -90,7 +90,7 @@ TANGLE_RATIO_DEFINITION = "fraction of symbols inside non-trivial SCCs; higher =
 DEAD_EXPORT_DEFINITION = "exported symbols (kind in function/class/method) with zero inbound edges in edges table."
 
 DEAD_EXPORT_ACTION_DEFINITION = (
-    "SAFE = no production consumers (graph proof); REVIEW = heuristic (API/barrel/test-only);"
+    "SAFE = no production consumers (graph proof); REVIEW = public surface or heuristic (API/barrel/test-only);"
     " INTENTIONAL = name/docstring scaffolding pattern."
 )
 
