@@ -4535,6 +4535,19 @@ def _apply_diff_scope(
     return violations, True, score, verdict
 
 
+def _classify_file_remaining_findings(
+    scoped_violations: list[dict], open_violations: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Split open target-file findings into target-wave and residual rows."""
+    scoped_ids = {id(violation) for violation in scoped_violations}
+    residual = [violation for violation in open_violations if id(violation) not in scoped_ids]
+    for violation in scoped_violations:
+        violation["finding_scope"] = "target-wave"
+    for violation in residual:
+        violation["finding_scope"] = "pre-existing/residual"
+    return scoped_violations, residual
+
+
 def _recompute_filtered_verdict_if_needed(
     score: int,
     verdict: str,
@@ -4628,6 +4641,9 @@ def _build_verify_summary(
     baselined_count: int,
     max_blast_radius: int,
     scope_summary: dict | None,
+    file_remaining: bool = False,
+    target_wave_violation_count: int | None = None,
+    residual_violation_count: int = 0,
 ) -> dict:
     summary = {
         "verdict": verdict,
@@ -4659,6 +4675,11 @@ def _build_verify_summary(
         )
     if scope_summary:
         summary["scope"] = scope_summary
+    if file_remaining:
+        summary["file_remaining"] = True
+        summary["target_wave_violation_count"] = target_wave_violation_count or 0
+        summary["residual_violation_count"] = residual_violation_count
+        summary["residual_findings_non_gating"] = True
     return summary
 
 
@@ -4677,6 +4698,7 @@ def _emit_verify_result(
     categories: dict,
     selected: list[str],
     verbose: bool,
+    file_remaining: bool = False,
 ) -> None:
     if report:
         if persist:
@@ -4701,6 +4723,8 @@ def _emit_verify_result(
         fix_suggestions,
         root,
         verbose,
+        all_violations=all_violations,
+        file_remaining=file_remaining,
     )
     if score < threshold:
         ctx.exit(EXIT_GATE_FAILURE)
@@ -4717,12 +4741,21 @@ def _emit_verify_text(
     fix_suggestions: bool,
     root: Path,
     verbose: bool,
+    all_violations: list[dict] | None = None,
+    file_remaining: bool = False,
 ) -> None:
+    all_violations = all_violations or []
+    residual_count = sum(1 for violation in all_violations if violation.get("finding_scope") == "pre-existing/residual")
     click.echo(
         f"VERDICT: {verdict} (score {score}/100) "
         f"-- {violation_count} issue{'s' if violation_count != 1 else ''} "
         f"in {files_checked} changed file{'s' if files_checked != 1 else ''}"
     )
+    if file_remaining:
+        click.echo(
+            f"file remaining: {violation_count - residual_count} target-wave, "
+            f"{residual_count} pre-existing/residual (non-gating)"
+        )
     if len(selected) != len(_ALL_CHECKS):
         skipped = ", ".join(check for check in _ALL_CHECKS if check not in selected)
         click.echo(f"checks: {', '.join(selected)} (skipped: {skipped})")
@@ -4743,6 +4776,16 @@ def _emit_verify_text(
         ("TAINT", _VERIFY_TAINT_CATEGORY),
     ):
         _print_category(label, categories[key], fix_suggestions, root=root, verbose=verbose)
+    if file_remaining:
+        click.echo("FILE REMAINING (priority-ranked; pre-existing/residual findings are non-gating):")
+        for violation in all_violations:
+            severity = violation.get("severity", "WARN")
+            scope = violation.get("finding_scope", "target-wave").upper()
+            file_loc = loc(violation["file"], violation.get("line"))
+            click.echo(f"  {severity} [{scope}]: {file_loc} -- {violation['message']}")
+            if fix_suggestions and violation.get("fix"):
+                click.echo(f"    FIX: {violation['fix']}")
+        click.echo("")
     gate_result = "PASS" if score >= threshold else "FAIL"
     click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
 
@@ -4760,6 +4803,7 @@ def _build_verify_run(
     threshold: int,
     token_budget: int,
     json_mode: bool,
+    file_remaining: bool = False,
 ) -> dict | None:
     with open_db(readonly=True) as conn:
         file_map = resolve_changed_to_db(conn, target_paths)
@@ -4775,6 +4819,7 @@ def _build_verify_run(
         all_violations = _flatten_category_violations(categories)
         advisory_cats = _advisory_categories(categories)
         all_violations, suppressed_count = _apply_verify_suppressions(root, categories, all_violations)
+        open_violations = list(all_violations)
 
         if baseline_write:
             _emit_verify_baseline_written(all_violations, root, json_mode)
@@ -4800,12 +4845,35 @@ def _build_verify_run(
         # recompute can launder a breaking change back to PASS.
         score, verdict = _apply_hard_block_floor(score, verdict, all_violations)
 
+        target_wave_violations = list(all_violations)
+        residual_findings: list[dict] = []
+        if file_remaining:
+            target_wave_violations, residual_findings = _classify_file_remaining_findings(
+                target_wave_violations, open_violations
+            )
+            all_violations = target_wave_violations + residual_findings
+
         violation_count = len(all_violations)
         files_checked = len(file_map)
         scope_summary = _verify_scope_summary(target_paths, file_map)
         all_violations, max_blast_radius, severity_full_count = _annotate_sort_filter_violations(
             conn, all_violations, severity
         )
+        if file_remaining:
+            all_violations.sort(
+                key=lambda violation: (
+                    _SEVERITY_ORDER.get(violation.get("severity"), 9),
+                    violation.get("category") or "",
+                    -int(violation.get("blast_radius") or 0),
+                    violation.get("file") or "",
+                    violation.get("line") or 0,
+                )
+            )
+            residual_findings = [
+                violation
+                for violation in all_violations
+                if violation.get("finding_scope") == "pre-existing/residual"
+            ]
         verify_summary = _build_verify_summary(
             verdict,
             score,
@@ -4823,20 +4891,26 @@ def _build_verify_run(
             baselined_count,
             max_blast_radius,
             scope_summary,
+            file_remaining,
+            len(target_wave_violations),
+            len(residual_findings),
         )
-        verify_envelope = json_envelope(
-            "verify",
-            summary=verify_summary,
-            categories=_category_summary(categories),
-            violations=all_violations,
-            budget=token_budget,
-        )
+        envelope_data = {
+            "summary": verify_summary,
+            "categories": _category_summary(categories),
+            "violations": all_violations,
+            "budget": token_budget,
+        }
+        if file_remaining:
+            envelope_data["residual_findings"] = residual_findings
+        verify_envelope = json_envelope("verify", **envelope_data)
         auto_log(verify_envelope, action="verify", target=((target_paths[0] if target_paths else "") or ""))
         return {
             "envelope": verify_envelope,
             "violations": all_violations,
             "score": score,
             "categories": categories,
+            "file_remaining": file_remaining,
         }
 
 
@@ -4916,6 +4990,7 @@ def _emit_verify_run_result(
     out: str | None,
     fix_suggestions: bool,
     verbose: bool,
+    file_remaining: bool,
 ) -> None:
     run = _build_verify_run(
         root,
@@ -4930,6 +5005,7 @@ def _emit_verify_run_result(
         request["threshold"],
         token_budget,
         json_mode,
+        file_remaining,
     )
     if run is None:
         return
@@ -4949,6 +5025,7 @@ def _emit_verify_run_result(
         run["categories"],
         request["selected"],
         verbose,
+        file_remaining=run["file_remaining"],
     )
 
 
@@ -4974,6 +5051,7 @@ def _dispatch_verify_command(
     out: str | None,
     fix_suggestions: bool,
     verbose: bool,
+    file_remaining: bool,
 ) -> None:
     cfg = _active_verify_config_or_emit(set_on, set_off, root, json_mode)
     if cfg is None:
@@ -5002,6 +5080,7 @@ def _dispatch_verify_command(
         out,
         fix_suggestions,
         verbose,
+        file_remaining,
     )
 
 
@@ -5103,6 +5182,15 @@ def _dispatch_verify_command(
     "Composes with --changed-lines (identity AND position scoping).",
 )
 @click.option(
+    "--file-remaining",
+    "file_remaining",
+    is_flag=True,
+    default=False,
+    help="Also show all other open findings in the touched files, labeled "
+    "pre-existing/residual and ranked by severity then category. Residual "
+    "findings are display-only and do not change the gate verdict.",
+)
+@click.option(
     "--deep",
     "deep",
     is_flag=True,
@@ -5175,6 +5263,7 @@ def verify(
     persist,
     out,
     files,
+    file_remaining,
 ):
     """Verify changed files follow codebase conventions.
 
@@ -5211,6 +5300,7 @@ def verify(
         out,
         fix_suggestions,
         verbose,
+        file_remaining,
     )
 
 

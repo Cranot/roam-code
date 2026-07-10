@@ -793,3 +793,84 @@ class TestReportMode:
         assert "REPORT" in res.output
         # fail-only: no WARN/INFO lines leak through the filter
         assert "[WARN]" not in res.output and "[INFO]" not in res.output
+
+
+def _prepare_file_remaining_fixture(verify_project, monkeypatch):
+    """Create three committed residual findings and two new target findings."""
+    path = verify_project / "cleanup.py"
+    path.write_text(
+        "def old_one():\n"
+        "    try:\n"
+        "        return int('1')\n"
+        "    except Exception:\n"
+        "        return 0\n\n"
+        "def old_two():\n"
+        "    try:\n"
+        "        return int('2')\n"
+        "    except Exception:\n"
+        "        return 0\n\n"
+        "def old_three():\n"
+        "    try:\n"
+        "        return int('3')\n"
+        "    except Exception:\n"
+        "        return 0\n"
+    )
+    git_commit(verify_project, "add cleanup baseline")
+    monkeypatch.chdir(verify_project)
+    out, rc = index_in_process(verify_project, "--force")
+    assert rc == 0, out
+    path.write_text(
+        path.read_text()
+        + "\n"
+        + "def new_one():\n"
+        + "    try:\n"
+        + "        return int('4')\n"
+        + "    except:\n"
+        + "        return 0\n\n"
+        + "def new_two():\n"
+        + "    try:\n"
+        + "        return int('5')\n"
+        + "    except:\n"
+        + "        return 0\n"
+    )
+
+
+def test_file_remaining_adds_residual_findings_without_re_gating(verify_project, cli_runner, monkeypatch):
+    _prepare_file_remaining_fixture(verify_project, monkeypatch)
+    result = invoke_cli(
+        cli_runner,
+        [
+            "verify",
+            "--checks",
+            "error_handling",
+            "--diff-only",
+            "--file-remaining",
+            "cleanup.py",
+        ],
+        cwd=verify_project,
+        json_mode=True,
+    )
+    data = parse_json_output(result, "verify")
+
+    assert len(data["violations"]) == 5
+    assert len(data["residual_findings"]) == 3
+    assert sum(v["finding_scope"] == "target-wave" for v in data["violations"]) == 2
+    assert all(v["finding_scope"] == "pre-existing/residual" for v in data["residual_findings"])
+    assert [v["severity"] for v in data["violations"][:2]] == ["FAIL", "FAIL"]
+    assert data["summary"]["residual_findings_non_gating"] is True
+    assert data["summary"]["score"] == 90
+
+
+def test_file_remaining_is_opt_in(verify_project, cli_runner, monkeypatch):
+    _prepare_file_remaining_fixture(verify_project, monkeypatch)
+    result = invoke_cli(
+        cli_runner,
+        ["verify", "--checks", "error_handling", "--diff-only", "cleanup.py"],
+        cwd=verify_project,
+        json_mode=True,
+    )
+    data = parse_json_output(result, "verify")
+
+    assert len(data["violations"]) == 2
+    assert "residual_findings" not in data
+    assert all("finding_scope" not in violation for violation in data["violations"])
