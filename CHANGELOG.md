@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`roam reachability-triage`** — first-class zero-egress command that projects the `service-report --type reachability-triage` compose (sbom → supply-chain → vulns → vuln-reach → taint → secrets) into deterministic reachability facts. Adds `--gate-on-new-reachable` (exit 5 only on a *new* reachable flow versus a persisted `.roam` baseline; fail-open on a missing baseline) and `--range` for a diff scope. Emits facts only — reachable/not, hop distance, blast radius — never a semantic pass/fail verdict.
+- **`roam verify --checks tenant_scope`** — opt-in multi-tenant data-bleed detector. Flags an API endpoint that reaches a tenant-scoped data access with no configured tenant guard on the reachable path. Conservative (fires only when project guards are configured and matched) and advisory; configure guards via `.roam/verify.yaml`.
+- **`roam verify --checks fabricated_success`** — opt-in detector for external-sink stubs: a function whose name/docstring/annotations declare an external operation (payment/http/db/write) but that returns only a success-shaped literal with no statically-resolved external effect. Precision-first; silent on any resolved effect or unresolved declaration.
+- **`roam verify --summary`** — compact grouped-findings inspection (one top item per group) alongside the existing `--json` detail.
+
 ## [13.8.0] — 2026-07-10
 
 ### Added
