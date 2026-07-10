@@ -28,5 +28,15 @@
     "file": "src/roam/security/tenant_scope.py",
     "function": "visit_ClassDef",
     "line": 115
+  },
+  {
+    "file": "src/roam/world_model/fabricated_success.py",
+    "function": "visit_FunctionDef",
+    "line": 196
+  },
+  {
+    "file": "src/roam/world_model/fabricated_success.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 199
   }
 ]

@@ -64,6 +64,8 @@ _CATEGORY_WEIGHTS = {
     "import_side_effects": 0.15,
     # Restore-loss — advisory, opt-in structural data-loss detector.
     "restore_loss": 0.15,
+    # Fabricated-success — opt-in external-effect stub detector.
+    "fabricated_success": 0.15,
     # Richer STRUCTURAL checks (opt-in via --checks/--auto/--all/config): higher
     # signal than style — KISS (complexity) + architecture (import cycles).
     "complexity": 0.20,
@@ -123,6 +125,7 @@ _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 _VERIFY_BREAKING_CATEGORY = "breaking"
 _VERIFY_TAINT_CATEGORY = "taint"
 _VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
+_VERIFY_FABRICATED_SUCCESS_CATEGORY = "fabricated_success"
 # Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
 # Guardrails emit hard_block FAIL when they fire; the rest emit advisory WARN
 # that surface in the violations list WITHOUT entering the weighted composite
@@ -445,6 +448,7 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     "secrets",
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
+    _VERIFY_FABRICATED_SUCCESS_CATEGORY,
     "complexity",
     "cycles",
     "tests",
@@ -2441,6 +2445,51 @@ def _check_restore_loss(conn, file_ids: list[int]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Fabricated-success check (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _check_fabricated_success(conn, file_ids: list[int]) -> dict:
+    """Flag external-sink functions that return success without an effect."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.fabricated_success import classify_fabricated_success
+
+    violations: list[dict] = []
+    for finding in classify_fabricated_success(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        message = (
+            f"fabricated success: {finding.symbol} declares a {finding.declared_sink} sink "
+            f"but returns {finding.success_shape} without an external effect"
+        )
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": _VERIFY_FABRICATED_SUCCESS_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": message,
+                "fix": (
+                    f"Perform and verify the declared {finding.declared_sink} effect in `{finding.symbol}`, "
+                    "or return a result that does not claim success"
+                ),
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
+    return {"score": score, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
 # Import-cycle check (architecture) — file-level SCC over file_edges
 # ---------------------------------------------------------------------------
 
@@ -4362,6 +4411,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             selected, "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
         ),
         "restore_loss": _maybe_run_verify_check(selected, "restore_loss", lambda: _check_restore_loss(conn, file_ids)),
+        _VERIFY_FABRICATED_SUCCESS_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_FABRICATED_SUCCESS_CATEGORY,
+            lambda: _check_fabricated_success(conn, file_ids),
+        ),
         "secrets": _maybe_run_verify_check(selected, "secrets", lambda: _check_secrets(target_paths, root)),
         "command_examples": _maybe_run_verify_check(
             selected, "command_examples", lambda: _check_command_examples(target_paths, root)
@@ -4910,6 +4964,7 @@ def _emit_verify_text(
         ("COMPLEXITY", "complexity"),
         ("CYCLES", "cycles"),
         ("RESTORE LOSS", "restore_loss"),
+        ("FABRICATED SUCCESS", _VERIFY_FABRICATED_SUCCESS_CATEGORY),
         ("TESTS", "tests"),
         ("COMMAND EXAMPLES", "command_examples"),
         ("CLAIMS", "claims"),
@@ -5261,7 +5316,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,command_examples,claims,tenant_scope. "
+        "restore_loss,fabricated_success,command_examples,claims,tenant_scope. "
         "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )
