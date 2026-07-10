@@ -191,6 +191,7 @@ published, attacked, then re-measured (full per-cell history in the repo):
 | Jun 11 | v13.6 | generation cell, re-measured n=3 | **−26% cost win** |
 | Jun 11 | v13.6 | "biggest cycles" cell, re-measured n=3 | **−89% cost win** ($0.65 → $0.07, 6→1 turns) |
 | Jun 11 | v13.6 | 723-prompt routing replay | 91% L1, p50 0.45 s cold |
+| Jul 11 | v13.7 | live dogfood rolling window | cold-compile p50 410 ms (0.45 s holds) |
 
 Caveats that always ship with these numbers: trivial prompts the agent
 one-shots anyway gain nothing (now a within-noise tie after the lean/skip
