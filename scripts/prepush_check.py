@@ -227,8 +227,16 @@ class GateRunner:
             "-m",
             "pytest",
             "-q",
+            # -n auto --dist loadfile: parallelize the independent structural
+            # guards ACROSS files (each guard file is a pure in-process AST/
+            # registry/file scan with no shared mutable fixtures, so file-level
+            # distribution is race-free and deterministic). Folding the 8
+            # release drift-guards into FAST pushed the bundle over the 2-min
+            # shell timeout on -n 0; loadfile brings it back down.
             "-n",
-            "0",
+            "auto",
+            "--dist",
+            "loadfile",
             "-p",
             "no:cacheprovider",
             *[f"tests/{g}" for g in guards],

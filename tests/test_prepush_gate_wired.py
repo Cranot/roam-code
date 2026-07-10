@@ -112,6 +112,23 @@ def test_prepush_script_exposes_expected_symbols() -> None:
         )
 
 
+def test_release_tier_registered() -> None:
+    """The pre-tag preflight tier (--release) must stay wired.
+
+    CONTRIBUTING.md + .githooks/pre-push document `prepush_check.py --release`
+    as the gate that runs what CI runs before a tag. If the flag is renamed or
+    dropped, that documented preflight silently no-ops — the exact gap that let
+    the 13.8.0 tag take 8 sequential CI rounds. Import-light source assertion
+    (mirrors the other guards in this file — no module import needed).
+    """
+    src = SCRIPT_PATH.read_text(encoding="utf-8")
+    for flag in ("--release", "--full", "--fast"):
+        assert flag in src, (
+            f"scripts/prepush_check.py must register the {flag!r} tier; "
+            ".githooks/pre-push + CONTRIBUTING.md document it as a release gate."
+        )
+
+
 def test_fast_bundle_contains_expected_guards() -> None:
     """Every high-frequency FAST guard from the design back-test is bundled."""
     tree = _parse_script()
