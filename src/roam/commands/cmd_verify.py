@@ -66,6 +66,8 @@ _CATEGORY_WEIGHTS = {
     "restore_loss": 0.15,
     # Fabricated-success — opt-in external-effect stub detector.
     "fabricated_success": 0.15,
+    # Unchecked stdlib optional-result dereference — opt-in precision detector.
+    "unchecked_result": 0.15,
     # Return-in-finally — opt-in exception-swallowing control-flow detector.
     "return_in_finally": 0.15,
     # Self-comparison — opt-in precision-first repeated operand detector.
@@ -130,6 +132,7 @@ _VERIFY_BREAKING_CATEGORY = "breaking"
 _VERIFY_TAINT_CATEGORY = "taint"
 _VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
 _VERIFY_FABRICATED_SUCCESS_CATEGORY = "fabricated_success"
+_VERIFY_UNCHECKED_RESULT_CATEGORY = "unchecked_result"
 _VERIFY_RETURN_IN_FINALLY_CATEGORY = "return_in_finally"
 _VERIFY_SELF_COMPARISON_CATEGORY = "self_comparison"
 # Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
@@ -455,6 +458,7 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     _VERIFY_FABRICATED_SUCCESS_CATEGORY,
+    _VERIFY_UNCHECKED_RESULT_CATEGORY,
     _VERIFY_RETURN_IN_FINALLY_CATEGORY,
     _VERIFY_SELF_COMPARISON_CATEGORY,
     "complexity",
@@ -2497,6 +2501,42 @@ def _check_fabricated_success(conn, file_ids: list[int]) -> dict:
     return {"score": score, "violations": violations}
 
 
+def _check_unchecked_result(conn, file_ids: list[int]) -> dict:
+    """Flag inline dereferences of narrowly known optional stdlib results."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.unchecked_result import classify_unchecked_result
+
+    violations: list[dict] = []
+    for finding in classify_unchecked_result(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": _VERIFY_UNCHECKED_RESULT_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": (
+                    f"unchecked result: {finding.symbol} dereferences {finding.callee} result "
+                    f"via {finding.access_kind} without a None check"
+                ),
+                "fix": "assign the result, check for None/empty, then dereference",
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
+    return {"score": score, "violations": violations}
+
+
 def _check_return_in_finally(conn, file_ids: list[int]) -> dict:
     """Flag control flow in finally blocks that can swallow exceptions."""
     if not file_ids:
@@ -4508,6 +4548,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             _VERIFY_FABRICATED_SUCCESS_CATEGORY,
             lambda: _check_fabricated_success(conn, file_ids),
         ),
+        _VERIFY_UNCHECKED_RESULT_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_UNCHECKED_RESULT_CATEGORY,
+            lambda: _check_unchecked_result(conn, file_ids),
+        ),
         _VERIFY_SELF_COMPARISON_CATEGORY: _maybe_run_verify_check(
             selected,
             _VERIFY_SELF_COMPARISON_CATEGORY,
@@ -5062,6 +5107,7 @@ def _emit_verify_text(
         ("CYCLES", "cycles"),
         ("RESTORE LOSS", "restore_loss"),
         ("FABRICATED SUCCESS", _VERIFY_FABRICATED_SUCCESS_CATEGORY),
+        ("UNCHECKED RESULT", _VERIFY_UNCHECKED_RESULT_CATEGORY),
         ("RETURN IN FINALLY", _VERIFY_RETURN_IN_FINALLY_CATEGORY),
         ("SELF COMPARISON", _VERIFY_SELF_COMPARISON_CATEGORY),
         ("TESTS", "tests"),
@@ -5415,7 +5461,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,fabricated_success,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
+        "restore_loss,fabricated_success,unchecked_result,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
         "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )

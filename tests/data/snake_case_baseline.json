@@ -63,5 +63,15 @@
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
     "line": 130
+  },
+  {
+    "file": "src/roam/world_model/unchecked_result.py",
+    "function": "visit_FunctionDef",
+    "line": 129
+  },
+  {
+    "file": "src/roam/world_model/unchecked_result.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 132
   }
 ]
