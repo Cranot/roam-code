@@ -39,6 +39,10 @@ _NON_CACHEABLE_COMMANDS = {
 }
 _VOLATILE_COMMANDS = {"diff", "pr-risk", "pr-diff", "affected", "affected-tests", "weather"}
 
+# Canonical registry responses whose list payload is itself the public contract.
+# Truncating these lists makes their count headlines internally inconsistent.
+_DEFAULT_BUDGET_EXEMPT_COMMANDS = {"surface"}
+
 # Commands whose envelopes should NOT be written to .roam/responses/ even when
 # ROAM_RUN_ID is set. These either log the act of logging (creating feedback
 # loops) or own the responses directory themselves (pr-bundle auto-collect
@@ -1262,6 +1266,9 @@ def _stamp_response_meta(out: dict, command: str) -> None:
 def _apply_envelope_budget(out: dict, budget: int) -> dict:
     if budget > 0:
         return budget_truncate_json(out, budget)
+
+    if out.get("command") in _DEFAULT_BUDGET_EXEMPT_COMMANDS:
+        return out
 
     # Pattern-6 default bounding (E1/N3): budget 0 ("no cap") historically let
     # high-fanout commands (uses/clones/path-coverage) emit 56K-224KB JSON --
