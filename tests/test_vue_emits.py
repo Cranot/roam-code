@@ -23,10 +23,7 @@ def test_vue_child_emit_without_parent_handler_is_reported(project_factory, cli_
                 "</script>\n"
             ),
             "Parent.vue": (
-                "<template><Child /></template>\n"
-                "<script setup>\n"
-                "import Child from './Child.vue'\n"
-                "</script>\n"
+                "<template><Child /></template>\n<script setup>\nimport Child from './Child.vue'\n</script>\n"
             ),
         }
     )
@@ -40,12 +37,7 @@ def test_vue_child_emit_without_parent_handler_is_reported(project_factory, cli_
 def test_vue_child_emit_with_handler_is_clean(project_factory, cli_runner):
     project = project_factory(
         {
-            "Child.vue": (
-                "<script setup>\n"
-                "const emit = defineEmits<{ save: [] }>()\n"
-                "emit('save')\n"
-                "</script>\n"
-            ),
+            "Child.vue": ("<script setup>\nconst emit = defineEmits<{ save: [] }>()\nemit('save')\n</script>\n"),
             "Parent.vue": (
                 '<template><Child @save="onSave" /></template>\n'
                 "<script setup>\n"
@@ -64,17 +56,9 @@ def test_vue_child_emit_with_handler_is_clean(project_factory, cli_runner):
 def test_vue_dynamic_emit_is_not_flagged(project_factory, cli_runner):
     project = project_factory(
         {
-            "Child.vue": (
-                "<script setup>\n"
-                "const emit = defineEmits<{}>()\n"
-                "emit(eventName)\n"
-                "</script>\n"
-            ),
+            "Child.vue": ("<script setup>\nconst emit = defineEmits<{}>()\nemit(eventName)\n</script>\n"),
             "Parent.vue": (
-                "<template><Child /></template>\n"
-                "<script setup>\n"
-                "import Child from './Child.vue'\n"
-                "</script>\n"
+                "<template><Child /></template>\n<script setup>\nimport Child from './Child.vue'\n</script>\n"
             ),
         }
     )

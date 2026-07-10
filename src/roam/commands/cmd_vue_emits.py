@@ -95,10 +95,7 @@ def _line_number(text: str, offset: int) -> int:
 
 
 def _type_events(type_body: str) -> set[str]:
-    events = {
-        match.group(2)
-        for match in re.finditer(r"\(\s*[A-Za-z_$][\w$]*\s*:\s*(['\"])([^'\"]+)\1", type_body)
-    }
+    events = {match.group(2) for match in re.finditer(r"\(\s*[A-Za-z_$][\w$]*\s*:\s*(['\"])([^'\"]+)\1", type_body)}
     for match in re.finditer(
         rf"(?:^|[;{{,\n])\s*(?:['\"]({_EVENT_NAME})['\"]|({_EVENT_NAME}))\s*\??\s*:",
         type_body,
@@ -192,9 +189,7 @@ def _event_handlers(attrs: str) -> set[str]:
 
 def _scan(root: Path) -> dict:
     vue_files = sorted(
-        path
-        for path in root.rglob("*.vue")
-        if not any(part in _VUE_DIRS_TO_SKIP for part in path.parts)
+        path for path in root.rglob("*.vue") if not any(part in _VUE_DIRS_TO_SKIP for part in path.parts)
     )
     components: dict[Path, _ComponentEmits] = {}
     scripts: dict[Path, str] = {}
@@ -294,7 +289,4 @@ def vue_emits(ctx):
         return
     click.echo(f"VERDICT: {verdict}")
     for finding in findings:
-        click.echo(
-            f"  {finding['parent']}:{finding['line']} {finding['message']} "
-            f"(child: {finding['child']})"
-        )
+        click.echo(f"  {finding['parent']}:{finding['line']} {finding['message']} (child: {finding['child']})")

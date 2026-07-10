@@ -4870,9 +4870,7 @@ def _build_verify_run(
                 )
             )
             residual_findings = [
-                violation
-                for violation in all_violations
-                if violation.get("finding_scope") == "pre-existing/residual"
+                violation for violation in all_violations if violation.get("finding_scope") == "pre-existing/residual"
             ]
         verify_summary = _build_verify_summary(
             verdict,
