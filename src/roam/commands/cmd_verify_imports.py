@@ -966,6 +966,8 @@ def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bo
     }
 
 
+# 7 extensions: the Node/TypeScript module-resolution set tried for extensionless
+# relative imports (.js/.ts/.jsx/.tsx/.mjs/.cjs/.json), matching Node + tsc resolution.
 _JS_RESOLUTION_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".json")
 
 

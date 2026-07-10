@@ -7,6 +7,8 @@ import configparser
 import json
 from pathlib import Path
 
+# 8 extensions: JS/TS source file types recognised when resolving a package's
+# public entry points (.js/.jsx/.mjs/.cjs/.ts/.tsx/.mts/.cts).
 _JS_EXTENSIONS = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"})
 
 
