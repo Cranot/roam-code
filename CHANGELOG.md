@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`roam verify --checks return_in_finally`** — opt-in control-flow detector that flags a `return`/`break`/`continue` inside a `finally` block, which silently discards any exception propagating out of the corresponding `try`. Skips `break`/`continue` bound to a loop nested inside the finally. Advisory WARN.
 - **`roam verify --checks unchecked_result`** — opt-in precision detector that flags an inline dereference of a narrowly-known optional stdlib result (`re.search`/`re.match`, `os.getenv`, `dict.get`) without a `None` check. Excludes HTTP-client `.get()` idioms (`self.session.get(...)`) via immediate-receiver checking. Advisory WARN.
 - **`roam verify --checks unreachable_except`** — opt-in precision detector that flags a later `except` handler made unreachable by an earlier broader handler catching a proven builtin supertype (e.g. `except Exception:` before `except ValueError:`). Builtins-only resolution; reports the first shadowed handler. Advisory WARN.
+- **`roam verify --checks redundant_boolean_return`** — opt-in detector that flags an `if/else` returning `True` in one branch and `False` in the other (or the if-return-sibling form), simplifiable to `return bool(cond)`. Advisory WARN.
+- **`roam verify --checks unreachable_after_return`** — opt-in detector that flags dead code following an unconditional `return`/`raise`/`break`/`continue` in the same block. Advisory WARN.
+- **`roam verify --checks none_eq_comparison`** — opt-in precision detector that flags `x == None` / `x != None` (use `is` / `is not`). Never fires on the `x == x` NaN idiom. Advisory WARN.
 - **`roam verify --summary`** — compact grouped-findings inspection (one top item per group) alongside the existing `--json` detail.
 
 ## [13.8.0] — 2026-07-10
