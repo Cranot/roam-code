@@ -106,6 +106,16 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "ask",
         "mode",
         "intent-check",
+        # 13.8.0 — four analysis commands shipped this release; all pure
+        # read-side (no source edits): `cycle-break` recommends the smallest
+        # extraction that breaks each import cycle (reads source, writes
+        # nothing); `vue-emits` lists a Vue component's declared/used emits;
+        # `vuln-map` / `vuln-reach` map advisories to symbols and test
+        # reachability — DB/graph reads only. Same profile as `describe`/`deps`.
+        "cycle-break",
+        "vue-emits",
+        "vuln-map",
+        "vuln-reach",
         # W107 — demoted from safe_edit. Both are pure DB queries with no
         # edit semantics: `findings` is a read-side surface over the central
         # findings registry (all subcommands open the DB with readonly=True
