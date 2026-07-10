@@ -34,6 +34,7 @@ LOCK_MODE: dict[str, LockMode] = {
     "critique": "read",
     "context": "read",
     "uses": "read",
+    "profile-import": "read",
     # Pilot writes
     "index": "exclusive",  # full re-index — drain everything
     "init": "exclusive",  # schema bootstrap

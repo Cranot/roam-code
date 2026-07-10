@@ -121,6 +121,7 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         #   no DB touch — composes other commands without executing them).
         "why-fail",
         "why-slow",
+        "profile-import",
         "workflow",
         # W1289 — both are pure DB reads:
         #   `weather` ranks files by churn × complexity (open_db readonly=True;
