@@ -397,6 +397,7 @@ _COMMANDS = {
     "smells": ("roam.commands.cmd_smells", "smells"),
     "mcp-setup": ("roam.commands.cmd_mcp_setup", "mcp_setup"),
     "verify-imports": ("roam.commands.cmd_verify_imports", "verify_imports_cmd"),
+    "vue-emits": ("roam.commands.cmd_vue_emits", "vue_emits"),
     "vulns": ("roam.commands.cmd_vulns", "vulns"),
     "metrics": ("roam.commands.cmd_metrics", "metrics"),
     "congestion": ("roam.commands.cmd_congestion", "congestion"),
@@ -620,6 +621,7 @@ _CATEGORIES = {
         "why-slow",
         "eval-retrieve",
         "boundary",
+        "vue-emits",
     ],
     "Architecture": [
         "map",
