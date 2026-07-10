@@ -1315,8 +1315,14 @@ def _block_mode_command(ctx: click.Context, reason: str) -> None:
     from roam.exit_codes import EXIT_GATE_FAILURE
 
     click.echo(f"BLOCKED: {reason}", err=True)
+    # `--override-mode` is a GROUP-level flag: it must come BEFORE the
+    # subcommand (`roam --override-mode <cmd>`), not after it. Spell the full
+    # form out — agents/users naturally try `roam <cmd> --override-mode`, which
+    # click rejects and re-blocks with this same message (confusing loop).
+    invoked = ctx.info_name or "<cmd>"
     click.echo(
-        "Pass `--override-mode` to bypass for this one call, or `roam mode <name>` to switch modes.",
+        f"Pass `--override-mode` BEFORE the subcommand (`roam --override-mode {invoked} …`) "
+        "to bypass for this one call, or `roam mode <name>` to switch modes.",
         err=True,
     )
     ctx.exit(EXIT_GATE_FAILURE)
