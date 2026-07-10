@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -290,6 +291,142 @@ class TestSyntaxCheck:
         monkeypatch.chdir(verify_project)
         result = invoke_cli(cli_runner, ["verify", "utils.py"], cwd=verify_project)
         assert "SYNTAX" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: Complexity display clustering
+# ---------------------------------------------------------------------------
+
+
+class TestComplexityDisplay:
+    """Repeated complexity findings collapse only on the text surface."""
+
+    def test_cli_clusters_three_functions_and_keeps_json_details(self, tmp_path, cli_runner, monkeypatch):
+        project = tmp_path / "complexity-repo"
+        project.mkdir()
+        (project / ".gitignore").write_text(".roam/\n")
+        body = (
+            "    if value:\n"
+            "        if value:\n"
+            "            if value:\n"
+            "                if value:\n"
+            "                    if value:\n"
+            "                        return value\n"
+            "    return None\n"
+        )
+        (project / "complex.py").write_text(
+            "def first(value):\n" + body + "\ndef second(value):\n" + body + "\ndef third(value):\n" + body
+        )
+        git_init(project)
+        monkeypatch.chdir(project)
+        assert index_in_process(project, "--force")[1] == 0
+
+        text_result = invoke_cli(
+            cli_runner,
+            ["verify", "--checks", "complexity", "--threshold", "0", "complex.py"],
+            cwd=project,
+        )
+        assert text_result.exit_code == 0, text_result.output
+        assert "complex.py has 3 complex functions" in text_result.output
+        assert text_result.output.count("fn `") == 0
+
+        verbose_result = invoke_cli(
+            cli_runner,
+            ["verify", "--verbose", "--checks", "complexity", "--threshold", "0", "complex.py"],
+            cwd=project,
+        )
+        assert verbose_result.exit_code == 0, verbose_result.output
+        assert verbose_result.output.count("fn `") == 3
+
+        json_result = invoke_cli(
+            cli_runner,
+            ["verify", "--checks", "complexity", "--threshold", "0", "complex.py"],
+            cwd=project,
+            json_mode=True,
+        )
+        data = parse_json_output(json_result, "verify")
+        complexity_findings = [item for item in data["violations"] if item.get("category") == "complexity"]
+        assert len(complexity_findings) == 3
+
+    def test_repeated_file_findings_use_smallest_extraction_target(self, tmp_path, monkeypatch):
+        from roam.commands import cmd_verify
+        from roam.index import complexity_extract
+
+        hints = {
+            "first": SimpleNamespace(
+                label="if block",
+                line_start=4,
+                line_end=8,
+                line_count=5,
+                reduction=12.0,
+                parent_after=10.0,
+                helper_cc=3.0,
+            ),
+            "second": SimpleNamespace(
+                label="for loop",
+                line_start=20,
+                line_end=22,
+                line_count=3,
+                reduction=11.0,
+                parent_after=4.0,
+                helper_cc=2.0,
+            ),
+            "third": SimpleNamespace(
+                label="while loop",
+                line_start=35,
+                line_end=41,
+                line_count=7,
+                reduction=14.0,
+                parent_after=13.0,
+                helper_cc=4.0,
+            ),
+        }
+
+        def fake_hints(path, line_start, line_end, *, max_hints):
+            name = {4: "first", 20: "second", 35: "third"}[line_start]
+            return [hints[name]]
+
+        monkeypatch.setattr(complexity_extract, "hints_for_symbol", fake_hints)
+        findings = [
+            {
+                "category": "complexity",
+                "severity": "WARN",
+                "file": "service.py",
+                "line": line,
+                "line_end": line + 10,
+                "symbol": name,
+                "cognitive_complexity": score,
+            }
+            for name, line, score in (("first", 4, 22), ("second", 20, 19), ("third", 35, 21))
+        ]
+
+        displayed = cmd_verify._complexity_display_violations(findings, tmp_path)
+
+        assert len(displayed) == 1
+        cluster = displayed[0]
+        assert cluster["file"] == "service.py"
+        assert cluster["complexity_count"] == 3
+        assert cluster["functions"] == ["first", "third", "second"]
+        assert "service.py has 3 complex functions" in cluster["message"]
+        assert "extract for loop from `second`" in cluster["message"]
+        assert "smallest high-leverage target" in cluster["message"]
+
+    def test_single_file_finding_is_unchanged(self, tmp_path):
+        from roam.commands import cmd_verify
+
+        finding = {
+            "category": "complexity",
+            "severity": "WARN",
+            "file": "service.py",
+            "line": 4,
+            "line_end": 14,
+            "symbol": "only_function",
+            "cognitive_complexity": 22,
+        }
+
+        displayed = cmd_verify._complexity_display_violations([finding], tmp_path)
+
+        assert displayed == [finding]
 
 
 # ---------------------------------------------------------------------------

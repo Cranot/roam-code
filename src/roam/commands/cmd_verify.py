@@ -2139,6 +2139,7 @@ def _composable_complexity_violation(row, cc: float) -> dict:
         "severity": SEVERITY_INFO,
         "file": row["file_path"],
         "line": row["line_start"],
+        "line_end": row["line_end"],
         "message": (
             f"composable `{name}` container complexity {rounded} — sum over its "
             f"inner closures, advisory only (container idiom, not per-function load)"
@@ -2157,6 +2158,7 @@ def _standard_complexity_violation(row, cc: float, threshold: int) -> dict:
         "severity": SEVERITY_FAIL if cc >= _COMPLEXITY_FAIL else SEVERITY_WARN,
         "file": row["file_path"],
         "line": row["line_start"],
+        "line_end": row["line_end"],
         "message": f"fn `{name}` cognitive complexity {rounded} (threshold {threshold})",
         "symbol": name,
         "cognitive_complexity": rounded,
@@ -2177,6 +2179,7 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
     rows = batched_in(
         conn,
         """SELECT s.name, s.line_start, f.path AS file_path,
+                  s.line_end,
                   COALESCE(f.language, '') AS language,
                   sm.cognitive_complexity AS cc
            FROM symbols s
@@ -2199,6 +2202,136 @@ def _check_complexity(conn, file_ids: list[int], threshold: int = _COMPLEXITY_WA
         penalty = sum(15 if v["severity"] == SEVERITY_FAIL else 8 for v in violations if v["severity"] != SEVERITY_INFO)
         score = max(0, 100 - penalty)
     return {"score": score, "violations": violations}
+
+
+def _complexity_extraction_target(violations: list[dict], root: Path) -> tuple[dict, dict] | None:
+    """Return the best deterministic extraction hint across *violations*.
+
+    ``suggest-refactoring`` uses ``hints_for_symbol`` from the shared
+    complexity-extraction module. Reuse that same ranking here so the cluster
+    points at the smallest target that can also remove the most leverage from
+    the parent function. A missing hint is a valid result for diffuse
+    complexity; the caller keeps the highest-complexity symbol as a fallback.
+    """
+    from roam.index.complexity_extract import hints_for_symbol
+
+    candidates: list[tuple[tuple, dict, object]] = []
+    for violation in sorted(
+        violations,
+        key=lambda item: (
+            -float(item.get("cognitive_complexity") or 0),
+            item.get("line") or 0,
+            item.get("symbol") or "",
+        ),
+    ):
+        path = Path(violation.get("file") or "")
+        if not path.is_absolute():
+            path = root / path
+        line_start = violation.get("line")
+        line_end = violation.get("line_end")
+        if not path or line_start is None or line_end is None:
+            continue
+        try:
+            hints = hints_for_symbol(str(path), int(line_start), int(line_end), max_hints=1)
+        except Exception:  # noqa: BLE001 — display enrichment must not break verify
+            hints = []
+        if not hints:
+            continue
+        hint = hints[0]
+        solves = 0 if hint.parent_after < 15.0 else 1
+        rank = (
+            solves,
+            hint.line_count if solves == 0 else -hint.reduction,
+            hint.line_start,
+            violation.get("symbol") or "",
+        )
+        candidates.append((rank, violation, hint))
+    if not candidates:
+        return None
+    _rank, violation, hint = min(candidates, key=lambda item: item[0])
+    return violation, {
+        "block": hint.label,
+        "line_start": hint.line_start,
+        "line_end": hint.line_end,
+        "line_count": hint.line_count,
+        "reduction": hint.reduction,
+        "parent_after": hint.parent_after,
+        "helper_cc": hint.helper_cc,
+    }
+
+
+def _complexity_display_violations(violations: list[dict], root: Path) -> list[dict]:
+    """Collapse repeated complexity findings into one per-file display target.
+
+    The underlying list remains untouched for JSON, scoring, suppressions, and
+    ``--verbose`` output. Files with exactly one complexity finding pass
+    through unchanged so the default surface stays conservative.
+    """
+    by_file: dict[str, list[dict]] = defaultdict(list)
+    other: list[dict] = []
+    for violation in violations:
+        if violation.get("category") == "complexity" and violation.get("file"):
+            by_file[str(violation["file"]).replace("\\", "/")].append(violation)
+        else:
+            other.append(violation)
+
+    displayed: list[dict] = list(other)
+    for file_path, file_violations in sorted(by_file.items()):
+        if len(file_violations) == 1:
+            displayed.append(file_violations[0])
+            continue
+
+        ordered = sorted(
+            file_violations,
+            key=lambda item: (
+                -float(item.get("cognitive_complexity") or 0),
+                item.get("line") or 0,
+                item.get("symbol") or "",
+            ),
+        )
+        target = _complexity_extraction_target(ordered, root)
+        if target is None:
+            target_violation = ordered[0]
+            hint = None
+        else:
+            target_violation, hint = target
+
+        if hint:
+            target_text = (
+                f"extract {hint['block']} from `{target_violation.get('symbol')}` "
+                f"(L{hint['line_start']}-{hint['line_end']}, "
+                f"smallest high-leverage target)"
+            )
+            fix = f"Extract {hint['block']} from `{target_violation.get('symbol')}` to reduce cognitive complexity"
+            target_line = hint["line_start"]
+            target_line_end = hint["line_end"]
+        else:
+            target_text = (
+                f"extract from `{target_violation.get('symbol')}` (no single-block hint; simplify diffuse control flow)"
+            )
+            fix = f"Refactor `{target_violation.get('symbol')}`; no single extraction block reduces the complexity"
+            target_line = target_violation.get("line")
+            target_line_end = target_violation.get("line_end")
+
+        severity = min(
+            (item.get("severity", SEVERITY_WARN) for item in file_violations),
+            key=lambda value: _SEVERITY_ORDER.get(value, 9),
+        )
+        displayed.append(
+            {
+                "category": "complexity",
+                "severity": severity,
+                "file": file_path,
+                "line": target_line,
+                "line_end": target_line_end,
+                "symbol": target_violation.get("symbol"),
+                "complexity_count": len(file_violations),
+                "functions": [item.get("symbol") for item in ordered],
+                "message": (f"{file_path} has {len(file_violations)} complex functions; target: {target_text}"),
+                "fix": fix,
+            }
+        )
+    return displayed
 
 
 _MODULE_INIT_SKIP_LANGS = frozenset(
@@ -4544,12 +4677,13 @@ def _emit_verify_result(
     fix_suggestions: bool,
     categories: dict,
     selected: list[str],
+    verbose: bool,
 ) -> None:
     if report:
         if persist:
             _persist_verify_report(verify_envelope, all_violations, out, root, json_mode)
         else:
-            _render_verify_report(verify_envelope, all_violations, json_mode)
+            _render_verify_report(verify_envelope, all_violations, json_mode, root=root, verbose=verbose)
         return
     if json_mode:
         click.echo(to_json(verify_envelope))
@@ -4566,6 +4700,8 @@ def _emit_verify_result(
         selected,
         categories,
         fix_suggestions,
+        root,
+        verbose,
     )
     if score < threshold:
         ctx.exit(EXIT_GATE_FAILURE)
@@ -4580,6 +4716,8 @@ def _emit_verify_text(
     selected: list[str],
     categories: dict,
     fix_suggestions: bool,
+    root: Path,
+    verbose: bool,
 ) -> None:
     click.echo(
         f"VERDICT: {verdict} (score {score}/100) "
@@ -4605,7 +4743,7 @@ def _emit_verify_text(
         ("BREAKING", _VERIFY_BREAKING_CATEGORY),
         ("TAINT", _VERIFY_TAINT_CATEGORY),
     ):
-        _print_category(label, categories[key], fix_suggestions)
+        _print_category(label, categories[key], fix_suggestions, root=root, verbose=verbose)
     gate_result = "PASS" if score >= threshold else "FAIL"
     click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
 
@@ -4778,6 +4916,7 @@ def _emit_verify_run_result(
     persist: bool,
     out: str | None,
     fix_suggestions: bool,
+    verbose: bool,
 ) -> None:
     run = _build_verify_run(
         root,
@@ -4810,6 +4949,7 @@ def _emit_verify_run_result(
         fix_suggestions,
         run["categories"],
         request["selected"],
+        verbose,
     )
 
 
@@ -4834,6 +4974,7 @@ def _dispatch_verify_command(
     persist: bool,
     out: str | None,
     fix_suggestions: bool,
+    verbose: bool,
 ) -> None:
     cfg = _active_verify_config_or_emit(set_on, set_off, root, json_mode)
     if cfg is None:
@@ -4861,6 +5002,7 @@ def _dispatch_verify_command(
         persist,
         out,
         fix_suggestions,
+        verbose,
     )
 
 
@@ -4918,6 +5060,12 @@ def _dispatch_verify_command(
     is_flag=True,
     default=False,
     help="Show concrete fix suggestions for each violation",
+)
+@click.option(
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Show individual complexity findings instead of per-file clusters",
 )
 @click.option(
     "--diff-only",
@@ -5017,6 +5165,7 @@ def verify(
     set_on,
     set_off,
     fix_suggestions,
+    verbose,
     diff_only,
     changed_lines,
     baseline_write,
@@ -5062,10 +5211,11 @@ def verify(
         persist,
         out,
         fix_suggestions,
+        verbose,
     )
 
 
-def _print_category(label: str, result: dict, fix_suggestions: bool):
+def _print_category(label: str, result: dict, fix_suggestions: bool, *, root: Path, verbose: bool):
     """Print a single category's results in text format."""
     if result.get("skipped"):
         click.echo(f"{label}: skipped (not selected)")
@@ -5073,6 +5223,8 @@ def _print_category(label: str, result: dict, fix_suggestions: bool):
         return
     score = result["score"]
     violations = result.get("violations", [])
+    if label == "COMPLEXITY" and not verbose:
+        violations = _complexity_display_violations(violations, root)
 
     click.echo(f"{label} ({score}/100):")
     if not violations:
@@ -5123,7 +5275,15 @@ def _all_report_paths(root: Path, selected: list[str]) -> list[str]:
     return sorted(set(_all_source_paths(root)) | set(_all_advisory_surface_paths(root, selected)))
 
 
-def _render_verify_report(envelope: dict, violations: list, json_mode: bool, cap: int = 200) -> None:
+def _render_verify_report(
+    envelope: dict,
+    violations: list,
+    json_mode: bool,
+    *,
+    root: Path,
+    verbose: bool,
+    cap: int = 200,
+) -> None:
     """REPORT mode — NON-gating ranked punch-list the agent can work through.
 
     JSON: emit the envelope (already carries the flat findings). Text: a count
@@ -5133,6 +5293,10 @@ def _render_verify_report(envelope: dict, violations: list, json_mode: bool, cap
     if json_mode:
         click.echo(to_json(envelope))
         return
+    if not verbose:
+        complexity = [v for v in violations if v.get("category") == "complexity"]
+        other = [v for v in violations if v.get("category") != "complexity"]
+        violations = other + _complexity_display_violations(complexity, root)
     total = len(violations)
     fails = sum(1 for v in violations if v.get("severity") == SEVERITY_FAIL)
     warns = sum(1 for v in violations if v.get("severity") == SEVERITY_WARN)
