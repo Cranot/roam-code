@@ -4248,11 +4248,15 @@ def _empty_verify_envelope(threshold: int) -> dict:
     )
 
 
-def _emit_empty_verify(json_mode: bool, threshold: int) -> None:
+def _emit_empty_verify(json_mode: bool, threshold: int, summary_mode: bool = False) -> None:
     envelope = _empty_verify_envelope(threshold)
     auto_log(envelope, action="verify", target="")
     if json_mode:
         click.echo(to_json(envelope))
+        return
+    if summary_mode:
+        click.echo("VERIFY SUMMARY: 0 findings across 0 files")
+        click.echo("  OK -- all checks passed")
         return
     click.echo("VERDICT: PASS (score 100/100) -- no changed files")
 
@@ -4683,6 +4687,69 @@ def _build_verify_summary(
     return summary
 
 
+def _verify_summary_groups(violations: list[dict]) -> dict[str, list[tuple[str, str, list[dict]]]]:
+    """Group findings deterministically for the compact text inspection view."""
+    grouped: dict[str, dict[tuple[str, str], list[dict]]] = defaultdict(lambda: defaultdict(list))
+    for violation in violations:
+        file_path = (violation.get("file") or "?").replace("\\", "/")
+        severity = str(violation.get("severity") or "?")
+        category = str(violation.get("category") or "?")
+        grouped[file_path][(severity, category)].append(violation)
+
+    result: dict[str, list[tuple[str, str, list[dict]]]] = {}
+    for file_path in sorted(grouped):
+        groups = grouped[file_path]
+        result[file_path] = [
+            (severity, category, sorted(items, key=_verify_summary_priority_key))
+            for (severity, category), items in sorted(
+                groups.items(),
+                key=lambda item: (
+                    _SEVERITY_ORDER.get(item[0][0], 9),
+                    item[0][0],
+                    item[0][1],
+                ),
+            )
+        ]
+    return result
+
+
+def _verify_summary_priority_key(violation: dict) -> tuple:
+    """Rank one finding within a file/severity/category summary group."""
+    line = violation.get("line")
+    try:
+        line_key = int(line) if line is not None else 2**31 - 1
+    except (TypeError, ValueError):
+        line_key = 2**31 - 1
+    return (
+        -int(violation.get("blast_radius") or 0),
+        line_key,
+        str(violation.get("symbol") or ""),
+        str(violation.get("message") or ""),
+        str(violation.get("fix") or ""),
+    )
+
+
+def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
+    """Print one top finding per file/severity/category group."""
+    groups = _verify_summary_groups(violations)
+    total = len(violations)
+    click.echo(
+        f"VERIFY SUMMARY: {total} finding{'s' if total != 1 else ''} "
+        f"across {files_checked} file{'s' if files_checked != 1 else ''}"
+    )
+    if not groups:
+        click.echo("  OK -- all checks passed")
+        return
+    for file_path, file_groups in groups.items():
+        file_count = sum(len(items) for _, _, items in file_groups)
+        click.echo(f"FILE: {file_path} ({file_count} finding{'s' if file_count != 1 else ''})")
+        for severity, category, items in file_groups:
+            top = items[0]
+            item_name = top.get("symbol") or top.get("message") or "unnamed finding"
+            click.echo(f"  {severity} / {category}: {len(items)} finding{'s' if len(items) != 1 else ''}")
+            click.echo(f"    TOP: {item_name} @ {loc(top.get('file'), top.get('line'))} -- {top.get('message', '')}")
+
+
 def _emit_verify_result(
     ctx,
     verify_envelope: dict,
@@ -4698,18 +4765,27 @@ def _emit_verify_result(
     categories: dict,
     selected: list[str],
     verbose: bool,
+    summary_mode: bool,
     file_remaining: bool = False,
 ) -> None:
-    if report:
-        if persist:
-            _persist_verify_report(verify_envelope, all_violations, out, root, json_mode)
-        else:
-            _render_verify_report(verify_envelope, all_violations, json_mode, root=root, verbose=verbose)
+    if report and persist:
+        _persist_verify_report(verify_envelope, all_violations, out, root, json_mode)
         return
     if json_mode:
-        click.echo(to_json(verify_envelope))
+        if report:
+            _render_verify_report(verify_envelope, all_violations, json_mode, root=root, verbose=verbose)
+        else:
+            click.echo(to_json(verify_envelope))
         if score < threshold:
             ctx.exit(EXIT_GATE_FAILURE)
+        return
+    if summary_mode:
+        _emit_verify_summary(all_violations, verify_envelope["summary"]["files_checked"])
+        if score < threshold:
+            ctx.exit(EXIT_GATE_FAILURE)
+        return
+    if report:
+        _render_verify_report(verify_envelope, all_violations, json_mode, root=root, verbose=verbose)
         return
     summary = verify_envelope["summary"]
     _emit_verify_text(
@@ -4965,10 +5041,12 @@ def _resolve_report_scope(
     return _apply_report_mode(report, files, checks_opt, selected, target_paths, root)
 
 
-def _emit_empty_verify_if_needed(target_paths: list[str], json_mode: bool, threshold: int) -> bool:
+def _emit_empty_verify_if_needed(
+    target_paths: list[str], json_mode: bool, threshold: int, summary_mode: bool = False
+) -> bool:
     if target_paths:
         return False
-    _emit_empty_verify(json_mode, threshold)
+    _emit_empty_verify(json_mode, threshold, summary_mode)
     return True
 
 
@@ -4988,6 +5066,7 @@ def _emit_verify_run_result(
     fix_suggestions: bool,
     verbose: bool,
     file_remaining: bool,
+    summary_mode: bool,
 ) -> None:
     run = _build_verify_run(
         root,
@@ -5022,6 +5101,7 @@ def _emit_verify_run_result(
         run["categories"],
         request["selected"],
         verbose,
+        summary_mode,
         file_remaining=run["file_remaining"],
     )
 
@@ -5049,6 +5129,7 @@ def _dispatch_verify_command(
     fix_suggestions: bool,
     verbose: bool,
     file_remaining: bool,
+    summary_mode: bool,
 ) -> None:
     cfg = _active_verify_config_or_emit(set_on, set_off, root, json_mode)
     if cfg is None:
@@ -5056,7 +5137,7 @@ def _dispatch_verify_command(
 
     ensure_index()
     request = _resolve_verify_request(cfg, root, files, threshold, checks_opt, auto, deep, report, diff_only)
-    if _emit_empty_verify_if_needed(request["target_paths"], json_mode, request["threshold"]):
+    if _emit_empty_verify_if_needed(request["target_paths"], json_mode, request["threshold"], summary_mode):
         return
 
     # Verify reads symbols from the DB; refresh newly edited targets before
@@ -5078,6 +5159,7 @@ def _dispatch_verify_command(
         fix_suggestions,
         verbose,
         file_remaining,
+        summary_mode,
     )
 
 
@@ -5141,6 +5223,13 @@ def _dispatch_verify_command(
     is_flag=True,
     default=False,
     help="Show individual complexity findings instead of per-file clusters",
+)
+@click.option(
+    "--summary",
+    "summary_mode",
+    is_flag=True,
+    default=False,
+    help="Print a compact text view grouped by file, severity, and category; use --json or --verbose for full detail.",
 )
 @click.option(
     "--diff-only",
@@ -5261,6 +5350,7 @@ def verify(
     out,
     files,
     file_remaining,
+    summary_mode,
 ):
     """Verify changed files follow codebase conventions.
 
@@ -5298,6 +5388,7 @@ def verify(
         fix_suggestions,
         verbose,
         file_remaining,
+        summary_mode,
     )
 
 
