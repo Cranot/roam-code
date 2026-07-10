@@ -117,6 +117,20 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     "test_w462_landing_page_tool_count_drift.py",
     "test_mcp_server_card_hash.py",
     "test_compound_recipe_registry.py",
+    # 2026-07-10: the 13.8.0 release tripped these full-CI drift-guards ONE
+    # per CI round (8 rounds) because none were in this FAST tier. All are
+    # in-process AST/registry scans (~35s combined) that fire whenever a new
+    # command / cmd file / detector / site-copy ships. Adding them here means
+    # the next release catches the whole class in one local run, not N CI
+    # rounds. See [[roam-code-ci-campaign]] memo (#166/#168).
+    "test_sarif_disclosure_coverage.py",
+    "test_mode_classification_coverage.py",
+    "test_budget_coverage_survey.py",
+    "test_commands_doc_synced.py",
+    "test_docs_site_quality.py",
+    "test_snake_case_function_lint.py",
+    "test_cli_contract.py",
+    "test_canonical_constant_citations.py",
 )
 
 # FULL-tier additions (heavy doc-hygiene + extra-axis guards). Per the memo,
