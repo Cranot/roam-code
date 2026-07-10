@@ -22,6 +22,21 @@
 
 ---
 
+**Jump to** —
+[Why Roam](#why-roam-is-different) ·
+[Install](#install--first-four-commands) ·
+[The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer) ·
+[Core commands](#core-commands) ·
+[MCP server](#mcp-server) ·
+[AI-tool integration](#integration-with-ai-coding-tools) ·
+[Roam Guard (PR gate)](#roam-guard-for-prs) ·
+[Performance](#performance) ·
+[Compare](#how-roam-compares) ·
+[Pricing](#paid-layers-free-cli-stays-apache-20) ·
+[FAQ](#faq)
+
+---
+
 ## Why Roam is different
 
 [METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/) and [FrontierCode](https://cognition.ai/blog/frontier-code) both point at the same gap: passing tests is not the same as mergeable code. Roam is an **agent-first CLI surface** that gives the agent local graph facts before it edits, gates risky changes, and emits scoped evidence after the run. In the agent/review tools surveyed as of 2026-06-12, the differentiator is this combination:
@@ -47,7 +62,7 @@ Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git hi
 
 ## Install + first four commands
 
-Ten minutes from `pip install` to a verdict on whether your next edit is safe.
+About two minutes from `pip install` to a verdict on whether your next edit is safe.
 
 ```bash
 pip install "roam-code[mcp]"          # 1. install with MCP server for Claude Code / Cursor / Continue
@@ -248,7 +263,7 @@ Private per-task tables and raw cells are retained for audit; the public summary
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
 Prefer a dedicated product CLI? The same loop ships as
 [**compile-code**](https://github.com/Cranot/compile-code) —
-`pip install compile-code && compile claude`.
+`pip install git+https://github.com/Cranot/compile-code && compile claude`.
 
 ### The verify half of the loop — what runs after every edit
 
@@ -316,19 +331,16 @@ refactors, never lose entries).
 
 ## What's New
 
+**v13.6 (2026-06-11) — the verify loop grows teeth + compiler injection economics.** A default secrets-leak gate and scoped algorithm sweep run after every edit; suppressions are symbol-keyed so they survive refactors; and the compiler now skips generation-shaped prompts (measured overhead) while ranking retrieval by graph importance. Full notes below · [CHANGELOG.md](CHANGELOG.md).
+
+<details>
+<summary><strong>Release notes — v13.6 → v13.0</strong></summary>
+
 **v13.6 (2026-06-11) — The verify loop grows teeth + compiler injection economics.** The post-edit loop now runs a **secrets leak gate** by default (credential shapes + an optional repo-local `.roam-leak-patterns.py` catalogue) and an advisory **algorithm/idiom sweep** scoped to the diff; suppressions are **symbol-keyed** (refactor-proof) and the suppression file is append-only after a confirmed data-loss fix; the naming rule samples production code only (~2000 false positives removed on a test-heavy codebase) and `verify --auto` is **16× faster** on sweeping diffs. The compiler learns injection economics — generation-shaped prompts get **no envelope** (measured pure overhead) — plus graph-ranked retrieval (PageRank + file-role + path-token blend), new answer probes (taint scan, world-model idempotency/side-effects, design patterns, scoped algo findings, and verify findings riding into envelopes as `known_findings`), and routing waves for trace/entry-point phrasings. New offline lock suites (procedure-registry lint, suppression fuzz corpus, self-dogfood FP lock, envelope byte budgets, L1-rate floor) and a `prepush_check.py --release` gate that proves the full CI surface green before any release push. Full diff in [CHANGELOG.md](CHANGELOG.md).
 
 **v13.5 (2026-06-10) — Compiler coverage waves + the Claude Code adapter.** Eight new compile intent procedures land from production-telemetry mining (`file_history` "what changed in X last week", `repo_structure` layers/clusters/health, `entry_point_where` with the authoritative `[project.scripts]` answer, `config_where` env-var lookup, module-name `describe_file` recall, `session_meta`, a zero-probe fast-path for self-contained batch prompts, and a `bug_site_slice` that embeds the source around "fix the bug in cli.py:45"); **`roam hooks claude --write`** wires the full compile-before/verify-after loop into Claude Code in one command (fail-open, idempotent, `--no-verify` / `--uninstall`); two reliability fixes seal a CliRunner stdout-swap race in the in-process probe pool and add a compiler fingerprint to all three compile cache keys; `envelope-diff` regression rules stop false-flagging budget bookkeeping keys. Compiler A/B on Claude (Fable 5): −83% turns / −80% input tokens / −63% cost on nav-comprehension (41 cells). Full diff in [CHANGELOG.md](CHANGELOG.md).
 
-<details>
-<summary><strong>v13.4 (released 2026-05-21)</strong></summary>
-
 **v13.4 (released 2026-05-21) — Perf wave + Pattern-1 stabilisation + assurance hardening.** Major detector speed-ups (`clones` 43.8s → 13.1s, `intent` 66s → 12s, `doc-staleness` 93s → 19s, `sbom` 30s → 9s — all byte-identical output), 17 commands now emit `isError`/`status` on error envelopes + 11 commands route their argless `--json` path through a proper envelope (Pattern-1C drift-guards added), a persisted per-snapshot spectral gap powering a real `roam forecast` failure budget, MCP prompt-injection marker scan on tool-call egress, release supply-chain hardening (PEP 740 attestations, tag-bound artifacts), and large false-positive cuts in `feature-envy` / `shotgun-surgery` / `god-components`. Full diff in [CHANGELOG.md](CHANGELOG.md).
-
-</details>
-
-<details>
-<summary><strong>Earlier releases (v13.3 / v13.2 / v13.1 / v13.0)</strong></summary>
 
 ### v13.3 (released 2026-05-19) — MCP runtime security + UX polish
 
@@ -506,7 +518,7 @@ roam mcp
 **Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
-243 MCP tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
+244 MCP tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
 
 **Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
 
@@ -990,7 +1002,7 @@ Exclude paths with a `.roamignore` file (full gitignore syntax) or `roam config 
 
 ## How Roam Compares
 
-roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
+roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
 
 | Capability | roam-code | AI IDEs (Cursor, Windsurf) | AI Agents (Claude Code, Codex) | SAST (SonarQube, CodeQL) |
 |---|---|---|---|---|
@@ -1002,7 +1014,7 @@ roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC,
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 243 (16 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| MCP tools for agents | 244 (16 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 28 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
