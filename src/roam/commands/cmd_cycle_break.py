@@ -1,4 +1,10 @@
-"""Recommend the smallest resolved extraction that breaks each file cycle."""
+"""Recommend the smallest resolved extraction that breaks each file cycle.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cycle-break's deliverable is a refactoring recommendation
+(the minimum extraction edge-set that severs each import cycle) — not a set
+of per-location rule violations, which is the unit SARIF encodes.
+"""
 
 from __future__ import annotations
 

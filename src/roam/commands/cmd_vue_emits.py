@@ -1,4 +1,10 @@
-"""Find Vue child emits that have no handler at a resolved parent usage."""
+"""Find Vue child emits that have no handler at a resolved parent usage.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted in this release: vue-emits ships as a text/JSON advisory and is
+not yet wired into the global ``--sarif`` flag (``cli._SARIF_CONSUMERS``).
+A SARIF exporter for its per-usage findings is tracked as a follow-up.
+"""
 
 from __future__ import annotations
 

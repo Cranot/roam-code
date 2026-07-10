@@ -3,6 +3,11 @@
 This command displaces manual registry greps by comparing the authoritative
 CLI and MCP source registries with the generated ``docs/COMMANDS.md`` index.
 It is deterministic and does not require a project index.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because surface-gaps reports registry-reconciliation gaps across
+roam's own CLI/MCP/docs surfaces — not per-location violations in the
+target codebase, which is the unit SARIF encodes.
 """
 
 from __future__ import annotations

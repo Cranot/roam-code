@@ -1,4 +1,10 @@
-"""Import sampled profiler output and rank indexed source spans by runtime share."""
+"""Import sampled profiler output and rank indexed source spans by runtime share.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because profile-import's deliverable is a runtime-share ranking of
+source spans (a profiling report) — not a set of per-location rule
+violations, which is the unit SARIF encodes.
+"""
 
 from __future__ import annotations
 

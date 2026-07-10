@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "file": "src/roam/commands/cmd_doc_staleness.py",
+    "function": "visit_FunctionDef",
+    "line": 221
+  },
+  {
+    "file": "src/roam/commands/cmd_doc_staleness.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 224
+  },
+  {
+    "file": "src/roam/commands/cmd_doc_staleness.py",
+    "function": "visit_ClassDef",
+    "line": 227
+  }
+]
