@@ -74,6 +74,8 @@ _CATEGORY_WEIGHTS = {
     "return_in_finally": 0.15,
     # Self-comparison — opt-in precision-first repeated operand detector.
     "self_comparison": 0.15,
+    # Redundant-boolean-return — opt-in if/else True/False simplification detector.
+    "redundant_boolean_return": 0.15,
     # Richer STRUCTURAL checks (opt-in via --checks/--auto/--all/config): higher
     # signal than style — KISS (complexity) + architecture (import cycles).
     "complexity": 0.20,
@@ -138,6 +140,7 @@ _VERIFY_UNREACHABLE_EXCEPT_CATEGORY = "unreachable_except"
 _VERIFY_UNCHECKED_RESULT_CATEGORY = "unchecked_result"
 _VERIFY_RETURN_IN_FINALLY_CATEGORY = "return_in_finally"
 _VERIFY_SELF_COMPARISON_CATEGORY = "self_comparison"
+_VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY = "redundant_boolean_return"
 # Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
 # Guardrails emit hard_block FAIL when they fire; the rest emit advisory WARN
 # that surface in the violations list WITHOUT entering the weighted composite
@@ -465,6 +468,7 @@ _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     _VERIFY_UNCHECKED_RESULT_CATEGORY,
     _VERIFY_RETURN_IN_FINALLY_CATEGORY,
     _VERIFY_SELF_COMPARISON_CATEGORY,
+    _VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY,
     "complexity",
     "cycles",
     "tests",
@@ -2658,6 +2662,45 @@ def _check_self_comparison(conn, file_ids: list[int]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Redundant-boolean-return check (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _check_redundant_boolean_return(conn, file_ids: list[int]) -> dict:
+    """Flag exact if/else branches that return opposite boolean literals."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.redundant_boolean_return import classify_redundant_boolean_return
+
+    violations: list[dict] = []
+    for finding in classify_redundant_boolean_return(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        message = f"redundant boolean return: {finding.symbol} returns True/False literals from both branches"
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": _VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": message,
+                "fix": "collapse `if cond: return True; else: return False` to `return bool(cond)`",
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
+    return {"score": score, "violations": violations}
+
+
+# ---------------------------------------------------------------------------
 # Import-cycle check (architecture) — file-level SCC over file_edges
 # ---------------------------------------------------------------------------
 
@@ -4604,6 +4647,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             _VERIFY_SELF_COMPARISON_CATEGORY,
             lambda: _check_self_comparison(conn, file_ids),
         ),
+        _VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY,
+            lambda: _check_redundant_boolean_return(conn, file_ids),
+        ),
         "secrets": _maybe_run_verify_check(selected, "secrets", lambda: _check_secrets(target_paths, root)),
         "command_examples": _maybe_run_verify_check(
             selected, "command_examples", lambda: _check_command_examples(target_paths, root)
@@ -5157,6 +5205,7 @@ def _emit_verify_text(
         ("UNCHECKED RESULT", _VERIFY_UNCHECKED_RESULT_CATEGORY),
         ("RETURN IN FINALLY", _VERIFY_RETURN_IN_FINALLY_CATEGORY),
         ("SELF COMPARISON", _VERIFY_SELF_COMPARISON_CATEGORY),
+        ("REDUNDANT BOOLEAN RETURN", _VERIFY_REDUNDANT_BOOLEAN_RETURN_CATEGORY),
         ("TESTS", "tests"),
         ("COMMAND EXAMPLES", "command_examples"),
         ("CLAIMS", "claims"),
@@ -5508,7 +5557,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,fabricated_success,unreachable_except,unchecked_result,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
+        "restore_loss,fabricated_success,unreachable_except,unchecked_result,return_in_finally,self_comparison,redundant_boolean_return,command_examples,claims,tenant_scope. "
         "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )
