@@ -847,3 +847,50 @@ def test_framework_slugs_titles_in_sync():
         f"Only in FRAMEWORK_TITLES: "
         f"{sorted(frozenset(FRAMEWORK_TITLES.keys()) - _SOURCE_FRAMEWORK_ALLOWED)}"
     )
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for chunk in v.split(".")[:3]:
+        m = re.match(r"\d+", chunk)
+        parts.append(int(m.group(0)) if m else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+# Explicit "this is the current version" declarations on the landing pages.
+# Deliberately NARROW — only fields that assert the page's *own* current version
+# (JSON-LD softwareVersion, a status-page "current: vX" stamp). Prose mentions
+# and changelog history legitimately name older versions, so they are NOT matched.
+_CURRENT_VERSION_PATTERNS = (
+    re.compile(r'"softwareVersion"\s*:\s*"v?(\d+\.\d+\.\d+)"'),
+    re.compile(r"current[^<>\n]{0,20}?\bv(\d+\.\d+\.\d+)\b", re.IGNORECASE),
+)
+
+
+def test_all_landing_html_current_version_not_behind_pyproject():
+    """Walk EVERY landing-page HTML for current-version stamps behind pyproject.
+
+    The four named-file assertions above pin specific fields on specific pages;
+    this walks the whole tree so a NEW page (or a new hardcoded current-version
+    stamp) can't silently ship a version behind the package. Only explicit
+    current-version declarations are checked (see ``_CURRENT_VERSION_PATTERNS``),
+    so changelog history and prose references to older versions are ignored.
+    Equal is fine; only strictly-behind fails.
+    """
+    truth = _version_tuple(_truth_version())
+    behind: list[str] = []
+    for path in sorted(_LANDING_PAGE.rglob("*.html")):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(_LANDING_PAGE)
+        for pat in _CURRENT_VERSION_PATTERNS:
+            for m in pat.finditer(text):
+                ver = _version_tuple(m.group(1))
+                if ver < truth:
+                    behind.append(f"{rel}: current-version stamp {m.group(1)} < pyproject {'.'.join(map(str, truth))}")
+    behind = sorted(set(behind))
+    assert not behind, (
+        "landing-page HTML declares a current version BEHIND pyproject "
+        "(run the version-bump sync scripts):\n  " + "\n  ".join(behind)
+    )
