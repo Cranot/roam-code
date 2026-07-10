@@ -108,6 +108,7 @@ _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 #   ROAM_VERIFY_BREAKING_MIN_CALLERS=1 external-caller blast threshold (private-helper noise)
 #   ROAM_VERIFY_UNRESOLVED=1           flag calls that resolve to nothing (NameError shape)
 #   ROAM_VERIFY_TAINT=0                surface source->sink taint touching the edit (opt-in)
+#   ROAM_VERIFY_TENANT_SCOPE=0         warn on unguarded tenant-data endpoints (opt-in)
 #   ROAM_VERIFY_DELETE_CHECK=0        block a diff whose deleted symbol still has survivors (opt-in; grep-FP)
 #   ROAM_VERIFY_MIGRATION_SAFETY=1    block a non-idempotent / destructive changed .php migration
 #   ROAM_VERIFY_SMELLS=0              warn on god-class / brain-method / deep-nesting in changed code
@@ -121,6 +122,7 @@ _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 # ---------------------------------------------------------------------------
 _VERIFY_BREAKING_CATEGORY = "breaking"
 _VERIFY_TAINT_CATEGORY = "taint"
+_VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
 # Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
 # Guardrails emit hard_block FAIL when they fire; the rest emit advisory WARN
 # that surface in the violations list WITHOUT entering the weighted composite
@@ -452,6 +454,7 @@ _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     # --checks/--all/config; auto-selected by default on Python edits.
     _VERIFY_BREAKING_CATEGORY,
     _VERIFY_TAINT_CATEGORY,
+    _VERIFY_TENANT_SCOPE_CATEGORY,
     _VERIFY_DELETE_CATEGORY,
     _VERIFY_MIGRATION_CATEGORY,
     _VERIFY_SMELLS_CATEGORY,
@@ -684,6 +687,8 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
             selected.add(_VERIFY_BREAKING_CATEGORY)
         if _verify_env_flag("ROAM_VERIFY_TAINT", False):
             selected.add(_VERIFY_TAINT_CATEGORY)
+        if _verify_env_flag("ROAM_VERIFY_TENANT_SCOPE", False):
+            selected.add(_VERIFY_TENANT_SCOPE_CATEGORY)
     # Additional reusable detectors (env-flagged). Default-OFF ones stay OUT of
     # the auto set unless their switch is on, so the no-arg / Stop-hook gate is
     # byte-identical to before. Each detector fn ALSO re-checks its flag and
@@ -3358,6 +3363,60 @@ def _check_taint(conn, file_ids: list[int], target_paths: list[str], root: Path)
 
 
 # ---------------------------------------------------------------------------
+# Tenant-scope gate (opt-in via --checks/config or ROAM_VERIFY_TENANT_SCOPE=1).
+# The engine requires a configured guard convention to match somewhere in the
+# project before it can report a reachable, concrete ORM/DB access.
+# ---------------------------------------------------------------------------
+
+
+def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
+    """Surface tenant-data endpoint paths that have no configured guard."""
+    del file_ids  # Scope is derived from the complete reachable path below.
+    changed = {path.replace("\\", "/") for path in target_paths}
+    if not changed:
+        return {"score": 100, "violations": [], "advisory": True}
+    try:
+        from roam.security.tenant_scope import find_tenant_scope_findings, load_tenant_guard_signals
+
+        guards = load_tenant_guard_signals(root)
+        findings = find_tenant_scope_findings(conn, root, guard_signals=guards)
+    except Exception as exc:  # noqa: BLE001 - opt-in security analysis must fail closed
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify.tenant_scope", exc)
+        return {"score": 100, "violations": [], "advisory": True}
+
+    violations: list[dict] = []
+    for finding in findings:
+        touched = set(finding.get("reachable_files") or ()) & changed
+        if not touched:
+            continue
+        data_file = finding.get("data_file") or ""
+        handler_file = finding.get("file") or ""
+        location = (
+            data_file if data_file in touched else handler_file if handler_file in touched else sorted(touched)[0]
+        )
+        line = finding.get("data_line") if location == data_file else finding.get("line")
+        matched = ", ".join(finding.get("matched_project_guards") or ())
+        violations.append(
+            {
+                "category": _VERIFY_TENANT_SCOPE_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": location,
+                "line": line,
+                "symbol": finding.get("handler"),
+                "message": (
+                    f"tenant-scope: {finding.get('method')} {finding.get('endpoint')} reaches "
+                    f"`{finding.get('data_signal')}` without a tenant guard; project guards: {matched}"
+                ),
+                "fix": "Add a configured tenant decorator, dependency, middleware, or guard call on this path",
+                "evidence": finding,
+            }
+        )
+    return {"score": 100 if not violations else 60, "violations": violations, "advisory": True}
+
+
+# ---------------------------------------------------------------------------
 # Additional reusable detector wires. Each reuses the shipped roam command's
 # engine, is scoped to the changed files (the diff), is independently
 # env-flagged (ROAM_VERIFY_<NAME>) and FULLY fail-open: any import or runtime
@@ -4219,6 +4278,7 @@ def _apply_report_mode(
         "tests",
         _VERIFY_BREAKING_CATEGORY,
         _VERIFY_TAINT_CATEGORY,
+        _VERIFY_TENANT_SCOPE_CATEGORY,
         _VERIFY_DELETE_CATEGORY,
         _VERIFY_MIGRATION_CATEGORY,
     )
@@ -4312,6 +4372,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
         ),
         _VERIFY_TAINT_CATEGORY: _maybe_run_verify_check(
             selected, _VERIFY_TAINT_CATEGORY, lambda: _check_taint(conn, file_ids, target_paths, root)
+        ),
+        _VERIFY_TENANT_SCOPE_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_TENANT_SCOPE_CATEGORY,
+            lambda: _check_tenant_scope(conn, file_ids, target_paths, root),
         ),
         _VERIFY_DELETE_CATEGORY: _maybe_run_verify_check(
             selected, _VERIFY_DELETE_CATEGORY, lambda: _check_delete_safety(conn, target_paths, root)
@@ -5196,7 +5261,8 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,command_examples,claims. Default: all (or .roam/verify.yaml)."
+        "restore_loss,command_examples,claims,tenant_scope. "
+        "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )
 @click.option(

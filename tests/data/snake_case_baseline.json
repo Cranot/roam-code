@@ -13,5 +13,20 @@
     "file": "src/roam/commands/cmd_doc_staleness.py",
     "function": "visit_ClassDef",
     "line": 227
+  },
+  {
+    "file": "src/roam/security/tenant_scope.py",
+    "function": "visit_FunctionDef",
+    "line": 107
+  },
+  {
+    "file": "src/roam/security/tenant_scope.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 111
+  },
+  {
+    "file": "src/roam/security/tenant_scope.py",
+    "function": "visit_ClassDef",
+    "line": 115
   }
 ]
