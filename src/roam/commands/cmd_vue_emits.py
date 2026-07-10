@@ -176,6 +176,10 @@ def _kebab_name(name: str) -> str:
     return re.sub(r"(?<!^)([A-Z])", r"-\1", name).lower()
 
 
+def _canonical_event(name: str) -> str:
+    return ":".join(segment.lower().replace("-", "") for segment in name.split(":"))
+
+
 def _resolve_vue_import(parent: Path, specifier: str, root: Path) -> Path | None:
     """Resolve one relative import only when exactly one `.vue` target exists."""
     raw = (parent.parent / specifier).resolve()
@@ -190,7 +194,7 @@ def _resolve_vue_import(parent: Path, specifier: str, root: Path) -> Path | None
 
 
 def _event_handlers(attrs: str) -> set[str]:
-    return {match.group("event").split(".", 1)[0] for match in _HANDLER_RE.finditer(attrs)}
+    return {_canonical_event(match.group("event").split(".", 1)[0]) for match in _HANDLER_RE.finditer(attrs)}
 
 
 def _scan(root: Path) -> dict:
@@ -234,7 +238,7 @@ def _scan(root: Path) -> dict:
                 line = start_line + template.count("\n", 0, tag_match.start())
                 handlers = _event_handlers(tag_match.group("attrs"))
                 for event, child_line in child_emits.events.items():
-                    if event in handlers:
+                    if _canonical_event(event) in handlers:
                         continue
                     findings.append(
                         {
