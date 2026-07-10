@@ -66,6 +66,8 @@ _CATEGORY_WEIGHTS = {
     "restore_loss": 0.15,
     # Fabricated-success — opt-in external-effect stub detector.
     "fabricated_success": 0.15,
+    # Unreachable except ordering — opt-in precision-first AST detector.
+    "unreachable_except": 0.15,
     # Unchecked stdlib optional-result dereference — opt-in precision detector.
     "unchecked_result": 0.15,
     # Return-in-finally — opt-in exception-swallowing control-flow detector.
@@ -132,6 +134,7 @@ _VERIFY_BREAKING_CATEGORY = "breaking"
 _VERIFY_TAINT_CATEGORY = "taint"
 _VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
 _VERIFY_FABRICATED_SUCCESS_CATEGORY = "fabricated_success"
+_VERIFY_UNREACHABLE_EXCEPT_CATEGORY = "unreachable_except"
 _VERIFY_UNCHECKED_RESULT_CATEGORY = "unchecked_result"
 _VERIFY_RETURN_IN_FINALLY_CATEGORY = "return_in_finally"
 _VERIFY_SELF_COMPARISON_CATEGORY = "self_comparison"
@@ -458,6 +461,7 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     _VERIFY_FABRICATED_SUCCESS_CATEGORY,
+    _VERIFY_UNREACHABLE_EXCEPT_CATEGORY,
     _VERIFY_UNCHECKED_RESULT_CATEGORY,
     _VERIFY_RETURN_IN_FINALLY_CATEGORY,
     _VERIFY_SELF_COMPARISON_CATEGORY,
@@ -2493,6 +2497,43 @@ def _check_fabricated_success(conn, file_ids: list[int]) -> dict:
                     f"Perform and verify the declared {finding.declared_sink} effect in `{finding.symbol}`, "
                     "or return a result that does not claim success"
                 ),
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
+    return {"score": score, "violations": violations}
+
+
+def _check_unreachable_except(conn, file_ids: list[int]) -> dict:
+    """Flag later builtin handlers shadowed by an earlier broader handler."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.unreachable_except import classify_unreachable_except
+
+    violations: list[dict] = []
+    for finding in classify_unreachable_except(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        message = (
+            f"unreachable except: {finding.symbol} catches {finding.shadowed_type} "
+            f"after a broader {finding.shadowing_type}"
+        )
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": _VERIFY_UNREACHABLE_EXCEPT_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": message,
+                "fix": (f"reorder except clauses so {finding.shadowed_type} precedes {finding.shadowing_type}"),
             }
         )
         violations.append(violation)
@@ -4548,6 +4589,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             _VERIFY_FABRICATED_SUCCESS_CATEGORY,
             lambda: _check_fabricated_success(conn, file_ids),
         ),
+        _VERIFY_UNREACHABLE_EXCEPT_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_UNREACHABLE_EXCEPT_CATEGORY,
+            lambda: _check_unreachable_except(conn, file_ids),
+        ),
         _VERIFY_UNCHECKED_RESULT_CATEGORY: _maybe_run_verify_check(
             selected,
             _VERIFY_UNCHECKED_RESULT_CATEGORY,
@@ -5107,6 +5153,7 @@ def _emit_verify_text(
         ("CYCLES", "cycles"),
         ("RESTORE LOSS", "restore_loss"),
         ("FABRICATED SUCCESS", _VERIFY_FABRICATED_SUCCESS_CATEGORY),
+        ("UNREACHABLE EXCEPT", _VERIFY_UNREACHABLE_EXCEPT_CATEGORY),
         ("UNCHECKED RESULT", _VERIFY_UNCHECKED_RESULT_CATEGORY),
         ("RETURN IN FINALLY", _VERIFY_RETURN_IN_FINALLY_CATEGORY),
         ("SELF COMPARISON", _VERIFY_SELF_COMPARISON_CATEGORY),
@@ -5461,7 +5508,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,fabricated_success,unchecked_result,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
+        "restore_loss,fabricated_success,unreachable_except,unchecked_result,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
         "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )

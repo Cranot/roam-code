@@ -73,5 +73,25 @@
     "file": "src/roam/world_model/unchecked_result.py",
     "function": "visit_AsyncFunctionDef",
     "line": 132
+  },
+  {
+    "file": "src/roam/world_model/unreachable_except.py",
+    "function": "visit_FunctionDef",
+    "line": 180
+  },
+  {
+    "file": "src/roam/world_model/unreachable_except.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 183
+  },
+  {
+    "file": "src/roam/world_model/unreachable_except.py",
+    "function": "visit_ClassDef",
+    "line": 186
+  },
+  {
+    "file": "src/roam/world_model/unreachable_except.py",
+    "function": "visit_TryStar",
+    "line": 199
   }
 ]
