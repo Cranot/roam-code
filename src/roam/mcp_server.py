@@ -11912,6 +11912,40 @@ def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
 
 
 @_tool(
+    name="roam_reachability_triage",
+    description=(
+        "Classify vulnerability-flow findings as reachable or not reachable "
+        "from entrypoints through local call-graph evidence. This MCP tool "
+        "is read-only: it does not write or move the reachability baseline; "
+        "use the CLI for baseline management."
+    ),
+)
+def roam_reachability_triage(commit_range: str = "", root: str = ".") -> dict:
+    """Classify vulnerability-flow findings by entrypoint reachability.
+
+    Parameters
+    ----------
+    commit_range:
+        Optional git range, such as ``main..HEAD``, used to limit the facts
+        to changed files.
+    root:
+        Project root to inspect.
+
+    Returns
+    -------
+    dict
+        Envelope containing ``summary``, ``agent_contract``,
+        ``wrapper_version``, ``delegated_compose``, ``primitives``,
+        ``metrics``, ``flows``, ``gate``, ``missing_primitives``,
+        ``honesty``, and ``budget``.
+    """
+    args = ["reachability-triage"]
+    if commit_range:
+        args.extend(["--range", commit_range])
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_secrets",
     description="Scan for hardcoded secrets, API keys, tokens, passwords (25 patterns).",
 )

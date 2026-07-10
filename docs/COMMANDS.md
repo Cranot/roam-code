@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**273 commands** (266 canonical + aliases) across 7 categories · 243 MCP tools · roam v13.4
+**273 commands** (266 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.4
 
 ## Getting Started (41)
 
@@ -121,7 +121,7 @@
 | `pr-risk` | stable | ✓ | — |
 | `preflight` | stable | ✓ | — |
 | `proof-bundle` | stable | ✓ | — |
-| `reachability-triage` | stable | — | — |
+| `reachability-triage` | stable | ✓ | — |
 | `recommend` | stable | ✓ | — |
 | `replay` | stable | — | — |
 | `retrieve` | stable | ✓ | — |

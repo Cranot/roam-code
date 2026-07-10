@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>273 commands · 243 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>273 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -515,7 +515,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 243)</strong></summary>
+<summary><strong>MCP tool list (all 244)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-table -->
@@ -697,6 +697,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_py_modern` | Python modernisation signal: walrus, match, PEP 604/585, f-strings vs legacy. |
 | `roam_py_types` | Python type-annotation health: % public fns fully typed, Any usage, legacy typing. |
 | `roam_pytest_fixtures` | pytest fixture chain: top fixtures by dependent count, or per-symbol dependency walk. |
+| `roam_reachability_triage` | Classify vulnerability-flow findings as reachable or not reachable from entrypoints through local call-graph evidence. This MCP tool is read-only: it does not write or move the reachability baseline; use the CLI for baseline management. |
 | `roam_recommend` | Surface symbols related to a given symbol via three signal sources combined: call-graph neighbours (1-hop in + out), git co-change (other symbols whose files changed in the same commits), and persisted clone siblings (when ``roam clones --persist`` was run). Each candidate gets a score that's the normalised sum of the three contributions. Different from ``roam_impact`` (transitive blast radius) and ``roam_neighbours`` (graph-only 1-hop neighbours) -- this fuses co-change + clones into the ranking. |
 | `roam_refs_text` | Audit literal strings across the project and emit a per-string verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every reference by surface (code, test, docs, config, generated, vendored) and annotates reachability for code hits. |
 | `roam_reindex` | Incremental or force reindex. Task-mode + elicited confirmation for force runs. |

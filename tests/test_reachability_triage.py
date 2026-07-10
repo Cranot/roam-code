@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from click.testing import CliRunner
 
@@ -167,6 +169,25 @@ def test_range_scopes_facts_to_changed_files(tmp_path, monkeypatch):
     payload = _parse_json(result)
     assert payload["flows"] == []
     assert payload["summary"]["changed_files"] == 1
+
+
+def test_mcp_wrapper_returns_read_only_envelope_and_forwards_range(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    envelope = {"command": "reachability-triage", "summary": {"verdict": "0 reachable paths"}}
+
+    from roam.mcp_server import roam_reachability_triage
+
+    params = inspect.signature(roam_reachability_triage).parameters
+    assert "write_baseline" not in params
+    assert "gate_on_new_reachable" not in params
+
+    with patch("roam.mcp_server._run_roam", return_value=envelope) as run_roam:
+        assert roam_reachability_triage(root=str(tmp_path)) == envelope
+        run_roam.assert_called_once_with(["reachability-triage"], str(tmp_path))
+        assert roam_reachability_triage(commit_range="main..HEAD", root=str(tmp_path)) == envelope
+        run_roam.assert_called_with(["reachability-triage", "--range", "main..HEAD"], str(tmp_path))
+
+    assert "error" not in envelope
 
 
 def test_help_and_output_keep_the_honesty_wording(tmp_path, monkeypatch):
