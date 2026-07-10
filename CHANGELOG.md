@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.8.0] — 2026-07-10
+
+### Added
+- **Five new commands** — `roam surface-gaps` (reconcile CLI ↔ MCP ↔ docs surfaces and
+  flag orphaned/undocumented/unimplemented commands), `roam cycle-break` (recommend the
+  minimal extraction that breaks an import cycle), `roam profile-import` (ingest a
+  profiler trace and rank the hottest source spans by runtime share), `roam vue-emits`
+  (flag Vue child-component emits with no matching parent handler), and the
+  **silent-data-loss detector** surfaced as `roam verify --checks restore_loss`
+  (flags a function that deletes tables without reinserting them).
+- **JS/TS import resolution** — `verify-imports` now resolves Node core builtins
+  (`node:*` and bare), `package.json` dependencies (incl. subpaths), and relative
+  paths, eliminating hundreds of false "unresolved import" findings on JS/TS.
+- **Semantic docstring-drift** — flags documented parameters/returns/raises that no
+  longer match the code; prose-only summary drift is gated behind an opt-in.
+- **Complexity clustering** — `roam verify` consolidates repeated complexity findings
+  into one refactor target per file instead of many near-duplicate warnings.
+- **Remaining-findings surface** — an opt-in flag lists residual findings in touched
+  files (priority-ranked, clearly labelled pre-existing) so a cleanup wave can finish.
+
+### Changed
+- **Default verify checks expanded (behaviour change).** `roam verify` now runs
+  `restore_loss` by default (advisory WARN), and `dead` + `n1` now fire by default on
+  **newly-introduced** issues in changed code (diff-scoped, WARN). Opt out with
+  `ROAM_VERIFY_DEAD=0` / `ROAM_VERIFY_N1=0`. Higher-FP checks (complexity, cycles,
+  taint, …) remain opt-in via `--checks`/`--all`/config.
+- **Dead-code precision** — public API symbols (named in `__all__`, re-exported from a
+  package `__init__`, or declared as entry points) are capped at REVIEW confidence and
+  labelled external-facing instead of reported as dead-SAFE from lack of internal
+  consumers alone.
+- **N+1-I/O precision** — the io-in-loop detector no longer flags batch primitives
+  (`executemany`, `execute_batch`, `bulk_create`/`insert`/`update`, `copy_from`,
+  `writerows`, `addAll`, …); genuine per-row I/O still fires.
+
 ## [13.7.1] — 2026-07-09
 
 ### Added

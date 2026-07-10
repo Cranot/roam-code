@@ -76,6 +76,21 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.8.0] — 2026-07-10</h2>
+<h3>Added</h3>
+<ul>
+<li><strong>Five new commands</strong> — <code>roam surface-gaps</code> (reconcile CLI ↔ MCP ↔ docs surfaces and flag orphaned/undocumented/unimplemented commands), <code>roam cycle-break</code> (recommend the minimal extraction that breaks an import cycle), <code>roam profile-import</code> (ingest a profiler trace and rank the hottest source spans by runtime share), <code>roam vue-emits</code> (flag Vue child-component emits with no matching parent handler), and the <strong>silent-data-loss detector</strong> surfaced as <code>roam verify --checks restore_loss</code> (flags a function that deletes tables without reinserting them).</li>
+<li><strong>JS/TS import resolution</strong> — <code>verify-imports</code> now resolves Node core builtins (<code>node:*</code> and bare), <code>package.json</code> dependencies (incl. subpaths), and relative paths, eliminating hundreds of false "unresolved import" findings on JS/TS.</li>
+<li><strong>Semantic docstring-drift</strong> — flags documented parameters/returns/raises that no longer match the code; prose-only summary drift is gated behind an opt-in.</li>
+<li><strong>Complexity clustering</strong> — <code>roam verify</code> consolidates repeated complexity findings into one refactor target per file instead of many near-duplicate warnings.</li>
+<li><strong>Remaining-findings surface</strong> — an opt-in flag lists residual findings in touched files (priority-ranked, clearly labelled pre-existing) so a cleanup wave can finish.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><strong>Default verify checks expanded (behaviour change).</strong> <code>roam verify</code> now runs <code>restore_loss</code> by default (advisory WARN), and <code>dead</code> + <code>n1</code> now fire by default on <strong>newly-introduced</strong> issues in changed code (diff-scoped, WARN). Opt out with <code>ROAM_VERIFY_DEAD=0</code> / <code>ROAM_VERIFY_N1=0</code>. Higher-FP checks (complexity, cycles, taint, …) remain opt-in via <code>--checks</code>/<code>--all</code>/config.</li>
+<li><strong>Dead-code precision</strong> — public API symbols (named in <code>__all__</code>, re-exported from a package <code>__init__</code>, or declared as entry points) are capped at REVIEW confidence and labelled external-facing instead of reported as dead-SAFE from lack of internal consumers alone.</li>
+<li><strong>N+1-I/O precision</strong> — the io-in-loop detector no longer flags batch primitives (<code>executemany</code>, <code>execute_batch</code>, <code>bulk_create</code>/<code>insert</code>/<code>update</code>, <code>copy_from</code>, <code>writerows</code>, <code>addAll</code>, …); genuine per-row I/O still fires.</li>
+</ul>
 <h2>[13.7.1] — 2026-07-09</h2>
 <h3>Added</h3>
 <ul>
