@@ -402,6 +402,7 @@ _COMMANDS = {
     "mcp-setup": ("roam.commands.cmd_mcp_setup", "mcp_setup"),
     "verify-imports": ("roam.commands.cmd_verify_imports", "verify_imports_cmd"),
     "vue-emits": ("roam.commands.cmd_vue_emits", "vue_emits"),
+    "rules-suggest": ("roam.commands.cmd_rules_suggest", "rules_suggest"),
     "vulns": ("roam.commands.cmd_vulns", "vulns"),
     "metrics": ("roam.commands.cmd_metrics", "metrics"),
     "congestion": ("roam.commands.cmd_congestion", "congestion"),
@@ -627,6 +628,7 @@ _CATEGORIES = {
         "eval-retrieve",
         "boundary",
         "vue-emits",
+        "rules-suggest",
     ],
     "Architecture": [
         "map",
