@@ -134,6 +134,7 @@ def _find_surface_gaps(
 def surface_gaps(ctx: click.Context) -> None:
     """Find gaps between CLI registration, MCP exposure, and documentation."""
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     implementation, implementation_warning = _resolve_implementation_commands()
     if implementation is None:
         mcp_exposed, mcp_warning = None, "MCP comparison skipped: implementation layer unavailable"
@@ -174,6 +175,7 @@ def surface_gaps(ctx: click.Context) -> None:
                         "documentation": documented is not None,
                     },
                     warnings=warnings,
+                    budget=token_budget,
                 )
             )
         )

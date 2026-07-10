@@ -271,6 +271,7 @@ def _scan(root: Path) -> dict:
 def vue_emits(ctx):
     """Find Vue child emits without matching handlers in resolved parent usages."""
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     root = find_project_root()
     result = _scan(root)
     findings = result["findings"]
@@ -285,7 +286,7 @@ def vue_emits(ctx):
         "usages_checked": result["usages_checked"],
     }
     if json_mode:
-        click.echo(to_json(json_envelope("vue-emits", summary=summary, findings=findings)))
+        click.echo(to_json(json_envelope("vue-emits", summary=summary, findings=findings, budget=token_budget)))
         return
     click.echo(f"VERDICT: {verdict}")
     for finding in findings:

@@ -4897,11 +4897,10 @@ def _build_verify_run(
             "summary": verify_summary,
             "categories": _category_summary(categories),
             "violations": all_violations,
-            "budget": token_budget,
         }
         if file_remaining:
             envelope_data["residual_findings"] = residual_findings
-        verify_envelope = json_envelope("verify", **envelope_data)
+        verify_envelope = json_envelope("verify", budget=token_budget, **envelope_data)
         auto_log(verify_envelope, action="verify", target=((target_paths[0] if target_paths else "") or ""))
         return {
             "envelope": verify_envelope,
