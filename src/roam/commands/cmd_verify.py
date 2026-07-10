@@ -113,8 +113,8 @@ _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 #   ROAM_VERIFY_SMELLS=0              warn on god-class / brain-method / deep-nesting in changed code
 #   ROAM_VERIFY_CLONES=0             warn on AST near-duplicate of changed code (heavier)
 #   ROAM_VERIFY_MAGIC_NUMBERS=0      warn on repeated magic numbers in changed code
-#   ROAM_VERIFY_DEAD=0               warn on a newly-orphaned exported symbol in changed code
-#   ROAM_VERIFY_N1=0                 warn on an N+1 lazy-load introduced by a changed model
+#   ROAM_VERIFY_DEAD=1               warn on a newly-orphaned exported symbol in changed code
+#   ROAM_VERIFY_N1=1                 warn on an N+1 lazy-load introduced by a changed model
 #   ROAM_VERIFY_OVER_FETCH=0         warn on serializer over-fetch in changed code
 #   ROAM_VERIFY_LLM_SMELLS=0         warn on LLM-API anti-patterns in changed code
 #   ROAM_VERIFY_TEST_HERMETICITY=0   warn on non-hermetic patterns in a changed test file
@@ -424,10 +424,9 @@ def _load_verify_baseline(root: Path) -> dict | None:
 # auto mode keyed on what was touched).
 # ---------------------------------------------------------------------------
 
-# Default = the conventions-grade five (backward compatible). The structural
-# checks (complexity, cycles) are AVAILABLE but opt-in so `roam verify` with no
-# args behaves exactly as before; `--all`, `--auto`, `--checks`, or config
-# unlock them.
+# Default = the conservative precision checks. Higher-FP structural checks
+# (complexity, cycles) remain available but opt-in; `--all`, `--auto`,
+# `--checks`, or config unlock them.
 _DEFAULT_CHECKS: tuple[str, ...] = (
     "naming",
     "imports",
@@ -435,6 +434,7 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
     "duplicates",
     "syntax",
     "import_side_effects",
+    "restore_loss",
     # The leak gate rides the default loop: built-in credential shapes plus
     # the optional repo-local `.roam-leak-patterns.py` catalogue, which is
     # only executed when ROAM_ALLOW_REPO_LEAK_PATTERNS is set in the process
@@ -448,7 +448,6 @@ _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     "tests",
     "command_examples",
     "claims",
-    "restore_loss",
     # Guardrail gates (env-flagged; see _verify_env_flag). Selectable via
     # --checks/--all/config; auto-selected by default on Python edits.
     _VERIFY_BREAKING_CATEGORY,
@@ -703,9 +702,9 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
             selected.add(_VERIFY_SMELLS_CATEGORY)
         if _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
             selected.add(_VERIFY_MAGIC_CATEGORY)
-        if _verify_env_flag("ROAM_VERIFY_DEAD", False):
+        if _verify_env_flag("ROAM_VERIFY_DEAD", True):
             selected.add(_VERIFY_DEAD_CATEGORY)
-        if _verify_env_flag("ROAM_VERIFY_N1", False):
+        if _verify_env_flag("ROAM_VERIFY_N1", True):
             selected.add(_VERIFY_N1_CATEGORY)
     if any(("migration" in p.lower() and p.lower().endswith(".php")) for p in target_paths):
         if _verify_env_flag("ROAM_VERIFY_MIGRATION_SAFETY", True):
@@ -3778,7 +3777,7 @@ def _check_magic_numbers(target_paths, root):
 def _check_dead(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_DEAD=1): an exported symbol in a changed file
     that now has no production consumers. Reuses cmd_dead._analyze_dead."""
-    if not _verify_env_flag("ROAM_VERIFY_DEAD", False):
+    if not _verify_env_flag("ROAM_VERIFY_DEAD", True):
         return {"score": 100, "violations": []}
     py_changed = {p for p in _verify_changed_set(target_paths) if p.endswith(".py")}
     if not py_changed:
@@ -3856,7 +3855,7 @@ def _check_n1(conn, target_paths):
     return _run_verify_detector_wire(
         conn,
         "ROAM_VERIFY_N1",
-        False,
+        True,
         target_paths,
         analyzer=_analyze,
         build_violations=_build,

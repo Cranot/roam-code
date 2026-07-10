@@ -1,7 +1,7 @@
 """The output-side verify MODE: config / freedom / auto-select / toggle.
 
-These exercise the selection layer added on top of the existing 5-check verify
-(naming/imports/error_handling/duplicates/syntax) — opt-in, never forced.
+These exercise the selection layer that combines conservative default checks
+with diff-sensitive auto-selection.
 """
 
 from __future__ import annotations
@@ -40,9 +40,14 @@ def test_config_checks_filtered_and_threshold(tmp_path):
     assert cfg["threshold"] == 90
 
 
-def test_auto_select_python_source(tmp_path):
+def test_auto_select_python_source(tmp_path, monkeypatch):
+    monkeypatch.delenv("ROAM_VERIFY_DEAD", raising=False)
+    monkeypatch.delenv("ROAM_VERIFY_N1", raising=False)
     sel = auto_select_checks(["src/foo.py"])
     assert {"naming", "imports", "error_handling", "syntax"} <= set(sel)
+    assert {"dead", "n1"} <= set(sel)
+    assert "dead" not in _DEFAULT_CHECKS
+    assert "n1" not in _DEFAULT_CHECKS
 
 
 def test_auto_select_test_only_skips_naming(tmp_path):
@@ -79,11 +84,11 @@ def test_resolve_precedence(tmp_path):
     assert {"syntax", "error_handling"} <= set(resolve_selected_checks(None, True, cfg, ["a.py"]))
     # config.checks when neither flag set
     assert resolve_selected_checks(None, False, cfg, []) == ["naming"]
-    # nothing set → the conventions-grade DEFAULT five (backward compatible),
-    # NOT the structural checks.
+    # nothing set → the conservative defaults, not higher-FP structural checks.
     empty = {"enabled": True, "checks": None, "auto": False, "threshold": None}
     assert resolve_selected_checks(None, False, empty, []) == list(_DEFAULT_CHECKS)
     assert "complexity" not in resolve_selected_checks(None, False, empty, [])
+    assert "taint" not in resolve_selected_checks(None, False, empty, [])
     # `--checks all` opts into every available check incl. complexity + cycles
     assert resolve_selected_checks("all", False, empty, []) == list(_ALL_CHECKS)
 
@@ -97,12 +102,12 @@ def test_structural_checks_available_and_opt_in():
     assert "complexity" in sel and "cycles" in sel
 
 
-def test_restore_loss_check_is_opt_in_only():
-    # restore_loss is an advisory structural detector: available when asked
-    # for, but never part of the default verify surface.
+def test_restore_loss_check_is_advisory_by_default():
+    # restore_loss is conservative enough for the default surface, while the
+    # Python-edit auto tier remains focused on diff-sensitive checks.
     sel = auto_select_checks(["src/foo.py"])
     assert "restore_loss" in _ALL_CHECKS
-    assert "restore_loss" not in _DEFAULT_CHECKS
+    assert "restore_loss" in _DEFAULT_CHECKS
     assert "restore_loss" not in sel
 
 

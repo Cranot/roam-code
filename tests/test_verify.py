@@ -714,6 +714,25 @@ class TestMultipleFiles:
 class TestEdgeCases:
     """Tests for edge cases and robustness."""
 
+    def test_promoted_checks_are_clean_on_empty_index(self, monkeypatch):
+        """Default/auto-promoted checks return clean results with no indexed findings."""
+        import sqlite3
+
+        from roam.commands.cmd_verify import _check_dead, _check_n1, _check_restore_loss
+        from roam.db.connection import ensure_schema
+
+        monkeypatch.delenv("ROAM_VERIFY_DEAD", raising=False)
+        monkeypatch.delenv("ROAM_VERIFY_N1", raising=False)
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        ensure_schema(conn)
+
+        clean = {"score": 100, "violations": []}
+        assert _check_restore_loss(conn, []) == clean
+        assert _check_dead(conn, ["src/missing.py"]) == clean
+        assert _check_n1(conn, ["src/missing.py"]) == clean
+        conn.close()
+
     def test_empty_file(self, verify_project, cli_runner, monkeypatch):
         """Empty file should not crash."""
         (verify_project / "empty.py").write_text("")
