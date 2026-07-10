@@ -127,3 +127,55 @@ def test_vue_dynamic_emit_is_not_flagged(project_factory, cli_runner):
     data = parse_json_output(_run(project, cli_runner), "vue-emits")
     assert data["summary"]["finding_count"] == 0
     assert data["findings"] == []
+
+
+def test_vue_object_handler_binding_suppresses_findings(project_factory, cli_runner):
+    for binding in ('v-on="handlers"', 'v-on="$listeners"'):
+        project = project_factory(
+            {
+                "Child.vue": ("<script setup>\nconst emit = defineEmits(['saveItem', 'close'])\n</script>\n"),
+                "Parent.vue": (
+                    f"<template><Child {binding} /></template>\n"
+                    "<script setup>\nimport Child from './Child.vue'\n</script>\n"
+                ),
+            }
+        )
+
+        data = parse_json_output(_run(project, cli_runner), "vue-emits")
+        assert data["summary"]["finding_count"] == 0
+        assert data["findings"] == []
+
+
+def test_vue_object_handler_suppression_is_scoped_to_usage(project_factory, cli_runner):
+    project = project_factory(
+        {
+            "Child.vue": "<script setup>\nconst emit = defineEmits(['saveItem', 'close'])\n</script>\n",
+            "Parent.vue": (
+                "<template>\n"
+                '  <Child v-on="handlers" />\n'
+                '  <Child @close="x" />\n'
+                "</template>\n"
+                "<script setup>\nimport Child from './Child.vue'\n</script>\n"
+            ),
+        }
+    )
+
+    data = parse_json_output(_run(project, cli_runner), "vue-emits")
+    assert data["summary"]["finding_count"] == 1
+    assert data["findings"][0]["event"] == "saveItem"
+
+
+def test_vue_named_v_on_binding_is_not_an_object_binding(project_factory, cli_runner):
+    project = project_factory(
+        {
+            "Child.vue": "<script setup>\nconst emit = defineEmits(['save-item'])\n</script>\n",
+            "Parent.vue": (
+                '<template><Child v-on:save-item="x" /></template>\n'
+                "<script setup>\nimport Child from './Child.vue'\n</script>\n"
+            ),
+        }
+    )
+
+    data = parse_json_output(_run(project, cli_runner), "vue-emits")
+    assert data["summary"]["finding_count"] == 0
+    assert data["findings"] == []

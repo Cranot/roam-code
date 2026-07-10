@@ -23,6 +23,7 @@ _VUE_DIRS_TO_SKIP = frozenset({".git", ".roam", "node_modules"})
 _DEFAULT_IMPORT_RE = re.compile(r"\bimport\s+([A-Za-z_$][\w$]*)\s+from\s*(['\"])(\.\.?/[^'\"]+)\2")
 _TAG_RE = re.compile(r'<(?P<name>[A-Za-z][\w.-]*)(?P<attrs>(?:"[^"]*"|\'[^\']*\'|[^<>])*)>')
 _HANDLER_RE = re.compile(r"(?:@|v-on:)(?P<event>[A-Za-z_$][\w:.-]*)")
+_OPEN_HANDLER_RE = re.compile(r"\bv-on\s*=")
 _EVENT_NAME = r"[A-Za-z_$][\w:.-]*"
 
 
@@ -197,6 +198,10 @@ def _event_handlers(attrs: str) -> set[str]:
     return {_canonical_event(match.group("event").split(".", 1)[0]) for match in _HANDLER_RE.finditer(attrs)}
 
 
+def _has_open_handler_binding(attrs: str) -> bool:
+    return _OPEN_HANDLER_RE.search(attrs) is not None
+
+
 def _scan(root: Path) -> dict:
     vue_files = sorted(
         path for path in root.rglob("*.vue") if not any(part in _VUE_DIRS_TO_SKIP for part in path.parts)
@@ -236,7 +241,10 @@ def _scan(root: Path) -> dict:
                     continue
                 usages_checked += 1
                 line = start_line + template.count("\n", 0, tag_match.start())
-                handlers = _event_handlers(tag_match.group("attrs"))
+                attrs = tag_match.group("attrs")
+                if _has_open_handler_binding(attrs):
+                    continue
+                handlers = _event_handlers(attrs)
                 for event, child_line in child_emits.events.items():
                     if _canonical_event(event) in handlers:
                         continue
