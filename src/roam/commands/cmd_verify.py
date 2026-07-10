@@ -66,6 +66,8 @@ _CATEGORY_WEIGHTS = {
     "restore_loss": 0.15,
     # Fabricated-success — opt-in external-effect stub detector.
     "fabricated_success": 0.15,
+    # Return-in-finally — opt-in exception-swallowing control-flow detector.
+    "return_in_finally": 0.15,
     # Self-comparison — opt-in precision-first repeated operand detector.
     "self_comparison": 0.15,
     # Richer STRUCTURAL checks (opt-in via --checks/--auto/--all/config): higher
@@ -128,6 +130,7 @@ _VERIFY_BREAKING_CATEGORY = "breaking"
 _VERIFY_TAINT_CATEGORY = "taint"
 _VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
 _VERIFY_FABRICATED_SUCCESS_CATEGORY = "fabricated_success"
+_VERIFY_RETURN_IN_FINALLY_CATEGORY = "return_in_finally"
 _VERIFY_SELF_COMPARISON_CATEGORY = "self_comparison"
 # Additional reusable detector wires (each env-flagged, diff-scoped, fail-open).
 # Guardrails emit hard_block FAIL when they fire; the rest emit advisory WARN
@@ -452,6 +455,7 @@ _DEFAULT_CHECKS: tuple[str, ...] = (
 )
 _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     _VERIFY_FABRICATED_SUCCESS_CATEGORY,
+    _VERIFY_RETURN_IN_FINALLY_CATEGORY,
     _VERIFY_SELF_COMPARISON_CATEGORY,
     "complexity",
     "cycles",
@@ -2493,6 +2497,43 @@ def _check_fabricated_success(conn, file_ids: list[int]) -> dict:
     return {"score": score, "violations": violations}
 
 
+def _check_return_in_finally(conn, file_ids: list[int]) -> dict:
+    """Flag control flow in finally blocks that can swallow exceptions."""
+    if not file_ids:
+        return {"score": 100, "violations": []}
+
+    rows = batched_in(conn, "SELECT path FROM files WHERE id IN ({ph})", file_ids)
+    scope = {row["path"].replace("\\", "/") for row in rows if row["path"]}
+    if not scope:
+        return {"score": 100, "violations": []}
+
+    from roam.world_model.return_in_finally import classify_return_in_finally
+
+    violations: list[dict] = []
+    for finding in classify_return_in_finally(conn):
+        if (finding.file or "").replace("\\", "/") not in scope:
+            continue
+        message = f"exception-swallowing control flow: {finding.symbol} has a {finding.statement_kind} inside finally"
+        violation = finding.to_dict()
+        violation.update(
+            {
+                "category": _VERIFY_RETURN_IN_FINALLY_CATEGORY,
+                "severity": SEVERITY_WARN,
+                "file": finding.file,
+                "line": finding.line_start or finding.line_end or 1,
+                "message": message,
+                "fix": (
+                    f"Move the {finding.statement_kind} outside the finally block in `{finding.symbol}`, "
+                    "or preserve the active exception before exiting"
+                ),
+            }
+        )
+        violations.append(violation)
+
+    score = 100 if not violations else max(0, 100 - 10 * len(violations))
+    return {"score": score, "violations": violations}
+
+
 # ---------------------------------------------------------------------------
 # Self-comparison check (opt-in)
 # ---------------------------------------------------------------------------
@@ -4457,6 +4498,11 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             selected, "import_side_effects", lambda: _check_import_side_effects(conn, file_ids, root)
         ),
         "restore_loss": _maybe_run_verify_check(selected, "restore_loss", lambda: _check_restore_loss(conn, file_ids)),
+        _VERIFY_RETURN_IN_FINALLY_CATEGORY: _maybe_run_verify_check(
+            selected,
+            _VERIFY_RETURN_IN_FINALLY_CATEGORY,
+            lambda: _check_return_in_finally(conn, file_ids),
+        ),
         _VERIFY_FABRICATED_SUCCESS_CATEGORY: _maybe_run_verify_check(
             selected,
             _VERIFY_FABRICATED_SUCCESS_CATEGORY,
@@ -5016,6 +5062,7 @@ def _emit_verify_text(
         ("CYCLES", "cycles"),
         ("RESTORE LOSS", "restore_loss"),
         ("FABRICATED SUCCESS", _VERIFY_FABRICATED_SUCCESS_CATEGORY),
+        ("RETURN IN FINALLY", _VERIFY_RETURN_IN_FINALLY_CATEGORY),
         ("SELF COMPARISON", _VERIFY_SELF_COMPARISON_CATEGORY),
         ("TESTS", "tests"),
         ("COMMAND EXAMPLES", "command_examples"),
@@ -5368,7 +5415,7 @@ def _dispatch_verify_command(
     default=None,
     help=(
         "Comma-list to run: naming,imports,error_handling,duplicates,syntax,"
-        "restore_loss,fabricated_success,self_comparison,command_examples,claims,tenant_scope. "
+        "restore_loss,fabricated_success,return_in_finally,self_comparison,command_examples,claims,tenant_scope. "
         "Configure tenant_guards in .roam/verify.yaml. Default: all (or config)."
     ),
 )

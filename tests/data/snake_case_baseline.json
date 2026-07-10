@@ -38,5 +38,30 @@
     "file": "src/roam/world_model/fabricated_success.py",
     "function": "visit_AsyncFunctionDef",
     "line": 199
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_FunctionDef",
+    "line": 66
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 69
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_AsyncFor",
+    "line": 103
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_FunctionDef",
+    "line": 127
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 130
   }
 ]
