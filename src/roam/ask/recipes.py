@@ -837,6 +837,66 @@ RECIPES: list[Recipe] = [
             "Suppress historical mentions with --ignore CHANGELOG.md if needed",
         ),
     ),
+    Recipe(
+        name="is-feature-wired",
+        intent=(
+            "Check whether a feature is actually wired end-to-end — its "
+            "handler symbol is reachable from an entry point AND reaches a "
+            "data read/write site (not an orphaned stub)"
+        ),
+        examples=(
+            "is create_user actually hooked up",
+            "is the checkout feature wired end to end",
+            "is handle_webhook actually reachable and does it write data",
+            "is this feature actually wired",
+            "check if process_payment is hooked up end-to-end",
+            "is register_route wired to anything",
+        ),
+        # Distinctive multi-word tokens only — deliberately NOT
+        # "reach"/"reachable"/"orphan"/"trace"/"flow", which collide with
+        # security-audit / dead-code-sweep / trace-* keyword bonuses
+        # (kw_bonus is substring-matched, classifier.py:140).
+        keywords=(
+            "wired",
+            "hooked up",
+            "hooked-up",
+            "end to end",
+            "end-to-end",
+            "actually wired",
+            "actually hooked",
+            "fully wired",
+        ),
+        commands=(
+            ("entry-points", ()),
+            ("uses", ("{symbol}",)),
+            ("effects", ("{symbol}",)),
+        ),
+        summary=(
+            "Three lenses on 'is this feature actually hooked up?': the "
+            "entry-point catalog (which symbols are real entries + their "
+            "reachability coverage), the inbound caller list for the feature "
+            "symbol (empty = orphaned handler, unless it IS an entry), and "
+            "its transitive side-effects (io_read/io_write/writes_db = it "
+            "reaches a data site). Wired = reachable from an entry AND "
+            "reaches a read/write effect. No callers or no data effect = a "
+            "stub that isn't actually hooked up."
+        ),
+        phase="verify",
+        perspectives=(
+            "entry-reachability",
+            "handler-connectivity",
+            "data-read-write-site",
+        ),
+        followups=(
+            "roam trace <entry> {symbol}",
+            "roam effects {symbol} --transitive",
+            "roam impact {symbol}",
+        ),
+        gates=(
+            "Treat zero inbound callers (and not itself an entry point) as an unwired/orphaned handler",
+            "Treat absence of any io_read/io_write/writes_db effect as 'reaches no data site — likely a stub'",
+        ),
+    ),
 ]
 
 

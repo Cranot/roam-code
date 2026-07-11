@@ -70,12 +70,15 @@ class TestRecipes:
             # "what does X.py do" → roam file (was noise-routing to module-deps).
             "complexity-ranking",
             "describe-file",
+            # enrichment #48 — compose reachability + CRUD/read-site primitives
+            # to answer "is this feature actually hooked up end-to-end?"
+            "is-feature-wired",
         }
 
     def test_recipe_count(self):
         # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 29
+        assert len(RECIPES) == 30
 
     def test_readme_recipe_count_matches_registry(self):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
@@ -200,6 +203,37 @@ class TestClassifier:
             ranked = classify(q)
             assert ranked, f"no recipe matched: {q!r}"
             assert ranked[0][0].name == "module-deps", f"{q!r} -> {ranked[0][0].name}"
+
+    def test_is_feature_wired_routes(self):
+        # enrichment #48 — "is this feature actually hooked up end-to-end?"
+        # composes entry-points + uses + effects. Multi-word tokens
+        # ("hooked up", "wired", "end to end") must route here.
+        for q in (
+            "is create_user actually hooked up",
+            "is the checkout feature wired end to end",
+            "is this feature actually wired",
+        ):
+            ranked = classify(q)
+            assert ranked, f"no recipe matched: {q!r}"
+            assert ranked[0][0].name == "is-feature-wired", f"{q!r} -> {ranked[0][0].name}"
+
+    def test_is_feature_wired_by_name(self):
+        assert by_name("is-feature-wired").name == "is-feature-wired"
+
+    def test_is_feature_wired_does_not_steal_adjacent_routes(self):
+        # Keyword-collision guard: the distinctive multi-word tokens must NOT
+        # over-fire on queries that belong to adjacent recipes sharing surface
+        # vocabulary (reach / unreachable / trace). Proves no bare "reach" kw.
+        assert classify("trace the call chain through handle_login")[0][0].name in {
+            "trace-flow",
+            "trace-task",
+            "locate-symbol",
+        }
+        assert classify("find dead unreachable code")[0][0].name in {
+            "dead-code-sweep",
+            "safe-delete-check",
+        }
+        assert classify("find sql injection or xss reach")[0][0].name == "security-audit"
 
     def test_dead_code_sweep_match(self):
         ranked = classify("find dead code I can delete")

@@ -6467,7 +6467,7 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
         "Natural-language codebase question dispatcher. Examples: "
         "'is it safe to delete X?', 'where does login validate?', "
         "'what just broke?', 'who owns module Y?'. Routes intent to "
-        "one recipe in the graph-aware 29-recipe registry. One call "
+        "one recipe in the graph-aware 30-recipe registry. One call "
         "replaces Grep+Read for most questions. Run this FIRST when "
         "the user asks a code-comprehension question."
     ),
