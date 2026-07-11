@@ -31,6 +31,27 @@ from roam.output.formatter import json_envelope, to_json
 
 _CACHE_WARMER_AGENT_MODES = frozenset({"compile_cache_build"})
 
+# Documented row schema for `.roam/compile-runs.jsonl`. Insertion order mirrors
+# the writer dict in `roam/plan/compiler.py` (~11634-11664) so `--schema` text
+# output matches the actual on-disk field layout. Meanings are hand-derived
+# one-liners; they document, not recompute, the writer fields.
+_ROW_SCHEMA: dict[str, str] = {
+    "ts": "UTC timestamp of the compile call (ISO-8601, from time.gmtime)",
+    "task_hash": "first 12 hex chars of sha256(task) — stable task identity",
+    "task_prefix": "first 80 chars of the task text (human-readable label)",
+    "procedure": "classifier-selected compile procedure (plan.procedure)",
+    "classifier_conf": "procedure-classifier confidence 0..1 (plan.classifier_confidence)",
+    "art_label": "chosen envelope artifact class (e.g. l1_probe, facts) — compile's headline KPI",
+    "prefetched_keys": "sorted prefetched-fact keys attached to the envelope (excludes *_definition)",
+    "envelope_bytes": "serialized envelope size in bytes (-1 if serialization failed)",
+    "compile_ms": "wall-clock compile latency in milliseconds",
+    "agent_mode": "ROAM_AGENT_MODE env at compile time (compile/roam/vanilla/unknown)",
+    "compiler_fp": "compiler-code fingerprint — attributes telemetry shifts to compiler revisions",
+    "injection_advice": "hook-channel injection advice for this procedure/task",
+    "probe_timings_ms": "OPTIONAL — per-probe-section latency map; present only when L1 routing fired",
+    "cache_hit": "whether the envelope cache served this call (W58)",
+}
+
 
 def _read_telemetry(root: str) -> list[dict]:
     """Read .roam/compile-runs.jsonl rows. Returns [] if the log doesn't exist."""
@@ -228,6 +249,12 @@ def _top_cache_misses(rows: list[dict], limit: int = 10) -> list[dict]:
     "(compile/roam/vanilla/unknown). Rows that pre-date the "
     "agent_mode field count as 'unknown'.",
 )
+@click.option(
+    "--schema",
+    is_flag=True,
+    default=False,
+    help="Print the documented compile-runs.jsonl row-field schema and exit (no telemetry read).",
+)
 @click.pass_context
 @roam_capability(
     name="compile-stats",
@@ -242,10 +269,26 @@ def _top_cache_misses(rows: list[dict], limit: int = 10) -> list[dict]:
     tags=("planning", "telemetry", "compiler"),
 )
 def compile_stats(
-    ctx: click.Context, root: str, by_procedure: bool, slow_probes: bool, top_misses: bool, by_mode: bool
+    ctx: click.Context,
+    root: str,
+    by_procedure: bool,
+    slow_probes: bool,
+    top_misses: bool,
+    by_mode: bool,
+    schema: bool,
 ) -> None:
     """Show distribution stats over the compile telemetry log."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    # `--schema` is static documentation: short-circuit BEFORE reading any
+    # telemetry so it works even with no `.roam/compile-runs.jsonl` present.
+    if schema:
+        if json_mode:
+            click.echo(to_json(json_envelope("compile-stats", schema={"fields": _ROW_SCHEMA})))
+        else:
+            click.echo("compile-runs.jsonl row schema:")
+            for field, meaning in _ROW_SCHEMA.items():
+                click.echo(f"  {field:<18s} {meaning}")
+        return
     rows = _read_telemetry(root)
     summary = _summarize(rows)
     # W52 — per-procedure breakdown
