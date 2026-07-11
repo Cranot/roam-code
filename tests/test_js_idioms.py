@@ -7,6 +7,8 @@ in-memory index pointing at a real temp ``.js`` file.
 
 from __future__ import annotations
 
+import pytest
+
 from roam.catalog.js_idioms import (
     _CONCAT_REASSIGN_IN_LOOP_RE,
     _DELETE_IN_LOOP_RE,
@@ -260,9 +262,39 @@ _FIXTURE_SYMBOLS = [
 ]
 
 
+def _e2e_flake_diagnostics(conn, js_path, caught_warnings) -> str:
+    """State dump appended to e2e assertion failures so a CI flake
+    self-identifies: did the fixture file actually READ (parse), was the
+    text the fixture's or something stale, and what was the scope?
+
+    Motivated by the 2026-07 CI flake (``detect_js_shift_in_loop: expected
+    {bugShift}, got set()``): the failure output alone could not distinguish
+    a wrong-answer bug from a silently-broken setup. Root cause was
+    ``_FILE_TEXT_CACHE`` aliasing across recycled connection ids — the
+    "STALE TEXT" branch below would have named it from the CI log.
+    """
+    from roam.catalog import js_idioms
+    from roam.catalog.python_idioms import _file_text
+
+    text = _file_text(conn, 1)
+    if text is None:
+        parsed = "READ FAILED (_file_text -> None; fixture never parsed)"
+    elif text == _JS_FIXTURE:
+        parsed = f"read OK ({len(text)} chars, matches fixture)"
+    else:
+        parsed = f"STALE TEXT ({len(text)} chars, does NOT match fixture — cache aliasing?)"
+    return (
+        f"\n[flake diagnostics] fixture file: {parsed}"
+        f" | on disk: exists={js_path.exists()}"
+        f" | js scope _SCOPE_FILE_IDS={js_idioms._SCOPE_FILE_IDS!r}"
+        f" | warnings during detection={[str(w.message) for w in caught_warnings]!r}"
+    )
+
+
 def test_js_detectors_end_to_end(tmp_path):
     """Each detector finds exactly its bug symbol; safe siblings stay clean."""
     import sqlite3
+    import warnings
 
     from roam.catalog.js_idioms import (
         detect_js_concat_reassign_in_loop,
@@ -272,6 +304,7 @@ def test_js_detectors_end_to_end(tmp_path):
         detect_js_shift_in_loop,
         set_js_idiom_scope,
     )
+    from roam.catalog.python_idioms import _clear_file_text_cache, _file_text
 
     js_path = tmp_path / "app.js"
     js_path.write_text(_JS_FIXTURE, encoding="utf-8")
@@ -288,25 +321,124 @@ def test_js_detectors_end_to_end(tmp_path):
         conn.execute("INSERT INTO symbols VALUES (?, 1, ?, 'function', ?, ?)", (i, name, start, end))
 
     set_js_idiom_scope(None)  # reset any leaked scope from another test
-    cases = [
-        (detect_js_shift_in_loop, "bugShift"),
-        (detect_js_concat_reassign_in_loop, "bugConcat"),
-        (detect_js_push_then_sort_in_loop, "bugPushSort"),
-        (detect_js_json_deepclone, "bugClone"),
-        (detect_js_delete_in_loop, "bugDelete"),
-    ]
-    for detect_fn, expected in cases:
-        findings = detect_fn(conn)
-        names = {f["symbol_name"] for f in findings}
-        assert names == {expected}, f"{detect_fn.__name__}: expected {{{expected!r}}}, got {names}"
-
-    # scope narrowing: an empty scope yields no findings; reset restores
-    set_js_idiom_scope(set())
+    _clear_file_text_cache()  # hermetic: no other test's cached text can serve this conn
     try:
-        assert detect_js_shift_in_loop(conn) == []
+        # Preflight: the fixture must actually read back before any detector
+        # runs, so a setup/read failure fails HERE with its own name instead
+        # of masquerading as "detector found nothing" (the got-set() flake).
+        preflight = _file_text(conn, 1)
+        assert preflight == _JS_FIXTURE, "e2e precondition failed: fixture did not read back — " + (
+            "_file_text returned None (read FAILED)"
+            if preflight is None
+            else f"got {len(preflight)} unexpected chars (stale/aliased text?)"
+        )
+
+        cases = [
+            (detect_js_shift_in_loop, "bugShift"),
+            (detect_js_concat_reassign_in_loop, "bugConcat"),
+            (detect_js_push_then_sort_in_loop, "bugPushSort"),
+            (detect_js_json_deepclone, "bugClone"),
+            (detect_js_delete_in_loop, "bugDelete"),
+        ]
+        for detect_fn, expected in cases:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                findings = detect_fn(conn)
+            names = {f["symbol_name"] for f in findings}
+            assert names == {expected}, (
+                f"{detect_fn.__name__}: expected {{{expected!r}}}, got {names}"
+                + _e2e_flake_diagnostics(conn, js_path, caught)
+            )
+
+        # scope narrowing: an empty scope yields no findings; reset restores
+        set_js_idiom_scope(set())
+        try:
+            assert detect_js_shift_in_loop(conn) == []
+        finally:
+            set_js_idiom_scope(None)
+        assert {f["symbol_name"] for f in detect_js_shift_in_loop(conn)} == {"bugShift"}
+    finally:
+        set_js_idiom_scope(None)  # never leak scope into a later test, even on failure
+        conn.close()
+
+
+def test_js_detectors_warn_loudly_when_an_indexed_file_cannot_be_read(tmp_path):
+    """Loud-fallback ratchet: an indexed JS file whose source can't be READ
+    must emit a RuntimeWarning instead of silently contributing zero findings
+    (a read failure masquerading as "no findings" is exactly the got-set()
+    flake shape). Return type stays a plain (empty) findings list."""
+    import sqlite3
+
+    from roam.catalog.js_idioms import detect_js_shift_in_loop, set_js_idiom_scope
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, language TEXT)")
+    conn.execute(
+        "CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT,"
+        " kind TEXT, line_start INTEGER, line_end INTEGER)"
+    )
+    conn.execute("INSERT INTO files VALUES (1, ?, 'javascript')", (str(tmp_path / "does-not-exist.js"),))
+    set_js_idiom_scope(None)
+    try:
+        with pytest.warns(RuntimeWarning, match="could not be read"):
+            findings = detect_js_shift_in_loop(conn)
+        assert findings == []
     finally:
         set_js_idiom_scope(None)
-    assert {f["symbol_name"] for f in detect_js_shift_in_loop(conn)} == {"bugShift"}
+        conn.close()
+
+
+def test_file_text_cache_survives_recycled_connection_ids(tmp_path):
+    """Regression for the 2026-07 CI flake: ``_FILE_TEXT_CACHE`` was keyed by
+    ``(id(conn), file_id)``; CPython recycles a dead connection's address, so
+    a NEW connection whose ``id()`` collided with a dead one was silently
+    served the DEAD connection's cached text — the JS e2e test then scanned a
+    python-idiom test's PYTHON source and found nothing (``got set()``).
+    Force the id collision and pin that the fresh connection reads ITS OWN
+    file."""
+    import gc
+    import sqlite3
+
+    from roam.catalog.python_idioms import _file_text
+
+    py_path = tmp_path / "a.py"
+    py_path.write_text("PYTHON_TEXT = 1\n", encoding="utf-8")
+    js_path = tmp_path / "b.js"
+    js_path.write_text("const JS_TEXT = 1;\n", encoding="utf-8")
+
+    def _mk(path, language):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, language TEXT)")
+        conn.execute("INSERT INTO files VALUES (1, ?, ?)", (str(path), language))
+        return conn
+
+    conn_a = _mk(py_path, "python")
+    assert _file_text(conn_a, 1) == "PYTHON_TEXT = 1\n"  # populates the cache
+    dead_id = id(conn_a)
+    conn_a.close()
+    del conn_a
+    gc.collect()
+
+    held = []
+    conn_b = None
+    try:
+        for _ in range(2000):
+            candidate = _mk(js_path, "javascript")
+            if id(candidate) == dead_id:
+                conn_b = candidate  # landed on the recycled address
+                break
+            held.append(candidate)  # hold the ref so the allocator moves on
+        if conn_b is None:
+            pytest.skip("allocator never recycled the connection id (cannot exercise the alias)")
+        assert _file_text(conn_b, 1) == "const JS_TEXT = 1;\n", (
+            "recycled conn id was served another connection's stale cached text"
+        )
+    finally:
+        for c in held:
+            c.close()
+        if conn_b is not None:
+            conn_b.close()
 
 
 def test_js_files_covers_the_language_variants(tmp_path):

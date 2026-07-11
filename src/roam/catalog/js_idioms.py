@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import warnings
 from functools import partial
 
 # Language-agnostic plumbing shared with the Python pack: disk-read cache,
@@ -181,6 +182,32 @@ _DELETE_IN_LOOP_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
+def _read_js_source(conn: sqlite3.Connection, file_id: int, path: str) -> str | None:
+    """Read + string/comment-strip one indexed JS/TS file, or ``None`` when
+    there is nothing to scan (empty file, or read failure).
+
+    LOUD on read failure (loud-fallback ratchet, mirrors
+    ``graph/spectral.py``'s compute-unavailable RuntimeWarning): a file the
+    index says exists but whose source can't be read is a broken sweep
+    precondition, not an empty result. Silently skipping it made a read
+    failure indistinguishable from "no findings" (the ``got set()`` CI-flake
+    shape). The empty return is preserved — callers still just skip the file
+    — but the lineage is no longer silent.
+    """
+    text = _file_text(conn, file_id)
+    if text is None:
+        warnings.warn(
+            f"js idiom sweep: indexed file {path!r} (file_id={file_id}) could not be read; "
+            "skipping it — findings for this file are ABSENT, not verified-clean",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    if not text:
+        return None
+    return _strip_js_strings_and_comments(text) or None
+
+
 def _detect_js_loop_idiom(
     conn: sqlite3.Connection,
     regex: re.Pattern[str],
@@ -202,9 +229,7 @@ def _detect_js_loop_idiom(
     conventionally formatted JS."""
     findings: list[dict] = []
     for file_id, path in _js_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_js_strings_and_comments(text)
+        text = _read_js_source(conn, file_id, path)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -301,9 +326,7 @@ def detect_js_json_deepclone(conn: sqlite3.Connection) -> list[dict]:
     functions, ``undefined``, and mangles ``Date``/``Map``/``Set``."""
     findings: list[dict] = []
     for file_id, path in _js_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_js_strings_and_comments(text)
+        text = _read_js_source(conn, file_id, path)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)

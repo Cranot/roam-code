@@ -263,14 +263,28 @@ def _project_root_for_conn(conn: sqlite3.Connection) -> str:
 
 # Per-process cache of file-text reads. With 19 detectors each calling
 # ``_file_text`` per file, an uncached implementation does 19×N disk
-# reads. Cache keyed by ``(id(conn), file_id)`` so distinct DB
-# connections don't collide. Cleared at module unload (or via
-# ``_clear_file_text_cache()`` in tests). Bounded in size at 4096
-# entries to avoid unbounded growth on huge repos; LRU-evicted.
+# reads. Cleared at module unload (or via ``_clear_file_text_cache()``
+# in tests). Bounded in size at 4096 entries to avoid unbounded growth
+# on huge repos; LRU-evicted.
+#
+# KEY DISCIPLINE (2026-07 CI flake root cause): the key is the RESOLVED
+# file path — the identity of the thing actually read from disk. It must
+# NOT include ``id(conn)``: CPython recycles a dead connection's address,
+# so the old ``(id(conn), file_id)`` key let a NEW connection alias a dead
+# connection's entries and silently serve ANOTHER project's cached text
+# (observed as ``detect_js_shift_in_loop: expected {bugShift}, got set()``
+# — the JS e2e test's fresh in-memory conn landed on a recycled id and
+# scanned a python-idiom test's cached PYTHON source). ``sqlite3.Connection``
+# is not weakref-able, so identity-checking the conn isn't possible;
+# path-keying removes conn identity from the equation entirely.
 from collections import OrderedDict as _OrderedDict
 
 _FILE_TEXT_CACHE: _OrderedDict = _OrderedDict()
 _FILE_TEXT_CACHE_MAX = 4096
+
+# Distinct sentinel for "read attempted and failed" so a genuinely empty
+# file ("") and an unreadable file (None) stay distinguishable to callers.
+_READ_FAILED = object()
 
 
 def _clear_file_text_cache() -> None:
@@ -285,22 +299,16 @@ def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
     project-relative, so a bare ``open(path)`` fails when the caller
     isn't sitting at the project root).
 
-    Caches results across calls within a process so all 19+ detectors
-    pay the disk read once per file rather than 19+ times.
+    Caches the DISK READ per resolved path across calls within a process
+    so all 19+ detectors pay the read once per file rather than 19+
+    times. Returns ``None`` when the row is missing or the file can't be
+    read; ``""`` for a genuinely empty file.
     """
-    cache_key = (id(conn), file_id)
-    cached = _FILE_TEXT_CACHE.get(cache_key)
-    if cached is not None:
-        # LRU bump
-        _FILE_TEXT_CACHE.move_to_end(cache_key)
-        return cached if cached != "" else None  # sentinel for "tried, failed"
     row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
     if row is None:
-        _FILE_TEXT_CACHE[cache_key] = ""
         return None
     path = row[0]
     if not path:
-        _FILE_TEXT_CACHE[cache_key] = ""
         return None
     # Resolve project-relative path via the DB's location.
     root = _project_root_for_conn(conn)
@@ -309,13 +317,18 @@ def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
 
         if not _osp.isabs(path):
             path = _osp.join(root, path)
+    cached = _FILE_TEXT_CACHE.get(path)
+    if cached is not None:
+        # LRU bump
+        _FILE_TEXT_CACHE.move_to_end(path)
+        return None if cached is _READ_FAILED else cached
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
     except OSError:
-        _FILE_TEXT_CACHE[cache_key] = ""
+        _FILE_TEXT_CACHE[path] = _READ_FAILED
         return None
-    _FILE_TEXT_CACHE[cache_key] = text
+    _FILE_TEXT_CACHE[path] = text
     # LRU eviction
     if len(_FILE_TEXT_CACHE) > _FILE_TEXT_CACHE_MAX:
         _FILE_TEXT_CACHE.popitem(last=False)
@@ -349,14 +362,18 @@ def _strip_strings_and_comments(text: str) -> str:
     """
     if not text:
         return text
-    # Cache key: id() of the original string (CPython gives unique
-    # ids while alive). Combined with len() to catch the rare case
-    # of id-reuse after string GC.
+    # Cache key: id() of the original string (CPython gives unique ids
+    # while alive). id() alone is unsafe after GC — a NEW string can be
+    # allocated at a dead string's address (the same aliasing class as
+    # the 2026-07 _FILE_TEXT_CACHE flake) — so the entry stores the
+    # ORIGINAL text object too: holding the reference pins the id while
+    # the entry lives, and the identity check below rejects any entry
+    # that survived from a different (dead) string.
     key = (id(text), len(text))
-    cached = _STRIP_CACHE.get(key)
-    if cached is not None:
+    entry = _STRIP_CACHE.get(key)
+    if entry is not None and entry[0] is text:
         _STRIP_CACHE.move_to_end(key)
-        return cached
+        return entry[1]
 
     def _blank_multiline(match: re.Match) -> str:
         # Per-SEGMENT instead of per-character: O(lines) not O(chars).
@@ -371,7 +388,7 @@ def _strip_strings_and_comments(text: str) -> str:
     out = _TRIPLE_QUOTE_RE.sub(_blank_multiline, text)
     out = _SINGLE_QUOTE_RE.sub(_blank_inline, out)
     out = _COMMENT_RE.sub(_blank_inline, out)
-    _STRIP_CACHE[key] = out
+    _STRIP_CACHE[key] = (text, out)
     if len(_STRIP_CACHE) > _STRIP_CACHE_MAX:
         _STRIP_CACHE.popitem(last=False)
     return out
