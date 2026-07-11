@@ -18,6 +18,7 @@ from roam.plan.compiler import (
     _MODULE_NAME_RE,
     _RUN_ROAM_CACHE_TTL_S,
     _harvest_probe_future,
+    _maybe_append_compile_telemetry,
     _probe_conventions_for_task,
     _probe_module_name_for_task,
     _ProbeRunContext,
@@ -48,6 +49,32 @@ def test_w43_p3_telemetry_records_probe_timings(tmp_path):
         for label in ("inner_probe", "task_text", "backtick_fallback", "always_on", "l10_symbol_resolution"):
             assert label in timings, f"missing timing for {label}: {timings}"
             assert isinstance(timings[label], (int, float))
+
+
+def test_cache_hit_row_omits_stale_probe_timings(tmp_path):
+    """2026-07-11 — an envelope-cache HIT reuses the plan object (plan
+    cache), which still carries `_w43_timings_ms` from the original MISS.
+    The HIT telemetry row must omit probe_timings_ms (a ~1ms row carrying
+    hundreds of probe-ms corrupts probe-cost analyses); the MISS row still
+    records them. Telemetry-only: the served envelope is untouched."""
+    (tmp_path / ".roam").mkdir()
+    plan = compile_plan("what does telemetry/hit_vs_miss.py do")
+    object.__setattr__(plan, "_w43_timings_ms", {"inner_probe": 123.4})
+    env = {"plan": {"prefetched_facts": {}}}
+
+    # MISS row: cache-hit flag unset — timings recorded.
+    _maybe_append_compile_telemetry(plan, env, "l1_probe", 500.0, str(tmp_path))
+    # HIT row: same plan object, cache-hit flag set — timings omitted.
+    object.__setattr__(plan, "_w58_cache_hit", True)
+    _maybe_append_compile_telemetry(plan, env, "l1_probe", 1.0, str(tmp_path))
+
+    log = tmp_path / ".roam" / "compile-runs.jsonl"
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    miss, hit = rows[-2], rows[-1]
+    assert miss["cache_hit"] is False
+    assert miss["probe_timings_ms"] == {"inner_probe": 123.4}
+    assert hit["cache_hit"] is True
+    assert "probe_timings_ms" not in hit
 
 
 def test_w128_outer_parallel_honors_always_on_budget(monkeypatch):

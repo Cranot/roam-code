@@ -11657,11 +11657,19 @@ def _maybe_append_compile_telemetry(
     }
     # W43 P3 — per-section timings if the plan attached them as
     # `_W43_TIMINGS_MS`. Optional: only present when L1 routing fired.
+    # cache_hit guard (2026-07-11): on an envelope-cache HIT no probes ran
+    # in THIS call, but the plan object (reused via the plan cache) still
+    # carries `_w43_timings_ms` from the original MISS. Copying those stale
+    # timings into a ~1ms HIT row over-counts probe cost in downstream
+    # probe-cost analyses (compile-stats / dispatch-trace), so HIT rows omit
+    # probe_timings_ms. Telemetry-record-only: the served envelope is
+    # untouched.
+    cache_hit = bool(getattr(plan, "_w58_cache_hit", False))
     timings = getattr(plan, "_w43_timings_ms", None)
-    if timings:
+    if timings and not cache_hit:
         entry["probe_timings_ms"] = {k: round(v, 1) for k, v in timings.items()}
     # W58 — cache-hit flag for production visibility.
-    entry["cache_hit"] = bool(getattr(plan, "_w58_cache_hit", False))
+    entry["cache_hit"] = cache_hit
     # W149 — off-thread write opt-in via ROAM_TELEMETRY_OFFTHREAD=1.
     # Default stays synchronous to preserve test contracts that read
     # the JSONL file immediately after compile. Set the env var when

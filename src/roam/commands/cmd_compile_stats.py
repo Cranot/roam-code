@@ -48,7 +48,7 @@ _ROW_SCHEMA: dict[str, str] = {
     "agent_mode": "ROAM_AGENT_MODE env at compile time (compile/roam/vanilla/unknown)",
     "compiler_fp": "compiler-code fingerprint — attributes telemetry shifts to compiler revisions",
     "injection_advice": "hook-channel injection advice for this procedure/task",
-    "probe_timings_ms": "OPTIONAL — per-probe-section latency map; present only when L1 routing fired",
+    "probe_timings_ms": "OPTIONAL — per-probe-section latency map; present only when L1 routing fired on a cache MISS (HIT rows omit it: the reused plan carries stale MISS timings)",
     "cache_hit": "whether the envelope cache served this call (W58)",
 }
 

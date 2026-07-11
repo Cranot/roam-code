@@ -599,6 +599,13 @@ _CLAUDE_STOP_HOOK_SCRIPT = '''#!/usr/bin/env python3
 Installed by `roam hooks claude --write`. FAIL-OPEN and QUIET-ON-PASS:
 any error or a clean verdict prints nothing; only real findings surface.
 
+Fast-exit + block-rate telemetry (2026-07-11): a stop with a clean working
+tree (no tracked edits, no new untracked files -- a pure Q&A session) skips
+the verify subprocess entirely (~10ms git check instead of a 90s-budget
+verify run). Every decision appends a counts-only JSON line to
+`.roam/hook-stops.jsonl` so the block rate is measurable -- see
+_log_stop_event.
+
 Feedback layer (all env-gated, all fail-open; defaults reproduce the
 prior shipped behaviour when WHYFAIL+DOCDRIFT off and PROMINENT off):
   ROAM_HOOK_PROMINENT (default 1) -- present BLOCK-level (FAIL-severity)
@@ -640,6 +647,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 _VERIFY_TIMEOUT_S = 90
 _WHYFAIL_TIMEOUT_S = 20
@@ -648,6 +656,7 @@ _PRRISK_TIMEOUT_S = 45
 _ADVERSARIAL_TIMEOUT_S = 45
 _VIBE_TIMEOUT_S = 60
 _GITDIFF_TIMEOUT_S = 15
+_GIT_CHECK_TIMEOUT_S = 10
 _MAX_FAIL_SHOWN = 12
 _MAX_OTHER_SHOWN = 8
 _MAX_WHYFAIL_TESTS = 3
@@ -726,6 +735,69 @@ def _git_diff_head():
         return proc.stdout if proc.returncode == 0 else ""
     except Exception:
         return ""
+
+
+def _tree_has_no_edits():
+    """Fast-exit pre-check (~10ms): True only when the working tree has no
+    tracked changes vs HEAD AND no new untracked files -- a pure Q&A stop
+    with nothing for `verify --diff-only` to inspect. Any git error (not a
+    repo, no HEAD yet, timeout) returns False so the hook falls back to the
+    full verify path (fail-open)."""
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", "HEAD"],
+            capture_output=True, timeout=_GIT_CHECK_TIMEOUT_S,
+        )
+        if diff.returncode != 0:  # 1 = tracked changes; 128+ = git error
+            return False
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, timeout=_GIT_CHECK_TIMEOUT_S,
+        )
+        if untracked.returncode != 0:
+            return False
+        # Roam's own state files (.roam/hook-stops.jsonl, .claude/settings)
+        # are often untracked in target repos -- without this filter the
+        # first telemetry write would defeat the fast-exit forever. verify
+        # --diff-only has nothing to say about them anyway.
+        new_files = [
+            ln for ln in untracked.stdout.splitlines()
+            if ln.strip() and not ln.startswith((".roam/", ".claude/"))
+        ]
+        return not new_files
+    except Exception:
+        return False
+
+
+def _log_stop_event(blocked, findings_n, advisory_n, verify_ms, skipped_no_edit):
+    """Best-effort block-rate telemetry: one counts-only JSON line per
+    Stop-hook decision appended to `.roam/hook-stops.jsonl` (same dir
+    convention as `.roam/compile-runs.jsonl`: cwd-relative, skip when
+    `.roam/` doesn't exist, never grow past 10 MB). decision:block outcomes
+    are the only place the compile stack spends real model tokens (each
+    block = one extra full agent turn), so the block rate must be
+    measurable. Finding TEXT stays out of the log (privacy) -- counts only.
+    Never breaks the hook."""
+    try:
+        log_dir = os.path.join(os.getcwd(), ".roam")
+        if not os.path.isdir(log_dir):
+            return
+        log_path = os.path.join(log_dir, "hook-stops.jsonl")
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            return  # rotate manually; never grow unbounded
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "blocked": bool(blocked),
+            "findings": int(findings_n),
+            "advisory_findings": int(advisory_n),
+            "verify_ms": int(verify_ms),
+            "skipped_no_edit": bool(skipped_no_edit),
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + chr(10))  # chr(10): the enclosing
+            # module embeds this script in a non-raw string literal
+    except Exception:
+        pass  # telemetry must never break the hook
 
 
 def _collect_findings(d):
@@ -894,8 +966,20 @@ def main():
         payload = json.load(sys.stdin)
         if payload.get("stop_hook_active"):
             return  # already inside a stop-hook continuation; never loop
-        d = _run_roam(["verify", "--auto", "--diff-only"], _VERIFY_TIMEOUT_S,
-                      env={**os.environ, **_ADVISORY_ENV})
+        # Fast-exit (2026-07-11): pure Q&A stops (no tracked edits, no new
+        # untracked files) have nothing for `verify --diff-only` to check --
+        # skip the verify subprocess entirely. Any git error falls back to
+        # the full verify path below (fail-open). Downstream code is
+        # unchanged: d=None yields the same quiet "allow" outcome (and the
+        # same opt-in second-opinion behaviour) as a clean verify.
+        skipped_no_edit = _tree_has_no_edits()
+        verify_ms = 0
+        d = None
+        if not skipped_no_edit:
+            verify_t0 = time.perf_counter()
+            d = _run_roam(["verify", "--auto", "--diff-only"], _VERIFY_TIMEOUT_S,
+                          env={**os.environ, **_ADVISORY_ENV})
+            verify_ms = int((time.perf_counter() - verify_t0) * 1000)
         summary = (d or {}).get("summary") or {}
         verdict = str(summary.get("verdict") or "")
         verify_failed = bool(d) and bool(verdict) and not verdict.upper().startswith("PASS")
@@ -978,6 +1062,7 @@ def main():
             )
             lines.extend(extra)
 
+        _log_stop_event(bool(lines), len(findings), len(advisory), verify_ms, skipped_no_edit)
         if not lines:
             return  # quiet: clean verify and nothing from any enabled reviewer
         print(json.dumps({"decision": "block", "reason": chr(10).join(lines)}))

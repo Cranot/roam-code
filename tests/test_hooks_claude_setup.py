@@ -174,3 +174,165 @@ class TestVerifyStopHook:
         # garbage stdin → fail open
         proc = subprocess.run([sys.executable, str(hook)], input="NOT JSON", capture_output=True, text=True, timeout=30)
         assert proc.returncode == 0 and proc.stdout == ""
+
+
+_PASS_ENVELOPE = {"summary": {"verdict": "PASS"}, "violations": []}
+
+# Python stub standing in for the `roam` binary: appends an invocation marker
+# and prints the canned envelope. Pure Python so it is hermetic on every OS
+# (a bare-name `roam` PATH stub is NOT: Windows CreateProcess resolves
+# `roam` to a real roam.exe on PATH and never to a stub roam.bat, so on dev
+# machines with roam installed a PATH stub silently tests the real binary).
+_ROAM_STUB_PY = """\
+import os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "roam-called.txt"), "a", encoding="utf-8") as fh:
+    fh.write("called" + chr(10))
+with open(os.path.join(here, "envelope.json"), encoding="utf-8") as fh:
+    sys.stdout.write(fh.read())
+"""
+
+# Driver that runs the UNMODIFIED Stop-hook script text with a `subprocess`
+# module shim: argv ["roam", ...] is redirected to the Python stub above;
+# everything else (git ...) passes through to the real subprocess module.
+_STOP_HOOK_DRIVER_PY = """\
+import sys, types, subprocess as _real_subprocess
+
+_STUB = sys.argv[1]
+_SCRIPT = sys.argv[2]
+
+shim = types.ModuleType("subprocess")
+
+
+def _run(args, **kwargs):
+    if args and args[0] == "roam":
+        args = [sys.executable, _STUB] + list(args[1:])
+    return _real_subprocess.run(args, **kwargs)
+
+
+shim.run = _run
+sys.modules["subprocess"] = shim
+with open(_SCRIPT, encoding="utf-8") as fh:
+    code = fh.read()
+sys.argv = [_SCRIPT]
+exec(compile(code, _SCRIPT, "exec"), {"__name__": "__main__"})
+"""
+
+
+def _install_roam_verify_stub(stub_root, envelope):
+    """Write the roam stub + canned envelope. Returns (stub_dir, marker)."""
+    stub_dir = stub_root / "bin"
+    stub_dir.mkdir()
+    (stub_dir / "roam-stub.py").write_text(_ROAM_STUB_PY, encoding="utf-8")
+    (stub_dir / "envelope.json").write_text(json.dumps(envelope), encoding="utf-8")
+    return stub_dir, stub_dir / "roam-called.txt"
+
+
+def _run_stop_hook(repo, stub_dir):
+    """Run the Stop-hook script (via the subprocess-shim driver) with
+    cwd=repo. Script files live OUTSIDE the repo so the tree stays clean."""
+    import subprocess
+    import sys
+
+    from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
+
+    hook = repo.parent / "stop-hook.py"
+    hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
+    driver = repo.parent / "stop-hook-driver.py"
+    driver.write_text(_STOP_HOOK_DRIVER_PY, encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(driver), str(stub_dir / "roam-stub.py"), str(hook)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=str(repo),
+    )
+
+
+class TestStopHookFastExitAndTelemetry:
+    """2026-07-11 — clean-tree fast-exit (skip verify on pure Q&A stops) +
+    counts-only block-rate telemetry in `.roam/hook-stops.jsonl`."""
+
+    @staticmethod
+    def _git_repo(tmp_path):
+        """Committed git repo with a `.roam/` dir (telemetry destination)."""
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+        for args in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@t"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-q", "-m", "init"],
+        ):
+            subprocess.run(args, cwd=repo, check=True, capture_output=True)
+        (repo / ".roam").mkdir()
+        return repo
+
+    @staticmethod
+    def _stop_rows(repo):
+        log = repo / ".roam" / "hook-stops.jsonl"
+        assert log.exists(), "hook-stops.jsonl was not written"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    def test_fast_exit_skips_verify_on_clean_tree(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        proc = _run_stop_hook(repo, stub_dir)
+        assert proc.returncode == 0 and proc.stdout == ""
+        assert not marker.exists(), "verify subprocess ran despite a clean tree"
+        row = self._stop_rows(repo)[-1]
+        assert row["skipped_no_edit"] is True
+        assert row["blocked"] is False
+        assert row["verify_ms"] == 0
+
+    def test_fast_exit_does_not_fire_on_tracked_edit(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        proc = _run_stop_hook(repo, stub_dir)
+        assert proc.returncode == 0 and proc.stdout == ""  # PASS stays quiet
+        assert marker.exists(), "verify subprocess should run on a dirty tree"
+        row = self._stop_rows(repo)[-1]
+        assert row["skipped_no_edit"] is False
+
+    def test_fast_exit_does_not_fire_on_new_untracked_file(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "brand_new.py").write_text("x = 1\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        _run_stop_hook(repo, stub_dir)
+        assert marker.exists(), "verify should run when a new untracked file exists"
+        assert self._stop_rows(repo)[-1]["skipped_no_edit"] is False
+
+    def test_blocked_decision_logs_counts_not_text(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        envelope = {
+            "summary": {"verdict": "FAIL"},
+            "violations": [
+                {
+                    "severity": "FAIL",
+                    "category": "imports",
+                    "file": "tracked.txt",
+                    "line": 1,
+                    "message": "hallucinated import super_secret_module",
+                }
+            ],
+        }
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, envelope)
+        proc = _run_stop_hook(repo, stub_dir)
+        assert proc.returncode == 0
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        row = self._stop_rows(repo)[-1]
+        assert row["blocked"] is True
+        assert row["findings"] == 1
+        assert row["advisory_findings"] == 0
+        assert row["skipped_no_edit"] is False
+        log_text = (repo / ".roam" / "hook-stops.jsonl").read_text(encoding="utf-8")
+        assert "super_secret_module" not in log_text  # counts only, never finding text

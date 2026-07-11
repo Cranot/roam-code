@@ -29,8 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`roam verify --checks unreachable_after_return`** — opt-in detector that flags dead code following an unconditional `return`/`raise`/`break`/`continue` in the same block. Advisory WARN.
 - **`roam verify --checks none_eq_comparison`** — opt-in precision detector that flags `x == None` / `x != None` (use `is` / `is not`). Never fires on the `x == x` NaN idiom. Advisory WARN.
 - **`roam verify --summary`** — compact grouped-findings inspection (one top item per group) alongside the existing `--json` detail.
+- **Claude Stop-hook empty-diff fast-exit** — a stop with a clean working tree (no tracked edits, no new untracked files — a pure Q&A session) now skips the `roam verify --auto --diff-only` subprocess entirely (~10ms git check instead of a 90s-budget verify run). Fail-open: any git error falls back to the full verify path; roam's own state files (`.roam/`, `.claude/`) don't defeat the fast-exit.
+- **Claude Stop-hook block-rate telemetry** — every stop-hook decision appends a counts-only JSON line (`blocked`, `findings`, `advisory_findings`, `verify_ms`, `skipped_no_edit`) to `.roam/hook-stops.jsonl` (10 MB cap, fail-open, no finding text). A block decision costs a full extra agent turn — the rate is now measurable.
 
 ### Fixed
+- **Stale probe timings on compile cache hits** — `compile-runs.jsonl` rows for envelope-cache HITs no longer carry `probe_timings_ms` copied from the original MISS's cached plan object (a ~1ms hit row claiming hundreds of ms of probe time corrupted probe-cost analyses; 1,008 such rows observed). Telemetry-record-only; the served envelope is unchanged.
 - **React-hook naming false positives** — `roam verify` naming and `roam conventions` no longer flag idiomatic `useX` React hooks (`useSwarm`, `useProjects`) as camelCase outliers in PascalCase-dominant `.tsx` files; the Rules-of-Hooks `use` prefix is the correct convention. Gated js-family + `^use[A-Z]` + functions-only, so genuinely mis-named helpers still flag.
 - **`detect_list_membership` overfitting** — the O(n) membership detector now keys on the real membership idiom (strict equality in a boolean-return/early-exit position) instead of name substrings; measured on roam's own source: 11 firings → 1 (the genuine case), with filter/dispatch/identity loops excluded by shape.
 
