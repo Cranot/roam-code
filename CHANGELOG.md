@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`roam ask "is <feature> wired?"`** — new `is-feature-wired` recipe (registry 29 → 30) that composes reachability-from-entry with CRUD/read-site detection to answer whether a feature is hooked up end-to-end (entry reachable → handler → data read/write site) in one call.
+- **`roam compile-stats --schema`** — documents the 14 `compile-runs.jsonl` telemetry row fields (name + one-line meaning, in writer order), text + `--json`; works with no telemetry log present.
+- **`roam compile --checklist`** — emits a `roam-compile-checklist-v1` block composing the plan's `required_checks` + verification contract + recommended first command into one checkbox-shaped artifact. Explicitly `kind: static` — it lists the commands to run, it is not a live verification.
+- **`roam duplicates` semantic-review caveat** — high-structural-similarity clusters that are likely *behaviorally distinct* (disjoint call targets, or a genuine pure-query vs pure-mutation name split) now carry an additive `semantic_review` annotation ("review before merging") in text/JSON/SARIF. Never suppresses a cluster; compound-verb genuine duplicates (`getOrCreateUser`) draw no caveat.
+- **`roam coupling` / `roam dark-matter` expected-pattern annotation** — locale-pair co-changes (real ISO-639 codes only, e.g. `messages.en.ts` ↔ `messages.el.ts`) and doc-hub siblings (same docs dir, both `.md`) are labeled `expected_locale` / `expected_doc_hub` instead of reading as hidden coupling. Annotation-only: dark-matter counts, verdicts, and risk are unchanged.
+- **`roam cycles` shadow-artifact labeling** — every cycle finding now carries `shadow_artifact: true/false`, flagging phantom cycles caused by destructured-consumer name collisions (a resolver artifact, not a real reverse import). Label-only, never suppresses; genuine cycles report unchanged.
+
 - **`roam blame-reviewers`** — advisory command that ranks suggested reviewers for a diff by total `lines_added` per author across the changed non-test files (pure git-blame-lines, read from the index — no live blame shell-out). Positional `COMMIT_RANGE` + `--staged` + `--top N`; text + `--json`. Complements the multi-signal `roam suggest-reviewers` with a simpler, transparent blame-only view, and extracts a shared `rank_blame_reviewers` helper that de-duplicates pr-risk's inline logic.
 - **`roam rules-suggest`** — first-class command that promotes the review-suggestion capability previously hidden inside `roam pr-replay`. Runs `roam postmortem` over a commit range (`--range` / `--tier {sample,team,deep}`), aggregates findings by detector class, and for the classes that *recur* emits a starter `.roam/rules.yml` body + concrete `roam … --ci` gate invocations (heuristic, no LLM). Advisory/read-only by default; `--write` persists the preview and refuses to clobber an existing file without `--force`. Text + `--json`.
 - **`roam reachability-triage`** — first-class zero-egress command that projects the `service-report --type reachability-triage` compose (sbom → supply-chain → vulns → vuln-reach → taint → secrets) into deterministic reachability facts. Adds `--gate-on-new-reachable` (exit 5 only on a *new* reachable flow versus a persisted `.roam` baseline; fail-open on a missing baseline) and `--range` for a diff scope. Emits facts only — reachable/not, hop distance, blast radius — never a semantic pass/fail verdict.
@@ -21,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`roam verify --checks unreachable_after_return`** — opt-in detector that flags dead code following an unconditional `return`/`raise`/`break`/`continue` in the same block. Advisory WARN.
 - **`roam verify --checks none_eq_comparison`** — opt-in precision detector that flags `x == None` / `x != None` (use `is` / `is not`). Never fires on the `x == x` NaN idiom. Advisory WARN.
 - **`roam verify --summary`** — compact grouped-findings inspection (one top item per group) alongside the existing `--json` detail.
+
+### Fixed
+- **React-hook naming false positives** — `roam verify` naming and `roam conventions` no longer flag idiomatic `useX` React hooks (`useSwarm`, `useProjects`) as camelCase outliers in PascalCase-dominant `.tsx` files; the Rules-of-Hooks `use` prefix is the correct convention. Gated js-family + `^use[A-Z]` + functions-only, so genuinely mis-named helpers still flag.
+- **`detect_list_membership` overfitting** — the O(n) membership detector now keys on the real membership idiom (strict equality in a boolean-return/early-exit position) instead of name substrings; measured on roam's own source: 11 firings → 1 (the genuine case), with filter/dispatch/identity loops excluded by shape.
 
 ## [13.8.0] — 2026-07-10
 
