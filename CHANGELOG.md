@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`roam ask "blast radius of renaming <field>"`** — new `field-trace` recipe (registry 30 → 31) that composes `uses` + `refs-text` + `impact` + `x-lang` into a pre-rename recon report: direct code consumers, per-surface text references (code/tests/docs/config with reachability + verdict), transitive blast radius, and FE<->BE API-bridge links — the full DB->BE->API->FE touchpoint list before a field/symbol rename. The `roam mutate rename` dry-run is the follow-up (it needs the new name; keeping `mutate` out of the trace path keeps the recipe runnable under read-only constitutions). Honest gate: the rest-api bridge matches URLs, not serialized JSON keys.
 - **`roam ask "is <feature> wired?"`** — new `is-feature-wired` recipe (registry 29 → 30) that composes reachability-from-entry with CRUD/read-site detection to answer whether a feature is hooked up end-to-end (entry reachable → handler → data read/write site) in one call.
 - **`roam compile-stats --schema`** — documents the 14 `compile-runs.jsonl` telemetry row fields (name + one-line meaning, in writer order), text + `--json`; works with no telemetry log present.
 - **`roam compile --checklist`** — emits a `roam-compile-checklist-v1` block composing the plan's `required_checks` + verification contract + recommended first command into one checkbox-shaped artifact. Explicitly `kind: static` — it lists the commands to run, it is not a live verification.

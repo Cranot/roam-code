@@ -73,17 +73,28 @@ class TestRecipes:
             # enrichment #48 — compose reachability + CRUD/read-site primitives
             # to answer "is this feature actually hooked up end-to-end?"
             "is-feature-wired",
+            # 2026-07-11 — pre-rename recon: every layer touchpoint of a
+            # field/symbol (uses + refs-text + impact + x-lang).
+            "field-trace",
         }
 
     def test_recipe_count(self):
         # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 30
+        assert len(RECIPES) == 31
 
     def test_readme_recipe_count_matches_registry(self):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
         match = re.search(r"\b(\d+)-recipe registry\b", readme)
         assert match, "README missing '<N>-recipe registry' phrase"
+        assert int(match.group(1)) == len(RECIPES)
+
+    def test_mcp_server_recipe_count_matches_registry(self):
+        # Same "<N>-recipe registry" phrase is repeated in the MCP tool
+        # description — drift insurance (it is not built from RECIPES).
+        mcp = (Path(__file__).resolve().parents[1] / "src" / "roam" / "mcp_server.py").read_text(encoding="utf-8")
+        match = re.search(r"\b(\d+)-recipe registry\b", mcp)
+        assert match, "mcp_server.py missing '<N>-recipe registry' phrase"
         assert int(match.group(1)) == len(RECIPES)
 
     def test_recipe_names_unique(self):
@@ -234,6 +245,47 @@ class TestClassifier:
             "safe-delete-check",
         }
         assert classify("find sql injection or xss reach")[0][0].name == "security-audit"
+
+    def test_field_trace_routes(self):
+        # 2026-07-11 — pre-rename recon: "every layer touchpoint of a field
+        # before a rename" composes uses + refs-text + impact + x-lang.
+        for q in (
+            "blast radius of renaming user_email",
+            "what touches the email field across layers",
+            "every layer touchpoint before renaming created_at",
+            "field rename impact from database to frontend",
+        ):
+            ranked = classify(q)
+            assert ranked, f"no recipe matched: {q!r}"
+            assert ranked[0][0].name == "field-trace", f"{q!r} -> {ranked[0][0].name}"
+
+    def test_field_trace_by_name(self):
+        assert by_name("field-trace").name == "field-trace"
+
+    def test_field_trace_does_not_steal_adjacent_routes(self):
+        # Keyword-collision guard: "renam*" vocabulary overlaps
+        # fixture-impact (its example says "if I rename cli_runner what
+        # tests break") and explore-impact ("blast radius"). field-trace
+        # keeps multi-word tokens only ("renaming", "field rename", ...)
+        # so those queries must NOT route here.
+        #
+        # NOTE: "if I rename cli_runner what tests break" already topped
+        # explore-tests (not fixture-impact) BEFORE field-trace existed —
+        # the guard is that field-trace does not enter the picture.
+        top = classify("if I rename cli_runner what tests break")[0][0].name
+        assert top in {"explore-tests", "fixture-impact"}, top
+        assert classify("what will break if I change UserSession")[0][0].name == "explore-impact"
+        assert classify("blast radius of indexed_project")[0][0].name in {
+            "explore-impact",
+            "fixture-impact",
+        }
+        # is-feature-wired keeps its own routing queries.
+        for q in (
+            "is create_user actually hooked up",
+            "is the checkout feature wired end to end",
+            "is this feature actually wired",
+        ):
+            assert classify(q)[0][0].name == "is-feature-wired", q
 
     def test_dead_code_sweep_match(self):
         ranked = classify("find dead code I can delete")
@@ -520,3 +572,155 @@ class TestAskCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert "ask" in result.output
+
+
+# ---------------------------------------------------------------------------
+# field-trace — pre-rename layer-touchpoint recon (2026-07-11)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def field_trace_project(tmp_path):
+    """Multi-layer project: BE handler + FE fetch + docs, all touching
+    ``user_email`` — the DB->BE->API->FE rename blast-radius shape."""
+    proj = _make_project(
+        tmp_path,
+        {
+            "api.py": """
+                user_email = "seed@example.com"
+
+                app = None
+
+
+                @app.route("/api/users")
+                def list_users():
+                    return {"user_email": user_email}
+
+
+                def update_email(value):
+                    global user_email
+                    user_email = value
+                    return user_email
+            """,
+            "app.js": """
+                async function loadUsers() {
+                  const res = await fetch('/api/users');
+                  const data = await res.json();
+                  return data.user_email;
+                }
+            """,
+            "NOTES.md": """
+                # Notes
+
+                The `user_email` field is returned by the /api/users endpoint.
+            """,
+        },
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        yield proj
+    finally:
+        os.chdir(old_cwd)
+
+
+class TestFieldTraceRecipe:
+    _COMMAND_ORDER = ["uses", "refs-text", "impact", "x-lang"]
+
+    def test_workflow_inspection_renders_symbol_and_followups(self, ask_project):
+        # Fast contract test — no recipe subprocesses. `roam workflow`
+        # renders the same extract-symbol + fill pipeline run_recipe uses.
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "workflow", "field-trace", "--query", "blast radius of renaming user_email"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["recipe"] == "field-trace"
+        assert data["phase"] == "scope"
+        assert [c["cmd"] for c in data["commands"]] == self._COMMAND_ORDER
+        assert data["commands"][0]["args"] == ["user_email"]
+        assert data["commands"][3]["args"] == []  # x-lang is project-wide
+        assert data["followups"][0].startswith("roam mutate rename user_email")
+
+    def test_recipe_json_shape_without_subprocesses(self, ask_project, monkeypatch):
+        # Cheap monkeypatched JSON-contract test (fast-suite coverage) —
+        # the real 4-subprocess run is in the integration tests below.
+        from roam.commands import cmd_ask as cmd_ask_module
+
+        def fake_run_recipe(recipe, query, **_kwargs):
+            assert recipe.name == "field-trace"
+            return [{"command": c, "summary": {"verdict": "ok"}} for c, _ in recipe.commands]
+
+        monkeypatch.setattr(cmd_ask_module, "run_recipe", fake_run_recipe)
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "ask", "--recipe", "field-trace", "blast radius of renaming user_email"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["recipe"] == "field-trace"
+        assert [s["command"] for s in data["steps"]] == self._COMMAND_ORDER
+        assert data["perspectives"] == ["code-refs", "text-refs", "consumer-blast-radius", "api-bridge"]
+        assert any(f.startswith("roam mutate rename user_email") for f in data["followups"])
+        assert any("serialized JSON key" in g for g in data["gates"])
+
+    @pytest.mark.slow
+    def test_field_trace_end_to_end_multi_layer(self, field_trace_project):
+        # POSITIVE: a field referenced across >=2 layers is fully listed.
+        # run_recipe shells `python -m roam` subprocesses — integration.
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "ask", "--recipe", "field-trace", "blast radius of renaming user_email"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["recipe"] == "field-trace"
+        assert [s["command"] for s in data["steps"]] == self._COMMAND_ORDER
+        assert any(f.startswith("roam mutate rename user_email") for f in data["followups"])
+
+        # Layer-content assertion via the refs-text primitive directly (the
+        # ask envelope compacts step payloads, dropping per-surface lists).
+        refs = runner.invoke(cli, ["--json", "refs-text", "user_email"])
+        assert refs.exit_code == 0, refs.output
+        refs_data = json.loads(refs.output)
+        by_surface = refs_data["results"][0]["by_surface"]
+        assert len(by_surface) >= 2, by_surface  # e.g. code + docs
+        assert "docs" in by_surface, by_surface
+
+    @pytest.mark.slow
+    def test_field_trace_unknown_field_completes_cleanly(self, field_trace_project):
+        # NEGATIVE: unknown field yields a clean explanatory result, not a
+        # crash — symbol-not-found envelopes for uses/impact, SAFE-TO-REMOVE
+        # from refs-text, well-formed x-lang envelope.
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "ask", "--recipe", "field-trace", "blast radius of renaming zz_nonexistent_field"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        steps = {s["command"]: s for s in data["steps"]}
+        assert list(steps) == self._COMMAND_ORDER
+        # uses + impact: structured not-found envelopes (no non-JSON crash).
+        for cmd in ("uses", "impact"):
+            assert steps[cmd].get("error") != "command produced non-JSON output", steps[cmd]
+            assert steps[cmd]["summary"]["state"] == "not_found", steps[cmd]
+        # refs-text: zero matches → 0 load-bearing.
+        assert steps["refs-text"]["summary"]["load_bearing"] == 0
+        # x-lang: well-formed envelope with a summary.
+        assert steps["x-lang"]["command"] == "x-lang"
+        assert "summary" in steps["x-lang"]
+
+        # Per-string verdict shape (compacted out of the ask envelope) via
+        # the primitive directly.
+        refs = runner.invoke(cli, ["--json", "refs-text", "zz_nonexistent_field"])
+        assert refs.exit_code == 0, refs.output
+        entry = json.loads(refs.output)["results"][0]
+        assert entry["verdict"] == "SAFE-TO-REMOVE"
+        assert entry["reason"] == "no references in source code"

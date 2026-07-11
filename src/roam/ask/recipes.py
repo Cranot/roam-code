@@ -897,6 +897,78 @@ RECIPES: list[Recipe] = [
             "Treat absence of any io_read/io_write/writes_db effect as 'reaches no data site — likely a stub'",
         ),
     ),
+    Recipe(
+        name="field-trace",
+        intent=(
+            "Trace every layer touchpoint of a field/symbol BEFORE a rename — "
+            "code references, cross-file text references, consumers, and "
+            "FE<->BE API-bridge links (DB->BE->API->FE blast radius)"
+        ),
+        examples=(
+            "blast radius of renaming user_email",
+            "what touches the email field across layers",
+            "every layer touchpoint before renaming created_at",
+            "rename the user_id field everywhere - what will it touch",
+            "field rename impact from database to frontend",
+            "trace the price field across backend api and frontend",
+        ),
+        # Distinctive multi-word / suffixed tokens ONLY — the keyword bonus
+        # is substring-matched (classifier.py:139-141), so a bare "rename"
+        # keyword would fire on fixture-impact's own example query
+        # "if I rename cli_runner what tests break" (+0.25 steal).
+        # "renaming" / "field rename" do not substring-match that query.
+        keywords=(
+            "renaming",
+            "rename a field",
+            "rename the field",
+            "field rename",
+            "rename this field",
+            "blast radius of renaming",
+            "every layer",
+            "across layers",
+            "touchpoint",
+        ),
+        commands=(
+            ("uses", ("{symbol}",)),
+            ("refs-text", ("{symbol}",)),
+            ("impact", ("{symbol}",)),
+            ("x-lang", ()),
+        ),
+        summary=(
+            "Four layers on one field. Layer 1 — direct code consumers: "
+            "`uses` lists callers, importers, and inheritors of the symbol. "
+            "Layer 2 — text references: `refs-text` groups every textual "
+            "hit by surface (code with reachability + PageRank, tests, docs, "
+            "config, generated, vendored, dead) and annotates cross-language "
+            "bridge links; its verdict (SAFE-TO-REMOVE / REVIEW / "
+            "LOAD-BEARING) is the rename-risk headline. Layer 3 — "
+            "transitive consumers: `impact` gives the PageRank-personalized "
+            "blast radius beyond direct callers. Layer 4 — FE<->BE API "
+            "bridge: `x-lang` correlates fetch/axios/requests URLs to "
+            "backend routes; filter its rest-api links for URLs whose route "
+            "handler touches the field. Note the bridge matches URLs, not "
+            "JSON payload keys — a rename that changes a serialized key is "
+            "invisible to it."
+        ),
+        phase="scope",
+        perspectives=(
+            "code-refs",
+            "text-refs",
+            "consumer-blast-radius",
+            "api-bridge",
+        ),
+        followups=(
+            "roam mutate rename {symbol} <new-name>  # dry-run (default) = exact line-level rename plan",
+            "roam refs-text {symbol} --per-match-detail",
+            "roam impact {symbol} --json",
+            "roam x-lang --scope src/",
+        ),
+        gates=(
+            "Do not rename until every layer group is reviewed",
+            "refs-text LOAD-BEARING verdict or reachable config/docs hits = update those surfaces in the same change",
+            "A rename that changes a serialized JSON key is NOT visible to the rest-api bridge — check FE payload accessors by hand",
+        ),
+    ),
 ]
 
 
