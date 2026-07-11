@@ -174,6 +174,18 @@ def test_credential_fail_floors_verdict_below_pass(tmp_path, monkeypatch):
     assert not verdict.upper().startswith("PASS"), verdict
 
 
+import os as _os
+
+import pytest as _pytest
+
+
+@_pytest.mark.skipif(
+    _os.name == "nt",
+    reason="POSIX shell PATH stub cannot execute on Windows (CreateProcess "
+    "resolves the real roam.exe past it) — pre-existing platform limitation, "
+    "verified against the pre-fast-exit hook too; hermetic subprocess-shim "
+    "port tracked (see test_hooks_claude_setup driver).",
+)
 def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     """On findings the shipped Stop hook emits a decision-block with the
     AUTO-FIX directive (on by default); quiet on PASS."""
@@ -212,12 +224,17 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stub_dir}:{os.environ['PATH']}")
 
+    # cwd is pinned to tmp_path (NOT a git repo) so the hook's empty-diff
+    # fast-exit stays out of play (git error -> fail-open -> verify runs) and
+    # the test no longer depends on the checkout's working-tree state — on CI
+    # the clean repo tree made the fast-exit skip verify and emit nothing.
     proc = subprocess.run(
         [_sys.executable, str(hook)],
         input=_json.dumps({"stop_hook_active": False}),
         capture_output=True,
         text=True,
         timeout=30,
+        cwd=tmp_path,
     )
     assert proc.returncode == 0
     out = _json.loads(proc.stdout)
@@ -232,5 +249,6 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
         capture_output=True,
         text=True,
         timeout=30,
+        cwd=tmp_path,
     )
     assert proc2.returncode == 0 and proc2.stdout == ""
