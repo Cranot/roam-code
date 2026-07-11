@@ -308,3 +308,49 @@ def test_compile_envelope_carries_next_evidence(runner):
     assert ev["state"] in {"recent_failure", "no_recent_failure", "not_initialized"}
     # hint is a string when there is a failure, else null — never undefined.
     assert "hint" in ev
+
+
+# --------------------------------------------------------------------------
+# --checklist: compose required_checks + verification_contract +
+# recommended_first_command into one STATIC checklist block (#77).
+# --------------------------------------------------------------------------
+
+
+def test_compile_checklist_emits_composed_block(runner):
+    """Synthesis task so required_checks can populate; the block composes
+    recommended_first_command + required checkboxes + verification contract."""
+    result = runner.invoke(
+        cli,
+        ["--json", "compile", "write a pytest for src/roam/plan/compiler.py::compile_plan", "--checklist"],
+    )
+    assert result.exit_code == 0
+    block = json.loads(result.output)
+    assert block["schema"] == "roam-compile-checklist-v1"
+    assert block["kind"] == "static"  # honesty: static, not live
+    assert "recommended_first_command" in block
+    assert block["recommended_first_command"]  # non-empty routing hint
+    assert "checks" in block and isinstance(block["checks"], list)
+    # composed contract mirrors the proof-stub shape (cmd_compile.py:67-70)
+    vc = block["verification_contract"]
+    assert set(vc) >= {"required", "compiler_recommended_first"}
+    # each required check surfaces as a checkbox line
+    for item in block["checks"]:
+        assert item["done"] is False
+        assert item["check"] in vc["required"]
+    # required_checks reused verbatim from the plan object (not recomputed)
+    assert [i["check"] for i in block["checks"]] == vc["required"]
+
+
+def test_compile_checklist_static_and_may_be_empty(runner):
+    """Honesty on empty-check procedures: a structural task yields
+    required_checks == [], and the block does not over-promise 'live'."""
+    result = runner.invoke(
+        cli,
+        ["--json", "compile", "Find files coupled to src/roam/cli.py", "--checklist"],
+    )
+    assert result.exit_code == 0
+    block = json.loads(result.output)
+    assert block["kind"] == "static"
+    # note states it is static and NOT live — does not over-promise
+    assert "static" in block["note"].lower() and "not" in block["note"].lower()
+    assert isinstance(block["checks"], list)  # empty is valid for structural_coupling

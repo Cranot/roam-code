@@ -78,6 +78,41 @@ def _build_proof_stub(task: str, plan, env: dict, art_label: str) -> dict:
     }
 
 
+def _build_checklist_block(plan) -> dict:
+    """Compose the plan's already-computed required_checks +
+    recommended_first_command + verification contract into ONE
+    checklist-shaped artifact (a `roam-compile-checklist` block).
+
+    HONEST SCOPE: this is a STATIC checklist derived from the compiler's
+    static `required_checks` — NOT a runtime/live probe of check status.
+    `required_checks` is only populated for procedure=synthesis_query;
+    other procedures (structural/trace/freeform) yield an empty check
+    list, which is a valid, honest outcome (we do NOT fabricate checks).
+
+    Composes ONLY from fields already on `plan` (no recomputation). The
+    `verification_contract` shape is kept byte-identical to the proof-stub
+    surface (`_build_proof_stub`, above) so the two surfaces never diverge.
+    """
+    required_checks = list(plan.required_checks or [])
+    return {
+        "schema": "roam-compile-checklist-v1",
+        "kind": "static",
+        "recommended_first_command": plan.recommended_first_command,
+        "checks": [{"check": c, "done": False} for c in required_checks],
+        "verification_contract": {
+            "required": list(required_checks),
+            "compiler_recommended_first": plan.recommended_first_command,
+        },
+        "note": (
+            "Static checklist derived from the compiler's static "
+            "required_checks (procedure=synthesis_query populates checks; "
+            "other procedures yield an empty check list). NOT a "
+            "runtime/live verification of check status — the agent must "
+            "actually run each command."
+        ),
+    }
+
+
 def _resolve_verify_enabled(cwd: str | None) -> bool:
     """Whether to surface the post-edit `roam verify --auto` hint.
 
@@ -592,6 +627,18 @@ def _emit_text_compile(
     "Useful for CI scripts that just want the precomputed data + can "
     "skip the surrounding contract/routing layer.",
 )
+@click.option(
+    "--checklist",
+    "checklist",
+    is_flag=True,
+    default=False,
+    help="Emit a STATIC roam-compile-checklist block composed from the "
+    "plan's already-computed required_checks + recommended_first_command "
+    "+ verification contract. This is a static checklist derived from the "
+    "compiler's static required_checks — NOT a live/runtime probe of check "
+    "status (procedure=synthesis_query populates checks; other procedures "
+    "yield an empty check list).",
+)
 @click.pass_context
 @roam_capability(
     name="compile",
@@ -616,6 +663,7 @@ def compile_(
     explain: bool,
     emit_proof_stub: bool,
     probes_only: bool,
+    checklist: bool,
 ) -> None:
     """Compile TASK (freeform string) into an agent-consumable envelope."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -657,6 +705,15 @@ def compile_(
     # contract). This is the production-grade output.
     if route:
         _emit_route(task, plan, _cwd, profile, bool(json_mode))
+        return
+
+    # --checklist short-circuits (json-gated, like --probes below): compose
+    # the plan's already-computed required_checks + recommended_first_command
+    # + verification contract into ONE static roam-compile-checklist block.
+    # Placed before _artifact_for_request so no envelope/artifact work runs
+    # for a checklist-only request (mirrors the --route short-circuit above).
+    if checklist and json_mode:
+        click.echo(to_json(_build_checklist_block(plan)))
         return
 
     env, art_label = _artifact_for_request(plan, artifact, _cwd)
