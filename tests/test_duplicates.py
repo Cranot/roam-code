@@ -726,3 +726,262 @@ class TestPatternInferenceDeterminism:
             assert proc.returncode == 0, f"seed={seed} failed: {proc.stderr}"
             outputs.add(proc.stdout)
         assert len(outputs) == 1, f"pattern inference varied across PYTHONHASHSEED: {outputs}"
+
+
+# ---------------------------------------------------------------------------
+# #40 — semantic-non-equivalence annotation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def divergent_pair_project(tmp_path):
+    """A structurally near-identical query/mutation pair that is
+    BEHAVIOURALLY distinct.
+
+    ``get_user`` reads (calls ``_open_conn`` + ``db_read``); ``save_user``
+    writes (calls ``_open_conn`` + ``db_write``). Identical control flow +
+    line shape => the metric-weighted similarity clusters them, but the
+    call-target sets diverge (Jaccard 1/3) AND the names split query vs
+    mutation. The cluster MUST still be reported (hard constraint) and
+    carry the ``semantic_review`` caveat.
+    """
+    proj = tmp_path / "divergent_proj"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+
+    data = proj / "data"
+    data.mkdir()
+
+    (data / "user_read.py").write_text(
+        "def get_user(user_id):\n"
+        '    """Read a user by id."""\n'
+        "    conn = _open_conn()\n"
+        "    row = db_read(conn, user_id)\n"
+        "    if row is None:\n"
+        "        return None\n"
+        "    return row\n"
+    )
+    (data / "user_write.py").write_text(
+        "def save_user(user_id):\n"
+        '    """Persist a user by id."""\n'
+        "    conn = _open_conn()\n"
+        "    row = db_write(conn, user_id)\n"
+        "    if row is None:\n"
+        "        return None\n"
+        "    return row\n"
+    )
+    (data / "helpers.py").write_text(
+        "def _open_conn():\n"
+        "    return object()\n"
+        "\n"
+        "def db_read(conn, uid):\n"
+        '    return {"id": uid}\n'
+        "\n"
+        "def db_write(conn, uid):\n"
+        '    return {"id": uid}\n'
+    )
+
+    git_init(proj)
+    out, rc = index_in_process(proj)
+    assert rc == 0, f"roam index failed:\n{out}"
+    return proj
+
+
+def _find_cluster_with(clusters, names):
+    """Return the first cluster whose function-name set equals *names*."""
+    want = set(names)
+    for c in clusters:
+        got = {f["name"] for f in c.get("functions", [])}
+        if got == want:
+            return c
+    return None
+
+
+class TestSemanticNonEquivalence:
+    """#40 — high-similarity but behaviourally distinct clusters get a
+    'review before merging' annotation without ever being suppressed."""
+
+    def test_divergent_pair_still_reported(self, divergent_pair_project, cli_runner):
+        """HARD CONSTRAINT: the divergent pair is STILL a reported cluster."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=divergent_pair_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "duplicates")
+        assert data["summary"]["total_clusters"] >= 1
+        cluster = _find_cluster_with(data["clusters"], ["get_user", "save_user"])
+        assert cluster is not None, "divergent pair must still cluster as a duplicate"
+
+    def test_divergent_pair_annotated(self, divergent_pair_project, cli_runner):
+        """The divergent cluster carries semantic_review.flag == true with a
+        non-empty reason mentioning call-targets or mutation/query."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=divergent_pair_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "duplicates")
+        cluster = _find_cluster_with(data["clusters"], ["get_user", "save_user"])
+        assert cluster is not None
+        review = cluster.get("semantic_review")
+        assert review is not None, "divergent cluster should carry semantic_review"
+        assert review.get("flag") is True
+        reason = review.get("reason", "")
+        assert reason, "reason must be non-empty"
+        assert any(tok in reason.lower() for tok in ("call target", "mutation", "query"))
+
+    def test_divergent_pair_text_note(self, divergent_pair_project, cli_runner):
+        """Text mode surfaces the review-before-merging note."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=divergent_pair_project,
+        )
+        assert result.exit_code == 0
+        assert "review before merging" in result.output
+        # The suggestion line is NOT removed — the annotation is additive.
+        assert "Suggestion:" in result.output
+
+    def test_divergent_pair_envelope_valid(self, divergent_pair_project, cli_runner):
+        """Envelope stays schema-valid with the additive field present."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=divergent_pair_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "duplicates")
+        assert_json_envelope(data, "duplicates")
+
+    def test_genuine_duplicate_not_caveated(self, dup_project, cli_runner):
+        """LOAD-BEARING regression guard: a genuine duplicate (identical
+        callees, no query/mutation split) is reported AND NOT flagged."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=dup_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "duplicates")
+        assert data["summary"]["total_clusters"] >= 1
+        for cluster in data["clusters"]:
+            review = cluster.get("semantic_review")
+            # Absent or flag=false — never a positive caveat on a true dup.
+            assert not (review and review.get("flag")), (
+                f"genuine duplicate falsely caveated: {cluster.get('functions')}"
+            )
+
+    def test_no_semantic_review_key_when_not_divergent(self, dup_project, cli_runner):
+        """BYTE-IDENTICAL guard: non-divergent clusters carry NO
+        ``semantic_review`` key (additive-absent discipline)."""
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=dup_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "duplicates")
+        for cluster in data["clusters"]:
+            assert "semantic_review" not in cluster, "non-divergent cluster must omit semantic_review entirely"
+
+    def test_no_edges_db_does_not_crash(self, divergent_pair_project, cli_runner):
+        """DEGRADATION: with the ``edges`` table emptied (no call graph),
+        the command must not crash. The call-target signal goes silent, but
+        the DB-independent name-marker signal (query vs mutation) still
+        fires on this pair, which is acceptable."""
+        import sqlite3
+
+        from roam.db.connection import get_db_path
+
+        db_path = get_db_path(divergent_pair_project)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("DELETE FROM edges")
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = invoke_cli(
+            cli_runner,
+            ["duplicates", "--threshold", "0.5"],
+            cwd=divergent_pair_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        data = parse_json_output(result, "duplicates")
+        assert_json_envelope(data, "duplicates")
+        cluster = _find_cluster_with(data["clusters"], ["get_user", "save_user"])
+        assert cluster is not None, "pair must still cluster with no edges"
+        # Name-marker signal is DB-independent and catches query-vs-mutation.
+        review = cluster.get("semantic_review")
+        assert review is not None and review.get("flag") is True
+        assert "mutation" in review.get("reason", "").lower() or "query" in review.get("reason", "").lower()
+
+    def test_behavioral_divergence_helper_conservative(self):
+        """Unit: identical callee sets and no query/mutation split never
+        flag — the conservative default that protects true duplicates."""
+        from roam.commands.cmd_duplicates import _behavioral_divergence
+
+        members = [{"id": 1, "name": "parse_json_config"}, {"id": 2, "name": "parse_yaml_config"}]
+        # Identical callee sets => call-target Jaccard 1.0 => no flag.
+        callees = {1: {"_parse_format", "_validate_schema"}, 2: {"_parse_format", "_validate_schema"}}
+        flag, reason = _behavioral_divergence(members, callees)
+        assert flag is False
+        assert reason == ""
+
+    def test_behavioral_divergence_helper_call_targets(self):
+        """Unit: disjoint callee sets on both members flags call-targets."""
+        from roam.commands.cmd_duplicates import _behavioral_divergence
+
+        members = [{"id": 1, "name": "handler_a"}, {"id": 2, "name": "handler_b"}]
+        callees = {1: {"db_read", "shared"}, 2: {"db_write", "other"}}
+        flag, reason = _behavioral_divergence(members, callees)
+        assert flag is True
+        assert "call target" in reason.lower()
+
+    def test_behavioral_divergence_helper_name_markers(self):
+        """Unit: query vs mutation name split flags even with no callees."""
+        from roam.commands.cmd_duplicates import _behavioral_divergence
+
+        members = [{"id": 1, "name": "get_thing"}, {"id": 2, "name": "save_thing"}]
+        flag, reason = _behavioral_divergence(members, {})
+        assert flag is True
+        assert "mutation" in reason.lower() or "query" in reason.lower()
+
+    def test_behavioral_divergence_two_mutations_no_name_flag(self):
+        """Unit: two mutation-siblings (useFinalize/useUnfinalize) do NOT
+        flag on the name-marker signal alone (both are mutations); the
+        call-target signal is the one that catches that motivating case."""
+        from roam.commands.cmd_duplicates import _behavioral_divergence
+
+        members = [
+            {"id": 1, "name": "useFinalizeKinisiMutation"},
+            {"id": 2, "name": "useUnfinalizeKinisiMutation"},
+        ]
+        # No call edges resolved => call-target signal silent; both names are
+        # mutations => no query/mutation split => no flag from names alone.
+        flag, reason = _behavioral_divergence(members, {})
+        assert flag is False
+        assert reason == ""
+
+    def test_behavioral_divergence_compound_verb_dupes_not_flagged(self):
+        """Unit (regression): two IDENTICAL compound-verb functions must NOT
+        draw the name-marker caveat. ``getOrCreateUser`` carries BOTH a query
+        marker (get) and a mutation marker (create) => it is MIXED, not pure,
+        so a cluster of two such genuine duplicates has no pure-query member
+        AND no pure-mutation member => no split => no flag. The prior
+        cluster-level OR-accumulation wrongly flagged these (any get* + any
+        *create* anywhere tripped it) even for byte-identical bodies."""
+        from roam.commands.cmd_duplicates import _behavioral_divergence
+
+        for compound in ("getOrCreateUser", "findOrCreateSession", "loadAndSaveConfig"):
+            members = [{"id": 1, "name": compound}, {"id": 2, "name": compound}]
+            # Identical callees => call-target signal silent; both names mixed
+            # => no pure query/mutation split => genuine dup, no caveat.
+            callees = {1: {"_lookup", "_persist"}, 2: {"_lookup", "_persist"}}
+            flag, reason = _behavioral_divergence(members, callees)
+            assert flag is False, f"{compound} genuine dup should not flag: {reason}"
+            assert reason == ""

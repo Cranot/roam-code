@@ -5467,6 +5467,14 @@ def duplicates_to_sarif(data: dict) -> dict:
         pattern = cluster.get("pattern", "") or ""
         suggestion = cluster.get("suggestion", "") or ""
         role_bucket = cluster.get("role_bucket", "") or ""
+        # #40 — behavioural-divergence caveat. Absent on non-divergent
+        # clusters (the metric-weighted duplicate is otherwise emitted
+        # unchanged), so this only appends a review hint when the
+        # ``duplicates`` command flagged the cluster.
+        semantic_review = cluster.get("semantic_review")
+        review_reason = ""
+        if isinstance(semantic_review, dict) and semantic_review.get("flag"):
+            review_reason = str(semantic_review.get("reason") or "").strip()
 
         functions = cluster.get("functions") or []
         if not isinstance(functions, list):
@@ -5512,6 +5520,8 @@ def duplicates_to_sarif(data: dict) -> dict:
         )
         if suggestion:
             message = f"{message}. Suggestion: {suggestion}"
+        if review_reason:
+            message = f"{message} (review before merging: {review_reason})"
 
         results.append(
             _result_entry(

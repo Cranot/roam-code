@@ -16,6 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.graph.clone_detect import _UnionFind
 from roam.index.file_roles import is_test as _is_test
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -80,7 +81,7 @@ def _role_bucket_for_files(files: list[str]) -> str:
 # Bump this stamp when the weight formula in :func:`_compute_similarity`
 # or the bucketing / pre-filter shape changes meaningfully — both affect
 # which clusters survive thresholding and therefore which findings emit.
-DUPLICATES_DETECTOR_VERSION: str = "1.1.0"
+DUPLICATES_DETECTOR_VERSION: str = "1.2.0"
 
 # Geometric line-count band base for duplicate-candidate bucketing. Each band
 # spans a ~1.3x line ratio, so two functions within the ±30% shape window land
@@ -411,6 +412,186 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
         return f"Extract common logic into a generic {base_name}() helper"
 
     return "Extract shared logic into a parameterized helper function"
+
+
+# ---------------------------------------------------------------------------
+# #40 — semantic-non-equivalence annotation
+# ---------------------------------------------------------------------------
+#
+# The metric-weighted similarity that drives clustering normalizes AST node
+# text as equivalent, so structurally near-identical members that are
+# BEHAVIOURALLY distinct — a TanStack query factory vs its mutation sibling,
+# ``useFinalize*`` vs ``useUnfinalize*``, ``get_user`` vs ``save_user`` with
+# identical control flow — surface together and read as "merge these". That
+# implication is wrong: they share a shape but do different things.
+#
+# ``_behavioral_divergence`` attaches a CONSERVATIVE, additive caveat. It
+# NEVER suppresses a cluster (the hard constraint: genuine duplicates still
+# report as duplicates) — it only labels a cluster whose members show a
+# POSITIVE divergence signal so an agent reviews before merging. Two members
+# with identical call-target sets and no query/mutation split never flag.
+
+# Name-token verbs that mark a state-changing (mutation / write) operation.
+_MUTATION_MARKERS: frozenset[str] = frozenset(
+    {
+        "mutation",
+        "mutate",
+        "create",
+        "update",
+        "delete",
+        "insert",
+        "finalize",
+        "unfinalize",
+        "set",
+        "post",
+        "put",
+        "save",
+        "remove",
+        "write",
+        "add",
+        "destroy",
+        "patch",
+    }
+)
+
+# Name-token verbs that mark a read / query operation.
+_QUERY_MARKERS: frozenset[str] = frozenset(
+    {
+        "query",
+        "get",
+        "fetch",
+        "list",
+        "read",
+        "select",
+        "find",
+        "load",
+        "search",
+        "lookup",
+    }
+)
+
+
+def _callee_name_sets_for_ids(
+    conn: sqlite3.Connection,
+    symbol_ids: set[int],
+) -> dict[int, set[str]]:
+    """Build ``{symbol_id: {callee_name, ...}}`` for the given cluster members.
+
+    Mirrors :func:`roam.catalog.clones_cross_layer._load_callee_name_sets`:
+    one batched ``edges`` JOIN chunked at 400 ids to stay under SQLite's
+    ~999 host-param cap, unioning both canonical call-edge kinds. Read-only;
+    any :class:`sqlite3.OperationalError` (pre-relations DB, no ``edges``
+    table) degrades to an empty mapping so the caller emits with no
+    call-target divergence signal rather than crashing.
+    """
+    if not symbol_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in CALL_EDGE_KINDS)
+    out: dict[int, set[str]] = defaultdict(set)
+    id_list = list(symbol_ids)
+    chunk_size = 400
+    for start in range(0, len(id_list), chunk_size):
+        chunk = id_list[start : start + chunk_size]
+        src_ph = ", ".join("?" for _ in chunk)
+        sql = (
+            f"SELECT e.source_id AS src, s.name AS callee_name "
+            f"FROM edges e "
+            f"JOIN symbols s ON e.target_id = s.id "
+            f"WHERE e.kind IN ({placeholders}) "
+            f"AND e.source_id IN ({src_ph})"
+        )
+        params: list = list(CALL_EDGE_KINDS) + chunk
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        for r in rows:
+            try:
+                src = r["src"] if hasattr(r, "keys") else r[0]
+                callee = r["callee_name"] if hasattr(r, "keys") else r[1]
+            except (KeyError, IndexError, TypeError):
+                continue
+            if src is None or not callee:
+                continue
+            out[int(src)].add(str(callee))
+    return dict(out)
+
+
+def _behavioral_divergence(
+    members: list,
+    callees_by_id: dict[int, set[str]],
+) -> tuple[bool, str]:
+    """Detect whether a high-similarity cluster is behaviourally distinct.
+
+    Returns ``(flag, reason)``. The flag is CONSERVATIVE — it fires only on
+    a POSITIVE divergence signal, never on mere absence of shared callees —
+    so genuine duplicates (identical call targets, no query/mutation split)
+    never carry the caveat.
+
+    Two cheap signals, in priority order:
+
+    (a) CALL-TARGET divergence — the min pairwise Jaccard of member
+        callee-name sets drops below 0.5 while every member has at least one
+        resolved callee. This catches ``postMutation`` vs a different target
+        directly. Best-effort: needs call edges (relations indexed); absent
+        edges simply skip this signal, never false-flag.
+
+    (b) MUTATION-vs-QUERY name markers — the members split across
+        state-changing verbs (``finalize`` / ``create`` / ``save`` / …) vs
+        read verbs (``query`` / ``get`` / ``fetch`` / …). DB-independent —
+        catches ``useFinalize*`` vs ``useUnfinalize*`` and a query-factory
+        vs its mutation sibling even with zero call edges.
+
+    Signal (a) is reported first when both fire (it is the stronger,
+    evidence-backed signal). Empty / single-member input never flags.
+    """
+    if not members or len(members) < 2:
+        return (False, "")
+
+    # -- (a) call-target divergence -----------------------------------
+    callee_sets: list[set[str]] = []
+    for m in members:
+        try:
+            sid = int(m["id"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            sid = None
+        callee_sets.append(callees_by_id.get(sid, set()) if sid is not None else set())
+
+    if all(cs for cs in callee_sets):
+        min_jac = 1.0
+        for i in range(len(callee_sets)):
+            for j in range(i + 1, len(callee_sets)):
+                min_jac = min(min_jac, _jaccard(callee_sets[i], callee_sets[j]))
+        if min_jac < 0.5:
+            return (True, "distinct call targets")
+
+    # -- (b) mutation-vs-query name markers ---------------------------
+    # Flag ONLY when the cluster genuinely SPLITS on intent: at least one
+    # member is purely query-shaped AND a distinct member is purely
+    # mutation-shaped. A member carrying BOTH markers (compound verbs like
+    # ``getOrCreateUser`` / ``findOrCreateSession`` / ``loadAndSaveConfig``)
+    # is MIXED, not pure -- so two identical compound-verb duplicates no
+    # longer draw a spurious "review before merging" caveat. (Cluster-level
+    # OR-accumulation was the false-positive source: any get* + any *create*
+    # anywhere in the cluster tripped it, even for byte-identical bodies.)
+    has_pure_query = False
+    has_pure_mutation = False
+    for m in members:
+        try:
+            name = m["name"]
+        except (KeyError, IndexError, TypeError):
+            name = None
+        toks = _name_tokens(name) if name else set()
+        is_mut = bool(toks & _MUTATION_MARKERS)
+        is_qry = bool(toks & _QUERY_MARKERS)
+        if is_qry and not is_mut:
+            has_pure_query = True
+        if is_mut and not is_qry:
+            has_pure_mutation = True
+    if has_pure_query and has_pure_mutation:
+        return (True, "mutation vs query markers")
+
+    return (False, "")
 
 
 # ---------------------------------------------------------------------------
@@ -1117,6 +1298,38 @@ def duplicates(
         for c in cluster_list:
             c.setdefault("role_bucket", "production")
 
+        # -- 5.#40 Semantic-non-equivalence annotation ---------------
+        # Additive, absent-when-false caveat: label clusters that are
+        # structurally similar but show a POSITIVE behavioural-divergence
+        # signal (distinct call targets OR a mutation-vs-query name split)
+        # so an agent reviews before merging. This does NOT filter or
+        # suppress anything — the cluster is STILL a reported duplicate
+        # (hard constraint: genuine duplicates keep reporting). One batched
+        # edges query over all cluster-member ids up front (mirrors
+        # clones_cross_layer chunking), then a cheap per-cluster heuristic.
+        # Wrapped in the W607-BM marker discipline: a raise degrades to "no
+        # annotation" (flag stays absent -> byte-identical happy path)
+        # rather than crashing the read.
+        def _annotate_semantic_review():
+            member_ids: set[int] = set()
+            for c in cluster_list:
+                for r in c["functions"]:
+                    try:
+                        member_ids.add(int(r["id"]))
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        continue
+            callees_by_id = _callee_name_sets_for_ids(conn, member_ids)
+            for c in cluster_list:
+                flag, reason = _behavioral_divergence(c["functions"], callees_by_id)
+                if flag:
+                    c["semantic_review"] = {"flag": True, "reason": reason}
+
+        _run_check_bm(
+            "annotate_semantic_review",
+            _annotate_semantic_review,
+            default=None,
+        )
+
         if exclude_tests or exclude_fixtures:
             filtered: list[dict] = []
             for c in cluster_list:
@@ -1242,35 +1455,41 @@ def duplicates(
         # downstream registry consumers do.
         clusters_json = []
         for i, c in enumerate(cluster_list):
-            clusters_json.append(
-                {
-                    "id": i + 1,
-                    "similarity": c["similarity"],
-                    "size": c["size"],
-                    "functions": [
-                        {
-                            "name": r["name"],
-                            "qualified_name": r["qualified_name"],
-                            "kind": r["kind"],
-                            "file": r["file_path"],
-                            "line": r["line_start"],
-                            "lines": r["line_count"] or 0,
-                            # W-dogfood (W336 sibling family): 6-decimal
-                            # rounding (matches cmd_search / cmd_intent
-                            # / cmd_hover); 4-decimal collapsed ~72% of
-                            # nonzero PR values to 0.0 on 5K+ graphs.
-                            "pagerank": round(r["pagerank"] or 0, 6),
-                        }
-                        for r in c["functions"]
-                    ],
-                    "pattern": c["pattern"],
-                    "suggestion": c["suggestion"],
-                    # W165 — bucket on the live cluster object so JSON
-                    # consumers can filter without going through the
-                    # registry.
-                    "role_bucket": c.get("role_bucket", "production"),
-                }
-            )
+            cluster_dict = {
+                "id": i + 1,
+                "similarity": c["similarity"],
+                "size": c["size"],
+                "functions": [
+                    {
+                        "name": r["name"],
+                        "qualified_name": r["qualified_name"],
+                        "kind": r["kind"],
+                        "file": r["file_path"],
+                        "line": r["line_start"],
+                        "lines": r["line_count"] or 0,
+                        # W-dogfood (W336 sibling family): 6-decimal
+                        # rounding (matches cmd_search / cmd_intent
+                        # / cmd_hover); 4-decimal collapsed ~72% of
+                        # nonzero PR values to 0.0 on 5K+ graphs.
+                        "pagerank": round(r["pagerank"] or 0, 6),
+                    }
+                    for r in c["functions"]
+                ],
+                "pattern": c["pattern"],
+                "suggestion": c["suggestion"],
+                # W165 — bucket on the live cluster object so JSON
+                # consumers can filter without going through the
+                # registry.
+                "role_bucket": c.get("role_bucket", "production"),
+            }
+            # #40 — additive, absent-when-not-divergent so the happy-path
+            # envelope stays byte-identical (W607 empty-bucket discipline).
+            # The cluster is STILL a reported duplicate; this only caveats
+            # a merge.
+            semantic_review = c.get("semantic_review")
+            if semantic_review:
+                cluster_dict["semantic_review"] = semantic_review
+            clusters_json.append(cluster_dict)
 
         # -- SARIF format ----------------------------------------------------
         # W1213: SARIF projection for CI / GitHub Code Scanning integration.
@@ -1412,6 +1631,16 @@ def duplicates(
                 )
             click.echo(f"  Shared pattern: {c['pattern']}")
             click.echo(f"  Suggestion: {c['suggestion']}")
+            # #40 — caveat a merge on a behaviourally divergent cluster.
+            # Additive: printed only when the divergence signal fired, so
+            # non-divergent clusters keep byte-identical text output.
+            _sr = c.get("semantic_review")
+            if _sr and _sr.get("flag"):
+                _reason = _sr.get("reason") or "behavioural divergence"
+                click.echo(
+                    f"  Note: structurally similar but possibly behaviorally "
+                    f"distinct ({_reason}) — review before merging"
+                )
             click.echo()
 
         click.echo(
