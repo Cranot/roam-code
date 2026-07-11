@@ -267,6 +267,127 @@ def mark_actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
     return formatted_cycles
 
 
+# Symbol kinds a destructured-consumer binding can take (`const { x } = ...`
+# in JS/TS/Vue, module-level assignment in Python). Function/class targets are
+# never destructure shadows.
+_SHADOW_TARGET_KINDS = frozenset({"constant", "variable"})
+
+
+def mark_shadow_artifacts(formatted_cycles: list[dict], G: nx.DiGraph, conn: sqlite3.Connection) -> list[dict]:
+    """Annotate each formatted cycle with ``shadow_artifact: true/false``.
+
+    A *shadow artifact* is a cycle that exists only because name-based edge
+    resolution mislinked a reference to a destructured consumer binding
+    (e.g. Vue ``const { total } = useCart()`` creates a non-exported local
+    ``total`` that shadows the composable's exported ``total``). The phantom
+    closing edge points cross-file INTO that non-exported binding.
+
+    The predicate is deliberately narrow (precision-first). A cycle is
+    labelled a shadow artifact only when some in-cycle edge ``u -> v``
+    satisfies ALL of:
+
+    1. ``u`` and ``v`` live in different files (cross-file edge — a
+       same-file reference to a local binding is a correct resolution);
+    2. ``v`` is a NON-exported const/var (the destructured-binding shape);
+    3. a DISTINCT genuine sibling exists: an exported symbol with ``v``'s
+       name in a different file than ``v`` — NOT merely "any exported
+       symbol named X anywhere", because of (4);
+    4. the sibling is plausibly what the reference actually meant:
+       the edge source ``u`` is co-located with the sibling's module,
+       ``u``'s file imports the sibling's module, or ``v``'s file (the
+       consumer) imports the sibling's module (the destructured source).
+
+    A corpus-wide name collision with an UNRELATED export fails (4) and is
+    NOT treated as shadowing — that misclassification suppressed a genuine
+    cycle in the first attempt at this feature.
+
+    Label-only: never filters, reorders, or mutates any other key, so
+    genuine import cycles report unchanged. Renderers may annotate.
+    """
+    for cyc in formatted_cycles:
+        cyc["shadow_artifact"] = False
+
+    member_ids = sorted({s["id"] for cyc in formatted_cycles for s in cyc.get("symbols", [])})
+    if not member_ids:
+        return formatted_cycles
+
+    rows = batched_in(
+        conn,
+        "SELECT id, name, kind, is_exported, file_id FROM symbols WHERE id IN ({ph})",
+        member_ids,
+    )
+    info = {
+        sid: {"name": name, "kind": kind, "is_exported": exported, "file_id": fid}
+        for sid, name, kind, exported, fid in rows
+    }
+
+    candidate_names = sorted(
+        {
+            meta["name"]
+            for meta in info.values()
+            if not meta["is_exported"] and meta["kind"] in _SHADOW_TARGET_KINDS and meta["name"]
+        }
+    )
+    if not candidate_names:
+        return formatted_cycles
+
+    # Genuine-sibling candidates: distinct exported symbols sharing a
+    # candidate name. Filtered per-edge below for cross-file + linkage.
+    sibling_rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.file_id, f.path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.is_exported = 1 AND s.name IN ({ph})",
+        candidate_names,
+    )
+    siblings_by_name: dict[str, list[tuple[int, int, str]]] = {}
+    for sid, name, fid, fpath in sibling_rows:
+        siblings_by_name.setdefault(name, []).append((sid, fid, fpath))
+    if not siblings_by_name:
+        return formatted_cycles
+
+    # Import linkage: file_edges FROM any file hosting a cycle member.
+    member_file_ids = sorted({meta["file_id"] for meta in info.values()})
+    import_rows = batched_in(
+        conn,
+        "SELECT source_file_id, target_file_id FROM file_edges WHERE source_file_id IN ({ph})",
+        member_file_ids,
+    )
+    imports: set[tuple[int, int]] = set(import_rows)
+
+    for cyc in formatted_cycles:
+        members = {s["id"] for s in cyc.get("symbols", [])}
+        evidence = None
+        for u, v in G.subgraph(members).edges():
+            u_meta, v_meta = info.get(u), info.get(v)
+            if u_meta is None or v_meta is None:
+                continue
+            if v_meta["is_exported"] or v_meta["kind"] not in _SHADOW_TARGET_KINDS:
+                continue
+            if u_meta["file_id"] == v_meta["file_id"]:
+                continue  # same-file resolution is not the artifact shape
+            for sib_id, sib_file, sib_path in siblings_by_name.get(v_meta["name"], ()):
+                if sib_id == v or sib_file == v_meta["file_id"]:
+                    continue  # sibling must be a DISTINCT cross-file export
+                plausible = (
+                    u_meta["file_id"] == sib_file
+                    or (u_meta["file_id"], sib_file) in imports
+                    or (v_meta["file_id"], sib_file) in imports
+                )
+                if plausible:
+                    evidence = {
+                        "edge": [u, v],
+                        "shadowed_name": v_meta["name"],
+                        "genuine_sibling_file": sib_path,
+                    }
+                    break
+            if evidence:
+                break
+        if evidence:
+            cyc["shadow_artifact"] = True
+            cyc["shadow_evidence"] = evidence
+    return formatted_cycles
+
+
 def actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
     """Return only cycles classified as actionable.
 

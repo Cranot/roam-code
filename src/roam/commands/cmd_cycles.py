@@ -18,7 +18,12 @@ from roam.capability import roam_capability
 from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
-from roam.graph.cycles import find_cycles, format_cycles, mark_actionable_cycles
+from roam.graph.cycles import (
+    find_cycles,
+    format_cycles,
+    mark_actionable_cycles,
+    mark_shadow_artifacts,
+)
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -88,6 +93,11 @@ def cycles(ctx, min_size, limit, actionable_only):
         raw = find_cycles(graph, min_size=min_size)
         formatted = format_cycles(raw, conn) if raw else []
         mark_actionable_cycles(formatted)
+        # Label-only classification: phantom shadow-cycle artifacts (resolver
+        # mislink into a destructured consumer binding). Never suppresses —
+        # genuine cycles report unchanged; renderers just annotate.
+        mark_shadow_artifacts(formatted, graph, conn)
+        shadow_count = sum(1 for c in formatted if c.get("shadow_artifact"))
         actionable = [c for c in formatted if c.get("actionable")]
         pool = actionable if actionable_only else formatted
         shown = sorted(pool, key=lambda c: -c.get("size", 0))[: max(0, limit)]
@@ -112,6 +122,13 @@ def cycles(ctx, min_size, limit, actionable_only):
                                 "import/call graph with >= min_size members; actionable = "
                                 "spans >=2 distinct non-test files"
                             ),
+                            "shadow_artifact_count": shadow_count,
+                            "shadow_artifact_definition": (
+                                "cycles whose closing edge is a likely name-resolution "
+                                "mislink into a non-exported destructured binding that "
+                                "shadows a distinct cross-file export; label-only, never "
+                                "excluded from counts"
+                            ),
                         },
                         cycles=shown,
                         budget=token_budget,
@@ -128,7 +145,8 @@ def cycles(ctx, min_size, limit, actionable_only):
             mark = "!" if cyc.get("actionable") else " "
             names = ", ".join(s.get("name", "?") for s in cyc.get("symbols", [])[:6])
             file_count = cyc.get("file_count", len(cyc.get("files", [])))
-            click.echo(f"  {mark} cycle {i}: {cyc.get('size')} symbols, {file_count} file(s)")
+            shadow_note = " [shadow-artifact? likely resolver mislink]" if cyc.get("shadow_artifact") else ""
+            click.echo(f"  {mark} cycle {i}: {cyc.get('size')} symbols, {file_count} file(s){shadow_note}")
             click.echo(f"      files:   {', '.join(cyc.get('files', [])[:5])}")
             click.echo(f"      symbols: {names}")
         if len(pool) > len(shown):
