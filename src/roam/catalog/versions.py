@@ -49,6 +49,15 @@ DETECTOR_VERSION_OVERRIDES: dict[str, str] = {
     # `function exec(`/`def exec(` declaration lines are definitions, not
     # dynamic-exec call sites. Precision-only patch bump (zero TP loss).
     "dangerous-eval": "1.1.0",
+    # list-membership tightened (2026-07-11, revise of parked #32): the
+    # name-substring + nested-loop-compare predicate now also requires
+    # the membership SHAPE — a strict-equality comparison (==/===/eq/is;
+    # never !=/!==/<>/`is not`) in a boolean-returning / early-exit
+    # position (`if a == b: return True|break` or `return a == b`).
+    # Filter (`!=` + append), dispatch (`==` + continue/handle) and
+    # identity-guard loops no longer qualify. Precision-only tightening;
+    # no schema change (shape is read from source at detect time).
+    "membership": "1.1.0",
 }
 
 

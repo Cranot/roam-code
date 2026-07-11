@@ -3787,6 +3787,86 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# -- membership shape gate (precision revise of parked #32) ----------
+#
+# The name-substring predicate alone flags ANY nested-loop compare in a
+# membership-named function; a prior structural revise (fire on any
+# in-loop equality rooted at a loop var) measured 10 -> 106 findings on
+# roam's own src — an 11x FP regression (adversarial verify). The real
+# membership idiom has a narrower fingerprint:
+#
+#     for elem in collection:
+#         if elem == target:      # STRICT equality (==, ===, eq, is)
+#             return True         # boolean early-exit (or break)
+#     # ...or:  return elem == target
+#
+# Filter loops (`!=` + append), skip/dispatch loops (`== ...: continue`
+# / `handle(...)`) and `is not` guards share the in-loop-equality signal
+# but NOT this shape, so the gate requires BOTH:
+#   (1) strict equality only — !=, !==, <>, `is not` never qualify;
+#   (2) the comparison sits in a boolean-returning / early-exit
+#       position: `if a == b: return True|true|1` / `break`
+#       (consequent on the same line or as the first body statement),
+#       or a direct `return a == b`.
+
+# Strict equality: `==`/`===` (not !=, !==, <=, >=, <>), Python `is`
+# (not `is not`), and the `eq` operator word (Perl/templates) — space-
+# delimited so hyphenated prose like "strict-eq" in a string literal
+# cannot qualify (measured self-referential FP on this very module).
+_MEMBERSHIP_STRICT_EQ_RE = re.compile(r"(?<![=!<>])={2,3}(?!=)|\bis\b(?!\s+not\b)|(?<=\s)eq(?=\s)")
+# Condition line: `if` / `elif` / `else if` at statement start (allows a
+# leading `}` for C-family cuddled else).
+_MEMBERSHIP_IF_RE = re.compile(r"^\s*\}?\s*(?:if|elif|else\s+if)\b(.*)$")
+# Boolean early-exit consequent: `return True|true|TRUE|1` or `break`.
+_MEMBERSHIP_EXIT_RE = re.compile(r"\b(?:return\s+(?:True|true|TRUE|1)|break)\b")
+_MEMBERSHIP_EXIT_STMT_RE = re.compile(r"^\s*\{?\s*(?:return\s+(?:True|true|TRUE|1)|break)\b")
+_MEMBERSHIP_RETURN_RE = re.compile(r"^\s*return\b(.+)$")
+# Boolean-flag assignment (`found = True`) — tolerated between the
+# comparison and the early exit, for the flag-set + break variant.
+_MEMBERSHIP_FLAG_SET_RE = re.compile(r"^\s*\w+\s*=\s*(?:True|true|TRUE|1)\s*;?\s*$")
+# Strip conventional trailing comments (` # ...`) so English prose like
+# "# item is done" cannot satisfy the `is` alternative. Space-anchored to
+# avoid truncating string literals such as `ch == "#"`.
+_MEMBERSHIP_COMMENT_RE = re.compile(r"\s#\s.*$")
+
+
+def _membership_scan_offset(snippet: str) -> tuple[int, str] | None:
+    """Locate the membership idiom in *snippet*.
+
+    Returns ``(line_offset, evidence)`` for the first strict-equality
+    comparison in a boolean-returning / early-exit position, or ``None``
+    when the function body has no membership shape.
+    """
+    lines = snippet.splitlines()
+    for i, raw in enumerate(lines):
+        line = _MEMBERSHIP_COMMENT_RE.sub("", raw)
+        m = _MEMBERSHIP_IF_RE.match(line)
+        if m:
+            tail = m.group(1)
+            if not _MEMBERSHIP_STRICT_EQ_RE.search(tail):
+                continue
+            # Same-line consequent: `if a == b: return True` /
+            # `if (a == b) { return true; }`.
+            if _MEMBERSHIP_EXIT_RE.search(tail):
+                return i, f"strict-eq early-exit: {line.strip()[:80]}"
+            # Otherwise the if-body must lead with the early exit —
+            # optionally preceded by a boolean-flag set (`found = True`,
+            # the flag-set + break variant). An append/continue/handle()
+            # first statement means filter/skip/dispatch, not membership.
+            for j in range(i + 1, min(i + 5, len(lines))):
+                nxt = lines[j].strip()
+                if not nxt or nxt == "{" or _MEMBERSHIP_FLAG_SET_RE.match(lines[j]):
+                    continue
+                if _MEMBERSHIP_EXIT_STMT_RE.match(lines[j]):
+                    return j, f"strict-eq early-exit: {line.strip()[:60]} -> {nxt[:40]}"
+                break
+            continue
+        m = _MEMBERSHIP_RETURN_RE.match(line)
+        if m and _MEMBERSHIP_STRICT_EQ_RE.search(m.group(1)):
+            return i, f"boolean-return equality: {line.strip()[:80]}"
+    return None
+
+
 @detector(
     task_id="membership",
     languages=(),
@@ -3794,8 +3874,16 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_MEDIUM,
 )
 def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
-    """Nested loops with equality comparisons — structural pattern for
-    O(n^2) membership testing regardless of function name.
+    """Nested loops with a strict-equality early-exit — the structural
+    fingerprint of O(n^2) membership testing.
+
+    Two-stage predicate: the SQL gate keeps the historical recall set
+    (membership-flavoured name + nested loops + in-loop compare +
+    subscript), then ``_membership_scan_offset`` requires the actual
+    membership SHAPE (see the comment block above the helper). Detector
+    version bumped to 1.1.0 in ``roam.catalog.versions`` for this
+    tightening — no schema change, the shape check reads the symbol
+    source on demand via ``_read_symbol_source``.
 
     Note on the LIKE patterns: ``_`` is a single-char wildcard in SQL
     LIKE, so ``LIKE '%in_%'`` matches *any* identifier with "in" followed
@@ -3806,7 +3894,7 @@ def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_with_compare, ms.subscript_in_loops, "
+        "s.line_start, s.line_end, ms.loop_with_compare, ms.subscript_in_loops, "
         "ms.has_nested_loops, ms.calls_in_loops "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
@@ -3826,13 +3914,23 @@ def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        shape = _membership_scan_offset(snippet)
+        if shape is None:
+            continue
+        offset, evidence = shape
         results.append(
             _finding(
                 "membership",
                 "list-scan",
                 r,
-                "Nested loops with comparisons for membership check",
+                "Nested loops with strict-equality early-exit for membership check",
                 "medium",
+                match_line=(r["line_start"] or 1) + offset,
+                snippet=snippet,
+                matched_patterns=[evidence],
             )
         )
     return results

@@ -744,6 +744,128 @@ class TestDetectors:
             assert len(hits) >= 1, "Genuine O(n*m) cross-product join must still be flagged"
             assert hits[0]["task_id"] == "nested-lookup"
 
+    def test_detect_list_membership_scan(self, project_factory, monkeypatch):
+        """Real O(n) membership scans (contains_user / has_pair style) must flag:
+        strict equality in a boolean-returning / early-exit position."""
+        proj = project_factory(
+            {
+                "members.py": (
+                    "def contains_user(groups, target):\n"
+                    "    for group in groups:\n"
+                    "        for j in range(len(group)):\n"
+                    "            if group[j] == target:\n"
+                    "                return True\n"
+                    "    return False\n"
+                    "\n"
+                    "def has_pair(items, target):\n"
+                    "    found = False\n"
+                    "    for i in range(len(items)):\n"
+                    "        for j in range(i):\n"
+                    "            if items[i] + items[j] == target:\n"
+                    "                found = True\n"
+                    "                break\n"
+                    "    return found\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_list_membership
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_list_membership(conn)
+            names = {h["symbol_name"] for h in hits}
+            assert "contains_user" in names, "return-True membership scan must flag"
+            assert "has_pair" in names, "flag-set + break membership scan must flag"
+            assert all(h["task_id"] == "membership" for h in hits)
+
+    def test_list_membership_skips_ne_filter_loop(self, project_factory, monkeypatch):
+        """NEGATIVE (revise of parked #32): a `!=` filter loop (append) is
+        not a membership scan — non-strict equality never qualifies."""
+        proj = project_factory(
+            {
+                "filt.py": (
+                    "def check_filter_rows(rows, bad):\n"
+                    "    out = []\n"
+                    "    for row in rows:\n"
+                    "        for j in range(len(row)):\n"
+                    "            if row[j] != bad:\n"
+                    "                out.append(row[j])\n"
+                    "    return out\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_list_membership
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_list_membership(conn) == []
+
+    def test_list_membership_skips_dispatch_loop(self, project_factory, monkeypatch):
+        """NEGATIVE (revise of parked #32): `if x == mode: continue` /
+        `handle()` dispatch loops have in-loop equality but no
+        boolean-returning / early-exit shape."""
+        proj = project_factory(
+            {
+                "dispatch.py": (
+                    "def check_dispatch(rows, mode):\n"
+                    "    for row in rows:\n"
+                    "        for j in range(len(row)):\n"
+                    "            if row[j] == mode:\n"
+                    "                continue\n"
+                    "            process(row[j])\n"
+                    "\n"
+                    "def check_route(rows, mode):\n"
+                    "    for row in rows:\n"
+                    "        for j in range(len(row)):\n"
+                    "            if row[j] == mode:\n"
+                    "                handle(row[j])\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_list_membership
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_list_membership(conn) == []
+
+    def test_list_membership_skips_identity_is_loop(self, project_factory, monkeypatch):
+        """NEGATIVE (revise of parked #32): an identity `is` guard inside a
+        prune loop (continue / append body) is not a membership scan."""
+        proj = project_factory(
+            {
+                "prune.py": (
+                    "def check_prune_none(rows):\n"
+                    "    kept = []\n"
+                    "    for row in rows:\n"
+                    "        j = 0\n"
+                    "        while j < len(row):\n"
+                    "            if row[j] is None:\n"
+                    "                j += 1\n"
+                    "                continue\n"
+                    "            kept.append(row[j])\n"
+                    "            j += 1\n"
+                    "    return kept\n"
+                    "\n"
+                    "def check_keep_set(rows):\n"
+                    "    kept = []\n"
+                    "    for row in rows:\n"
+                    "        for j in range(len(row)):\n"
+                    "            if row[j] is not None:\n"
+                    "                kept.append(row[j])\n"
+                    "    return kept\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_list_membership
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_list_membership(conn) == []
+
     def test_skips_test_files(self, project_factory, monkeypatch):
         """Detectors should skip test files."""
         proj = project_factory(
