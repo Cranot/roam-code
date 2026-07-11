@@ -206,7 +206,7 @@ published, attacked, then re-measured (full per-cell history in the repo):
 | Jun 11 | v13.6 | generation cell, re-measured n=3 | **−26% cost win** |
 | Jun 11 | v13.6 | "biggest cycles" cell, re-measured n=3 | **−89% cost win** ($0.65 → $0.07, 6→1 turns) |
 | Jun 11 | v13.6 | 723-prompt routing replay | 91% L1, p50 0.45 s cold |
-| Jul 11 | v13.7 | live dogfood rolling window | cold-compile p50 410 ms (0.45 s holds) |
+| Jul 11 | v13.7 | live dogfood rolling window (separate population, not the replay harness) | cold-compile median 410 ms |
 
 Caveats that always ship with these numbers: trivial prompts the agent
 one-shots anyway gain nothing (now a within-noise tie after the lean/skip
@@ -518,7 +518,7 @@ roam mcp
 **Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
-244 MCP tools span seven presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
+244 MCP tools span seven selectable presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
 
 **Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
 
