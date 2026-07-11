@@ -776,6 +776,11 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                         "strength": p["strength"],
                         "cochange_count": p["cochange_count"],
                         "hypothesis": p.get("hypothesis"),
+                        # ADDITIVE tag from roam.graph.coupling_patterns
+                        # (expected_locale / expected_doc_hub / None).
+                        # Tagged pairs still count toward every summary
+                        # metric — annotation only, never subtraction.
+                        "expected_pattern": p.get("expected_pattern"),
                     }
                     for p in pairs
                 ],

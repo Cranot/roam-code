@@ -368,6 +368,46 @@ def test_coupling_classifies_doc_hub():
     assert _classify_pair("docs/site/index.html", "docs/site/about.html") == ""
 
 
+def test_coupling_locale_positive_any_dir():
+    """POSITIVE (revise of parked #18): real locale siblings classify as
+    expected_locale in ANY directory, not just i18n-named dirs."""
+    from roam.commands.cmd_coupling import _classify_pair
+
+    assert _classify_pair("src/components/messages.en.ts", "src/components/messages.el.ts") == "expected_locale"
+    # Common regioned forms.
+    assert _classify_pair("i18n/app.en-US.json", "i18n/app.pt_BR.json") == "expected_locale"
+
+
+def test_coupling_locale_no_false_negatives_on_code_concerns():
+    """NEGATIVE (adversarial-verify regression, revise of parked #18): a bare
+    2-3-lowercase-letter suffix is NOT a locale code. Genuine cross-concern
+    couplings must stay hidden/normal coupling (empty classification)."""
+    from roam.commands.cmd_coupling import _classify_pair
+
+    # api/db layers share a stem but are cross-concern coupling.
+    assert _classify_pair("src/user.api.ts", "src/user.db.ts") == ""
+    # SQL migration direction pair.
+    assert _classify_pair("migrations/schema.up.sql", "migrations/schema.dn.sql") == ""
+    # io/ui code-concern tokens ("io" collides with ISO-639-1 Ido — denied).
+    assert _classify_pair("src/bar.io.ts", "src/bar.ui.ts") == ""
+    # Rust module siblings — whole basenames are not locale codes.
+    assert _classify_pair("src/mod.rs", "src/lib.rs") == ""
+    # Different stems never classify even with real locale suffixes.
+    assert _classify_pair("src/messages.en.ts", "src/errors.el.ts") == ""
+
+
+def test_coupling_doc_hub_is_md_only_and_path_anchored():
+    """Doc-hub stays narrow: .md siblings under a docs/-anchored path only."""
+    from roam.commands.cmd_coupling import _classify_pair
+
+    # Non-docs dirs never classify, even for .md files.
+    assert _classify_pair("src/notes/a.md", "src/notes/b.md") == ""
+    # Non-.md files under docs/ never classify.
+    assert _classify_pair("docs/spec/a.rst", "docs/spec/b.rst") == ""
+    # Different directories never classify.
+    assert _classify_pair("docs/a/x.md", "docs/b/y.md") == ""
+
+
 def test_doc_staleness_skips_pure_prose_summaries():
     from roam.commands.cmd_doc_staleness import _docstring_facts, _semantic_drift
 

@@ -199,6 +199,79 @@ class TestDarkMatterEdgesFunction:
             assert "cochange_count" in e
 
 
+class TestDarkMatterExpectedPatternAnnotation:
+    """Revise of parked #18: the expected-pattern classifier must be ADDITIVE.
+
+    Genuine cross-concern couplings (api/db layers, up/dn migrations) must
+    NOT be tagged expected_locale, and every pair — tagged or not — must
+    still be counted by dark_matter_edges.
+    """
+
+    @staticmethod
+    def _make_conn():
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(
+            """
+            CREATE TABLE git_commits (id INTEGER PRIMARY KEY);
+            CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+            CREATE TABLE file_stats (file_id INTEGER, commit_count INTEGER);
+            CREATE TABLE git_cochange (
+                file_id_a INTEGER, file_id_b INTEGER, cochange_count INTEGER
+            );
+            CREATE TABLE file_edges (
+                source_file_id INTEGER, target_file_id INTEGER, symbol_count INTEGER
+            );
+            """
+        )
+        conn.executemany("INSERT INTO git_commits (id) VALUES (?)", [(i,) for i in range(1, 11)])
+        files = [
+            (1, "src/user.api.ts"),
+            (2, "src/user.db.ts"),
+            (3, "migrations/schema.up.sql"),
+            (4, "migrations/schema.dn.sql"),
+            (5, "src/components/messages.en.ts"),
+            (6, "src/components/messages.el.ts"),
+        ]
+        conn.executemany("INSERT INTO files (id, path) VALUES (?, ?)", files)
+        conn.executemany(
+            "INSERT INTO file_stats (file_id, commit_count) VALUES (?, ?)",
+            [(fid, 5) for fid, _ in files],
+        )
+        conn.executemany(
+            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
+            [(1, 2, 5), (3, 4, 5), (5, 6, 5)],
+        )
+        return conn
+
+    def test_cross_concern_pairs_still_counted_and_untagged(self):
+        """NEGATIVE: user.api.ts<->user.db.ts and schema.up.sql<->schema.dn.sql
+        classify as hidden/normal coupling and stay in the dark-matter count."""
+        conn = self._make_conn()
+        edges = dark_matter_edges(conn, min_cochanges=3, min_npmi=0.3)
+        by_pair = {frozenset((e["path_a"], e["path_b"])): e for e in edges}
+
+        api_db = by_pair.get(frozenset(("src/user.api.ts", "src/user.db.ts")))
+        up_dn = by_pair.get(frozenset(("migrations/schema.up.sql", "migrations/schema.dn.sql")))
+        assert api_db is not None, f"api/db pair must be counted; got {sorted(by_pair)}"
+        assert up_dn is not None, f"up/dn pair must be counted; got {sorted(by_pair)}"
+        assert not api_db["expected_pattern"], f"api/db is cross-concern coupling, not locale: {api_db}"
+        assert not up_dn["expected_pattern"], f"up/dn is migration coupling, not locale: {up_dn}"
+
+    def test_locale_pair_tagged_but_still_counted(self):
+        """POSITIVE + ADDITIVE: messages.en.ts<->messages.el.ts is tagged
+        expected_locale but never subtracted from the edge count."""
+        conn = self._make_conn()
+        edges = dark_matter_edges(conn, min_cochanges=3, min_npmi=0.3)
+        assert len(edges) == 3, f"annotation must be additive — all 3 pairs counted; got {len(edges)}"
+        by_pair = {frozenset((e["path_a"], e["path_b"])): e for e in edges}
+        locale = by_pair.get(frozenset(("src/components/messages.en.ts", "src/components/messages.el.ts")))
+        assert locale is not None
+        assert locale["expected_pattern"] == "expected_locale", locale
+
+
 # ===========================================================================
 # Unit tests: HypothesisEngine
 # ===========================================================================

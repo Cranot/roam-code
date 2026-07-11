@@ -11,8 +11,6 @@ memo.
 from __future__ import annotations
 
 import math
-import os
-import re
 import sqlite3
 
 import click
@@ -21,66 +19,14 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.graph.coupling_patterns import classify_pair
 from roam.output.formatter import format_table, json_envelope, to_json
 
-# Directories that conventionally hold parallel-translation files; co-change
-# between sibling files there is expected, not hidden coupling.
-_LOCALE_DIR_TOKENS = frozenset({"locales", "locale", "i18n", "lang", "langs", "translations", "intl", "messages"})
-_LOCALE_CODE_RE = re.compile(r"^[a-z]{2,3}(?:[-_][A-Z]{2})?$")
-_DOC_DIR_TOKENS = frozenset({"docs", "doc", "documentation", "guide", "guides", "manual"})
-_DOC_EXTS = frozenset({".md", ".rst", ".mdx", ".adoc", ".txt"})
-
-
-def _classify_pair(path_a: str, path_b: str) -> str:
-    """Tag known co-change patterns that aren't architectural coupling.
-
-    Returns one of:
-
-    - ``""`` — no special pattern
-    - ``"expected_locale"`` — sibling translation files (same dir,
-      filenames differ by locale code)
-    - ``"expected_doc_hub"`` — sibling docs in a docs/<topic>/ folder
-      that always co-change with their cousins
-    """
-    a = path_a.replace("\\", "/")
-    b = path_b.replace("\\", "/")
-    dir_a, base_a = os.path.dirname(a), os.path.basename(a)
-    dir_b, base_b = os.path.dirname(b), os.path.basename(b)
-    if dir_a != dir_b:
-        return ""
-    parent = os.path.basename(dir_a).lower()
-
-    name_a, ext_a = os.path.splitext(base_a)
-    name_b, ext_b = os.path.splitext(base_b)
-    if ext_a != ext_b:
-        return ""
-
-    # Locale pattern: parent dir is a known i18n root, OR both basenames
-    # are short locale codes ("el.ts" + "en.ts"), OR both share a stem
-    # with a locale suffix ("strings.el.json" + "strings.en.json").
-    looks_locale_dir = parent in _LOCALE_DIR_TOKENS
-    if looks_locale_dir or (_LOCALE_CODE_RE.match(name_a) and _LOCALE_CODE_RE.match(name_b)):
-        if _LOCALE_CODE_RE.match(name_a) and _LOCALE_CODE_RE.match(name_b):
-            return "expected_locale"
-        # strings.<lang>.json shape
-        a_parts = name_a.rsplit(".", 1)
-        b_parts = name_b.rsplit(".", 1)
-        if (
-            len(a_parts) == 2
-            and len(b_parts) == 2
-            and a_parts[0] == b_parts[0]
-            and _LOCALE_CODE_RE.match(a_parts[1])
-            and _LOCALE_CODE_RE.match(b_parts[1])
-        ):
-            return "expected_locale"
-
-    # Doc-hub: any sibling Markdown/rst pair under a docs/ subtree.
-    if ext_a.lower() in _DOC_EXTS:
-        path_parts = dir_a.lower().split("/")
-        if any(part in _DOC_DIR_TOKENS for part in path_parts):
-            return "expected_doc_hub"
-
-    return ""
+# Expected co-change pattern classifier (locale siblings / doc-hub cousins).
+# Lives in roam.graph.coupling_patterns — shared with dark_matter's additive
+# expected_pattern annotation. The re-export keeps the historical private
+# name importable (tests and downstream callers use `_classify_pair`).
+_classify_pair = classify_pair
 
 
 # ---------------------------------------------------------------------------

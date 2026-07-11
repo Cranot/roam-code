@@ -21,6 +21,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from roam.db.connection import batched_in
+from roam.graph.coupling_patterns import classify_pair
 
 
 def _npmi(p_ab: float, p_a: float, p_b: float) -> float:
@@ -88,16 +89,23 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
         strength = cochanges / avg if avg > 0 else 0
         lift = (cochanges * total_commits) / max(ca * cb, 1)
 
+        path_a = id_to_path.get(fid_a, f"file_id={fid_a}")
+        path_b = id_to_path.get(fid_b, f"file_id={fid_b}")
         results.append(
             {
                 "file_id_a": fid_a,
                 "file_id_b": fid_b,
-                "path_a": id_to_path.get(fid_a, f"file_id={fid_a}"),
-                "path_b": id_to_path.get(fid_b, f"file_id={fid_b}"),
+                "path_a": path_a,
+                "path_b": path_b,
                 "npmi": round(npmi, 3),
                 "lift": round(lift, 2),
                 "strength": round(strength, 2),
                 "cochange_count": cochanges,
+                # ADDITIVE annotation only (precision contract in
+                # roam.graph.coupling_patterns): expected locale/doc-hub
+                # siblings are TAGGED, never dropped — the pair still
+                # participates in every count / verdict / risk projection.
+                "expected_pattern": classify_pair(path_a, path_b) or None,
             }
         )
 
