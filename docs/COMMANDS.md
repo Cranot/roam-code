@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**274 commands** (267 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
+**275 commands** (268 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
 
 ## Getting Started (41)
 
@@ -242,12 +242,13 @@
 | `trace` | stable | ✓ | — |
 | `uses` | stable | ✓ | refs |
 
-## Reports & CI (29)
+## Reports & CI (30)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
 | `api-drift` | stable | ✓ | — |
 | `auth-gaps` | stable | ✓ | — |
+| `blame-reviewers` | stable | — | — |
 | `breaking` | stable | ✓ | — |
 | `budget` | stable | ✓ | — |
 | `bus-factor` | stable | ✓ | — |

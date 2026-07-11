@@ -500,6 +500,36 @@ def _emit_pr_risk_findings(
     return written
 
 
+def rank_blame_reviewers(conn, file_map, *, limit: int = 5) -> list[tuple[str, int]]:
+    """Rank suggested reviewers by total ``lines_added`` across changed files.
+
+    Aggregates ``git_file_changes.lines_added`` per author over the indexed
+    git history of the non-test files in ``file_map`` (``{path: file_id}``),
+    then returns the top ``limit`` authors as ``(author, lines)`` tuples sorted
+    descending by lines. Test files are excluded (``is_test_file``).
+
+    This is the single source of truth for pr-risk's ``suggested_reviewers``
+    envelope field (previously inlined + duplicated across two emit sites) and
+    for the standalone ``roam blame-reviewers`` advisory command. It is a pure
+    read over ``conn`` — no live ``git blame`` shell-out — so callers must hold
+    an open (read-only is fine) sqlite connection over an indexed repo.
+    """
+    author_lines: dict[str, int] = {}
+    for path, fid in file_map.items():
+        if is_test_file(path):
+            continue
+        rows = conn.execute(
+            "SELECT gc.author, gfc.lines_added FROM git_file_changes gfc "
+            "JOIN git_commits gc ON gfc.commit_id = gc.id "
+            "WHERE gfc.file_id = ?",
+            (fid,),
+        ).fetchall()
+        for r in rows:
+            author = r["author"]
+            author_lines[author] = author_lines.get(author, 0) + (r["lines_added"] or 0)
+    return sorted(author_lines.items(), key=lambda x: -x[1])[:limit]
+
+
 def _get_all_file_stats(root, *, staged=False, commit_range=None):
     """Get +/- line counts for ALL changed files in one ``git diff --numstat``.
 
@@ -1521,19 +1551,10 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
         per_file.sort(key=lambda x: x["blast"], reverse=True)
 
         # --- Suggested reviewers ---
-        author_lines = {}
-        for path, fid in file_map.items():
-            if is_test_file(path):
-                continue
-            rows = conn.execute(
-                "SELECT gc.author, gfc.lines_added FROM git_file_changes gfc "
-                "JOIN git_commits gc ON gfc.commit_id = gc.id "
-                "WHERE gfc.file_id = ?",
-                (fid,),
-            ).fetchall()
-            for r in rows:
-                author_lines[r["author"]] = author_lines.get(r["author"], 0) + (r["lines_added"] or 0)
-        top_authors = sorted(author_lines.items(), key=lambda x: -x[1])[:5]
+        # W198 + extraction: single source of truth is ``rank_blame_reviewers``
+        # (also used by the standalone ``roam blame-reviewers`` advisory
+        # command). Returns [(author, lines), ...] top-5 over non-test files.
+        top_authors = rank_blame_reviewers(conn, file_map, limit=5)
 
         label = commit_range or ("staged" if staged else "unstaged")
 

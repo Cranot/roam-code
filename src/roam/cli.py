@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 241 invokable command names (234 canonical commands + 7 alias names).
+# Total: 275 invokable command names (268 canonical commands + 7 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
@@ -357,6 +357,7 @@ _COMMANDS = {
     "supply-chain": ("roam.commands.cmd_supply_chain", "supply_chain"),
     "simulate-departure": ("roam.commands.cmd_simulate_departure", "simulate_departure"),
     "suggest-reviewers": ("roam.commands.cmd_suggest_reviewers", "suggest_reviewers"),
+    "blame-reviewers": ("roam.commands.cmd_blame_reviewers", "blame_reviewers"),
     "verify": ("roam.commands.cmd_verify", "verify"),
     "verification-contract": ("roam.commands.cmd_verification_contract", "verification_contract"),
     "verdict": ("roam.commands.cmd_verdict", "verdict"),
@@ -692,6 +693,7 @@ _CATEGORIES = {
         "bus-factor",
         "simulate-departure",
         "suggest-reviewers",
+        "blame-reviewers",
         "dev-profile",
         "owner",
         "codeowners",

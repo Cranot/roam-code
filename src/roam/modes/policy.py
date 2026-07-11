@@ -106,6 +106,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "ask",
         "mode",
         "intent-check",
+        # blame-reviewers ranks suggested reviewers for a diff by git-blame
+        # lines-added per author (reads indexed git history; read-only, no
+        # edits) — same profile as the pr-risk reviewer field it was extracted from.
+        "blame-reviewers",
         # 13.8.0 — four analysis commands shipped this release; all pure
         # read-side (no source edits): `cycle-break` recommends the smallest
         # extraction that breaks each import cycle (reads source, writes

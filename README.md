@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>274 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>275 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -391,7 +391,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~269 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **274 commands (267 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~270 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **275 commands (268 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -406,7 +406,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 267)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 268)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
