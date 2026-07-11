@@ -36,6 +36,7 @@ from roam.commands.cmd_conventions import (
     _group_for_kind,
     classify_case,
     is_python_type_alias_signature,
+    is_react_hook_name,
     is_upper_snake_constant_name,
 )
 from roam.commands.conventions_helper import CONVENTION_NEUTRAL_FILE_ROLES, has_excluded_prefix
@@ -790,6 +791,10 @@ def _naming_group_or_skip(name: str, kind: str, language, signature) -> str | No
       * Python PascalCase type aliases stored as ``kind=variable``
         (``PathLike = Union[...]``, ``LockMode = Literal[...]``) — PEP 484 says
         PascalCase IS the convention; skip.
+      * JS-family React hooks (``useSwarm``, ``useProjects``) — the camelCase
+        ``^use[A-Z]`` name is mandated by the Rules of Hooks, so it must not be
+        flagged even when a ``.tsx`` file's dominant function style is
+        PascalCase (its React components); skip.
     """
     if (language or "").lower() in NON_CODE_CONVENTION_LANGUAGES:
         return None
@@ -797,6 +802,8 @@ def _naming_group_or_skip(name: str, kind: str, language, signature) -> str | No
         return "constants"
     group = _group_for_kind(kind)
     if group == "variables" and classify_case(name) == "PascalCase" and is_python_type_alias_signature(signature, name):
+        return None
+    if group == "functions" and is_react_hook_name(name, language):
         return None
     return group
 

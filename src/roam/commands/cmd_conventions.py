@@ -397,6 +397,7 @@ from roam.commands.conventions_primitives import (  # noqa: E402,F401
     _language_family,
     classify_case,
     is_python_type_alias_signature,
+    is_react_hook_name,
     is_upper_snake_constant_name,
 )
 

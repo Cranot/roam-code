@@ -466,6 +466,30 @@ def _language_family(language: str | None) -> str:
     return _LANGUAGE_FAMILIES.get(language.lower(), "unknown")
 
 
+def is_react_hook_name(name: str, language: str | None) -> bool:
+    """React-hook convention: a JS-family function/method named ``^use[A-Z]``.
+
+    The Rules of Hooks (React docs) MANDATE the ``use`` prefix; the camelCase
+    ``useX`` name (``useSwarm``, ``useProjects``, ``useState``) is the CORRECT
+    convention, not a violation — even when a ``.tsx`` file's dominant function
+    style is PascalCase (its React components ``App``/``Button``/``Header``).
+
+    Gated three ways so it can never silence a genuine mis-naming:
+      * ``_language_family == "js"`` — a Python ``use_thing`` / ``useThing`` and
+        every non-JS ``useX`` still flow to the normal violation check;
+      * ``^use`` — a bare prefix, distinct from ``username`` / ``useful`` /
+        ``user_id`` which do not match;
+      * ``[A-Z]`` after ``use`` — the capital is required, so lowercase-run
+        names are ordinary identifiers, not hooks.
+
+    Callers gate on ``group == "functions"`` so a variable / class merely
+    named ``useThing`` is untouched.
+    """
+    if _language_family(language) != "js":
+        return False
+    return bool(re.match(r"^use[A-Z]", name))
+
+
 # Kind groupings for naming analysis
 _KIND_GROUPS = {
     "function": "functions",

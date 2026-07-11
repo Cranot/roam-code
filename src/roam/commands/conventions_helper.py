@@ -56,6 +56,7 @@ from roam.commands.conventions_primitives import (
     _language_family,
     classify_case,
     is_python_type_alias_signature,
+    is_react_hook_name,
     is_upper_snake_constant_name,
 )
 
@@ -303,6 +304,18 @@ def compute_conventions(
         else:
             group = _group_for_kind(kind)
         family = _language_family(sym["language"])
+
+        # React hooks (``useSwarm``, ``useProjects``) are JS-family functions
+        # named ``^use[A-Z]``. The Rules of Hooks MANDATE the ``use`` prefix,
+        # so the camelCase name is the CORRECT convention — flagging it against
+        # a ``.tsx`` file's PascalCase-dominant component style is a false
+        # positive. Exclude them from both the sample AND the outlier scan
+        # (they're a distinct convention that shouldn't vote on general
+        # ``functions`` style). Gated to js + functions so a Python
+        # ``use_thing`` / ``useThing`` and non-function ``useX`` still flag.
+        if group == "functions" and is_react_hook_name(name, sym["language"]):
+            excluded_count += 1
+            continue
 
         # W162: PEP 484 / PEP 585 / PEP 613 / PEP 695 type aliases and
         # ``NewType`` constructions are stored by the python extractor
