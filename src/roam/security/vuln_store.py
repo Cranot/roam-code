@@ -8,6 +8,8 @@ from pathlib import Path
 
 import click
 
+from roam.security.import_reachability import ImportReachability, scan_import_reachability
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -46,16 +48,51 @@ def _escape_like(pattern: str) -> str:
     return pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[dict]:
+_IMPORT_REACHABILITY_CACHE: dict[Path, ImportReachability] = {}
+
+
+def _reset_import_reachability_cache() -> None:
+    """Clear the process-local import scan cache (primarily for tests)."""
+    _IMPORT_REACHABILITY_CACHE.clear()
+
+
+def _import_reachability(project_root: str | Path) -> ImportReachability:
+    resolved_root = Path(project_root).resolve()
+    reachability = _IMPORT_REACHABILITY_CACHE.get(resolved_root)
+    if reachability is None:
+        reachability = scan_import_reachability(resolved_root)
+        _IMPORT_REACHABILITY_CACHE[resolved_root] = reachability
+    return reachability
+
+
+def match_vuln_to_symbols(
+    conn: sqlite3.Connection,
+    package_name: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Try to find symbols that reference or match the vulnerable package.
 
     Strategy:
-    1. Search symbols whose name or qualified_name contains the package name.
-    2. Search edges for import references where the target symbol name matches.
-    3. Return matched symbol IDs and file paths.
+    1. When a project root is available, scan concrete import specifiers.
+    2. Search symbols whose name or qualified_name contains the package name.
+    3. Search edges for import references where the target symbol name matches.
+    4. Return matched symbol IDs and file paths.
     """
     matches: list[dict] = []
     seen_ids: set[int] = set()
+
+    if project_root is not None:
+        for site in _import_reachability(project_root).sites_for(package_name):
+            matches.append(
+                {
+                    "symbol_id": None,
+                    "name": package_name,
+                    "qualified_name": site.specifier,
+                    "file_path": site.file,
+                    "line": site.line,
+                    "match_kind": "import_site",
+                }
+            )
 
     # Direct symbol name match. The qualified_name match is anchored to
     # DOTTED-SEGMENT boundaries, not a naked substring: a short package name
@@ -91,6 +128,7 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
                     "name": r["name"],
                     "qualified_name": r["qualified_name"],
                     "file_path": r["file_path"],
+                    "match_kind": "symbol_name",
                 }
             )
 
@@ -120,6 +158,7 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
                     "name": r["name"],
                     "qualified_name": r["qualified_name"],
                     "file_path": r["file_path"],
+                    "match_kind": "import_edge",
                 }
             )
 
@@ -138,14 +177,16 @@ def _insert_vuln(
     severity: str | None,
     title: str | None,
     source: str,
+    project_root: str | Path | None = None,
 ) -> dict:
     """Insert a single vulnerability and attempt symbol matching.
 
     Returns a dict describing the ingested vuln.
     """
-    matches = match_vuln_to_symbols(conn, package_name)
-    matched_id = matches[0]["symbol_id"] if matches else None
-    matched_file = matches[0]["file_path"] if matches else None
+    matches = match_vuln_to_symbols(conn, package_name, project_root=project_root)
+    matched_id = next((match["symbol_id"] for match in matches if match["symbol_id"] is not None), None)
+    import_match = next((match for match in matches if match["match_kind"] == "import_site"), None)
+    matched_file = import_match["file_path"] if import_match else (matches[0]["file_path"] if matches else None)
 
     conn.execute(
         "INSERT INTO vulnerabilities "
@@ -162,6 +203,8 @@ def _insert_vuln(
         "source": source,
         "matched_symbol_id": matched_id,
         "matched_file": matched_file,
+        "match_kind": import_match["match_kind"] if import_match else (matches[0]["match_kind"] if matches else None),
+        "matched_line": import_match["line"] if import_match else None,
     }
 
 
@@ -203,7 +246,11 @@ def _load_json(report_path: str) -> object:
 # ---------------------------------------------------------------------------
 
 
-def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
+def ingest_npm_audit(
+    conn: sqlite3.Connection,
+    report_path: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Parse npm audit JSON format and ingest vulnerabilities.
 
     Supports both npm audit v1 (advisories dict) and v2 (vulnerabilities dict).
@@ -235,7 +282,17 @@ def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                                 cve_id = v.get("url", "").split("/")[-1] or None
                             if not title:
                                 title = v.get("title")
-                results.append(_insert_vuln(conn, cve_id, pkg_name, severity, title, "npm-audit"))
+                results.append(
+                    _insert_vuln(
+                        conn,
+                        cve_id,
+                        pkg_name,
+                        severity,
+                        title,
+                        "npm-audit",
+                        project_root=project_root,
+                    )
+                )
 
         # npm audit v1: {"advisories": {"id": {...}}}
         elif "advisories" in data and isinstance(data["advisories"], dict):
@@ -252,13 +309,18 @@ def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                         adv.get("severity", "unknown"),
                         adv.get("title"),
                         "npm-audit",
+                        project_root=project_root,
                     )
                 )
 
     return results
 
 
-def ingest_pip_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
+def ingest_pip_audit(
+    conn: sqlite3.Connection,
+    report_path: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Parse pip-audit JSON format and ingest vulnerabilities.
 
     pip-audit JSON is a list of dicts with keys: name, version, vulns.
@@ -280,6 +342,7 @@ def ingest_pip_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                         vuln.get("fix_versions", [""])[0] if vuln.get("fix_versions") else "unknown",
                         vuln.get("description"),
                         "pip-audit",
+                        project_root=project_root,
                     )
                 )
     # pip-audit may also produce {"dependencies": [...]}
@@ -296,13 +359,18 @@ def ingest_pip_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                         vuln.get("severity", "unknown"),
                         vuln.get("description"),
                         "pip-audit",
+                        project_root=project_root,
                     )
                 )
 
     return results
 
 
-def ingest_trivy(conn: sqlite3.Connection, report_path: str) -> list[dict]:
+def ingest_trivy(
+    conn: sqlite3.Connection,
+    report_path: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Parse Trivy JSON format and ingest vulnerabilities.
 
     Trivy JSON has {"Results": [{"Vulnerabilities": [...]}]}.
@@ -322,6 +390,7 @@ def ingest_trivy(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                         vuln.get("Severity", "unknown").lower(),
                         vuln.get("Title"),
                         "trivy",
+                        project_root=project_root,
                     )
                 )
 
@@ -340,7 +409,11 @@ def _normalized_osv_severity(vuln: dict) -> str:
     return severity.lower() if severity else "unknown"
 
 
-def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
+def ingest_osv(
+    conn: sqlite3.Connection,
+    report_path: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Parse OSV JSON format and ingest vulnerabilities.
 
     OSV scanner output: {"results": [{"packages": [{"package": {...}, "vulnerabilities": [...]}]}]}
@@ -367,6 +440,7 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                             _normalized_osv_severity(vuln),
                             vuln.get("summary"),
                             "osv",
+                            project_root=project_root,
                         )
                     )
     elif isinstance(data, list):
@@ -384,13 +458,18 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                     _normalized_osv_severity(vuln),
                     vuln.get("summary"),
                     "osv",
+                    project_root=project_root,
                 )
             )
 
     return results
 
 
-def ingest_generic(conn: sqlite3.Connection, report_path: str) -> list[dict]:
+def ingest_generic(
+    conn: sqlite3.Connection,
+    report_path: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Parse a simple generic JSON format.
 
     Expected: [{"cve": "...", "package": "...", "severity": "...", "title": "..."}]
@@ -409,6 +488,7 @@ def ingest_generic(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                     entry.get("severity", "unknown"),
                     entry.get("title"),
                     "generic",
+                    project_root=project_root,
                 )
             )
 

@@ -11,7 +11,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output._severity import (
     severity_breakdown as _canonical_severity_breakdown,
 )
@@ -278,7 +278,12 @@ def _detect_format(data: object) -> str:
     )
 
 
-def _ingest_report(conn: sqlite3.Connection, report_path: str, fmt: str) -> list[dict]:
+def _ingest_report(
+    conn: sqlite3.Connection,
+    report_path: str,
+    fmt: str,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Ingest a vulnerability report using the appropriate parser.
 
     Parameters
@@ -319,7 +324,7 @@ def _ingest_report(conn: sqlite3.Connection, report_path: str, fmt: str) -> list
     if ingester is None:
         raise ValueError(f"Unknown format: {fmt}")
 
-    return ingester(conn, report_path)
+    return ingester(conn, report_path, project_root=project_root)
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +716,7 @@ def _do_import(
                 _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
                 return default
 
+    project_root = find_project_root()
     with open_db(readonly=False) as conn:
         # Dispatch through the format dispatcher; each ingest-format
         # boundary (npm-audit / pip-audit / trivy / osv / generic)
@@ -745,6 +751,7 @@ def _do_import(
                 conn,
                 import_file,
                 detected_fmt,
+                project_root=project_root,
                 default=[],
             )
         elif detected_fmt == "pip-audit":
@@ -754,6 +761,7 @@ def _do_import(
                 conn,
                 import_file,
                 detected_fmt,
+                project_root=project_root,
                 default=[],
             )
         elif detected_fmt == "trivy":
@@ -763,6 +771,7 @@ def _do_import(
                 conn,
                 import_file,
                 detected_fmt,
+                project_root=project_root,
                 default=[],
             )
         elif detected_fmt == "osv":
@@ -772,6 +781,7 @@ def _do_import(
                 conn,
                 import_file,
                 detected_fmt,
+                project_root=project_root,
                 default=[],
             )
         else:
@@ -781,6 +791,7 @@ def _do_import(
                 conn,
                 import_file,
                 detected_fmt,
+                project_root=project_root,
                 default=[],
             )
         if ingested is None:
@@ -793,6 +804,7 @@ def _do_import(
             _query_vulns,
             conn,
             reachable_only,
+            project_root=project_root,
             default=[],
         )
         if vuln_rows is None:
@@ -860,6 +872,8 @@ def _do_inventory(
                 _w607ch_warnings_out.append(f"vulns_{phase}_failed:{type(exc).__name__}:{exc}")
                 return default
 
+    project_root = find_project_root()
+
     # When --persist is set we need a writable connection so the
     # findings emit can land — otherwise stay readonly to honour the
     # principle that listing inventory is side-effect-free.
@@ -869,6 +883,7 @@ def _do_inventory(
             _query_vulns,
             conn,
             reachable_only,
+            project_root=project_root,
             default=[],
         )
         if vuln_rows is None:
@@ -953,7 +968,11 @@ def _compute_reachability_in_memory(vulns: list[dict], conn: sqlite3.Connection)
         log_swallowed("cmd_vulns:reachability", _exc)
 
 
-def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
+def _query_vulns(
+    conn: sqlite3.Connection,
+    reachable_only: bool,
+    project_root: str | Path | None = None,
+) -> list[dict]:
     """Query vulnerabilities from the DB, optionally filtered by reachability.
 
     If reachable_only is True and reachability data exists, build the graph
@@ -970,6 +989,31 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
         return []
 
     vulns = [dict(r) for r in rows]
+
+    if project_root is not None:
+        from roam.security.vuln_store import match_vuln_to_symbols
+
+        for vuln in vulns:
+            matches = match_vuln_to_symbols(
+                conn,
+                vuln.get("package_name") or "",
+                project_root=project_root,
+            )
+            import_match = next((match for match in matches if match["match_kind"] == "import_site"), None)
+            if import_match is not None:
+                vuln["match_kind"] = "import_site"
+                # File and line must come from the SAME match: legacy rows can
+                # carry a matched_file from a pre-fix symbol-name coincidence,
+                # and pairing that file with a fresh scan's line would render
+                # false evidence ("<stale-file>:<line> (imported)").
+                vuln["matched_file"] = import_match["file_path"]
+                vuln["matched_line"] = import_match["line"]
+            elif vuln.get("matched_symbol_id") is not None:
+                symbol_match = next(
+                    (match for match in matches if match["symbol_id"] == vuln["matched_symbol_id"]),
+                    None,
+                )
+                vuln["match_kind"] = symbol_match["match_kind"] if symbol_match else "symbol_name"
 
     if reachable_only:
         # If we don't have reachability data yet, compute it in-memory
@@ -1086,6 +1130,20 @@ def _render_sarif_output(vulns: list[dict], reachable_only: bool, _run_check_aq)
     click.echo(sarif_text)
 
 
+def _match_evidence(vuln: dict) -> str | None:
+    matched_file = vuln.get("matched_file")
+    if not matched_file:
+        return None
+    if vuln.get("match_kind") == "import_site":
+        line = vuln.get("matched_line")
+        return f"{matched_file}:{line} (imported)" if line else f"{matched_file} (imported)"
+    if vuln.get("match_kind") == "symbol_name":
+        return f"{matched_file} (symbol-name match)"
+    if vuln.get("match_kind") == "import_edge":
+        return f"{matched_file} (import-edge match)"
+    return str(matched_file)
+
+
 def _build_vuln_records(vulns: list[dict]) -> list[dict]:
     """Project raw vuln rows into R22 wrap_findings input records."""
     vuln_records: list[dict] = []
@@ -1097,6 +1155,9 @@ def _build_vuln_records(vulns: list[dict]) -> list[dict]:
             "title": v.get("title"),
             "source": v.get("source"),
             "matched_file": v.get("matched_file"),
+            "matched_line": v.get("matched_line"),
+            "match_kind": v.get("match_kind"),
+            "match_evidence": _match_evidence(v),
             "reachable": v.get("reachable", 0),
         }
         if v.get("shortest_path"):
@@ -1319,7 +1380,7 @@ def _render_text_output(
             if len(title) > 50:
                 title = title[:47] + "..."
             reach = "yes" if v.get("reachable") == 1 else ("no" if v.get("reachable") == -1 else "?")
-            matched = v.get("matched_file") or "-"
+            matched = _match_evidence(v) or "-"
             rows.append([cve, pkg, sev, title, reach, matched])
 
         click.echo(

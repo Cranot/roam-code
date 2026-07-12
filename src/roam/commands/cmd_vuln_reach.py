@@ -382,6 +382,18 @@ def _output_all(
                     "package": r.get("package_name"),
                     "severity": r.get("severity"),
                     "reachable": r["reachable"] == 1,
+                    "reachability": (
+                        "reachable"
+                        if r["reachable"] == 1
+                        else (
+                            "import-reachable"
+                            if r.get("matched_symbol_id") is None and r.get("matched_file")
+                            else "unreachable"
+                            if r["reachable"] == -1
+                            else "unmatched"
+                        )
+                    ),
+                    "matched_file": r.get("matched_file"),
                     "path": r.get("path_names", []),
                     "hops": r.get("hop_count", 0),
                     "blast_radius": r.get("blast_radius", 0),
@@ -476,6 +488,14 @@ def _output_all(
             hops = r.get("hop_count", 0)
             br = r.get("blast_radius", 0)
             click.echo(f"  Distance: {hops} hop{'s' if hops != 1 else ''} | Blast radius: {br} symbols")
+            click.echo("")
+
+        elif r.get("matched_symbol_id") is None and r.get("matched_file"):
+            click.echo(f"{pkg} -- IMPORT-REACHABLE")
+            click.echo(
+                f"  import-reachable (imported at {r['matched_file']}; "
+                "no call-graph trace available)"
+            )
             click.echo("")
 
         elif r["reachable"] == -1:
@@ -720,6 +740,7 @@ def _output_cve(
         return
 
     reachable = result.get("reachable", False)
+    import_reachable = result.get("matched_symbol_id") is None and bool(result.get("matched_file"))
     sev = (result.get("severity") or "unknown").upper()
     cve = result.get("cve_id", "?")
     pkg = result.get("package_name", "?")
@@ -727,6 +748,7 @@ def _output_cve(
     # W607-CL -- compute_predicate boundary on the CVE-result path.
     def _compute_predicate_fields(
         reachable_local: bool,
+        import_reachable_local: bool,
         sev_local: str,
         cve_local: str,
     ) -> dict:
@@ -736,12 +758,14 @@ def _output_cve(
             "critical_count": 1 if reachable_local and sev_local == "CRITICAL" else 0,
             "cve": cve_local,
             "reachable_bool": bool(reachable_local),
+            "import_reachable_bool": bool(import_reachable_local),
         }
 
     _pred_fields = _run_check_cl(
         "compute_predicate",
         _compute_predicate_fields,
         reachable,
+        import_reachable,
         sev,
         cve,
         default={
@@ -750,6 +774,7 @@ def _output_cve(
             "critical_count": 0,
             "cve": cve,
             "reachable_bool": False,
+            "import_reachable_bool": import_reachable,
         },
     )
 
@@ -757,7 +782,8 @@ def _output_cve(
     def _build_verdict_str(fields: dict) -> str:
         cve_local = fields["cve"]
         reachable_bool = fields["reachable_bool"]
-        state_word = "reachable" if reachable_bool else "not reachable"
+        import_reachable_bool = fields["import_reachable_bool"]
+        state_word = "reachable" if reachable_bool else "import-reachable" if import_reachable_bool else "not reachable"
         return f"{cve_local}: {state_word}"
 
     verdict = _run_check_cl(
@@ -786,6 +812,10 @@ def _output_cve(
                     "package": pkg,
                     "severity": result.get("severity"),
                     "reachable": reachable,
+                    "reachability": (
+                        "reachable" if reachable else "import-reachable" if import_reachable else "unreachable"
+                    ),
+                    "matched_file": result.get("matched_file"),
                     "path": result.get("path_names", []),
                     "hops": result.get("hop_count", 0),
                     "blast_radius": result.get("blast_radius", 0),
@@ -825,7 +855,8 @@ def _output_cve(
         click.echo(output_text)
         return
 
-    click.echo(f"VERDICT: {cve}: {'reachable' if reachable else 'not reachable'}")
+    state_word = "reachable" if reachable else "import-reachable" if import_reachable else "not reachable"
+    click.echo(f"VERDICT: {cve}: {state_word}")
     click.echo("")
     click.echo(f"{cve} ({pkg}) -- {sev}")
     if reachable:
@@ -840,5 +871,10 @@ def _output_cve(
         entries = result.get("entry_points_reaching", [])
         if entries:
             click.echo(f"  Entry points reaching: {', '.join(entries)}")
+    elif import_reachable:
+        click.echo(
+            f"  import-reachable (imported at {result['matched_file']}; "
+            "no call-graph trace available)"
+        )
     else:
         click.echo("  Not reachable from any entry point. Safe to deprioritize.")
