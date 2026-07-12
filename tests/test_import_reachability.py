@@ -7,10 +7,7 @@ from roam.security.import_reachability import ImportSite, scan_import_reachabili
 
 def test_python_import_sites_and_distribution_aliases(tmp_path) -> None:
     (tmp_path / "app.py").write_text(
-        "import requests\n"
-        "import yaml as y\n"
-        "from dotenv import load_dotenv\n"
-        "import os\n",
+        "import requests\nimport yaml as y\nfrom dotenv import load_dotenv\nimport os\n",
         encoding="utf-8",
     )
     pkg = tmp_path / "pkg"
@@ -29,10 +26,7 @@ def test_python_import_sites_and_distribution_aliases(tmp_path) -> None:
 
 def test_javascript_import_sites_exclude_relative_specifiers(tmp_path) -> None:
     (tmp_path / "app.js").write_text(
-        "const _ = require('lodash');\n"
-        "import express from 'express';\n"
-        "import '@scope/pkg/sub';\n"
-        "import('./local');\n",
+        "const _ = require('lodash');\nimport express from 'express';\nimport '@scope/pkg/sub';\nimport('./local');\n",
         encoding="utf-8",
     )
 

@@ -42,10 +42,7 @@ def test_real_index_matches_python_import_sites_and_preserves_legacy_default(tmp
         pyyaml_matches = match_vuln_to_symbols(conn, "PyYAML", project_root=root)
         legacy_matches = match_vuln_to_symbols(conn, "requests")
 
-    assert any(
-        match["match_kind"] == "import_site" and match["file_path"] == "app.py"
-        for match in requests_matches
-    )
+    assert any(match["match_kind"] == "import_site" and match["file_path"] == "app.py" for match in requests_matches)
     assert any(match["match_kind"] == "import_site" for match in pyyaml_matches)
     assert legacy_matches == []
 

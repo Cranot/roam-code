@@ -492,10 +492,7 @@ def _output_all(
 
         elif r.get("matched_symbol_id") is None and r.get("matched_file"):
             click.echo(f"{pkg} -- IMPORT-REACHABLE")
-            click.echo(
-                f"  import-reachable (imported at {r['matched_file']}; "
-                "no call-graph trace available)"
-            )
+            click.echo(f"  import-reachable (imported at {r['matched_file']}; no call-graph trace available)")
             click.echo("")
 
         elif r["reachable"] == -1:
@@ -872,9 +869,6 @@ def _output_cve(
         if entries:
             click.echo(f"  Entry points reaching: {', '.join(entries)}")
     elif import_reachable:
-        click.echo(
-            f"  import-reachable (imported at {result['matched_file']}; "
-            "no call-graph trace available)"
-        )
+        click.echo(f"  import-reachable (imported at {result['matched_file']}; no call-graph trace available)")
     else:
         click.echo("  Not reachable from any entry point. Safe to deprioritize.")
