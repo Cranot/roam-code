@@ -10,6 +10,21 @@
       "file": "tn_safe_flask.py",
       "should_fire_lines": [],
       "rationale": "debug is gated by os.environ — should not fire"
+    },
+    {
+      "file": "tests/test_debug_fixture.py",
+      "should_fire_lines": [],
+      "rationale": "debug=True in a test-named fixture is not a production exposure"
+    },
+    {
+      "file": "tests/helpers/flask_app.py",
+      "should_fire_lines": [],
+      "rationale": "a production-named file under tests/ is still test context"
+    },
+    {
+      "file": "src/guard_flask_app.py",
+      "should_fire_lines": [8],
+      "rationale": "test-like text in a source comment does not make production code a test"
     }
   ]
 }

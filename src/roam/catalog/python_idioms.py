@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from roam.catalog._shared import is_test_path
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 
 __all__ = [
@@ -1243,6 +1244,9 @@ def detect_flask_debug_true(conn: sqlite3.Connection) -> list[dict]:
     """
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
+        # Test fixtures intentionally enable debug mode and are not production exposure risks.
+        if is_test_path(path):
+            continue
         text = _file_text(conn, file_id)
         if text:
             text = _strip_strings_and_comments(text)

@@ -78,9 +78,11 @@ def _run_detector_against(slug: str, detector_fn, tmp_path: Path, monkeypatch):
     if not (src / "expected.json").exists():
         pytest.skip(f"no expected.json for {slug}")
 
-    for f in src.iterdir():
+    for f in src.rglob("*"):
         if f.suffix == ".py" or f.name == "expected.json":
-            shutil.copy(f, tmp_path / f.name)
+            destination = tmp_path / f.relative_to(src)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(f, destination)
 
     monkeypatch.chdir(tmp_path)
     _index_fixture_dir(tmp_path)
@@ -99,7 +101,7 @@ def _run_detector_against(slug: str, detector_fn, tmp_path: Path, monkeypatch):
             line_no = int(line_str)
         except ValueError:
             continue
-        by_file.setdefault(Path(path_str).name, set()).add(line_no)
+        by_file.setdefault(Path(path_str).as_posix(), set()).add(line_no)
     return by_file
 
 
@@ -162,3 +164,12 @@ def test_detector_precision_recall(slug, detector_fn, tmp_path, monkeypatch):
     )
     assert precision >= floor["precision"], diag_str
     assert recall >= floor["recall"], diag_str
+
+
+def test_flask_debug_true_suppresses_test_contexts_without_recall_loss(tmp_path, monkeypatch):
+    actual = _run_detector_against("flask", python_idioms.detect_flask_debug_true, tmp_path, monkeypatch)
+
+    assert actual == {
+        "src/guard_flask_app.py": {8},
+        "tp_flask_app.py": {29},
+    }
