@@ -162,6 +162,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Fixture trees are DATA, never test modules: detector-eval fixtures
+# deliberately include test-NAMED files (a test-context suppression fixture
+# must look like a test), and collecting them imports third-party modules
+# the suite doesn't depend on (CI red 2026-07-13: fixture imported flask).
+norecursedirs = ["tests/fixtures"]
 # ``-p roam.testing.ci_xdist`` loads the CI auto-parallelism plugin (injects
 # ``-n auto --dist loadgroup`` only when CI is set, xdist is importable, and
 # no explicit -n/--dist was given — see that module's docstring for why the
