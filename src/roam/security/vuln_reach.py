@@ -1,4 +1,14 @@
-"""Reachability analysis for vulnerabilities in the call graph."""
+"""Reachability analysis for vulnerabilities in the call graph.
+
+Invariant (traversal completeness): every traversal here uses NetworkX BFS/DFS
+primitives (``shortest_path`` / ``descendants`` / ``ancestors``) whose internal
+visited-sets guarantee polynomial termination -- results are always COMPLETE,
+never truncated. If you ever add a ``cutoff=`` / node budget to bound latency on
+a pathological graph, you MUST surface a ``truncated: True`` signal up through
+``cmd_vuln_reach``'s summary + ``partial_success``. A silent cap would turn a
+latency optimization into a false-negative on exploitable code -- the one
+failure a reachability product must never ship.
+"""
 
 from __future__ import annotations
 

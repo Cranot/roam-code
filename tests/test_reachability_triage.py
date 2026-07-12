@@ -156,6 +156,30 @@ def test_gate_fails_open_without_baseline(tmp_path, monkeypatch):
     assert payload["gate"]["new_reachable_finding_ids"] == []
 
 
+def test_gate_fails_closed_on_corrupt_baseline(tmp_path, monkeypatch):
+    # A present-but-corrupt/tampered baseline must NOT silently disarm the gate
+    # the way a genuinely-missing one does (you should not be able to turn off a
+    # security gate by truncating one JSON file). It fails CLOSED -- exit 5 --
+    # and is distinguishable from a "new reachable flow" exit 5 by an empty
+    # new_reachable_finding_ids + baseline_error=True.
+    _install_compose(monkeypatch, tmp_path, _injected_compose())
+    baseline = triage._baseline_path(tmp_path)
+    baseline.parent.mkdir(parents=True, exist_ok=True)
+    baseline.write_text("{ this is not valid json ", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        ["reachability-triage", "--gate-on-new-reachable", "--json"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 5, result.output
+    payload = _parse_json(result)
+    assert payload["gate"]["baseline_state"] == "unreadable"
+    assert payload["gate"]["baseline_error"] is True
+    assert payload["gate"]["evaluated"] is False
+    assert payload["gate"]["new_reachable_finding_ids"] == []
+
+
 def test_range_scopes_facts_to_changed_files(tmp_path, monkeypatch):
     _install_compose(monkeypatch, tmp_path, _injected_compose(matched_file="src/app.py"))
     monkeypatch.setattr(triage, "get_changed_files", lambda root, commit_range: ["src/other.py"])

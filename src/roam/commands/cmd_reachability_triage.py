@@ -231,6 +231,11 @@ def _text_output(
     if gate["requested"]:
         if gate["evaluated"]:
             lines.append(f"Baseline gate: {len(gate['new_reachable_finding_ids'])} new reachable paths.")
+        elif gate.get("baseline_error"):
+            lines.append(
+                f"Baseline gate: FAIL-CLOSED -- baseline at {gate['baseline_path']} is present but unreadable "
+                "(corrupt/tampered); refusing to pass silently. Re-run --write-baseline to re-establish it."
+            )
         else:
             lines.append(f"Baseline gate: fail-open ({gate['baseline_state']} baseline).")
     if gate["baseline_state"] == "written":
@@ -304,6 +309,12 @@ def reachability_triage_cmd(
     )
 
     # Do not duplicate or partially reconstruct the six-command compose.
+    # Invariant (single reachability source): reachability-triage is a PASS-THROUGH
+    # re-projection of `roam vuln-reach`'s output (the compose invokes it
+    # in-process) plus a temporal baseline diff + file-scope filter. There is
+    # exactly ONE reachability computation in the product. NEVER recompute
+    # reachability / hop_distance / blast_radius from the DB here -- a second
+    # matcher would let the two commands silently diverge on identical state.
     env = _GATHER["reachability-triage"](commit_range or "")
     metrics = _compose_metrics(env)
     flows = _project_vulnerability_flows(env, changed_files)
@@ -321,11 +332,20 @@ def reachability_triage_cmd(
         baseline_ids, baseline_state = _load_baseline(baseline_path)
 
     gate_evaluated = gate_on_new_reachable and baseline_ids is not None
+    # A present-but-corrupt/tampered baseline must NOT silently disarm the gate.
+    # `_load_baseline` returns None (fail-open) for BOTH "missing" and
+    # "unreadable", which previously collapsed a corrupt baseline into the same
+    # silent pass as a legitimately-absent one -- a security gate that can be
+    # disarmed by truncating one JSON file. We now split the two: "missing"
+    # still fails open (legitimate first run / bootstrap), but "unreadable"
+    # (the tamper/corruption case) fails CLOSED so it cannot pass unnoticed.
+    baseline_unreadable = gate_on_new_reachable and not write_baseline and baseline_state == "unreadable"
     new_reachable_ids = sorted(reachable_ids - baseline_ids) if gate_evaluated else []
     gate = {
         "requested": gate_on_new_reachable,
         "evaluated": gate_evaluated,
         "baseline_state": baseline_state,
+        "baseline_error": baseline_unreadable,
         "baseline_path": str(baseline_path),
         "new_reachable_finding_ids": new_reachable_ids,
     }
@@ -378,5 +398,7 @@ def reachability_triage_cmd(
             )
         )
 
-    if gate_evaluated and new_reachable_ids:
+    if (gate_evaluated and new_reachable_ids) or baseline_unreadable:
+        # Fail the gate on EITHER a new reachable flow (the normal block) OR a
+        # present-but-corrupt baseline (the tamper case that used to pass open).
         ctx.exit(EXIT_GATE_FAILURE)
