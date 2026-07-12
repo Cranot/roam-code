@@ -26,13 +26,17 @@ called on non-JS-family targets), not a cycle hedge.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
+from roam.analysis.framework_entrypoints import is_framework_entrypoint
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.languages import JS_FAMILY_LANGUAGES
+from roam.observability import log_swallowed
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -367,9 +371,38 @@ def uses(ctx, name, full):
             rows.extend(extras)
 
         if not rows:
+            # A RESOLVED symbol with zero static callers is not necessarily
+            # unused. A decorator/registry-dispatched framework
+            # entrypoint (an MCP `@_tool` wrapper, etc.) is invoked by the
+            # framework's runtime registry, not a literal `foo()` call site, so
+            # it correctly has 0 static callers. Consult the SAME classifier
+            # `roam dead` uses (W157) and report a distinct `framework_entrypoint`
+            # state instead of a misleading "no consumers" -- `roam uses onboard`
+            # used to report 0 consumers for a live MCP tool (56/92 @_tool
+            # functions affected). Best-effort: any lookup failure degrades to
+            # the legacy no_consumers state, never breaking the readonly path.
+            _fw_entry = False
+            try:
+                _tgt_ids = [t["id"] for t in targets]
+                if _tgt_ids:
+                    _paths = batched_in(
+                        conn,
+                        "SELECT f.path AS file_path FROM symbols s "
+                        "JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+                        _tgt_ids,
+                    )
+                    _fw_entry = any(is_framework_entrypoint(name, r["file_path"]) for r in _paths)
+            except (sqlite3.Error, KeyError, TypeError) as _fw_exc:
+                log_swallowed("cmd_uses:framework_entrypoint_lookup", _fw_exc)
+                _fw_entry = False
             if json_mode:
                 _nr_summary: dict = {
-                    "verdict": f"no consumers of '{name}' found",
+                    "verdict": (
+                        f"'{name}' has 0 static callers but is a framework entrypoint "
+                        "(decorator/runtime dispatch, e.g. an MCP tool); not unused"
+                        if _fw_entry
+                        else f"no consumers of '{name}' found"
+                    ),
                     "total_consumers": 0,
                     "production_consumers": 0,
                     "test_consumers": 0,
@@ -378,10 +411,13 @@ def uses(ctx, name, full):
                     "caller_metric_definition": CALLER_METRIC_RAW,
                     # Shape parity: a machine-readable state so cross-command
                     # consumers (preflight/critique) switch on a field rather
-                    # than regex-grepping the verdict. This is the RESOLVED
-                    # symbol with zero callers — distinct from "not_found".
-                    "state": "no_consumers",
+                    # than regex-grepping the verdict. RESOLVED with zero callers
+                    # -- distinct from "not_found", and now from a
+                    # "framework_entrypoint" whose 0-count is expected-not-dead.
+                    "state": "framework_entrypoint" if _fw_entry else "no_consumers",
                 }
+                if _fw_entry:
+                    _nr_summary["registered_via"] = "framework_dispatch"
                 _nr_kwargs: dict = {
                     "summary": _nr_summary,
                     "symbol": name,
@@ -401,6 +437,15 @@ def uses(ctx, name, full):
                             **_nr_kwargs,
                         )
                     )
+                )
+            elif _fw_entry:
+                click.echo(
+                    f"VERDICT: '{name}' has 0 static callers but is a framework entrypoint "
+                    "(decorator/runtime dispatch); not unused.\n"
+                )
+                click.echo(
+                    f"'{name}' is registered via framework dispatch (e.g. an MCP tool), so a static "
+                    "caller count of 0 is expected -- it is not dead code."
                 )
             else:
                 click.echo(f"VERDICT: no consumers of '{name}' found.\n")
