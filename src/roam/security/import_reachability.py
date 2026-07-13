@@ -65,34 +65,34 @@ _JS_EXTS: frozenset[str] = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cj
 # A CVE/audit report names the *distribution*; source names the *import*. We
 # register both forms so either side of the query matches. Conservative on
 # purpose — only well-known, unambiguous divergences.
-_IMPORT_TO_DISTRIBUTION: dict[str, str] = {
-    "yaml": "pyyaml",
-    "bs4": "beautifulsoup4",
-    "pil": "pillow",
-    "sklearn": "scikit-learn",
-    "cv2": "opencv-python",
-    "dateutil": "python-dateutil",
-    "dotenv": "python-dotenv",
-    "jose": "python-jose",
-    "jwt": "pyjwt",
-    "serial": "pyserial",
-    "openssl": "pyopenssl",
-    "crypto": "pycryptodome",
-    "magic": "python-magic",
-    "usb": "pyusb",
-    "attr": "attrs",
+_IMPORT_TO_DISTRIBUTION: dict[str, tuple[str, ...]] = {
+    "yaml": ("pyyaml",),
+    "bs4": ("beautifulsoup4",),
+    "pil": ("pillow",),
+    "sklearn": ("scikit-learn",),
+    "cv2": ("opencv-python",),
+    "dateutil": ("python-dateutil",),
+    "dotenv": ("python-dotenv",),
+    "jose": ("python-jose",),
+    "jwt": ("pyjwt",),
+    "serial": ("pyserial",),
+    "openssl": ("pyopenssl",),
+    "crypto": ("pycryptodome", "pycrypto", "pycryptodomex"),
+    "magic": ("python-magic",),
+    "usb": ("pyusb",),
+    "attr": ("attrs",),
     # NOTE: no "google" entry on purpose — ``google`` is a namespace package
     # spanning many distributions (protobuf, googleapis-*, ...); mapping it to
     # any single one would fabricate reachability evidence.
-    "slugify": "python-slugify",
-    "memcache": "python-memcached",
-    "docx": "python-docx",
-    "pptx": "python-pptx",
-    "ruamel": "ruamel-yaml",
-    "zmq": "pyzmq",
-    "win32api": "pywin32",
-    "win32com": "pywin32",
-    "gi": "pygobject",
+    "slugify": ("python-slugify",),
+    "memcache": ("python-memcached",),
+    "docx": ("python-docx",),
+    "pptx": ("python-pptx",),
+    "ruamel": ("ruamel-yaml",),
+    "zmq": ("pyzmq",),
+    "win32api": ("pywin32",),
+    "win32com": ("pywin32",),
+    "gi": ("pygobject",),
 }
 
 
@@ -115,8 +115,7 @@ def _norm_keys(name: str) -> set[str]:
     if not n:
         return set()
     keys = {n, n.replace("_", "-"), n.replace("-", "_")}
-    alias = _IMPORT_TO_DISTRIBUTION.get(n)
-    if alias:
+    for alias in _IMPORT_TO_DISTRIBUTION.get(n, ()):
         keys.add(alias)
         keys.add(alias.replace("-", "_"))
     return keys

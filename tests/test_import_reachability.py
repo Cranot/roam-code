@@ -63,6 +63,15 @@ def test_python_distribution_alias_without_local_shadow_remains_reachable(tmp_pa
     assert reachability.sites_for("pyjwt") == [ImportSite("app.py", 1, "jwt")]
 
 
+def test_python_namespace_import_reaches_all_plausible_distributions(tmp_path) -> None:
+    (tmp_path / "app.py").write_text("import crypto\n", encoding="utf-8")
+    declared_deps = ["pycryptodome", "pycrypto"]
+
+    reachability = scan_import_reachability(tmp_path)
+
+    assert all(reachability.is_reachable(dep) for dep in declared_deps)
+
+
 def test_node_modules_is_ignored(tmp_path) -> None:
     node_modules = tmp_path / "node_modules" / "nested"
     node_modules.mkdir(parents=True)
