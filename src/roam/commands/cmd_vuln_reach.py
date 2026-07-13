@@ -332,9 +332,19 @@ def _output_all(
     def _compute_predicate_fields(results_local: list[dict]) -> dict:
         reachable_local = [r for r in results_local if r["reachable"] == 1]
         critical_local = [r for r in reachable_local if (r.get("severity") or "").lower() == "critical"]
+        # Import-reachable = the CVE'd dep IS imported into this codebase but has
+        # no call-graph trace (same predicate as the per-row display below). These
+        # are a real exposure; counting only call-graph-reachable (==1) in the
+        # headline under-reports the LEAD product's own finding. Tri-count instead.
+        import_reachable_local = [
+            r
+            for r in results_local
+            if r["reachable"] != 1 and r.get("matched_symbol_id") is None and r.get("matched_file")
+        ]
         return {
             "total": len(results_local),
             "reachable_count": len(reachable_local),
+            "import_reachable_count": len(import_reachable_local),
             "critical_count": len(critical_local),
         }
 
@@ -345,6 +355,7 @@ def _output_all(
         default={
             "total": 0,
             "reachable_count": 0,
+            "import_reachable_count": 0,
             "critical_count": 0,
         },
     )
@@ -364,6 +375,9 @@ def _output_all(
         if critical_count_local > 0:
             plural = "s" if critical_count_local != 1 else ""
             out += f", {critical_count_local} critical path{plural}"
+        import_reachable_count_local = fields.get("import_reachable_count", 0)
+        if import_reachable_count_local > 0:
+            out += f", {import_reachable_count_local} import-reachable (imported, no call-graph trace)"
         return out
 
     verdict = _run_check_cl(
@@ -404,6 +418,7 @@ def _output_all(
             "verdict": verdict,
             "total_vulns": _pred_fields["total"],
             "reachable_count": _pred_fields["reachable_count"],
+            "import_reachable_count": _pred_fields.get("import_reachable_count", 0),
             "critical_count": _pred_fields["critical_count"],
         }
         if _combined_warnings_out:
@@ -594,6 +609,7 @@ def _output_from_entry(
             "verdict": verdict,
             "total_vulns": _pred_fields["total"],
             "reachable_count": _pred_fields["reachable_count"],
+            "import_reachable_count": _pred_fields.get("import_reachable_count", 0),
             "critical_count": _pred_fields["critical_count"],
         }
         if _combined_warnings_out:
@@ -796,6 +812,7 @@ def _output_cve(
             "verdict": verdict,
             "total_vulns": _pred_fields["total"],
             "reachable_count": _pred_fields["reachable_count"],
+            "import_reachable_count": _pred_fields.get("import_reachable_count", 0),
             "critical_count": _pred_fields["critical_count"],
         }
         if _combined_warnings_out:
