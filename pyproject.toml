@@ -40,7 +40,7 @@ dependencies = [
     # tarball that fails to register the ``tree_sitter_language_pack``
     # module post-install (CI run 25217131296). 1.6.2 (cp310-abi3) works
     # cleanly across 3.10-3.13 (project floor since W44).
-    "tree-sitter-language-pack>=0.6,<1.6.3",
+    "tree-sitter-language-pack>=0.6,<1.12.6",
     "networkx>=3.0",
     # tomllib is stdlib on 3.11+. On 3.10 (our floor) we need the tomli
     # backport so commands that parse pyproject.toml (orphan-imports
