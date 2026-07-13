@@ -72,6 +72,23 @@ def test_python_namespace_import_reaches_all_plausible_distributions(tmp_path) -
     assert all(reachability.is_reachable(dep) for dep in declared_deps)
 
 
+def test_scan_reports_when_a_per_language_file_cap_is_hit(tmp_path) -> None:
+    for index in range(3):
+        (tmp_path / f"app{index}.py").write_text(f"import dependency{index}\n", encoding="utf-8")
+
+    reachability = scan_import_reachability(tmp_path, max_files=2)
+
+    assert reachability.truncated is True
+
+
+def test_scan_reports_complete_below_the_per_language_file_cap(tmp_path) -> None:
+    (tmp_path / "app.py").write_text("import requests\n", encoding="utf-8")
+
+    reachability = scan_import_reachability(tmp_path, max_files=2)
+
+    assert reachability.truncated is False
+
+
 def test_node_modules_is_ignored(tmp_path) -> None:
     node_modules = tmp_path / "node_modules" / "nested"
     node_modules.mkdir(parents=True)

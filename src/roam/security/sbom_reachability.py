@@ -300,20 +300,23 @@ def _iter_files(
     skip_dirs: frozenset[str] = frozenset(
         {"node_modules", ".git", ".roam", "dist", "build", "out", "coverage", ".next", ".nuxt", "__pycache__"}
     ),
-) -> list[Path]:
+) -> tuple[list[Path], bool]:
     """Walk ``project_root`` for files with any of ``exts``.
 
     Skips heavy artifact directories (pruned during descent). Capped at
-    ``max_files`` to keep the scan cheap on large monorepos.
+    ``max_files`` to keep the scan cheap on large monorepos. The boolean return
+    value reports conservatively that the cap was hit.
     """
     exts_set = {e.lower() for e in exts}
     results: list[Path] = []
+    if max_files <= 0:
+        return results, True
     for path in _walk_pruned(project_root, skip_dirs):
-        if len(results) >= max_files:
-            break
         if path.suffix.lower() in exts_set:
             results.append(path)
-    return results
+            if len(results) >= max_files:
+                return results, True
+    return results, False
 
 
 def _iter_named_files(
@@ -361,14 +364,15 @@ def _find_tsconfigs(project_root: Path, *, max_depth: int = 4) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_css_imports(project_root: Path) -> list[str]:
+def _scan_css_imports(project_root: Path, *, max_files: int = 5000) -> tuple[list[str], bool]:
     """Return import specifiers found in .css/.scss/.sass/.less files
     AND inside ``<style>`` blocks of .vue/.svelte/.astro files.
     """
     specs: list[str] = []
 
     # Plain stylesheet files
-    for path in _iter_files(project_root, _STYLE_EXTS):
+    style_files, style_truncated = _iter_files(project_root, _STYLE_EXTS, max_files=max_files)
+    for path in style_files:
         text = _safe_read(path)
         if not text:
             continue
@@ -376,7 +380,10 @@ def _scan_css_imports(project_root: Path) -> list[str]:
             specs.append(m.group("spec"))
 
     # <style> blocks in component frameworks
-    for path in _iter_files(project_root, (".vue", ".svelte", ".astro")):
+    component_files, component_truncated = _iter_files(
+        project_root, (".vue", ".svelte", ".astro"), max_files=max_files
+    )
+    for path in component_files:
         text = _safe_read(path)
         if not text:
             continue
@@ -385,7 +392,7 @@ def _scan_css_imports(project_root: Path) -> list[str]:
             for m in _CSS_IMPORT_RE.finditer(body):
                 specs.append(m.group("spec"))
 
-    return specs
+    return specs, style_truncated or component_truncated
 
 
 # ---------------------------------------------------------------------------
@@ -393,16 +400,17 @@ def _scan_css_imports(project_root: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _scan_dynamic_imports(project_root: Path) -> list[str]:
+def _scan_dynamic_imports(project_root: Path, *, max_files: int = 5000) -> tuple[list[str], bool]:
     """Return string-literal specifiers passed to ``import(...)`` calls."""
     specs: list[str] = []
-    for path in _iter_files(project_root, _SOURCE_EXTS):
+    source_files, truncated = _iter_files(project_root, _SOURCE_EXTS, max_files=max_files)
+    for path in source_files:
         text = _safe_read(path)
         if not text:
             continue
         for m in _DYNAMIC_IMPORT_RE.finditer(text):
             specs.append(m.group("spec"))
-    return specs
+    return specs, truncated
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +758,9 @@ def _composer_namespace_roots(package_name: str) -> set[str]:
     return roots
 
 
-def _scan_php_composer_imports(project_root: Path, declared_deps: set[str]) -> dict[str, list[str]]:
+def _scan_php_composer_imports(
+    project_root: Path, declared_deps: set[str], *, max_files: int = 5000
+) -> tuple[dict[str, list[str]], bool]:
     """Match declared Composer packages against PHP ``use`` namespace roots."""
     package_by_root: dict[str, set[str]] = {}
     for composer_json in _discover_composer_json(project_root):
@@ -761,13 +771,14 @@ def _scan_php_composer_imports(project_root: Path, declared_deps: set[str]) -> d
                 package_by_root.setdefault(root.lower(), set()).add(name)
 
     if not package_by_root:
-        return {}
+        return {}, False
 
     result: dict[str, list[str]] = {}
     php_skip_dirs = frozenset(
         {"node_modules", ".git", ".roam", "dist", "build", "out", "coverage", ".next", ".nuxt", "__pycache__", "vendor"}
     )
-    for path in _iter_files(project_root, (".php",), skip_dirs=php_skip_dirs):
+    php_files, truncated = _iter_files(project_root, (".php",), max_files=max_files, skip_dirs=php_skip_dirs)
+    for path in php_files:
         text = _safe_read(path)
         if not text:
             continue
@@ -783,7 +794,7 @@ def _scan_php_composer_imports(project_root: Path, declared_deps: set[str]) -> d
                 reasons = result.setdefault(dep, [])
                 if reason not in reasons:
                     reasons.append(reason)
-    return result
+    return result, truncated
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +805,8 @@ def _scan_php_composer_imports(project_root: Path, declared_deps: set[str]) -> d
 def compute_filesystem_reachability(
     project_root: Path,
     declared_deps: list[str],
+    *,
+    max_files: int | None = None,
 ) -> dict[str, dict]:
     """Return reachability info for each declared dep based on filesystem scan.
 
@@ -812,8 +825,12 @@ def compute_filesystem_reachability(
     the dep. Order (most to least): ``direct`` > ``config_import`` > ``script_consumer``
     > ``loader`` > ``css_import`` > ``dynamic_import`` > ``indirect``.
 
-    ``reachable`` is True iff any source was found.
+    ``reachable`` is True iff any source was found. The reserved
+    ``_scan_truncated`` record reports whether a scanner hit its file cap.
     """
+    filesystem_file_cap = 5000 if max_files is None else max_files
+    import_file_cap = 6000 if max_files is None else max_files
+    caps_hit: set[int] = set()
     declared_set = {d for d in declared_deps if d}
     out: dict[str, dict] = {dep: {"reachable": False, "sources": [], "confidence": "indirect"} for dep in declared_deps}
 
@@ -839,13 +856,19 @@ def compute_filesystem_reachability(
             info["confidence"] = confidence
 
     # Category A — CSS imports
-    for spec in _scan_css_imports(project_root):
+    css_specs, css_truncated = _scan_css_imports(project_root, max_files=filesystem_file_cap)
+    if css_truncated:
+        caps_hit.add(filesystem_file_cap)
+    for spec in css_specs:
         pkg = _spec_root_package(spec)
         if pkg and pkg in declared_set:
             _record(pkg, f"css @import {spec!r}", "css_import")
 
     # Category B — Dynamic imports
-    for spec in _scan_dynamic_imports(project_root):
+    dynamic_specs, dynamic_truncated = _scan_dynamic_imports(project_root, max_files=filesystem_file_cap)
+    if dynamic_truncated:
+        caps_hit.add(filesystem_file_cap)
+    for spec in dynamic_specs:
         pkg = _spec_root_package(spec)
         if pkg and pkg in declared_set:
             _record(pkg, f"dynamic import({spec!r})", "dynamic_import")
@@ -869,7 +892,11 @@ def compute_filesystem_reachability(
             _record(dep, r, "loader")
 
     # Category F — PHP composer namespace imports
-    php_hits = _scan_php_composer_imports(project_root, declared_set)
+    php_hits, php_truncated = _scan_php_composer_imports(
+        project_root, declared_set, max_files=filesystem_file_cap
+    )
+    if php_truncated:
+        caps_hit.add(filesystem_file_cap)
     for dep, reasons in php_hits.items():
         for r in reasons:
             _record(dep, r, "config_import")
@@ -881,7 +908,9 @@ def compute_filesystem_reachability(
     # this category closes the plain-source-import gap they do not cover.
     from roam.security.import_reachability import scan_import_reachability
 
-    imported = scan_import_reachability(project_root)
+    imported = scan_import_reachability(project_root, max_files=import_file_cap)
+    if imported.truncated:
+        caps_hit.add(import_file_cap)
     for dep in declared_deps:
         if out[dep]["reachable"] or not imported.is_reachable(dep):
             continue
@@ -892,6 +921,11 @@ def compute_filesystem_reachability(
         lang = "python" if ext in ("py", "pyi") else "js/ts"
         _record(dep, f"{lang} import {site.file}:{site.line}", "direct")
 
+    out["_scan_truncated"] = {
+        "truncated": bool(caps_hit),
+        "max_files": min(caps_hit) if caps_hit else None,
+        "caps_hit": sorted(caps_hit),
+    }
     return out
 
 
@@ -914,6 +948,7 @@ def merge_reachability(
         keys.update(graph.keys())
     if fs:
         keys.update(fs.keys())
+    keys.discard("_scan_truncated")
 
     merged: dict[str, dict] = {}
     for key in keys:
@@ -929,4 +964,7 @@ def merge_reachability(
             "confidence": "direct" if graph_reachable else f.get("confidence", "indirect"),
         }
         merged[key] = entry
+    scan_metadata = (fs or {}).get("_scan_truncated")
+    if scan_metadata:
+        merged["_scan_truncated"] = dict(scan_metadata)
     return merged

@@ -28,7 +28,7 @@ import ast
 import os
 import re
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -126,6 +126,7 @@ class ImportReachability:
 
     def __init__(self) -> None:
         self._by_key: dict[str, list[ImportSite]] = {}
+        self.truncated = False
         # Preserve insertion order of distinct (file,line,root) so callers get
         # stable, deterministic evidence.
         self._seen: set[tuple[str, int, str]] = set()
@@ -166,18 +167,20 @@ class ImportReachability:
 # ---------------------------------------------------------------------------
 
 
-def _iter_source_files(project_root: Path, exts: frozenset[str], max_files: int) -> Iterator[Path]:
-    """Yield source files with ``exts`` under ``project_root``, pruning heavy dirs."""
-    count = 0
+def _iter_source_files(project_root: Path, exts: frozenset[str], max_files: int) -> tuple[list[Path], bool]:
+    """Return matching source files and whether their language cap was hit."""
+    paths: list[Path] = []
+    if max_files <= 0:
+        return paths, True
     for dirpath, dirnames, filenames in os.walk(project_root):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
         base = Path(dirpath)
         for fn in filenames:
             if Path(fn).suffix.lower() in exts:
-                if count >= max_files:
-                    return
-                count += 1
-                yield base / fn
+                paths.append(base / fn)
+                if len(paths) >= max_files:
+                    return paths, True
+    return paths, False
 
 
 def _read_text(path: Path, limit: int = 3_000_000) -> str:
@@ -292,7 +295,9 @@ def scan_import_reachability(project_root: str | Path, *, max_files: int = 6000)
         return reach
 
     first_party_python_roots = _first_party_python_roots(root)
-    for path in _iter_source_files(root, _PY_EXTS, max_files):
+    python_files, python_truncated = _iter_source_files(root, _PY_EXTS, max_files)
+    reach.truncated = python_truncated
+    for path in python_files:
         text = _read_text(path)
         if not text:
             continue
@@ -302,7 +307,9 @@ def scan_import_reachability(project_root: str | Path, *, max_files: int = 6000)
                 continue
             reach._add(pkg_root, ImportSite(rel, line, spec))
 
-    for path in _iter_source_files(root, _JS_EXTS, max_files):
+    js_files, js_truncated = _iter_source_files(root, _JS_EXTS, max_files)
+    reach.truncated = reach.truncated or js_truncated
+    for path in js_files:
         text = _read_text(path)
         if not text:
             continue

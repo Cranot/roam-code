@@ -492,6 +492,24 @@ def test_source_import_jsts_dep_labelled_jsts_not_python(tmp_path: Path) -> None
     assert not any(s.startswith("python import ") for s in sources), sources
 
 
+def test_filesystem_reachability_surfaces_scan_truncation(tmp_path: Path) -> None:
+    for index in range(3):
+        (tmp_path / f"app{index}.js").write_text(f"import 'dependency-{index}'\n", encoding="utf-8")
+
+    result = compute_filesystem_reachability(tmp_path, ["dependency-2"], max_files=2)
+
+    assert result["_scan_truncated"] == {"truncated": True, "max_files": 2, "caps_hit": [2]}
+    assert merge_reachability(None, result)["_scan_truncated"] == result["_scan_truncated"]
+
+
+def test_filesystem_reachability_reports_complete_scan_below_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.js").write_text("import 'dependency'\n", encoding="utf-8")
+
+    result = compute_filesystem_reachability(tmp_path, ["dependency"], max_files=2)
+
+    assert result["_scan_truncated"] == {"truncated": False, "max_files": None, "caps_hit": []}
+
+
 # ---------------------------------------------------------------------------
 # merge_reachability — graph + fs fusion
 # ---------------------------------------------------------------------------
