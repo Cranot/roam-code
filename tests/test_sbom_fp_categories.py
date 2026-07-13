@@ -496,18 +496,49 @@ def test_filesystem_reachability_surfaces_scan_truncation(tmp_path: Path) -> Non
     for index in range(3):
         (tmp_path / f"app{index}.js").write_text(f"import 'dependency-{index}'\n", encoding="utf-8")
 
-    result = compute_filesystem_reachability(tmp_path, ["dependency-2"], max_files=2)
+    meta: dict = {}
+    result = compute_filesystem_reachability(tmp_path, ["dependency-2"], max_files=2, meta_out=meta)
 
-    assert result["_scan_truncated"] == {"truncated": True, "max_files": 2, "caps_hit": [2]}
-    assert merge_reachability(None, result)["_scan_truncated"] == result["_scan_truncated"]
+    assert meta == {"truncated": True, "caps_hit": [2]}
+    # The {dep: info} contract stays pure: every key is a declared dep whose
+    # value carries the full reachability shape (the old reserved-key design
+    # leaked a pseudo-dep lacking "reachable" into every consumer loop).
+    assert set(result) == {"dependency-2"}
+    assert set(result["dependency-2"]) >= {"reachable", "sources", "confidence"}
 
 
 def test_filesystem_reachability_reports_complete_scan_below_cap(tmp_path: Path) -> None:
     (tmp_path / "app.js").write_text("import 'dependency'\n", encoding="utf-8")
 
-    result = compute_filesystem_reachability(tmp_path, ["dependency"], max_files=2)
+    meta: dict = {}
+    result = compute_filesystem_reachability(tmp_path, ["dependency"], max_files=2, meta_out=meta)
 
-    assert result["_scan_truncated"] == {"truncated": False, "max_files": None, "caps_hit": []}
+    assert meta == {"truncated": False, "caps_hit": []}
+    assert set(result) == {"dependency"}
+
+
+def test_filesystem_reachability_truncates_at_exact_cap(tmp_path: Path) -> None:
+    """files == max_files must report truncated (conservative over-report):
+    the walker cannot know whether a further file existed past the cap."""
+    for index in range(2):
+        (tmp_path / f"app{index}.js").write_text(f"import 'dep-{index}'\n", encoding="utf-8")
+
+    meta: dict = {}
+    compute_filesystem_reachability(tmp_path, ["dep-0"], max_files=2, meta_out=meta)
+
+    assert meta["truncated"] is True
+
+
+def test_merge_reachability_output_contains_only_dependency_keys(tmp_path: Path) -> None:
+    for index in range(3):
+        (tmp_path / f"app{index}.js").write_text(f"import 'dependency-{index}'\n", encoding="utf-8")
+
+    fs = compute_filesystem_reachability(tmp_path, ["dependency-0", "dependency-2"], max_files=2)
+    merged = merge_reachability(None, fs)
+
+    assert set(merged) == {"dependency-0", "dependency-2"}
+    for info in merged.values():
+        assert set(info) >= {"reachable", "sources", "confidence"}
 
 
 # ---------------------------------------------------------------------------

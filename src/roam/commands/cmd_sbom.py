@@ -713,14 +713,26 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
         except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError):
             graph_reach = {}
 
-        # Filesystem-based reachability (cheap, independent of index)
+        # Filesystem-based reachability (cheap, independent of index).
+        # ``fs_scan_meta`` carries scan-completeness out-of-band (never as a
+        # pseudo-dep inside the {dep: info} result); a truncated scan means
+        # absence-of-import evidence is incomplete, so disclose it via the
+        # established W607-AM warnings channel (Pattern-2: no silent caps).
+        fs_scan_meta: dict = {}
         fs_reach = _run_check_am(
             "compute_filesystem_reachability",
             compute_filesystem_reachability,
             project_root,
             dep_names,
             default={},
+            meta_out=fs_scan_meta,
         )
+        if fs_scan_meta.get("truncated"):
+            _w607am_warnings_out.append(
+                "reachability_scan_truncated:caps_hit="
+                + ",".join(str(c) for c in fs_scan_meta.get("caps_hit", []))
+                + " — file cap reached; unimported/phantom verdicts may under-report"
+            )
 
         reachability = _run_check_am(
             "merge_reachability",

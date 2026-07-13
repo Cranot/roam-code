@@ -380,9 +380,7 @@ def _scan_css_imports(project_root: Path, *, max_files: int = 5000) -> tuple[lis
             specs.append(m.group("spec"))
 
     # <style> blocks in component frameworks
-    component_files, component_truncated = _iter_files(
-        project_root, (".vue", ".svelte", ".astro"), max_files=max_files
-    )
+    component_files, component_truncated = _iter_files(project_root, (".vue", ".svelte", ".astro"), max_files=max_files)
     for path in component_files:
         text = _safe_read(path)
         if not text:
@@ -807,6 +805,7 @@ def compute_filesystem_reachability(
     declared_deps: list[str],
     *,
     max_files: int | None = None,
+    meta_out: dict | None = None,
 ) -> dict[str, dict]:
     """Return reachability info for each declared dep based on filesystem scan.
 
@@ -825,8 +824,13 @@ def compute_filesystem_reachability(
     the dep. Order (most to least): ``direct`` > ``config_import`` > ``script_consumer``
     > ``loader`` > ``css_import`` > ``dynamic_import`` > ``indirect``.
 
-    ``reachable`` is True iff any source was found. The reserved
-    ``_scan_truncated`` record reports whether a scanner hit its file cap.
+    ``reachable`` is True iff any source was found.
+
+    The return value contains ONLY dependency entries — consumers iterate it
+    as ``{dep: info}``. Scan-completeness metadata travels out-of-band: pass
+    ``meta_out={}`` and it is populated with ``truncated`` (bool — a scanner
+    hit its file cap, so absence-of-import evidence may be incomplete) and
+    ``caps_hit`` (the cap values that were reached).
     """
     filesystem_file_cap = 5000 if max_files is None else max_files
     import_file_cap = 6000 if max_files is None else max_files
@@ -892,9 +896,7 @@ def compute_filesystem_reachability(
             _record(dep, r, "loader")
 
     # Category F — PHP composer namespace imports
-    php_hits, php_truncated = _scan_php_composer_imports(
-        project_root, declared_set, max_files=filesystem_file_cap
-    )
+    php_hits, php_truncated = _scan_php_composer_imports(project_root, declared_set, max_files=filesystem_file_cap)
     if php_truncated:
         caps_hit.add(filesystem_file_cap)
     for dep, reasons in php_hits.items():
@@ -921,11 +923,9 @@ def compute_filesystem_reachability(
         lang = "python" if ext in ("py", "pyi") else "js/ts"
         _record(dep, f"{lang} import {site.file}:{site.line}", "direct")
 
-    out["_scan_truncated"] = {
-        "truncated": bool(caps_hit),
-        "max_files": min(caps_hit) if caps_hit else None,
-        "caps_hit": sorted(caps_hit),
-    }
+    if meta_out is not None:
+        meta_out["truncated"] = bool(caps_hit)
+        meta_out["caps_hit"] = sorted(caps_hit)
     return out
 
 
@@ -948,7 +948,6 @@ def merge_reachability(
         keys.update(graph.keys())
     if fs:
         keys.update(fs.keys())
-    keys.discard("_scan_truncated")
 
     merged: dict[str, dict] = {}
     for key in keys:
@@ -964,7 +963,4 @@ def merge_reachability(
             "confidence": "direct" if graph_reachable else f.get("confidence", "indirect"),
         }
         merged[key] = entry
-    scan_metadata = (fs or {}).get("_scan_truncated")
-    if scan_metadata:
-        merged["_scan_truncated"] = dict(scan_metadata)
     return merged

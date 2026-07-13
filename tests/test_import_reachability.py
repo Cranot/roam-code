@@ -72,6 +72,30 @@ def test_python_namespace_import_reaches_all_plausible_distributions(tmp_path) -
     assert all(reachability.is_reachable(dep) for dep in declared_deps)
 
 
+def test_python_legacy_one_to_one_alias_still_resolves_after_tuple_conversion(tmp_path) -> None:
+    """The multi-distribution change converted alias values str -> tuple; the
+    pre-existing 1:1 entries must keep resolving (a str/tuple regression here
+    would silently unmatch every classic alias like yaml -> pyyaml)."""
+    (tmp_path / "app.py").write_text("import yaml\n", encoding="utf-8")
+
+    reachability = scan_import_reachability(tmp_path)
+
+    assert reachability.sites_for("pyyaml") == [ImportSite("app.py", 1, "yaml")]
+    assert reachability.is_reachable("PyYAML")  # case-insensitive package match
+
+
+def test_python_mixed_case_local_shadow_suppresses_same_cased_import(tmp_path) -> None:
+    """First-party suppression compares raw (case-preserved) names on both
+    sides: a local ``Crypto.py`` suppresses ``import Crypto`` (pycryptodome's
+    real import casing), while a differently-cased local file does not."""
+    (tmp_path / "Crypto.py").write_text("# first-party Crypto module\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("import Crypto\n", encoding="utf-8")
+
+    reachability = scan_import_reachability(tmp_path)
+
+    assert reachability.sites_for("pycryptodome") == []
+
+
 def test_scan_reports_when_a_per_language_file_cap_is_hit(tmp_path) -> None:
     for index in range(3):
         (tmp_path / f"app{index}.py").write_text(f"import dependency{index}\n", encoding="utf-8")

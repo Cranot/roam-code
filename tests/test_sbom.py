@@ -101,6 +101,30 @@ class TestSbomJSON:
         assert requests["roam:reach_sources"] == "python import main.py:1"
         assert click["roam:reachable"] == "false"
 
+    def test_truncated_reachability_scan_is_disclosed_in_envelope(self, cli_runner, sbom_project, monkeypatch):
+        """A capped filesystem scan must surface Pattern-2 style in the envelope
+        (warnings_out marker), and must NEVER leak a pseudo-dependency into the
+        component list — the consumer-path halves of the truncation fix."""
+        # cmd_sbom lazily imports the scanner at invocation time, so patch the
+        # source module — the command binds the patched callable when it runs.
+        import roam.security.sbom_reachability as sbom_reach_module
+
+        real = sbom_reach_module.compute_filesystem_reachability
+
+        def capped(project_root, declared_deps, **kwargs):
+            kwargs["max_files"] = 1  # sbom_project has >1 scannable source file
+            return real(project_root, declared_deps, **kwargs)
+
+        monkeypatch.setattr(sbom_reach_module, "compute_filesystem_reachability", capped)
+        monkeypatch.chdir(sbom_project)
+        result = invoke_cli(cli_runner, ["sbom"], cwd=sbom_project, json_mode=True)
+        data = parse_json_output(result, "sbom")
+
+        warnings = data["summary"].get("warnings_out") or []
+        assert any(w.startswith("reachability_scan_truncated") for w in warnings), warnings
+        component_names = {c["name"] for c in data["sbom"]["components"]}
+        assert "_scan_truncated" not in component_names
+
 
 class TestSbomText:
     def test_verdict_line(self, cli_runner, sbom_project, monkeypatch):
