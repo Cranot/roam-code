@@ -388,6 +388,14 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 - **Small scripts (<10 files)** — read the files directly.
 - **Pure text search** — ripgrep is faster for raw string matching.
 
+### What's measured vs advisory
+
+Roam's surfaces differ in how rigorously they've been validated — know which is which before you gate on them:
+
+- **Reachability triage** (`roam vuln-reach`, `roam sbom`) — the most rigorously validated surface: import-specifier reachability separates reachable CVE'd deps from phantom ones with file:line evidence. Use it as the decision signal. (Real-CVE recall on unfamiliar repos is still being measured.)
+- **Taint packs** (`roam taint`) — validated on synthetic fixtures; real-code recall on arbitrary repositories is low/unmeasured. Treat findings as leads to investigate, not a completeness guarantee; the `--ci` gate is opt-in.
+- **Idiom & long-tail detectors** (`roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam n1`, framework idioms) — advisory. Blind precision on unfamiliar repos is not yet measured for all of them, and framework idiom detectors that measured low on stranger repos are opt-in (not on the default surface). Review each finding; don't gate CI on these alone.
+
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
