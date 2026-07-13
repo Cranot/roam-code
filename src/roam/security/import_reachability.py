@@ -190,6 +190,24 @@ def _read_text(path: Path, limit: int = 3_000_000) -> str:
         return ""
 
 
+def _first_party_python_roots(project_root: Path) -> set[str]:
+    """Return unambiguous top-level Python module/package names in the repo."""
+    roots: set[str] = set()
+    for source_root in (project_root, project_root / "src"):
+        if not source_root.is_dir():
+            continue
+        try:
+            children = list(source_root.iterdir())
+        except OSError:
+            continue
+        for path in children:
+            if path.is_file() and path.suffix.lower() in _PY_EXTS:
+                roots.add(path.stem)
+            elif path.is_dir() and (path / "__init__.py").is_file():
+                roots.add(path.name)
+    return roots
+
+
 def _python_import_roots(text: str) -> Iterable[tuple[str, int, str]]:
     """Yield ``(root_module, line, specifier)`` for third-party Python imports.
 
@@ -274,12 +292,15 @@ def scan_import_reachability(project_root: str | Path, *, max_files: int = 6000)
     if not root.exists():
         return reach
 
+    first_party_python_roots = _first_party_python_roots(root)
     for path in _iter_source_files(root, _PY_EXTS, max_files):
         text = _read_text(path)
         if not text:
             continue
         rel = _rel(path, root)
         for pkg_root, line, spec in _python_import_roots(text):
+            if pkg_root in first_party_python_roots:
+                continue
             reach._add(pkg_root, ImportSite(rel, line, spec))
 
     for path in _iter_source_files(root, _JS_EXTS, max_files):
