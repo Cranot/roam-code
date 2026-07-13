@@ -30,6 +30,7 @@ from roam.config import get_retrieve_config
 from roam.db.connection import batched_in
 from roam.graph.clone_detect import get_clone_siblings
 from roam.graph.dark_matter import co_change_scores_to_seed_set_bulk
+from roam.retrieve.repair_intent import RepairIntent, flag_enabled, score_retrieval_candidates
 from roam.retrieve.seeds import extract_tokens
 from roam.runtime.hotspots import runtime_score
 
@@ -48,6 +49,7 @@ def structural_score(
     config_root: Path | None = None,
     lexical_baseline: float | None = None,
     task: str = "",
+    repair_intent: RepairIntent | None = None,
 ) -> list[dict]:
     """Rerank *candidates* with structural signals.
 
@@ -89,6 +91,8 @@ def structural_score(
         seeds,
         task=task,
         use_personalized=use_personalized,
+        repair_intent=repair_intent,
+        project_root=config_root or Path.cwd(),
     )
     ctx = _build_scoring_context(
         candidates,
@@ -98,7 +102,8 @@ def structural_score(
         use_personalized=use_personalized,
         config_root=config_root,
         lexical_baseline=lexical_baseline,
-        **signal_maps,
+        **{key: value for key, value in signal_maps.items() if key != "repair_scores"},
+        repair_scores=signal_maps["repair_scores"],
     )
     return _rank_candidates(candidates, ctx)
 
@@ -111,6 +116,8 @@ def _gather_signal_maps(
     *,
     task: str,
     use_personalized: bool,
+    repair_intent: RepairIntent | None,
+    project_root: Path,
 ) -> dict[str, object]:
     """Collect all independently-computed signal maps into one dict.
 
@@ -119,6 +126,10 @@ def _gather_signal_maps(
     lets the scoring formula consume them cohesively without
     :func:`structural_score` needing to know how each signal is derived.
     """
+    repair_scores: dict[int, float] = {}
+    if repair_intent is not None and flag_enabled():
+        repair_scores = score_retrieval_candidates(candidates, repair_intent, project_root=project_root)
+
     return {
         "path_token_boost": _path_token_boost(candidates, task),
         "rule_yaml_penalty": _rule_yaml_penalty(candidates, task),
@@ -131,6 +142,7 @@ def _gather_signal_maps(
         "cochange_scores": _cochange_scores(conn, candidate_ids, seeds),
         "runtime_scores": _runtime_scores(conn, candidate_ids),
         "semantic_scores": _semantic_scores(conn, candidate_ids, task),
+        "repair_scores": repair_scores,
     }
 
 
@@ -161,6 +173,7 @@ def _build_scoring_context(
     async_query_boost: dict[int, float],
     recency_boost: dict[int, float],
     clone_tags: dict[int, dict],
+    repair_scores: dict[int, float],
 ) -> dict[str, object]:
     """Return a read-only context that captures the scoring formula state.
 
@@ -203,6 +216,7 @@ def _build_scoring_context(
         "cochange_max": cochange_max,
         "runtime_max": runtime_max,
         "semantic_max": semantic_max,
+        "repair_scores": repair_scores,
         "pr_scores": pr_scores,
         "cochange_scores": cochange_scores,
         "runtime_scores": runtime_scores,
@@ -248,6 +262,7 @@ def _normalized_signals(c: dict, ctx: dict[str, object]) -> tuple[dict[str, floa
     cochange_scores = ctx["cochange_scores"]  # type: ignore[assignment]
     runtime_scores = ctx["runtime_scores"]  # type: ignore[assignment]
     semantic_scores = ctx["semantic_scores"]  # type: ignore[assignment]
+    repair_scores = ctx["repair_scores"]  # type: ignore[assignment]
     clone_tags = ctx["clone_tags"]  # type: ignore[assignment]
     clone_info = clone_tags.get(sid)
 
@@ -264,13 +279,14 @@ def _normalized_signals(c: dict, ctx: dict[str, object]) -> tuple[dict[str, floa
         "recency_boost": ctx["recency_boost"].get(sid, 0.0),  # type: ignore[union-attr]
         "rule_yaml_penalty": ctx["rule_yaml_penalty"].get(sid, 0.0),  # type: ignore[union-attr]
         "test_file_penalty": ctx["test_file_penalty"].get(sid, 0.0),  # type: ignore[union-attr]
+        "repair_intent": repair_scores.get(sid, 0.0),  # type: ignore[union-attr]
     }
     return signals, clone_info
 
 
 def _blend_score(signals: dict[str, float], ctx: dict[str, object]) -> float:
     """Blend normalized signals into a single score."""
-    return (
+    score = (
         float(ctx["alpha"]) * signals["pr_norm"]  # type: ignore[arg-type]
         + float(ctx["beta"]) * signals["cochange_norm"]  # type: ignore[arg-type]
         + float(ctx["delta"]) * signals["runtime_norm"]  # type: ignore[arg-type]
@@ -284,6 +300,9 @@ def _blend_score(signals: dict[str, float], ctx: dict[str, object]) -> float:
         + signals["rule_yaml_penalty"]
         + signals["test_file_penalty"]
     )
+    if signals["repair_intent"]:
+        score += signals["repair_intent"]
+    return score
 
 
 def _justifications_for_signals(
@@ -309,6 +328,8 @@ def _justifications_for_signals(
     if clone_info:
         justifications["clone_cluster"] = clone_info["cluster_id"]
         justifications["clone_siblings"] = clone_info["sibling_count"]
+    if signals["repair_intent"]:
+        justifications["repair_intent"] = round(signals["repair_intent"], 4)
     return justifications
 
 

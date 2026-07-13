@@ -185,6 +185,66 @@ class TestPipeline:
 
 
 class TestRerank:
+    def test_repair_intent_flag_off_is_byte_identical(self, indexed_project, monkeypatch):
+        """Supplying intent cannot alter retrieval until the opt-in flag is set."""
+        from roam.db.connection import open_db
+        from roam.retrieve.repair_intent import derive_repair_intent
+        from roam.retrieve.rerank import structural_score
+
+        monkeypatch.delenv("ROAM_EXPERIMENTAL_REPAIR_INTENT", raising=False)
+        with open_db(readonly=True, project_root=indexed_project) as conn:
+            row = conn.execute(
+                "SELECT s.id AS symbol_id, s.name, s.kind, s.line_start, s.line_end, "
+                "       f.path AS file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id LIMIT 1"
+            ).fetchone()
+            assert row is not None
+            candidate = {**dict(row), "fts_score": 1.0}
+            kwargs = {
+                "use_personalized": False,
+                "config_root": indexed_project,
+                "lexical_baseline": 0.0,
+                "task": "",
+            }
+            baseline = structural_score(conn, [candidate], {}, {"alpha": 0.0}, **kwargs)
+            gated = structural_score(
+                conn,
+                [candidate],
+                {},
+                {"alpha": 0.0},
+                repair_intent=derive_repair_intent(["- return value", "+ return value.get()"]),
+                **kwargs,
+            )
+
+        assert gated == baseline
+
+    def test_repair_intent_flag_on_adds_justification(self, indexed_project, monkeypatch):
+        from roam.db.connection import open_db
+        from roam.retrieve.repair_intent import derive_repair_intent
+        from roam.retrieve.rerank import structural_score
+
+        monkeypatch.setenv("ROAM_EXPERIMENTAL_REPAIR_INTENT", "1")
+        with open_db(readonly=True, project_root=indexed_project) as conn:
+            row = conn.execute(
+                "SELECT s.id AS symbol_id, s.name, s.kind, s.line_start, s.line_end, "
+                "       f.path AS file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE s.name = 'refresh'"
+            ).fetchone()
+            assert row is not None
+            result = structural_score(
+                conn,
+                [{**dict(row), "fts_score": 1.0}],
+                {},
+                {"alpha": 0.0},
+                use_personalized=False,
+                config_root=indexed_project,
+                lexical_baseline=0.0,
+                repair_intent=derive_repair_intent(["- return self.token", "+ return self.token.upper()"]),
+            )
+
+        assert result[0]["justifications"]["repair_intent"] > 0
+
     def test_empty_candidates_returns_empty(self, indexed_project):
         from roam.db.connection import open_db
         from roam.retrieve.rerank import structural_score

@@ -23,6 +23,8 @@ memo.
 from __future__ import annotations
 
 import sqlite3
+import sys
+from pathlib import Path
 
 import click
 
@@ -33,6 +35,7 @@ from roam.db.connection import open_db
 from roam.output.confidence import verdict_prefix
 from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
+from roam.retrieve.repair_intent import REPAIR_INTENT_FLAG, flag_enabled, intent_from_patch
 from roam.retrieve.semantic import semantic_coverage
 
 _RECOVERABLE_RETRIEVE_ERRORS: tuple[type[Exception], ...] = (
@@ -75,7 +78,7 @@ def _compute_semantic_coverage(conn):
     return semantic_coverage(conn)
 
 
-def _fts5_search_full(conn, task_str, *, budget, k, rerank, seed_files):
+def _fts5_search_full(conn, task_str, *, budget, k, rerank, seed_files, repair_intent=None):
     """W607-BI substrate-CALL: full FTS5 + rerank pipeline.
 
     Delegates to ``run_retrieve``. On raise, the W607-BI wrapper retries
@@ -86,7 +89,7 @@ def _fts5_search_full(conn, task_str, *, budget, k, rerank, seed_files):
         conn,
         task_str,
         seed_files=seed_files,
-        options=RetrieveOptions(budget=budget, k=k, rerank=rerank),
+        options=RetrieveOptions(budget=budget, k=k, rerank=rerank, repair_intent=repair_intent),
     )
 
 
@@ -380,6 +383,16 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     help="Deprecated alias for --seed-file. Retained for backward compatibility.",
 )
 @click.option(
+    "--repair-intent",
+    "repair_intent_path",
+    type=str,
+    default=None,
+    help=(
+        f"Experimental unified diff used for repair-intent reranking; enable "
+        f"{REPAIR_INTENT_FLAG}=1 first. Use '-' to read stdin."
+    ),
+)
+@click.option(
     "--dry-run",
     "dry_run",
     is_flag=True,
@@ -402,7 +415,7 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     ),
 )
 @click.pass_context
-def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
+def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_run, scope_path):
     """Return ranked code spans for a free-form task.
 
     Composes hybrid first-stage (FTS5) + structural reranker (PageRank +
@@ -428,6 +441,13 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
         from roam.output.errors import EMPTY_INPUT, structured_usage_error
 
         raise structured_usage_error(EMPTY_INPUT, "task text cannot be empty")
+
+    repair_intent = None
+    if repair_intent_path is not None:
+        if not flag_enabled():
+            raise click.UsageError(f"Set {REPAIR_INTENT_FLAG}=1 to use --repair-intent.")
+        patch_text = sys.stdin.read() if repair_intent_path == "-" else Path(repair_intent_path).read_text(encoding="utf-8")
+        repair_intent = intent_from_patch(patch_text)
 
     ensure_index()
 
@@ -570,15 +590,20 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
                 _captured_exceptions["lexical"] = exc
                 raise
 
+        full_search_kwargs = {
+            "budget": effective_budget,
+            "k": effective_k,
+            "rerank": effective_rerank,
+            "seed_files": list(seed_files) or None,
+        }
+        if repair_intent is not None:
+            full_search_kwargs["repair_intent"] = repair_intent
         result = _run_check_bi(
             "fts5_search",
             _fts5_search_capture,
             conn,
             task_str,
-            budget=effective_budget,
-            k=effective_k,
-            rerank=effective_rerank,
-            seed_files=list(seed_files) or None,
+            **full_search_kwargs,
             default=None,
         )
         if result is None:

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from roam.config import get_retrieve_config, get_retrieve_weights
 from roam.db.connection import batched_in
+from roam.retrieve.repair_intent import RepairIntent
 from roam.retrieve.rerank import structural_score
 from roam.retrieve.seeds import _fts5_query_for, extract_tokens, infer_seeds
 
@@ -50,6 +51,7 @@ class RetrieveOptions:
     rerank: str = "fast"
     first_stage_limit: int = 200
     weights: dict[str, float] | None = None
+    repair_intent: RepairIntent | None = None
 
 
 def _resolve_options(options: RetrieveOptions | None) -> RetrieveOptions:
@@ -142,6 +144,7 @@ def run_retrieve(
         use_personalized=use_personalized,
         config_root=config_root,
         task=task,
+        repair_intent=opts.repair_intent,
     )
 
     if opts.rerank == "learned":
