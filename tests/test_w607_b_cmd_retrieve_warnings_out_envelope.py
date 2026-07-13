@@ -442,9 +442,11 @@ def test_caller_unmodified():
     """AST-check ``cmd_retrieve.retrieve``'s public interface.
 
     W607-B threads warnings_out PURELY internally (the bucket is a
-    local accumulator; no new Click option exposes it to callers).
-    The Click decorator surface, function name, and parameter list
-    must therefore remain byte-identical to pre-W607-B.
+    local accumulator; no new Click option exposes it to callers), so
+    it added nothing to the caller surface. The parameter list is pinned
+    here to catch accidental drift; deliberate feature additions (e.g.
+    the repair-intent reranker's --repair-intent option) update this
+    baseline explicitly.
     """
     path = repo_root() / "src" / "roam" / "commands" / "cmd_retrieve.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -456,8 +458,12 @@ def test_caller_unmodified():
     )
     assert fn is not None, "retrieve function not found in cmd_retrieve.py"
 
-    # Parameter list must be the canonical
-    # (ctx, task, budget, k, rerank, seed_files, dry_run, scope_path).
+    # Parameter list must be the canonical pre-W607-B set plus any
+    # deliberately-added public options. ``repair_intent_path`` was added
+    # intentionally by the repair-intent reranker feature (the
+    # --repair-intent Click option); it is a legitimate interface addition,
+    # not the accidental W607-B drift this guard defends against. Order is
+    # pinned so a future accidental insertion/removal still trips the guard.
     arg_names = [a.arg for a in fn.args.args]
     assert arg_names == [
         "ctx",
@@ -466,6 +472,7 @@ def test_caller_unmodified():
         "k",
         "rerank",
         "seed_files",
+        "repair_intent_path",
         "dry_run",
         "scope_path",
     ], f"retrieve parameter list drifted from pre-W607-B: {arg_names!r}"
