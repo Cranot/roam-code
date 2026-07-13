@@ -1,8 +1,9 @@
 """Filesystem-based reachability heuristics for SBOM dependency tracing.
 
 The graph-based ``_compute_reachability`` in ``cmd_sbom.py`` walks the indexed
-symbol graph. That alone misses 6 systematic false-positive categories:
+symbol graph. That alone misses 7 systematic false-positive categories:
 
+* **G — Source import specifiers** (Python and JavaScript/TypeScript packages)
 * **A — CSS side-effect imports** (``primeicons``, ``tailwindcss``)
 * **B — Dynamic imports** (``await import("...")``)
 * **C — Config-file imports** (``vite.config.ts``, ``tsconfig.json extends``)
@@ -22,6 +23,7 @@ This module supplements the graph-based check with cheap regex scans of:
 * ``package.json:scripts`` (binary-name cross-reference)
 * Known runtime loaders & ``@types/*`` (always-on heuristics)
 * ``composer.json`` + PHP ``use`` statements (namespace-root cross-reference)
+* Python and JavaScript/TypeScript source import specifiers
 
 Output: ``{dep_name: {reachable: bool, sources: [reason strings], confidence: str}}``
 
@@ -802,12 +804,12 @@ def compute_filesystem_reachability(
         {
             "reachable": bool,
             "sources": [reason strings],
-            "confidence": "css_import" | "dynamic_import" | "config_import" |
+            "confidence": "direct" | "css_import" | "dynamic_import" | "config_import" |
                           "script_consumer" | "loader" | "indirect",
         }
 
     Confidence is set to the *highest* trustworthiness source that flagged
-    the dep. Order (most to least): ``config_import`` > ``script_consumer``
+    the dep. Order (most to least): ``direct`` > ``config_import`` > ``script_consumer``
     > ``loader`` > ``css_import`` > ``dynamic_import`` > ``indirect``.
 
     ``reachable`` is True iff any source was found.
@@ -823,6 +825,7 @@ def compute_filesystem_reachability(
         "loader": 3,
         "script_consumer": 4,
         "config_import": 5,
+        "direct": 6,
     }
 
     def _record(dep: str, reason: str, confidence: str) -> None:
@@ -870,6 +873,20 @@ def compute_filesystem_reachability(
     for dep, reasons in php_hits.items():
         for r in reasons:
             _record(dep, r, "config_import")
+
+    # Category G — Python and JavaScript/TypeScript source imports
+    # Import locally to avoid the scanner's intentional dependency on
+    # ``_spec_root_package`` creating a module-import cycle. Preserve the
+    # established specialized confidence for dynamic/config import hits;
+    # this category closes the plain-source-import gap they do not cover.
+    from roam.security.import_reachability import scan_import_reachability
+
+    imported = scan_import_reachability(project_root)
+    for dep in declared_deps:
+        if out[dep]["reachable"] or not imported.is_reachable(dep):
+            continue
+        sites = imported.sites_for(dep)
+        _record(dep, f"python import {sites[0].file}:{sites[0].line}", "direct")
 
     return out
 

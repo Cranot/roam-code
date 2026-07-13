@@ -85,6 +85,22 @@ class TestSbomJSON:
             "sbom" in data or "document" in data or "components" in data["summary"] or "dependencies" in data["summary"]
         )
 
+    def test_imported_component_is_reachable_and_true_phantom_stays_false(self, cli_runner, sbom_project, monkeypatch):
+        monkeypatch.chdir(sbom_project)
+        result = invoke_cli(cli_runner, ["sbom"], cwd=sbom_project, json_mode=True)
+        data = parse_json_output(result, "sbom")
+        components = {component["name"]: component for component in data["sbom"]["components"]}
+
+        def properties(name):
+            return {prop["name"]: prop["value"] for prop in components[name]["properties"]}
+
+        requests = properties("requests")
+        click = properties("click")
+        assert requests["roam:reachable"] == "true"
+        assert requests["roam:reach_confidence"] == "direct"
+        assert requests["roam:reach_sources"] == "python import main.py:1"
+        assert click["roam:reachable"] == "false"
+
 
 class TestSbomText:
     def test_verdict_line(self, cli_runner, sbom_project, monkeypatch):
@@ -96,6 +112,25 @@ class TestSbomText:
         monkeypatch.chdir(sbom_project)
         result = invoke_cli(cli_runner, ["sbom"], cwd=sbom_project)
         assert "requests" in result.output.lower()
+
+
+def test_filesystem_reachability_tracks_import_site_and_preserves_true_phantom(tmp_path):
+    from roam.security.sbom_reachability import compute_filesystem_reachability
+
+    (tmp_path / "app.py").write_text("import yaml\n", encoding="utf-8")
+
+    reachability = compute_filesystem_reachability(tmp_path, ["PyYAML", "requests"])
+
+    assert reachability["PyYAML"] == {
+        "reachable": True,
+        "sources": ["python import app.py:1"],
+        "confidence": "direct",
+    }
+    assert reachability["requests"] == {
+        "reachable": False,
+        "sources": [],
+        "confidence": "indirect",
+    }
 
 
 class TestSbomOutputFile:

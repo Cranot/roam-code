@@ -573,9 +573,8 @@ class TestCrossEcosystemSbomReachabilityDisclosure:
         should consider returning a non-zero advisory code for runs
         where one or more declared ecosystems are unsupported.
 
-        Pinned LIVE (not xfail) — the asymmetry it documents is real
-        today: exit 0 + ``reachable_count: 0`` on a polyglot SBOM with
-        ingested CRITICAL-supply-chain-risk deps. If a future fix
+        Pinned LIVE (not xfail) — the imported Python dependency is direct,
+        while unsupported npm/Maven dependencies remain unresolved. If a future fix
         decides to flip the exit code as part of the disclosure surface
         (rather than just the envelope shape), this test will need
         updating in the same patch.
@@ -585,12 +584,9 @@ class TestCrossEcosystemSbomReachabilityDisclosure:
 
         assert res.exit_code == 0
         summary = data.get("summary") or {}
-        # We DO NOT assert reachable_count > 0 — the xfail above already
-        # pins the silent-SAFE shape. Just record the present-day state.
-        assert summary.get("reachable_count") == 0, (
-            "Today the envelope reports reachable_count=0 on a polyglot "
-            "SBOM. If a fix lands that flips this for ecosystem-unsupported "
-            "rows, update this assertion."
+        assert summary.get("reachable_count") == 1, (
+            "The imported Python dependency must be reachable while the "
+            "unsupported npm and Maven dependencies remain unresolved."
         )
 
 
