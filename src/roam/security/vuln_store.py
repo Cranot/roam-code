@@ -184,9 +184,24 @@ def _insert_vuln(
     Returns a dict describing the ingested vuln.
     """
     matches = match_vuln_to_symbols(conn, package_name, project_root=project_root)
-    matched_id = next((match["symbol_id"] for match in matches if match["symbol_id"] is not None), None)
+    # Reachability seeds MUST come from import evidence. A symbol_name match is
+    # a name coincidence -- a symbol in the indexed repo that happens to share
+    # the package's name -- not evidence the package is present or used. Both
+    # reachability engines (vuln_reach.analyze_reachability and cmd_vulns'
+    # in-memory fallback) compute graph reachability FROM matched_symbol_id, so
+    # seeding it from a coincidence lets a CVE with zero import evidence be
+    # reported reachable=1. matched_file follows the same rule because
+    # cmd_vuln_reach treats (no symbol id + a matched_file) as file-level
+    # import evidence. symbol_name matches stay in the match list for display.
+    import_edge_match = next((match for match in matches if match["match_kind"] == "import_edge"), None)
+    matched_id = import_edge_match["symbol_id"] if import_edge_match else None
     import_match = next((match for match in matches if match["match_kind"] == "import_site"), None)
-    matched_file = import_match["file_path"] if import_match else (matches[0]["file_path"] if matches else None)
+    if import_match is not None:
+        matched_file = import_match["file_path"]
+    elif import_edge_match is not None:
+        matched_file = import_edge_match["file_path"]
+    else:
+        matched_file = None
 
     conn.execute(
         "INSERT INTO vulnerabilities "
@@ -194,6 +209,13 @@ def _insert_vuln(
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (cve_id, package_name, severity, title, source, matched_id, matched_file),
     )
+
+    if import_match is not None:
+        match_kind = "import_site"
+    elif import_edge_match is not None:
+        match_kind = "import_edge"
+    else:
+        match_kind = None
 
     return {
         "cve_id": cve_id,
@@ -203,7 +225,7 @@ def _insert_vuln(
         "source": source,
         "matched_symbol_id": matched_id,
         "matched_file": matched_file,
-        "match_kind": import_match["match_kind"] if import_match else (matches[0]["match_kind"] if matches else None),
+        "match_kind": match_kind,
         "matched_line": import_match["line"] if import_match else None,
     }
 

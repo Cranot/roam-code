@@ -194,7 +194,9 @@ contains the literal answer — at **p50 0.45 s cold / p50 92 ms live**
 (warm cache) compile latency, fully local. Zero model calls.
 
 **Eval history by version** — re-measured on every kernel change; losses are
-published, attacked, then re-measured (full per-cell history in the repo):
+published, attacked, then re-measured. The table below is the summary ledger;
+raw per-cell data for the historical runs is retained privately, not in this
+repository:
 
 | measured | kernel | what | result |
 |---|---|---|---|
@@ -392,7 +394,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 
 Roam's surfaces differ in how rigorously they've been validated — know which is which before you gate on them:
 
-- **Reachability triage** (`roam vuln-reach`, `roam sbom`) — the most rigorously validated surface: import-specifier reachability separates reachable CVE'd deps from phantom ones with file:line evidence. Use it as the decision signal. (Real-CVE recall on unfamiliar repos is still being measured.)
+- **Reachability triage** (`roam vuln-reach`, `roam sbom`) — the most conservatively designed surface: reachability is derived only from import evidence (import sites and import edges, with file:line), never from symbol-name coincidence, so a CVE with no import evidence reports as unknown rather than reachable. Strong precision by construction; real-CVE recall on unfamiliar repos is still being measured — use it as a high-precision triage signal, and treat "unknown" as unverified rather than safe.
 - **Taint packs** (`roam taint`) — validated on synthetic fixtures; real-code recall on arbitrary repositories is low/unmeasured. Treat findings as leads to investigate, not a completeness guarantee; the `--ci` gate is opt-in.
 - **Idiom & long-tail detectors** (`roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam n1`, framework idioms) — advisory. Blind precision on unfamiliar repos is not yet measured for all of them, and framework idiom detectors that measured low on stranger repos are opt-in (not on the default surface). Review each finding; don't gate CI on these alone.
 

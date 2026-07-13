@@ -643,13 +643,40 @@ class TestMatchedFiles:
     """Test that matched_file is populated for package-matching vulns."""
 
     def test_matched_vulns_have_file(self, vuln_project, generic_report):
+        # matched_file now requires IMPORT evidence -- a symbol that merely
+        # shares the package's name must not populate it (cmd_vuln_reach reads
+        # a no-symbol matched_file as file-level import evidence, so a
+        # coincidence file would poison the reachability report). Give
+        # merge_data a real import edge, the shape the indexer emits on real
+        # repos; then its matched_file must point at the importing symbol's
+        # file (service.py), not the coincidental definition in utils.py.
+        import os as _os
+
+        from roam.db.connection import open_db
+
+        old_cwd = _os.getcwd()
+        try:
+            _os.chdir(str(vuln_project))
+            with open_db(readonly=False) as conn:
+                sid = {
+                    r["name"]: r["id"]
+                    for r in conn.execute(
+                        "SELECT id, name FROM symbols WHERE name IN ('process','merge_data')"
+                    )
+                }
+                conn.execute(
+                    "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'import')",
+                    (sid["process"], sid["merge_data"]),
+                )
+                conn.commit()
+        finally:
+            _os.chdir(old_cwd)
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)
         data = json.loads(result.output)
-        # merge_data matches a symbol in utils.py
         # R22 confidence triple shape — read package via .value
         merge_vulns = [v for v in data.get("vulnerabilities", []) if v["value"]["package"] == "merge_data"]
-        if merge_vulns:
-            assert merge_vulns[0]["value"].get("matched_file") is not None
+        assert merge_vulns, "merge_data vuln missing from output"
+        assert merge_vulns[0]["value"].get("matched_file") is not None
 
     def test_unmatched_vulns_no_file(self, vuln_project, generic_report):
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)

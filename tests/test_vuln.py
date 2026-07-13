@@ -123,20 +123,34 @@ class TestVulnIngestion:
         finally:
             os.chdir(old_cwd)
 
-    def test_ingest_matches_symbols(self, vuln_project, generic_vuln_report):
-        """Matched packages should have matched_symbol_id populated."""
+    def test_ingest_matches_imported_package(self, project_factory, tmp_path):
+        """A THIRD-PARTY package that IS imported gets import_site evidence
+        (production parity: the cmd path always passes project_root, so import
+        statements in the repo are scanned as file-level evidence). A
+        first-party module sharing the name would be excluded by the M10
+        shadow rule — hence ``vulnlib`` has no local file here.
+        """
+        import json as _json
+
         from roam.db.connection import open_db
         from roam.security.vuln_store import ingest_generic
 
+        proj = project_factory(
+            {"consumer.py": "import vulnlib\ndef use(): return vulnlib.go()\n"}
+        )
+        report = tmp_path / "vulnlib_vuln.json"
+        report.write_text(
+            _json.dumps([{"cve": "CVE-2024-0009", "package": "vulnlib", "severity": "high", "title": "x"}])
+        )
         old_cwd = os.getcwd()
         try:
-            os.chdir(str(vuln_project))
+            os.chdir(str(proj))
             with open_db(readonly=False) as conn:
-                results = ingest_generic(conn, generic_vuln_report)
-                # merge_data should be matched
-                merge_vuln = [r for r in results if r["package_name"] == "merge_data"]
-                assert len(merge_vuln) == 1
-                assert merge_vuln[0]["matched_symbol_id"] is not None
+                results = ingest_generic(conn, str(report), project_root=str(proj))
+                assert len(results) == 1
+                assert results[0]["match_kind"] == "import_site"
+                assert results[0]["matched_file"] is not None
+                assert results[0]["matched_line"] is not None
         finally:
             os.chdir(old_cwd)
 
@@ -153,6 +167,33 @@ class TestVulnIngestion:
                 unmatched = [r for r in results if r["package_name"] == "nonexistent_pkg"]
                 assert len(unmatched) == 1
                 assert unmatched[0]["matched_symbol_id"] is None
+        finally:
+            os.chdir(old_cwd)
+
+    def test_ingest_name_coincidence_is_not_import_evidence(self, vuln_project, generic_vuln_report):
+        """A symbol that merely SHARES the package's name must not seed the
+        reachability pipeline. Both ``merge_data`` and ``load_config`` exist as
+        symbol NAMES in this repo, but neither is imported as a PACKAGE
+        specifier: seeding matched_symbol_id from the coincidence let
+        reachability be computed from a coincidental symbol, and seeding
+        matched_file from it made cmd_vuln_reach's (no-symbol + matched_file)
+        heuristic read the coincidence as file-level import evidence. All
+        three fields must stay None — indistinguishable from a package that
+        is absent from the codebase.
+        """
+        from roam.db.connection import open_db
+        from roam.security.vuln_store import ingest_generic
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(vuln_project))
+            with open_db(readonly=False) as conn:
+                results = ingest_generic(conn, generic_vuln_report, project_root=str(vuln_project))
+                for pkg in ("merge_data", "load_config"):
+                    coincidence = next(r for r in results if r["package_name"] == pkg)
+                    assert coincidence["matched_symbol_id"] is None, pkg
+                    assert coincidence["matched_file"] is None, pkg
+                    assert coincidence["match_kind"] is None, pkg
         finally:
             os.chdir(old_cwd)
 
@@ -174,16 +215,38 @@ class TestVulnReachability:
         try:
             os.chdir(str(vuln_project))
             with open_db(readonly=False) as conn:
+                # The tiny fixture's index emits no import edges (module-scope
+                # imports at line 1 have no preceding symbol to attribute to),
+                # so give the engine a real one: process --import--> merge_data,
+                # exactly the shape the indexer emits on real repos.
+                sid = {
+                    r["name"]: r["id"]
+                    for r in conn.execute("SELECT id, name FROM symbols WHERE name IN ('process','merge_data')")
+                }
+                conn.execute(
+                    "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'import')",
+                    (sid["process"], sid["merge_data"]),
+                )
                 ingest_generic(conn, generic_vuln_report)
                 G = build_symbol_graph(conn)
                 results = analyze_reachability(conn, G)
                 assert len(results) == 3
-                # At least one should be reachable (merge_data has callers)
-                reachable = [r for r in results if r["reachable"] == 1]
-                # merge_data is called by process which is called by handle
-                # so it should be reachable from handle (in-degree 0 entry)
-                matched_reachable = [r for r in reachable if r["package_name"] == "merge_data"]
-                assert len(matched_reachable) >= 0  # relaxed: depends on graph structure
+                # merge_data with a real import EDGE (inserted above): the seed
+                # is the importing symbol (process), which handle() reaches, so
+                # reachability is a definite positive. The previous assertion
+                # here (len >= 0) was vacuously true and could not fail.
+                merge = next(r for r in results if r["package_name"] == "merge_data")
+                assert merge["matched_symbol_id"] is not None
+                assert merge["reachable"] == 1
+                # load_config exists as a SYMBOL NAME in config.py but is never
+                # imported anywhere. A bare name coincidence must not seed
+                # reachability: that was the FP class where a CVE with zero
+                # import evidence got reported reachable=1 in the sold report's
+                # decision signal. It must stay unmatched/unknown, exactly like
+                # a package absent from the codebase.
+                coincidence = next(r for r in results if r["package_name"] == "load_config")
+                assert coincidence["matched_symbol_id"] is None
+                assert coincidence["reachable"] == 0
         finally:
             os.chdir(old_cwd)
 

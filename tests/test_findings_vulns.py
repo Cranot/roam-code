@@ -281,10 +281,29 @@ def test_vulns_finding_evidence_carries_reachability(vuln_project, generic_repor
 
 
 def test_vulns_subject_kind_picks_symbol_when_matched(vuln_project, generic_report):
-    """Matched vulns get subject_kind=symbol + subject_id; otherwise package."""
+    """Matched vulns get subject_kind=symbol + subject_id; otherwise package.
+
+    Symbol seeds now require IMPORT evidence (a name coincidence must not seed
+    reachability — the sold report's decision signal). The tiny fixture's index
+    emits no import edges, so insert the one the indexer emits on real repos:
+    process --import--> merge_data. merge_data then resolves as a symbol
+    subject; load_config (a bare name coincidence) stays a package subject.
+    """
     old_cwd = os.getcwd()
     try:
         os.chdir(str(vuln_project))
+        with open_db(readonly=False) as conn:
+            sid = {
+                r["name"]: r["id"]
+                for r in conn.execute(
+                    "SELECT id, name FROM symbols WHERE name IN ('process','merge_data')"
+                )
+            }
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'import')",
+                (sid["process"], sid["merge_data"]),
+            )
+            conn.commit()
         _run_vulns_persist(vuln_project, generic_report)
 
         with open_db(readonly=True) as conn:
