@@ -885,8 +885,12 @@ def compute_filesystem_reachability(
     for dep in declared_deps:
         if out[dep]["reachable"] or not imported.is_reachable(dep):
             continue
-        sites = imported.sites_for(dep)
-        _record(dep, f"python import {sites[0].file}:{sites[0].line}", "direct")
+        site = imported.sites_for(dep)[0]
+        # ``scan_import_reachability`` covers both ecosystems; label by the hit's
+        # own extension so a JS/TS import is not mislabelled ``python import``.
+        ext = site.file.rsplit(".", 1)[-1].lower() if "." in site.file else ""
+        lang = "python" if ext in ("py", "pyi") else "js/ts"
+        _record(dep, f"{lang} import {site.file}:{site.line}", "direct")
 
     return out
 

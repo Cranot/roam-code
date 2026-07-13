@@ -467,6 +467,32 @@ def test_phantom_count_drops_dramatically_on_vue_vite_like_fixture(tmp_path: Pat
 
 
 # ---------------------------------------------------------------------------
+# Category G — plain Python + JS/TS source imports (label by the hit's own
+# ecosystem; a JS/TS hit must NOT be mislabelled ``python import``).
+# ---------------------------------------------------------------------------
+
+
+def test_source_import_python_dep_labelled_python(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("import requests\n", encoding="utf-8")
+    result = compute_filesystem_reachability(tmp_path, ["requests"])
+    assert result["requests"]["reachable"] is True
+    assert result["requests"]["confidence"] == "direct"
+    assert any(s.startswith("python import ") for s in result["requests"]["sources"])
+
+
+def test_source_import_jsts_dep_labelled_jsts_not_python(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "app.ts").write_text("import axios from 'axios'\n", encoding="utf-8")
+    result = compute_filesystem_reachability(tmp_path, ["axios"])
+    assert result["axios"]["reachable"] is True
+    assert result["axios"]["confidence"] == "direct"
+    sources = result["axios"]["sources"]
+    assert any(s.startswith("js/ts import ") for s in sources), sources
+    # the exact regression: a .ts hit is never labelled a python import
+    assert not any(s.startswith("python import ") for s in sources), sources
+
+
+# ---------------------------------------------------------------------------
 # merge_reachability — graph + fs fusion
 # ---------------------------------------------------------------------------
 
