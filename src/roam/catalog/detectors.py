@@ -5273,6 +5273,18 @@ def run_detectors(
     exclude_set = {n for n in (exclude or ()) if n} - only_set
     detector_entries = list(_iter_registered_detectors())
     known_detector_names = {getattr(fn, "__name__", "") for _task_id, _way_id, fn in detector_entries}
+    if not only_set:
+        # Experimental Python idioms remain registry-visible for discovery and
+        # explicit ``--only`` selection, but never execute on the default sold
+        # surface. This is intentionally a small default-exclude gate rather
+        # than a second detector-registration framework.
+        from roam.catalog.python_idioms import EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES
+
+        detector_entries = [
+            entry
+            for entry in detector_entries
+            if getattr(entry[2], "__name__", "") not in EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES
+        ]
     # W1057 (Pattern 1D + Pattern 2): diff user-supplied --only/--exclude against
     # the registry-derived authoritative detector-name set so unknown names
     # don't silently filter-to-zero. Mirrors the framework_unknown precedent

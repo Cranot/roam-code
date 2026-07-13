@@ -58,7 +58,7 @@ def test_lambda_in_loop_skips_non_capturing():
 def test_applicable_idiom_detectors_is_content_driven():
     """Only detectors whose trigger token is present run; generic ones always
     run. Makes the deep-verify sweep fire just the checks the change can trip."""
-    from roam.catalog.python_idioms import PYTHON_IDIOM_DETECTORS, applicable_idiom_detectors
+    from roam.catalog.python_idioms import DEFAULT_PYTHON_IDIOM_DETECTORS, applicable_idiom_detectors
 
     ids = lambda txt: {t for t, _w, _f in applicable_idiom_detectors(txt)}
     plain = ids("def f(x):\n    return x + 1\n")
@@ -69,10 +69,30 @@ def test_applicable_idiom_detectors_is_content_driven():
     assert "py-mutable-default-arg" in plain
     # content-present → detector included
     assert "py-regex-alt-join" in ids("p = re.compile(x)")
-    assert "py-django-n1" in ids("User.objects.filter(x)")
+    assert "py-django-n1" not in ids("User.objects.filter(x)")
+    assert "py-fastapi-depends" not in ids("Depends(get_user)")
     assert "py-lambda-in-loop" in ids("g = lambda y: y")
-    # plain code runs strictly fewer detectors than the full registry
-    assert len(plain) < len(PYTHON_IDIOM_DETECTORS)
+    # plain code runs strictly fewer detectors than the default registry
+    assert len(plain) < len(DEFAULT_PYTHON_IDIOM_DETECTORS)
+
+
+def test_measured_bad_idioms_are_opt_in_not_default():
+    """Measured-bad stranger-repo detectors stay sold-surface opt-in."""
+    from roam.catalog.python_idioms import (
+        DEFAULT_PYTHON_IDIOM_DETECTORS,
+        EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES,
+        PYTHON_IDIOM_DETECTORS,
+    )
+
+    default_names = {fn.__name__ for _task, _way, fn in DEFAULT_PYTHON_IDIOM_DETECTORS}
+    all_names = {fn.__name__ for _task, _way, fn in PYTHON_IDIOM_DETECTORS}
+
+    assert EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES == {
+        "detect_django_n1",
+        "detect_fastapi_depends",
+    }
+    assert EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES.isdisjoint(default_names)
+    assert EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES <= all_names
 
 
 # ---- loop-body performance idioms (2026-06-11 wave) ----

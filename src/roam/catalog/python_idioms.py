@@ -42,6 +42,8 @@ from roam.db.edge_kinds import CALL_EDGE_KINDS
 
 __all__ = [
     # Detector registry (consumed by detectors._iter_registered_detectors).
+    "DEFAULT_PYTHON_IDIOM_DETECTORS",
+    "EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES",
     "PYTHON_IDIOM_DETECTORS",
     # Helpers used by external command modules (e.g. cmd_context).
     "has_decorator",
@@ -1055,6 +1057,9 @@ def detect_lambda_in_loop(conn: sqlite3.Connection) -> list[dict]:
 def detect_django_n1(conn: sqlite3.Connection) -> list[dict]:
     """Find Django ORM N+1 patterns:
 
+    EXPERIMENTAL / opt-in: measured 17% blind precision on stranger repos as
+    of 2026-07-13; excluded by default until context-aware rework measures >=70%.
+
     * ``.objects.filter(...)`` / ``.get(...)`` *inside* a loop body.
     * ``.all()`` immediately followed by ``for x in qs:`` (suggests
       ``.select_related()`` / ``.prefetch_related()``).
@@ -1194,6 +1199,9 @@ def detect_sqlalchemy_lazy(conn: sqlite3.Connection) -> list[dict]:
 
 def detect_fastapi_depends(conn: sqlite3.Connection) -> list[dict]:
     """Inventory FastAPI ``Depends(X)`` provider chain.
+
+    EXPERIMENTAL / opt-in: measured 0% blind precision on stranger repos as
+    of 2026-07-13; excluded by default until context-aware rework measures >=70%.
 
     Not strictly an anti-pattern; surfaces as info-level findings so
     agents can discover the dependency graph for FastAPI apps.
@@ -1861,6 +1869,25 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-frame-concat-in-loop", "concat-per-iteration", detect_frame_concat_in_loop),
 ]
 
+# Thesis-Zero own-corpus trap (measured 2026-07-13): both detectors score
+# 1.0/1.0 on their author-written labelled fixtures but only 0% / 17% blind
+# precision on stranger repositories. Keep them discoverable and runnable via
+# ``roam math --only <detector-function-name>`` while withholding them from
+# every unqualified/default detector pack until context-aware rework measures
+# at least 70% blind precision.
+EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES = frozenset(
+    {
+        "detect_django_n1",
+        "detect_fastapi_depends",
+    }
+)
+
+DEFAULT_PYTHON_IDIOM_DETECTORS = [
+    detector
+    for detector in PYTHON_IDIOM_DETECTORS
+    if getattr(detector[2], "__name__", "") not in EXPERIMENTAL_PYTHON_IDIOM_DETECTOR_NAMES
+]
+
 
 # Cheap applicability gate (2026-06-05): a detector whose trigger token can't
 # appear in the changed text CANNOT produce a finding, so don't even run it.
@@ -1901,7 +1928,7 @@ def applicable_idiom_detectors(scanned_text: str):
     ``scanned_text`` — i.e. those whose trigger token is present, plus every
     detector that declares no trigger (generic patterns). Lets a caller skip the
     framework/library detectors that can't possibly apply to the change."""
-    for task_id, way, fn in PYTHON_IDIOM_DETECTORS:
+    for task_id, way, fn in DEFAULT_PYTHON_IDIOM_DETECTORS:
         trig = _IDIOM_TRIGGERS.get(task_id)
         if trig is None or any(t in scanned_text for t in trig):
             yield task_id, way, fn

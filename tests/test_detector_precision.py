@@ -105,6 +105,47 @@ def _run_detector_against(slug: str, detector_fn, tmp_path: Path, monkeypatch):
     return by_file
 
 
+def _run_explicit_detector_against(slug: str, detector_fn, tmp_path: Path, monkeypatch):
+    """Run an opt-in detector through the production ``--only`` dispatch."""
+    import shutil
+
+    from roam.catalog.detectors import run_detectors
+    from roam.catalog.python_idioms import _clear_file_text_cache
+
+    _clear_file_text_cache()
+    src = FIXTURE_ROOT / slug
+    for fixture in src.iterdir():
+        if fixture.suffix == ".py" or fixture.name == "expected.json":
+            shutil.copy(fixture, tmp_path / fixture.name)
+
+    monkeypatch.chdir(tmp_path)
+    _index_fixture_dir(tmp_path)
+
+    with open_db(readonly=False) as conn:
+        findings, meta = run_detectors(
+            conn,
+            profile="aggressive",
+            return_meta=True,
+            only=(detector_fn.__name__,),
+        )
+
+    assert meta["detectors_executed"] == 1
+    assert set(meta["detector_metadata"]) == {f"py-{slug.replace('_', '-')}"}
+
+    by_file: dict[str, set[int]] = {}
+    for finding in findings:
+        location = finding.get("location", "")
+        if ":" not in location:
+            continue
+        path_str, line_str = location.rsplit(":", 1)
+        try:
+            line_no = int(line_str)
+        except ValueError:
+            continue
+        by_file.setdefault(Path(path_str).name, set()).add(line_no)
+    return by_file
+
+
 def _precision_recall(actual: dict[str, set[int]], expected: dict) -> tuple[float, float, dict]:
     """Compare detector output against ground truth.
 
@@ -173,3 +214,16 @@ def test_flask_debug_true_suppresses_test_contexts_without_recall_loss(tmp_path,
         "src/guard_flask_app.py": {8},
         "tp_flask_app.py": {29},
     }
+
+
+@pytest.mark.parametrize("slug", ["django_n1", "fastapi_depends"])
+def test_experimental_detector_precision_when_explicitly_selected(slug, tmp_path, monkeypatch):
+    """Opt-in dispatch still runs the real detector against labelled fixtures."""
+    detector_fn = _DETECTORS[slug]
+    expected = json.loads((FIXTURE_ROOT / slug / "expected.json").read_text(encoding="utf-8"))
+
+    actual = _run_explicit_detector_against(slug, detector_fn, tmp_path, monkeypatch)
+    precision, recall, diag = _precision_recall(actual, expected)
+
+    assert precision >= _THRESHOLDS[slug]["precision"], diag
+    assert recall >= _THRESHOLDS[slug]["recall"], diag
