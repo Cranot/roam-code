@@ -102,8 +102,7 @@ def score_retrieval_candidates(
         pool.append(ScoredCandidate(candidate=candidate, lexical=float(row.get("fts_score") or 0.0)))
 
     return {
-        int(item.candidate.meta.get("id") or 0): item.repair_score
-        for item in score_pool_repair_intent(pool, intent)
+        int(item.candidate.meta.get("id") or 0): item.repair_score for item in score_pool_repair_intent(pool, intent)
     }
 
 

@@ -135,9 +135,7 @@ class TestVulnIngestion:
         from roam.db.connection import open_db
         from roam.security.vuln_store import ingest_generic
 
-        proj = project_factory(
-            {"consumer.py": "import vulnlib\ndef use(): return vulnlib.go()\n"}
-        )
+        proj = project_factory({"consumer.py": "import vulnlib\ndef use(): return vulnlib.go()\n"})
         report = tmp_path / "vulnlib_vuln.json"
         report.write_text(
             _json.dumps([{"cve": "CVE-2024-0009", "package": "vulnlib", "severity": "high", "title": "x"}])

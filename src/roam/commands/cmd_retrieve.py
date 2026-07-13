@@ -446,7 +446,9 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
     if repair_intent_path is not None:
         if not flag_enabled():
             raise click.UsageError(f"Set {REPAIR_INTENT_FLAG}=1 to use --repair-intent.")
-        patch_text = sys.stdin.read() if repair_intent_path == "-" else Path(repair_intent_path).read_text(encoding="utf-8")
+        patch_text = (
+            sys.stdin.read() if repair_intent_path == "-" else Path(repair_intent_path).read_text(encoding="utf-8")
+        )
         repair_intent = intent_from_patch(patch_text)
 
     ensure_index()

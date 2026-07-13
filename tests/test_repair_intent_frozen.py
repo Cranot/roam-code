@@ -26,9 +26,7 @@ def _frozen_cases(corpus: dict) -> list[dict]:
 
 def _candidate_for_site(site: dict, ordinal: int) -> ScoredCandidate:
     body = "\n".join(
-        value[1:]
-        for value in site.get("changes", [])
-        if isinstance(value, str) and value[:1] in {"+", "-"}
+        value[1:] for value in site.get("changes", []) if isinstance(value, str) and value[:1] in {"+", "-"}
     )
     candidate = ScorerCandidate.from_body(
         {
@@ -74,10 +72,9 @@ def test_frozen_corpus_replay_uses_ported_scorer() -> None:
     assert replayed == 1530
     assert score_digest.hexdigest() == "8c81b43903dfb7f2e9a9a7474baf93e944a914ec5d46990d1bacd335b96d264b"
 
-    measured_ndcg10 = sum(
-        float(case["case_metrics"]["T"]["ndcg@10"])
-        for case in results["cases"]
-    ) / len(results["cases"])
+    measured_ndcg10 = sum(float(case["case_metrics"]["T"]["ndcg@10"]) for case in results["cases"]) / len(
+        results["cases"]
+    )
     assert abs(measured_ndcg10 - EXPECTED_T_NDCG10) <= 0.005
 
 

@@ -660,9 +660,7 @@ class TestMatchedFiles:
             with open_db(readonly=False) as conn:
                 sid = {
                     r["name"]: r["id"]
-                    for r in conn.execute(
-                        "SELECT id, name FROM symbols WHERE name IN ('process','merge_data')"
-                    )
+                    for r in conn.execute("SELECT id, name FROM symbols WHERE name IN ('process','merge_data')")
                 }
                 conn.execute(
                     "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, 'import')",
