@@ -210,9 +210,10 @@
       </div>
       <p>
         Claude head-to-head vs vanilla, June 2026, 41 cells. Bug-fixing graded
-        by a failing-test-transitions-to-passing oracle: 10/10 fixed in both
-        arms at −13% cost. Replayed on 723 real prompts: 91% of envelopes
-        ship pre-executed answers — the agent's first token can be the answer.
+        by a failing-test-transitions-to-passing oracle: 10/10 in both arms at
+        −13% cost (n=10 — no parity claim). Replayed on 723 real prompts: 57%
+        of envelopes ship pre-executed answers — the agent's first token can
+        be the answer — and a further ~33% ship structured facts.
         <em>Honest caveats attached: the two cells we once published as losses
         (trivial prompts, code generation) were attacked in v13.6 and
         re-measured — now a tie and a −26% win; every number keeps its
@@ -221,7 +222,7 @@
       <p>
         Prefer a dedicated CLI? The same loop ships as
         <a href="https://github.com/Cranot/compile-code">compile-code</a> —
-        <code>pip install compile-code &amp;&amp; compile claude</code>.
+        <code>pip install git+https://github.com/Cranot/compile-code &amp;&amp; compile claude</code>.
       </p>
     </div>
   </section>

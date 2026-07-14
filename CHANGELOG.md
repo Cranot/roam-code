@@ -275,7 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### Measured
 
-- Compiler A/B on Claude (Fable 5), 41 cells, n=2/cell: **−83% agent turns (median 6 → 1), −80% input tokens (271K → 53K), −63% cost, −50% wall** on navigation/comprehension tasks; same shape on Opus (−86% turns). Ground-truth bug-fix bench (20 cells, planted bugs): saturated 10/10 vs 10/10 with compile slightly cheaper. Compile overhead p50 92ms / p95 305ms per prompt.
+- Compiler A/B on Claude (Fable 5), 41 cells, n=2/cell: **−83% agent turns (median 6 → 1), −80% input tokens (271K → 53K), −63% cost, −50% wall** on navigation/comprehension tasks; same shape on Opus (−86% turns) [corrected 2026-07-14: −33% turns overall; −88% was a single cell — see the README claims audit, c2adf10d]. Ground-truth bug-fix bench (20 cells, planted bugs): saturated 10/10 vs 10/10 with compile slightly cheaper. Compile overhead p50 92ms / p95 305ms per prompt.
 
 ### Perf + drift-truth wave (2026-05-22)
 
