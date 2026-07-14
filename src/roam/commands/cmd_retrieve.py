@@ -38,8 +38,18 @@ from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 from roam.retrieve.repair_intent import intent_from_patch
 from roam.retrieve.semantic import semantic_coverage
 
+# Retrieve error-hardening (2026-07-14): ArithmeticError (scoring math),
+# AttributeError / LookupError (shape drift inside pipeline dicts) and
+# ImportError (lazy imports inside the rerank + confidence paths) join the
+# recoverable set so they degrade to a disclosed marker instead of a raw
+# Click traceback. BaseException families (KeyboardInterrupt, SystemExit,
+# MemoryError) stay uncaught by design.
 _RECOVERABLE_RETRIEVE_ERRORS: tuple[type[Exception], ...] = (
     click.ClickException,
+    ArithmeticError,
+    AttributeError,
+    ImportError,
+    LookupError,
     OSError,
     RuntimeError,
     TypeError,
@@ -76,6 +86,171 @@ def _load_retrieve_config():
 def _compute_semantic_coverage(conn):
     """W607-BI substrate-CALL: semantic-coverage diagnostic."""
     return semantic_coverage(conn)
+
+
+def _count_fts_rows(conn):
+    """Substrate-CALL: ``symbol_fts`` row count (error-hardening 2026-07-14).
+
+    Previously an inline ``try/except sqlite3.Error`` that silently
+    coerced failure to ``-1`` with NO disclosure (Pattern-2 silent
+    fallback). Wrapped via ``_run_check_bi`` so a missing/corrupt FTS5
+    table surfaces a ``retrieve_fts_count_failed:`` marker.
+    """
+    return conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
+
+
+def _count_symbols(conn):
+    """Substrate-CALL: ``symbols`` row count (error-hardening 2026-07-14).
+
+    Previously an UNGUARDED query — a corrupt DB (missing ``symbols``
+    table) crashed retrieve with a raw traceback before any envelope
+    emitted (Pattern-1). ``-1`` sentinel = "count unavailable"; the
+    empty-index early return requires ``sym_count > 0`` so an unreadable
+    count never masquerades as an empty index.
+    """
+    return conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+
+def _stdin_is_tty() -> bool:
+    """Return whether stdin is an interactive terminal.
+
+    Module-level shim so tests can monkeypatch TTY-ness (CliRunner
+    always presents a non-tty stdin). A closed/detached stdin counts as
+    non-interactive; the actual read is guarded by the caller.
+    """
+    try:
+        return bool(sys.stdin.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _read_repair_intent_patch(repair_intent_path: str) -> str:
+    """Read the ``--repair-intent`` patch text with structured failure modes.
+
+    Error-hardening (2026-07-14): every failure raises a
+    ``structured_usage_error`` (stable SCREAMING_SNAKE_CASE prefix) so
+    agents can branch on the code instead of parsing a traceback:
+
+    * ``-`` with an interactive stdin -> ``EMPTY_INPUT`` (Pattern-1A:
+      ``sys.stdin.read()`` on a TTY blocks forever)
+    * missing / unreadable file       -> ``FILE_NOT_FOUND``
+    * non-UTF-8 bytes                 -> ``INVALID_DIFF``
+    """
+    from roam.output.errors import EMPTY_INPUT, FILE_NOT_FOUND, INVALID_DIFF, structured_usage_error
+
+    if repair_intent_path == "-":
+        if _stdin_is_tty():
+            raise structured_usage_error(
+                EMPTY_INPUT,
+                "--repair-intent - expects a unified diff on stdin, but stdin is an "
+                "interactive terminal. Pipe a diff (`git diff | roam retrieve ... "
+                "--repair-intent -`) or pass a file path instead.",
+            )
+        try:
+            return sys.stdin.read()
+        except (OSError, ValueError) as exc:
+            raise structured_usage_error(INVALID_DIFF, f"could not read patch from stdin: {exc}") from exc
+    try:
+        return Path(repair_intent_path).read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise structured_usage_error(
+            FILE_NOT_FOUND,
+            f"--repair-intent file does not exist: {repair_intent_path}",
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise structured_usage_error(
+            INVALID_DIFF,
+            f"--repair-intent file is not valid UTF-8 text: {repair_intent_path} ({exc})",
+        ) from exc
+    except OSError as exc:
+        raise structured_usage_error(
+            FILE_NOT_FOUND,
+            f"--repair-intent file could not be read: {repair_intent_path} ({exc})",
+        ) from exc
+
+
+def _parse_repair_intent(patch_text: str):
+    """Validate + derive the repair intent with structured failure modes.
+
+    * empty patch text      -> ``EMPTY_INPUT``
+    * zero +/- change lines -> ``INVALID_DIFF`` — previously the flag
+      silently no-opped on non-diff input (Pattern-2: the user believed
+      the repair-intent rerank applied when it contributed nothing)
+    * derivation crash      -> ``INVALID_DIFF`` (defensive)
+    """
+    from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
+
+    if not (patch_text or "").strip():
+        raise structured_usage_error(EMPTY_INPUT, "--repair-intent patch is empty")
+    try:
+        from roam.sibling_patch.repair_scorer import parse_patch_changes
+
+        changes = parse_patch_changes(patch_text)
+        if not changes:
+            raise structured_usage_error(
+                INVALID_DIFF,
+                "--repair-intent input has no +/- change lines; expected a unified diff "
+                "(the repair-intent rerank would silently be a no-op)",
+            )
+        return intent_from_patch(patch_text)
+    except click.ClickException:
+        raise
+    except _RECOVERABLE_RETRIEVE_ERRORS as exc:
+        raise structured_usage_error(
+            INVALID_DIFF, f"could not derive repair intent from patch: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+_RESULT_REQUIRED_KEYS: tuple[str, ...] = (
+    "task",
+    "rerank",
+    "seeds",
+    "candidates",
+    "total_candidates",
+    "budget",
+    "budget_used",
+    "k",
+    "weights",
+)
+
+_SEMANTIC_DIAG_DEFAULTS: dict = {"embeddings": 0, "coverage_pct": 0.0, "ready": False}
+
+
+def _normalize_result_shape(result, *, task_str, rerank, budget, k):
+    """Shape guard (error-hardening 2026-07-14): fill missing pipeline keys.
+
+    Returns ``(normalized_result, missing_keys)``. A well-formed pipeline
+    result passes through untouched (``missing_keys == []``) so the
+    happy-path envelope stays byte-identical. A partial dict — or a
+    non-dict — is completed with floor defaults so downstream field
+    access (``result["budget_used"]`` etc.) can never KeyError-crash the
+    envelope wholesale; the caller discloses ``missing_keys`` via a
+    ``retrieve_result_shape_failed:`` marker.
+    """
+    defaults = {
+        "task": task_str,
+        "rerank": rerank,
+        "seeds": [],
+        "candidates": [],
+        "total_candidates": 0,
+        "budget": budget,
+        "budget_used": 0,
+        "k": k,
+        "weights": {},
+    }
+    if not isinstance(result, dict):
+        return dict(defaults), list(_RESULT_REQUIRED_KEYS)
+    missing = [key for key in _RESULT_REQUIRED_KEYS if key not in result]
+    for key in missing:
+        result[key] = defaults[key]
+    # Type-level floor: list/dict-shaped fields consumed via iteration or
+    # ``.get`` must actually be lists/dicts.
+    for key, want in (("candidates", list), ("seeds", list), ("weights", dict)):
+        if not isinstance(result.get(key), want):
+            result[key] = defaults[key]
+            if key not in missing:
+                missing.append(key)
+    return result, missing
 
 
 def _fts5_search_full(conn, task_str, *, budget, k, rerank, seed_files, repair_intent=None):
@@ -450,10 +625,12 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
         # lock on an already-locked door — a user who found the flag, read --help and tried
         # it got an error telling them to go set an environment variable. The ranking is
         # pinned by a frozen 576-case corpus in CI (tests/test_repair_intent_frozen.py).
-        patch_text = (
-            sys.stdin.read() if repair_intent_path == "-" else Path(repair_intent_path).read_text(encoding="utf-8")
-        )
-        repair_intent = intent_from_patch(patch_text)
+        # Error-hardening (2026-07-14): both the read and the parse raise
+        # structured usage errors (FILE_NOT_FOUND / INVALID_DIFF /
+        # EMPTY_INPUT) instead of leaking a raw traceback, and `-` on an
+        # interactive stdin fails fast instead of hanging on read().
+        patch_text = _read_repair_intent_patch(repair_intent_path)
+        repair_intent = _parse_repair_intent(patch_text)
 
     ensure_index()
 
@@ -532,40 +709,59 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
         # Defensive guard: if symbol_fts has been wiped (rare, but seen
         # mid-session after schema migrations on cloud-synced repos), the
         # entire pipeline silently returns 0 candidates. Surface a clear
-        # remediation message instead.
-        try:
-            fts_count = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
-        except sqlite3.Error:
-            fts_count = -1
-        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        # remediation message instead. Error-hardening (2026-07-14): both
+        # counts run through _run_check_bi — the fts count used to fail
+        # SILENTLY (no marker) and the symbols count used to be entirely
+        # unguarded (raw traceback on a corrupt DB). -1 = "unavailable";
+        # the empty-index branch requires sym_count > 0 so an unreadable
+        # count is never reported as an empty index (Pattern-2).
+        fts_count = _run_check_bi("fts_count", _count_fts_rows, conn, default=-1)
+        sym_count = _run_check_bi("symbol_count", _count_symbols, conn, default=-1)
         semantic_diag = _run_check_bi(
             "compute_semantic_coverage",
             _compute_semantic_coverage,
             conn,
-            default={"embeddings": 0, "coverage_pct": 0.0, "ready": False},
+            default=dict(_SEMANTIC_DIAG_DEFAULTS),
         )
+        # Shape floor for the diagnostic sidecar: a substrate that RETURNS
+        # a malformed dict (rather than raising) must not KeyError the
+        # envelope build below. Disclosed, never silent.
+        if not isinstance(semantic_diag, dict):
+            _w607bi_warnings_out.append(
+                f"retrieve_semantic_coverage_shape_failed:TypeError:{type(semantic_diag).__name__}"
+            )
+            semantic_diag = dict(_SEMANTIC_DIAG_DEFAULTS)
+        elif any(key not in semantic_diag for key in _SEMANTIC_DIAG_DEFAULTS):
+            missing_diag = [key for key in _SEMANTIC_DIAG_DEFAULTS if key not in semantic_diag]
+            _w607bi_warnings_out.append(f"retrieve_semantic_coverage_shape_failed:KeyError:{','.join(missing_diag)}")
+            semantic_diag = {**_SEMANTIC_DIAG_DEFAULTS, **semantic_diag}
         if sym_count > 0 and fts_count == 0:
             msg = f"VERDICT: search index is empty (0 / {sym_count} symbols indexed for FTS5)."
+            # Carry any markers accumulated so far — the early return must
+            # not drop disclosure (Pattern-2 parity with the main path).
+            early_combined = list(warnings_out) + list(_w607bi_warnings_out)
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "retrieve",
-                            summary={
-                                "verdict": msg,
-                                "candidates": 0,
-                                "total_candidates": 0,
-                                "fts_rows": 0,
-                                "symbol_count": sym_count,
-                            },
-                            semantic_coverage=semantic_diag,
-                            budget=effective_budget,
-                            task=task_str,
-                        )
-                    )
-                )
+                early_summary: dict = {
+                    "verdict": msg,
+                    "candidates": 0,
+                    "total_candidates": 0,
+                    "fts_rows": 0,
+                    "symbol_count": sym_count,
+                }
+                early_kwargs: dict = {
+                    "semantic_coverage": semantic_diag,
+                    "budget": effective_budget,
+                    "task": task_str,
+                }
+                if early_combined:
+                    early_summary["warnings_out"] = list(early_combined)
+                    early_summary["partial_success"] = True
+                    early_kwargs["warnings_out"] = list(early_combined)
+                click.echo(to_json(json_envelope("retrieve", summary=early_summary, **early_kwargs)))
             else:
                 click.echo(msg)
+                for warning in early_combined:
+                    click.echo(f"  warning: {warning}")
                 click.echo("Run `roam index --force` to rebuild the search index.")
             return
 
@@ -652,6 +848,20 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
                 "weights": {},
             }
 
+    # Error-hardening (2026-07-14): shape-normalize the pipeline result so
+    # a partial dict (or non-dict) from a drifted/monkeypatched substrate
+    # can never KeyError-crash the envelope build. Well-formed results
+    # pass through untouched — the happy path stays byte-identical.
+    result, _shape_missing = _normalize_result_shape(
+        result,
+        task_str=task_str,
+        rerank=effective_rerank,
+        budget=effective_budget,
+        k=effective_k,
+    )
+    if _shape_missing:
+        _w607bi_warnings_out.append(f"retrieve_result_shape_failed:KeyError:{','.join(_shape_missing)}")
+
     candidates = result["candidates"]
     if scope_path:
         # post-filter candidates by path prefix. Normalising
@@ -682,7 +892,15 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
         task_str,
         default=(0.0, "low"),
     )
-    confidence_score, confidence = confidence_pair
+    # Error-hardening (2026-07-14): the unpack itself was unguarded — a
+    # substrate that RETURNS a malformed value (not a 2-tuple, or a
+    # non-numeric score) crashed after the guard. Coerce with disclosure.
+    try:
+        confidence_score = float(confidence_pair[0])
+        confidence = str(confidence_pair[1])
+    except (IndexError, KeyError, TypeError, ValueError):
+        _w607bi_warnings_out.append(f"retrieve_confidence_shape_failed:TypeError:{type(confidence_pair).__name__}")
+        confidence_score, confidence = 0.0, "low"
     base_verdict = (
         f"{len(candidates)} span{'s' if len(candidates) != 1 else ''} "
         f"({result['budget_used']}/{result['budget']} tokens, "
@@ -785,7 +1003,37 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
         click.echo(text)
         return
 
+    # Error-hardening (2026-07-14): compute the low-confidence refinements
+    # BEFORE printing (guarded — this call was previously unguarded in
+    # text mode) so the combined disclosure bucket is complete when the
+    # DEGRADED block prints directly under the verdict.
+    refined: list[str] = []
+    if confidence_score < 0.40 and candidates:
+        refined = (
+            _run_check_bi(
+                "suggest_refinements",
+                _suggest_refinements,
+                task_str,
+                candidates,
+                default=[],
+            )
+            or []
+        )
+
+    combined = list(warnings_out) + list(_w607bi_warnings_out)
+
     click.echo(f"VERDICT: {verdict}")
+    if combined:
+        # Pattern-2 disclosure parity with the JSON envelope: a degraded
+        # text-mode run must never look identical to a clean one. Before
+        # this block, a wholesale pipeline failure printed the same
+        # "No candidates matched the task text" as a legitimate empty
+        # result. Empty bucket -> byte-identical text output.
+        click.echo(
+            f"DEGRADED: {len(combined)} substrate warning{'s' if len(combined) != 1 else ''} (results may be partial)"
+        )
+        for warning in combined:
+            click.echo(f"  warning: {warning}")
     if not candidates:
         click.echo()
         click.echo("Try `roam retrieve <task> --seed-file <path>` to anchor the search.")
@@ -798,10 +1046,18 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
     click.echo()
 
     for idx, item in enumerate(candidates, start=1):
-        score = item.get("score", 0.0)
-        kind = item.get("kind", "?")
-        name = item.get("name", "?")
-        path = item.get("file_path", "?")
+        # Error-hardening (2026-07-14): coerce display fields — a None
+        # kind/name or a string score from a drifted candidate row used
+        # to TypeError inside the f-string format specs.
+        if not isinstance(item, dict):
+            continue
+        try:
+            score = float(item.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        kind = str(item.get("kind") or "?")
+        name = str(item.get("name") or "?")
+        path = str(item.get("file_path") or "?")
         line = item.get("line_start") or 0
         click.echo(f"{idx:2d}. [{score:.3f}] {kind:<8} {name:<40s} {loc(path, line)}")
         just = item.get("justifications") or {}
@@ -820,7 +1076,11 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
         f"SUMMARY: {len(candidates)} of {result['total_candidates']} candidates, "
         f"{result['budget_used']} tokens used (budget {result['budget']})"
     )
-    if float(result["weights"].get("zeta", 0.0) or 0.0) > 0 and not semantic_diag["ready"]:
+    try:
+        zeta_weight = float(result["weights"].get("zeta", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        zeta_weight = 0.0
+    if zeta_weight > 0 and not semantic_diag.get("ready"):
         click.echo(
             "SEMANTIC: 0 dense vectors available; zeta is currently inert. "
             "Configure semantic backend and rerun `roam index` to activate it."
@@ -831,10 +1091,9 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
     # the returned spans. Surface 2-3 refined queries the agent can
     # try next: dropping generic NL words, adding a seed-files
     # anchor, or pivoting to ``roam search`` for exact name match.
-    if confidence_score < 0.40 and candidates:
-        refined = _suggest_refinements(task_str, candidates)
-        if refined:
-            click.echo()
-            click.echo("REFINE: low confidence — try a tighter query:")
-            for r in refined:
-                click.echo(f"  {r}")
+    # (Computed guarded, pre-print — see the DEGRADED block above.)
+    if refined:
+        click.echo()
+        click.echo("REFINE: low confidence — try a tighter query:")
+        for r in refined:
+            click.echo(f"  {r}")
