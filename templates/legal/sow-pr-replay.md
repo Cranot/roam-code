@@ -181,12 +181,15 @@ governs. The clauses most material to PR Replay engagements:
   14 calendar days of payment per Directive 2011/83/EU. Where Client
   is a business buyer (B2B), the right of withdrawal does not strictly
   apply but Provider honours it in practice.
-- **Zero-findings clause**: If a Team engagement surfaces zero findings
-  worth wiring into CI (Provider's reasonable judgement, narrated in
-  the report), Provider will at Client's choice either (a) re-run the
-  replay on a different range at no additional fee, or (b) refund 50%
-  of the fee. Deep engagements do not carry this clause due to the
-  longer window.
+- **False-positive and material-findings clause**: On the walk-through,
+  Provider and Client review each high- and medium-severity finding.
+  Any finding Client's team calls a false positive is struck from the
+  report and its pro-rata share of the fee refunded. If fewer than half
+  of the high- and medium-severity findings survive that review, Client
+  receives a full refund. If the report surfaces zero material findings,
+  the refund is 100% of the fee (not 50%). Client keeps the delivered
+  report and evidence packet in all cases. This clause applies to Team
+  and Deep engagements alike.
 - **Post-kickoff cancellation (Client request)**: Non-refundable, but
   Provider will deliver the work-in-progress at the time of cancellation
   if Client requests it.
