@@ -394,6 +394,18 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 
 Roam's surfaces differ in how rigorously they've been validated — know which is which before you gate on them:
 
+- **Repair-intent retrieval** (`roam retrieve --repair-intent <patch>`) — **the one surface with a preregistered, held-out, stranger-repo result.** Give it the diff of a fix you just made and it reranks toward the *other* files that need the same repair, rather than the files that merely look similar. Measured on 576 real multi-site fixes from 12 third-party repos (rich, aiohttp, httpx, fastapi, click, flask, jinja, werkzeug, pydantic, pytest, attrs, urllib3), frozen before scoring and shipped in-repo:
+
+  | vs plain lexical search | delta | 95% CI (bootstrap, n=2000) |
+  |---|---|---|
+  | nDCG@10 | **+0.064** (0.605 vs 0.541) | [+0.032, +0.097] |
+  | P@3 | **+0.041** | [+0.024, +0.058] |
+  | MRR | **+0.059** | [+0.026, +0.092] |
+  | recall@10 | +0.034 | [−0.002, +0.070] — **not significant** |
+
+  That clears the preregistered bar (nDCG@10 ≥ +0.05 with a CI excluding zero) and it survived an adversarial falsifier. **Read it for what it is: a real but modest improvement over lexical search on this task — not a step change.** The one striking result underneath: our graph-sibling candidate pool *on its own* scores **0.258**, far *worse* than lexical's 0.541. It only beats lexical once repair-intent reranking is applied. The reranking is not polish on a good pool — it is the reason the pool is usable at all.
+
+  Scope honestly: it needs a real patch as input, and it finds *repair siblings*. It is not a general-purpose search improvement, and recall is not measurably better. This is the only roam surface we would put in front of your codebase without hedging.
 - **Reachability triage** (`roam vuln-reach`, `roam sbom`) — the most conservatively designed surface: reachability is derived only from import evidence (import sites and import edges, with file:line), never from symbol-name coincidence, so a CVE with no import evidence reports as unknown rather than reachable. Strong precision by construction; real-CVE recall on unfamiliar repos is still being measured — use it as a high-precision triage signal, and treat "unknown" as unverified rather than safe.
 - **Taint packs** (`roam taint`) — validated on synthetic fixtures; real-code recall on arbitrary repositories is low/unmeasured. Treat findings as leads to investigate, not a completeness guarantee; the `--ci` gate is opt-in.
 - **Idiom & long-tail detectors** (`roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam n1`, framework idioms) — advisory. Blind precision on unfamiliar repos is not yet measured for all of them, and framework idiom detectors that measured low on stranger repos are opt-in (not on the default surface). Review each finding; don't gate CI on these alone.

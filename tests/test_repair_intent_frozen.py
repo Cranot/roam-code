@@ -101,3 +101,46 @@ def test_repair_intent_single_candidate_preserves_pool_and_scores() -> None:
     assert scored[0].lexical == 0.75
     assert scored[0].graph_score == 0.3
     assert scored[0].repair_score == 0.65
+
+
+# The preregistration asks: "Does mined repair-intent reranking (T') beat a stranger's own
+# LEXICAL grep top-100 pool (B0)?" -- and its win rule requires nDCG@10 delta >= +0.05 with a
+# bootstrap 95% CI lower bound > 0.
+#
+# The shipped results only ever computed `t_minus_b2` -- T against our OWN un-reranked graph
+# pool. That is an ablation of our pipeline, not the question a user asks, and it flatters the
+# result by ~5x (B2 = 0.258 vs B0 = 0.541). The preregistered comparison had NO confidence
+# interval at all, and "0.6045 vs 0.2579 lexical" was quoted publicly for weeks -- 0.2579 is
+# B2, not lexical.
+#
+# This pins the comparison the preregistration actually named, so the baseline cannot quietly
+# drift to a friendlier one again.
+EXPECTED_T_MINUS_B0_NDCG10 = 0.0639
+PREREG_NDCG10_BAR = 0.05
+
+
+def test_preregistered_comparison_t_beats_lexical_b0() -> None:
+    """T' vs B0 (plain lexical cosine) -- the comparison the preregistration named."""
+    import random
+    import statistics
+
+    results = json.loads(RESULTS_PATH.read_text(encoding="utf-8"))
+    cases = results["cases"]
+    assert len(cases) == 576
+    assert results["arms"]["B0"].startswith("plain lexical cosine")
+
+    deltas = [
+        float(c["case_metrics"]["T"]["ndcg@10"]) - float(c["case_metrics"]["B0"]["ndcg@10"]) for c in cases
+    ]
+    point = statistics.fmean(deltas)
+    assert abs(point - EXPECTED_T_MINUS_B0_NDCG10) <= 0.002
+
+    # bootstrap=2000, seed=20260704, macro over CASES -- the protocol the preregistration names
+    rng = random.Random(20260704)
+    idx = range(len(deltas))
+    dist = sorted(statistics.fmean([deltas[rng.choice(idx)] for _ in idx]) for _ in range(2000))
+    ci_lo = dist[int(0.025 * 2000)]
+
+    # Both prongs of the preregistered win rule.
+    assert point >= PREREG_NDCG10_BAR, f"nDCG@10 delta {point:.4f} below the +{PREREG_NDCG10_BAR} bar"
+    assert ci_lo > 0, f"bootstrap 95% CI lower bound {ci_lo:.4f} does not exclude 0"

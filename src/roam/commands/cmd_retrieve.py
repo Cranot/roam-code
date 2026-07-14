@@ -35,7 +35,7 @@ from roam.db.connection import open_db
 from roam.output.confidence import verdict_prefix
 from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
-from roam.retrieve.repair_intent import REPAIR_INTENT_FLAG, flag_enabled, intent_from_patch
+from roam.retrieve.repair_intent import intent_from_patch
 from roam.retrieve.semantic import semantic_coverage
 
 _RECOVERABLE_RETRIEVE_ERRORS: tuple[type[Exception], ...] = (
@@ -388,8 +388,9 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     type=str,
     default=None,
     help=(
-        f"Experimental unified diff used for repair-intent reranking; enable "
-        f"{REPAIR_INTENT_FLAG}=1 first. Use '-' to read stdin."
+        "A unified diff of a fix you just made. Reranks results toward the OTHER files that "
+        "need the same repair, instead of the files that merely look similar. Measured on a "
+        "frozen 576-case corpus: nDCG@10 0.604 vs 0.258 for lexical retrieval. Use '-' for stdin."
     ),
 )
 @click.option(
@@ -444,8 +445,11 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
 
     repair_intent = None
     if repair_intent_path is not None:
-        if not flag_enabled():
-            raise click.UsageError(f"Set {REPAIR_INTENT_FLAG}=1 to use --repair-intent.")
+        # Passing --repair-intent IS the opt-in: retrieval is unchanged for anyone who
+        # doesn't supply a patch. The old ROAM_EXPERIMENTAL_REPAIR_INTENT gate was a second
+        # lock on an already-locked door — a user who found the flag, read --help and tried
+        # it got an error telling them to go set an environment variable. The ranking is
+        # pinned by a frozen 576-case corpus in CI (tests/test_repair_intent_frozen.py).
         patch_text = (
             sys.stdin.read() if repair_intent_path == "-" else Path(repair_intent_path).read_text(encoding="utf-8")
         )
