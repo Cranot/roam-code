@@ -112,13 +112,18 @@ def collect_metrics(conn):
     # Keep health math aligned with `roam health`.
     from roam.commands.cmd_health import _betweenness_percentiles, _is_utility_path
 
-    # Cycles
+    # Cycles. Tarjan runs ONCE here; the SCC list is reused by the
+    # health-score factor and the tangle ratio below (pre-fix each of the
+    # three sites re-ran find_cycles over the full symbol graph — 3x SCC
+    # per collect_metrics call, pure waste on big graphs).
+    cycle_list: list = []
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
 
         G = build_symbol_graph(conn)
-        cycles = len(find_cycles(G))
+        cycle_list = find_cycles(G)
+        cycles = len(cycle_list)
     except (ImportError, sqlite3.Error):
         cycles = 0
         G = None
@@ -165,27 +170,20 @@ def collect_metrics(conn):
         bn_items,
         bn_p90,
         layer_violations,
-        find_cycles,
+        # Reuse the Tarjan result computed once above instead of re-running
+        # SCC detection over the full symbol graph.
+        lambda _graph: cycle_list,
         _is_utility_path,
     )
 
-    # Tangle ratio: percentage of symbols in cycles
+    # Tangle ratio: percentage of symbols in cycles (reuses cycle_list —
+    # third pre-fix find_cycles call site).
     tangle_ratio = 0.0
     if G is not None and symbols > 0:
-        from networkx.exception import NetworkXException
-
-        try:
-            from roam.graph.cycles import find_cycles as _find_cycles
-
-            cycle_list = _find_cycles(G)
-            cycle_sym_ids = set()
-            for scc in cycle_list:
-                cycle_sym_ids.update(scc)
-            tangle_ratio = round(len(cycle_sym_ids) / symbols * 100, 1)
-        except (ImportError, NetworkXException) as _exc:
-            from roam.observability import log_swallowed
-
-            log_swallowed("metrics_history:nested", _exc)
+        cycle_sym_ids = set()
+        for scc in cycle_list:
+            cycle_sym_ids.update(scc)
+        tangle_ratio = round(len(cycle_sym_ids) / symbols * 100, 1)
 
     # Average complexity from symbol_metrics
     avg_complexity = 0.0

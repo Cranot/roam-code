@@ -651,14 +651,15 @@ def _resolved_thresholds(
 
 _RATE_OF_CHANGE_PCT = 20  # alert if metric changes more than 20%
 
-# Cap snapshot history fed into the O(n^2) Mann-Kendall / Sen's-slope trend
-# tests. _check_trends runs an O(n) window loop x an O(window^2) test per
-# tracked metric, i.e. O(n^3); an unbounded get_snapshots() fetch made `roam
-# alerts` latent-cubic on long-history repos. get_snapshots() returns
-# newest-first and trend significance is dominated by recent history, so
-# capping the fetch keeps the most-recent N snapshots -- the meaningful
-# "is it trending now" signal. Override via ROAM_ALERTS_SNAPSHOT_LIMIT for the
-# rare repo that wants a wider analysis window.
+# Cap snapshot history fed into the Mann-Kendall / Sen's-slope trend tests.
+# _check_trends is O(n^2) per tracked metric (incremental suffix-S table via
+# _suffix_mann_kendall_s; pre-fix it re-ran the O(window^2) test per window,
+# i.e. O(n^3), which made an unbounded get_snapshots() fetch latent-cubic on
+# long-history repos). get_snapshots() returns newest-first and trend
+# significance is dominated by recent history, so capping the fetch keeps the
+# most-recent N snapshots -- the meaningful "is it trending now" signal.
+# Override via ROAM_ALERTS_SNAPSHOT_LIMIT for the rare repo that wants a
+# wider analysis window.
 _TREND_SNAPSHOT_LIMIT = 200
 
 
@@ -783,6 +784,36 @@ def _make_alert(
     return alert
 
 
+def _mann_kendall_p(s, n):
+    """Two-sided p-value for a Mann-Kendall S statistic over *n* values.
+
+    Uses the normal approximation of the variance:
+    Var(S) = n(n-1)(2n+5)/18, with continuity-corrected z.
+
+    Returns None for n < 3 (test undefined). Extracted from
+    ``_mann_kendall_s`` so the incremental suffix-S path in
+    ``_check_trends`` can score each window in O(1) — the arithmetic is
+    byte-identical to the pre-extraction inline version.
+    """
+    import math
+
+    if n < 3:
+        return None
+    var_s = n * (n - 1) * (2 * n + 5) / 18.0
+    if var_s == 0:
+        return 1.0
+    std_s = math.sqrt(var_s)
+    # Continuity-corrected z
+    if s > 0:
+        z = (s - 1) / std_s
+    elif s < 0:
+        z = (s + 1) / std_s
+    else:
+        z = 0
+    # Two-sided p-value via complementary error function
+    return math.erfc(abs(z) / math.sqrt(2))
+
+
 def _mann_kendall_s(values):
     """Compute the Mann-Kendall S statistic and its significance.
 
@@ -795,8 +826,6 @@ def _mann_kendall_s(values):
     Returns (S, p_value).  p_value is None for n < 3.
     Reference: Mann (1945), Kendall (1975).
     """
-    import math
-
     n = len(values)
     s = 0
     for i in range(n):
@@ -806,22 +835,34 @@ def _mann_kendall_s(values):
                 s += 1
             elif diff < 0:
                 s -= 1
-    if n < 3:
-        return s, None
-    var_s = n * (n - 1) * (2 * n + 5) / 18.0
-    if var_s == 0:
-        return s, 1.0
-    std_s = math.sqrt(var_s)
-    # Continuity-corrected z
-    if s > 0:
-        z = (s - 1) / std_s
-    elif s < 0:
-        z = (s + 1) / std_s
-    else:
-        z = 0
-    # Two-sided p-value via complementary error function
-    p = math.erfc(abs(z) / math.sqrt(2))
-    return s, p
+    return s, _mann_kendall_p(s, n)
+
+
+def _suffix_mann_kendall_s(values):
+    """Mann-Kendall S for EVERY suffix of *values*, keyed by window size.
+
+    Perf backbone of ``_check_trends``. Recomputing S from scratch per
+    suffix window costs O(window^2) each — summed over all windows that
+    is O(n^3) per metric, the exact latent-cubic ``roam alerts`` hot path.
+    Extending a suffix leftward by one element only adds the pairs
+    ``(new_front, j)`` whose contribution is the O(window) sign-sum of
+    the existing suffix against the new front, so ALL suffix S values
+    cost O(n^2) total. The S integers are exact (integer sign sums), so
+    downstream p-values are byte-identical to the from-scratch path.
+    """
+    n = len(values)
+    s_by_window: dict[int, int] = {}
+    s = 0
+    for i in range(n - 2, -1, -1):
+        front = values[i]
+        for j in range(i + 1, n):
+            v = values[j]
+            if v > front:
+                s += 1
+            elif v < front:
+                s -= 1
+        s_by_window[n - i] = s
+    return s_by_window
 
 
 def _sens_slope(values):
@@ -928,6 +969,14 @@ def _check_trends(snapshots_chrono):
     """Detect monotonic degradation over 3+ consecutive snapshots.
 
     *snapshots_chrono* is a list of snapshot dicts ordered oldest-first.
+
+    Perf: scans windows largest-first against a precomputed suffix
+    Mann-Kendall table (``_suffix_mann_kendall_s``, O(n^2) per metric)
+    instead of re-running the O(window^2) test per window — the pre-fix
+    from-scratch loop was O(n^3) per metric and dominated ``roam alerts``
+    wall time on long snapshot histories (~4.4s at n=400). Alert output
+    is byte-identical: same S integers, same p-values, same largest-
+    significant-window selection, same Sen's slope on the winner.
     """
     alerts = []
     if len(snapshots_chrono) < 3:
@@ -936,10 +985,23 @@ def _check_trends(snapshots_chrono):
     tracked = list(_WORSE_WHEN_HIGHER | _WORSE_WHEN_LOWER)
     for metric in tracked:
         values = [s.get(metric, 0) or 0 for s in snapshots_chrono]
+        s_by_window = _suffix_mann_kendall_s(values)
         # Check the last 3..N window sizes for a monotonic run
         for window in range(len(values), 2, -1):
-            tail = values[-window:]
-            if _is_monotonic_worsening(tail, metric):
+            # Same significance + direction test as _is_monotonic_worsening,
+            # but scored O(1) from the suffix-S table.
+            s = s_by_window[window]
+            p = _mann_kendall_p(s, window)
+            if p is None or p >= 0.10:
+                continue
+            if metric in _WORSE_WHEN_HIGHER:
+                worsening = s > 0
+            elif metric in _WORSE_WHEN_LOWER:
+                worsening = s < 0
+            else:
+                worsening = False
+            if worsening:
+                tail = values[-window:]
                 current = tail[-1]
                 arrow = " -> ".join(str(v) for v in tail)
                 label = _TREND_LABELS.get(metric, f"{metric} worsening")

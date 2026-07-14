@@ -595,3 +595,92 @@ class TestAlertsInternals:
 
         alert = _make_alert("warning", "cycles", "msg", 15, trend_direction="up")
         assert alert["trend_direction"] == "up"
+
+
+class TestCheckTrendsIncrementalEquivalence:
+    """Differential guard for the O(n^2) incremental suffix Mann-Kendall path.
+
+    _check_trends used to recompute the Mann-Kendall S statistic from scratch
+    per suffix window (O(window^2) each -> O(n^3) per metric; ~4.4s wall at
+    n=400 across the 6 tracked metrics). The fix precomputes S for every
+    suffix incrementally (_suffix_mann_kendall_s, O(n^2) total) and scores
+    each window in O(1). These tests pin that the fast path is EXACTLY
+    equivalent to the brute-force reference — same S integers per window,
+    same alerts (window choice, message, slope) on randomized series.
+    """
+
+    def test_suffix_s_matches_bruteforce_on_random_series(self):
+        """_suffix_mann_kendall_s agrees with _mann_kendall_s per window."""
+        import random
+
+        from roam.commands.cmd_alerts import _mann_kendall_s, _suffix_mann_kendall_s
+
+        rng = random.Random(1234)
+        for trial in range(20):
+            n = rng.randint(2, 40)
+            values = [rng.randint(-5, 25) for _ in range(n)]
+            s_by_window = _suffix_mann_kendall_s(values)
+            assert set(s_by_window) == set(range(2, n + 1))
+            for window in range(2, n + 1):
+                expected_s, _p = _mann_kendall_s(values[-window:])
+                assert s_by_window[window] == expected_s, (
+                    f"trial={trial} window={window} values={values}: "
+                    f"incremental S={s_by_window[window]} != brute-force S={expected_s}"
+                )
+
+    def test_check_trends_matches_bruteforce_reference(self):
+        """_check_trends output is byte-identical to the pre-fix O(n^3) loop."""
+        import random
+
+        from roam.commands.cmd_alerts import (
+            _TREND_LABELS,
+            _WORSE_WHEN_HIGHER,
+            _WORSE_WHEN_LOWER,
+            WARNING,
+            _check_trends,
+            _is_monotonic_worsening,
+            _make_alert,
+            _sens_slope,
+        )
+
+        def reference_check_trends(snapshots_chrono):
+            # Verbatim pre-fix implementation (from-scratch test per window).
+            alerts = []
+            if len(snapshots_chrono) < 3:
+                return alerts
+            tracked = list(_WORSE_WHEN_HIGHER | _WORSE_WHEN_LOWER)
+            for metric in tracked:
+                values = [s.get(metric, 0) or 0 for s in snapshots_chrono]
+                for window in range(len(values), 2, -1):
+                    tail = values[-window:]
+                    if _is_monotonic_worsening(tail, metric):
+                        current = tail[-1]
+                        arrow = " -> ".join(str(v) for v in tail)
+                        label = _TREND_LABELS.get(metric, f"{metric} worsening")
+                        slope = _sens_slope(tail)
+                        slope_str = f", rate={slope:+.1f}/snapshot" if abs(slope) >= 0.1 else ""
+                        alerts.append(
+                            _make_alert(
+                                WARNING,
+                                metric,
+                                f"{label}: {arrow} over {window} snapshots{slope_str}",
+                                current,
+                                trend_direction="up" if metric in _WORSE_WHEN_HIGHER else "down",
+                            )
+                        )
+                        break
+            return alerts
+
+        metrics = sorted(_WORSE_WHEN_HIGHER | _WORSE_WHEN_LOWER)
+        rng = random.Random(20260714)
+        for trial in range(15):
+            n = rng.randint(3, 30)
+            # Mix flavours: noisy-flat, trending, and step-change series so
+            # both the alert and no-alert paths get exercised.
+            snaps = []
+            drift = {m: rng.choice([-1, 0, 0, 1]) for m in metrics}
+            for i in range(n):
+                snaps.append({m: max(0, 10 + drift[m] * i + rng.randint(-2, 2)) for m in metrics})
+            assert _check_trends(snaps) == reference_check_trends(snaps), (
+                f"trial={trial}: incremental _check_trends diverged from the brute-force reference"
+            )
