@@ -149,7 +149,8 @@ repo, with and without the compiler — June 2026, 41 cells):
 | Cost | $1.30 | $0.48 | **−63%** |
 | Wall time | — | — | **−50%** |
 
-The same shape reproduces on Opus (−86% turns). And the compiler knows
+A second run on Opus shows the same direction at smaller magnitude (−33%
+turns overall; the best single cell hit −88%). And the compiler knows
 where it *doesn't* help: prompts that ask the agent to **write** code get
 no envelope at all — injection there was measured as pure overhead, so it
 spends your tokens only where it wins.
@@ -184,13 +185,16 @@ the compiler routes them.
 
 **Bug-fixing, ground-truth graded** (a failing test must transition to
 passing — no LLM judging): 20 cells of planted bugs with real tracebacks —
-**10/10 fixed in both arms** at **−13% cost**; the envelope ships the
-source around the cited `path:line`, so the typical fix lands within 2
-turns.
+10/10 fixed in both arms at −13% dollar cost. Read that honestly: **n=10
+cannot establish quality parity** (the 95% interval on 10/10 spans
+[72%, 100%]), and the dollar saving comes with **more tokens, not fewer**
+on this task class — the envelope shifts spend into cheaper cache reads. No
+quality difference was *detected*; the sample has little power to detect one.
 
-**Routing, replayed on 723 real prompts** from live agent sessions: **91%
+**Routing, replayed on 723 real prompts** from live agent sessions: **57%
 of envelopes ship pre-executed answers** (L1 probes) — the envelope already
-contains the literal answer — at **p50 0.45 s cold / p50 92 ms live**
+contains the literal answer — and a further ~33% ship structured facts
+(context, not the literal answer), at **p50 0.45 s cold / p50 92 ms live**
 (warm cache) compile latency, fully local. Zero model calls.
 
 **Eval history by version** — re-measured on every kernel change; losses are
@@ -201,13 +205,13 @@ repository:
 | measured | kernel | what | result |
 |---|---|---|---|
 | Jun 09 | v13.4 | 41-cell nav/comprehension A/B | turns −83%, tokens −80%, cost −63% |
-| Jun 09 | v13.4 | 20-cell ground-truth bugbench | 10/10 both arms, cost −13% |
+| Jun 09 | v13.4 | 20-cell ground-truth bugbench | 10/10 both arms (n=10 — no parity claim), $ −13% but tokens up |
 | Jun 09 | v13.4 | trivial-prompt cell | **+80% cost — published loss** |
 | Jun 09 | v13.4 | generation cell | **+17% cost — published loss** |
 | Jun 11 | v13.6 | trivial-prompt cell, re-measured n=3 | tie ($0.21 → $0.22) |
 | Jun 11 | v13.6 | generation cell, re-measured n=3 | **−26% cost win** |
 | Jun 11 | v13.6 | "biggest cycles" cell, re-measured n=3 | **−89% cost win** ($0.65 → $0.07, 6→1 turns) |
-| Jun 11 | v13.6 | 723-prompt routing replay | 91% L1, p50 0.45 s cold |
+| Jun 11 | v13.6 | 723-prompt routing replay | 57% L1 (answer-shipping) + ~33% facts, p50 0.45 s cold |
 | Jul 11 | v13.7 | live dogfood rolling window (separate population, not the replay harness) | cold-compile median 410 ms |
 
 Caveats that always ship with these numbers: trivial prompts the agent
