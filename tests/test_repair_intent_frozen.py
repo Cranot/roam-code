@@ -129,9 +129,7 @@ def test_preregistered_comparison_t_beats_lexical_b0() -> None:
     assert len(cases) == 576
     assert results["arms"]["B0"].startswith("plain lexical cosine")
 
-    deltas = [
-        float(c["case_metrics"]["T"]["ndcg@10"]) - float(c["case_metrics"]["B0"]["ndcg@10"]) for c in cases
-    ]
+    deltas = [float(c["case_metrics"]["T"]["ndcg@10"]) - float(c["case_metrics"]["B0"]["ndcg@10"]) for c in cases]
     point = statistics.fmean(deltas)
     assert abs(point - EXPECTED_T_MINUS_B0_NDCG10) <= 0.002
 
