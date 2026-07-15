@@ -200,6 +200,25 @@ def test_rounding_semantic_lookup():
     assert rounding_semantic("cobol", "round") is None  # unknown lang
 
 
+def test_fail_on_divergence_gate_exits_5(tmp_path):
+    _write(tmp_path, "a.php", "<?php $vat = round($base * $rate, 2);")
+    _write(tmp_path, "b.py", "vat = round(base * rate, 2)\n")
+    runner = CliRunner()
+    result = runner.invoke(calc_inventory, [str(tmp_path), "--fail-on-divergence"], obj={"json": True})
+    assert result.exit_code == 5
+    assert json.loads(result.output)["summary"]["gate_failed"] is True
+
+
+def test_fail_on_divergence_gate_passes_when_consistent(tmp_path):
+    # same rounding semantics on both sides -> no gate failure
+    _write(tmp_path, "a.php", "<?php $vat = round($base * $rate, 2);")
+    _write(tmp_path, "b.php", "<?php $vat = round($base * $rate / 1, 2);")
+    runner = CliRunner()
+    result = runner.invoke(calc_inventory, [str(tmp_path), "--fail-on-divergence"], obj={"json": True})
+    assert result.exit_code == 0
+    assert json.loads(result.output)["summary"]["gate_failed"] is False
+
+
 def test_command_rounding_semantics_divergence(tmp_path):
     # same field 'vat' rounded with round() in PHP (half-away) and Python
     # (banker's) — identical call name, DIFFERENT semantics → flagged.
