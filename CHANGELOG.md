@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **`roam capsule --redact-paths` no longer leaks the directory tree via cluster labels** — the "zero-source" architecture capsule is meant for external review *without* sharing source, and it correctly hashes every symbol's `file` path, but `clusters[].label` (which is derived from a file/directory path) was emitted verbatim — leaking the exact tree the flag exists to anonymize (e.g. `workflows/checkout`, `tests/test_cmd_pr_replay_...`). Cluster labels are now hashed with the same per-component scheme as symbol paths under `--redact-paths`. Surfaced by real dogfooding of the redaction path.
+- **`roam --json postmortem` no longer corrupts its own JSON on stdout** — the `click.progressbar("Replaying detectors")` wrote its label to stdout ahead of the JSON, so `roam --json postmortem <range> > out.json` produced an unparseable file. The progress chrome now goes to stderr (matching `pr-replay`), leaving stdout pure JSON.
 - **`--json` / SARIF deliverables no longer leak compile-time `SyntaxWarning`s** — a structured-output run (e.g. `service-report --type reachability-triage`, a client-facing report) emitted raw interpreter `invalid escape sequence '\d'` / `'\g'` / `'\ '` lines on stderr, sourced from a dependency's `compile()` codegen (`filename=<unknown>`), not from roam's own source (which is SyntaxWarning-clean under the compileall gate). The structured warning handler now drops `SyntaxWarning` (compile-time, never a user-actionable roam finding) from the customer stream; genuine roam-origin warnings (and all other categories) are still surfaced, and normal non-structured runs are unchanged.
 
 ## [13.9.0] — 2026-07-15

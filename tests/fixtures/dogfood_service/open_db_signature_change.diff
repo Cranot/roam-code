@@ -1,0 +1,12 @@
+diff --git a/src/roam/db/connection.py b/src/roam/db/connection.py
+index 1234567..89abcde 100644
+--- a/src/roam/db/connection.py
++++ b/src/roam/db/connection.py
+@@ -960,6 +960,7 @@ def open_db(
+ def open_db(
+     readonly: bool = False,
+     project_root: Path | None = None,
++    strict_validation: bool = False,
+     *,
+     warnings_out: WarningsOut = None,
+ ) -> "Iterator[sqlite3.Connection]":

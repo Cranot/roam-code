@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json as _json
 import subprocess
+import sys
 from collections import Counter
 
 import click
@@ -446,7 +447,10 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
             _new_with_findings = _commits_with_findings + 1
         return (_new_high, _new_medium, _new_with_findings)
 
-    with click.progressbar(commits, label="Replaying detectors") as bar:
+    # Progress chrome MUST go to stderr — click.progressbar defaults to stdout,
+    # which corrupts `roam --json postmortem > out.json` (the label lands as the
+    # first stdout byte and breaks json.load). pr-replay already strips this.
+    with click.progressbar(commits, label="Replaying detectors", file=sys.stderr) as bar:
         for commit in bar:
             _fields = _run_check_dr(
                 "extract_commit_fields",

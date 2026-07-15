@@ -1,0 +1,6 @@
+[
+  {"cve": "CVE-2023-32681", "package": "requests", "severity": "medium", "title": "Requests leaks Proxy-Authorization header on cross-host redirect"},
+  {"cve": "CVE-2020-14343", "package": "PyYAML", "severity": "critical", "title": "PyYAML full_load allows arbitrary code execution"},
+  {"cve": "CVE-2021-23337", "package": "lodash", "severity": "high", "title": "lodash command injection via template"},
+  {"cve": "CVE-9999-00000", "package": "nonexistent-pkg-xyz", "severity": "high", "title": "control: package not present in the repo at all"}
+]

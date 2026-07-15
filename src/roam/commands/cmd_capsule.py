@@ -127,14 +127,28 @@ def _gather_edges(conn) -> list[dict]:
     return [{"source": r[0], "target": r[1], "kind": r[2]} for r in rows]
 
 
-def _gather_clusters(conn) -> list[dict]:
-    """Return clusters with id, label and member count."""
+def _gather_clusters(conn, redact_paths: bool = False) -> list[dict]:
+    """Return clusters with id, label and member count.
+
+    Cluster labels are derived from a file/directory path. Under
+    ``--redact-paths`` they MUST be hashed with the same per-component scheme
+    as symbol ``file`` fields — otherwise the "zero-source" capsule leaks the
+    directory tree verbatim via ``clusters[].label`` while every other path is
+    redacted.
+    """
     rows = conn.execute(
         "SELECT cluster_id, cluster_label, COUNT(*) as size "
         "FROM clusters GROUP BY cluster_id, cluster_label "
         "ORDER BY cluster_id"
     ).fetchall()
-    return [{"id": r[0], "label": r[1], "size": r[2]} for r in rows]
+    return [
+        {
+            "id": r[0],
+            "label": _redact_path(r[1]) if (redact_paths and r[1]) else r[1],
+            "size": r[2],
+        }
+        for r in rows
+    ]
 
 
 def _gather_health(conn) -> dict:
@@ -182,7 +196,7 @@ def _build_capsule(
         topology = _gather_topology(conn)
         symbols = _gather_symbols(conn, redact_paths=redact_paths, no_signatures=no_signatures)
         edges = _gather_edges(conn)
-        clusters = _gather_clusters(conn)
+        clusters = _gather_clusters(conn, redact_paths=redact_paths)
         health = _gather_health(conn)
     else:
         topology = run_check(
@@ -209,6 +223,7 @@ def _build_capsule(
             "gather_clusters",
             _gather_clusters,
             conn,
+            redact_paths,
             default=[],
         )
         health = run_check(
