@@ -852,28 +852,19 @@ def testresolve_roam_version_falls_back_on_metadata_failure(
     The helper must NOT propagate the exception - collection must keep
     running, and the sentinel ``"unknown"`` is the canonical fallback.
     """
-    import sys
-
     import roam
     from roam.evidence.change_evidence import resolve_roam_version
 
-    # Force ``from roam import __version__`` to raise during the helper's
-    # deferred import. Easiest reliable way: temporarily remove the
-    # attribute from the loaded ``roam`` module so the import-bound
-    # ``from roam import __version__`` inside the helper raises
-    # ``ImportError``.
-    saved = roam.__version__
-    monkeypatch.delattr(roam, "__version__")
-    try:
-        # Sanity: the helper's deferred ``from roam import __version__``
-        # must hit ``ImportError`` now.
-        assert "roam" in sys.modules
-        result = resolve_roam_version()
-        assert result == "unknown"
-    finally:
-        # ``monkeypatch.delattr`` already restores on test teardown, but
-        # also keep ``saved`` available for any post-yield consumer.
-        roam.__version__ = saved  # type: ignore[attr-defined]
+    # ``roam.__version__`` is resolved lazily via a PEP 562 module
+    # ``__getattr__`` (deferred so ``importlib.metadata`` is not paid on every
+    # ``import roam``). Simulate the version resolution failing by making that
+    # resolver raise ``ImportError`` — the helper's deferred
+    # ``from roam import __version__`` must translate it to ``"unknown"``.
+    def _raise_import_error(name: str) -> str:
+        raise ImportError(f"simulated version-resolution failure for {name!r}")
+
+    monkeypatch.setattr(roam, "__getattr__", _raise_import_error)
+    assert resolve_roam_version() == "unknown"
 
 
 def testresolve_roam_version_falls_back_when_version_is_empty(
@@ -891,10 +882,22 @@ def testresolve_roam_version_falls_back_when_version_is_empty(
     import roam
     from roam.evidence.change_evidence import resolve_roam_version
 
-    monkeypatch.setattr(roam, "__version__", "", raising=False)
+    # ``roam.__version__`` resolves lazily via a PEP 562 module ``__getattr__``.
+    # Do NOT ``monkeypatch.setattr(roam, "__version__", ...)`` here: because the
+    # lazy getattr makes ``getattr(roam, "__version__")`` succeed, monkeypatch
+    # saves the resolved value and RESTORES it as a *real* module attribute on
+    # teardown — leaking a real ``__version__`` that shadows the lazy resolver
+    # for every later test in the process. Patch the resolver itself instead.
+    def _returns(value):
+        def _getattr(name: str):
+            return value
+
+        return _getattr
+
+    monkeypatch.setattr(roam, "__getattr__", _returns(""))
     assert resolve_roam_version() == "unknown"
 
-    monkeypatch.setattr(roam, "__version__", None, raising=False)
+    monkeypatch.setattr(roam, "__getattr__", _returns(None))
     assert resolve_roam_version() == "unknown"
 
 

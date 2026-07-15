@@ -526,6 +526,7 @@ Installed by `roam hooks claude --write`. FAIL-OPEN: any error prints
 nothing and exits 0 (a broken roam install must never block a turn).
 """
 import json
+import os
 import subprocess
 import sys
 
@@ -539,9 +540,17 @@ def main():
         prompt = (payload.get("prompt") or "").strip()
         if len(prompt) < _MIN_PROMPT_CHARS:
             return
+        # Forward Claude's session id so the compile telemetry row carries a
+        # join key to the session's downstream outcome. Fail-open: an absent id
+        # just leaves the key empty, never breaks the hook.
+        env = os.environ.copy()
+        session_id = str(payload.get("session_id") or "").strip()
+        if session_id:
+            env["ROAM_SESSION_ID"] = session_id
         proc = subprocess.run(
             ["roam", "--json", "compile", prompt],
             capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,
+            env=env,
         )
         if proc.returncode != 0 or not proc.stdout.strip():
             return

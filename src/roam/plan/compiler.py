@@ -11646,6 +11646,17 @@ def _maybe_append_compile_telemetry(
         # Rows pre-dating this edit lack the field; `--by-mode` buckets them
         # as 'unknown'.
         "agent_mode": os.environ.get("ROAM_AGENT_MODE", "unknown"),
+        # 2026-07-15 — session/turn join key. The compile row records the
+        # envelope's section list but nothing about what the agent did with it;
+        # a consumer-side turn ledger records the outcome (tool calls, result,
+        # session id) but not the section list. Stamping the session id (and an
+        # optional per-turn sequence) here — from env, exactly like agent_mode —
+        # is the one missing field that makes the two joinable, so per-section
+        # value becomes measurable at fleet scale instead of from small replays.
+        # Hosts set ROAM_SESSION_ID; the Claude prompt-submit hook forwards the
+        # editor's session id. Empty string when unset.
+        "session_id": os.environ.get("ROAM_SESSION_ID", ""),
+        "turn_seq": os.environ.get("ROAM_TURN_SEQ", ""),
         # 2026-06-09 — stamp the compiler-code fingerprint so telemetry
         # shifts (routing distributions, L1 rate, latency) are attributable
         # to compiler revisions. Without this, a classifier change and a

@@ -25,6 +25,8 @@ _EXPECTED_FIELDS = {
     "envelope_bytes",
     "compile_ms",
     "agent_mode",
+    "session_id",
+    "turn_seq",
     "compiler_fp",
     "injection_advice",
     "probe_timings_ms",
