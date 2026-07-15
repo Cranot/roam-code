@@ -489,6 +489,11 @@ def test_conformance_cli_on_real_repo_trail_is_partial():
     r = run_roam("audit-trail-conformance-check", timeout=120)
     assert r.returncode == 0, r.stderr
     out = r.stdout
+    # A fresh checkout (CI) has no .roam/audit-trail.jsonl; the command correctly
+    # reports "no_trail" rather than a conformance score. Skip rather than assume
+    # a populated trail exists (which only a live dev box has).
+    if "no_trail" in out.lower() or "no audit trail" in out.lower():
+        pytest.skip("no .roam/audit-trail.jsonl in this checkout — conformance needs a real trail")
     assert "conformance" in out.lower()
     assert "retention" in out.lower()
 
@@ -634,6 +639,10 @@ def test_agent_score_cli_scores_real_ledger():
     assert r.returncode == 0, r.stderr
     env = json.loads(r.stdout)
     agents = env.get("agents") or []
+    # A fresh checkout (CI) has no .roam/runs/ agent ledger; agent-score correctly
+    # scores 0 agents. Skip rather than assume real agent runs exist (dev box only).
+    if env["summary"]["agents_scored"] == 0:
+        pytest.skip("no .roam/runs/ ledger in this checkout — agent-score needs real agent runs")
     assert env["summary"]["agents_scored"] >= 1
     for a in agents:
         assert 0 <= a["score"] <= 100
