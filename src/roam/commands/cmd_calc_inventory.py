@@ -184,11 +184,17 @@ def _find_divergences(calcs: list[Calc]) -> list[dict]:
 @click.option(
     "--round-funcs", default="", help="Comma-list of extra project rounding wrappers to recognize (e.g. r,round2)."
 )
+@click.option(
+    "--fail-on-divergence",
+    is_flag=True,
+    help="Exit 5 if any field is rounding-semantics-divergent (same name, different tie behavior). Opt-in CI gate.",
+)
 @click.pass_context
-def calc_inventory(ctx, path, money_only, divergence, round_funcs):
+def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_divergence):
     """Enumerate computed-numeric fields + their formulas from the AST."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    divergence = divergence or fail_on_divergence  # the gate needs divergence data
     root = Path(path)
 
     extra_round_funcs = frozenset(f.strip().lower() for f in round_funcs.split(",") if f.strip())
@@ -245,6 +251,10 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
     if divergences is not None:
         facts.append(f"{len(divergences)} divergent fields")
 
+    gate_failed = (
+        fail_on_divergence and bool(divergences) and any(d["rounding_semantics_divergent"] for d in divergences)
+    )
+
     summary = {
         "verdict": verdict,
         "calculations": len(calcs),
@@ -252,6 +262,7 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
         "files_with_calcs": files_with_calcs,
         "rounding_count": rounding_count,
         "money_only": money_only,
+        "gate_failed": gate_failed,
     }
 
     if json_mode:
@@ -268,6 +279,7 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
         # budget gate (test_budget_coverage_survey) detects the forwarding and
         # the large ``calculations`` list is trimmed to the token cap.
         click.echo(to_json(json_envelope("calc-inventory", budget=token_budget, **envelope_kwargs)))
+        ctx.exit(5 if gate_failed else 0)
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -298,3 +310,7 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
             for c in sorted(by_file[fpath], key=lambda x: x.line):
                 r = f"  [{c.rounding}]" if c.rounding else ""
                 click.echo(f"  L{c.line:<5} {c.target[:26]:26s} = {c.formula[:60]}{r}")
+
+    if gate_failed:
+        click.echo("\nVERDICT: FAIL — rounding-semantics-divergent field(s) found (--fail-on-divergence)")
+        ctx.exit(5)
