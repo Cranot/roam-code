@@ -3305,12 +3305,15 @@ class TestStaleRefsLspDynamicVersion:
         import roam
         from roam.commands.cmd_lsp import _server_version
 
-        saved = roam.__version__
-        monkeypatch.delattr(roam, "__version__")
-        try:
-            assert _server_version() == "unknown"
-        finally:
-            roam.__version__ = saved  # type: ignore[attr-defined]
+        # roam.__version__ is resolved lazily via a PEP 562 module __getattr__
+        # (deferred so importlib.metadata is not paid on every import). Force the
+        # helper's deferred ``from roam import __version__`` to raise ImportError
+        # so its ``"unknown"`` fallback is exercised.
+        def _raise_import_error(name: str) -> str:
+            raise ImportError(f"simulated version-resolution failure for {name!r}")
+
+        monkeypatch.setattr(roam, "__getattr__", _raise_import_error)
+        assert _server_version() == "unknown"
 
 
 class TestFindBrokenLinksRecipeFollowups:
