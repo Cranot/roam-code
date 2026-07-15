@@ -35,10 +35,23 @@ from roam.output.formatter import json_envelope, to_json
 )
 @click.command(name="index")
 @click.option("--force", is_flag=True, help="Force full reindex")
+# Forgiving alias: several older docs, hints, and sibling commands say
+# `roam index --rebuild`. There is only one real flag (--force), so a bare
+# `--rebuild` used to fail with "No such option: --rebuild". Accept it as a
+# hidden, identical-behaviour alias for --force so a recommendation can never
+# mislead into an unusable command. Kept ``hidden`` so --help still shows the
+# single canonical flag.
+@click.option(
+    "--rebuild",
+    "rebuild",
+    is_flag=True,
+    hidden=True,
+    help="Alias for --force (full reindex). Accepted for forgiveness; --force is canonical.",
+)
 @click.option("--verbose", is_flag=True, help="Show detailed warnings during indexing")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress progress output")
 @click.pass_context
-def run_index_command(ctx, force, verbose, quiet):
+def run_index_command(ctx, force, verbose, quiet, rebuild):
     """Build or rebuild the codebase index.
 
     Unlike ``init`` (which bootstraps the project with config files and
@@ -55,6 +68,9 @@ def run_index_command(ctx, force, verbose, quiet):
     See also ``init`` (first-run bootstrap), ``watch`` (auto-reindex
     on file changes), and ``index-stats`` (DB size + symbol counts).
     """
+    # ``--rebuild`` is a forgiving alias for ``--force`` — collapse it here so
+    # the rest of the body only reasons about ``force``.
+    force = force or rebuild
     json_mode = ctx.obj.get("json") if ctx.obj else False
     include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
     from roam.db.connection import db_exists, open_db

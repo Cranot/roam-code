@@ -464,6 +464,19 @@ def _is_python_file(language: str | None, file_path: str) -> bool:
     return file_path.endswith(".py") or file_path.endswith(".pyi")
 
 
+# Documentation extensions whose ``import`` lines are code-fence EXAMPLES, not
+# real imports. Dogfooded 2026-07-15: verify-imports flagged ``import x`` lines
+# inside fenced code blocks in ``.md`` / ``.mdx`` files as unresolved
+# hallucinations. Prose files are not a source tree, so they are skipped by
+# default; ``--include-docs`` restores the old (scan-everything) behaviour.
+_DOC_FILE_EXTENSIONS: tuple[str, ...] = (".md", ".mdx")
+
+
+def _is_doc_file(file_path: str) -> bool:
+    """Return True for markdown/MDX docs (``import`` lines there are examples)."""
+    return file_path.lower().endswith(_DOC_FILE_EXTENSIONS)
+
+
 _TRIPLE_QUOTE_RE = re.compile(r'"""|\'\'\'')
 
 
@@ -1199,6 +1212,8 @@ def verify_imports_for_connection(
     conn: sqlite3.Connection,
     project_root: str,
     file_filter: str | None = None,
+    *,
+    include_docs: bool = False,
 ) -> dict:
     """Run the full import verification pipeline against an open DB connection.
 
@@ -1210,6 +1225,10 @@ def verify_imports_for_connection(
         Absolute path to the project root directory.
     file_filter:
         Optional file path to restrict scanning to a single file.
+    include_docs:
+        When False (default) ``.md`` / ``.mdx`` files are skipped — their
+        ``import`` lines are documentation examples inside fenced code
+        blocks, not real imports. Set True to scan docs too.
 
     Returns
     -------
@@ -1230,6 +1249,12 @@ def verify_imports_for_connection(
     else:
         rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
         file_paths = [r["path"] for r in rows]
+
+    # Documentation files carry ``import`` lines only as fenced code-block
+    # examples — skip them unless the caller opts in. Applied to both the
+    # single-file filter and the full scan so behaviour is uniform.
+    if not include_docs:
+        file_paths = [fp for fp in file_paths if not _is_doc_file(fp)]
 
     # Pre-load symbol names / qualified names + a file->language map ONCE so the
     # per-import resolution probe and per-file language lookup are in-memory
@@ -1286,6 +1311,11 @@ def verify_imports_for_connection(
             continue
         # Check if we already found this import from file scanning
         fp = edge["file_path"]
+        # Docs are excluded from the file scan above — keep the edge pass
+        # consistent so a stray doc-sourced import edge can't reintroduce
+        # the code-fence false positive.
+        if not include_docs and _is_doc_file(fp):
+            continue
         line = edge.get("line") or 0
         if (fp, target_name) in seen_file_name:
             continue
@@ -1367,8 +1397,17 @@ def verify_imports_for_connection(
     hidden=True,
     help="Deprecated alias for --path. Retained for backward compatibility.",
 )
+@click.option(
+    "--include-docs",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also scan .md / .mdx files. By default their import lines are "
+        "treated as fenced code-block examples and skipped."
+    ),
+)
 @click.pass_context
-def verify_imports_cmd(ctx, file_path):
+def verify_imports_cmd(ctx, file_path, include_docs):
     """Validate import/require statements against the indexed symbol table.
 
     Flags unresolvable imports and suggests corrections via fuzzy matching.
@@ -1387,7 +1426,7 @@ def verify_imports_cmd(ctx, file_path):
     project_root = str(find_project_root())
 
     with open_db(readonly=True) as conn:
-        result = verify_imports_for_connection(conn, project_root, file_filter=file_path)
+        result = verify_imports_for_connection(conn, project_root, file_filter=file_path, include_docs=include_docs)
 
         # --- SARIF output (W1229) ------------------------------------------
         # SARIF surfaces the closed-enum classification rule catalogue

@@ -238,6 +238,41 @@ def test_text_mode_by_status_breakdown_present(evals_dir, cli_runner):
     assert "--all" in out
 
 
+def test_text_mode_lists_parse_failure_paths_inline(tmp_path, cli_runner):
+    """Text mode must list failing eval paths inline (no second --json trip).
+
+    Regression for the dogfooding sweep: the human output printed only a
+    count plus "(see --json for paths)", forcing a second invocation just
+    to learn WHICH files failed to parse.
+    """
+    base = tmp_path / "evals"
+    # One clean eval so the corpus isn't empty.
+    _write_eval(
+        base,
+        "complexity",
+        "good",
+        status="open",
+        findings=[("H", "wrong", "real finding")],
+    )
+    # A malformed eval the parser cannot accept: no frontmatter block.
+    broken_dir = base / "broken"
+    broken_dir.mkdir(parents=True, exist_ok=True)
+    broken = broken_dir / "2026-05-12-unparseable.md"
+    broken.write_text("no frontmatter and no findings table here\n", encoding="utf-8")
+
+    result = invoke_cli(
+        cli_runner,
+        ["dogfood-aggregate", "--path", str(base)],
+    )
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "Parse failures: 1" in out
+    # The failing path itself must appear inline.
+    assert "2026-05-12-unparseable.md" in out, out
+    # And the old "go run --json" deferral must be gone.
+    assert "see --json for paths" not in out
+
+
 def test_backward_compat_no_status_defaults_to_open(tmp_path, cli_runner):
     """Evals without a ``status:`` field must be treated as ``open``."""
     base = tmp_path / "evals"

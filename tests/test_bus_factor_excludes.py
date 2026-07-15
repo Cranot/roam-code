@@ -191,6 +191,103 @@ def test_bus_factor_includes_excluded_with_flag(cli_runner, project_with_github,
     )
 
 
+@pytest.fixture
+def project_with_public(tmp_path):
+    """Project with source code AND a generated ``public/api/`` tree.
+
+    The ``public/api/`` file is a build artifact / static output owned by
+    a single bot author. Without the bus-factor build-artifact exclusion
+    it surfaces as a CRITICAL stale single-owner directory — exactly the
+    dogfooding false positive this test pins closed.
+    """
+    proj = tmp_path / "public_proj"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+
+    src = proj / "src"
+    src.mkdir()
+    (src / "lib.py").write_text(
+        "def compute(x):\n"
+        '    """Compute something."""\n'
+        "    return x * 2\n"
+        "\n"
+        "\n"
+        "def helper(y):\n"
+        '    """Helper."""\n'
+        "    return y + 1\n"
+    )
+
+    public_api = proj / "public" / "api"
+    public_api.mkdir(parents=True)
+    (public_api / "data.js").write_text("export function loadData() {\n  return [];\n}\n")
+
+    git_init(proj)
+
+    # Alice owns src/lib.py
+    (src / "lib.py").write_text(
+        "def compute(x):\n"
+        '    """Compute something (Alice rev)."""\n'
+        "    return x * 3\n"
+        "\n"
+        "\n"
+        "def helper(y):\n"
+        '    """Helper (Alice rev)."""\n'
+        "    return y + 2\n"
+    )
+    _git_commit_as(proj, "Alice", "alice@example.com", "lib: alice revision")
+
+    # GenBot is the sole author of the generated public/api tree — a
+    # "bus factor 1" stale directory if it isn't filtered out.
+    (public_api / "data.js").write_text("export function loadData() {\n  return [1, 2, 3];\n}\n")
+    _git_commit_as(proj, "GenBot", "gen@example.com", "public: regenerate api bundle")
+
+    (public_api / "data.js").write_text("export function loadData() {\n  return [1, 2, 3, 4];\n}\n")
+    _git_commit_as(proj, "GenBot", "gen@example.com", "public: regenerate api bundle again")
+
+    index_in_process(proj)
+    return proj
+
+
+def test_bus_factor_excludes_public_build_artifacts_by_default(cli_runner, project_with_public, monkeypatch):
+    """Default bus-factor must not surface ``public/`` (generated output) as a risk.
+
+    Regression for the dogfooding sweep: a stale single-author
+    ``public/api/`` was reported CRITICAL ("primary author inactive
+    >6 months"). Build-artifact directories carry no knowledge-
+    concentration risk and must be excluded by default.
+    """
+    monkeypatch.chdir(project_with_public)
+    result = invoke_cli(cli_runner, ["bus-factor"], cwd=project_with_public, json_mode=True)
+    data = parse_json_output(result, "bus-factor")
+
+    paths = _directory_paths(data)
+    public_dirs = [p for p in paths if "public/" in p.replace("\\", "/")]
+    assert not public_dirs, (
+        f"Expected public/ directories to be excluded by default, got: {public_dirs}\nAll directories: {paths}"
+    )
+
+    # The generated-tree author must not leak into any top_authors list.
+    for d in _directories(data):
+        names = [a.get("name") for a in d.get("top_authors", [])]
+        assert "GenBot" not in names, f"GenBot (public/ author) leaked into top_authors of {d['directory']}: {names}"
+
+
+def test_bus_factor_includes_public_with_flag(cli_runner, project_with_public, monkeypatch):
+    """``--include-excluded`` restores the ``public/`` directory to the ranking."""
+    monkeypatch.chdir(project_with_public)
+    result = invoke_cli(
+        cli_runner,
+        ["--include-excluded", "bus-factor"],
+        cwd=project_with_public,
+        json_mode=True,
+    )
+    data = parse_json_output(result, "bus-factor")
+
+    paths = _directory_paths(data)
+    public_dirs = [p for p in paths if "public/" in p.replace("\\", "/")]
+    assert public_dirs, f"Expected public/ directories to appear with --include-excluded, all dirs: {paths}"
+
+
 def test_bus_factor_envelope_reports_excluded_count(cli_runner, project_with_github, monkeypatch):
     """Default envelope exposes how many files were filtered and which
     prefixes were active so agents can see the gate's effect.

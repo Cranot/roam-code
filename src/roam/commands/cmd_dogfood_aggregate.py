@@ -635,7 +635,11 @@ def dogfood_aggregate(
     click.echo()
     click.echo(f"Evals dir: {root_path}")
     if parse_failures:
-        click.echo(f"Parse failures: {len(parse_failures)} (see --json for paths)")
+        # List the failing paths inline so triage doesn't require a second
+        # ``--json`` invocation just to learn WHICH files could not be parsed.
+        click.echo(f"Parse failures: {len(parse_failures)}")
+        for pf in parse_failures:
+            click.echo(f"  {pf}")
     click.echo()
 
     # Top-N commands.

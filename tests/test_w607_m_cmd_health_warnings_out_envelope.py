@@ -248,6 +248,69 @@ def test_algebraic_connectivity_unavailable_exports_null(cli_runner, health_proj
     assert any(m.startswith("health_algebraic_connectivity_failed:") for m in top_wo), top_wo
 
 
+def test_json_stdout_no_runtimewarning_leak(cli_runner, health_project, monkeypatch):
+    """UFS3 / FIX 2: ``roam --json health`` must emit ONLY the JSON envelope on
+    stdout.
+
+    The real production path is ``algebraic_connectivity`` EMITTING a
+    ``RuntimeWarning`` (numpy/scipy-missing 0.0 sentinel) rather than raising —
+    the ``except`` clause never sees it. If that warning reaches stdout it lands
+    BEFORE the ``{`` and breaks every JSON parser downstream. The call-site
+    ``catch_warnings(record=True)`` capture must fold it into ``warnings_out``
+    so it can NEVER reach stdout — even when a non-default ``showwarning``
+    routes warnings to stdout (the adversarial host the capture defends
+    against). Simulated deterministically so the test holds whether or not THIS
+    host has numpy installed.
+    """
+    import warnings as _warnings
+
+    from roam.commands import cmd_health
+
+    # Emit-and-return-0.0, exactly like graph/cycles.algebraic_connectivity on
+    # a missing numpy/scipy substrate (it does NOT raise).
+    def _emit_warning_fiedler(G):
+        _warnings.warn(
+            "algebraic_connectivity compute failed (ModuleNotFoundError): "
+            "No module named 'numpy'; returning 0.0 sentinel",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
+        return 0.0
+
+    monkeypatch.setattr(cmd_health, "algebraic_connectivity", _emit_warning_fiedler)
+
+    # Adversarial host: a non-default showwarning that routes warning text to
+    # stdout. FIX 2's call-site capture must make this irrelevant.
+    def _stdout_showwarning(message, category, filename, lineno, file=None, line=None):
+        sys.stdout.write(f"{getattr(category, '__name__', category)}: {message}\n")
+
+    monkeypatch.setattr(_warnings, "showwarning", _stdout_showwarning)
+
+    result = _invoke_health(cli_runner, health_project, json_mode=True)
+    assert result.exit_code == 0, result.output
+
+    out = result.output
+    first_nonempty = next((ln for ln in out.splitlines() if ln.strip()), "")
+    assert first_nonempty.lstrip().startswith("{"), (
+        f"stdout must START with the JSON envelope, not a leaked RuntimeWarning; "
+        f"first non-empty line = {first_nonempty!r}"
+    )
+    # The strongest guarantee: the WHOLE stdout parses as JSON — no warning text
+    # leaked before, between, or after the envelope.
+    data = _json.loads(out)
+    assert data["command"] == "health"
+
+    # Non-vacuous: prove the warning actually fired and was FOLDED into
+    # warnings_out (disclosed, not lost) rather than simply never emitted.
+    wo = data.get("warnings_out") or data.get("summary", {}).get("warnings_out") or []
+    assert any("algebraic_connectivity_warning" in m for m in wo), (
+        f"the captured fiedler RuntimeWarning must be disclosed in warnings_out; got {wo!r}"
+    )
+    # And the sentinel is honestly exported as null / unavailable.
+    assert data["summary"].get("algebraic_connectivity") is None, data["summary"]
+    assert data["summary"].get("algebraic_connectivity_available") is False, data["summary"]
+
+
 def test_algebraic_connectivity_available_exports_value(cli_runner, health_project, monkeypatch):
     """When the Fiedler value computes, it is exported verbatim with
     ``algebraic_connectivity_available: true`` (no false n/a)."""

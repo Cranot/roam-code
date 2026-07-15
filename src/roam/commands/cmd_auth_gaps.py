@@ -1326,6 +1326,7 @@ def _emit_auth_gaps_json(
     _run_check_ed,
     _w607cm_warnings_out,
     _w607ed_warnings_out,
+    excluded_tests=0,
 ):
     """Emit the canonical auth-gaps JSON envelope.
 
@@ -1418,6 +1419,9 @@ def _emit_auth_gaps_json(
         "by_kind": _pred_fields["by_kind"],
         "files_affected": _pred_fields["files_affected"],
         "endpoints_affected": _pred_fields["endpoints_affected"],
+        # Dogfood FP transparency: how many findings were dropped because
+        # they live in test files (default-excluded; --include-tests keeps).
+        "excluded_tests": excluded_tests,
     }
     envelope_kwargs: dict = {
         "summary": summary_block,
@@ -1455,7 +1459,7 @@ def _emit_auth_gaps_json(
     click.echo(to_json(envelope))
 
 
-def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit):
+def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit, excluded_tests=0):
     """Emit the human-readable auth-gaps report."""
     click.echo("=== Auth Gaps ===\n")
 
@@ -1531,6 +1535,12 @@ def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_fi
         click.echo("No auth gaps detected.")
     elif n_high == 0:
         click.echo("No high-confidence gaps found. Review medium/low findings manually.")
+
+    # Dogfood FP transparency: mirror the ``smells`` detector's
+    # "(excluded N in ...)" footer so the default test-file exclusion is
+    # visible rather than silent.
+    if excluded_tests:
+        click.echo(f"\n(excluded {excluded_tests} test(s); pass --include-tests to surface them)")
 
 
 def _collect_auth_gaps_findings(
@@ -1695,6 +1705,44 @@ def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
 
 
 # ---------------------------------------------------------------------------
+# Test-file exclusion (dogfood FP — a test method is not an HTTP endpoint)
+# ---------------------------------------------------------------------------
+#
+# Real dogfooding-sweep false positive: PHP ``tests/Feature/*ControllerTest``
+# files are picked up by ``_find_controller_files`` (path LIKE '%Controller%'),
+# and their ``test_*`` methods — which frequently embed a CRUD action word
+# (``test_store_creates_user`` matches "store", ``test_can_update`` matches
+# "update") — get flagged as "missing authorization". They are test functions,
+# not endpoints, and on the sweep they dominated the false positives. Exclude
+# any finding whose file classifies as a test path by default; the
+# ``--include-tests`` flag restores the pre-fix behaviour. This mirrors the
+# ``smells`` detector's default tooling exclusion + ``(excluded N ...)`` footer.
+
+
+def _filter_out_test_findings(findings: list[dict]) -> tuple[list[dict], int]:
+    """Drop findings located in test files, returning ``(kept, excluded_n)``.
+
+    Uses the canonical :func:`roam.commands.changed_files.is_test_file`
+    classifier (covers ``tests/`` / ``test/`` / ``__tests__/`` / ``spec/`` /
+    ``testing/`` directory components plus per-language name conventions such
+    as PHP ``*Test.php``) so this exclusion stays in sync with the rest of the
+    codebase's test detection instead of re-deriving a private pattern list.
+    A legitimately-named ``TestController.php`` (ends with ``Controller.php``,
+    not ``Test.php``, and lives outside any test dir) is NOT excluded.
+    """
+    from roam.commands.changed_files import is_test_file
+
+    kept: list[dict] = []
+    excluded = 0
+    for f in findings:
+        if is_test_file(f.get("file") or ""):
+            excluded += 1
+            continue
+        kept.append(f)
+    return kept, excluded
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -1763,8 +1811,20 @@ def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
         "cross-detector surface."
     ),
 )
+@click.option(
+    "--include-tests",
+    "include_tests",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include findings in test files (tests/, test/, spec/, __tests__/, "
+        "*Test.php, ...). Excluded by default because test methods are not "
+        "HTTP endpoints and dominate false positives; the count of excluded "
+        "test findings is reported in a footer / the JSON summary."
+    ),
+)
 @click.pass_context
-def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, persist):
+def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, persist, include_tests):
     """Find endpoints missing authentication or authorization checks.
 
     Analyses PHP controller files and route definitions to detect:
@@ -1896,6 +1956,25 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
             _run_check_cm,
         )
 
+        # --- Dogfood FP: exclude test-file findings by default. ---
+        # PHP ``tests/Feature/*ControllerTest::test_*`` methods (and other
+        # test functions whose name embeds a CRUD action word) are not HTTP
+        # endpoints; on a real sweep they dominated the false positives.
+        # Filter BEFORE persist so the findings-registry rows stay clean too;
+        # ``--include-tests`` restores the pre-fix behaviour. The excluded
+        # count flows into the text footer / JSON summary for transparency.
+        excluded_tests = 0
+        if not include_tests:
+            _test_filter = _run_check_cm(
+                "exclude_test_findings",
+                _filter_out_test_findings,
+                all_findings,
+                default=(all_findings, 0),
+            )
+            if _test_filter is None:
+                _test_filter = (all_findings, 0)
+            all_findings, excluded_tests = _test_filter
+
         # --- W116: mirror auth-gaps into the central findings registry.
         # Runs ONLY with --persist. The persisted set is the unfiltered
         # union of route + controller findings — the registry mirrors
@@ -1976,8 +2055,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
             _run_check_ed,
             _w607cm_warnings_out,
             _w607ed_warnings_out,
+            excluded_tests,
         )
         return
 
     # --- Text output ---
-    _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit)
+    _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit, excluded_tests)

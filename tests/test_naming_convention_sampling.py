@@ -109,8 +109,97 @@ def test_framework_lifecycle_names_never_flagged():
 def test_single_lowercase_words_are_neutral_everywhere():
     from roam.commands.cmd_conventions import classify_case
 
-    for name in ("props", "text", "surface", "run", "delay", "session", "emit"):
+    # The six idiomatic Vue-3 bindings a dogfood repo had to hand-suppress
+    # (defineProps/defineEmits bindings, a destructured value, single-word
+    # refs, a toggle handler) plus the original neutral set. Every one is a
+    # single all-lowercase token with NO underscore: written identically under
+    # snake_case and camelCase, so it carries no case signal and must never be
+    # classified (and therefore never flagged) as a snake_case violation.
+    for name in (
+        "props",
+        "emit",
+        "text",
+        "batches",
+        "selected",
+        "toggle",  # the six FPs
+        "surface",
+        "run",
+        "delay",
+        "session",
+    ):
         assert classify_case(name) is None, name
+
+
+# ---------------------------------------------------------------------------
+# The verify ``naming`` rule DECISION must skip single all-lowercase
+# identifiers in a camelCase codebase (the six the dogfood Vue-3 repo had to
+# hand-suppress: ``props``/``emit``/``text``/``batches``/``selected``/
+# ``toggle``) while a genuine snake_case name (``my_variable``,
+# ``handle_click``) MUST still flag. The unit test above pins the classifier;
+# this pins the rule's flag decision end-to-end (mirrors ``_check_naming``'s
+# inner loop) without a git-indexed fixture — so the FP suppression and the
+# precision guard are pinned together: over-suppression would silence the
+# true positives, and this test would catch it.
+# ---------------------------------------------------------------------------
+
+
+def _naming_rule_flagged(names_kinds, dominant, *, language="vue"):
+    """Replay verify's ``_check_naming`` decision on synthetic symbols.
+
+    Returns the set of names the naming rule would flag. Mirrors
+    ``_check_naming`` (``cmd_verify.py``): each changed symbol is resolved via
+    ``_changed_naming_candidate``; a candidate is flagged only when its style
+    differs from the (kind-group, language) dominant style at >= 60% support.
+    """
+    from roam.commands.cmd_verify import _changed_naming_candidate
+
+    flagged = set()
+    for name, kind in names_kinds:
+        sym = {
+            "name": name,
+            "kind": kind,
+            "line_start": 1,
+            "signature": "",
+            "file_path": "src/components/Widget.vue",
+            "language": language,
+            "file_role": "source",
+        }
+        candidate = _changed_naming_candidate(sym)
+        if candidate is None:
+            continue
+        group, lang, style = candidate
+        expected = dominant.get((group, lang))
+        if expected is None:
+            continue
+        expected_style, pct = expected
+        if style != expected_style and pct >= 60:
+            flagged.add(name)
+    return flagged
+
+
+def test_verify_naming_skips_single_lowercase_but_flags_real_snake():
+    # A camelCase Vue codebase: both variables and functions are camelCase.
+    dominant = {
+        ("variables", "vue"): ("camelCase", 100.0),
+        ("functions", "vue"): ("camelCase", 100.0),
+    }
+    idiomatic = [
+        ("props", "variable"),
+        ("emit", "variable"),
+        ("text", "variable"),
+        ("batches", "variable"),
+        ("selected", "variable"),
+        ("toggle", "function"),
+    ]
+    real_snake = [("my_variable", "variable"), ("handle_click", "function")]
+
+    flagged = _naming_rule_flagged(idiomatic + real_snake, dominant)
+
+    # FP suppression: NONE of the six single-lowercase bindings are flagged.
+    assert flagged.isdisjoint({name for name, _ in idiomatic}), flagged
+    # Precision preserved (THE proof): genuine snake_case names STILL flag, so
+    # the suppression is a case-signal carve-out, not a blanket mute.
+    assert flagged == {"my_variable", "handle_click"}, flagged
 
 
 # ---------------------------------------------------------------------------

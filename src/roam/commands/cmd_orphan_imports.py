@@ -336,6 +336,28 @@ _JS_BUILTIN_PREFIXES = (
     "process",
 )
 
+# Style/asset imports (``import './styles.css'``) resolve to a real on-disk
+# file, not to an indexed JS/TS module — the indexer never registers CSS as a
+# JS-family language, so a naive ``target in indexed`` check flags every
+# existing stylesheet as a missing_local orphan. Dogfooded 2026-07-15. We
+# resolve these against the filesystem before flagging.
+_STYLE_IMPORT_EXTENSIONS: tuple[str, ...] = (".css", ".scss", ".sass", ".less")
+
+
+def _style_asset_resolves(target: str) -> bool:
+    """True when a relative style import (.css/.scss/.sass/.less) exists on disk.
+
+    ``target`` is the normalised posix path of the import relative to the
+    project root (the scanner runs with CWD == project root, mirroring the
+    ``Path(rel_path).is_file()`` check the scanners already rely on).
+    """
+    if not target.lower().endswith(_STYLE_IMPORT_EXTENSIONS):
+        return False
+    try:
+        return Path(target).is_file()
+    except OSError:
+        return False
+
 
 def _modules_from_path(rel_path: str, out: set[str]) -> None:
     """Add every dotted-prefix module name derivable from a Python file path."""
@@ -984,6 +1006,11 @@ def _scan_javascript(conn) -> tuple[list[dict], int]:
                         stack.append(p)
                 target = "/".join(stack)
             if target in indexed:
+                continue
+            # CSS/SCSS/etc. imports resolve to an on-disk asset the indexer
+            # doesn't register as a JS module — check the filesystem before
+            # flagging so an existing stylesheet isn't a false orphan.
+            if _style_asset_resolves(target):
                 continue
             orphans.append(
                 {

@@ -854,3 +854,52 @@ class TestJsFirewallSemantics:
         assert _declared_js_dependency_packages(str(a)) == frozenset({"vue"})
         assert _js_path_aliases(str(a)) == {"@/*": ["./src/*"]}
         assert _js_path_aliases(str(b)) == {}
+
+
+# ===========================================================================
+# 14. Documentation-file exclusion (.md / .mdx)
+# ===========================================================================
+
+
+class TestDocFileExclusion:
+    """``import`` lines inside ``.md`` / ``.mdx`` fenced code blocks are
+    documentation examples, not real imports. Dogfooded 2026-07-15: the
+    firewall flagged ``import x`` inside a markdown code fence as an
+    unresolved hallucination. Docs are skipped by default; ``--include-docs``
+    restores the old scan-everything behaviour."""
+
+    @pytest.fixture
+    def markdown_import_project(self, project_factory):
+        return project_factory(
+            {
+                "real.py": "def thing():\n    return 1\n",
+                "guide.md": (
+                    "# Usage\n\n```python\nimport phantom_md_pkg_xyz\nfrom another_fake_md_mod import Thing\n```\n"
+                ),
+            }
+        )
+
+    def test_markdown_import_not_reported_by_default(self, markdown_import_project):
+        result = _invoke(["verify-imports"], markdown_import_project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        # No import row may originate from a .md file, and neither fenced
+        # example name may appear.
+        assert not any(imp["file"].endswith(".md") for imp in data["imports"]), data["imports"]
+        names = {imp["name"] for imp in data["imports"]}
+        assert "phantom_md_pkg_xyz" not in names
+        assert "another_fake_md_mod" not in names
+
+    def test_markdown_import_reported_with_include_docs(self, markdown_import_project):
+        result = _invoke(
+            ["verify-imports", "--include-docs"],
+            markdown_import_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        md_rows = {imp["name"]: imp["status"] for imp in data["imports"] if imp["file"].endswith(".md")}
+        # The opt-in restores the pre-fix behaviour: the code-fence imports
+        # are scanned and flagged as unresolved.
+        assert md_rows.get("phantom_md_pkg_xyz") == "unresolved", data["imports"]
+        assert md_rows.get("another_fake_md_mod") == "unresolved", data["imports"]

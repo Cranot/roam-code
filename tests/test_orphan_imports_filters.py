@@ -33,6 +33,7 @@ from roam.commands.cmd_orphan_imports import (
     _is_conftest_path,
     _optional_import_line_set,
     _resolve_relative_import,
+    _style_asset_resolves,
 )
 from tests.conftest import make_src_project as _make_project
 
@@ -583,6 +584,89 @@ def test_w161_bare_sibling_import_in_tests_resolves(tmp_path):
         runner = CliRunner()
         count = _orphan_count(proj, runner)
         assert count == 0, f"expected 0 orphans (bare sibling import in tests); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+# ---------------------------------------------------------------------------
+# CSS/SCSS style-asset imports — existing stylesheets are not orphans
+# ---------------------------------------------------------------------------
+
+
+def test_style_asset_resolves_helper(tmp_path):
+    """Unit: ``_style_asset_resolves`` is disk-backed and extension-scoped."""
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "s.css").write_text("body{}", encoding="utf-8")
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(tmp_path))
+        assert _style_asset_resolves("assets/s.css") is True
+        assert _style_asset_resolves("assets/missing.css") is False
+        # Not a style extension — the helper declines (JS resolution owns it).
+        assert _style_asset_resolves("assets/s.js") is False
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_existing_css_import_is_not_orphan(tmp_path):
+    """``import './styles.css'`` where the file exists must NOT be flagged.
+
+    Dogfooded 2026-07-15: CSS/SCSS imports resolve to a real on-disk asset,
+    but the indexer never registers CSS as a JS module, so a naive
+    ``target in indexed`` check flagged every existing stylesheet as a
+    missing_local orphan.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "app.js": "import './styles.css'\nimport './theme.scss'\nexport const x = 1\n",
+            "styles.css": "body { color: red; }\n",
+            "theme.scss": "$c: red;\n",
+        },
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        import json as _json
+
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        result = runner.invoke(cli, ["--json", "orphan-imports", "--lang", "javascript"])
+        assert result.exit_code == 0, result.output
+        envelope = _json.loads(result.output)
+        modules = {o["value"]["module"] for o in envelope["orphans"]}
+        assert "./styles.css" not in modules, envelope["orphans"]
+        assert "./theme.scss" not in modules, envelope["orphans"]
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_missing_css_import_still_surfaces(tmp_path):
+    """A relative ``.css`` import with no file on disk is STILL an orphan.
+
+    The resolver must drop noise (existing assets) without eating signal
+    (genuinely broken style imports).
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "app.js": "import './styles.css'\nimport './missing_style_xyz.css'\nexport const x = 1\n",
+            "styles.css": "body {}\n",
+        },
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        import json as _json
+
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        result = runner.invoke(cli, ["--json", "orphan-imports", "--lang", "javascript"])
+        assert result.exit_code == 0, result.output
+        envelope = _json.loads(result.output)
+        modules = {o["value"]["module"] for o in envelope["orphans"]}
+        assert "./styles.css" not in modules, envelope["orphans"]  # exists → resolved
+        assert "./missing_style_xyz.css" in modules, envelope["orphans"]  # absent → orphan
     finally:
         os.chdir(old_cwd)
 

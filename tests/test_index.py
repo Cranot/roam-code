@@ -684,3 +684,50 @@ class TestClusterCache:
         out, rc = index_in_process(index_project, "--force")
         assert rc == 0, f"forced index failed:\n{out}"
         assert call_count["n"] >= 1, "detect_clusters MUST run under --force even on signature match"
+
+
+# ===========================================================================
+# --rebuild forgiving alias (regression guard)
+# ===========================================================================
+
+
+class TestRebuildAlias:
+    """``roam index --rebuild`` is a hidden, forgiving alias for ``--force``.
+
+    Reported bug: doctor / hints historically suggested ``roam index
+    --rebuild`` while the only real flag was ``--force``, so the recommended
+    command failed with ``Error: No such option: --rebuild``. The alias makes
+    every such recommendation executable while keeping ``--force`` canonical.
+    """
+
+    def test_rebuild_is_accepted(self, index_project):
+        """``roam index --rebuild`` parses (no "No such option") and succeeds."""
+        out, rc = index_in_process(index_project, "--rebuild")
+        assert "No such option" not in out, f"--rebuild must be a real option:\n{out}"
+        assert rc == 0, f"roam index --rebuild failed:\n{out}"
+        db_path = index_project / ".roam" / "index.db"
+        assert db_path.exists(), f"index DB not created by --rebuild:\n{out}"
+
+    def test_rebuild_behaves_like_force(self, index_project):
+        """``--rebuild`` triggers a full reindex like ``--force`` (never "up to date")."""
+        out1, rc1 = index_in_process(index_project)
+        assert rc1 == 0, out1
+        # A plain re-index of an unchanged project is a no-op.
+        out2, rc2 = index_in_process(index_project)
+        assert rc2 == 0, out2
+        assert "up to date" in out2.lower(), out2
+        # --rebuild must force a reprocess, exactly like --force.
+        out3, rc3 = index_in_process(index_project, "--rebuild")
+        assert rc3 == 0, out3
+        assert "up to date" not in out3.lower(), f"--rebuild should force reprocess:\n{out3}"
+
+    def test_rebuild_hidden_but_force_canonical(self):
+        """``--rebuild`` stays hidden from --help; ``--force`` is the documented flag."""
+        from click.testing import CliRunner
+
+        from roam.cli import cli
+
+        res = CliRunner().invoke(cli, ["index", "--help"])
+        assert res.exit_code == 0, res.output
+        assert "--force" in res.output, "--force must remain documented"
+        assert "--rebuild" not in res.output, "alias must stay hidden; --force is canonical"

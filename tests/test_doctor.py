@@ -85,6 +85,57 @@ class TestDoctorSmoke:
 
 
 # ---------------------------------------------------------------------------
+# Doctor recommendations must reference real flags (FIX 1a regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorIndexRecommendationsAreReal:
+    """Every ``roam index --<flag>`` the doctor recommends must be a real,
+    parseable option on the ``index`` command.
+
+    Reported bug: doctor advised ``roam index --rebuild`` while the only flag
+    was ``--force``, so the recommendation errored with
+    ``No such option: --rebuild``. This guards against re-introducing a
+    recommendation that references a non-existent flag.
+    """
+
+    @staticmethod
+    def _recommended_index_flags() -> list[str]:
+        import re
+        from pathlib import Path
+
+        from roam.commands import cmd_doctor
+
+        src = Path(cmd_doctor.__file__).read_text(encoding="utf-8")
+        return sorted(set(re.findall(r"roam index (--[a-z][a-z0-9-]*)", src)))
+
+    @staticmethod
+    def _real_index_options() -> set[str]:
+        from roam.commands.cmd_index import run_index_command
+
+        real: set[str] = set()
+        for param in run_index_command.params:
+            real.update(getattr(param, "opts", []) or [])
+        return real
+
+    def test_all_recommended_index_flags_are_real_options(self):
+        real = self._real_index_options()
+        for flag in self._recommended_index_flags():
+            assert flag in real, (
+                f"doctor recommends `roam index {flag}` but that is not a real "
+                f"option on the index command (real options: {sorted(real)})"
+            )
+
+    def test_doctor_uses_force_not_rebuild(self):
+        """Canonical recommendation is ``--force``; ``--rebuild`` must not be advised."""
+        flags = self._recommended_index_flags()
+        assert "--force" in flags, f"doctor should recommend `roam index --force`; found {flags}"
+        assert "--rebuild" not in flags, (
+            f"doctor must not recommend the non-canonical `roam index --rebuild`; found {flags}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Check coverage — all expected checks are present
 # ---------------------------------------------------------------------------
 

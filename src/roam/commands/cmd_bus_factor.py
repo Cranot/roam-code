@@ -32,6 +32,34 @@ from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 # classifier shape.
 BUS_FACTOR_DETECTOR_VERSION: str = "1.0.0"
 
+# The shared ``conventions_helper`` default list already drops CI configs,
+# docs, and the classic build-output dirs (``dist/``, ``build/``,
+# ``node_modules/``, ``vendor/``, ``__pycache__/`` ...). A dogfooding sweep
+# surfaced a few MORE non-source directories that carry git history but no
+# knowledge-concentration risk, so a stale single-author ``public/api/`` or
+# ``.vscode/`` was reported as a CRITICAL "primary author inactive >6 months"
+# finding — pure noise. These augment (never replace) the shared prefixes and
+# are matched by the same ``has_excluded_prefix`` component-aware matcher, so
+# nested layouts (``packages/foo/public/...``) are caught too. The global
+# ``--include-excluded`` flag clears BOTH the shared and the extra sets.
+# (``.roamignore`` is honoured transitively: index-time discovery already
+# drops ignored paths, so they never reach the ``files`` table this detector
+# reads.)
+BUS_FACTOR_EXTRA_EXCLUDE_PREFIXES: tuple[str, ...] = (
+    "public/",  # generated / static web output (Next.js, CRA, ...)
+    "out/",  # build output (Next.js export, tsc --outDir, ...)
+    ".vscode/",  # editor config — never source
+    ".idea/",  # JetBrains IDE config — never source
+    "coverage/",  # coverage-report artifacts
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "generated/",  # explicitly generated code trees
+)
+
+# Effective bus-factor exclusion set: shared canon + the bus-factor extras.
+BUS_FACTOR_EXCLUDE_PREFIXES: tuple[str, ...] = DEFAULT_EXCLUDE_PREFIXES + BUS_FACTOR_EXTRA_EXCLUDE_PREFIXES
+
 
 def _contribution_entropy(author_shares):
     """Normalized Shannon entropy of contributions. 0.0=single author, 1.0=perfectly distributed."""
@@ -131,7 +159,7 @@ def _risk_label(score: float) -> str:
 def _analyse_bus_factor(
     conn,
     stale_months: int,
-    exclude_prefixes: tuple[str, ...] = DEFAULT_EXCLUDE_PREFIXES,
+    exclude_prefixes: tuple[str, ...] = BUS_FACTOR_EXCLUDE_PREFIXES,
 ):
     """Run the bus-factor analysis across all directories.
 
@@ -140,9 +168,12 @@ def _analyse_bus_factor(
         stale_months: months of inactivity before flagging a primary
             author as stale.
         exclude_prefixes: tuple of path prefixes to skip. Defaults to
-            :data:`DEFAULT_EXCLUDE_PREFIXES` (``.github/``, ``.claude/``,
-            ``docs/``, ``dist/``, ``node_modules/`` etc.) so non-source
-            paths don't dominate the ranking. Pass ``()`` to disable.
+            :data:`BUS_FACTOR_EXCLUDE_PREFIXES` (the shared
+            :data:`DEFAULT_EXCLUDE_PREFIXES` — ``.github/``, ``.claude/``,
+            ``docs/``, ``dist/``, ``node_modules/``, ``vendor/`` etc. — plus
+            the bus-factor extras ``public/``, ``out/``, ``.vscode/``,
+            ``.idea/`` and tool caches) so build-artifact / config dirs
+            don't dominate the ranking. Pass ``()`` to disable.
 
     Returns:
         (results, excluded_files): ``results`` is a list of per-directory
@@ -886,11 +917,13 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
       roam bus-factor --brain-methods
       roam bus-factor --force-team-mode
 
-    By default the scan skips identifiers under ``.github/``, ``.claude/``,
-    ``docs/``, ``dist/``, ``build/``, ``node_modules/``, ``vendor/``, and
-    ``__pycache__/`` so CI workflows and vendored deps don't dominate the
-    ranking. The global ``--include-excluded`` flag restores legacy
-    scan-everything behaviour.
+    By default the scan skips paths under ``.github/``, ``.claude/``,
+    ``docs/``, ``dist/``, ``build/``, ``node_modules/``, ``vendor/``,
+    ``__pycache__/`` plus non-source / build-artifact dirs (``public/``,
+    ``out/``, ``.vscode/``, ``.idea/``, ``coverage/``, tool caches,
+    ``generated/``) so CI workflows, vendored deps, and generated output
+    don't dominate the ranking. The global ``--include-excluded`` flag
+    restores legacy scan-everything behaviour.
 
     See also ``simulate-departure`` (impact of a specific developer
     leaving), ``drift`` (CODEOWNERS divergence), and ``owner``
@@ -903,7 +936,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
     # Default is to skip ``.github/``, ``.claude/``, ``docs/``, ``dist/``,
     # ``node_modules/``, etc. — see ``conventions_helper`` for the canon.
     include_excluded = ctx.obj.get("include_excluded", False) if ctx.obj else False
-    exclude_prefixes: tuple[str, ...] = () if include_excluded else DEFAULT_EXCLUDE_PREFIXES
+    exclude_prefixes: tuple[str, ...] = () if include_excluded else BUS_FACTOR_EXCLUDE_PREFIXES
     ensure_index()
 
     # W607-CQ -- substrate-boundary plumbing for cmd_bus_factor.
