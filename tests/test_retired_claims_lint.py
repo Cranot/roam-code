@@ -117,9 +117,7 @@ def test_retired_claims_do_not_reappear_uncorrected():
 
     # Sanity: a silent empty walk (wrong path after a rename) would let
     # drift slip through unnoticed — the W462 leak class itself.
-    assert scanned_files > 2, (
-        f"Only {scanned_files} public surfaces scanned; check _LANDING_DIR / _ROOT_DOCS paths."
-    )
+    assert scanned_files > 2, f"Only {scanned_files} public surfaces scanned; check _LANDING_DIR / _ROOT_DOCS paths."
 
     assert not failures, (
         "Retired public claims reappeared uncorrected (2026-07-14 claims audit; "
@@ -145,6 +143,4 @@ def test_retired_claims_lint_actually_catches_reappearance():
         "10/10 fixed in both arms (n=10 - no parity claim).\n"
         "same shape on Opus (-86% turns) [corrected 2026-07-14: -33% overall].\n"
     )
-    assert _find_violations(annotated) == [], (
-        "correction annotations on the same line must suppress the lint"
-    )
+    assert _find_violations(annotated) == [], "correction annotations on the same line must suppress the lint"
