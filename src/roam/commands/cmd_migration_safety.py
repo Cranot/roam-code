@@ -159,6 +159,14 @@ def _read_source(abs_path: Path) -> list[str]:
         return []
 
 
+# Per-line CODE-only (opens, closes) of {/} for a line list: shared
+# implementation (php_source_scan) so per-detector copies can't drift.
+# Migrations are the classic home of heredoc SQL (DB::statement(<<<SQL ...));
+# the shared scanner survives heredoc bodies with unpaired apostrophes that
+# poisoned a quote-aware scanner into string state.
+from roam.commands.php_source_scan import code_brace_deltas as _code_brace_deltas
+
+
 def _extract_up_block(lines: list[str]) -> tuple[int, int]:
     """Find the line range of the up() method body.
 
@@ -172,12 +180,20 @@ def _extract_up_block(lines: list[str]) -> tuple[int, int]:
       first '{' after the declaration (which may be on the same line or the
       next).  We record 'entered' once depth goes positive, then we stop
       when depth returns to 0.
+
+    Brace counting is string/comment-aware (see :func:`_code_brace_deltas`)
+    so a ``{``/``}`` inside a comment or string can't prematurely close the
+    detected up() block and hide unsafe operations that follow it.
     """
     up_start = 0
     brace_depth = 0
     in_up = False
     entered_body = False  # True once we've seen the opening { of the method
     up_end = 0
+
+    # Code-only per-line brace deltas (index-aligned with ``lines``), so
+    # non-code braces in comments/strings don't drift the depth walk.
+    deltas = _code_brace_deltas(lines)
 
     for i, line in enumerate(lines, start=1):
         if not in_up:
@@ -186,8 +202,7 @@ def _extract_up_block(lines: list[str]) -> tuple[int, int]:
                 up_start = i
 
         if in_up:
-            opens = line.count("{")
-            closes = line.count("}")
+            opens, closes = deltas[i - 1]
             brace_depth += opens - closes
 
             if not entered_body and opens > 0:

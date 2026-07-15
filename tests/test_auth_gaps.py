@@ -329,3 +329,62 @@ class TestAuthGapsExcludesTestMethods:
         # Opt-in restores the pre-fix behaviour: the test class is reported.
         assert "OrderControllerTest" in controllers
         assert data["summary"].get("excluded_tests", 0) == 0
+
+
+class TestBraceDeltasAuthGroupTracking:
+    """Auth-group brace tracking must ignore braces that appear in comments and
+    backticks (URL params like ``{id}`` are written in doc comments). A comment
+    ``}`` that dropped brace depth onto an auth group's boundary used to pop the
+    whole group, so every route after it read as "missing auth" (measured: 433
+    false auth-gaps on a real Laravel app, all from one ``{id}`` in a comment).
+    """
+
+    def test_brace_deltas_skips_comment_and_string_and_backtick_braces(self):
+        from roam.commands.cmd_auth_gaps import _brace_deltas
+
+        src = (
+            "Route::group(function () {\n"  # (1,0) real open
+            "    // registered before {id} to avoid `{clash}` collisions\n"  # (0,0) comment
+            "    $x = '/users/{id}/edit';\n"  # (0,0) braces in string
+            "    /* block { with } braces */ Route::get('/a', 'C@a');\n"  # (0,0)
+            "});\n"  # (0,1) real close
+        )
+        deltas = _brace_deltas(src)
+        assert deltas == [(1, 0), (0, 0), (0, 0), (0, 0), (0, 1)]
+
+    def test_brace_deltas_carries_block_comment_across_lines(self):
+        from roam.commands.cmd_auth_gaps import _brace_deltas
+
+        src = "a {\n/* comment with { and }\nstill in comment } */ b }\n"
+        # line1: one real open; line2: all in comment (0,0); line3: comment ends,
+        # then a real `}` -> (0,1)
+        assert _brace_deltas(src) == [(1, 0), (0, 0), (0, 1)]
+
+    def test_comment_brace_does_not_pop_auth_group(self):
+        from roam.commands.cmd_auth_gaps import _analyze_route_file
+
+        src = (
+            "<?php\n"
+            "Route::middleware([\n"
+            "    'auth:sanctum',\n"
+            "    App\\Http\\Middleware\\SetOfficeContext::class,\n"
+            "])->group(function () {\n"
+            "    // 'calculate' is registered before {id} to avoid a route clash\n"
+            "    Route::get('/things/{id}', [ThingController::class, 'show']);\n"
+            "    Route::post('/things', [ThingController::class, 'store']);\n"
+            "    Route::prefix('deep')->group(function () {\n"
+            "        Route::post('/x', [DeepController::class, 'store']);\n"
+            "    });\n"
+            "});\n"
+            "// a route defined OUTSIDE the auth group must still be flagged:\n"
+            "Route::post('/legacy-sync', [LegacyController::class, 'run']);\n"
+        )
+        findings, protected = _analyze_route_file("routes/api.php", src)
+        # Controllers reached only inside the auth group are protected despite the
+        # `{id}` in the comment above them (and inside a deeper nested prefix group).
+        assert "ThingController" in protected
+        assert "DeepController" in protected
+        # The route outside the group is still reported high (true positive kept —
+        # the fix must not over-suppress by leaving the auth group open to EOF).
+        assert "LegacyController" not in protected
+        assert any(f["path"] == "/legacy-sync" and f["confidence"] == "high" for f in findings)

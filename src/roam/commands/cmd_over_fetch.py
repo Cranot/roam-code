@@ -507,6 +507,17 @@ def _find_api_resource_for_model(conn, model_name: str) -> str | None:
     return None
 
 
+# Position-based string/comment-aware delimiter matching: shared implementation
+# (php_source_scan) so per-detector copies can't drift. The shared version also
+# handles PHP heredocs/nowdocs — an unpaired apostrophe in a heredoc body (SQL
+# `-- don't`, and this repo's Services DO hold heredoc SQL) poisoned a
+# quote-aware scanner into string state — and PHP 8 `#[...]` attributes.
+# A `]`/`}` buried in a doc comment or quoted literal (a route path
+# '/users/{id}', an array key 'Item [beta]') cannot prematurely balance the
+# count and truncate the matched span.
+from roam.commands.php_source_scan import matching_delim_end as _matching_delim_end
+
+
 def _count_resource_fields(root, resource_path: str) -> int | None:
     """Count fields exposed in a Laravel API Resource's ``toArray()`` method.
 
@@ -530,18 +541,13 @@ def _count_resource_fields(root, resource_path: str) -> int | None:
         return None
 
     bracket_pos = rest.index("[", return_match.start())
-    depth = 0
-    pos = bracket_pos
-    while pos < len(rest):
-        if rest[pos] == "[":
-            depth += 1
-        elif rest[pos] == "]":
-            depth -= 1
-            if depth == 0:
-                break
-        pos += 1
+    # Walk the array extent with a string/comment-aware matcher so a
+    # ``[``/``]`` inside a string literal or comment within the toArray()
+    # return can't prematurely balance the bracket count and truncate the
+    # array body (same brace-in-comment defect fixed in auth-gaps).
+    end_pos = _matching_delim_end(rest, bracket_pos, "[", "]")
 
-    array_body = rest[bracket_pos : pos + 1]
+    array_body = rest[bracket_pos : end_pos + 1]
 
     # Each 'key' => represents one exposed field in the response
     return len(re.findall(r"""['\"][^'\"]+['\"]\s*=>""", array_body))
@@ -642,7 +648,12 @@ def _check_controller_direct_returns(
     return direct_returns
 
 
-# M12 helper — extract method bodies with line numbers for scoped scans.
+# Per-line CODE-only (opens, closes) of {/}: shared implementation
+# (php_source_scan) — see the note on _matching_delim_end above; both now
+# also survive heredocs/nowdocs and PHP 8 attributes.
+from roam.commands.php_source_scan import brace_deltas as _brace_deltas
+
+
 def _extract_method_bodies_with_lines(source: str) -> list[dict]:
     """Pull out PHP class method bodies with start_line + name.
 
@@ -653,6 +664,11 @@ def _extract_method_bodies_with_lines(source: str) -> list[dict]:
     out: list[dict] = []
     method_re = re.compile(r"(?:public|protected|private)\s+function\s+(\w+)\s*\(")
     lines = source.splitlines()
+    # Code-only brace deltas (skip braces in strings/comments/backticks,
+    # cross-line aware) so a `{id}` in a route-path string or a doc comment
+    # can't shift where the method body's closing `}` is located. Aligned
+    # by index with ``lines`` (both derive from ``source.splitlines()``).
+    deltas = _brace_deltas(source)
     i = 0
     while i < len(lines):
         m = method_re.search(lines[i])
@@ -661,19 +677,19 @@ def _extract_method_bodies_with_lines(source: str) -> list[dict]:
             continue
         method_name = m.group(1)
         start_line = i + 1  # 1-based
-        # Walk to the closing brace
+        # Walk to the closing brace using per-line code-only deltas. The
+        # end-of-line check matches the original char loop's semantics
+        # (brace depth was only inspected after each full line).
         brace_depth = 0
         body_lines: list[str] = []
         j = i
         found_open = False
         while j < len(lines):
             seg = lines[j]
-            for ch in seg:
-                if ch == "{":
-                    brace_depth += 1
-                    found_open = True
-                elif ch == "}":
-                    brace_depth -= 1
+            opens, closes = deltas[j]
+            if opens:
+                found_open = True
+            brace_depth += opens - closes
             body_lines.append(seg)
             if found_open and brace_depth == 0:
                 break

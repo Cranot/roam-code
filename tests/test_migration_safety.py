@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from roam.commands.cmd_migration_safety import _analyze_file, _extract_up_block
 from tests.conftest import (
     assert_json_envelope,
     git_init,
@@ -502,3 +503,103 @@ class TestMigrationSafetyFilters:
         assert result.exit_code == 0
         assert data["findings"] == []
         assert data["summary"]["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestMigrationSafetyBraceAwareness
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationSafetyBraceAwareness:
+    """A `{`/`}` inside a comment or string must not shift the detected up()
+    block extent.
+
+    Root cause: ``_extract_up_block`` counted braces with a naive
+    ``line.count("{")`` / ``line.count("}")`` — so a stray brace in a comment
+    or string drifted brace depth and mis-located the up() body. A premature
+    close HIDES unsafe operations that follow it (false negative); an
+    over-extend swallows down(). Same defect class fixed in cmd_auth_gaps.
+    """
+
+    def test_stray_closing_brace_in_comment_does_not_truncate_up_block(self):
+        # The `}` in the comment must NOT close up() early -- if it did, the
+        # Schema::create below would fall OUTSIDE the up() block and never be
+        # scanned.
+        source = (
+            "<?php\n"
+            "class CreateFooTable extends Migration\n"
+            "{\n"
+            "    public function up()\n"
+            "    {\n"
+            "        // dropping the legacy } column marker before recreating\n"
+            "        Schema::create('foo', function (Blueprint $table) {\n"
+            "            $table->id();\n"
+            "        });\n"
+            "    }\n"
+            "\n"
+            "    public function down()\n"
+            "    {\n"
+            "        Schema::dropIfExists('foo');\n"
+            "    }\n"
+            "}\n"
+        )
+        lines = source.splitlines(keepends=True)
+        up_start, up_end = _extract_up_block(lines)
+        up_block = "".join(lines[up_start - 1 : up_end])
+        assert "Schema::create('foo'" in up_block, up_block
+
+    def test_stray_open_brace_in_string_does_not_overrun_up_block(self):
+        # The lone `{` in the `'tenant_{'` string must NOT push up()'s end
+        # past its real closing brace into down().
+        source = (
+            "<?php\n"
+            "class CreateBazTable extends Migration\n"
+            "{\n"
+            "    public function up()\n"
+            "    {\n"
+            "        $prefix = 'tenant_{';\n"
+            "        Schema::create('baz', function (Blueprint $table) {\n"
+            "            $table->id();\n"
+            "        });\n"
+            "    }\n"
+            "\n"
+            "    public function down()\n"
+            "    {\n"
+            "        Schema::dropIfExists('baz');\n"
+            "    }\n"
+            "}\n"
+        )
+        lines = source.splitlines(keepends=True)
+        up_start, up_end = _extract_up_block(lines)
+        up_block = "".join(lines[up_start - 1 : up_end])
+        assert "Schema::create('baz'" in up_block
+        # up() must not over-extend into down().
+        assert "function down" not in up_block, up_block
+
+    def test_comment_brace_does_not_hide_unguarded_create(self, tmp_path):
+        # End-to-end: the whole detector must still flag the unguarded
+        # Schema::create even though a `}` in a comment precedes it. Without
+        # the fix the comment brace truncated up() and the create was missed.
+        source = (
+            "<?php\n"
+            "class CreateBarTable extends Migration\n"
+            "{\n"
+            "    public function up()\n"
+            "    {\n"
+            "        // note: JSON payload ends with a } here\n"
+            "        Schema::create('bar', function (Blueprint $table) {\n"
+            "            $table->id();\n"
+            "        });\n"
+            "    }\n"
+            "\n"
+            "    public function down()\n"
+            "    {\n"
+            "        Schema::dropIfExists('bar');\n"
+            "    }\n"
+            "}\n"
+        )
+        path = tmp_path / "2024_01_01_000001_create_bar_table.php"
+        path.write_text(source)
+        findings = _analyze_file(path, "database/migrations/2024_01_01_000001_create_bar_table.php")
+        categories = {f["category"] for f in findings}
+        assert "create_without_check" in categories, findings

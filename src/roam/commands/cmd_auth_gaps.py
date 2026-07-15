@@ -494,6 +494,16 @@ def _count_braces(line: str) -> tuple[int, int]:
     return opens, closes
 
 
+# Per-line CODE-only (opens, closes) of {/}: the string/comment/heredoc-aware
+# scanner is shared (php_source_scan) so per-detector copies can't drift. The
+# shared version also handles PHP heredocs/nowdocs — an unpaired apostrophe in
+# a heredoc body (SQL `-- don't`) poisoned the first-generation local scanner
+# into string state — and PHP 8 `#[...]` attributes (code, not comments).
+# Route files put URL params ({id}) inside string literals AND doc comments;
+# counting those braces was the cause of premature auth-group pops (measured:
+# 433 false auth-gaps from one comment `}` popping the whole auth group).
+from roam.commands.php_source_scan import brace_deltas as _brace_deltas
+
 # ---------------------------------------------------------------------------
 # Route file analysis
 # ---------------------------------------------------------------------------
@@ -525,6 +535,10 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
     findings: list[dict] = []
     protected_controllers: set[str] = set()
     lines = source.splitlines()
+    # Code-only brace deltas (skip braces in strings AND comments/backticks,
+    # cross-line aware) so a `{id}` in a route path or a doc comment can't pop
+    # an auth group. See _brace_deltas.
+    deltas = _brace_deltas(source)
 
     # (depth_at_open, is_auth) — depth_at_open is brace_depth right before
     # the group's opening ``{``.  We pop when a ``}`` returns us to that depth.
@@ -547,7 +561,7 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
 
     for lineno, raw_line in enumerate(lines, 1):
         line = raw_line
-        opens, closes = _count_braces(line)
+        opens, closes = deltas[lineno - 1]
 
         # --- Multi-line middleware accumulation ---
         if middleware_accumulator is not None:

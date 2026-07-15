@@ -111,10 +111,16 @@ _RESOURCE_ROUTE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Route groups with prefix:
-#   Route::prefix('prefix')->group(...)
-_PREFIX_RE = re.compile(
-    r"Route\s*::\s*(?:[^;]*?->)?\s*prefix\s*\(\s*['\"]([^'\"]+)['\"]",
+# Route groups whose prefix composes child route paths:
+#   Route::prefix('mydata')->group(function () { Route::post('/bulk-send', ...) })
+#   -> the child route's REAL path is /mydata/bulk-send (the FE calls that, not /bulk-send)
+# Matches ``prefix('X') ...optional ->name()/->middleware() chain... ->group(``. The prefix
+# string is consumed by the quoted group so route params inside it (e.g. 'x/{id}/y') don't
+# break parsing, and ``[^;{]`` stops the chain before the group body's opening brace.
+_PREFIX_GROUP_RE = re.compile(
+    r"prefix\s*\(\s*['\"]([^'\"]+)['\"]\s*\)"
+    r"[^;{]*?"
+    r"->\s*group\s*\(",
     re.IGNORECASE,
 )
 
@@ -146,6 +152,91 @@ _HTTP_METHOD_MAP = {
 }
 
 
+def _scan_to_matching_brace(source: str, open_idx: int) -> int:
+    """Index of the ``}`` matching the ``{`` at ``open_idx``.
+
+    String- and comment-aware: PHP route params (``{id}``) live inside quoted
+    strings and must not be counted, so we skip ``'...'`` / ``"..."`` strings
+    (with ``\\`` escapes) and ``//`` / ``#`` / ``/* */`` comments. Returns
+    ``len(source)`` if unbalanced (treated as running to EOF).
+    """
+    depth = 0
+    i = open_idx
+    n = len(source)
+    while i < n:
+        c = source[i]
+        if c == "/" and i + 1 < n and source[i + 1] == "/":
+            j = source.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if c == "#":
+            j = source.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if c == "/" and i + 1 < n and source[i + 1] == "*":
+            j = source.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        if c in ("'", '"'):
+            quote = c
+            i += 1
+            while i < n:
+                if source[i] == "\\":
+                    i += 2
+                    continue
+                if source[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _prefix_scopes(source: str) -> list[tuple[str, int, int]]:
+    """Return ``(prefix_segment, body_start, body_end)`` for each
+    ``Route::prefix('X')->group(function () { ... })`` block, so routes nested
+    inside inherit the composed prefix. Groups without an in-file brace body
+    (arrow-fn or file-include groups) are skipped — their child paths cannot be
+    composed from this file.
+    """
+    scopes: list[tuple[str, int, int]] = []
+    for m in _PREFIX_GROUP_RE.finditer(source):
+        seg = m.group(1).strip("/")
+        if not seg:
+            continue
+        brace = source.find("{", m.end())
+        if brace == -1:
+            continue
+        semi = source.find(";", m.end())
+        if semi != -1 and semi < brace:
+            continue
+        end = _scan_to_matching_brace(source, brace)
+        scopes.append((seg, brace, end))
+    return scopes
+
+
+def _compose_path(prefix_segs: list[str], raw_path: str) -> str:
+    """Join active group prefixes with a child route path into one ``/``-path.
+
+    Handles multi-segment prefixes (``'vat/f2'``) and route params
+    (``'{usagePeriod}'``); returns ``/`` for an empty composition.
+    """
+    parts: list[str] = []
+    for seg in prefix_segs:
+        parts.extend(p for p in seg.strip("/").split("/") if p)
+    for p in raw_path.strip("/").split("/"):
+        if p:
+            parts.append(p)
+    return "/" + "/".join(parts) if parts else "/"
+
+
 def _extract_routes_from_file(file_path: Path) -> list[dict]:
     """Parse a PHP route file and extract route definitions.
 
@@ -159,18 +250,27 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
 
     routes = []
 
+    # Prefix-group scopes: routes nested in Route::prefix('x')->group(){...} inherit 'x'
+    # (composed onto the child path) so the FE caller of /x/child is found, not /child.
+    scopes = _prefix_scopes(source)
+
     def _line_of(match):
         """Return 1-based line number for a regex match in 'source'."""
         return source[: match.start()].count("\n") + 1
+
+    def _active_prefix_segments(pos: int) -> list[str]:
+        """Prefix segments of every group scope containing 'pos', outermost first."""
+        active = [(s, seg) for (seg, s, e) in scopes if s <= pos <= e]
+        active.sort(key=lambda t: t[0])
+        return [seg for _, seg in active]
 
     # --- Single-action routes ---
     for m in _SINGLE_ROUTE_RE.finditer(source):
         http_verb = _HTTP_METHOD_MAP.get(m.group(1).lower(), m.group(1).upper())
         raw_path = m.group(2)
 
-        # Normalise path — make it start with /
-        if not raw_path.startswith("/"):
-            raw_path = "/" + raw_path
+        # Compose the enclosing group prefix stack onto the child route path.
+        path = _compose_path(_active_prefix_segments(m.start()), raw_path)
 
         # Controller and action
         if m.group(3):  # [Controller::class, 'method'] form
@@ -186,7 +286,7 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
         routes.append(
             {
                 "method": http_verb,
-                "path": raw_path,
+                "path": path,
                 "controller": controller,
                 "action": action,
                 "file": str(file_path),
@@ -201,6 +301,7 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
         controller = m.group(3).split("\\")[-1]
         method_map = _APIRESOURCE_METHODS if is_api else _RESOURCE_METHODS
         line = _line_of(m)
+        prefix_segs = _active_prefix_segments(m.start())
 
         for action, http_verb in method_map.items():
             if action == "index":
@@ -218,6 +319,7 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
             else:
                 path = f"/{resource_name}"
 
+            path = _compose_path(prefix_segs, path)
             routes.append(
                 {
                     "method": http_verb,

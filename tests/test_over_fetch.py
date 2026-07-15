@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from roam.commands.cmd_over_fetch import (
+    _count_resource_fields,
+    _extract_method_bodies_with_lines,
+)
 from tests.conftest import (
     assert_json_envelope,
     git_init,
@@ -90,3 +94,141 @@ class TestOverFetchText:
         monkeypatch.chdir(overfetch_project)
         result = invoke_cli(cli_runner, ["over-fetch"], cwd=overfetch_project)
         assert "VERDICT:" in result.output
+
+
+class TestOverFetchBraceAwareness:
+    """A `{`/`}`/`[`/`]` inside a comment or string literal must not shift
+    where a method body / return-array ends.
+
+    Root cause: line-/char-based delimiter counting that counted delimiters
+    appearing inside COMMENTS and STRINGS. PHP route/controller files write
+    URL params like ``{id}`` inside doc comments and string literals; a stray
+    brace/bracket there drifted the depth walk. Same defect class root-caused
+    and fixed in cmd_auth_gaps (``_brace_deltas``).
+    """
+
+    def test_stray_closing_brace_in_comment_does_not_truncate_body(self):
+        # A `}` inside a `//` comment must NOT prematurely close index()'s
+        # body (which would drop the paginate/return lines and mis-parse the
+        # rest of the class).
+        source = (
+            "<?php\n"
+            "class ThingController {\n"
+            "    public function index()\n"
+            "    {\n"
+            "        // the frontend appends a closing brace } to the payload\n"
+            "        $rows = Thing::query()->paginate();\n"
+            "        return $rows;\n"
+            "    }\n"
+            "\n"
+            "    public function show()\n"
+            "    {\n"
+            "        return 1;\n"
+            "    }\n"
+            "}\n"
+        )
+        methods = _extract_method_bodies_with_lines(source)
+        assert [m["name"] for m in methods] == ["index", "show"]
+        index_body = next(m["body"] for m in methods if m["name"] == "index")
+        # Body reaches the real closing brace, past the comment brace.
+        assert "paginate()" in index_body
+        assert "return $rows;" in index_body
+        # And must not swallow the following method.
+        assert "function show" not in index_body
+
+    def test_stray_brace_in_string_does_not_overrun_body(self):
+        # `'/users/{id}'` is a realistic (balanced) route param; the lone `{`
+        # in `'tenant_{'` is the stray that, when counted, over-extends
+        # first()'s body to swallow second() -- so only ONE method would be
+        # found without the fix.
+        source = (
+            "<?php\n"
+            "class RouteController {\n"
+            "    public function first()\n"
+            "    {\n"
+            "        $tpl = '/users/{id}';\n"
+            "        $prefix = 'tenant_{';\n"
+            "        $x = User::query()->paginate();\n"
+            "        return $x;\n"
+            "    }\n"
+            "\n"
+            "    public function second()\n"
+            "    {\n"
+            "        return 2;\n"
+            "    }\n"
+            "}\n"
+        )
+        methods = _extract_method_bodies_with_lines(source)
+        assert [m["name"] for m in methods] == ["first", "second"]
+        first_body = next(m["body"] for m in methods if m["name"] == "first")
+        assert "paginate()" in first_body
+        assert "function second" not in first_body
+
+    def test_heredoc_with_unpaired_apostrophe_does_not_poison_body(self):
+        # The REAL app's Services hold heredoc SQL (FileTableService.php). A
+        # heredoc body is prose/SQL with unpaired apostrophes (`-- don't`); a
+        # quote-aware scanner without heredoc support flips into string state
+        # at that apostrophe and swallows the rest of the file — the method
+        # body would truncate and the second method vanish.
+        source = (
+            "<?php\n"
+            "class FileTableService {\n"
+            "    public function rebuild()\n"
+            "    {\n"
+            "        $sql = <<<SQL\n"
+            '            INSERT INTO "{$schema}"."article_ledger_accounts"\n'
+            "            -- don't touch existing rows {\n"
+            "            SELECT gen_random_uuid()\n"
+            "        SQL;\n"
+            "        DB::statement($sql);\n"
+            "        $rows = Model::query()->paginate();\n"
+            "        return $rows;\n"
+            "    }\n"
+            "\n"
+            "    public function after()\n"
+            "    {\n"
+            "        return 2;\n"
+            "    }\n"
+            "}\n"
+        )
+        methods = _extract_method_bodies_with_lines(source)
+        assert [m["name"] for m in methods] == ["rebuild", "after"]
+        body = next(m["body"] for m in methods if m["name"] == "rebuild")
+        # Body reaches past the heredoc to the real end; second method intact.
+        assert "paginate()" in body
+        assert "function after" not in body
+
+    def test_count_resource_fields_ignores_bracket_in_comment(self, tmp_path):
+        # A `]` inside a `//` comment in the toArray() return must not close
+        # the array-body walk early (which would undercount exposed fields).
+        (tmp_path / "OrderResource.php").write_text(
+            "<?php\n"
+            "class OrderResource {\n"
+            "    public function toArray($request)\n"
+            "    {\n"
+            "        return [\n"
+            "            'id' => $this->id,   // note: trailing bracket ] here\n"
+            "            'name' => $this->name,\n"
+            "            'email' => $this->email,\n"
+            "        ];\n"
+            "    }\n"
+            "}\n"
+        )
+        assert _count_resource_fields(tmp_path, "OrderResource.php") == 3
+
+    def test_count_resource_fields_ignores_bracket_in_string(self, tmp_path):
+        # A lone `]` inside a string value must not close the array walk early.
+        (tmp_path / "LabelResource.php").write_text(
+            "<?php\n"
+            "class LabelResource {\n"
+            "    public function toArray($request)\n"
+            "    {\n"
+            "        return [\n"
+            "            'closing' => ']',\n"
+            "            'name' => $this->name,\n"
+            "            'slug' => $this->slug,\n"
+            "        ];\n"
+            "    }\n"
+            "}\n"
+        )
+        assert _count_resource_fields(tmp_path, "LabelResource.php") == 3

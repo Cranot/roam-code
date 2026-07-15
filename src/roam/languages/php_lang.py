@@ -509,6 +509,13 @@ class PhpExtractor(LanguageExtractor):
         if ntype == "function_call_expression":
             self._extract_function_call(node, source, refs, scope_name)
             return True
+        if ntype == "class_constant_access_expression":
+            # Only the `X::class` magic-constant form owns its recursion
+            # (and emits a class reference). Every other class-constant
+            # access (`X::SOME_CONST`, `self::class`, `$obj::class`) returns
+            # False so the walk recurses exactly as it did before this
+            # handler existed — keeping non-`::class` behaviour byte-identical.
+            return self._extract_class_constant_ref(node, source, refs, scope_name)
         return False
 
     def _scope_that_preserves_reference_owner(self, node, source, scope_name):
@@ -658,6 +665,63 @@ class PhpExtractor(LanguageExtractor):
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)
+
+    def _extract_class_constant_ref(self, node, source, refs, scope_name) -> bool:
+        """Extract the ``ClassName::class`` constant-expression reference.
+
+        tree-sitter-php parses ``X::class`` as a
+        ``class_constant_access_expression`` with *positional* children
+        ``[scope, '::', name]`` — note it does NOT expose ``scope`` / ``name``
+        *fields* the way ``scoped_call_expression`` does, so we read the
+        children by position: the constant name is the last child, the
+        left-hand class is the first.
+
+        Motivation (measured FP): a class referenced ONLY via ``X::class`` —
+        Laravel ``$casts = ['col' => MyCast::class]``, ``$dispatchesEvents``,
+        provider ``$bindings``, config arrays — otherwise produced no inbound
+        edge, so ``roam dead`` falsely labelled it unreferenced / safe to
+        delete. We emit a reference to the class ``X`` (its simple name),
+        mirroring how ``_extract_new`` emits the class reference for
+        ``new X()`` (``kind="call"``, ``line``, ``source_name``).
+
+        Conservative firing rules (highest-blast-radius core parser change):
+          * Fire ONLY for the magic ``::class`` form (constant name == ``class``).
+            Other class constants (``X::SOME_CONST``) emit nothing.
+          * Skip ``self::class`` / ``static::class`` / ``parent::class`` — their
+            left-hand side is a ``relative_scope`` node, not a class name
+            (mirrors how ``_extract_scoped_call`` skips self/static/parent).
+          * Skip dynamic scopes (``$obj::class``) — only a plain ``name`` or
+            ``qualified_name`` left-hand side resolves to a static class.
+
+        Returns True only when a reference is emitted (so the walker stops
+        recursing into this node); returns False for every other form so the
+        walk proceeds untouched.
+        """
+        children = node.children
+        if not children:
+            return False
+        const_node = children[-1]
+        # Fire ONLY on the magic `::class` constant, never `X::SOME_CONST`.
+        if const_node.type != "name" or self.node_text(const_node, source) != "class":
+            return False
+        scope_node = children[0]
+        # `relative_scope` covers self/static/parent; anything that isn't a
+        # static class name (e.g. a variable for `$obj::class`) is skipped.
+        if scope_node.type not in ("name", "qualified_name"):
+            return False
+        target = self.node_text(scope_node, source)
+        short = target.rsplit("\\", 1)[-1] if "\\" in target else target
+        if not short:
+            return False
+        refs.append(
+            self._make_reference(
+                target_name=short,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+        return True
 
     def _extract_new(self, node, source, refs, scope_name):
         """Extract `new ClassName()` constructor calls."""

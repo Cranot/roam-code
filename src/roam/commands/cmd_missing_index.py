@@ -39,6 +39,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.index.test_conventions import is_test_file
 from roam.observability import log_swallowed
 from roam.output._severity import severity_rank
 from roam.output.confidence import (
@@ -193,6 +194,16 @@ _RE_CLASS_DECL = re.compile(
     r"class\s+([A-Z][a-zA-Z0-9_]+)\s+extends",
 )
 
+# Class declaration that also captures the parent class, so the non-model gate
+# (`_is_non_model_class`) can tell an Eloquent model apart from a Seeder / Test /
+# Console command / Migration / ServiceProvider. Matches the SAME set of
+# declarations as `_RE_CLASS_DECL` (both require ``extends``) — the parent is
+# just exposed as group(2). The parent may be namespaced, e.g.
+# ``\Illuminate\Console\Command`` or ``Illuminate\Database\Seeder``.
+_RE_CLASS_DECL_PARENT = re.compile(
+    r"class\s+([A-Z][a-zA-Z0-9_]+)\s+extends\s+([\w\\]+)",
+)
+
 # Explicit $table = 'table_name' property
 _RE_TABLE_PROP = re.compile(
     r"\$table\s*=\s*['\"]([^'\"]+)['\"]",
@@ -220,6 +231,97 @@ def _extract_string_list(raw: str) -> list[str]:
     return [m.group(1) for m in re.finditer(r"['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]", raw)]
 
 
+def _is_non_model_class(rel_path: str, class_name: str, parent_name: str | None) -> bool:
+    """True when a class is NOT an Eloquent model.
+
+    Seeders, Tests, Console commands, Migrations, and ServiceProviders share the
+    ``class`` keyword and routinely issue ``->where(...)`` calls, but their class
+    name is **not** a table. Before this gate a class name like
+    ``DocumentArchiveSeeder`` was pluralised (via ``_class_to_table``) into a
+    phantom table ``document_archive_seeders`` and every ``->where`` in the
+    seeder's ``run()`` produced a false "missing index" finding on a table that
+    never existed (measured against a real Laravel app, roam 13.8.0):
+
+      database/seeders/DocumentArchiveSeeder.php  → document_archive_seeders.*
+      app/Console/Commands/BackfillOristiki.php   → backfill_oristikis.*
+      tests/Feature/.../DedupPerPeriodTest.php    → dedup_per_period_tests.*
+
+    A **genuine** model reference inside such a file (e.g.
+    ``DocumentArchive::where('usage_period_id', ...)``) is untouched: the caller
+    only skips the *class-declaration* inference, so the ``Model::call`` path can
+    still resolve the real model's table. Likewise a real Eloquent model
+    (``app/Models/*``, ``extends Model``) or a controller query is never gated —
+    only the Seeder/Test/Console/Migration/ServiceProvider class families are.
+
+    Detection combines path convention and class-shape convention so either
+    signal alone is sufficient (Laravel apps reliably honour at least one):
+      - Tests:    the canonical ``is_test_file`` classifier, or ``extends TestCase``.
+      - Seeders:  under ``database/seeders/``, or name/parent ends ``Seeder``.
+      - Commands: under ``Console/Commands/``, or name/parent ends ``Command``.
+      - Migrations: a migration path, or ``extends Migration``.
+      - Providers: name/parent ends ``ServiceProvider``.
+    """
+    p = (rel_path or "").replace("\\", "/").lower()
+    name = class_name or ""
+    parent = parent_name or ""
+
+    # --- Test classes: canonical path/name classifier + PHPUnit base class. ---
+    if is_test_file(rel_path or ""):
+        return True
+    if name.endswith("Test") or parent.endswith("TestCase"):
+        return True
+
+    # --- Seeders. ---
+    if "/database/seeders/" in p or p.startswith("database/seeders/"):
+        return True
+    if name.endswith("Seeder") or parent.endswith("Seeder"):
+        return True
+
+    # --- Console commands. ---
+    if "/console/commands/" in p or p.startswith("console/commands/"):
+        return True
+    if name.endswith("Command") or parent.endswith("Command"):
+        return True
+
+    # --- Migrations. Migration files are already routed to the index-parse
+    # path (not the query path), so this is defensive — but a stray query in a
+    # migration class must not pluralise the migration class name either. ---
+    if _is_migration_path(rel_path or "") or "/database/migrations/" in p:
+        return True
+    if parent.endswith("Migration"):
+        return True
+
+    # --- Service providers. ---
+    if name.endswith("ServiceProvider") or parent.endswith("ServiceProvider"):
+        return True
+
+    # --- Queue / domain classes that routinely hold ->where() queries but whose
+    # class name is never a table (Jobs, Observers, Policies, Listeners, Events,
+    # Mailables, Notifications, Rules). Matched by Laravel's PSR-4 directory
+    # conventions (unambiguous) rather than name suffixes, so a real model that
+    # happens to end that way (a CMS `PrivacyPolicy`, a `CalendarEvent`, a
+    # `PrintJob` in app/Models/) is NOT gated. Only the class-name→table
+    # inference is skipped; an explicit `Model::where(...)` inside these classes
+    # still resolves via the Model::call path, so a real missing index is not
+    # lost. HTTP classes (controllers/requests/resources/middleware) are
+    # deliberately NOT gated here — a controller's query legitimately resolves a
+    # real table and gating it would drop true findings (measured).
+    non_model_dirs = (
+        "app/jobs/",
+        "app/observers/",
+        "app/policies/",
+        "app/listeners/",
+        "app/events/",
+        "app/mail/",
+        "app/notifications/",
+        "app/rules/",
+    )
+    if any(d in p for d in non_model_dirs):
+        return True
+
+    return False
+
+
 # M9 — project-wide override index. Populated once per `roam missing-index`
 # run by walking all model files and parsing `protected $table = '...'`.
 # `_class_to_table` consults this BEFORE applying the snake_case fallback.
@@ -245,12 +347,18 @@ def _build_model_table_overrides(root, model_paths: list[str]) -> dict[str, str]
         except OSError:
             continue
         # Find each class declaration in the file + the nearest $table.
-        for class_match in _RE_CLASS_DECL.finditer(content):
+        for class_match in _RE_CLASS_DECL_PARENT.finditer(content):
             class_name = class_match.group(1)
+            parent_name = class_match.group(2)
+            # Non-model classes (Seeders / Tests / Console commands / Migrations /
+            # ServiceProviders) are never Eloquent models; don't let a stray
+            # $table on one pollute the override index keyed by class name.
+            if _is_non_model_class(rel, class_name, parent_name):
+                continue
             # Look forward in the class body for a $table = '...' definition.
             class_body_start = class_match.end()
             # Stop at the next class declaration (multi-class files are rare in PHP)
-            next_cls = _RE_CLASS_DECL.search(content, class_body_start)
+            next_cls = _RE_CLASS_DECL_PARENT.search(content, class_body_start)
             class_body_end = next_cls.start() if next_cls else len(content)
             class_body = content[class_body_start:class_body_end]
             tbl_match = _RE_TABLE_PROP.search(class_body)
@@ -305,6 +413,30 @@ def _class_to_table(class_name: str) -> str:
     ):
         return snake + "es"
     return snake + "s"
+
+
+def _table_from_class_decl_window(window: str, rel_path: str) -> str | None:
+    """Infer a table from the nearest class declaration in *window*.
+
+    Returns the snake_case-plural table name for the nearest ``class X extends Y``
+    declaration — UNLESS that class is a non-model class (Seeder / Test / Console
+    command / Migration / ServiceProvider), in which case it returns ``None`` so
+    the caller can fall through to the ``Model::call`` inference (which names a
+    real model) rather than pluralising a class name that is not a table.
+
+    This is the single gate that eliminated the measured false positives where a
+    Seeder/Test/Console class name was pluralised into a phantom table and every
+    ``->where`` inside it was reported as a missing index.
+    """
+    matches = list(_RE_CLASS_DECL_PARENT.finditer(window))
+    if not matches:
+        return None
+    m = matches[-1]
+    class_name = m.group(1)
+    parent_name = m.group(2)
+    if _is_non_model_class(rel_path, class_name, parent_name):
+        return None
+    return _class_to_table(class_name)
 
 
 # ---------------------------------------------------------------------------
@@ -388,13 +520,21 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
 # ---------------------------------------------------------------------------
 
 
-def _infer_table_from_context(content: str, match_pos: int) -> str | None:
+def _infer_table_from_context(content: str, match_pos: int, rel_path: str = "") -> str | None:
     """Try to infer the table name from surrounding code context.
 
     Looks backwards from *match_pos* for:
       1. An explicit $table = 'name' property
-      2. A class declaration (converts to snake_case plural)
+      2. A class declaration (converts to snake_case plural — but a Seeder /
+         Test / Console command / Migration / ServiceProvider class name is
+         NOT a table, so that inference is skipped for those; see
+         ``_table_from_class_decl_window`` / ``_is_non_model_class``)
       3. A Model::where('...') call that names a model class
+
+    ``rel_path`` is the file the *content* came from. It is optional (defaults
+    to ``""``) so direct unit callers can still pass just ``(content, pos)``;
+    the production caller passes it so the path-based non-model classifier
+    (``is_test_file``, ``database/seeders/``, ``Console/Commands/``) can fire.
 
     To avoid cross-model attribution (e.g. attributing a query on Model B
     to Model A because Model A appears earlier in the same file), the search
@@ -429,10 +569,13 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     if m:
         return m[-1].group(1)
 
-    # Class name → snake_case table
-    m2 = list(_RE_CLASS_DECL.finditer(window))
-    if m2:
-        return _class_to_table(m2[-1].group(1))
+    # Class name → snake_case table (gated: a Seeder / Test / Console command /
+    # Migration / ServiceProvider class name is NOT a table — skipping it lets
+    # a real Model::call below still resolve, while a bare non-model class no
+    # longer mints a phantom missing-index target).
+    table_from_class = _table_from_class_decl_window(window, rel_path)
+    if table_from_class is not None:
+        return table_from_class
 
     # Model::query / Model::where calls
     m3 = list(_RE_MODEL_CALL.finditer(window))
@@ -445,9 +588,9 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
         m_full = list(_RE_TABLE_PROP.finditer(raw_window))
         if m_full:
             return m_full[-1].group(1)
-        m2_full = list(_RE_CLASS_DECL.finditer(raw_window))
-        if m2_full:
-            return _class_to_table(m2_full[-1].group(1))
+        table_from_class_full = _table_from_class_decl_window(raw_window, rel_path)
+        if table_from_class_full is not None:
+            return table_from_class_full
 
     return None
 
@@ -857,7 +1000,7 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
                 scope_body,
                 rel_path,
                 _line_no_for_pos(offsets, scope_match.start()),
-                _infer_table_from_context(content, scope_match.start()),
+                _infer_table_from_context(content, scope_match.start(), rel_path),
                 "scope",
             )
             if pat is not None:
@@ -874,7 +1017,7 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
                 body,
                 rel_path,
                 _line_no_for_pos(offsets, mm.start()),
-                _infer_table_from_context(content, mm.start()),
+                _infer_table_from_context(content, mm.start(), rel_path),
                 file_kind,
             )
             if pat is not None:
