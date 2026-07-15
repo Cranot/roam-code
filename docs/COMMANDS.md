@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**275 commands** (268 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
+**275 commands** (268 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.9.0
 
 ## Getting Started (41)
 

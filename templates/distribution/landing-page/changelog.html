@@ -76,6 +76,7 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[13.9.0] — 2026-07-15</h2>
 <h3>Added</h3>
 <ul>
 <li><strong><code>roam ask "blast radius of renaming &lt;field&gt;"</code></strong> — new <code>field-trace</code> recipe (registry 30 → 31) that composes <code>uses</code> + <code>refs-text</code> + <code>impact</code> + <code>x-lang</code> into a pre-rename recon report: direct code consumers, per-surface text references (code/tests/docs/config with reachability + verdict), transitive blast radius, and FE&lt;-&gt;BE API-bridge links — the full DB-&gt;BE-&gt;API-&gt;FE touchpoint list before a field/symbol rename. The <code>roam mutate rename</code> dry-run is the follow-up (it needs the new name; keeping <code>mutate</code> out of the trace path keeps the recipe runnable under read-only constitutions). Honest gate: the rest-api bridge matches URLs, not serialized JSON keys.</li>
