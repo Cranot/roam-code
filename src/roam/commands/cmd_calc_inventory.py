@@ -38,7 +38,13 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.index.calc_extract import Calc, extract_calcs_from_file, normalize_formula, normalize_target
+from roam.index.calc_extract import (
+    Calc,
+    extract_calcs_from_file,
+    normalize_formula,
+    normalize_target,
+    rounding_semantic,
+)
 from roam.output.formatter import json_envelope, to_json
 
 # Languages whose grammars use the node kinds the extractor understands.
@@ -119,6 +125,7 @@ def _find_divergences(calcs: list[Calc]) -> list[dict]:
         if len(shapes) < 2:
             continue
         rounders = {c.rounding for c in group if c.rounding}
+        semantics = {s for c in group if (s := rounding_semantic(c.language, c.rounding))}
         langs = {c.language for c in group if c.language}
         files = {c.file for c in group if c.file}
         out.append(
@@ -130,6 +137,8 @@ def _find_divergences(calcs: list[Calc]) -> list[dict]:
                 "cross_file": len(files) > 1,
                 "rounding_functions": sorted(rounders),
                 "rounding_divergent": len(rounders) > 1,
+                "rounding_semantics": sorted(semantics),
+                "rounding_semantics_divergent": len(semantics) > 1,
                 "variants": [
                     {
                         "formula": group2[0].formula,
@@ -146,6 +155,7 @@ def _find_divergences(calcs: list[Calc]) -> list[dict]:
     # accumulators (many `total` shapes in one file) sink to the bottom.
     out.sort(
         key=lambda d: (
+            not d["rounding_semantics_divergent"],
             not d["cross_language"],
             not d["rounding_divergent"],
             not d["cross_file"],
@@ -181,11 +191,7 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     root = Path(path)
 
-    if round_funcs.strip():
-        from roam.index import calc_extract as _ce
-
-        extra = {f.strip().lower() for f in round_funcs.split(",") if f.strip()}
-        _ce._ROUND_FUNCS = frozenset(_ce._ROUND_FUNCS | extra)  # session-local widening
+    extra_round_funcs = frozenset(f.strip().lower() for f in round_funcs.split(",") if f.strip())
 
     if not root.exists():
         verdict = f"path not found: {path}"
@@ -208,7 +214,7 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
     files = _discover_files(root)
     calcs: list[Calc] = []
     for f in files:
-        calcs.extend(extract_calcs_from_file(f))
+        calcs.extend(extract_calcs_from_file(f, extra_round_funcs))
 
     if money_only:
         calcs = [c for c in calcs if _MONEY_RE.search(normalize_target(c.target))]
@@ -220,8 +226,14 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
     if calcs:
         verdict = f"{len(calcs)} calculations across {files_with_calcs} files ({rounding_count} with rounding)"
         if divergences:
+            sd = sum(1 for d in divergences if d["rounding_semantics_divergent"])
             rd = sum(1 for d in divergences if d["rounding_divergent"])
-            verdict += f"; {len(divergences)} divergent fields" + (f" ({rd} rounding-divergent)" if rd else "")
+            extra = []
+            if sd:
+                extra.append(f"{sd} rounding-semantics-divergent")
+            if rd:
+                extra.append(f"{rd} rounding-divergent")
+            verdict += f"; {len(divergences)} divergent fields" + (f" ({', '.join(extra)})" if extra else "")
     else:
         verdict = "no calculations found"
 
@@ -265,6 +277,8 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs):
         click.echo("\nDIVERGENT FIELDS (same name, different formula):")
         for d in divergences[:20]:
             tags = []
+            if d["rounding_semantics_divergent"]:
+                tags.append("ROUNDING-SEMANTICS-DIVERGENT " + "/".join(d["rounding_semantics"]))
             if d["cross_language"]:
                 tags.append("CROSS-LANGUAGE " + "/".join(d["languages"]))
             if d["rounding_divergent"]:
