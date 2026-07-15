@@ -8,7 +8,12 @@ import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_calc_inventory import calc_inventory
-from roam.index.calc_extract import extract_calcs, normalize_formula, normalize_target
+from roam.index.calc_extract import (
+    extract_calcs,
+    normalize_formula,
+    normalize_target,
+    rounding_semantic,
+)
 
 
 def _grammars_available() -> bool:
@@ -160,3 +165,48 @@ def test_command_path_not_found():
     result = runner.invoke(calc_inventory, ["/no/such/path/xyz"], obj={"json": True})
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "path_not_found"
+
+
+# ---- round-funcs threading (no module-global leak) + rounding semantics ----
+
+
+def test_extra_round_funcs_param_recognized():
+    src = b"<?php $vat = r($base * $rate);"
+    # without the wrapper it's still a calc (arithmetic), but rounding is unknown
+    base = extract_calcs("php", src)[0]
+    assert base.rounding is None
+    # with the wrapper declared, r() is recognized as the rounding fn
+    widened = extract_calcs("php", src, extra_round_funcs=frozenset({"r"}))[0]
+    assert widened.rounding == "r"
+
+
+def test_extra_round_funcs_does_not_leak():
+    # the correctness fix: a per-call widening must NOT persist to later calls
+    # (would corrupt a long-running MCP server). Widen once, then call plain.
+    src = b"<?php $vat = money($base);"
+    extract_calcs("php", src, extra_round_funcs=frozenset({"money"}))
+    after = extract_calcs("php", src)  # no widening this time
+    # 'money' is not a standard rounder, so a plain call must not report it
+    assert after == [] or after[0].rounding != "money"
+
+
+def test_rounding_semantic_lookup():
+    # the subtle cross-language bug: same "round" name, different tie behavior
+    assert rounding_semantic("php", "round") == "half_away_from_zero"
+    assert rounding_semantic("python", "round") == "half_to_even"  # banker's
+    assert rounding_semantic("javascript", "round") == "half_up_toward_positive"
+    assert rounding_semantic("php", "bcmul") == "truncate"
+    assert rounding_semantic("php", None) is None
+    assert rounding_semantic("cobol", "round") is None  # unknown lang
+
+
+def test_command_rounding_semantics_divergence(tmp_path):
+    # same field 'vat' rounded with round() in PHP (half-away) and Python
+    # (banker's) — identical call name, DIFFERENT semantics → flagged.
+    _write(tmp_path, "a.php", "<?php $vat = round($base * $rate, 2);")
+    _write(tmp_path, "b.py", "vat = round(base * rate, 2)\n")
+    runner = CliRunner()
+    env = json.loads(runner.invoke(calc_inventory, [str(tmp_path), "--divergence"], obj={"json": True}).output)
+    vat = next(d for d in env["divergences"] if d["field"] == "vat")
+    assert vat["rounding_semantics_divergent"] is True
+    assert set(vat["rounding_semantics"]) == {"half_away_from_zero", "half_to_even"}

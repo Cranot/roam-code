@@ -121,11 +121,13 @@ def _func_name(call, src: bytes) -> str:
     return name.strip()
 
 
-def _analyze_rhs(node, src: bytes) -> tuple[bool, str | None]:
+def _analyze_rhs(node, src: bytes, round_funcs: frozenset[str]) -> tuple[bool, str | None]:
     """(is_calculation, rounding_fn) for a right-hand-side subtree.
 
     A calculation = contains an arithmetic binary operator, or calls a
-    rounding/math function.
+    rounding/math function. ``round_funcs`` is passed in (not read from a module
+    global) so a per-call ``--round-funcs`` widening cannot leak across calls in
+    the long-running MCP server.
     """
     is_calc = False
     rounding: str | None = None
@@ -144,7 +146,7 @@ def _analyze_rhs(node, src: bytes) -> tuple[bool, str | None]:
                 is_calc = True
         elif n.type in _CALL_NODES:
             name = _func_name(n, src)
-            if name in _ROUND_FUNCS:
+            if name in round_funcs:
                 is_calc = True
                 rounding = rounding or name
         stack.extend(n.children)
@@ -187,12 +189,15 @@ def _aug_operator(node, src: bytes) -> str:
     return ""
 
 
-def extract_calcs(language: str, source: bytes) -> list[Calc]:
+def extract_calcs(language: str, source: bytes, extra_round_funcs: frozenset[str] = frozenset()) -> list[Calc]:
     """Extract computed-numeric assignments from ``source`` in ``language``.
 
     ``language`` is a roam grammar name (php, javascript, typescript, python,
-    ...). Returns ``[]`` on missing grammar or parse failure — never raises.
+    ...). ``extra_round_funcs`` widens the recognized rounding wrappers for this
+    call only (e.g. a project's ``r`` / ``round2`` / ``money`` helper). Returns
+    ``[]`` on missing grammar or parse failure — never raises.
     """
+    round_funcs = _ROUND_FUNCS | extra_round_funcs
     try:
         from tree_sitter_language_pack import get_parser
     except ImportError:
@@ -221,7 +226,7 @@ def extract_calcs(language: str, source: bytes) -> list[Calc]:
             lhs = n.child_by_field_name(lf)
             rhs = n.child_by_field_name(rf)
             if lhs is not None and rhs is not None and rhs.type not in _FUNC_RHS_NODES:
-                is_calc, rounding = _analyze_rhs(rhs, source)
+                is_calc, rounding = _analyze_rhs(rhs, source, round_funcs)
                 aug_op = _aug_operator(n, source) if kind == "augmented" else ""
                 if aug_op:
                     is_calc = True
@@ -249,7 +254,7 @@ def extract_calcs(language: str, source: bytes) -> list[Calc]:
     return out
 
 
-def extract_calcs_from_file(path: str | Path) -> list[Calc]:
+def extract_calcs_from_file(path: str | Path, extra_round_funcs: frozenset[str] = frozenset()) -> list[Calc]:
     """Detect language, read, and extract. ``[]`` on any I/O or grammar miss."""
     from roam.languages.registry import get_language_for_file
 
@@ -261,8 +266,45 @@ def extract_calcs_from_file(path: str | Path) -> list[Calc]:
         source = p.read_bytes()
     except OSError:
         return []
-    calcs = extract_calcs(language, source)
+    calcs = extract_calcs(language, source, extra_round_funcs)
     return [Calc(**{**c.__dict__, "file": str(p)}) for c in calcs]
+
+
+# Language-aware rounding semantics for the SAME bare function name — the subtle
+# cross-implementation bug a formula diff alone misses: PHP ``round()`` is
+# half-away-from-zero, JS ``Math.round`` is half-up-toward-+inf (diverges on
+# negative half-cents / credit notes), Python ``round()`` is banker's
+# (half-to-even). A field computed with "round" in two languages can silently
+# disagree on ties even when the formula text matches.
+_ROUNDING_SEMANTICS: dict[tuple[str, str], str] = {
+    ("php", "round"): "half_away_from_zero",
+    ("python", "round"): "half_to_even",
+    ("javascript", "round"): "half_up_toward_positive",
+    ("typescript", "round"): "half_up_toward_positive",
+    ("php", "number_format"): "half_away_from_zero",
+    ("php", "bcadd"): "truncate",
+    ("php", "bcsub"): "truncate",
+    ("php", "bcmul"): "truncate",
+    ("php", "bcdiv"): "truncate",
+    ("php", "intval"): "truncate",
+    ("php", "floor"): "toward_negative",
+    ("javascript", "floor"): "toward_negative",
+    ("php", "ceil"): "toward_positive",
+    ("javascript", "ceil"): "toward_positive",
+    ("javascript", "tofixed"): "half_up_toward_positive",
+}
+
+
+def rounding_semantic(language: str, func: str | None) -> str | None:
+    """Documented tie/direction semantics of a rounding fn in a language, if known.
+
+    Lets divergence detection flag two implementations that call the *same*
+    rounding name but with *different* semantics (e.g. PHP half-away vs JS
+    half-up) — a to-the-cent bug that a formula-text comparison alone misses.
+    """
+    if not func:
+        return None
+    return _ROUNDING_SEMANTICS.get((language, func))
 
 
 def normalize_target(target: str) -> str:
