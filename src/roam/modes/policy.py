@@ -174,11 +174,13 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         #   compiler-corpus  — analyzes a saved prompt corpus (read-only)
         #   dispatch-trace   — classifier path + per-probe fire/skip (read-only)
         #   magic-numbers    — AST/tree-sitter unnamed-constant scan (read-only)
+        #   calc-inventory   — AST/tree-sitter computed-field + formula scan (read-only)
         #   at               — show code at FILE:LINE + enclosing symbol (DB read)
         "compile",
         "compiler-corpus",
         "dispatch-trace",
         "magic-numbers",
+        "calc-inventory",
         "at",
         # 2026-06-08 — `cycles` is a pure read-only graph query (Tarjan SCCs of
         # the symbol graph; open_db readonly=True), the focused sibling of
