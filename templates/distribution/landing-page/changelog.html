@@ -76,6 +76,10 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Fixed</h3>
+<ul>
+<li><strong><code>--json</code> / SARIF deliverables no longer leak compile-time <code>SyntaxWarning</code>s</strong> — a structured-output run (e.g. <code>service-report --type reachability-triage</code>, a client-facing report) emitted raw interpreter <code>invalid escape sequence '\d'</code> / <code>'\g'</code> / <code>'\ '</code> lines on stderr, sourced from a dependency's <code>compile()</code> codegen (<code>filename=&lt;unknown&gt;</code>), not from roam's own source (which is SyntaxWarning-clean under the compileall gate). The structured warning handler now drops <code>SyntaxWarning</code> (compile-time, never a user-actionable roam finding) from the customer stream; genuine roam-origin warnings (and all other categories) are still surfaced, and normal non-structured runs are unchanged.</li>
+</ul>
 <h2>[13.9.0] — 2026-07-15</h2>
 <h3>Added</h3>
 <ul>

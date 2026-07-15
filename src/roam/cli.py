@@ -1691,6 +1691,17 @@ def _structured_output_requested(json_mode: bool, sarif_mode: bool, agent: bool)
 def _stderr_showwarning(message, category, filename, lineno, file=None, line=None) -> None:
     import json as _json
 
+    # SyntaxWarnings are compile-time interpreter signals — e.g. a dependency's
+    # codegen compiling a regex-bearing string (observed leaking `\d`/`\g<`/`\ `
+    # from `<unknown>` sources into `service-report --type reachability-triage`,
+    # a paid deliverable). They are never actionable roam findings for a user and
+    # must not appear in a customer-facing structured stream. roam's own source is
+    # SyntaxWarning-clean (compileall gate in CI), so dropping them here cannot
+    # hide a roam-source bug; dev/CI runs use the default warning hook (not this
+    # one — it is installed only under --json/SARIF/agent) and still surface them.
+    if isinstance(category, type) and issubclass(category, SyntaxWarning):
+        return
+
     try:
         line_json = _json.dumps(
             {

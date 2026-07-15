@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`--json` / SARIF deliverables no longer leak compile-time `SyntaxWarning`s** — a structured-output run (e.g. `service-report --type reachability-triage`, a client-facing report) emitted raw interpreter `invalid escape sequence '\d'` / `'\g'` / `'\ '` lines on stderr, sourced from a dependency's `compile()` codegen (`filename=<unknown>`), not from roam's own source (which is SyntaxWarning-clean under the compileall gate). The structured warning handler now drops `SyntaxWarning` (compile-time, never a user-actionable roam finding) from the customer stream; genuine roam-origin warnings (and all other categories) are still surfaced, and normal non-structured runs are unchanged.
+
 ## [13.9.0] — 2026-07-15
 
 ### Added
