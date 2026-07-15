@@ -483,6 +483,10 @@ _ALL_CHECKS: tuple[str, ...] = _DEFAULT_CHECKS + (
     "tests",
     "command_examples",
     "claims",
+    # Advisory: cross-file rounding-semantics divergence of a computed money field
+    # (== _VERIFY_CALC_DIVERGENCE_CATEGORY, defined near its check below). Not in
+    # _CATEGORY_WEIGHTS — never moves the composite score.
+    "calc_divergence",
     # Guardrail gates (env-flagged; see _verify_env_flag). Selectable via
     # --checks/--all/config; auto-selected by default on Python edits.
     _VERIFY_BREAKING_CATEGORY,
@@ -707,6 +711,8 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
         selected.add("command_examples")
     if any(_is_claim_surface(p) for p in target_paths):
         selected.add("claims")
+    if any(Path(p).suffix in _CALC_DIVERGENCE_EXTS and not is_test_file(p) for p in target_paths):
+        selected.add(_VERIFY_CALC_DIVERGENCE_CATEGORY)
     if has_py:
         # Behavioral + guardrail gates (env-flagged, reversible). The impacted-
         # test run is the executable signal that trips a behavioral regression
@@ -3306,6 +3312,93 @@ def _check_claims(changed_paths: list[str], root: Path) -> dict:
     return {"score": score, "violations": violations, "advisory": True, "claims_checked": claims_checked}
 
 
+_VERIFY_CALC_DIVERGENCE_CATEGORY = "calc_divergence"
+_CALC_DIVERGENCE_EXTS = frozenset(
+    {".php", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".py", ".go", ".java", ".cs", ".rb", ".rs"}
+)
+_CALC_DIVERGENCE_SCAN_CAP = 1500  # parse at most this many same-field files per verify
+_CALC_DIVERGENCE_SKIP_DIRS = frozenset({"node_modules", "vendor", "dist", "build", ".git", "__pycache__"})
+
+
+def _check_calc_divergence(changed_paths: list[str], root: Path) -> dict:
+    """Advisory: a money field computed by the SAME name but DIFFERENT rounding
+    semantics across the repo silently disagrees to-the-cent (PHP ``round``
+    half-away vs JS ``Math.round`` half-up vs Python banker's). Flag, at the
+    changed site, any field a changed file computes that is rounding-semantics-
+    divergent across its repo-wide implementations. Deterministic, no gate — the
+    divergence may be intentional; the agent decides. Cross-file by nature, so it
+    scans the repo (text-prefiltered to same-field files, capped, disclosed)."""
+    from roam.index.calc_extract import extract_calcs_from_file, normalize_target, rounding_semantic
+
+    changed = [p for p in changed_paths if Path(p).suffix in _CALC_DIVERGENCE_EXTS and not is_test_file(p)]
+    if not changed:
+        return {"score": 100, "violations": []}
+    # field -> [(rel, Calc)] computed in the CHANGED files
+    changed_by_field: dict[str, list[tuple[str, object]]] = {}
+    for rel in changed:
+        for c in extract_calcs_from_file(root / rel):
+            changed_by_field.setdefault(normalize_target(c.target), []).append((rel, c))
+    if not changed_by_field:
+        return {"score": 100, "violations": []}
+
+    # gather all repo-wide implementations of those fields (bounded)
+    target_fields = set(changed_by_field)
+    field_needles = [f.lower().encode() for f in target_fields if f]
+    all_by_field: dict[str, list[object]] = {f: [c for _, c in changed_by_field[f]] for f in target_fields}
+    changed_abs = {str((root / c).resolve()) for c in changed}
+    scanned = 0
+    capped = False
+    for p in root.rglob("*"):
+        if scanned >= _CALC_DIVERGENCE_SCAN_CAP:
+            capped = True
+            break
+        if not p.is_file() or p.suffix not in _CALC_DIVERGENCE_EXTS:
+            continue
+        if any(part in _CALC_DIVERGENCE_SKIP_DIRS for part in p.parts) or is_test_file(str(p)):
+            continue
+        if str(p.resolve()) in changed_abs:
+            continue
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            continue
+        low = raw.lower()
+        if not any(n in low for n in field_needles):  # cheap same-field prefilter
+            continue
+        scanned += 1
+        for c in extract_calcs_from_file(p):
+            f = normalize_target(c.target)
+            if f in target_fields:
+                all_by_field[f].append(c)
+
+    violations: list[dict] = []
+    for field, group in all_by_field.items():
+        sems = {s for c in group if (s := rounding_semantic(getattr(c, "language", ""), getattr(c, "rounding", None)))}
+        if len(sems) < 2:
+            continue
+        for rel, c in changed_by_field[field]:
+            violations.append(
+                {
+                    "severity": SEVERITY_WARN,
+                    "file": rel,
+                    "line": getattr(c, "line", 0),
+                    "message": (
+                        f"'{field}' is computed with divergent rounding semantics across the repo "
+                        f"({'/'.join(sorted(sems))}) — verify to-the-cent consistency (or confirm the difference is intended)"
+                    ),
+                    "category": _VERIFY_CALC_DIVERGENCE_CATEGORY,
+                }
+            )
+    result = {
+        "score": 100 if not violations else max(0, 100 - len(violations) * 5),
+        "violations": violations,
+        "advisory": True,
+    }
+    if capped:
+        result["scan_capped"] = _CALC_DIVERGENCE_SCAN_CAP
+    return result
+
+
 def _check_cycles(conn, file_ids: list[int], changed_paths: list[str]) -> dict:
     """Flag changed files in a SMALL import cycle (2..8 files) — actionable per
     edit. Large systemic tangles are out of scope (use `roam cycles`)."""
@@ -4763,6 +4856,9 @@ def _run_verify_categories(conn, selected: list[str], file_ids: list[int], targe
             selected, "command_examples", lambda: _check_command_examples(target_paths, root)
         ),
         "claims": _maybe_run_verify_check(selected, "claims", lambda: _check_claims(target_paths, root)),
+        _VERIFY_CALC_DIVERGENCE_CATEGORY: _maybe_run_verify_check(
+            selected, _VERIFY_CALC_DIVERGENCE_CATEGORY, lambda: _check_calc_divergence(target_paths, root)
+        ),
         _VERIFY_BREAKING_CATEGORY: _maybe_run_verify_check(
             selected, _VERIFY_BREAKING_CATEGORY, lambda: _check_breaking(conn, file_ids, target_paths, root)
         ),
