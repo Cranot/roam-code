@@ -882,10 +882,22 @@ def testresolve_roam_version_falls_back_when_version_is_empty(
     import roam
     from roam.evidence.change_evidence import resolve_roam_version
 
-    monkeypatch.setattr(roam, "__version__", "", raising=False)
+    # ``roam.__version__`` resolves lazily via a PEP 562 module ``__getattr__``.
+    # Do NOT ``monkeypatch.setattr(roam, "__version__", ...)`` here: because the
+    # lazy getattr makes ``getattr(roam, "__version__")`` succeed, monkeypatch
+    # saves the resolved value and RESTORES it as a *real* module attribute on
+    # teardown — leaking a real ``__version__`` that shadows the lazy resolver
+    # for every later test in the process. Patch the resolver itself instead.
+    def _returns(value):
+        def _getattr(name: str):
+            return value
+
+        return _getattr
+
+    monkeypatch.setattr(roam, "__getattr__", _returns(""))
     assert resolve_roam_version() == "unknown"
 
-    monkeypatch.setattr(roam, "__version__", None, raising=False)
+    monkeypatch.setattr(roam, "__getattr__", _returns(None))
     assert resolve_roam_version() == "unknown"
 
 
