@@ -226,13 +226,17 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec, gross_key)
     )
     ev = report["cases_evaluated"]
     unex_net = report["unexplained_by_best_rule"]
-    unex_fam = report["unexplained_by_families"]
+    unex_best_fam = report["unexplained_by_best_family"]
+    unex_union = report["unexplained_by_family_union"]
+    # Two honest residual counters: best-single is the conservative headline
+    # (one (family, mode) rule per bucket); the union is the loose bound the
+    # residual examples are gated on (no rule at all matches).
     verdict = (
         f"{ev} cases across {len(report['buckets'])} buckets; "
-        f"{unex_net} unexplained by net-family rules, {unex_fam} unexplained by ALL "
-        f"families [{', '.join(report['families_fitted'])}]"
+        f"{unex_net} unexplained by the best net rule, {unex_best_fam} by the best family rule, "
+        f"{unex_union} by NO family rule at all [{', '.join(report['families_fitted'])}]"
     )
-    facts = [f"{ev} cases scanned", f"{unex_fam} residual cases found", f"{len(report['buckets'])} buckets"]
+    facts = [f"{ev} cases scanned", f"{unex_union} residual cases found", f"{len(report['buckets'])} buckets"]
     if json_mode:
         click.echo(
             to_json(
@@ -248,7 +252,8 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec, gross_key)
     click.echo(f"VERDICT: {verdict}")
     for b in report["buckets"]:
         click.echo(
-            f"\n  bucket {b['bucket']}: {b['cases']} cases — best {b['best_family']} ({b['best_family_match_pct']}%)"
+            f"\n  bucket {b['bucket']}: {b['cases']} cases — best {b['best_family']} "
+            f"({b['best_family_match_pct']}%), union of all rules {b['family_union_match_pct']}%"
         )
         for rule, pct in sorted(b["family_match_pct"].items(), key=lambda kv: -kv[1])[:6]:
             click.echo(f"    {rule:26s} {pct}%")
