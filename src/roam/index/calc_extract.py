@@ -21,6 +21,7 @@ the ``calc_equivalence`` verify oracle and the compile-envelope calc fact.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,6 +84,27 @@ _ROUND_FUNCS = frozenset(
 )
 
 
+_MODE_CONST_RE = re.compile(
+    r"\b(PHP_ROUND_HALF_(?:UP|DOWN|EVEN|ODD)|ROUND_(?:HALF_(?:UP|DOWN|EVEN)|CEILING|FLOOR|UP|DOWN|05UP))\b"
+)
+# Explicit rounding-mode constants -> tie/direction semantics. PHP's HALF_UP and
+# decimal's ROUND_HALF_UP both mean half-AWAY-from-zero (not toward +inf).
+_MODE_SEMANTICS: dict[str, str] = {
+    "PHP_ROUND_HALF_UP": "half_away_from_zero",
+    "PHP_ROUND_HALF_DOWN": "half_toward_zero",
+    "PHP_ROUND_HALF_EVEN": "half_to_even",
+    "PHP_ROUND_HALF_ODD": "half_to_odd",
+    "ROUND_HALF_UP": "half_away_from_zero",
+    "ROUND_HALF_DOWN": "half_toward_zero",
+    "ROUND_HALF_EVEN": "half_to_even",
+    "ROUND_CEILING": "toward_positive",
+    "ROUND_FLOOR": "toward_negative",
+    "ROUND_UP": "away_from_zero",
+    "ROUND_DOWN": "truncate",
+    "ROUND_05UP": "round_05up",
+}
+
+
 @dataclass(frozen=True)
 class Calc:
     """One computed-numeric assignment extracted from source."""
@@ -96,6 +118,7 @@ class Calc:
     kind: str  # "assign" | "augmented" | "declarator"
     language: str = ""
     file: str = ""
+    rounding_mode: str | None = None  # explicit mode constant (e.g. PHP_ROUND_HALF_EVEN), if present
 
 
 def _text(node, src: bytes) -> str:
@@ -121,16 +144,24 @@ def _func_name(call, src: bytes) -> str:
     return name.strip()
 
 
-def _analyze_rhs(node, src: bytes, round_funcs: frozenset[str]) -> tuple[bool, str | None]:
-    """(is_calculation, rounding_fn) for a right-hand-side subtree.
+def _analyze_rhs(node, src: bytes, round_funcs: frozenset[str]) -> tuple[bool, str | None, str | None]:
+    """(is_calculation, rounding_fn, rounding_mode) for a right-hand-side subtree.
 
     A calculation = contains an arithmetic binary operator, or calls a
     rounding/math function. ``round_funcs`` is passed in (not read from a module
     global) so a per-call ``--round-funcs`` widening cannot leak across calls in
     the long-running MCP server.
+
+    ``rounding_mode`` is the explicit mode constant when the rounding call
+    carries one (e.g. ``round($x, 2, PHP_ROUND_HALF_EVEN)`` or
+    ``quantize(..., rounding=ROUND_HALF_UP)``) — the argument that flips the tie
+    behaviour away from the language default. Only *recognized constants* are
+    captured; a variable mode argument remains invisible (documented bound —
+    the base per-language label then still applies as an approximation).
     """
     is_calc = False
     rounding: str | None = None
+    rounding_mode: str | None = None
     stack = [node]
     while stack:
         n = stack.pop()
@@ -148,9 +179,13 @@ def _analyze_rhs(node, src: bytes, round_funcs: frozenset[str]) -> tuple[bool, s
             name = _func_name(n, src)
             if name in round_funcs:
                 is_calc = True
-                rounding = rounding or name
+                if rounding is None:
+                    rounding = name
+                    mode_match = _MODE_CONST_RE.search(_text(n, src))
+                    if mode_match:
+                        rounding_mode = mode_match.group(1)
         stack.extend(n.children)
-    return is_calc, rounding
+    return is_calc, rounding, rounding_mode
 
 
 def _operands_and_literals(node, src: bytes) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -226,7 +261,7 @@ def extract_calcs(language: str, source: bytes, extra_round_funcs: frozenset[str
             lhs = n.child_by_field_name(lf)
             rhs = n.child_by_field_name(rf)
             if lhs is not None and rhs is not None and rhs.type not in _FUNC_RHS_NODES:
-                is_calc, rounding = _analyze_rhs(rhs, source, round_funcs)
+                is_calc, rounding, rounding_mode = _analyze_rhs(rhs, source, round_funcs)
                 aug_op = _aug_operator(n, source) if kind == "augmented" else ""
                 if aug_op:
                     is_calc = True
@@ -247,6 +282,7 @@ def extract_calcs(language: str, source: bytes, extra_round_funcs: frozenset[str
                             line=n.start_point[0] + 1,
                             kind=kind,
                             language=language,
+                            rounding_mode=rounding_mode,
                         )
                     )
         stack.extend(n.children)
@@ -295,13 +331,26 @@ _ROUNDING_SEMANTICS: dict[tuple[str, str], str] = {
 }
 
 
-def rounding_semantic(language: str, func: str | None) -> str | None:
+def rounding_semantic(language: str, func: str | None, mode: str | None = None) -> str | None:
     """Documented tie/direction semantics of a rounding fn in a language, if known.
 
     Lets divergence detection flag two implementations that call the *same*
     rounding name but with *different* semantics (e.g. PHP half-away vs JS
     half-up) — a to-the-cent bug that a formula-text comparison alone misses.
+
+    ``mode`` is an explicit mode constant captured from the call (e.g.
+    ``PHP_ROUND_HALF_EVEN``); it OVERRIDES the per-language default — without
+    this, ``round($x, 2, PHP_ROUND_HALF_EVEN)`` would be mislabeled half-away
+    when it is actually banker's. An unrecognized mode returns ``None``
+    (honest-unknown beats confident-wrong).
+
+    Two documented approximation bounds remain: a *variable* mode argument is
+    invisible (base label still applies), and float-representation tie effects
+    (e.g. JS ``toFixed(2.675) == "2.67"``) are not expressible in any static
+    label — only an empirical differential probe resolves those.
     """
+    if mode:
+        return _MODE_SEMANTICS.get(mode)
     if not func:
         return None
     return _ROUNDING_SEMANTICS.get((language, func))
