@@ -525,7 +525,10 @@ def status(ctx):
 # copies. The stamp is a bare comment line inserted after the shebang:
 # compile-code's mode-override surgery rewrites only the roam INVOCATION lines,
 # never this, so a healed body keeps its version marker.
-_HOOK_BODY_VERSION = 2
+# v3 (2026-07-16): Stop hook gained the opt-in Loop-B whole-repo report refresh
+# (ROAM_HOOK_REPORT_REFRESH). Deployed v2 bodies heal to v3 on `hooks claude
+# --write`, which is how this new body reaches already-wired installs.
+_HOOK_BODY_VERSION = 3
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -665,6 +668,10 @@ behaviour.
   ROAM_HOOK_VIBE     (default 0) -- attach `roam vibe-check`'s AI-rot
       score when it crosses ROAM_HOOK_VIBE_THRESHOLD (default 50).
       Repo-scoped (not diff-scoped), so advisory only. Closes F23.
+  ROAM_HOOK_REPORT_REFRESH (default 0) -- Loop B: on an edit-stop, spawn a
+      DETACHED, THROTTLED (>= 6h) whole-repo `verify --report --persist` so the
+      next compile's known_findings is fresh. Never blocks the stop; opt-in
+      because it runs a background whole-repo verify.
 """
 import json
 import os
@@ -715,6 +722,79 @@ _ADVISORY_CATEGORIES = frozenset({
 
 def _env_on(name, default):
     return (os.environ.get(name, default) or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_REPORT_REFRESH_HOURS = 6.0
+_REFRESH_CLAIM_MINUTES = 30.0  # single-flight window: at most one spawn per claim age
+
+
+def _hook_repo_root():
+    """Nearest ancestor (cwd included) containing .git; cwd when none found.
+
+    The spawned verify persists at the PROJECT ROOT (find_project_root walks
+    up to .git) — the throttle and claim must anchor to the same directory,
+    or a hook run from a repo subdir respawns on every stop forever.
+    """
+    d = os.getcwd()
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return os.getcwd()
+        d = parent
+
+
+def _maybe_refresh_whole_repo_report():
+    """Loop B: keep .roam/verify-report.json fresh so `compile`'s known_findings
+    probe can embed the repo's OPEN findings for the edited file.
+
+    DETACHED + THROTTLED + SINGLE-FLIGHT + fail-open, by hard requirement:
+      - detached: a whole-repo `verify --report` is ~minutes; running it inline
+        would blow the Stop-hook budget (it is the exact stall the diff-only
+        scope avoids). We fire-and-forget and never read its result here.
+      - never --diff-only: that persists a diff-SCOPED view into the whole-repo
+        report path, poisoning known_findings. This is a SEPARATE whole-repo run.
+      - throttled: skip if the report is younger than _REPORT_REFRESH_HOURS.
+      - single-flight: a claim marker bounds spawning to one verify per
+        _REFRESH_CLAIM_MINUTES per repo. The report mtime alone cannot close
+        the in-flight window (it only moves AFTER the ~minutes-long verify
+        persists), and it never moves at all when the persist cannot land
+        (empty targets, missing DB, crash) — without the claim every edit-stop
+        would respawn a whole-repo verify, each re-running ensure_index().
+    Opt-in (ROAM_HOOK_REPORT_REFRESH, default OFF): it spawns a background
+    whole-repo verify, so enabling it is the user's call; enabling closes Loop B.
+    """
+    if not _env_on("ROAM_HOOK_REPORT_REFRESH", "0"):
+        return
+    try:
+        root = _hook_repo_root()
+        report = os.path.join(root, ".roam", "verify-report.json")
+        try:
+            if (time.time() - os.path.getmtime(report)) / 3600.0 < _REPORT_REFRESH_HOURS:
+                return  # fresh enough — don't respawn every edit-stop
+        except OSError:
+            pass  # missing/unreadable -> refresh
+        claim = os.path.join(root, ".roam", "verify-refresh-claim")
+        try:
+            if (time.time() - os.path.getmtime(claim)) / 60.0 < _REFRESH_CLAIM_MINUTES:
+                return  # a refresh is (or was recently) in flight
+        except OSError:
+            pass  # no claim yet
+        os.makedirs(os.path.join(root, ".roam"), exist_ok=True)
+        with open(claim, "w") as fh:
+            fh.write("pid=%d time=%d" % (os.getpid(), int(time.time())))  # observability crumb
+        kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.name == "nt":
+            kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        # whole-repo (NO --diff-only) --report --persist -> <root>/.roam/verify-report.json
+        # cwd=root pins the spawned verify's project-root resolution to the SAME
+        # directory the throttle checked.
+        subprocess.Popen(["roam", "verify", "--auto", "--report", "--persist"], cwd=root, **kwargs)
+    except Exception:
+        return  # a refresh we could not spawn is never the user's problem
 
 
 def _run_roam(args, timeout, env=None):
@@ -1003,6 +1083,13 @@ def main():
             d = _run_roam(["verify", "--auto", "--diff-only"], _VERIFY_TIMEOUT_S,
                           env={**os.environ, **_ADVISORY_ENV})
             verify_ms = int((time.perf_counter() - verify_t0) * 1000)
+            # Loop B (opt-in, detached, throttled): the edits just landed, so the
+            # persisted whole-repo report is now conceptually stale — kick off a
+            # background refresh so the NEXT compile's known_findings is current.
+            # Fire AFTER the blocking diff-only verify: a whole-repo verify
+            # competing for CPU/DB locks can push the gate past its 90s budget,
+            # and a timed-out gate silently allows — the worst possible trade.
+            _maybe_refresh_whole_repo_report()
         summary = (d or {}).get("summary") or {}
         verdict = str(summary.get("verdict") or "")
         verify_failed = bool(d) and bool(verdict) and not verdict.upper().startswith("PASS")
@@ -1126,6 +1213,9 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
+        "b28bcb7a414f92e1694ecbeb54ff1d5e69b8a4c46d4ee035e6b88975712e0805",  # stop v3 pristine (2026-07-16 loop-b)
+        "fa76db1e06bb44a947084ed10f94b553aa68289d60511cb246b67f5f85acfd44",  # stop v3 surgered (2026-07-16 loop-b)
+        "18e19f503c957e09850ec4173fc451b078c7a0356eb6c964d6406b9e5a8300a5",  # ups v3 pristine (2026-07-16 loop-b)
         "0313b8d53749fa9d188c9e6554b37826ff677cdd166627ab5b613538bb4b4573",  # stop v2 pristine (2026-07-16 18326816)
         "2c81e646c1102ebd010b6f470d6a153d8b47d68921584e55806de9052da13fa7",  # stop v2 surgered (2026-07-16 18326816)
         "fd8a7522fe488b6429f159146523524dcab6465ddbdc09aa91a3515a89bf58a2",  # stop pre-stamp (2026-06-10 ffa51bb1)
