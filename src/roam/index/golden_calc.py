@@ -297,6 +297,8 @@ def extract_cases(
     plain_bucket_keys: list[str] = []
     for b in bucket_by:
         if b.startswith("@index:"):
+            if era_keys:
+                raise ValueError(f"only one @index:N pseudo-key allowed; got {era_keys[0]!r} and {b!r}")
             try:
                 era_size = max(1, int(b.split(":", 1)[1]))
             except ValueError as exc:
@@ -503,7 +505,13 @@ def audit_corpus(
 
     Back-compat: ``rule_match_pct`` / ``best_rule`` / ``unexplained_by_best_rule``
     stay net-family-only (plain mode names). ``family_match_pct`` /
-    ``best_family`` / ``unexplained_by_families`` add the full family view.
+    ``best_family`` add the full family view, with TWO distinct residual
+    counters: ``unexplained_by_best_family`` (conservative — one (family, mode)
+    rule per bucket) and ``unexplained_by_family_union`` (loose — no rule at
+    all matches; the metric ``residual_examples`` is gated on). The union is
+    soft by construction: with a derived gross and 6 rounding modes, "some rule
+    matches" degenerates to roughly |error| <= ~1 cent, so headline claims
+    should quote the best-single number.
     """
     roles = role_keys or {"net": base_key}
     # (family, mode) rules whose base role is resolvable from this corpus
@@ -515,11 +523,13 @@ def audit_corpus(
     buckets_out: list[dict] = []
     total_evaluated = 0
     total_unexplained = 0  # by net-family best rule (back-compat)
-    total_unexplained_families = 0  # by best across ALL families
+    total_unexplained_best_family = 0  # by the best single (family, mode) per bucket
+    total_unexplained_union = 0  # by NO (family, mode) rule at all
     for bucket, group in sorted(by_bucket.items()):
         net_fits = {rule: 0 for rule in RULES}
         fam_fits = {f"{f.name}:{mode}": 0 for f in active_families for mode in RULES}
         evaluated = 0
+        union_explained = 0
         residuals: list[dict] = []
         for c in group:
             rate = resolve_rate(c, rate_key, rate_map)
@@ -540,7 +550,9 @@ def audit_corpus(
                     if fam.fn(fbase, rate, RULES[mode]) == expect:
                         fam_fits[f"{fam.name}:{mode}"] += 1
                         fam_explained = True
-            if not fam_explained and len(residuals) < residual_examples:
+            if fam_explained:
+                union_explained += 1
+            elif len(residuals) < residual_examples:
                 residuals.append(
                     {
                         "id": c.id,
@@ -568,17 +580,20 @@ def audit_corpus(
                 "family_match_pct": {r: round(100.0 * n / evaluated, 2) for r, n in fam_fits.items()}
                 if evaluated
                 else {},
+                "family_union_match_pct": round(100.0 * union_explained / evaluated, 2) if evaluated else 0.0,
                 "residual_examples": residuals,
             }
         )
         total_evaluated += evaluated
         total_unexplained += (evaluated - max(net_fits.values())) if evaluated else 0
-        total_unexplained_families += (evaluated - (max(fam_fits.values()) if fam_fits else 0)) if evaluated else 0
+        total_unexplained_best_family += (evaluated - (max(fam_fits.values()) if fam_fits else 0)) if evaluated else 0
+        total_unexplained_union += evaluated - union_explained
     return {
         "buckets": buckets_out,
         "cases_evaluated": total_evaluated,
         "unexplained_by_best_rule": total_unexplained,
-        "unexplained_by_families": total_unexplained_families,
+        "unexplained_by_best_family": total_unexplained_best_family,
+        "unexplained_by_family_union": total_unexplained_union,
         "families_fitted": [f.name for f in active_families],
     }
 

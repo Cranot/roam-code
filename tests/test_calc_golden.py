@@ -442,6 +442,38 @@ def test_audit_families_recover_gross_path():
     assert gross_best >= net_best
 
 
+def test_era_bucketing_rejects_multiple_index_keys():
+    """PR-#76 review F2: two @index:N entries must be a loud error, not last-wins."""
+    rows = [{"NET": str(i), "CAT": "2", "VAT": "1"} for i in range(12)]
+    with pytest.raises(ValueError, match="only one @index:N"):
+        extract_cases(
+            _records(*rows),
+            case_map=parse_mapping("net=NET,rate=CAT"),
+            expect_map=parse_mapping("vat=VAT"),
+            bucket_by=["@index:5", "@index:7"],
+        )
+
+
+def test_audit_best_family_vs_union_counters_distinct():
+    """PR-#76 review F1: best-single and union residual counters are BOTH emitted
+    and diverge when different cases are explained by different rules."""
+    # 10 half_up cases + 10 truncate cases in ONE bucket: each rule explains its
+    # half (plus tie-free overlap), the union explains all, best-single does not.
+    cases = []
+    for i, rule in enumerate(["half_up"] * 10 + ["truncate"] * 10):
+        net = Decimal(_TIE_NETS[i % len(_TIE_NETS)])
+        vat = predict(rule, net, Decimal("10"))
+        cases.append(GoldenCase(id=i, bucket="10", inputs={"net": str(net), "rate": "10"}, expect={"vat": str(vat)}))
+    report = audit_corpus(cases, "net", "rate", "vat")
+    assert report["unexplained_by_family_union"] == 0  # every case fits SOME rule
+    assert report["unexplained_by_best_family"] > 0  # no single rule fits all
+    b = report["buckets"][0]
+    assert b["family_union_match_pct"] == 100.0
+    assert b["best_family_match_pct"] < 100.0
+    # residual examples are gated on the union metric — none here
+    assert b["residual_examples"] == []
+
+
 def test_audit_backward_compat_net_only():
     # without gross role, audit stays net-family (v1 keys intact)
     cases = _corpus_for_rule("half_up", n=10)
