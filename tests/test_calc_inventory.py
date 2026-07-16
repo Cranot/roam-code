@@ -97,10 +97,37 @@ def test_extract_missing_grammar_returns_empty():
 # ---- normalization helpers ------------------------------------------------
 
 
-def test_normalize_target_strips_access_and_sigil():
+def test_normalize_target_strips_access_sigil_and_underscores():
     assert normalize_target("$this->vatAmount") == "vatamount"
-    assert normalize_target("self.vat_amount") == "vat_amount"
+    # underscore convention must not split the group: a snake_case backend and a
+    # camelCase frontend computing the same field MUST collide on one key
+    assert normalize_target("self.vat_amount") == "vatamount"
     assert normalize_target("$vat") == "vat"
+
+
+def test_divergence_groups_snake_and_camel(tmp_path):
+    _write(tmp_path, "back.php", "<?php $vat_amount = round($base * $rate, 2);")
+    _write(tmp_path, "front.ts", "const vatAmount = Math.round(base * rate * 100) / 100;")
+    runner = CliRunner()
+    env = json.loads(runner.invoke(calc_inventory, [str(tmp_path), "--divergence"], obj={"json": True}).output)
+    fields = {d["field"] for d in env["divergences"]}
+    assert "vatamount" in fields  # snake + camel grouped
+
+
+def test_rounding_semantic_language_aliases():
+    # .tsx/.jsx/.vue script code runs on the JS runtime — same semantics
+    assert rounding_semantic("tsx", "round") == "half_up_toward_positive"
+    assert rounding_semantic("vue", "tofixed") == "half_up_toward_positive"
+    assert rounding_semantic("typescript", "tofixed") == "half_up_toward_positive"
+
+
+def test_nested_call_mode_does_not_poison_outer():
+    # outer round has NO mode; inner has HALF_EVEN — outer must not inherit it
+    src = b"<?php $total = round(round($b, 2, PHP_ROUND_HALF_EVEN) + $a, 2);"
+    c = extract_calcs("php", src)[0]
+    assert c.target == "$total"
+    assert c.rounding == "round"
+    assert c.rounding_mode is None  # the nested call's mode must not leak
 
 
 def test_normalize_formula_whitespace_paren_insensitive():
