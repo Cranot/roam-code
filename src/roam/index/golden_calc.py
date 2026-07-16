@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import struct
 from dataclasses import dataclass, field
 from decimal import (
@@ -38,7 +39,7 @@ from decimal import (
     InvalidOperation,
 )
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 # ---------------------------------------------------------------------------
 # Minimal DBF reader (dBase III / Visual FoxPro), read-only, stdlib-only
@@ -195,6 +196,11 @@ class GoldenCase:
     bucket: str
     inputs: dict[str, str]
     expect: dict[str, str]
+    # Input keys that were COMPUTED at extract via --derive (e.g. gross=net+vat).
+    # A derived-from-expect input embeds the oracle's own answer, so it must be
+    # stripped from any external `--runner` payload — else the implementation
+    # under test is handed the result it is supposed to produce.
+    derived: tuple[str, ...] = ()
 
 
 @dataclass
@@ -221,6 +227,48 @@ def parse_mapping(spec: str) -> dict[str, str]:
     return out
 
 
+# A --derive expression: NEW_KEY = OPERAND (+|-) OPERAND, operands drawn from the
+# case's inputs OR expect. Kept deliberately tiny (two operands, +/- only) so it
+# stays Decimal-exact and cannot express anything that would hide a bug.
+_DERIVE_RE = re.compile(r"^\s*(\w+)\s*=\s*(\w+)\s*([+-])\s*(\w+)\s*$")
+
+
+def parse_derivations(spec: str) -> list[tuple[str, str, str, str]]:
+    """``"gross=net+vat"`` -> [(new_key, lhs, op, rhs)]. Semicolon-separated."""
+    out: list[tuple[str, str, str, str]] = []
+    for part in spec.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        m = _DERIVE_RE.match(part)
+        if not m:
+            raise ValueError(f"--derive entry {part!r} must be NEW=A+B or NEW=A-B (two operands, +/- only)")
+        out.append((m.group(1), m.group(2), m.group(3), m.group(4)))
+    return out
+
+
+def apply_derivations(
+    inputs: dict[str, str], expect: dict[str, str], derivations: list[tuple[str, str, str, str]]
+) -> tuple[dict[str, str], tuple[str, ...]] | None:
+    """Compute derived inputs Decimal-exactly. Operands resolve from inputs first,
+    then expect. Returns (augmented_inputs, derived_key_names), or None if any
+    operand is missing/non-numeric (the case cannot carry the derived value)."""
+    inputs = dict(inputs)
+    derived: list[str] = []
+    for new_key, lhs, op, rhs in derivations:
+
+        def val(name):
+            return to_decimal(inputs.get(name, expect.get(name, "")))
+
+        a, b = val(lhs), val(rhs)
+        if a is None or b is None:
+            return None
+        result = a + b if op == "+" else a - b
+        inputs[new_key] = str(result)
+        derived.append(new_key)
+    return inputs, tuple(derived)
+
+
 def extract_cases(
     records: Iterator[dict[str, str | None]],
     case_map: dict[str, str],
@@ -228,22 +276,55 @@ def extract_cases(
     bucket_by: list[str],
     where: dict[str, str] | None = None,
     limit: int = 0,
+    derivations: list[tuple[str, str, str, str]] | None = None,
 ) -> tuple[list[GoldenCase], ExtractStats]:
     """Build golden cases from records. A case needs EVERY mapped column non-empty
-    (a record missing an expected output cannot serve as an oracle row)."""
+    (a record missing an expected output cannot serve as an oracle row).
+
+    ``bucket_by`` accepts an input case_key OR the pseudo-key ``@index:N`` which
+    buckets by kept-record ordinal // N (an ERA proxy: it reveals regime changes
+    over the table's append order without a date column). Approximation caveat:
+    the ordinal is over ACTIVE records in file order — a VFP PACK or re-sort
+    shifts it, so it is a proxy for chronology, not chronology itself.
+
+    ``derivations`` (from ``--derive``) computes extra inputs Decimal-exactly
+    (e.g. gross=net+vat); the derived keys are recorded on each case so a
+    ``--runner`` check can strip them (they may embed the expected answer)."""
     stats = ExtractStats()
     cases: list[GoldenCase] = []
+    era_size = 0
+    era_keys: list[str] = []
+    plain_bucket_keys: list[str] = []
+    for b in bucket_by:
+        if b.startswith("@index:"):
+            try:
+                era_size = max(1, int(b.split(":", 1)[1]))
+            except ValueError as exc:
+                raise ValueError(f"bad era pseudo-key {b!r}; want @index:N (N a positive int)") from exc
+            era_keys.append(b)
+        else:
+            plain_bucket_keys.append(b)
     for rec in records:
         stats.read += 1
         if where and any((rec.get(col) or "") != val for col, val in where.items()):
             continue
-        inputs = {k: rec.get(col) for k, col in case_map.items()}
+        inputs: dict[str, str | None] = {k: rec.get(col) for k, col in case_map.items()}
         expect = {k: rec.get(col) for k, col in expect_map.items()}
         if any(v is None for v in inputs.values()) or any(v is None for v in expect.values()):
             stats.skipped_missing += 1
             continue
-        bucket = "|".join(str(inputs.get(b, "?")) for b in bucket_by) if bucket_by else "all"
-        cases.append(GoldenCase(id=stats.kept, bucket=bucket, inputs=inputs, expect=expect))  # type: ignore[arg-type]
+        derived: tuple[str, ...] = ()
+        if derivations:
+            applied = apply_derivations(inputs, expect, derivations)  # type: ignore[arg-type]
+            if applied is None:
+                stats.skipped_missing += 1
+                continue
+            inputs, derived = applied
+        parts = [str(inputs.get(b, "?")) for b in plain_bucket_keys]
+        if era_size:
+            parts.append(f"era{stats.kept // era_size}")
+        bucket = "|".join(parts) if parts else "all"
+        cases.append(GoldenCase(id=stats.kept, bucket=bucket, inputs=inputs, expect=expect, derived=derived))  # type: ignore[arg-type]
         stats.kept += 1
         stats.buckets[bucket] = stats.buckets.get(bucket, 0) + 1
         if limit and stats.kept >= limit:
@@ -256,10 +337,10 @@ def write_corpus(cases: list[GoldenCase], out_path: str | Path) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("w", encoding="utf-8") as fh:
         for c in cases:
-            fh.write(
-                json.dumps({"id": c.id, "bucket": c.bucket, "inputs": c.inputs, "expect": c.expect}, ensure_ascii=False)
-                + "\n"
-            )
+            row = {"id": c.id, "bucket": c.bucket, "inputs": c.inputs, "expect": c.expect}
+            if c.derived:
+                row["derived"] = list(c.derived)
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def read_corpus(path: str | Path) -> list[GoldenCase]:
@@ -270,7 +351,15 @@ def read_corpus(path: str | Path) -> list[GoldenCase]:
             if not line:
                 continue
             d = json.loads(line)
-            cases.append(GoldenCase(id=d["id"], bucket=d.get("bucket", "all"), inputs=d["inputs"], expect=d["expect"]))
+            cases.append(
+                GoldenCase(
+                    id=d["id"],
+                    bucket=d.get("bucket", "all"),
+                    inputs=d["inputs"],
+                    expect=d["expect"],
+                    derived=tuple(d.get("derived") or ()),
+                )
+            )
     return cases
 
 
@@ -315,9 +404,57 @@ def to_decimal(s: str) -> Decimal | None:
 
 
 def predict(rule: str, base: Decimal, rate_pct: Decimal) -> Decimal:
-    """rule(base * rate% ) quantized to cents — the candidate oracle formula."""
+    """rule(base * rate% ) quantized to cents — the net-family oracle formula.
+
+    Kept as the ``net`` family shorthand for ``check --rule`` and back-compat.
+    The full family set (below) covers the gross-inclusive second paths a naive
+    net×rate reimplementation misses."""
     raw = base * rate_pct / Decimal(100)
     return raw.quantize(_CENT, rounding=RULES[rule])
+
+
+@dataclass(frozen=True)
+class RuleFamily:
+    """A candidate calculation SHAPE (which base, which formula), independent of
+    the rounding mode. Reverse-engineering the legacy calc means fitting both the
+    shape AND the mode — the same tie mode over the WRONG base still misses."""
+
+    name: str
+    base_role: str  # input case_key holding this family's base (e.g. 'net' or 'gross')
+    fn: Callable[[Decimal, Decimal, str], Decimal]  # (base, rate_pct, rounding_const) -> cents
+
+
+def _f_net(net: Decimal, rate: Decimal, mode: str) -> Decimal:
+    # vat = round(net * rate%)
+    return (net * rate / Decimal(100)).quantize(_CENT, rounding=mode)
+
+
+def _f_vat_from_gross(gross: Decimal, rate: Decimal, mode: str) -> Decimal:
+    # vat = round(gross * rate / (100+rate)) — VAT extracted directly from a
+    # tax-inclusive gross (the entry mode where the operator typed the gross).
+    return (gross * rate / (Decimal(100) + rate)).quantize(_CENT, rounding=mode)
+
+
+def _f_net_from_gross(gross: Decimal, rate: Decimal, mode: str) -> Decimal:
+    # net = round(gross * 100 / (100+rate)); vat = gross - net — the two-step
+    # VFP path (net by division+round, vat by subtraction).
+    net = (gross * Decimal(100) / (Decimal(100) + rate)).quantize(_CENT, rounding=mode)
+    return gross - net
+
+
+# Registry of calculation shapes. 'net' is the naive path; the two gross families
+# are the tax-inclusive second paths that concentrate in later eras of real data
+# (measured: they explain ~62% of the late-era residuals a net-only audit leaves).
+FAMILIES: dict[str, RuleFamily] = {
+    "net": RuleFamily("net", "net", _f_net),
+    "vat_from_gross": RuleFamily("vat_from_gross", "gross", _f_vat_from_gross),
+    "net_from_gross": RuleFamily("net_from_gross", "gross", _f_net_from_gross),
+}
+
+
+def predict_family(family: str, mode: str, base: Decimal, rate_pct: Decimal) -> Decimal:
+    """Cents predicted by a (family, mode) rule."""
+    return FAMILIES[family].fn(base, rate_pct, RULES[mode])
 
 
 def resolve_rate(case: GoldenCase, rate_key: str, rate_map: dict[str, str] | None) -> Decimal | None:
@@ -351,64 +488,98 @@ def audit_corpus(
     target_key: str,
     rate_map: dict[str, str] | None = None,
     residual_examples: int = 5,
+    role_keys: dict[str, str] | None = None,
 ) -> dict:
-    """Which rounding rule best explains each bucket's expected outputs?
+    """Which calculation SHAPE + rounding rule best explains each bucket's outputs?
 
-    Reverse-engineers the legacy calculation from its own data: per bucket, fit
-    every rule in ``RULES`` on ``target ?= rule(base × rate%)`` and report match
-    rates plus residual cases NO rule explains (the multi-path/gross-inclusive
-    tell — the cases where a naive reimplementation silently diverges).
+    Reverse-engineers the legacy calc from its own data: per bucket, fit every
+    ``(family, mode)`` whose family base is available, and report match rates
+    plus the residual cases NO rule explains — the multi-path/gross-inclusive
+    tell a naive net×rate reimplementation silently diverges on.
+
+    ``role_keys`` maps a family base_role -> the input case_key holding it
+    (default ``{"net": base_key}``). Provide ``{"gross": "gross"}`` (via
+    ``--derive gross=net+vat``) to also fit the tax-inclusive second paths.
+
+    Back-compat: ``rule_match_pct`` / ``best_rule`` / ``unexplained_by_best_rule``
+    stay net-family-only (plain mode names). ``family_match_pct`` /
+    ``best_family`` / ``unexplained_by_families`` add the full family view.
     """
+    roles = role_keys or {"net": base_key}
+    # (family, mode) rules whose base role is resolvable from this corpus
+    active_families = [f for f in FAMILIES.values() if f.base_role in roles]
+
     by_bucket: dict[str, list[GoldenCase]] = {}
     for c in cases:
         by_bucket.setdefault(c.bucket, []).append(c)
     buckets_out: list[dict] = []
     total_evaluated = 0
-    total_unexplained = 0
+    total_unexplained = 0  # by net-family best rule (back-compat)
+    total_unexplained_families = 0  # by best across ALL families
     for bucket, group in sorted(by_bucket.items()):
-        fits = {rule: 0 for rule in RULES}
+        net_fits = {rule: 0 for rule in RULES}
+        fam_fits = {f"{f.name}:{mode}": 0 for f in active_families for mode in RULES}
         evaluated = 0
         residuals: list[dict] = []
         for c in group:
-            base = to_decimal(c.inputs.get(base_key, ""))
             rate = resolve_rate(c, rate_key, rate_map)
             expect = to_decimal(c.expect.get(target_key, ""))
-            if base is None or rate is None or expect is None:
+            net_base = to_decimal(c.inputs.get(base_key, ""))
+            if rate is None or expect is None or net_base is None:
                 continue
             evaluated += 1
-            explained = False
             for rule in RULES:
-                if predict(rule, base, rate) == expect:
-                    fits[rule] += 1
-                    explained = True
-            if not explained and len(residuals) < residual_examples:
+                if predict(rule, net_base, rate) == expect:
+                    net_fits[rule] += 1
+            fam_explained = False
+            for fam in active_families:
+                fbase = to_decimal(c.inputs.get(roles[fam.base_role], ""))
+                if fbase is None:
+                    continue
+                for mode in RULES:
+                    if fam.fn(fbase, rate, RULES[mode]) == expect:
+                        fam_fits[f"{fam.name}:{mode}"] += 1
+                        fam_explained = True
+            if not fam_explained and len(residuals) < residual_examples:
                 residuals.append(
                     {
                         "id": c.id,
-                        base_key: str(base),
+                        base_key: str(net_base),
                         "rate_pct": str(rate),
                         "expected": str(expect),
-                        "half_up_prediction": str(predict("half_up", base, rate)),
+                        "half_up_prediction": str(predict("half_up", net_base, rate)),
                     }
                 )
-        unexplained = evaluated - max(fits.values()) if evaluated else 0
-        best = max(fits, key=lambda r: fits[r]) if evaluated else None
+        best_net = max(net_fits, key=lambda r: net_fits[r]) if evaluated else None
+        best_fam = max(fam_fits, key=lambda r: fam_fits[r]) if (evaluated and fam_fits) else None
         buckets_out.append(
             {
                 "bucket": bucket,
                 "cases": evaluated,
-                "best_rule": best,
-                "best_match_pct": round(100.0 * fits[best] / evaluated, 2) if evaluated else 0.0,
-                "rule_match_pct": {r: round(100.0 * n / evaluated, 2) for r, n in fits.items()} if evaluated else {},
+                "best_rule": best_net,
+                "best_match_pct": round(100.0 * net_fits[best_net] / evaluated, 2) if evaluated else 0.0,
+                "rule_match_pct": {r: round(100.0 * n / evaluated, 2) for r, n in net_fits.items()}
+                if evaluated
+                else {},
+                "best_family": best_fam,
+                "best_family_match_pct": round(100.0 * fam_fits[best_fam] / evaluated, 2)
+                if (evaluated and best_fam)
+                else 0.0,
+                "family_match_pct": {r: round(100.0 * n / evaluated, 2) for r, n in fam_fits.items()}
+                if evaluated
+                else {},
                 "residual_examples": residuals,
             }
         )
         total_evaluated += evaluated
-        total_unexplained += unexplained
+        total_unexplained += (evaluated - max(net_fits.values())) if evaluated else 0
+        total_unexplained_families += (evaluated - (max(fam_fits.values()) if fam_fits else 0)) if evaluated else 0
     return {
         "buckets": buckets_out,
         "cases_evaluated": total_evaluated,
         "unexplained_by_best_rule": total_unexplained,
+        "unexplained_by_families": total_unexplained_families,
+        "families_fitted": [f.name for f in active_families],
     }
 
 
@@ -494,7 +665,17 @@ def check_with_runner(
     result = CheckResult(total=len(cases), replayed=0, passed=0, failures=[], buckets={})
     if not cases:
         return result
-    payload = "\n".join(json.dumps({"id": c.id, "inputs": c.inputs}, ensure_ascii=False) for c in cases) + "\n"
+
+    def _payload_inputs(c: GoldenCase) -> dict[str, str]:
+        # strip --derive'd inputs: a derived-from-expect value (gross=net+vat)
+        # would hand the oracle's answer to the implementation under test.
+        if not c.derived:
+            return c.inputs
+        return {k: v for k, v in c.inputs.items() if k not in c.derived}
+
+    payload = (
+        "\n".join(json.dumps({"id": c.id, "inputs": _payload_inputs(c)}, ensure_ascii=False) for c in cases) + "\n"
+    )
     try:
         proc = subprocess.run(runner_argv, input=payload, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
