@@ -143,6 +143,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "bench-compile",  # per-condition aggregate; bounded by n_runs × tasks
         "compile-stats",  # W40 — fixed-shape summary (top-15 keys, percentiles)
         "compile-cache",  # W56 — group with stats/clear/build subcmds; fixed-shape summaries
+        "compile-daemon",  # S2-lite — lifecycle group (start/status/stop); fixed-shape verdicts
         # --- Compound recipes (delegate budget downstream) -------------------
         "ask",  # router — delegates downstream
         "pr-prep",  # compound recipe

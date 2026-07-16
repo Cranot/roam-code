@@ -133,6 +133,101 @@ class TestHookScriptFailOpen:
         assert proc.stdout == ""
 
 
+class TestUpsDaemonPath:
+    """S2-lite (v4): the UPS hook tries the warm daemon before cold-spawning."""
+
+    _ENVELOPE = {
+        "summary": {"procedure": "daemon_served_proc", "classifier_confidence": 0.9},
+        "artifact": {"plan": {"named_paths": ["x.py"], "prefetched_facts": {"fact": "value"}}},
+    }
+
+    def _fake_daemon(self, in_tmp, envelope):
+        """Loopback thread serving one canned envelope, daemon-file discovery
+        exactly as `roam compile-daemon start` writes it."""
+        import json as _json
+        import socket
+        import threading
+
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        (in_tmp / ".roam").mkdir(exist_ok=True)
+        (in_tmp / ".roam" / "compile-daemon.json").write_text(
+            _json.dumps({"port": port, "token": "tok", "pid": 1}), encoding="utf-8"
+        )
+        got: dict = {}
+
+        def serve():
+            conn, _ = srv.accept()
+            with conn:
+                conn.settimeout(5)
+                data = b""
+                while b"\n" not in data:
+                    b = conn.recv(65536)
+                    if not b:
+                        break
+                    data += b
+                got.update(_json.loads(data.decode("utf-8")))
+                conn.sendall((_json.dumps(envelope) + "\n").encode("utf-8"))
+            srv.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        return got
+
+    def _run_hook(self, in_tmp, stdin_payload, env_extra=None):
+        import os as _os
+        import subprocess
+        import sys
+
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        env = {**_os.environ, **(env_extra or {})}
+        return subprocess.run(
+            [sys.executable, str(hook)],
+            input=stdin_payload,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(in_tmp),
+            env=env,
+        )
+
+    def test_daemon_served_envelope_is_injected(self, in_tmp):
+        _invoke("claude", "--write")
+        (in_tmp / ".git").mkdir()  # _repo_root anchor
+        got = self._fake_daemon(in_tmp, self._ENVELOPE)
+        proc = self._run_hook(in_tmp, '{"prompt": "investigate why login is slow", "session_id": "s-77"}')
+        assert proc.returncode == 0
+        assert "daemon_served_proc" in proc.stdout  # served warm, not cold-spawned
+        assert got["op"] == "compile" and got["token"] == "tok"
+        assert got["session_id"] == "s-77"  # telemetry join key rides the socket
+
+    def test_daemon_error_falls_back_without_injecting_junk(self, in_tmp):
+        """A daemon refusal (wrong_repo/bad_token) must never be injected; with
+        no roam on PATH the cold fallback fails open -> empty output, exit 0."""
+        _invoke("claude", "--write")
+        (in_tmp / ".git").mkdir()
+        self._fake_daemon(in_tmp, {"error": "wrong_repo"})
+        proc = self._run_hook(in_tmp, '{"prompt": "investigate why login is slow"}', {"PATH": ""})
+        assert proc.returncode == 0
+        assert proc.stdout == ""
+
+    def test_dead_daemon_config_fails_open(self, in_tmp):
+        """Config present but nothing listening: connect fails inside the 10 ms
+        budget -> cold path; with no roam on PATH -> quiet exit 0."""
+        import json as _json
+
+        _invoke("claude", "--write")
+        (in_tmp / ".git").mkdir()
+        (in_tmp / ".roam").mkdir(exist_ok=True)
+        (in_tmp / ".roam" / "compile-daemon.json").write_text(
+            _json.dumps({"port": 1, "token": "tok", "pid": 1}), encoding="utf-8"
+        )
+        proc = self._run_hook(in_tmp, '{"prompt": "investigate why login is slow"}', {"PATH": ""})
+        assert proc.returncode == 0
+        assert proc.stdout == ""
+
+
 class TestVerifyStopHook:
     """W-CC-VERIFY — the post-edit verify half of the MVP loop."""
 

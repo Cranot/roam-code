@@ -161,6 +161,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # W56 — compile-cache (group: stats/clear/build); writes to
         # .roam/compile-envelope-cache.sqlite, which is local-state.
         "compile-cache",
+        # S2-lite — compile-daemon (group: start/status/stop); serves compile
+        # over loopback; writes only .roam/compile-daemon.json (local-state),
+        # the same basis as compile-cache above.
+        "compile-daemon",
         # Pre-existing untracked alias surfaced by Wave 11-20 ceiling tightening:
         # `vulns` is a read-only vulnerability summary (alias of vuln-map family).
         "vulns",

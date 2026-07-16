@@ -314,6 +314,7 @@ _COMMANDS = {
     "compile": ("roam.commands.cmd_compile", "compile_"),
     "compile-stats": ("roam.commands.cmd_compile_stats", "compile_stats"),
     "compile-cache": ("roam.commands.cmd_compile_cache", "compile_cache"),
+    "compile-daemon": ("roam.commands.cmd_compile_daemon", "compile_daemon"),
     "envelope-diff": ("roam.commands.cmd_envelope_diff", "envelope_diff"),
     "dispatch-trace": ("roam.commands.cmd_dispatch_trace", "dispatch_trace"),
     "magic-numbers": ("roam.commands.cmd_magic_numbers", "magic_numbers"),
