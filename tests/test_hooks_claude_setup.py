@@ -357,50 +357,200 @@ class TestHookBodyHeal:
 
         assert _hook_body_version(_CLAUDE_UPS_HOOK_SCRIPT) == _HOOK_BODY_VERSION
 
-    def test_heal_state_classification(self):
+    @staticmethod
+    def _register(monkeypatch, *bodies: str):
+        """Add synthetic bodies to the shipped-registry for a test."""
+        import hashlib
+
+        from roam.commands import cmd_hooks
+
+        extra = {hashlib.sha256(b.encode("utf-8")).hexdigest() for b in bodies}
+        monkeypatch.setattr(cmd_hooks, "_KNOWN_HOOK_BODY_SHAS", cmd_hooks._KNOWN_HOOK_BODY_SHAS | extra)
+
+    def test_registry_is_seeded(self):
+        """F1 guard: an empty/garbled registry silently disables pre-stamp healing."""
+        from roam.commands.cmd_hooks import _KNOWN_HOOK_BODY_SHAS
+
+        assert len(_KNOWN_HOOK_BODY_SHAS) >= 13
+        assert all(len(s) == 64 and set(s) <= set("0123456789abcdef") for s in _KNOWN_HOOK_BODY_SHAS)
+
+    def test_heal_state_classification(self, monkeypatch):
         from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT, _hook_heal_state
 
         canonical = _CLAUDE_UPS_HOOK_SCRIPT
         assert _hook_heal_state(canonical, canonical) == "current"
-        # a roam body stamped with an OLDER version -> healable
-        older = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1")
-        assert _hook_heal_state(older, canonical) == "heal"
-        # an unstamped, unrecognized body -> foreign (never auto-overwrite)
-        assert _hook_heal_state("#!/usr/bin/env python3\nprint('mine')\n", canonical) == "foreign"
+        # an older stamp alone proves NOTHING: unknown content -> modified
+        older_unknown = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1") + "# my edit\n"
+        assert _hook_heal_state(older_unknown, canonical) == "modified"
+        # a REGISTERED older body (roam provably shipped it) -> healable
+        older_known = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+        self._register(monkeypatch, older_known)
+        from roam.commands.cmd_hooks import _hook_heal_state as heal_state
 
-    def test_stale_roam_body_is_healed(self, in_tmp):
+        assert heal_state(older_known, canonical) == "heal"
+        # a registered UNSTAMPED body (pre-stamp era) -> healable
+        prestamp = "#!/usr/bin/env python3\n# an old shipped body\n"
+        self._register(monkeypatch, prestamp)
+        assert heal_state(prestamp, canonical) == "heal"
+        # an unstamped, unrecognized body -> foreign (never auto-overwrite)
+        assert heal_state("#!/usr/bin/env python3\nprint('mine')\n", canonical) == "foreign"
+
+    def test_prestamp_registered_body_is_healed(self, in_tmp, monkeypatch):
+        """F1: the pre-stamp fleet heals via the SHA registry, no marker needed."""
         hook = self._install(in_tmp)
-        # simulate a frozen older install: same body, older version stamp
-        stale = hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
-        hook.write_text(stale, encoding="utf-8")
+        prestamp = "#!/usr/bin/env python3\n# roam body from before the stamp era\n"
+        hook.write_text(prestamp, encoding="utf-8")
+        self._register(monkeypatch, prestamp)
         res = _invoke("claude", "--write")
         assert "healed 1 stale hook body" in res.output
-        # refreshed to current version
         from roam.commands.cmd_hooks import _HOOK_BODY_VERSION, _hook_body_version
 
         assert _hook_body_version(hook.read_text(encoding="utf-8")) == _HOOK_BODY_VERSION
+        # F9: the replaced body is preserved as .bak
+        bak = hook.parent / (hook.name + ".bak")
+        assert bak.read_text(encoding="utf-8") == prestamp
+
+    def test_older_stamped_modified_body_not_healed(self, in_tmp):
+        """F3: a stamped-but-edited body is never silently overwritten."""
+        hook = self._install(in_tmp)
+        edited = (
+            hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+            + "# my customization\n"
+        )
+        hook.write_text(edited, encoding="utf-8")
+        res = _invoke("claude", "--write")
+        assert "user-modified" in res.output and "(modified)" in res.output
+        assert hook.read_text(encoding="utf-8") == edited  # untouched
+        # --force overwrites, keeping a .bak
+        res = _invoke("claude", "--write", "--force")
+        assert "force-refreshed 1 body(ies)" in res.output
+        assert (hook.parent / (hook.name + ".bak")).read_text(encoding="utf-8") == edited
+
+    def test_truncated_stamped_body_is_not_current(self, in_tmp):
+        """F6a: a truncated body behind an intact stamp must not read as current."""
+        hook = self._install(in_tmp)
+        truncated = "\n".join(hook.read_text(encoding="utf-8").split("\n")[:3]) + "\n"
+        hook.write_text(truncated, encoding="utf-8")
+        res = _invoke("claude", "--write")
+        assert "wired + current" not in res.output
+        assert "need attention" in res.output or "user-modified" in res.output
+
+    def test_missing_body_with_wired_entry_is_reinstalled(self, in_tmp):
+        """F6b: entry present + body file deleted -> body comes back on --write."""
+        hook = self._install(in_tmp)
+        hook.unlink()
+        res = _invoke("claude", "--write")
+        assert "healed 1 stale hook body" in res.output
+        assert hook.exists()
+
+    def test_unreadable_body_no_traceback(self, in_tmp):
+        """F5: a UTF-16 hook body must degrade to a report, never a traceback."""
+        hook = self._install(in_tmp)
+        hook.write_bytes("#!/usr/bin/env python3\nprint('x')\n".encode("utf-16"))
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 0
+        assert res.exception is None
+        assert "(unreadable)" in res.output
+        # untouched without --force
+        assert hook.read_bytes().startswith(b"\xff\xfe")
+        res = _invoke("claude", "--write", "--force")
+        assert "force-refreshed 1 body(ies)" in res.output
+        hook.read_text(encoding="utf-8")  # now valid UTF-8
+
+    def test_wiped_settings_does_not_overwrite_foreign_body(self, in_tmp):
+        """F4: a missing settings entry must not become a license to clobber."""
+        hook = self._install(in_tmp)
+        mine = "#!/usr/bin/env python3\n# my own hook\nprint('custom')\n"
+        hook.write_text(mine, encoding="utf-8")
+        (in_tmp / ".claude" / "settings.json").unlink()
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 0
+        settings = json.loads((in_tmp / ".claude" / "settings.json").read_text())
+        assert _ups_entry_present(settings)  # entry rewired...
+        assert hook.read_text(encoding="utf-8") == mine  # ...body preserved
+        assert "NOTE:" in res.output
 
     def test_foreign_body_not_healed_but_reported(self, in_tmp):
         hook = self._install(in_tmp)
         mine = "#!/usr/bin/env python3\n# my own customized hook\nprint('custom')\n"
         hook.write_text(mine, encoding="utf-8")
         res = _invoke("claude", "--write")
-        assert "user-modified or externally managed" in res.output
+        assert "user-modified" in res.output and "(foreign)" in res.output
         assert hook.read_text(encoding="utf-8") == mine  # untouched
 
     def test_force_overwrites_foreign_body(self, in_tmp):
         hook = self._install(in_tmp)
         hook.write_text("#!/usr/bin/env python3\nprint('custom')\n", encoding="utf-8")
         res = _invoke("claude", "--write", "--force")
-        assert "healed 1 stale hook body" in res.output
+        assert "force-refreshed 1 body(ies)" in res.output
         from roam.commands.cmd_hooks import _HOOK_BODY_VERSION, _hook_body_version
 
         assert _hook_body_version(hook.read_text(encoding="utf-8")) == _HOOK_BODY_VERSION
 
-    def test_dry_run_reports_heal_without_writing(self, in_tmp):
+    def test_dry_run_reports_heal_without_writing(self, in_tmp, monkeypatch):
         hook = self._install(in_tmp)
-        stale = hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
-        hook.write_text(stale, encoding="utf-8")
+        prestamp = "#!/usr/bin/env python3\n# roam body from before the stamp era\n"
+        hook.write_text(prestamp, encoding="utf-8")
+        self._register(monkeypatch, prestamp)
         res = _invoke("claude")  # no --write
-        assert "heal stale body" in res.output and "dry-run" in res.output
-        assert hook.read_text(encoding="utf-8") == stale  # unchanged
+        assert "heal stale/missing body" in res.output and "dry-run" in res.output
+        assert hook.read_text(encoding="utf-8") == prestamp  # unchanged
+
+    def test_dry_run_force_labels_foreign_distinctly(self, in_tmp):
+        """F10: dry-run --force must not call a foreign body a stale heal."""
+        hook = self._install(in_tmp)
+        hook.write_text("#!/usr/bin/env python3\nprint('custom')\n", encoding="utf-8")
+        res = _invoke("claude", "--force")  # no --write
+        assert "force-overwrite unrecognized body" in res.output
+        assert "print('custom')" in hook.read_text(encoding="utf-8")  # untouched
+
+    def test_surgered_current_body_classifies_current(self):
+        """compile-code's mode-override surgery on the CURRENT body stays quiet
+        (its SHA is registered as a shipped variant)."""
+        import re as _re
+
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT, _hook_heal_state
+
+        # verbatim copy of compile-code cli.py _override_hook_maintenance_commands
+        script = _CLAUDE_STOP_HOOK_SCRIPT.replace(
+            '["roam", "--json", *args]',
+            '["roam", *(["--override-mode"] if args and args[0] in {"verify", "index"} else []), "--json", *args]',
+        )
+        script = _re.sub(
+            r'(["\']roam["\']\s*,\s*)(["\'])(verify|index)\2',
+            r'\1"--override-mode", \2\3\2',
+            script,
+        )
+        assert script != _CLAUDE_STOP_HOOK_SCRIPT  # surgery actually bites
+        assert _hook_heal_state(script, _CLAUDE_STOP_HOOK_SCRIPT) == "current"
+
+    def test_doctor_reports_hook_body_state(self, in_tmp, monkeypatch):
+        """F7: doctor surfaces non-current bodies (advisory)."""
+        from roam.commands import cmd_hooks
+        from roam.commands.cmd_doctor import _check_claude_hook_bodies
+
+        # isolate the user level from the real box
+        monkeypatch.setattr(
+            cmd_hooks,
+            "_claude_hook_dir",
+            lambda user_level: in_tmp / "userhooks" if user_level else in_tmp / ".claude" / "hooks",
+        )
+        monkeypatch.setattr(
+            cmd_hooks,
+            "_claude_settings_path",
+            lambda user_level: (
+                in_tmp / "userhooks" / "settings.json" if user_level else in_tmp / ".claude" / "settings.json"
+            ),
+        )
+        _invoke("claude", "--write")
+        assert _check_claude_hook_bodies()["passed"] is True
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        hook.write_text("#!/usr/bin/env python3\nprint('custom')\n", encoding="utf-8")
+        result = _check_claude_hook_bodies()
+        assert result["passed"] is False
+        assert "foreign" in result["detail"]
+        # entry wired + body deleted -> reported, not silently fine
+        hook.unlink()
+        result = _check_claude_hook_bodies()
+        assert result["passed"] is False
+        assert "missing" in result["detail"]

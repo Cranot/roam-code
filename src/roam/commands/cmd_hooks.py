@@ -12,6 +12,7 @@ W1148 audit memo.
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -1114,12 +1115,32 @@ _CLAUDE_UPS_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_UPS_HOOK_SCRIPT)
 _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 
 
-# SHA-256 of roam-shipped historical hook bodies that predate the version stamp.
-# A deployed body whose hash is here is KNOWN to be roam's own past output, so it
-# is safe to heal even though it carries no marker. Seed additions belong here
-# whenever a body changes (compute the prior stamped body's SHA). Empty is fine:
-# stamped bodies heal by version comparison; only pre-stamp bodies need this set.
-_KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset()
+# SHA-256 of every hook body roam ever shipped, in DEPLOYED form (stamped where
+# the shipping commit stamped, raw literal before that), plus the deterministic
+# variant compile-code's mode-override surgery produces (cli.py:266-283 there).
+# A deployed body whose hash is here is KNOWN to be roam's own output — safe to
+# heal without a marker. A stamped body whose hash is NOT here has been edited
+# by hand (or by an unknown external transform): report, never auto-overwrite.
+# Regenerate with scripts/seed_hook_body_shas.py after ANY body change — an
+# empty or stale set silently disables healing for pre-stamp installs (the
+# defect that shipped in #77).
+_KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
+    {
+        "0313b8d53749fa9d188c9e6554b37826ff677cdd166627ab5b613538bb4b4573",  # stop v2 pristine (2026-07-16 18326816)
+        "2c81e646c1102ebd010b6f470d6a153d8b47d68921584e55806de9052da13fa7",  # stop v2 surgered (2026-07-16 18326816)
+        "fd8a7522fe488b6429f159146523524dcab6465ddbdc09aa91a3515a89bf58a2",  # stop pre-stamp (2026-06-10 ffa51bb1)
+        "23dc563a465af1e5e11f698ce2e8f1aa2cbae0959b7fbbd2ade9ce7abd7bebd6",  # stop pre-stamp (2026-06-11 16871343)
+        "6f95e9afb5f19c6479ca72647ffca014effe453bceaeba47d06d83a898bac3fc",  # stop pre-stamp (2026-07-08 118dcf55)
+        "929f2e2bc35b1b75874194d9e1843b8868a4f8795c8dbe47da29c9fe841fbf32",  # stop pre-stamp (2026-07-16 19e74bd5)
+        "cc1b6fdda85ce004c620ff01f0b7096b910395c224c0f723947d5c6d127343c2",  # stop pre-stamp surgered (07-08 118dcf55)
+        "2fe9800b212926cb332a903114534a9891ddb790d54ec1b7aeb90b740bf67b68",  # stop pre-stamp surgered (07-16 19e74bd5)
+        "0a33b73872a9e507521aa8feea09a9b14525ebc7f91ccc6ae5cce0c9cd83c224",  # ups v2 pristine (2026-07-16 18326816)
+        "c01d848b2da0503ca91460858da9a926851c0e6ce2d6a253b7a1f28fdc96aa8d",  # ups pre-stamp (2026-06-10 ffa51bb1)
+        "849c787f92d385f6eb2e2ca832a5cd85b2f29691dd3dc590381db2a05642fd09",  # ups pre-stamp (2026-07-11 dcf7b2af)
+        "527471d9c46f89825d79196bb092340b019d3f42ffbfcc96023ecda8c07d5433",  # ups pre-stamp (2026-07-16 19e74bd5)
+        "9bae32c06f5b850a6faa92ae926294fedc1036f651282d648f9858c6bcd07e41",  # ups pre-stamp (2026-07-16 30801aad)
+    }
+)
 
 
 def _hook_body_version(text: str) -> int | None:
@@ -1137,12 +1158,19 @@ def _hook_body_version(text: str) -> int | None:
 def _hook_heal_state(deployed: str, canonical: str) -> str:
     """Classify a deployed hook body vs the current canonical body.
 
-    - "current"  : byte-identical (or same version) — nothing to do.
-    - "heal"     : roam wrote it (carries our marker, or a known historical SHA)
-                   but it is out of date — safe to refresh.
-    - "foreign"  : no marker and unrecognized SHA — a user customization or an
-                   external manager (e.g. compile-code's surgery). NEVER auto-
-                   overwrite; report it and let --force / the manager handle it.
+    - "current"    : byte-identical, or a KNOWN roam-shipped variant of the
+                     current version (compile-code's surgered form).
+    - "heal"       : a KNOWN roam-shipped body (stamped or pre-stamp, pristine
+                     or surgered) that is out of date — safe to refresh.
+    - "modified"   : carries our version marker but the content is NOT any
+                     body roam ever shipped — a hand-edited (or truncated)
+                     roam body. Report; overwrite only with --force.
+    - "foreign"    : no marker and unrecognized SHA — a user customization or
+                     an external manager. Report; overwrite only with --force.
+
+    Content is verified by SHA against the shipped-body registry in every
+    non-identical case — a version marker alone proves nothing about the rest
+    of the file (a truncated heal or a user edit keeps the marker intact).
     """
     if deployed == canonical:
         return "current"
@@ -1150,28 +1178,60 @@ def _hook_heal_state(deployed: str, canonical: str) -> str:
 
     dver = _hook_body_version(deployed)
     cver = _hook_body_version(canonical)
-    if dver is not None:
-        # roam-stamped: heal if older, else it's a same-version local edit we
-        # leave alone (compile-code surgery keeps the marker but rewrites lines).
-        return "heal" if (cver is not None and dver < cver) else "current"
-    if hashlib.sha256(deployed.encode("utf-8")).hexdigest() in _KNOWN_HOOK_BODY_SHAS:
+    known = hashlib.sha256(deployed.encode("utf-8")).hexdigest() in _KNOWN_HOOK_BODY_SHAS
+    if known:
+        # Same-version known variant = compile-code's surgery on the current
+        # body: leave it alone. Anything else roam shipped is stale.
+        if dver is not None and cver is not None and dver >= cver:
+            return "current"
         return "heal"
-    return "foreign"
+    return "modified" if dver is not None else "foreign"
 
 
 def _scan_hook_bodies(hook_dir: Path, managed: list) -> dict[str, str]:
-    """{filename: heal_state} for each managed hook whose file exists on disk."""
+    """{filename: heal_state} for each managed hook.
+
+    Adds two states beyond :func:`_hook_heal_state`:
+    - "missing"    : file absent (reinstall when the settings entry exists).
+    - "unreadable" : not valid UTF-8 (e.g. saved as UTF-16 by PowerShell) —
+                     report; replaceable only with --force. Never a traceback:
+                     this scan runs inside `compile claude`'s wire path too.
+    """
     out: dict[str, str] = {}
     for _event, filename, canonical in managed:
         p = hook_dir / filename
         if not p.exists():
+            out[filename] = "missing"
             continue
         try:
             deployed = p.read_text(encoding="utf-8")
         except OSError:
+            continue  # transient FS error: report nothing, touch nothing
+        except ValueError:
+            out[filename] = "unreadable"
             continue
         out[filename] = _hook_heal_state(deployed, canonical)
     return out
+
+
+def _write_hook_body(hook_path: Path, script: str) -> None:
+    """Overwrite a hook body atomically, preserving the prior content as .bak.
+
+    Atomic (temp + os.replace) so a crash mid-write can never leave a
+    truncated body behind a valid version stamp; .bak so heal/--force is
+    recoverable (settings.json already gets the same courtesy).
+    """
+    if hook_path.exists():
+        try:
+            old = hook_path.read_bytes()
+        except OSError:
+            old = None
+        if old is not None and old != script.encode("utf-8"):
+            backup = hook_path.parent / (hook_path.name + ".bak")
+            backup.write_bytes(old)
+    tmp = hook_path.parent / (hook_path.name + ".tmp")
+    tmp.write_text(script, encoding="utf-8")
+    os.replace(tmp, hook_path)
 
 
 def _hook_entry_present(settings: dict, event: str, filename: str) -> bool:
@@ -1261,21 +1321,40 @@ def _claude_uninstall_hooks(settings: dict, settings_path: Path, hook_dir: Path,
     return verdict, removed_any
 
 
-def _claude_install_hooks(settings: dict, settings_path: Path, hook_dir: Path, to_install: list) -> str:
-    """Write the hook scripts + merge settings entries (settings.json backed up)."""
+def _claude_install_hooks(
+    settings: dict,
+    settings_path: Path,
+    hook_dir: Path,
+    to_install: list,
+    body_states: dict[str, str] | None = None,
+    force: bool = False,
+) -> tuple[str, list[str]]:
+    """Write the hook scripts + merge settings entries (settings.json backed up).
+
+    A hook whose settings entry is missing but whose FILE on disk is a body
+    roam cannot recognize (user-modified / foreign / unreadable) gets its entry
+    wired while the body is PRESERVED unless --force — a wiped settings.json
+    must not become a license to overwrite a customized body. Returns
+    (verdict_part, preserved_filenames).
+    """
     if settings_path.exists():
         backup = settings_path.with_suffix(".json.bak")
         backup.write_text(settings_path.read_text(encoding="utf-8"), encoding="utf-8")
     hook_dir.mkdir(parents=True, exist_ok=True)
+    preserved: list[str] = []
     for event, filename, script in to_install:
         hook_path = hook_dir / filename
-        hook_path.write_text(script, encoding="utf-8")
-        _make_executable(hook_path)
+        state = (body_states or {}).get(filename)
+        if state in ("modified", "foreign", "unreadable") and not force:
+            preserved.append(filename)
+        else:
+            _write_hook_body(hook_path, script)
+            _make_executable(hook_path)
         _merge_hook_entry(settings, event, f"python3 {hook_path}")
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     wired = " + ".join(e for e, _f, _s in to_install)
-    return f"Wired roam compile+verify into Claude Code ({wired}): {settings_path}"
+    return f"Wired roam compile+verify into Claude Code ({wired}): {settings_path}", preserved
 
 
 @hooks.command("claude")
@@ -1333,56 +1412,90 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
     # C3 heal: a hook whose settings entry is present but whose BODY on disk is a
     # stale roam-written version (frozen at an older install) is invisible to the
     # settings-based `to_install` above — so it never refreshes and misses new
-    # behaviour (session-id join key, agent-mode stamp). Scan present bodies and
-    # refresh the healable ones; leave foreign (user/external) bodies untouched.
+    # behaviour (session-id join key, agent-mode stamp). Scan bodies and refresh
+    # the ones roam provably shipped; reinstall bodies that vanished while their
+    # entry stayed wired; leave modified/foreign/unreadable bodies untouched
+    # (reported below; --force overwrites, with a .bak).
     body_states = _scan_hook_bodies(hook_dir, managed)
-    heal = [(e, f, s) for e, f, s in managed if body_states.get(f) == "heal" and (e, f, s) not in to_install]
+    heal = [
+        (e, f, s) for e, f, s in managed if body_states.get(f) in ("heal", "missing") and (e, f, s) not in to_install
+    ]
+    forced = []
     if force:
-        heal += [
+        forced = [
             (e, f, s)
             for e, f, s in managed
-            if body_states.get(f) == "foreign" and (e, f, s) not in to_install and (e, f, s) not in heal
+            if body_states.get(f) in ("modified", "foreign", "unreadable")
+            and (e, f, s) not in to_install
+            and (e, f, s) not in heal
         ]
-    foreign = [f for f, st in body_states.items() if st == "foreign" and not force]
+    attention = {f: st for f, st in body_states.items() if st in ("modified", "foreign", "unreadable") and not force}
 
-    if not to_install and not heal:
+    if not to_install and not heal and not forced:
         verdict = f"roam Claude Code hooks wired + current in {settings_path}"
+        if attention:
+            verdict = (
+                f"roam Claude Code hooks wired in {settings_path}; {len(attention)} body(ies) need attention (see NOTE)"
+            )
     elif write:
         parts = []
+        preserved: list[str] = []
         if to_install:
-            parts.append(_claude_install_hooks(settings, settings_path, hook_dir, to_install))
+            installed_verdict, preserved = _claude_install_hooks(
+                settings, settings_path, hook_dir, to_install, body_states=body_states, force=force
+            )
+            parts.append(installed_verdict)
+        surgery_reset = False
+        for _e, filename, script in heal + forced:
+            hook_path = hook_dir / filename
+            try:
+                prior = hook_path.read_text(encoding="utf-8") if hook_path.exists() else ""
+            except (OSError, ValueError):
+                prior = ""
+            if "--override-mode" in prior and "--override-mode" not in script:
+                surgery_reset = True
+            _write_hook_body(hook_path, script)
+            _make_executable(hook_path)
         if heal:
-            for _e, filename, script in heal:
-                (hook_dir / filename).write_text(script, encoding="utf-8")
-                _make_executable(hook_dir / filename)
             parts.append(f"healed {len(heal)} stale hook body(ies): {', '.join(f for _e, f, _s in heal)}")
+        if forced:
+            parts.append(f"force-refreshed {len(forced)} body(ies): {', '.join(f for _e, f, _s in forced)}")
         verdict = "; ".join(parts)
+        # preserved ⊆ attention already (same states, force=False) — the NOTE
+        # below reports them; nothing to overwrite here.
+        if surgery_reset:
+            verdict += "; mode-override surgery reset — re-run `compile claude` to re-apply"
     else:
         actions = []
         if to_install:
             actions.append(f"install {', '.join(f for _e, f, _s in to_install)}")
         if heal:
-            actions.append(f"heal stale body {', '.join(f for _e, f, _s in heal)}")
+            actions.append(f"heal stale/missing body {', '.join(f for _e, f, _s in heal)}")
+        if forced:
+            actions.append(f"force-overwrite unrecognized body {', '.join(f for _e, f, _s in forced)}")
         verdict = f"Would {' and '.join(actions)} (dry-run; add --write)"
 
     text_lines = []
-    if (to_install or heal) and not write:
-        text_lines = ["  hook script : " + str(hook_dir / f) for _e, f, _s in (to_install + heal)]
+    if (to_install or heal or forced) and not write:
+        text_lines = ["  hook script : " + str(hook_dir / f) for _e, f, _s in (to_install + heal + forced)]
         text_lines.append("  settings    : " + str(settings_path))
         text_lines.append("  apply with  : roam hooks claude --write" + (" --user" if user_level else ""))
-    if foreign:
+    if attention:
+        detail = ", ".join(f"{f} ({st})" for f, st in sorted(attention.items()))
         text_lines.append(
-            f"  NOTE: {len(foreign)} hook body(ies) are user-modified or externally managed "
-            f"({', '.join(foreign)}); not healed. Use --force to overwrite."
+            f"  NOTE: {len(attention)} hook body(ies) are user-modified, externally managed, or "
+            f"unreadable ({detail}); not healed. Use --force to overwrite (a .bak is kept)."
         )
     _emit_hooks_verdict(
         json_mode,
         verdict,
         {
             "already_installed": not to_install,
-            "applied": bool(write and (to_install or heal)),
+            "applied": bool(write and (to_install or heal or forced)),
             "healed": [f for _e, f, _s in heal],
-            "foreign_bodies": foreign,
+            "forced": [f for _e, f, _s in forced],
+            "foreign_bodies": sorted(attention),
+            "body_states": body_states,
             "hook_body_version": _HOOK_BODY_VERSION,
         },
         {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
