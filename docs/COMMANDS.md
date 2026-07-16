@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**277 commands** (270 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
+**278 commands** (271 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
 
 ## Getting Started (41)
 
@@ -141,7 +141,7 @@
 | `verify-imports` | stable | ✓ | — |
 | `why-fail` | stable | ✓ | — |
 
-## Codebase Health (40)
+## Codebase Health (41)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -152,6 +152,7 @@
 | `algo` | stable | ✓ | math |
 | `bisect` | experimental | ✓ | — |
 | `boundary` | stable | ✓ | — |
+| `calc-golden` | stable | — | — |
 | `calc-inventory` | stable | — | — |
 | `calc-probe` | stable | — | — |
 | `check-rules` | stable | ✓ | — |
