@@ -573,10 +573,12 @@ def _compile_envelope(task: str, cwd: str) -> dict:
     the ~200-500ms compile-pipeline import cost.
     """
     # Lazy import — `roam.plan.compiler` is heavy (~5800 lines + networkx).
+    from roam.plan.agent_mode import MODE_ENVELOPE_DIFF, agent_mode
     from roam.plan.compiler import compile_for_artifact, compile_plan
 
     plan = compile_plan(task, cwd=cwd)
-    env, label = compile_for_artifact(plan, cwd=cwd)
+    with agent_mode(MODE_ENVELOPE_DIFF):  # stamp diff-tool rows out of the KPIs
+        env, label = compile_for_artifact(plan, cwd=cwd)
     # dogfood fix: the inner artifact env (from
     # `compile_for_artifact`) carries only {plan, schema, schema_version};
     # it has NEITHER `summary.classifier_confidence` NOR

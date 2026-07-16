@@ -547,6 +547,10 @@ def main():
         session_id = str(payload.get("session_id") or "").strip()
         if session_id:
             env["ROAM_SESSION_ID"] = session_id
+        # Stamp real hook traffic as 'hook' so it is distinguishable from the
+        # mixed 'unknown' bucket in compile-stats. setdefault, not assign: an
+        # explicit ROAM_AGENT_MODE (a policy mode the user set) is preserved.
+        env.setdefault("ROAM_AGENT_MODE", "hook")
         proc = subprocess.run(
             ["roam", "--json", "compile", prompt],
             capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,

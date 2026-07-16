@@ -68,13 +68,20 @@ def _build_prompt(condition: str, task: str, compile_out: str) -> str:
 
 def _compile_envelope(task: str, cwd: str) -> str:
     """Run `roam compile <task>` and return its text envelope."""
+    from roam.plan.agent_mode import ENV_VAR, MODE_BENCH
+
     try:
+        # stamp the child's telemetry row as bench (measurement integrity — these
+        # rows must not land in the production L1-rate/latency KPIs). Passed via
+        # an explicit env so it holds regardless of the parent's own mode.
+        env = {**os.environ, ENV_VAR: MODE_BENCH}
         proc = subprocess.run(
             ["roam", "compile", task, "--artifact", "auto"],
             capture_output=True,
             text=True,
             timeout=10,
             cwd=cwd,
+            env=env,
         )
         return proc.stdout
     except (OSError, subprocess.TimeoutExpired):

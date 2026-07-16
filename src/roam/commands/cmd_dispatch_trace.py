@@ -224,12 +224,16 @@ def _normalize_task(task: str) -> str:
 
 
 def _read_telemetry_match(root: str, task: str) -> dict | None:
-    """Return the most recent telemetry row whose task_hash matches ``task``.
+    """Return the most recent PRODUCTION telemetry row matching ``task``.
 
     W43/W52/W58 instrumentation writes one row per `roam compile` call to
-    `.roam/compile-runs.jsonl`. If a row already exists for this exact
-    task we prefer it (production data, real probe timings).
+    `.roam/compile-runs.jsonl`. If a row already exists for this exact task we
+    prefer it (real probe timings). Non-production rows (bench/corpus/trace/
+    diff/cache/test — including this command's own past runs) are skipped: a
+    trace must not present a benchmark's probe timings as production data.
     """
+    from roam.plan.agent_mode import is_non_production
+
     log_path = Path(root) / ".roam" / "compile-runs.jsonl"
     if not log_path.exists():
         return None
@@ -247,7 +251,7 @@ def _read_telemetry_match(root: str, task: str) -> dict | None:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if row.get("task_hash") == target:
+                if row.get("task_hash") == target and not is_non_production(row):
                     matches.append(row)
     except OSError:
         return None
@@ -397,8 +401,11 @@ def dispatch_trace(ctx: click.Context, prompt: str, root: str, counterfactual: b
         data_source = "telemetry"
     else:
         try:
+            from roam.plan.agent_mode import MODE_TRACE, agent_mode
+
             plan = compile_plan(prompt, cwd=cwd)
-            env, art_label = compile_for_artifact(plan, cwd=cwd)
+            with agent_mode(MODE_TRACE):  # stamp trace-tool rows out of the KPIs
+                env, art_label = compile_for_artifact(plan, cwd=cwd)
             plan_obj = (env or {}).get("plan") or {}
             prefetched = plan_obj.get("prefetched_facts") or {}
             prefetched_keys = sorted(k for k in prefetched if not k.endswith("_definition"))

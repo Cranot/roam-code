@@ -33,6 +33,12 @@ def test_l1_rate_stays_above_floor(monkeypatch):
     if not corpus.exists() or not (root / ".roam" / "index.db").exists():
         pytest.skip("dogfood corpus/index absent (public CI)")
     monkeypatch.chdir(root)
+    # measurement integrity: this test runs 60 real compiles that append to the
+    # repo's own .roam/compile-runs.jsonl. Stamp them 'test' so they never land
+    # in the production L1-rate/latency KPIs (compile-stats default-excludes it).
+    from roam.plan.agent_mode import ENV_VAR, MODE_TEST
+
+    monkeypatch.setenv(ENV_VAR, MODE_TEST)
 
     from roam.plan.compiler import compile_for_artifact, compile_plan
 
