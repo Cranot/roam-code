@@ -524,7 +524,10 @@ def status(ctx):
 # copies. The stamp is a bare comment line inserted after the shebang:
 # compile-code's mode-override surgery rewrites only the roam INVOCATION lines,
 # never this, so a healed body keeps its version marker.
-_HOOK_BODY_VERSION = 2
+# v3 (2026-07-16): Stop hook gained the opt-in Loop-B whole-repo report refresh
+# (ROAM_HOOK_REPORT_REFRESH). Deployed v2 bodies heal to v3 on `hooks claude
+# --write`, which is how this new body reaches already-wired installs.
+_HOOK_BODY_VERSION = 3
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -664,6 +667,10 @@ behaviour.
   ROAM_HOOK_VIBE     (default 0) -- attach `roam vibe-check`'s AI-rot
       score when it crosses ROAM_HOOK_VIBE_THRESHOLD (default 50).
       Repo-scoped (not diff-scoped), so advisory only. Closes F23.
+  ROAM_HOOK_REPORT_REFRESH (default 0) -- Loop B: on an edit-stop, spawn a
+      DETACHED, THROTTLED (>= 6h) whole-repo `verify --report --persist` so the
+      next compile's known_findings is fresh. Never blocks the stop; opt-in
+      because it runs a background whole-repo verify.
 """
 import json
 import os
@@ -714,6 +721,43 @@ _ADVISORY_CATEGORIES = frozenset({
 
 def _env_on(name, default):
     return (os.environ.get(name, default) or "").strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_REPORT_REFRESH_HOURS = 6.0
+
+
+def _maybe_refresh_whole_repo_report():
+    """Loop B: keep .roam/verify-report.json fresh so `compile`'s known_findings
+    probe can embed the repo's OPEN findings for the edited file.
+
+    DETACHED + THROTTLED + fail-open, by hard requirement:
+      - detached: a whole-repo `verify --report` is ~minutes; running it inline
+        would blow the Stop-hook budget (it is the exact stall the diff-only
+        scope avoids). We fire-and-forget and never read its result here.
+      - never --diff-only: that persists a diff-SCOPED view into the whole-repo
+        report path, poisoning known_findings. This is a SEPARATE whole-repo run.
+      - throttled: skip if the report is younger than _REPORT_REFRESH_HOURS.
+    Opt-in (ROAM_HOOK_REPORT_REFRESH, default OFF): it spawns a background
+    whole-repo verify, so enabling it is the user's call; enabling closes Loop B.
+    """
+    if not _env_on("ROAM_HOOK_REPORT_REFRESH", "0"):
+        return
+    try:
+        report = os.path.join(".roam", "verify-report.json")
+        try:
+            if (time.time() - os.path.getmtime(report)) / 3600.0 < _REPORT_REFRESH_HOURS:
+                return  # fresh enough — don't respawn every edit-stop
+        except OSError:
+            pass  # missing/unreadable -> refresh
+        kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.name == "nt":
+            kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        # whole-repo (NO --diff-only) --report --persist -> .roam/verify-report.json
+        subprocess.Popen(["roam", "verify", "--auto", "--report", "--persist"], **kwargs)
+    except Exception:
+        return  # a refresh we could not spawn is never the user's problem
 
 
 def _run_roam(args, timeout, env=None):
@@ -998,6 +1042,11 @@ def main():
         verify_ms = 0
         d = None
         if not skipped_no_edit:
+            # Loop B (opt-in, detached, throttled): the edits just landed, so the
+            # persisted whole-repo report is now conceptually stale — kick off a
+            # background refresh so the NEXT compile's known_findings is current.
+            # Fire BEFORE the blocking diff-only verify so it overlaps that work.
+            _maybe_refresh_whole_repo_report()
             verify_t0 = time.perf_counter()
             d = _run_roam(["verify", "--auto", "--diff-only"], _VERIFY_TIMEOUT_S,
                           env={**os.environ, **_ADVISORY_ENV})
