@@ -3380,7 +3380,15 @@ def _check_calc_divergence(changed_paths: list[str], root: Path) -> dict:
 
     violations: list[dict] = []
     for field, group in all_by_field.items():
-        sems = {s for c in group if (s := rounding_semantic(getattr(c, "language", ""), getattr(c, "rounding", None)))}
+        sems = {
+            s
+            for c in group
+            if (
+                s := rounding_semantic(
+                    getattr(c, "language", ""), getattr(c, "rounding", None), getattr(c, "rounding_mode", None)
+                )
+            )
+        }
         if len(sems) < 2:
             continue
         for rel, c in changed_by_field[field]:

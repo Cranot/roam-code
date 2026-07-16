@@ -190,6 +190,46 @@ def test_extra_round_funcs_does_not_leak():
     assert after == [] or after[0].rounding != "money"
 
 
+def test_mode_arg_captured_and_overrides_language_default():
+    # the proven mislabel: round($x, 2, PHP_ROUND_HALF_EVEN) is banker's, NOT half-away
+    src = b"<?php $vat = round($base * $rate, 2, PHP_ROUND_HALF_EVEN);"
+    c = extract_calcs("php", src)[0]
+    assert c.rounding == "round"
+    assert c.rounding_mode == "PHP_ROUND_HALF_EVEN"
+    assert rounding_semantic(c.language, c.rounding, c.rounding_mode) == "half_to_even"
+
+
+def test_python_decimal_mode_captured():
+    src = b"vat = amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)\n"
+    c = extract_calcs("python", src)[0]
+    assert c.rounding == "quantize"
+    assert c.rounding_mode == "ROUND_HALF_UP"
+    assert rounding_semantic("python", "quantize", "ROUND_HALF_UP") == "half_away_from_zero"
+
+
+def test_unrecognized_mode_returns_none_not_wrong_label():
+    # honest-unknown beats confident-wrong
+    assert rounding_semantic("php", "round", "SOME_FUTURE_MODE") is None
+
+
+def test_no_mode_falls_back_to_language_default():
+    src = b"<?php $vat = round($base * $rate, 2);"
+    c = extract_calcs("php", src)[0]
+    assert c.rounding_mode is None
+    assert rounding_semantic(c.language, c.rounding, c.rounding_mode) == "half_away_from_zero"
+
+
+def test_same_language_mode_divergence_detected(tmp_path):
+    # NEW catch: same language, same call name, different MODE -> semantics divergent
+    _write(tmp_path, "a.php", "<?php $vat = round($base * $rate, 2);")
+    _write(tmp_path, "b.php", "<?php $vat = round($base * $rate, 2, PHP_ROUND_HALF_EVEN);")
+    runner = CliRunner()
+    env = json.loads(runner.invoke(calc_inventory, [str(tmp_path), "--divergence"], obj={"json": True}).output)
+    vat = next(d for d in env["divergences"] if d["field"] == "vat")
+    assert vat["rounding_semantics_divergent"] is True
+    assert set(vat["rounding_semantics"]) == {"half_away_from_zero", "half_to_even"}
+
+
 def test_rounding_semantic_lookup():
     # the subtle cross-language bug: same "round" name, different tie behavior
     assert rounding_semantic("php", "round") == "half_away_from_zero"

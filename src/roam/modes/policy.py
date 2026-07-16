@@ -175,12 +175,16 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         #   dispatch-trace   — classifier path + per-probe fire/skip (read-only)
         #   magic-numbers    — AST/tree-sitter unnamed-constant scan (read-only)
         #   calc-inventory   — AST/tree-sitter computed-field + formula scan (read-only)
+        #   calc-probe       — executes FIXED rounding snippets in local runtimes
+        #                      (python/node/php) on tie inputs; no repo reads/writes
+        #                      beyond an optional inventory scan (sibling of bench-compile)
         #   at               — show code at FILE:LINE + enclosing symbol (DB read)
         "compile",
         "compiler-corpus",
         "dispatch-trace",
         "magic-numbers",
         "calc-inventory",
+        "calc-probe",
         "at",
         # 2026-06-08 — `cycles` is a pure read-only graph query (Tarjan SCCs of
         # the symbol graph; open_db readonly=True), the focused sibling of

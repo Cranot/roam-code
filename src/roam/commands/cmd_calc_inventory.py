@@ -105,6 +105,7 @@ def _calc_to_dict(c: Calc) -> dict:
         "operands": list(c.operands),
         "literals": list(c.literals),
         "rounding": c.rounding,
+        "rounding_mode": c.rounding_mode,
         "file": c.file,
         "line": c.line,
         "language": c.language,
@@ -125,7 +126,7 @@ def _find_divergences(calcs: list[Calc]) -> list[dict]:
         if len(shapes) < 2:
             continue
         rounders = {c.rounding for c in group if c.rounding}
-        semantics = {s for c in group if (s := rounding_semantic(c.language, c.rounding))}
+        semantics = {s for c in group if (s := rounding_semantic(c.language, c.rounding, c.rounding_mode))}
         langs = {c.language for c in group if c.language}
         files = {c.file for c in group if c.file}
         out.append(
@@ -244,12 +245,12 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
         verdict = "no calculations found"
 
     facts = [
-        f"{len(calcs)} calculations",
+        f"{len(calcs)} calculations found",
         f"{files_with_calcs} files",
-        f"{rounding_count} rounding",
+        f"{rounding_count} rounding calls detected",
     ]
     if divergences is not None:
-        facts.append(f"{len(divergences)} divergent fields")
+        facts.append(f"{len(divergences)} divergent fields flagged")
 
     gate_failed = (
         fail_on_divergence and bool(divergences) and any(d["rounding_semantics_divergent"] for d in divergences)
