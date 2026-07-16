@@ -72,6 +72,37 @@ class TestInjectionAdvice:
         assert injection_advice("freeform_explore", "what calls open_db") == "inject"
 
 
+class TestStackTraceEditTrim:
+    """S4 edit-trim lever: stack_trace_fix injection is opt-in (default OFF) —
+    the file:line already rides the pasted trace, but the claude arm measured
+    the opposite sign, so the skip ships as a flag, never a default."""
+
+    def test_default_off_still_injects(self, monkeypatch):
+        monkeypatch.delenv("ROAM_SKIP_EDIT_ENVELOPE", raising=False)
+        assert injection_advice("stack_trace_fix", "fix this TypeError at foo.py:42") == "inject"
+
+    def test_flag_on_skips(self, monkeypatch):
+        monkeypatch.setenv("ROAM_SKIP_EDIT_ENVELOPE", "1")
+        assert injection_advice("stack_trace_fix", "fix this TypeError at foo.py:42") == "skip_edit_task"
+
+    def test_flag_only_affects_stack_trace_fix(self, monkeypatch):
+        monkeypatch.setenv("ROAM_SKIP_EDIT_ENVELOPE", "1")
+        # other procedures are untouched by this flag
+        assert injection_advice("structural_callers", "fix foo.py:42") == "inject"
+        assert injection_advice("synthesis_query", "propose a refactor") == "inject"
+
+    def test_skip_value_honored_by_deployed_hooks(self):
+        # deployed UPS hooks gate on startswith("skip"), so the new value works
+        # without redeployment — guard that the returned token keeps that prefix
+        import os
+
+        os.environ["ROAM_SKIP_EDIT_ENVELOPE"] = "on"
+        try:
+            assert injection_advice("stack_trace_fix", "x").startswith("skip")
+        finally:
+            del os.environ["ROAM_SKIP_EDIT_ENVELOPE"]
+
+
 class TestHookHonorsAdvice:
     def test_hook_script_injects_nothing_on_skip_advice(self, tmp_path, monkeypatch):
         """Run the installed hook script with a stubbed `roam` that returns a
