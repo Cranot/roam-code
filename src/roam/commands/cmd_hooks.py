@@ -528,7 +528,10 @@ def status(ctx):
 # v3 (2026-07-16): Stop hook gained the opt-in Loop-B whole-repo report refresh
 # (ROAM_HOOK_REPORT_REFRESH). Deployed v2 bodies heal to v3 on `hooks claude
 # --write`, which is how this new body reaches already-wired installs.
-_HOOK_BODY_VERSION = 3
+# v4 (2026-07-16): UPS hook tries the S2-lite warm compile daemon first
+# (.roam/compile-daemon.json, ~10 ms connect budget) and falls back to the
+# cold `roam --json compile` spawn on any failure. Deployed v3 bodies heal.
+_HOOK_BODY_VERSION = 4
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -545,6 +548,53 @@ import sys
 
 _COMPILE_TIMEOUT_S = 6.0
 _MIN_PROMPT_CHARS = 8
+# S2-lite warm daemon: startup dominates this chain (~346 ms cold vs ~2 ms
+# envelope compute on a cache hit), so try the loopback daemon first. The
+# connect budget is tiny on purpose: an absent daemon must cost ~nothing.
+_DAEMON_CONNECT_TIMEOUT_S = 0.01
+
+
+def _repo_root():
+    d = os.getcwd()
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return os.getcwd()
+        d = parent
+
+
+def _try_daemon(prompt, session_id):
+    """Compile via the repo's warm daemon; None on ANY failure (-> cold spawn)."""
+    try:
+        import socket
+        cfg_path = os.path.join(_repo_root(), ".roam", "compile-daemon.json")
+        with open(cfg_path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        s = socket.create_connection(("127.0.0.1", int(cfg["port"])),
+                                     timeout=_DAEMON_CONNECT_TIMEOUT_S)
+        try:
+            s.settimeout(_COMPILE_TIMEOUT_S)
+            req = {"token": cfg.get("token"), "op": "compile",
+                   "args": [prompt], "cwd": os.getcwd(),
+                   "session_id": session_id}
+            s.sendall((json.dumps(req) + chr(10)).encode("utf-8"))
+            s.shutdown(socket.SHUT_WR)
+            chunks = []
+            while True:
+                b = s.recv(65536)
+                if not b:
+                    break
+                chunks.append(b)
+        finally:
+            s.close()
+        d = json.loads(b"".join(chunks).decode("utf-8"))
+        if not isinstance(d, dict) or d.get("error") or "summary" not in d:
+            return None  # daemon refused (wrong repo / bad token) or junk
+        return d
+    except Exception:
+        return None  # fail open into the cold spawn
 
 
 def main():
@@ -556,22 +606,24 @@ def main():
         # Forward Claude's session id so the compile telemetry row carries a
         # join key to the session's downstream outcome. Fail-open: an absent id
         # just leaves the key empty, never breaks the hook.
-        env = os.environ.copy()
         session_id = str(payload.get("session_id") or "").strip()
-        if session_id:
-            env["ROAM_SESSION_ID"] = session_id
-        # Stamp real hook traffic as 'hook' so it is distinguishable from the
-        # mixed 'unknown' bucket in compile-stats. setdefault, not assign: an
-        # explicit ROAM_AGENT_MODE (a policy mode the user set) is preserved.
-        env.setdefault("ROAM_AGENT_MODE", "hook")
-        proc = subprocess.run(
-            ["roam", "--json", "compile", prompt],
-            capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,
-            env=env,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return
-        d = json.loads(proc.stdout)
+        d = _try_daemon(prompt, session_id)
+        if d is None:
+            env = os.environ.copy()
+            if session_id:
+                env["ROAM_SESSION_ID"] = session_id
+            # Stamp real hook traffic as 'hook' so it is distinguishable from the
+            # mixed 'unknown' bucket in compile-stats. setdefault, not assign: an
+            # explicit ROAM_AGENT_MODE (a policy mode the user set) is preserved.
+            env.setdefault("ROAM_AGENT_MODE", "hook")
+            proc = subprocess.run(
+                ["roam", "--json", "compile", prompt],
+                capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,
+                env=env,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return
+            d = json.loads(proc.stdout)
         summary = d.get("summary") or {}
         # Generation-shaped tasks (write a test / implement X): measured
         # net-negative to inject — the envelope is cache-re-read every turn
@@ -1213,6 +1265,9 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
+        "25492394429ce7416b7ba3f80b0f2c38accb79136f04a47e28fb51d828a0cc08",  # ups v4 pristine (2026-07-16 s2lite)
+        "9d6d69d97cc29639f27b3c45b8a02d4488712bf8fdece9a49cf2d250a219a378",  # stop v4 pristine (2026-07-16 s2lite)
+        "3a9db464c1480afabfc3cf20f474c75184c5088083085d763592804e7ea6422e",  # stop v4 surgered (2026-07-16 s2lite)
         "b28bcb7a414f92e1694ecbeb54ff1d5e69b8a4c46d4ee035e6b88975712e0805",  # stop v3 pristine (2026-07-16 loop-b)
         "fa76db1e06bb44a947084ed10f94b553aa68289d60511cb246b67f5f85acfd44",  # stop v3 surgered (2026-07-16 loop-b)
         "18e19f503c957e09850ec4173fc451b078c7a0356eb6c964d6406b9e5a8300a5",  # ups v3 pristine (2026-07-16 loop-b)
