@@ -711,7 +711,14 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
         selected.add("command_examples")
     if any(_is_claim_surface(p) for p in target_paths):
         selected.add("claims")
-    if any(Path(p).suffix in _CALC_DIVERGENCE_EXTS and not is_test_file(p) for p in target_paths):
+    # Opt-in (default OFF): the divergence check does a bounded repo-wide scan
+    # (~seconds on a large calc-heavy tree), so it stays OUT of the auto set —
+    # the no-arg Stop-hook gate is byte-identical to before. Enable per-repo with
+    # ROAM_VERIFY_CALC_DIVERGENCE=1, or run it explicitly via `--checks
+    # calc_divergence` / `--all` regardless of the flag.
+    if _verify_env_flag("ROAM_VERIFY_CALC_DIVERGENCE", False) and any(
+        Path(p).suffix in _CALC_DIVERGENCE_EXTS and not is_test_file(p) for p in target_paths
+    ):
         selected.add(_VERIFY_CALC_DIVERGENCE_CATEGORY)
     if has_py:
         # Behavioral + guardrail gates (env-flagged, reversible). The impacted-
