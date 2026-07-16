@@ -7,6 +7,7 @@ import struct
 import sys
 from decimal import Decimal
 
+import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_calc_golden import calc_golden
@@ -328,6 +329,126 @@ def test_cli_check_requires_exactly_one_oracle(tmp_path):
 def test_to_decimal_exactness():
     assert to_decimal("1.005") == Decimal("1.005")  # no float in the path
     assert to_decimal("garbage") is None
+
+
+# ---------------------------------------------------------------------------
+# v2: rule families, --derive, era bucketing, runner-payload guard
+# ---------------------------------------------------------------------------
+
+
+def test_rule_families_compute_distinct_shapes():
+    from roam.index.golden_calc import predict_family
+
+    net, gross, rate = Decimal("100"), Decimal("113"), Decimal("13")
+    # net family: round(100 * 13/100) = 13.00
+    assert predict_family("net", "half_up", net, rate) == Decimal("13.00")
+    # vat_from_gross: round(113 * 13/113) = round(13.00) = 13.00
+    assert predict_family("vat_from_gross", "half_up", gross, rate) == Decimal("13.00")
+    # net_from_gross: net'=round(113*100/113)=100.00; vat=113-100=13.00
+    assert predict_family("net_from_gross", "half_up", gross, rate) == Decimal("13.00")
+
+
+def test_apply_derivations_exact_and_marks_derived():
+    from roam.index.golden_calc import apply_derivations, parse_derivations
+
+    derivs = parse_derivations("gross=net+vat")
+    # net from inputs, vat from expect
+    out = apply_derivations({"net": "100.00", "rate": "13"}, {"vat": "13.00"}, derivs)
+    assert out is not None
+    inputs, derived = out
+    assert inputs["gross"] == "113.00"  # Decimal-exact, no float
+    assert derived == ("gross",)
+    # missing operand -> None (case cannot carry the derived value)
+    assert apply_derivations({"net": "100.00"}, {}, derivs) is None
+
+
+def test_parse_derivations_rejects_bad_forms():
+    from roam.index.golden_calc import parse_derivations
+
+    for bad in ("gross=net*vat", "gross=net", "gross=a+b+c"):
+        with pytest.raises(ValueError):
+            parse_derivations(bad)
+
+
+def test_era_bucketing_by_index(tmp_path):
+    rows = [{"NET": str(i), "CAT": "2", "VAT": "1"} for i in range(25)]
+    cases, stats = extract_cases(
+        _records(*rows),
+        case_map=parse_mapping("net=NET,rate=CAT"),
+        expect_map=parse_mapping("vat=VAT"),
+        bucket_by=["@index:10"],
+    )
+    # 25 cases // 10 -> era0 (0-9), era1 (10-19), era2 (20-24)
+    assert stats.buckets == {"era0": 10, "era1": 10, "era2": 5}
+
+
+def test_derived_corpus_roundtrip_and_runner_strip(tmp_path):
+    # derived key survives write/read AND is stripped from the runner payload
+    c = GoldenCase(
+        id=0, bucket="b", inputs={"net": "100", "rate": "13", "gross": "113"}, expect={"vat": "13"}, derived=("gross",)
+    )
+    out = tmp_path / "c.jsonl"
+    write_corpus([c], out)
+    back = read_corpus(out)[0]
+    assert back.derived == ("gross",)
+    # a runner that echoes the keys it received
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import sys, json\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line: continue\n"
+        "    c = json.loads(line)\n"
+        "    print(json.dumps({'id': c['id'], 'vat': '13', '_seen': sorted(c['inputs'])}))\n",
+        encoding="utf-8",
+    )
+    result = check_with_runner([back], [sys.executable, str(echo)])
+    # the case passes (vat matches) AND gross never reached the runner
+    assert result.replayed == 1
+    # inspect: re-run capturing the echoed keys
+    import subprocess
+
+    payload = json.dumps({"id": 0, "inputs": {k: v for k, v in back.inputs.items() if k not in back.derived}})
+    proc = subprocess.run([sys.executable, str(echo)], input=payload + "\n", capture_output=True, text=True)
+    assert json.loads(proc.stdout)["_seen"] == ["net", "rate"]  # gross stripped
+
+
+def test_audit_families_recover_gross_path():
+    from roam.index.golden_calc import predict_family
+
+    # build a corpus whose vat was produced by the GROSS path, not net×rate
+    cases = []
+    for i in range(30):
+        net = Decimal("10") + Decimal(i) / Decimal(7)
+        rate = Decimal("13")
+        vat = predict_family("vat_from_gross", "half_up", net + Decimal("2"), rate)  # gross-based
+        gross = str(net + vat)
+        cases.append(
+            GoldenCase(
+                id=i,
+                bucket="13",
+                inputs={"net": str(net), "rate": "13", "gross": gross},
+                expect={"vat": str(vat)},
+                derived=("gross",),
+            )
+        )
+    # net-only audit (v1 view) can't fully explain; family audit with gross can
+    report = audit_corpus(cases, "net", "rate", "vat", role_keys={"net": "net", "gross": "gross"})
+    assert "vat_from_gross" in report["families_fitted"]
+    b = report["buckets"][0]
+    # the gross family beats the net family here
+    net_best = max(v for k, v in b["family_match_pct"].items() if k.startswith("net:"))
+    gross_best = max(v for k, v in b["family_match_pct"].items() if k.startswith("vat_from_gross:"))
+    assert gross_best >= net_best
+
+
+def test_audit_backward_compat_net_only():
+    # without gross role, audit stays net-family (v1 keys intact)
+    cases = _corpus_for_rule("half_up", n=10)
+    report = audit_corpus(cases, "net", "rate", "vat")
+    assert report["families_fitted"] == ["net"]
+    assert "rule_match_pct" in report["buckets"][0]  # v1 key preserved
+    assert report["buckets"][0]["rule_match_pct"]["half_up"] == 100.0
 
 
 # ---------------------------------------------------------------------------
