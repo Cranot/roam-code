@@ -240,13 +240,26 @@ def injection_advice(procedure: str, task: str | None) -> str:
     """Advise the prompt-injection channel (Claude Code UPS hook) whether the
     envelope is worth injecting for this task.
 
-    Returns ``"inject"`` or ``"skip_generation_task"``. Explicit
-    ``roam compile`` callers always get the full envelope either way — the
-    advice only gates the per-prompt auto-injection channel.
+    Returns ``"inject"`` or a ``"skip_*"`` value. Explicit ``roam compile``
+    callers always get the full envelope either way — the advice only gates the
+    per-prompt auto-injection channel (the hook honors any ``startswith("skip")``,
+    so a new skip value works with already-deployed hooks without redeployment).
     """
     if procedure == "synthesis_query" and task and _GENERATION_SKIP_RE.search(task):
         return "skip_generation_task"
+    # Opt-in (default OFF): the ENVELOPE-TOKEN economics measured stack_trace_fix
+    # as the one live edit-class leak (source slices ride context every turn while
+    # the file:line is already in the pasted trace). Gate it behind a flag rather
+    # than default-skip — the claude arm measured the OPPOSITE sign, so a
+    # default-on skip would regress that family; ship the lever, A/B per family.
+    if procedure == "stack_trace_fix" and _skip_edit_envelope_enabled():
+        return "skip_edit_task"
     return "inject"
+
+
+def _skip_edit_envelope_enabled() -> bool:
+    """Whether ROAM_SKIP_EDIT_ENVELOPE opts stack_trace_fix out of injection."""
+    return os.environ.get("ROAM_SKIP_EDIT_ENVELOPE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # W35a — stack-trace shape. Real user task: "fix this: ... File 'x.py',
@@ -2299,6 +2312,12 @@ _ROAM_INPROC_DENYLIST = frozenset(
         # probe `timeout=` is actually enforceable.
         "boundary",
         "path-coverage",
+        # tail-1 (2026-07-16): `impact` (structural_blast probe) is O(reverse-
+        # caller-graph); on a hot symbol it ran 14.7s live because the in-process
+        # CliRunner lock makes its 8s probe timeout unenforceable. Route through
+        # the killable subprocess so the cap is real → fast fallback instead of a
+        # multi-second stall. The W147 result cache still serves warm hits.
+        "impact",
     }
 )
 
