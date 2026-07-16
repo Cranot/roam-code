@@ -43,6 +43,7 @@ from roam.index.golden_calc import (
     check_with_runner,
     extract_cases,
     iter_records,
+    parse_derivations,
     parse_mapping,
     read_corpus,
     write_corpus,
@@ -95,19 +96,32 @@ def calc_golden() -> None:
 @click.argument("source", type=click.Path(exists=True, dir_okay=False))
 @click.option("--inputs", "inputs_spec", required=True, help="Input mapping: case_key=SOURCE_COLUMN,...")
 @click.option("--expect", "expect_spec", required=True, help="Expected-output mapping: case_key=SOURCE_COLUMN,...")
-@click.option("--bucket-by", default="", help="Comma-list of input case_keys to bucket by (coverage axes).")
+@click.option(
+    "--bucket-by",
+    default="",
+    help="Comma-list of input case_keys to bucket by. The pseudo-key @index:N buckets by "
+    "record ordinal // N — an ERA proxy that reveals regime changes without a date column.",
+)
+@click.option(
+    "--derive",
+    "derive_spec",
+    default="",
+    help="Compute extra inputs, e.g. 'gross=net+vat' (two operands, +/- only, Decimal-exact). "
+    "Derived-from-expect inputs are stripped from --runner payloads (they embed the answer).",
+)
 @click.option("--where", "where_entries", multiple=True, help="COLUMN=VALUE equality filter (repeatable).")
 @click.option("--limit", type=int, default=0, help="Stop after N kept cases (0 = all).")
 @click.option("--encoding", default="", help="Source text encoding (default: cp1253 for DBF, utf-8 otherwise).")
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False), help="Corpus JSONL output path.")
 @click.pass_context
-def extract(ctx, source, inputs_spec, expect_spec, bucket_by, where_entries, limit, encoding, out_path):
+def extract(ctx, source, inputs_spec, expect_spec, bucket_by, derive_spec, where_entries, limit, encoding, out_path):
     """Extract golden cases from SOURCE (.dbf / .csv / .jsonl) into a corpus."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     try:
         case_map = parse_mapping(inputs_spec)
         expect_map = parse_mapping(expect_spec)
+        derivations = parse_derivations(derive_spec) if derive_spec.strip() else None
         needed = sorted(set(case_map.values()) | set(expect_map.values()) | set((_parse_where(where_entries) or {})))
         records = iter_records(source, encoding=encoding or None)
         # DBF: narrow decoding to the needed columns (2 GB tables) — the reader
@@ -123,6 +137,7 @@ def extract(ctx, source, inputs_spec, expect_spec, bucket_by, where_entries, lim
             bucket_by=[b.strip() for b in bucket_by.split(",") if b.strip()],
             where=_parse_where(where_entries),
             limit=limit,
+            derivations=derivations,
         )
     except (KeyError, ValueError) as exc:
         verdict = f"extract failed: {exc}"
@@ -183,25 +198,41 @@ def extract(ctx, source, inputs_spec, expect_spec, bucket_by, where_entries, lim
 
 @calc_golden.command("audit")
 @click.argument("corpus", type=click.Path(exists=True, dir_okay=False))
-@click.option("--base", "base_key", required=True, help="Input case_key holding the calculation base (e.g. net).")
+@click.option("--base", "base_key", required=True, help="Input case_key holding the net base (e.g. net).")
 @click.option("--rate", "rate_key", required=True, help="Input case_key holding the rate (percent or code).")
 @click.option("--target", "target_key", required=True, help="Expect case_key the rules must reproduce (e.g. vat).")
 @click.option("--rate-map", "rate_map_spec", default="", help="CODE=PERCENT,... map when --rate is a code field.")
+@click.option(
+    "--gross",
+    "gross_key",
+    default="",
+    help="Input case_key holding a tax-inclusive gross (e.g. from --derive gross=net+vat); "
+    "enables the gross-inclusive second-path families (vat_from_gross / net_from_gross).",
+)
 @click.pass_context
-def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec):
-    """Which rounding rule best explains each bucket? (+ residuals no rule explains)."""
+def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec, gross_key):
+    """Which calculation shape + rounding rule best explains each bucket? (+ residuals)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     try:
         cases = read_corpus(corpus)
     except (ValueError, KeyError, TypeError) as exc:
         raise click.UsageError(f"malformed corpus {corpus}: {exc}") from exc
-    report = audit_corpus(cases, base_key, rate_key, target_key, rate_map=_parse_rate_map(rate_map_spec))
-    ev, unex = report["cases_evaluated"], report["unexplained_by_best_rule"]
-    verdict = (
-        f"{ev} cases evaluated across {len(report['buckets'])} buckets; {unex} unexplained by the best per-bucket rule"
+    role_keys = {"net": base_key}
+    if gross_key:
+        role_keys["gross"] = gross_key
+    report = audit_corpus(
+        cases, base_key, rate_key, target_key, rate_map=_parse_rate_map(rate_map_spec), role_keys=role_keys
     )
-    facts = [f"{ev} cases scanned", f"{unex} residual cases found", f"{len(report['buckets'])} buckets"]
+    ev = report["cases_evaluated"]
+    unex_net = report["unexplained_by_best_rule"]
+    unex_fam = report["unexplained_by_families"]
+    verdict = (
+        f"{ev} cases across {len(report['buckets'])} buckets; "
+        f"{unex_net} unexplained by net-family rules, {unex_fam} unexplained by ALL "
+        f"families [{', '.join(report['families_fitted'])}]"
+    )
+    facts = [f"{ev} cases scanned", f"{unex_fam} residual cases found", f"{len(report['buckets'])} buckets"]
     if json_mode:
         click.echo(
             to_json(
@@ -216,12 +247,14 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec):
         return
     click.echo(f"VERDICT: {verdict}")
     for b in report["buckets"]:
-        click.echo(f"\n  bucket {b['bucket']}: {b['cases']} cases — best {b['best_rule']} ({b['best_match_pct']}%)")
-        for rule, pct in sorted(b["rule_match_pct"].items(), key=lambda kv: -kv[1]):
-            click.echo(f"    {rule:10s} {pct}%")
+        click.echo(
+            f"\n  bucket {b['bucket']}: {b['cases']} cases — best {b['best_family']} ({b['best_family_match_pct']}%)"
+        )
+        for rule, pct in sorted(b["family_match_pct"].items(), key=lambda kv: -kv[1])[:6]:
+            click.echo(f"    {rule:26s} {pct}%")
         for r in b["residual_examples"]:
             click.echo(
-                f"    residual: base={r.get(base_key)} rate={r['rate_pct']}% expected={r['expected']} (half_up gives {r['half_up_prediction']})"
+                f"    residual: base={r.get(base_key)} rate={r['rate_pct']}% expected={r['expected']} (net half_up gives {r['half_up_prediction']})"
             )
 
 
