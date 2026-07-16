@@ -1843,8 +1843,67 @@ def _check_ci_workflow_drift() -> dict:
 # A failure here means "something to be aware of" rather than "roam is
 # broken." CI can still pass with advisory failures unless ``--strict``
 # is set. See cmd_doctor docstring for the full exit-code matrix.
+def _check_claude_hook_bodies() -> dict:
+    """Deployed Claude hook bodies are roam-shipped and current (advisory).
+
+    Covers both install levels. Flags: stale roam bodies (healable), bodies
+    whose settings entry is wired but whose file vanished, and modified /
+    foreign / unreadable bodies (need --force). The T2c spec routes this
+    reporting through doctor so a drifted fleet shows up in onboarding
+    diagnostics, not only when someone happens to run `hooks claude`.
+    """
+    from roam.commands.cmd_hooks import (
+        _CLAUDE_STOP_HOOK_FILENAME,
+        _CLAUDE_STOP_HOOK_SCRIPT,
+        _CLAUDE_UPS_HOOK_FILENAME,
+        _CLAUDE_UPS_HOOK_SCRIPT,
+        _claude_hook_dir,
+        _claude_settings_path,
+        _hook_entry_present,
+        _load_claude_settings,
+        _scan_hook_bodies,
+    )
+
+    managed = [
+        ("UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME, _CLAUDE_UPS_HOOK_SCRIPT),
+        ("Stop", _CLAUDE_STOP_HOOK_FILENAME, _CLAUDE_STOP_HOOK_SCRIPT),
+    ]
+    problems: list[str] = []
+    scanned = 0
+    for level, user_level in (("project", False), ("user", True)):
+        settings, load_error = _load_claude_settings(_claude_settings_path(user_level))
+        if load_error:
+            continue  # unparseable settings are `hooks claude`'s exit-1 case, not ours
+        states = _scan_hook_bodies(_claude_hook_dir(user_level), managed)
+        for event, fname, _script in managed:
+            state = states.get(fname)
+            entry = _hook_entry_present(settings, event, fname)
+            if state == "missing":
+                if entry:
+                    problems.append(f"{level}:{fname}=missing (entry wired, body gone)")
+                continue
+            if state is None:
+                continue
+            scanned += 1
+            if state != "current":
+                problems.append(f"{level}:{fname}={state}")
+    if not problems:
+        detail = f"{scanned} deployed hook body(ies) current" if scanned else "no Claude hook bodies deployed"
+        return {"name": "Claude hook bodies", "passed": True, "detail": detail}
+    return {
+        "name": "Claude hook bodies",
+        "passed": False,
+        "detail": (
+            f"{len(problems)} hook body issue(s): "
+            + ", ".join(problems)
+            + " — `roam hooks claude --write` heals roam-shipped bodies; --force overwrites modified ones (.bak kept)"
+        ),
+    }
+
+
 _ADVISORY_CHECK_NAMES = frozenset(
     {
+        "Claude hook bodies",  # T2c heal reporting — actionable locally only
         "Optional extras",  # graceful degradation when extras missing
         "Cloud sync",  # OneDrive/Dropbox warning, not a hard break
         "MCP backpressure",  # only matters for MCP server users
@@ -1994,6 +2053,7 @@ def doctor(ctx, strict, persist):
     _run_check("optional_extras", _check_optional_extras)
     _run_check("cloud_sync", _check_cloud_sync)
     _run_check("cache_permissions", _check_cache_permissions)
+    _run_check("claude_hook_bodies", _check_claude_hook_bodies)
     _run_check("command_registry", _check_command_registry)
     _run_check("mcp_registry", _check_mcp_registry)
     _run_check("mcp_backpressure", _check_mcp_backpressure)
