@@ -62,13 +62,21 @@ def test_no_findings_when_field_only_in_changed_file(tmp_path):
     assert _check_calc_divergence(["only.php"], tmp_path)["violations"] == []
 
 
-def test_auto_select_includes_calc_divergence_for_source_edit():
+def test_auto_select_opt_in_default_off(monkeypatch):
+    # default OFF: the ~seconds repo scan stays out of the auto set (Stop hook
+    # byte-identical to before). Not selected even on a calc-bearing source edit.
+    monkeypatch.delenv("ROAM_VERIFY_CALC_DIVERGENCE", raising=False)
+    assert _VERIFY_CALC_DIVERGENCE_CATEGORY not in auto_select_checks(["app/Services/Vat.php"])
+
+
+def test_auto_select_opt_in_when_enabled(monkeypatch):
+    monkeypatch.setenv("ROAM_VERIFY_CALC_DIVERGENCE", "1")
     assert _VERIFY_CALC_DIVERGENCE_CATEGORY in auto_select_checks(["app/Services/Vat.php"])
     assert _VERIFY_CALC_DIVERGENCE_CATEGORY in auto_select_checks(["src/utils/vat.ts"])
 
 
-def test_auto_select_excludes_calc_divergence_for_test_only_edit():
-    # a test-only or docs-only change should not select the check
+def test_auto_select_excludes_test_only_edit_even_when_enabled(monkeypatch):
+    monkeypatch.setenv("ROAM_VERIFY_CALC_DIVERGENCE", "1")
     assert _VERIFY_CALC_DIVERGENCE_CATEGORY not in auto_select_checks(["tests/test_vat.php"])
     assert _VERIFY_CALC_DIVERGENCE_CATEGORY not in auto_select_checks(["README.md"])
 
