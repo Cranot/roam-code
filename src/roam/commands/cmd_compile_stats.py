@@ -413,9 +413,15 @@ def compile_stats(
         return
 
     if not rows:
-        click.echo("VERDICT: no telemetry yet")
-        click.echo(f"  (no .roam/compile-runs.jsonl under {root})")
-        click.echo("  Run `roam compile <task>` to populate the log.")
+        if excluded and not include_bench:
+            # the file EXISTS and has rows — they were all non-production. Say so
+            # rather than the misleading "no telemetry / no file" message.
+            click.echo("VERDICT: no production telemetry")
+            click.echo(f"  ({excluded} row(s) present, all non-production; --include-bench to include them)")
+        else:
+            click.echo("VERDICT: no telemetry yet")
+            click.echo(f"  (no .roam/compile-runs.jsonl under {root})")
+            click.echo("  Run `roam compile <task>` to populate the log.")
         return
 
     click.echo(f"VERDICT: {summary['verdict']}")

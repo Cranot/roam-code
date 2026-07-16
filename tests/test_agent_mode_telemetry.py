@@ -92,6 +92,22 @@ def test_stats_include_bench_keeps_all(tmp_path):
     assert "excluded_non_production_rows" not in env["summary"]
 
 
+def test_all_non_production_discloses_in_human_output(tmp_path):
+    # fresh-eyes edge: a repo whose telemetry is 100% non-production must NOT
+    # print the misleading "no telemetry yet / no file" message — the file
+    # exists, the rows were filtered. Disclose that in the human path too.
+    _write_telemetry(tmp_path, [_row(MODE_BENCH, "full") for _ in range(5)])
+    runner = CliRunner()
+    human = runner.invoke(compile_stats, ["--root", str(tmp_path)], obj={"json": False})
+    assert human.exit_code == 0
+    assert "no production telemetry" in human.output
+    assert "all non-production" in human.output
+    assert "no .roam/compile-runs.jsonl" not in human.output  # the OLD wrong message
+    # and the JSON path still carries the machine-readable excluded count
+    js = json.loads(runner.invoke(compile_stats, ["--root", str(tmp_path)], obj={"json": True}).output)
+    assert js["summary"]["excluded_non_production_rows"] == 5
+
+
 def test_by_mode_shows_full_split_regardless(tmp_path):
     rows = [_row("hook", "l1_probe")] + [_row(MODE_BENCH, "full") for _ in range(8)]
     _write_telemetry(tmp_path, rows)
