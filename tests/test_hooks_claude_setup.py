@@ -197,10 +197,11 @@ with open(os.path.join(here, "envelope.json"), encoding="utf-8") as fh:
 # module shim: argv ["roam", ...] is redirected to the Python stub above;
 # everything else (git ...) passes through to the real subprocess module.
 _STOP_HOOK_DRIVER_PY = """\
-import sys, types, subprocess as _real_subprocess
+import os, sys, types, subprocess as _real_subprocess
 
 _STUB = sys.argv[1]
 _SCRIPT = sys.argv[2]
+_POPEN_LOG = os.path.join(os.path.dirname(_STUB), "popen-called.txt")
 
 shim = types.ModuleType("subprocess")
 
@@ -211,7 +212,25 @@ def _run(args, **kwargs):
     return _real_subprocess.run(args, **kwargs)
 
 
+def _popen(args, **kwargs):
+    # record roam detached spawns (Loop-B report refresh) WITHOUT actually
+    # launching a background process — keeps the test deterministic.
+    if args and args[0] == "roam":
+        with open(_POPEN_LOG, "a", encoding="utf-8") as fh:
+            fh.write(" ".join(args) + chr(10))
+
+        class _Dummy:
+            pass
+
+        return _Dummy()
+    return _real_subprocess.Popen(args, **kwargs)
+
+
 shim.run = _run
+shim.Popen = _popen
+shim.DEVNULL = _real_subprocess.DEVNULL
+shim.PIPE = _real_subprocess.PIPE
+shim.TimeoutExpired = _real_subprocess.TimeoutExpired
 sys.modules["subprocess"] = shim
 with open(_SCRIPT, encoding="utf-8") as fh:
     code = fh.read()
@@ -367,6 +386,15 @@ class TestHookBodyHeal:
         extra = {hashlib.sha256(b.encode("utf-8")).hexdigest() for b in bodies}
         monkeypatch.setattr(cmd_hooks, "_KNOWN_HOOK_BODY_SHAS", cmd_hooks._KNOWN_HOOK_BODY_SHAS | extra)
 
+    def test_hook_bodies_compile(self):
+        """A syntax error in a body constant makes every absence-asserting hook
+        test pass vacuously (the broken hook spawns nothing) — guard the whole
+        class of failures with an explicit compile check."""
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT, _CLAUDE_UPS_HOOK_SCRIPT
+
+        compile(_CLAUDE_UPS_HOOK_SCRIPT, "roam-compile-ups.py", "exec")
+        compile(_CLAUDE_STOP_HOOK_SCRIPT, "roam-verify-stop.py", "exec")
+
     def test_registry_is_seeded(self):
         """F1 guard: an empty/garbled registry silently disables pre-stamp healing."""
         from roam.commands.cmd_hooks import _KNOWN_HOOK_BODY_SHAS
@@ -375,15 +403,17 @@ class TestHookBodyHeal:
         assert all(len(s) == 64 and set(s) <= set("0123456789abcdef") for s in _KNOWN_HOOK_BODY_SHAS)
 
     def test_heal_state_classification(self, monkeypatch):
-        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT, _hook_heal_state
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT, _HOOK_BODY_VERSION, _hook_heal_state
 
         canonical = _CLAUDE_UPS_HOOK_SCRIPT
+        cur = f"# roam-hook-version: {_HOOK_BODY_VERSION}"
+        old = f"# roam-hook-version: {_HOOK_BODY_VERSION - 1}"
         assert _hook_heal_state(canonical, canonical) == "current"
         # an older stamp alone proves NOTHING: unknown content -> modified
-        older_unknown = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1") + "# my edit\n"
+        older_unknown = canonical.replace(cur, old) + "# my edit\n"
         assert _hook_heal_state(older_unknown, canonical) == "modified"
         # a REGISTERED older body (roam provably shipped it) -> healable
-        older_known = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+        older_known = canonical.replace(cur, old)
         self._register(monkeypatch, older_known)
         from roam.commands.cmd_hooks import _hook_heal_state as heal_state
 
@@ -413,8 +443,12 @@ class TestHookBodyHeal:
     def test_older_stamped_modified_body_not_healed(self, in_tmp):
         """F3: a stamped-but-edited body is never silently overwritten."""
         hook = self._install(in_tmp)
+        from roam.commands.cmd_hooks import _HOOK_BODY_VERSION
+
         edited = (
-            hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+            hook.read_text(encoding="utf-8").replace(
+                f"# roam-hook-version: {_HOOK_BODY_VERSION}", f"# roam-hook-version: {_HOOK_BODY_VERSION - 1}"
+            )
             + "# my customization\n"
         )
         hook.write_text(edited, encoding="utf-8")
@@ -554,3 +588,137 @@ class TestHookBodyHeal:
         result = _check_claude_hook_bodies()
         assert result["passed"] is False
         assert "missing" in result["detail"]
+
+
+class TestLoopBReportRefresh:
+    """C5 / T2b: the Stop hook (opt-in) spawns a DETACHED, THROTTLED whole-repo
+    `verify --report --persist` on edit-stops so the next compile's
+    known_findings is fresh — never blocking, never --diff-only into the
+    whole-repo report path."""
+
+    @staticmethod
+    def _git_repo(tmp_path):
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+        for args in (
+            ["git", "init", "-q"],
+            ["git", "config", "user.email", "t@t"],
+            ["git", "config", "user.name", "t"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-q", "-m", "init"],
+        ):
+            subprocess.run(args, cwd=repo, check=True, capture_output=True)
+        (repo / ".roam").mkdir()
+        return repo
+
+    def _run(self, repo, stub_dir, env_extra=None, cwd=None):
+        import os
+        import subprocess
+        import sys
+
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
+
+        hook = repo.parent / "stop-hook.py"
+        hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
+        driver = repo.parent / "stop-hook-driver.py"
+        driver.write_text(_STOP_HOOK_DRIVER_PY, encoding="utf-8")
+        env = {**os.environ, **(env_extra or {})}
+        subprocess.run(
+            [sys.executable, str(driver), str(stub_dir / "roam-stub.py"), str(hook)],
+            input="{}",
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=str(cwd or repo),
+            env=env,
+        )
+        log = stub_dir / "popen-called.txt"
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def test_default_off_no_refresh_spawn(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")  # edit-stop
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir)  # no opt-in env
+        assert "verify" not in popen_log  # default OFF -> no background refresh
+
+    def test_optin_spawns_whole_repo_report_refresh(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")  # edit-stop
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        # whole-repo (report+persist), NOT --diff-only (that would poison the report)
+        assert "roam verify --auto --report --persist" in popen_log
+        assert "--diff-only" not in popen_log
+
+    def test_throttled_when_report_fresh(self, tmp_path):
+        import time
+
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        # a FRESH report exists -> refresh must be throttled (not respawned)
+        report = repo / ".roam" / "verify-report.json"
+        report.write_text("{}", encoding="utf-8")
+        os_utime_now = time.time()
+        import os
+
+        os.utime(report, (os_utime_now, os_utime_now))
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        assert "verify" not in popen_log  # fresh -> throttled
+
+    def test_no_refresh_on_clean_tree(self, tmp_path):
+        repo = self._git_repo(tmp_path)  # no edits -> fast-exit, no refresh
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        assert "verify" not in popen_log
+
+    def test_claim_marker_is_single_flight(self, tmp_path):
+        """Review MAJOR-1/2: repeated edit-stops during the in-flight window (or
+        with a persist that never lands) must spawn exactly ONE verify."""
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        first = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        assert first.count("roam verify --auto --report --persist") == 1
+        assert (repo / ".roam" / "verify-refresh-claim").exists()  # claim taken
+        # second stop, report still absent (persist "never landed") -> no respawn
+        (repo / "tracked.txt").write_text("changed again\n", encoding="utf-8")
+        second = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        assert second.count("roam verify --auto --report --persist") == 1  # log unchanged
+
+    def test_stale_claim_respawns(self, tmp_path):
+        import os as _os
+        import time as _time
+
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        (repo / ".roam").mkdir(exist_ok=True)
+        claim = repo / ".roam" / "verify-refresh-claim"
+        claim.write_text("pid=0 time=0\n", encoding="utf-8")
+        old = _time.time() - 7200  # 2h-old claim: well past the 30-min window
+        _os.utime(claim, (old, old))
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
+        assert "roam verify --auto --report --persist" in popen_log
+
+    def test_throttle_anchored_at_repo_root(self, tmp_path):
+        """Review MAJOR-3: a hook running in a repo SUBDIR must see the root
+        report (where the spawned verify persists), not a cwd-relative path."""
+        import os as _os
+        import time as _time
+
+        repo = self._git_repo(tmp_path)
+        sub = repo / "pkg"
+        sub.mkdir()
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        report = repo / ".roam" / "verify-report.json"
+        report.write_text("{}", encoding="utf-8")
+        now = _time.time()
+        _os.utime(report, (now, now))  # fresh AT THE ROOT
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"}, cwd=sub)
+        assert "verify --auto --report --persist" not in popen_log  # root throttle honored
