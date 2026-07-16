@@ -121,6 +121,21 @@ def test_multi_path_unions_idioms(tmp_path):
 
 
 @pytest.mark.skipif(not _grammars_available(), reason="tree-sitter grammars unavailable")
+def test_scoped_mode_exact_match_only(tmp_path):
+    """#8 regression: code using ONLY round(x,2,PHP_ROUND_HALF_EVEN) must not
+    also probe the default-mode php:round — that would report tie divergences
+    the codebase does not have."""
+    (tmp_path / "a.php").write_text("<?php $vat = round($base * $rate, 2, PHP_ROUND_HALF_EVEN);")
+    runner = CliRunner()
+    env = json.loads(runner.invoke(calc_probe, [str(tmp_path)], obj={"json": True}).output)
+    ran = set(env["summary"]["idioms_ran"])
+    assert "php:round" not in ran  # the unused default-mode variant stays out
+    if shutil.which("php"):
+        assert ran == {"php:round:PHP_ROUND_HALF_EVEN"}
+        assert env["summary"]["divergent_inputs"] == 0  # one idiom cannot diverge
+
+
+@pytest.mark.skipif(not _grammars_available(), reason="tree-sitter grammars unavailable")
 def test_unprobed_used_idioms_disclosed(tmp_path):
     # floor is a recognized rounding fn but has no probe-catalog entry -> disclosed
     (tmp_path / "f.php").write_text("<?php $cents = floor($x * 100);")

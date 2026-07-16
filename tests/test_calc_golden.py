@@ -328,3 +328,151 @@ def test_cli_check_requires_exactly_one_oracle(tmp_path):
 def test_to_decimal_exactness():
     assert to_decimal("1.005") == Decimal("1.005")  # no float in the path
     assert to_decimal("garbage") is None
+
+
+# ---------------------------------------------------------------------------
+# audit-fix regressions (2026-07-16 adversarial audit)
+# ---------------------------------------------------------------------------
+
+
+def test_runner_partial_answers_fail_the_gate(tmp_path):
+    """#1: a runner answering only SOME cases is a runner defect — exit 5."""
+    corpus = tmp_path / "c.jsonl"
+    write_corpus(_corpus_for_rule("half_up", n=10), corpus)
+    partial = tmp_path / "partial.py"
+    partial.write_text(
+        "import sys, json\n"
+        "from decimal import Decimal, ROUND_HALF_UP\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line: continue\n"
+        "    c = json.loads(line)\n"
+        "    if c['id'] >= 3: continue  # silently drop the rest\n"
+        "    vat = (Decimal(c['inputs']['net']) * Decimal(c['inputs']['rate']) / Decimal(100)).quantize(\n"
+        "        Decimal('0.01'), ROUND_HALF_UP)\n"
+        "    print(json.dumps({'id': c['id'], 'vat': str(vat)}))\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        calc_golden,
+        ["check", str(corpus), "--runner", f'"{sys.executable}" "{partial}"'],
+        obj={"json": True},
+    )
+    assert result.exit_code == 5
+    env = json.loads(result.output)
+    assert env["summary"]["missing"] == 7
+    assert env["summary"]["gate_failed"] is True
+
+
+def test_unrounded_runner_fails_default_tolerance(tmp_path):
+    """#2: the old 0.005 default let an UNROUNDED product pass every tie."""
+    corpus = tmp_path / "c.jsonl"
+    write_corpus([GoldenCase(id=0, bucket="10", inputs={"net": "0.05", "rate": "10"}, expect={"vat": "0.01"})], corpus)
+    raw_runner = tmp_path / "raw.py"
+    raw_runner.write_text(
+        "import sys, json\n"
+        "from decimal import Decimal\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line: continue\n"
+        "    c = json.loads(line)\n"
+        "    raw = Decimal(c['inputs']['net']) * Decimal(c['inputs']['rate']) / Decimal(100)\n"
+        "    print(json.dumps({'id': c['id'], 'vat': str(raw)}))  # 0.005, NOT rounded\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        calc_golden,
+        ["check", str(corpus), "--runner", f'"{sys.executable}" "{raw_runner}"'],
+        obj={"json": True},
+    )
+    assert result.exit_code == 5  # |0.01 - 0.005| = 0.005 > 0.001 default
+
+
+def test_dbf_lowercase_mapping_extracts(tmp_path):
+    """#3: case-insensitive validation must come with case-insensitive keying."""
+    dbf = _dbf_with_cases(tmp_path, rows=[{"NETVALUE": "100.00", "VATCAT": "1", "VATAMT": "24.00", "DOCTYPE": "1.1"}])
+    corpus = tmp_path / "c.jsonl"
+    runner = CliRunner()
+    result = runner.invoke(
+        calc_golden,
+        ["extract", str(dbf), "--inputs", "net=netvalue", "--expect", "vat=vatamt", "--out", str(corpus)],
+        obj={"json": True},
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["summary"]["cases"] == 1  # was 0 before the fix
+
+
+def test_extract_empty_corpus_exits_2(tmp_path):
+    """Liveness at the first stage: 0 kept cases from >0 records is a defect."""
+    dbf = _dbf_with_cases(tmp_path, rows=[{"NETVALUE": "100.00", "VATCAT": "1", "VATAMT": "24.00", "DOCTYPE": "1.1"}])
+    corpus = tmp_path / "c.jsonl"
+    runner = CliRunner()
+    result = runner.invoke(
+        calc_golden,
+        [
+            "extract",
+            str(dbf),
+            "--inputs",
+            "net=NETVALUE",
+            "--expect",
+            "vat=VATAMT",
+            "--where",
+            "DOCTYPE=9.9",  # matches nothing
+            "--out",
+            str(corpus),
+        ],
+        obj={"json": True},
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "empty_corpus"
+
+
+def test_dbf_numeric_overflow_asterisks_are_none(tmp_path):
+    """#13: partial '*' padding is dBase overflow — junk, not a value."""
+    dbf = _dbf_with_cases(tmp_path, rows=[{"NETVALUE": "**12.34", "VATCAT": "1", "VATAMT": "24.00", "DOCTYPE": "x"}])
+    recs = list(iter_dbf_records(dbf))
+    assert recs[0]["NETVALUE"] is None
+
+
+def test_tolerance_parse_is_sealed(tmp_path):
+    """#15: a malformed --tolerance must be a clean usage error, not a traceback."""
+    corpus = tmp_path / "c.jsonl"
+    write_corpus([GoldenCase(id=0, bucket="b", inputs={"x": "1"}, expect={"y": "2"})], corpus)
+    runner = CliRunner()
+    result = runner.invoke(
+        calc_golden,
+        [
+            "check",
+            str(corpus),
+            "--rule",
+            "half_up",
+            "--base",
+            "x",
+            "--rate",
+            "x",
+            "--target",
+            "y",
+            "--tolerance",
+            "0,005",
+        ],
+        obj={"json": True},
+    )
+    assert result.exit_code == 2
+    assert "not a decimal number" in result.output
+
+
+def test_rule_semantics_bridge_in_summary(tmp_path):
+    """#6: the vocabulary bridge rides every audit/check envelope."""
+    corpus = tmp_path / "c.jsonl"
+    write_corpus(_corpus_for_rule("half_up", n=3), corpus)
+    runner = CliRunner()
+    env = json.loads(
+        runner.invoke(
+            calc_golden,
+            ["check", str(corpus), "--rule", "half_up", "--base", "net", "--rate", "rate", "--target", "vat"],
+            obj={"json": True},
+        ).output
+    )
+    assert env["summary"]["rule_semantics"]["half_up"] == "half_away_from_zero"

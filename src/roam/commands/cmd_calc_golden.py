@@ -29,13 +29,14 @@ Usage::
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import click
 
 from roam.capability import roam_capability
 from roam.index.golden_calc import (
+    RULE_SEMANTICS,
     RULES,
     audit_corpus,
     check_with_rule,
@@ -131,7 +132,30 @@ def extract(ctx, source, inputs_spec, expect_spec, bucket_by, where_entries, lim
             click.echo(f"VERDICT: {verdict}")
         ctx.exit(2)
         return
-    write_corpus(cases, out_path)
+    if stats.kept == 0 and stats.read > 0:
+        # the suite's own liveness principle applied to its first stage: an
+        # empty corpus from a non-empty source is a mapping/filter defect
+        # (wrong column spelling, over-tight --where), never a silent success.
+        verdict = (
+            f"extract produced 0 cases from {stats.read} records "
+            f"({stats.skipped_missing} skipped for missing mapped values) — check --inputs/--expect/--where spellings"
+        )
+        if json_mode:
+            click.echo(to_json(json_envelope("calc-golden", summary={"verdict": verdict}, error="empty_corpus")))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
+        return
+    try:
+        write_corpus(cases, out_path)
+    except OSError as exc:
+        verdict = f"cannot write corpus to {out_path}: {exc}"
+        if json_mode:
+            click.echo(to_json(json_envelope("calc-golden", summary={"verdict": verdict}, error="write_failed")))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
+        return
     verdict = f"{stats.kept} cases extracted from {stats.read} records into {out_path} ({len(stats.buckets)} buckets)"
     facts = [
         f"{stats.kept} cases extracted",
@@ -168,10 +192,15 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec):
     """Which rounding rule best explains each bucket? (+ residuals no rule explains)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
-    cases = read_corpus(corpus)
+    try:
+        cases = read_corpus(corpus)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise click.UsageError(f"malformed corpus {corpus}: {exc}") from exc
     report = audit_corpus(cases, base_key, rate_key, target_key, rate_map=_parse_rate_map(rate_map_spec))
     ev, unex = report["cases_evaluated"], report["unexplained_by_best_rule"]
-    verdict = f"{ev} cases evaluated across {len(report['buckets'])} buckets; {unex} unexplained by any single rule"
+    verdict = (
+        f"{ev} cases evaluated across {len(report['buckets'])} buckets; {unex} unexplained by the best per-bucket rule"
+    )
     facts = [f"{ev} cases scanned", f"{unex} residual cases found", f"{len(report['buckets'])} buckets"]
     if json_mode:
         click.echo(
@@ -179,7 +208,7 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec):
                 json_envelope(
                     "calc-golden",
                     budget=token_budget,
-                    summary={"verdict": verdict, **report},
+                    summary={"verdict": verdict, "rule_semantics": RULE_SEMANTICS, **report},
                     agent_contract={"facts": facts},
                 )
             )
@@ -198,30 +227,61 @@ def audit(ctx, corpus, base_key, rate_key, target_key, rate_map_spec):
 
 @calc_golden.command("check")
 @click.argument("corpus", type=click.Path(exists=True, dir_okay=False))
-@click.option("--rule", type=click.Choice(sorted(RULES)), default=None, help="Oracle = this rounding rule.")
+@click.option(
+    "--rule",
+    type=click.Choice(sorted(RULES)),
+    default=None,
+    help="Oracle = this rounding rule. NOTE: half_up = ties AWAY FROM ZERO "
+    "(calc-inventory label half_away_from_zero) — not JS Math.round's half-toward-+inf.",
+)
 @click.option("--base", "base_key", default="", help="(rule mode) input case_key for the base.")
 @click.option("--rate", "rate_key", default="", help="(rule mode) input case_key for the rate.")
 @click.option("--target", "target_key", default="", help="(rule mode) expect case_key to reproduce.")
 @click.option("--rate-map", "rate_map_spec", default="", help="(rule mode) CODE=PERCENT,... map.")
 @click.option("--runner", default="", help="Oracle = external command; JSONL cases on stdin, JSONL results on stdout.")
-@click.option("--tolerance", default="0.005", show_default=True, help="Max |delta| treated as equal (cents-exact).")
-@click.option("--sample", type=int, default=0, help="Deterministic stride-sample N cases (0 = full corpus).")
+@click.option(
+    "--tolerance",
+    default="0.001",
+    show_default=True,
+    help="Max |delta| treated as equal. >=0.005 disables tie discrimination "
+    "(an unrounded product is always within half a cent of the rounded value).",
+)
+@click.option(
+    "--timeout",
+    "runner_timeout",
+    type=click.IntRange(min=1),
+    default=600,
+    show_default=True,
+    help="(runner mode) seconds before the runner is killed.",
+)
+@click.option(
+    "--sample", type=click.IntRange(min=0), default=0, help="Deterministic stride-sample N cases (0 = full corpus)."
+)
 @click.pass_context
-def check(ctx, corpus, rule, base_key, rate_key, target_key, rate_map_spec, runner, tolerance, sample):
+def check(ctx, corpus, rule, base_key, rate_key, target_key, rate_map_spec, runner, tolerance, runner_timeout, sample):
     """Replay the corpus against an oracle; exit 5 on any cent-level breach.
 
-    Liveness: zero replayed cases on a non-empty corpus ALSO exits 5 — a gate
-    that silently did nothing must never read as green.
+    Liveness: zero replayed cases on a non-empty corpus exits 5, and in runner
+    mode ANY unanswered case (missing > 0) also exits 5 — a runner that
+    silently drops the hard buckets must never read green.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     if bool(rule) == bool(runner.strip()):
         raise click.UsageError("exactly one oracle required: --rule ... OR --runner ...")
-    cases = read_corpus(corpus)
+    try:
+        tol = Decimal(tolerance)
+    except InvalidOperation as exc:
+        raise click.UsageError(f"--tolerance {tolerance!r} is not a decimal number") from exc
+    if tol < 0:
+        raise click.UsageError("--tolerance must be >= 0")
+    try:
+        cases = read_corpus(corpus)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise click.UsageError(f"malformed corpus {corpus}: {exc}") from exc
     if sample and len(cases) > sample:
-        stride = max(1, len(cases) // sample)
-        cases = cases[::stride][:sample]
-    tol = Decimal(tolerance)
+        stride = -(-len(cases) // sample)  # ceil: spans the whole corpus (no untested tail)
+        cases = cases[::stride]
     if rule:
         if not (base_key and rate_key and target_key):
             raise click.UsageError("--rule mode needs --base, --rate and --target")
@@ -232,12 +292,18 @@ def check(ctx, corpus, rule, base_key, rate_key, target_key, rate_map_spec, runn
     else:
         import shlex
 
-        result = check_with_runner(cases, shlex.split(runner), tolerance=tol)
+        result = check_with_runner(cases, shlex.split(runner), tolerance=tol, timeout=runner_timeout)
         oracle = f"runner:{runner}"
-    gate_failed = result.failed > 0 or (result.replayed == 0 and result.total > 0)
+    is_runner = bool(runner.strip())
+    gate_failed = (
+        result.failed > 0
+        or (result.replayed == 0 and result.total > 0)
+        or (is_runner and result.missing > 0)  # partial oracle = failing oracle
+    )
     pass_pct = round(100.0 * result.passed / result.replayed, 2) if result.replayed else 0.0
     verdict = (
-        f"{result.passed}/{result.replayed} replayed cases cent-exact ({pass_pct}%) vs {oracle}"
+        f"{result.passed}/{result.replayed} replayed of {result.total} cases cent-exact ({pass_pct}%) vs {oracle}"
+        f"{f'; {result.missing} case(s) never answered' if is_runner and result.missing else ''}"
         f"{'; GATE FAILED' if gate_failed else ''}"
         f"{'; LIVENESS: 0 cases replayed' if result.replayed == 0 and result.total > 0 else ''}"
     )
@@ -253,9 +319,11 @@ def check(ctx, corpus, rule, base_key, rate_key, target_key, rate_map_spec, runn
         "replayed": result.replayed,
         "passed": result.passed,
         "failed": result.failed,
+        "missing": result.missing,
         "pass_pct": pass_pct,
         "gate_failed": gate_failed,
         "buckets": result.buckets,
+        "rule_semantics": RULE_SEMANTICS,
     }
     if json_mode:
         click.echo(

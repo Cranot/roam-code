@@ -181,11 +181,31 @@ def _analyze_rhs(node, src: bytes, round_funcs: frozenset[str]) -> tuple[bool, s
                 is_calc = True
                 if rounding is None:
                     rounding = name
-                    mode_match = _MODE_CONST_RE.search(_text(n, src))
-                    if mode_match:
-                        rounding_mode = mode_match.group(1)
+                    rounding_mode = _own_mode_constant(n, src)
         stack.extend(n.children)
     return is_calc, rounding, rounding_mode
+
+
+def _own_mode_constant(call, src: bytes) -> str | None:
+    """Mode constant belonging to THIS call — nested calls' modes must not leak.
+
+    ``round(round($b, 2, PHP_ROUND_HALF_EVEN) + $a, 2)``: the outer call has no
+    mode argument; scraping the whole call text would mislabel it half_to_even.
+    Blank every nested call's byte range inside this call, then regex what
+    remains (the call's own argument text).
+    """
+    text = bytearray(src[call.start_byte : call.end_byte])
+    stack = list(call.children)
+    while stack:
+        n = stack.pop()
+        if n.type in _CALL_NODES:
+            lo = max(0, n.start_byte - call.start_byte)
+            hi = min(len(text), n.end_byte - call.start_byte)
+            text[lo:hi] = b" " * (hi - lo)
+            continue  # everything inside the nested call is blanked wholesale
+        stack.extend(n.children)
+    match = _MODE_CONST_RE.search(text.decode("utf-8", errors="replace"))
+    return match.group(1) if match else None
 
 
 def _operands_and_literals(node, src: bytes) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -331,6 +351,19 @@ _ROUNDING_SEMANTICS: dict[tuple[str, str], str] = {
 }
 
 
+# Grammar names that execute on another language's runtime and share its
+# rounding semantics: .ts/.tsx/.jsx/.vue script blocks are all JavaScript at
+# runtime. Applied inside rounding_semantic so a React (.tsx) or Vue frontend
+# gets the same labels as plain JS — without this, the suite's motivating
+# frontend-vs-backend case is invisible for those file types.
+LANGUAGE_ALIASES: dict[str, str] = {
+    "typescript": "javascript",
+    "tsx": "javascript",
+    "jsx": "javascript",
+    "vue": "javascript",
+}
+
+
 def rounding_semantic(language: str, func: str | None, mode: str | None = None) -> str | None:
     """Documented tie/direction semantics of a rounding fn in a language, if known.
 
@@ -353,22 +386,24 @@ def rounding_semantic(language: str, func: str | None, mode: str | None = None) 
         return _MODE_SEMANTICS.get(mode)
     if not func:
         return None
+    language = LANGUAGE_ALIASES.get(language, language)
     return _ROUNDING_SEMANTICS.get((language, func))
 
 
 def normalize_target(target: str) -> str:
     """Base field name for grouping divergent implementations.
 
-    ``$this->vatAmount`` / ``self.vat_amount`` / ``const vatAmount`` all reduce to
-    ``vatamount`` so the same conceptual field computed in two places (e.g. a PHP
-    backend and a JS frontend) groups together.
+    ``$this->vatAmount`` / ``self.vat_amount`` / ``vatAmount`` all reduce to
+    ``vatamount`` — casing style AND underscore convention are stripped so the
+    same conceptual field computed in a snake_case backend and a camelCase
+    frontend groups together.
     """
     t = target.strip()
     for sep in ("->", "::", "."):
         if sep in t:
             t = t.split(sep)[-1]
     t = t.lstrip("$").strip()
-    return t.lower()
+    return t.replace("_", "").lower()
 
 
 def normalize_formula(formula: str) -> str:

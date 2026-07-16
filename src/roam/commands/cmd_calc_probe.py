@@ -259,15 +259,12 @@ def calc_probe(ctx, paths):
             used |= part_used
             calc_count += part_count
         catalog_keys = {(i["language"], i["rounding"], i["mode"]) for i in _IDIOMS}
-        # keep every catalog idiom whose (lang, fn) the code uses — mode-specific
-        # variants match exactly; a used mode we can't express is disclosed.
-        used_fn = {(lang, fn) for lang, fn, _ in used}
-        idioms = [
-            i
-            for i in _IDIOMS
-            if (i["language"], i["rounding"]) in used_fn
-            and ((i["language"], i["rounding"], i["mode"]) in used or i["mode"] is None)
-        ]
+        # keep only idioms the code ACTUALLY uses — exact (lang, fn, mode)
+        # match. The mode=None catalog entry stands for "no explicit mode in
+        # the call", which is itself an exact extraction result; selecting
+        # mode-default variants the code never uses would report tie
+        # divergences the user does not have.
+        idioms = [i for i in _IDIOMS if (i["language"], i["rounding"], i["mode"]) in used]
         unprobed = sorted(
             f"{lang}:{fn}:{mode}"
             for (lang, fn, mode) in used
@@ -281,11 +278,18 @@ def calc_probe(ctx, paths):
         by_runtime.setdefault(idiom["runtime"], []).append(idiom)
     results: dict[str, list[str]] = {}
     skipped_runtimes: list[str] = []
+    failed_runtimes: list[str] = []
     for runtime, group in sorted(by_runtime.items()):
         if not _runtime_available(runtime):
             skipped_runtimes.append(runtime)
             continue
-        results.update(_run_idioms_for_runtime(runtime, group, _PROBE_INPUTS))
+        got = _run_idioms_for_runtime(runtime, group, _PROBE_INPUTS)
+        if not got:
+            # present on PATH but crashed/failed — must be disclosed separately
+            # from "not installed", or a one-runtime report reads vacuously green
+            failed_runtimes.append(runtime)
+            continue
+        results.update(got)
     ran = [i for i in idioms if i["id"] in results]
 
     # per-input comparison over normalized cents
@@ -297,10 +301,12 @@ def calc_probe(ctx, paths):
 
     verdict = (
         f"{len(divergences)}/{len(_PROBE_INPUTS)} tie inputs diverge across {len(ran)} idiom(s), "
-        f"{len(by_runtime) - len(skipped_runtimes)} runtime(s)"
+        f"{len(by_runtime) - len(skipped_runtimes) - len(failed_runtimes)} runtime(s)"
     )
     if skipped_runtimes:
         verdict += f"; skipped runtimes: {', '.join(sorted(skipped_runtimes))}"
+    if failed_runtimes:
+        verdict += f"; FAILED runtimes (present but crashed): {', '.join(sorted(failed_runtimes))}"
     facts = [
         f"{len(divergences)} divergent inputs found",
         f"{len(ran)} idioms ran",
@@ -312,6 +318,7 @@ def calc_probe(ctx, paths):
         "inputs_probed": len(_PROBE_INPUTS),
         "idioms_ran": [i["id"] for i in ran],
         "runtimes_skipped": sorted(skipped_runtimes),
+        "runtimes_failed": sorted(failed_runtimes),
         "unprobed_used_idioms": unprobed,
     }
     if scoped_note:

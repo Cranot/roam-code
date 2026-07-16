@@ -88,7 +88,10 @@ def _decode_dbf_value(raw: bytes, fld: DbfField, encoding: str) -> str | None:
         return raw.decode(encoding, "replace").strip()
     if fld.type in ("N", "F"):
         s = raw.decode("ascii", "replace").strip()
-        if not s or s in (".",) or set(s) <= {"*"}:
+        # '*' anywhere marks dBase/VFP numeric overflow — the stored digits are
+        # unusable, not merely padded; partial forms like '**12.34' must be None
+        # (a junk string here would silently vanish downstream at Decimal-parse).
+        if not s or s in (".",) or "*" in s:
             return None
         return s
     if fld.type == "D":
@@ -119,23 +122,30 @@ def iter_dbf_records(
     """
     p = Path(path)
     with p.open("rb") as fh:
-        _, header_size, record_size, fields = read_dbf_header(fh)
+        record_count, header_size, record_size, fields = read_dbf_header(fh)
         by_name = {f.name.upper(): f for f in fields}
         if columns is not None:
             missing = [c for c in columns if c.upper() not in by_name]
             if missing:
                 raise KeyError(f"DBF {p.name} has no column(s) {missing}; available: {sorted(by_name)}")
-            wanted = [by_name[c.upper()] for c in columns]
+            # key the yielded dicts by the REQUESTED spelling: validation is
+            # case-insensitive, so lookups downstream (mappings, --where) must
+            # see the caller's names — otherwise `net=netvalue` against a table
+            # storing NETVALUE silently extracts zero cases.
+            wanted = [(c, by_name[c.upper()]) for c in columns]
         else:
-            wanted = fields
+            wanted = [(f.name, f) for f in fields]
         fh.seek(header_size)
-        while True:
+        emitted = 0
+        while emitted < record_count:
             rec = fh.read(record_size)
             if len(rec) < record_size or rec[:1] == b"\x1a":
                 break
+            emitted += 1  # header record count bounds the read — trailing bytes
+            # after the declared records (appender debris) must not become ghosts
             if rec[0] == _DELETED_FLAG:
                 continue
-            yield {f.name: _decode_dbf_value(rec[f.offset : f.offset + f.size], f, encoding) for f in wanted}
+            yield {name: _decode_dbf_value(rec[f.offset : f.offset + f.size], f, encoding) for name, f in wanted}
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +290,22 @@ RULES: dict[str, str] = {
     "floor": ROUND_FLOOR,
 }
 
+# Naming bridge to calc-inventory's semantics labels (rounding_semantic()):
+# golden's "half_up" is decimal ROUND_HALF_UP = half-AWAY-FROM-ZERO — it is NOT
+# JS Math.round's half-toward-+infinity, which calc-inventory labels
+# "half_up_toward_positive". Emitted in audit/check summaries so the two
+# vocabularies can be machine-joined; note no RULES entry expresses JS's
+# half-toward-+inf (a JS-produced corpus surfaces its negative ties as
+# residuals — a documented audit gap, not a bug).
+RULE_SEMANTICS: dict[str, str] = {
+    "half_up": "half_away_from_zero",
+    "half_even": "half_to_even",
+    "half_down": "half_toward_zero",
+    "truncate": "truncate",
+    "ceil": "toward_positive",
+    "floor": "toward_negative",
+}
+
 
 def to_decimal(s: str) -> Decimal | None:
     try:
@@ -393,6 +419,7 @@ class CheckResult:
     passed: int
     failures: list[dict]
     buckets: dict[str, dict]  # bucket -> {replayed, passed}
+    missing: int = 0  # runner mode: cases sent but never answered — a runner defect
 
     @property
     def failed(self) -> int:
@@ -421,7 +448,7 @@ def check_with_rule(
     rate_key: str,
     target_key: str,
     rate_map: dict[str, str] | None = None,
-    tolerance: Decimal = Decimal("0.005"),
+    tolerance: Decimal = Decimal("0.001"),
     max_failures: int = 20,
 ) -> CheckResult:
     """Oracle via a named rounding rule — corpus vs ``rule(base × rate%)``."""
@@ -447,7 +474,7 @@ def check_with_rule(
 def check_with_runner(
     cases: list[GoldenCase],
     runner_argv: list[str],
-    tolerance: Decimal = Decimal("0.005"),
+    tolerance: Decimal = Decimal("0.001"),
     max_failures: int = 20,
     timeout: int = 600,
 ) -> CheckResult:
@@ -457,6 +484,10 @@ def check_with_runner(
     on stdin ``{"id": N, "inputs": {...}}`` and must emit one JSON object per
     line on stdout ``{"id": N, "<expect-field>": value, ...}`` (any order).
     One process for the whole corpus — 100k cases must not mean 100k spawns.
+
+    Every case is sent, so a case the runner never answers is a RUNNER DEFECT,
+    counted in ``missing`` (the caller gates on it — a runner that silently
+    drops the hard buckets must never read green). Duplicate ids: last wins.
     """
     import subprocess
 
@@ -467,6 +498,7 @@ def check_with_runner(
     try:
         proc = subprocess.run(runner_argv, input=payload, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
+        result.missing = len(cases)
         result.failures.append({"id": -1, "bucket": "-", "inputs": {}, "deltas": {"runner": f"failed to run: {exc}"}})
         return result
     got_by_id: dict[int, dict] = {}
@@ -479,10 +511,12 @@ def check_with_runner(
             got_by_id[int(d["id"])] = d
         except (ValueError, KeyError, TypeError):
             continue
+    missing_ids: list[int] = []
     for c in cases:
         got = got_by_id.get(c.id)
         if got is None:
-            continue  # not replayed — liveness accounting catches wholesale silence
+            missing_ids.append(c.id)
+            continue
         result.replayed += 1
         b = result.buckets.setdefault(c.bucket, {"replayed": 0, "passed": 0})
         b["replayed"] += 1
@@ -492,4 +526,24 @@ def check_with_runner(
             b["passed"] += 1
         elif len(result.failures) < max_failures:
             result.failures.append({"id": c.id, "bucket": c.bucket, "inputs": c.inputs, "deltas": deltas})
+    result.missing = len(missing_ids)
+    if missing_ids and len(result.failures) < max_failures:
+        result.failures.append(
+            {
+                "id": missing_ids[0],
+                "bucket": "-",
+                "inputs": {},
+                "deltas": {"runner": f"{len(missing_ids)} case(s) never answered; first ids: {missing_ids[:10]}"},
+            }
+        )
+    if (result.replayed == 0 or proc.returncode != 0) and proc.stderr:
+        # a crashing/failing runner must leave a diagnostic, not just a count
+        result.failures.append(
+            {
+                "id": -1,
+                "bucket": "-",
+                "inputs": {},
+                "deltas": {"runner": f"exit {proc.returncode}; stderr tail: {proc.stderr[-500:]}"},
+            }
+        )
     return result

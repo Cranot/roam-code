@@ -3350,7 +3350,25 @@ def _check_calc_divergence(changed_paths: list[str], root: Path) -> dict:
 
     # gather all repo-wide implementations of those fields (bounded)
     target_fields = set(changed_by_field)
-    field_needles = [f.lower().encode() for f in target_fields if f]
+    # Prefilter needles must match the BYTES in candidate files, so cover both
+    # spellings of each field: the normalized form strips underscores (grouping
+    # vat_amount with vatAmount), but a file spelling `vat_amount` only contains
+    # the underscored form — search for the raw last-segment spellings too.
+    field_needles: list[bytes] = []
+    for f in target_fields:
+        if not f:
+            continue
+        field_needles.append(f.lower().encode())
+    for group in changed_by_field.values():
+        for _, c in group:
+            raw = getattr(c, "target", "")
+            for sep in ("->", "::", "."):
+                if sep in raw:
+                    raw = raw.split(sep)[-1]
+            raw = raw.lstrip("$").strip().lower()
+            if raw:
+                field_needles.append(raw.encode())
+    field_needles = list(dict.fromkeys(field_needles))
     all_by_field: dict[str, list[object]] = {f: [c for _, c in changed_by_field[f]] for f in target_fields}
     changed_abs = {str((root / c).resolve()) for c in changed}
     scanned = 0
