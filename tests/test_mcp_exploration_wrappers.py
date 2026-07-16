@@ -158,6 +158,24 @@ class TestRoamGrepArgShape:
             assert "--rank-by" in args and "importance" in args
             assert "--group-by" in args and "symbol" in args
 
+    def test_context_packet_flags(self) -> None:
+        from roam.mcp_server import roam_grep
+
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = {"ok": True}
+            roam_grep(
+                pattern="auth",
+                context_lines=5,
+                whole_symbol=True,
+                max_packets=3,
+                max_packet_lines=80,
+            )
+            args = mock.call_args[0][0]
+            assert "--context" in args and "5" in args
+            assert "--whole-symbol" in args
+            assert "--max-packets" in args and "3" in args
+            assert "--max-packet-lines" in args and "80" in args
+
 
 class TestRoamHistoryGrepArgShape:
     def test_default_invocation(self) -> None:

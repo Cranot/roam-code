@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**279 commands** (272 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
+**281 commands** (274 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.8.0
 
 ## Getting Started (41)
 
@@ -50,7 +50,7 @@
 | `workflow` | stable | ✓ | — |
 | `ws` | internal | — | — |
 
-## Daily Workflow (86)
+## Daily Workflow (89)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -76,6 +76,7 @@
 | `compare` | stable | ✓ | — |
 | `compile` | stable | ✓ | — |
 | `compile-cache` | stable | — | — |
+| `compile-daemon` | stable | — | — |
 | `compile-stats` | stable | — | — |
 | `constitution` | stable | — | — |
 | `context` | stable | ✓ | — |
@@ -127,6 +128,8 @@
 | `retrieve` | stable | ✓ | — |
 | `rules-validate` | stable | ✓ | — |
 | `runs` | stable | — | — |
+| `savings` | stable | — | — |
+| `savings-backfill` | stable | — | — |
 | `semantic-diff` | stable | ✓ | — |
 | `service-report` | stable | — | — |
 | `skill-generate` | stable | — | — |
@@ -310,12 +313,11 @@
 | `test-scaffold` | stable | ✓ | — |
 | `why` | stable | ✓ | — |
 
-## Uncategorized (8)
+## Uncategorized (7)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
 | `churn` | deprecated | ✓ | weather |
-| `compile-daemon` | stable | — | — |
 | `digest` | deprecated | ✓ | snapshot, trend, trends |
 | `math` | deprecated | — | algo |
 | `onboard` | deprecated | ✓ | understand |

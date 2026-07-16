@@ -13943,7 +13943,9 @@ def roam_evidence_oscal(
         "their enclosing symbol, reachability badge, PageRank, clone-class, "
         "and bridge annotations. Supports multi-pattern, source-only / "
         "test-only filters, reachable-from / unreachable filters, "
-        "co-occurrence across patterns, and rank-by importance."
+        "co-occurrence across patterns, and rank-by importance. Request "
+        "bounded context packets or whole enclosing symbols to replace the "
+        "usual grep-then-read loop."
     ),
 )
 def roam_grep(
@@ -13963,6 +13965,10 @@ def roam_grep(
     missing_pattern: str = "",
     rank_by: str = "line",
     group_by: str = "none",
+    context_lines: int = 0,
+    whole_symbol: bool = False,
+    max_packets: int = 8,
+    max_packet_lines: int = 120,
     with_blame: bool = False,
     with_heat: bool = False,
     no_clones: bool = False,
@@ -14015,6 +14021,14 @@ def roam_grep(
     group_by:
         ``none`` (default) or ``symbol`` (collapse hits inside the same
         symbol).
+    context_lines:
+        Attach this many source lines around each match (0-20).
+    whole_symbol:
+        Attach each match's complete indexed enclosing symbol.
+    max_packets:
+        Maximum unique context packets to return (default 8).
+    max_packet_lines:
+        Maximum rendered lines per context packet (default 120).
     with_blame:
         Annotate hits with last-modified author + date.
     with_heat:
@@ -14063,6 +14077,14 @@ def roam_grep(
         args.extend(["--rank-by", rank_by])
     if group_by != "none":
         args.extend(["--group-by", group_by])
+    if context_lines:
+        args.extend(["--context", str(context_lines)])
+    if whole_symbol:
+        args.append("--whole-symbol")
+    if max_packets != 8:
+        args.extend(["--max-packets", str(max_packets)])
+    if max_packet_lines != 120:
+        args.extend(["--max-packet-lines", str(max_packet_lines)])
     if with_blame:
         args.append("--blame")
     if with_heat:

@@ -11676,6 +11676,10 @@ def _maybe_append_compile_telemetry(
         # editor's session id. Empty string when unset.
         "session_id": os.environ.get("ROAM_SESSION_ID", ""),
         "turn_seq": os.environ.get("ROAM_TURN_SEQ", ""),
+        # The episode id is the durable prompt->compile->terminal join key.
+        # Unlike session_id it identifies one user turn, so multiple compiles
+        # inside a resumed session cannot collapse onto the same outcome.
+        "episode_id": os.environ.get("ROAM_EPISODE_ID", ""),
         # 2026-06-09 — stamp the compiler-code fingerprint so telemetry
         # shifts (routing distributions, L1 rate, latency) are attributable
         # to compiler revisions. Without this, a classifier change and a

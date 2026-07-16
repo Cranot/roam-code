@@ -223,6 +223,7 @@
           <tr><td><code>--sarif</code></td><td>SARIF 2.1.0 — for GitHub Code Scanning. Supported on SARIF-capable analysis commands including <code>health</code>, <code>complexity</code>, <code>dead</code>, <code>smells</code>, <code>clones</code>, <code>vulns</code>, <code>taint</code>, <code>secrets</code>, <code>n1</code>, <code>dark-matter</code>, <code>supply-chain</code>, <code>critique</code>, <code>stale-refs</code>. Run <code>roam --help</code> for the live list.</td></tr>
           <tr><td><code>--agent</code></td><td>Compact JSON + 500-token default budget. Optimised for sub-agent CLI calls.</td></tr>
           <tr><td><code>--budget &lt;n&gt;</code></td><td>Cap output to N tokens (0 = unlimited).</td></tr>
+          <tr><td><code>--select &lt;expr&gt;</code></td><td>Project JSON with <code>.field</code>, <code>[N]</code>, or <code>[START:END]</code>; repeatable and implies JSON.</td></tr>
         </tbody>
       </table>
     </section>
@@ -558,7 +559,7 @@
       <tr><td><code>roam search-semantic</code></td><td>Find symbols by natural language query (hybrid BM25 + vec...</td></tr>
       <tr><td><code>roam batch-search</code></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
       <tr><td><code>roam complete</code></td><td>Return left-anchored prefix completions for the given par...</td></tr>
-      <tr><td><code>roam grep</code></td><td>Context-enriched grep with reachability, clone, and bridg...</td></tr>
+      <tr><td><code>roam grep</code></td><td>Return content matches with reachability and bounded <code>-C</code> / <code>--whole-symbol</code> evidence packets.</td></tr>
       <tr><td><code>roam refs-text</code></td><td>Audit literal strings across the project: per-surface ref...</td></tr>
       <tr><td><code>roam history-grep</code></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
       <tr><td><code>roam file</code></td><td>Show file skeleton: all definitions with signatures.</td></tr>

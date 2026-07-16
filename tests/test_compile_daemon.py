@@ -106,9 +106,8 @@ class TestProtocol:
         resp = _request(_cfg(tmp_path), {"op": "shutdown"}, timeout=2.0)
         assert resp["stopping"] is True
 
-    def test_session_id_stamped_for_telemetry(self, tmp_path, monkeypatch, server):
-        """The daemon must preserve the cold path's telemetry identity: the
-        request's session id rides ROAM_SESSION_ID around the in-proc invoke."""
+    def test_episode_identity_stamped_for_telemetry(self, tmp_path, monkeypatch, server):
+        """The daemon preserves the cold path's complete episode identity."""
         import os
 
         import roam.mcp_server as mcp
@@ -117,18 +116,31 @@ class TestProtocol:
 
         def spy(args):
             seen["session"] = os.environ.get("ROAM_SESSION_ID")
+            seen["episode"] = os.environ.get("ROAM_EPISODE_ID")
+            seen["turn_seq"] = os.environ.get("ROAM_TURN_SEQ")
             seen["mode"] = os.environ.get("ROAM_AGENT_MODE")
             return _FAKE_ENVELOPE
 
         monkeypatch.setattr(mcp, "_run_roam_inprocess", spy)
         monkeypatch.delenv("ROAM_SESSION_ID", raising=False)
+        monkeypatch.delenv("ROAM_EPISODE_ID", raising=False)
+        monkeypatch.delenv("ROAM_TURN_SEQ", raising=False)
         _request(
             _cfg(tmp_path),
-            {"op": "compile", "args": ["x"], "cwd": str(tmp_path), "session_id": "sess-42"},
+            {
+                "op": "compile",
+                "args": ["x"],
+                "cwd": str(tmp_path),
+                "session_id": "sess-42",
+                "episode_id": "ep-42",
+                "turn_seq": "7",
+            },
             timeout=2.0,
         )
-        assert seen == {"session": "sess-42", "mode": "hook"}
+        assert seen == {"session": "sess-42", "episode": "ep-42", "turn_seq": "7", "mode": "hook"}
         assert os.environ.get("ROAM_SESSION_ID") is None  # restored after
+        assert os.environ.get("ROAM_EPISODE_ID") is None
+        assert os.environ.get("ROAM_TURN_SEQ") is None
 
 
 class TestCliLifecycle:

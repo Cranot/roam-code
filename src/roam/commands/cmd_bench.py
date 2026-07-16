@@ -731,9 +731,9 @@ def bench_compile(
         "partial_success": sum(len(r) for r in by_cond.values()) < len(cells),
     }
     facts = [
-        f"{len(cells)} cells dispatched",
-        f"{summary['parsed_cells']} cells parsed",
-        f"{round(total_elapsed, 1)} seconds wall",
+        f"Dispatched {len(cells)} benchmark cells",
+        f"Parsed {summary['parsed_cells']} benchmark cells",
+        f"Elapsed wall time {round(total_elapsed, 1)} seconds",
         f"raw JSON in {work_dir}",
     ]
 

@@ -59,6 +59,7 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.file_roles import ROLE_SOURCE, ROLE_TEST, classify_file
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.source_context import read_body_preview, read_source_range
 
 # ---------------------------------------------------------------------------
 # Source-only exclusion patterns
@@ -270,7 +271,21 @@ def _read_patterns_file(p: Path) -> list[str]:
 @roam_capability(
     name="grep",
     category="exploration",
-    summary="Context-enriched grep with reachability, clone, and bridge annotations",
+    summary="Return content matches as bounded, structure-aware evidence packets",
+    inputs=(
+        "pattern",
+        "--context",
+        "--whole-symbol",
+        "--max-packets",
+        "--max-packet-lines",
+    ),
+    outputs=("matches", "context_packets"),
+    examples=(
+        "roam grep handleSave -C 5",
+        "roam grep handleSave --whole-symbol --max-packets 3",
+    ),
+    tags=("exploration", "search", "context-packet"),
+    displaces=("search_inspect_thrash", "repeated_code_slicing"),
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
@@ -322,6 +337,35 @@ def _read_patterns_file(p: Path) -> list[str]:
 )
 @click.option("--rank-by", "rank_by", type=click.Choice(["line", "importance"]), default="line")
 @click.option("--group-by", "group_by", type=click.Choice(["none", "symbol"]), default="none")
+@click.option(
+    "-C",
+    "--context",
+    "context_lines",
+    type=click.IntRange(0, 20),
+    default=0,
+    show_default=True,
+    help="Attach this many source lines around each match as bounded context packets.",
+)
+@click.option(
+    "--whole-symbol",
+    is_flag=True,
+    default=False,
+    help="Attach the complete indexed enclosing symbol for each match.",
+)
+@click.option(
+    "--max-packets",
+    type=click.IntRange(1, 20),
+    default=8,
+    show_default=True,
+    help="Maximum unique context packets to attach.",
+)
+@click.option(
+    "--max-packet-lines",
+    type=click.IntRange(1, 400),
+    default=120,
+    show_default=True,
+    help="Maximum rendered lines in each context packet; truncation is disclosed.",
+)
 @click.option("--blame", "with_blame", is_flag=True, help="Annotate hits with last-modified author + date.")
 @click.option("--heat", "with_heat", is_flag=True, help="Annotate hits with churn / commit count of file.")
 @click.option("--no-clones", is_flag=True, help="Skip clone-class annotation.")
@@ -346,6 +390,10 @@ def grep_cmd(
     missing_pattern,
     rank_by,
     group_by,
+    context_lines,
+    whole_symbol,
+    max_packets,
+    max_packet_lines,
     with_blame,
     with_heat,
     no_clones,
@@ -364,6 +412,8 @@ def grep_cmd(
       roam grep "DATABASE_URL" --reachable-from main
       roam grep "deprecated" --unreachable   # only in dead code
       roam grep "format_name" --rank-by importance --group-by symbol
+      roam grep "handleSave" -C 5            # match + bounded code packet
+      roam grep "handleSave" --whole-symbol  # match + enclosing function/class
 
     See also ``search`` (FTS5 symbol search), ``refs-text`` (literal-string
     audit with verdict), and ``history-grep`` (through-history pickaxe).
@@ -779,6 +829,18 @@ def grep_cmd(
         else:
             matches.sort(key=lambda m: (m["path"], m["line"]))
 
+        context_packets = None
+        omitted_context_packets = 0
+        if context_lines > 0 or whole_symbol:
+            context_packets, omitted_context_packets = _build_context_packets(
+                matches[:count],
+                root=root,
+                context_lines=context_lines,
+                whole_symbol=whole_symbol,
+                max_packets=max_packets,
+                max_packet_lines=max_packet_lines,
+            )
+
         # --- Group ---
         # W607-BV apply_group_by substrate-CALL: a raise surfaces
         # ``grep_apply_group_by_failed:``; degraded default returns None
@@ -794,6 +856,10 @@ def grep_cmd(
         verdict += f" — reachable from {reachable_from}"
     if unreachable_filter_active:
         verdict += " — restricted to unreachable code"
+    if context_packets is not None:
+        verdict += f"; {len(context_packets)} context packets"
+        if omitted_context_packets:
+            verdict += f" ({omitted_context_packets} omitted by cap)"
 
     if json_mode:
         # W607-G + W607-BV combined disclosure on the happy match path.
@@ -817,12 +883,22 @@ def grep_cmd(
             unreachable=unreachable_filter_active,
             rank_by=rank_by,
             group_by=group_by,
+            context_packets=context_packets,
+            omitted_context_packets=omitted_context_packets,
             warnings_out=_combined_match,
             _run_check_bv=_run_check_bv,
         )
         return
 
-    _emit_text(matches, groups, count, verdict, group_by)
+    _emit_text(
+        matches,
+        groups,
+        count,
+        verdict,
+        group_by,
+        context_packets=context_packets,
+        omitted_context_packets=omitted_context_packets,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +980,171 @@ def _span_matches(root: Path, path: str, line_start: int, line_end: int, rx: re.
 
 
 # ---------------------------------------------------------------------------
+# Context packets
+# ---------------------------------------------------------------------------
+
+
+def _build_context_packets(
+    matches: list[dict],
+    *,
+    root: Path,
+    context_lines: int,
+    whole_symbol: bool,
+    max_packets: int,
+    max_packet_lines: int,
+) -> tuple[list[dict], int]:
+    """Compile live grep hits into bounded, deduplicated source packets.
+
+    Whole-symbol mode deduplicates every hit inside the same indexed symbol.
+    Line-context mode deduplicates identical windows. The match list remains
+    intact and points at its packet via ``context_packet_id``.
+    """
+    specs: dict[tuple, dict] = {}
+    for match in matches:
+        resolved = _context_spec_for_match(
+            match,
+            root=root,
+            context_lines=context_lines,
+            whole_symbol=whole_symbol,
+        )
+        if resolved is None:
+            continue
+        key, candidate = resolved
+        spec = specs.setdefault(key, candidate)
+        spec["target_lines"].add(int(match["line"]))
+        spec["matches"].append(match)
+
+    packets: list[dict] = []
+    ordered_specs = list(specs.values())
+    for index, spec in enumerate(ordered_specs[:max_packets], start=1):
+        packet_id = f"context_{index}"
+        packet = _context_packet_from_spec(
+            spec,
+            packet_id=packet_id,
+            root=root,
+            max_packet_lines=max_packet_lines,
+        )
+        packets.append(packet)
+        for match in spec["matches"]:
+            match["_context_packet_id"] = packet_id
+    return packets, max(0, len(ordered_specs) - len(packets))
+
+
+def _context_spec_for_match(
+    match: dict,
+    *,
+    root: Path,
+    context_lines: int,
+    whole_symbol: bool,
+) -> tuple[tuple, dict] | None:
+    path = str(match.get("path") or "")
+    line = int(match.get("line") or 0)
+    if not path or line < 1:
+        return None
+    symbol = match.get("_enclosing")
+    current = _symbol_span_is_current(path, symbol, root) if whole_symbol else False
+    if current:
+        start = max(1, int(symbol.get("line_start") or line))
+        end = max(start, int(symbol.get("line_end") or line))
+        key = ("symbol", path, int(symbol.get("id") or 0), start, end)
+        source_basis = "live_match+current_indexed_symbol_span"
+        resolution = "indexed_symbol_current"
+    else:
+        radius = max(context_lines, 3 if whole_symbol else 0)
+        start, end = max(1, line - radius), line + radius
+        key = ("window", path, start, end)
+        source_basis = "live_match_window"
+        resolution = _window_resolution(whole_symbol, symbol)
+    return key, {
+        "path": path,
+        "start": start,
+        "end": end,
+        "target_lines": set(),
+        "matches": [],
+        "symbol": symbol if current else None,
+        "source_basis": source_basis,
+        "resolution": resolution,
+    }
+
+
+def _symbol_span_is_current(path: str, symbol: dict | None, root: Path) -> bool:
+    if not symbol:
+        return False
+    return bool(
+        read_body_preview(
+            path,
+            symbol.get("line_start"),
+            symbol_name=str(symbol.get("name") or ""),
+            n_lines=4,
+            cwd=str(root),
+        )
+    )
+
+
+def _window_resolution(whole_symbol: bool, symbol: dict | None) -> str:
+    if not whole_symbol:
+        return "live_match_window"
+    return "stale_symbol_span_fallback" if symbol else "unindexed_symbol_fallback"
+
+
+def _context_packet_from_spec(
+    spec: dict,
+    *,
+    packet_id: str,
+    root: Path,
+    max_packet_lines: int,
+) -> dict:
+    source = read_source_range(
+        spec["path"],
+        spec["start"],
+        spec["end"],
+        target_lines=sorted(spec["target_lines"]),
+        max_lines=max_packet_lines,
+        cwd=str(root),
+    )
+    return {
+        "id": packet_id,
+        "path": spec["path"],
+        "location": loc(spec["path"], source["returned_start"] or spec["start"]),
+        "requested_range": {
+            "start": source["requested_start"],
+            "end": source["requested_end"],
+        },
+        "returned_range": {
+            "start": source["returned_start"],
+            "end": source["returned_end"],
+        },
+        "match_lines": sorted(spec["target_lines"]),
+        "line_count": _source_line_count(source),
+        "total_file_lines": source["total_lines"],
+        "truncated": source["truncated"],
+        "readable": source["readable"],
+        "source_basis": spec["source_basis"],
+        "resolution": spec["resolution"],
+        "enclosing_symbol": _packet_symbol(spec.get("symbol")),
+        "code": source["code"],
+    }
+
+
+def _source_line_count(source: dict) -> int:
+    if not source["readable"]:
+        return 0
+    return source["returned_end"] - source["returned_start"] + 1
+
+
+def _packet_symbol(symbol: dict | None) -> dict | None:
+    if not symbol:
+        return None
+    return {
+        "name": symbol.get("name"),
+        "qualified_name": symbol.get("qualified_name"),
+        "kind": symbol.get("kind"),
+        "line_start": symbol.get("line_start"),
+        "line_end": symbol.get("line_end"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
@@ -965,6 +1206,8 @@ def _emit_json(
     unreachable,
     rank_by,
     group_by,
+    context_packets=None,
+    omitted_context_packets=0,
     warnings_out=None,
     _run_check_bv=None,
 ):
@@ -985,6 +1228,8 @@ def _emit_json(
         ):
             if m.get(k) is not None:
                 entry[k] = m[k]
+        if m.get("_context_packet_id"):
+            entry["context_packet_id"] = m["_context_packet_id"]
         serialised.append(entry)
 
     payload = {
@@ -1000,6 +1245,20 @@ def _emit_json(
         "group_by": group_by,
         "matches": serialised,
     }
+    if context_packets is not None:
+        payload["context_packets"] = context_packets
+        payload["context_packet_summary"] = {
+            "returned": len(context_packets),
+            "omitted_by_cap": omitted_context_packets,
+            "truncated_packets": sum(bool(packet.get("truncated")) for packet in context_packets),
+            "unreadable_packets": sum(not bool(packet.get("readable")) for packet in context_packets),
+            "stale_symbol_fallback_packets": sum(
+                packet.get("resolution") == "stale_symbol_span_fallback" for packet in context_packets
+            ),
+            "unindexed_symbol_fallback_packets": sum(
+                packet.get("resolution") == "unindexed_symbol_fallback" for packet in context_packets
+            ),
+        }
     if groups is not None:
         payload["groups"] = [_serialise_group(g) for g in groups[:count]]
 
@@ -1009,6 +1268,9 @@ def _emit_json(
         "shown": len(serialised),
         "engine": engine,
     }
+    if context_packets is not None:
+        _summary["context_packets"] = len(context_packets)
+        _summary["context_packets_omitted"] = omitted_context_packets
     # W607-G + W607-BV: non-empty combined bucket -> summary mirror +
     # partial_success flip + top-level mirror. Empty bucket ->
     # byte-identical envelope.
@@ -1075,28 +1337,72 @@ def _serialise_group(g):
     }
 
 
-def _emit_text(matches, groups, count, verdict, group_by):
+def _emit_text(
+    matches,
+    groups,
+    count,
+    verdict,
+    group_by,
+    *,
+    context_packets=None,
+    omitted_context_packets=0,
+):
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     if group_by == "symbol" and groups is not None:
         _emit_text_grouped(groups, count)
-        return
+    else:
+        _emit_text_matches(matches, count)
+    if context_packets is not None:
+        _emit_text_context_packets(context_packets, omitted_context_packets)
+
+
+def _emit_text_matches(matches: list[dict], count: int) -> None:
     click.echo(f"=== {len(matches)} matches ===\n")
-    shown = 0
-    for m in matches:
-        if shown >= count:
-            click.echo(f"\n(+{len(matches) - count} more)")
-            break
-        sym = m.get("_enclosing")
-        location = loc(m["path"], m["line"])
+    for index, match in enumerate(matches[:count]):
+        sym = match.get("_enclosing")
         sym_info = f"  in {abbrev_kind(sym['kind'])} {sym['qualified_name']}" if sym else ""
-        suffix = _annotations_suffix(m)
-        content = m["content"]
-        if len(content) > 100:
-            content = content[:97] + "..."
-        click.echo(f"  {location}{sym_info}{suffix}")
+        content = str(match["content"])
+        content = content if len(content) <= 100 else content[:97] + "..."
+        packet = f"  [{match['_context_packet_id']}]" if match.get("_context_packet_id") else ""
+        click.echo(f"  {loc(match['path'], match['line'])}{sym_info}{_annotations_suffix(match)}{packet}")
         click.echo(f"    {content}")
-        shown += 1
+    if len(matches) > count:
+        click.echo(f"\n(+{len(matches) - count} more)")
+
+
+def _emit_text_context_packets(
+    context_packets: list[dict],
+    omitted_context_packets: int,
+) -> None:
+    click.echo("")
+    click.echo(f"=== {len(context_packets)} context packets ===")
+    for packet in context_packets:
+        click.echo(
+            f"\n[{packet['id']}] {packet['location']}{_packet_symbol_label(packet)}{_packet_state_label(packet)}"
+        )
+        click.echo(packet.get("code") or "  (source unreadable)")
+    if omitted_context_packets:
+        click.echo(f"\n(+{omitted_context_packets} context packets omitted by --max-packets)")
+
+
+def _packet_symbol_label(packet: dict) -> str:
+    symbol = packet.get("enclosing_symbol") or {}
+    if not symbol.get("name"):
+        return ""
+    return f"  {abbrev_kind(symbol.get('kind'))} {symbol.get('qualified_name') or symbol.get('name')}"
+
+
+def _packet_state_label(packet: dict) -> str:
+    states = []
+    if packet.get("truncated"):
+        states.append("truncated")
+    resolution = packet.get("resolution")
+    if resolution == "stale_symbol_span_fallback":
+        states.append("stale-symbol-fallback")
+    elif resolution == "unindexed_symbol_fallback":
+        states.append("unindexed-symbol-fallback")
+    return f"  {' '.join(states)}" if states else ""
 
 
 def _emit_text_grouped(groups, count):

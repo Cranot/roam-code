@@ -48,6 +48,7 @@ _ROW_SCHEMA: dict[str, str] = {
     "agent_mode": "ROAM_AGENT_MODE env at compile time (compile/roam/vanilla/unknown)",
     "session_id": "ROAM_SESSION_ID env — join key to the consumer-side turn ledger; '' when unset",
     "turn_seq": "ROAM_TURN_SEQ env — optional per-session turn sequence to disambiguate multiple compiles; '' when unset",
+    "episode_id": "ROAM_EPISODE_ID env — durable join key spanning prompt compile and terminal stop outcome",
     "compiler_fp": "compiler-code fingerprint — attributes telemetry shifts to compiler revisions",
     "injection_advice": "hook-channel injection advice for this procedure/task",
     "probe_timings_ms": "OPTIONAL — per-probe-section latency map; present only when L1 routing fired on a cache MISS (HIT rows omit it: the reused plan carries stale MISS timings)",

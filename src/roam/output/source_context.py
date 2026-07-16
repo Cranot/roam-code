@@ -19,6 +19,7 @@ these helpers return '' rather than mislead.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 
 
 def _resolve(rel_path: str, cwd: str | None = None) -> str | None:
@@ -73,3 +74,63 @@ def read_source_line(rel_path: str, line_no, symbol_name: str = "", max_len: int
     if symbol_name and symbol_name not in text:
         return ""
     return text[:max_len]
+
+
+def read_source_range(
+    rel_path: str,
+    line_start: int,
+    line_end: int,
+    *,
+    target_lines: Iterable[int] = (),
+    max_lines: int = 120,
+    cwd: str | None = None,
+) -> dict:
+    """Read one bounded source range with stable line markers.
+
+    The result is JSON-ready so location-producing commands can share one
+    context-packet contract. ``target_lines`` marks live search hits with
+    ``>>``. An unreadable path returns the same shape with ``code=""`` and
+    ``readable=False``.
+    """
+    requested_start = max(1, int(line_start))
+    requested_end = max(requested_start, int(line_end))
+    line_cap = max(1, int(max_lines))
+    full = _resolve(rel_path, cwd)
+    empty = {
+        "code": "",
+        "requested_start": requested_start,
+        "requested_end": requested_end,
+        "returned_start": 0,
+        "returned_end": 0,
+        "total_lines": 0,
+        "truncated": False,
+        "readable": False,
+    }
+    if not full:
+        return empty
+    try:
+        with open(full, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return empty
+    total = len(lines)
+    if requested_start > total:
+        return {**empty, "total_lines": total}
+    returned_start = requested_start
+    bounded_end = min(total, requested_end)
+    returned_end = min(bounded_end, returned_start + line_cap - 1)
+    marked = {int(line) for line in target_lines}
+    rendered = []
+    for number in range(returned_start, returned_end + 1):
+        marker = ">>" if number in marked else "  "
+        rendered.append(f"{marker} {number:>5}  {lines[number - 1].rstrip()}")
+    return {
+        "code": "\n".join(rendered),
+        "requested_start": requested_start,
+        "requested_end": requested_end,
+        "returned_start": returned_start,
+        "returned_end": returned_end,
+        "total_lines": total,
+        "truncated": returned_end < bounded_end,
+        "readable": True,
+    }

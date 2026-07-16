@@ -88,6 +88,100 @@ class TestGrepJSONShape:
         assert "User" in data["patterns"] and "Admin" in data["patterns"]
 
 
+class TestGrepContextPackets:
+    def test_context_lines_return_bounded_source_packets(self, cli_runner, indexed_project, monkeypatch):
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            ["grep", "User", "--context", "2", "--max-packets", "2"],
+            cwd=indexed_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "grep")
+
+        assert data["context_packet_summary"]["returned"] <= 2
+        assert data["context_packets"]
+        packet = data["context_packets"][0]
+        assert packet["source_basis"] == "live_match_window"
+        assert packet["line_count"] <= 5
+        assert ">>" in packet["code"]
+        assert any("context_packet_id" in match for match in data["matches"])
+
+    def test_whole_symbol_deduplicates_hits_and_discloses_truncation(self, cli_runner, indexed_project, monkeypatch):
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "grep",
+                "User",
+                "--whole-symbol",
+                "--max-packets",
+                "3",
+                "--max-packet-lines",
+                "2",
+            ],
+            cwd=indexed_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "grep")
+
+        assert data["context_packets"]
+        assert all(packet["line_count"] <= 2 for packet in data["context_packets"])
+        assert all(
+            packet["resolution"]
+            in {
+                "indexed_symbol_current",
+                "stale_symbol_span_fallback",
+                "unindexed_symbol_fallback",
+            }
+            for packet in data["context_packets"]
+        )
+        current_packets = [
+            packet for packet in data["context_packets"] if packet["resolution"] == "indexed_symbol_current"
+        ]
+        if current_packets:
+            assert any(packet["truncated"] for packet in current_packets)
+
+    def test_whole_symbol_falls_back_when_indexed_span_is_stale(self, tmp_path):
+        from roam.commands.cmd_grep import _build_context_packets
+
+        source = tmp_path / "sample.py"
+        source.write_text(
+            "def current_name():\n    return 'needle'\n",
+            encoding="utf-8",
+        )
+        matches = [
+            {
+                "path": "sample.py",
+                "line": 2,
+                "content": "    return 'needle'",
+                "_enclosing": {
+                    "id": 7,
+                    "name": "old_name",
+                    "qualified_name": "old_name",
+                    "kind": "function",
+                    "line_start": 1,
+                    "line_end": 20,
+                },
+            }
+        ]
+
+        packets, omitted = _build_context_packets(
+            matches,
+            root=tmp_path,
+            context_lines=0,
+            whole_symbol=True,
+            max_packets=2,
+            max_packet_lines=20,
+        )
+
+        assert omitted == 0
+        assert packets[0]["resolution"] == "stale_symbol_span_fallback"
+        assert packets[0]["source_basis"] == "live_match_window"
+        assert packets[0]["enclosing_symbol"] is None
+        assert "current_name" in packets[0]["code"]
+
+
 # ============================================================================
 # Reachability / unreachable
 # ============================================================================

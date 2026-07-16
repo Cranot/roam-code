@@ -37,7 +37,7 @@ _GLOBAL_FLAGS_NO_VALUE = frozenset(
         "--version",
     }
 )
-_GLOBAL_FLAGS_WITH_VALUE = frozenset({"--budget"})
+_GLOBAL_FLAGS_WITH_VALUE = frozenset({"--budget", "--select"})
 _PLACEHOLDER_RE = re.compile(r"(<[^>\s]+>|\{[^}\s]+\})")
 _SQUARE_PLACEHOLDER_RE = re.compile(r"\[-{1,2}[^\]\n]+\]")
 _BARE_PLACEHOLDER_RE = re.compile(r"[A-Z][A-Z0-9_/-]*")

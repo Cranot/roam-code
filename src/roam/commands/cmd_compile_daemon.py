@@ -178,10 +178,15 @@ class CompileDaemonServer:
             args = req.get("args")
             if not isinstance(args, list) or not all(isinstance(a, str) for a in args) or not args:
                 return {"error": "bad_args"}
-            return self._compile(args, str(req.get("session_id") or ""))
+            return self._compile(
+                args,
+                str(req.get("session_id") or ""),
+                str(req.get("episode_id") or ""),
+                str(req.get("turn_seq") or ""),
+            )
         return {"error": "unknown_op"}
 
-    def _compile(self, args: list[str], session_id: str) -> dict:
+    def _compile(self, args: list[str], session_id: str, episode_id: str = "", turn_seq: str = "") -> dict:
         """In-process compile with the caller's telemetry identity stamped.
 
         The cold path stamps ROAM_SESSION_ID / ROAM_AGENT_MODE on the child
@@ -190,10 +195,16 @@ class CompileDaemonServer:
         """
         from roam.mcp_server import _run_roam_inprocess
 
-        saved = {k: os.environ.get(k) for k in ("ROAM_SESSION_ID", "ROAM_AGENT_MODE")}
+        saved = {
+            k: os.environ.get(k) for k in ("ROAM_SESSION_ID", "ROAM_EPISODE_ID", "ROAM_TURN_SEQ", "ROAM_AGENT_MODE")
+        }
         try:
             if session_id:
                 os.environ["ROAM_SESSION_ID"] = session_id
+            if episode_id:
+                os.environ["ROAM_EPISODE_ID"] = episode_id
+            if turn_seq:
+                os.environ["ROAM_TURN_SEQ"] = turn_seq
             os.environ.setdefault("ROAM_AGENT_MODE", "hook")
             envelope = _run_roam_inprocess(["compile", *args])
         finally:

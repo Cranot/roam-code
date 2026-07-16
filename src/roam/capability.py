@@ -65,6 +65,10 @@ class Capability:
     task_required: bool = False  # required for task plans (validate_plan etc.)
     destructive: bool = False  # rm-style operations
     stale_sensitive: bool = True  # results invalidate when index goes stale
+    # Procedure Foundry: closed, machine-readable repeated-work hypotheses this
+    # capability is intended to replace. A declaration is never proof of
+    # coverage, adoption, or savings; live outcome-conditioned episodes decide.
+    displaces: tuple[str, ...] = ()
 
 
 @dataclass
@@ -125,6 +129,7 @@ class CapabilityRegistry:
                     "task_required": cap.task_required,
                     "destructive": cap.destructive,
                     "stale_sensitive": cap.stale_sensitive,
+                    "displaces": list(cap.displaces),
                 }
                 for cap in self.all()
             ],
@@ -162,6 +167,7 @@ def roam_capability(
     task_required: bool = False,
     destructive: bool = False,
     stale_sensitive: bool = True,
+    displaces: tuple[str, ...] | list[str] = (),
 ) -> Callable[[F], F]:
     """Mark a Click command as a capability for introspection.
 
@@ -197,6 +203,7 @@ def roam_capability(
             task_required=task_required,
             destructive=destructive,
             stale_sensitive=stale_sensitive,
+            displaces=tuple(displaces),
         )
         REGISTRY.register(cap)
         # Stash on the function for later introspection (e.g. roam capabilities --explain X)
@@ -262,6 +269,8 @@ def emit_yaml() -> str:
                 lines.append(f"      - {_yaml_str(ex)}")
         if cap["tags"]:
             lines.append(f"    tags: [{', '.join(_yaml_str(t) for t in cap['tags'])}]")
+        if cap["displaces"]:
+            lines.append(f"    displaces: [{', '.join(_yaml_str(t) for t in cap['displaces'])}]")
         lines.append(f"    ai_safe: {str(cap['ai_safe']).lower()}")
         lines.append(f"    requires_index: {str(cap['requires_index']).lower()}")
         if cap["since"]:

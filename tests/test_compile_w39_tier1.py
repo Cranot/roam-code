@@ -223,6 +223,7 @@ def test_w39_d1_telemetry_writes_jsonl_line(tmp_path):
         "prefetched_keys",
         "envelope_bytes",
         "compile_ms",
+        "episode_id",
     ):
         assert field in entry, f"missing telemetry field: {field}"
     assert entry["art_label"] == label

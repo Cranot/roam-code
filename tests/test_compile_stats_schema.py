@@ -27,6 +27,7 @@ _EXPECTED_FIELDS = {
     "agent_mode",
     "session_id",
     "turn_seq",
+    "episode_id",
     "compiler_fp",
     "injection_advice",
     "probe_timings_ms",

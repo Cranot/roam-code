@@ -108,10 +108,14 @@ roam effects <symbol>   # DB writes, network I/O, filesystem, global mutation
 - **Default:** Human-readable text (also optimized for LLM consumption)
 - **`roam --json <cmd>`:** Structured JSON with consistent envelope
 - **`roam --budget N <cmd>`:** Token-capped output (N = max tokens)
+- **`roam complexity --select '.symbols[:5]'`:** Project one bounded JSON field without shell parsing (`--select` is repeatable)
+- **`roam grep <pattern> -C 5`:** Search source and return bounded live code packets in one call
+- **`roam grep <pattern> --whole-symbol --max-packets 3`:** Deduplicate hits into enclosing functions/classes; stale spans fall back safely
 - **`roam --sarif <cmd>`:** SARIF 2.1.0 for CI integration
 
 Prefer `--json` when you need to parse output programmatically.
 Prefer `--budget 2000` when context window is tight.
+Prefer `--select '.summary'` or a bounded list slice when only one envelope section is needed.
 
 ## Key Commands Reference
 
@@ -196,7 +200,7 @@ roam minimap --update           # update sentinel block in CLAUDE.md
 
 ## Discovering More Commands
 
-This skill covers the most common commands, but roam has 279 commands.
+This skill covers the most common commands, but roam has 281 commands.
 To explore what's available:
 
 ```bash

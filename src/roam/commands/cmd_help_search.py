@@ -66,6 +66,7 @@ def _score(query: str, name: str, help_text: str) -> int:
     stale_sensitive=False,
     ai_safe=True,
     requires_index=False,
+    displaces=("command_discoverability",),
 )
 @click.command(name="help-search")
 @click.argument("query", nargs=-1, required=True)

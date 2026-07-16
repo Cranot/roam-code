@@ -4,7 +4,7 @@ load-bearing behavior: never show wrong content when the index is stale."""
 
 from __future__ import annotations
 
-from roam.output.source_context import read_body_preview, read_source_line
+from roam.output.source_context import read_body_preview, read_source_line, read_source_range
 
 
 def test_body_preview_basic(tmp_path):
@@ -36,3 +36,26 @@ def test_missing_inputs():
     assert read_body_preview("", 5) == ""
     assert read_source_line("x.py", None) == ""
     assert read_body_preview("/nope/x.py", 1, "f") == ""
+
+
+def test_read_source_range_marks_targets_and_bounds_output(tmp_path):
+    source = tmp_path / "sample.py"
+    source.write_text(
+        "\n".join(f"line {i}" for i in range(1, 11)) + "\n",
+        encoding="utf-8",
+    )
+
+    result = read_source_range(
+        str(source),
+        3,
+        9,
+        target_lines=(4, 8),
+        max_lines=4,
+    )
+
+    assert result["readable"] is True
+    assert result["returned_start"] == 3
+    assert result["returned_end"] == 6
+    assert result["truncated"] is True
+    assert ">>     4  line 4" in result["code"]
+    assert "line 8" not in result["code"]

@@ -168,3 +168,4 @@ def test_new_capability_fields_have_conservative_defaults() -> None:
     assert cap.task_required is False
     assert cap.destructive is False
     assert cap.stale_sensitive is True
+    assert cap.displaces == ()

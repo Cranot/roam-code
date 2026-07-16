@@ -158,6 +158,12 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "bench-compile",
         # W40 — compile-stats reads .roam/compile-runs.jsonl; no edits.
         "compile-stats",
+        # Episode hooks append JSONL; savings materializes that local telemetry
+        # into .roam/episodes.sqlite. No source files or external state change.
+        "savings",
+        # Transcript backfill writes only keyed, text-free local evidence under
+        # .roam/; it never mutates source files or external systems.
+        "savings-backfill",
         # W56 — compile-cache (group: stats/clear/build); writes to
         # .roam/compile-envelope-cache.sqlite, which is local-state.
         "compile-cache",

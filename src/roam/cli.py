@@ -313,6 +313,8 @@ _COMMANDS = {
     "plan": ("roam.commands.cmd_plan", "plan"),
     "compile": ("roam.commands.cmd_compile", "compile_"),
     "compile-stats": ("roam.commands.cmd_compile_stats", "compile_stats"),
+    "savings": ("roam.commands.cmd_savings", "savings"),
+    "savings-backfill": ("roam.commands.cmd_savings_backfill", "savings_backfill"),
     "compile-cache": ("roam.commands.cmd_compile_cache", "compile_cache"),
     "compile-daemon": ("roam.commands.cmd_compile_daemon", "compile_daemon"),
     "envelope-diff": ("roam.commands.cmd_envelope_diff", "envelope_diff"),
@@ -574,7 +576,10 @@ _CATEGORIES = {
         "plan",
         "compile",
         "compile-stats",
+        "savings",
+        "savings-backfill",
         "compile-cache",
+        "compile-daemon",
         "envelope-diff",
         "dispatch-trace",
         "syntax-check",
@@ -906,7 +911,7 @@ class LazyGroup(click.Group):
         "--include-excluded",
         "--detail",
     }
-    _GLOBAL_VALUE_OPTIONS = {"--budget"}
+    _GLOBAL_VALUE_OPTIONS = {"--budget", "--select"}
     _AMBIGUOUS_FLAG_VS_VALUE = {"--agent"}
 
     def parse_args(self, ctx, args):
@@ -1134,6 +1139,7 @@ class LazyGroup(click.Group):
             ("--detail", "show full detailed output instead of compact summary"),
             ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
             ("--budget N", "max output tokens (0 = unlimited)"),
+            ("--select EXPR", "project JSON with .field, [N], or [START:END] (repeatable)"),
             ("--include-excluded", "include files normally excluded by .roamignore"),
             ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
             ("--ci", "CI mode: stricter defaults (over-fetch --leaks-only, pr-bundle --strict + --strict-resolved)"),
@@ -1648,6 +1654,7 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
         ("--detail", "show full detailed output instead of compact summary"),
         ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
         ("--budget N", "max output tokens (0 = unlimited)"),
+        ("--select EXPR", "project JSON with .field, [N], or [START:END] (repeatable)"),
         ("--include-excluded", "include files normally excluded by .roamignore"),
         ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
     ):
@@ -1676,6 +1683,7 @@ def _populate_cli_context(
     agent: bool,
     sarif_mode: bool,
     budget: int,
+    select_exprs: tuple[str, ...],
     include_excluded: bool,
     detail: bool,
     override_mode: bool,
@@ -1686,6 +1694,7 @@ def _populate_cli_context(
     ctx.obj["agent"] = agent
     ctx.obj["sarif"] = sarif_mode
     ctx.obj["budget"] = budget
+    ctx.obj["select"] = select_exprs
     ctx.obj["include_excluded"] = include_excluded
     ctx.obj["detail"] = detail
     ctx.obj["override_mode"] = bool(override_mode)
@@ -1811,6 +1820,15 @@ def _install_local_telemetry(ctx: click.Context) -> None:
 )
 @click.option("--budget", type=int, default=0, help="Max output tokens (0=unlimited)")
 @click.option(
+    "--select",
+    "select_exprs",
+    multiple=True,
+    help=(
+        "Project JSON output with .field, .field.nested, [N], or [START:END]. "
+        "Repeat for multiple projections; implies --json."
+    ),
+)
+@click.option(
     "--include-excluded",
     is_flag=True,
     help="Include files normally excluded by .roamignore / config / built-in patterns",
@@ -1841,10 +1859,26 @@ def _install_local_telemetry(ctx: click.Context) -> None:
     ),
 )
 @click.pass_context
-def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, detail, override_mode, ci_mode):
+def cli(
+    ctx,
+    json_mode,
+    compact,
+    agent,
+    sarif_mode,
+    budget,
+    select_exprs,
+    include_excluded,
+    detail,
+    override_mode,
+    ci_mode,
+):
     """Roam: Codebase comprehension tool."""
     if agent and sarif_mode:
         raise click.UsageError("--agent cannot be combined with --sarif")
+    if select_exprs and sarif_mode:
+        raise click.UsageError("--select cannot be combined with --sarif")
+    if select_exprs:
+        json_mode = True
 
     json_mode, compact, budget = _apply_agent_mode(agent, json_mode, compact, budget)
     _populate_cli_context(
@@ -1854,6 +1888,7 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
         agent=agent,
         sarif_mode=sarif_mode,
         budget=budget,
+        select_exprs=select_exprs,
         include_excluded=include_excluded,
         detail=detail,
         override_mode=override_mode,

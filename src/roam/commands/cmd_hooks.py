@@ -531,7 +531,12 @@ def status(ctx):
 # v4 (2026-07-16): UPS hook tries the S2-lite warm compile daemon first
 # (.roam/compile-daemon.json, ~10 ms connect budget) and falls back to the
 # cold `roam --json compile` spawn on any failure. Deployed v3 bodies heal.
-_HOOK_BODY_VERSION = 4
+# v5 (2026-07-16): prompt and stop hooks share a per-turn episode id, append
+# counts-only lifecycle events, and forward episode_id + turn_seq through both
+# warm-daemon and cold compile paths. Deployed v4 bodies heal.
+# v6 (2026-07-16): events stamp provenance + hook version and Stop emits a
+# closed verification-health state. Deployed v5 bodies heal.
+_HOOK_BODY_VERSION = 6
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -542,12 +547,18 @@ Installed by `roam hooks claude --write`. FAIL-OPEN: any error prints
 nothing and exits 0 (a broken roam install must never block a turn).
 """
 import json
+import hashlib
 import os
 import subprocess
 import sys
+import time
 
 _COMPILE_TIMEOUT_S = 6.0
 _MIN_PROMPT_CHARS = 8
+_EPISODE_SCHEMA = 1
+_LOCK_ATTEMPTS = 20
+_LOCK_SLEEP_S = 0.005
+_LOCK_STALE_S = 30.0
 # S2-lite warm daemon: startup dominates this chain (~346 ms cold vs ~2 ms
 # envelope compute on a cache hit), so try the loopback daemon first. The
 # connect budget is tiny on purpose: an absent daemon must cost ~nothing.
@@ -565,7 +576,164 @@ def _repo_root():
         d = parent
 
 
-def _try_daemon(prompt, session_id):
+def _utc_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _session_key(payload):
+    session_id = str(payload.get("session_id") or "").strip()
+    transcript_path = str(payload.get("transcript_path") or "").strip()
+    stable = session_id or transcript_path
+    if not stable:
+        return "", session_id, transcript_path
+    return hashlib.sha256(stable.encode("utf-8", "replace")).hexdigest()[:24], session_id, transcript_path
+
+
+def _acquire_lock(path):
+    for _ in range(_LOCK_ATTEMPTS):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii", "replace"))
+            return fd
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(path) > _LOCK_STALE_S:
+                    os.unlink(path)
+                    continue
+            except OSError:
+                pass
+            time.sleep(_LOCK_SLEEP_S)
+        except OSError:
+            return None
+    return None
+
+
+def _release_lock(path, fd):
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _atomic_json(path, value):
+    tmp = path + ".tmp-%d-%d" % (os.getpid(), time.time_ns())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(value, fh, sort_keys=True, separators=(",", ":"))
+            fh.write(chr(10))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _append_episode_event(root, event):
+    log_dir = os.path.join(root, ".roam")
+    if not os.path.isdir(log_dir):
+        return
+    log_path = os.path.join(log_dir, "episodes.jsonl")
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            return
+    except OSError:
+        return
+    lock_path = log_path + ".lock"
+    fd = _acquire_lock(lock_path)
+    if fd is None:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + chr(10))
+    finally:
+        _release_lock(lock_path, fd)
+
+
+def _start_episode(payload, prompt):
+    root = _repo_root()
+    state_root = os.path.join(root, ".roam", "episode-state")
+    session_key, session_id, transcript_path = _session_key(payload)
+    if not session_key or not os.path.isdir(os.path.join(root, ".roam")):
+        return session_id, "", ""
+    try:
+        os.makedirs(state_root, exist_ok=True)
+        state_path = os.path.join(state_root, session_key + ".json")
+        lock_path = state_path + ".lock"
+        fd = _acquire_lock(lock_path)
+        if fd is None:
+            return session_id, "", ""
+        try:
+            state = {}
+            try:
+                with open(state_path, encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        state = loaded
+            except (OSError, ValueError):
+                state = {}
+            turn_seq = int(state.get("last_turn_seq") or 0) + 1
+            started_at_ms = int(time.time() * 1000)
+            prompt_hash = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()
+            seed = "%s\\0%d\\0%s\\0%d\\0%d" % (
+                session_key,
+                turn_seq,
+                prompt_hash,
+                time.time_ns(),
+                os.getpid(),
+            )
+            episode_id = "ep_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+            state = {
+                "session_id": session_id,
+                "last_turn_seq": turn_seq,
+                "active": {
+                    "episode_id": episode_id,
+                    "started_at_ms": started_at_ms,
+                    "turn_seq": turn_seq,
+                },
+            }
+            _atomic_json(state_path, state)
+        finally:
+            _release_lock(lock_path, fd)
+        event = {
+            "schema_version": _EPISODE_SCHEMA,
+            "hook_version": 6,
+            "evidence_source": "live_hook",
+            "event_id": "evt_" + hashlib.sha256((episode_id + ":start").encode("utf-8")).hexdigest()[:24],
+            "episode_id": episode_id,
+            "event_type": "prompt_submitted",
+            "ts": _utc_now(),
+            "session_id": session_id,
+            "turn_seq": turn_seq,
+            "terminal": False,
+            "outcome": "pending",
+            "prompt_sha256": prompt_hash,
+            "prompt_chars": len(prompt),
+            "transcript_path_sha256": (
+                hashlib.sha256(transcript_path.encode("utf-8", "replace")).hexdigest()
+                if transcript_path
+                else ""
+            ),
+            "permission_mode": str(payload.get("permission_mode") or ""),
+            "compile_expected": len(prompt) >= _MIN_PROMPT_CHARS,
+            "health_state": "unknown",
+        }
+        _append_episode_event(root, event)
+        return session_id, episode_id, str(turn_seq)
+    except Exception:
+        return session_id, "", ""
+
+
+def _try_daemon(prompt, session_id, episode_id, turn_seq):
     """Compile via the repo's warm daemon; None on ANY failure (-> cold spawn)."""
     try:
         import socket
@@ -578,7 +746,9 @@ def _try_daemon(prompt, session_id):
             s.settimeout(_COMPILE_TIMEOUT_S)
             req = {"token": cfg.get("token"), "op": "compile",
                    "args": [prompt], "cwd": os.getcwd(),
-                   "session_id": session_id}
+                   "session_id": session_id,
+                   "episode_id": episode_id,
+                   "turn_seq": turn_seq}
             s.sendall((json.dumps(req) + chr(10)).encode("utf-8"))
             s.shutdown(socket.SHUT_WR)
             chunks = []
@@ -601,17 +771,21 @@ def main():
     try:
         payload = json.load(sys.stdin)
         prompt = (payload.get("prompt") or "").strip()
+        session_id, episode_id, turn_seq = _start_episode(payload, prompt)
         if len(prompt) < _MIN_PROMPT_CHARS:
             return
         # Forward Claude's session id so the compile telemetry row carries a
         # join key to the session's downstream outcome. Fail-open: an absent id
         # just leaves the key empty, never breaks the hook.
-        session_id = str(payload.get("session_id") or "").strip()
-        d = _try_daemon(prompt, session_id)
+        d = _try_daemon(prompt, session_id, episode_id, turn_seq)
         if d is None:
             env = os.environ.copy()
             if session_id:
                 env["ROAM_SESSION_ID"] = session_id
+            if episode_id:
+                env["ROAM_EPISODE_ID"] = episode_id
+            if turn_seq:
+                env["ROAM_TURN_SEQ"] = turn_seq
             # Stamp real hook traffic as 'hook' so it is distinguishable from the
             # mixed 'unknown' bucket in compile-stats. setdefault, not assign: an
             # explicit ROAM_AGENT_MODE (a policy mode the user set) is preserved.
@@ -726,6 +900,7 @@ behaviour.
       because it runs a background whole-repo verify.
 """
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -770,6 +945,223 @@ _ADVISORY_CATEGORIES = frozenset({
     "n1", "over_fetch", "dead", "magic_numbers",
     "llm_smells", "test_hermeticity", "smells",
 })
+_EPISODE_SCHEMA = 1
+_EPISODE_HOOK_VERSION = 6
+_EPISODE_LOCK_ATTEMPTS = 20
+_EPISODE_LOCK_SLEEP_S = 0.005
+_EPISODE_LOCK_STALE_S = 30.0
+
+
+def _episode_session_key(payload):
+    session_id = str(payload.get("session_id") or "").strip()
+    transcript_path = str(payload.get("transcript_path") or "").strip()
+    stable = session_id or transcript_path
+    if not stable:
+        return "", session_id
+    return hashlib.sha256(stable.encode("utf-8", "replace")).hexdigest()[:24], session_id
+
+
+def _episode_lock(path):
+    for _ in range(_EPISODE_LOCK_ATTEMPTS):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii", "replace"))
+            return fd
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(path) > _EPISODE_LOCK_STALE_S:
+                    os.unlink(path)
+                    continue
+            except OSError:
+                pass
+            time.sleep(_EPISODE_LOCK_SLEEP_S)
+        except OSError:
+            return None
+    return None
+
+
+def _episode_unlock(path, fd):
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _active_episode(payload):
+    session_key, session_id = _episode_session_key(payload)
+    if not session_key:
+        return {"session_id": session_id}
+    root = _hook_repo_root()
+    state_path = os.path.join(root, ".roam", "episode-state", session_key + ".json")
+    lock_path = state_path + ".lock"
+    fd = _episode_lock(lock_path)
+    if fd is None:
+        return {"session_id": session_id}
+    try:
+        try:
+            with open(state_path, encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {}
+        active = state.get("active") if isinstance(state, dict) else {}
+        if not isinstance(active, dict):
+            active = {}
+        return {
+            "session_id": str((state or {}).get("session_id") or session_id),
+            "episode_id": str(active.get("episode_id") or ""),
+            "turn_seq": active.get("turn_seq"),
+            "started_at_ms": active.get("started_at_ms"),
+            "_state_path": state_path,
+            "_state": state,
+        }
+    finally:
+        _episode_unlock(lock_path, fd)
+
+
+def _clear_active_episode(active):
+    state_path = str(active.get("_state_path") or "")
+    episode_id = str(active.get("episode_id") or "")
+    if not state_path or not episode_id:
+        return
+    lock_path = state_path + ".lock"
+    fd = _episode_lock(lock_path)
+    if fd is None:
+        return
+    try:
+        try:
+            with open(state_path, encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {}
+        current = state.get("active") if isinstance(state, dict) else {}
+        if not isinstance(current, dict) or str(current.get("episode_id") or "") != episode_id:
+            return
+        state["active"] = None
+        tmp = state_path + ".tmp-%d-%d" % (os.getpid(), time.time_ns())
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, sort_keys=True, separators=(",", ":"))
+                fh.write(chr(10))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, state_path)
+        finally:
+            try:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+    finally:
+        _episode_unlock(lock_path, fd)
+
+
+def _append_episode_event(event):
+    root = _hook_repo_root()
+    log_dir = os.path.join(root, ".roam")
+    if not os.path.isdir(log_dir):
+        return
+    log_path = os.path.join(log_dir, "episodes.jsonl")
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
+            return
+    except OSError:
+        return
+    lock_path = log_path + ".lock"
+    fd = _episode_lock(lock_path)
+    if fd is None:
+        return
+    try:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + chr(10))
+    finally:
+        _episode_unlock(lock_path, fd)
+
+
+def _diff_identity():
+    """Return counts + a privacy-preserving identity for the current diff."""
+    try:
+        tracked = subprocess.run(
+            ["git", "diff", "--binary", "HEAD"],
+            capture_output=True, timeout=_GITDIFF_TIMEOUT_S,
+        )
+        tracked_names = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True, text=True, timeout=_GITDIFF_TIMEOUT_S,
+        )
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, timeout=_GITDIFF_TIMEOUT_S,
+        )
+        if tracked.returncode != 0 or tracked_names.returncode != 0 or untracked.returncode != 0:
+            return {"changed_files": None, "diff_sha256": ""}
+        names = [ln.strip() for ln in tracked_names.stdout.splitlines() if ln.strip()]
+        new_names = [
+            ln.strip()
+            for ln in untracked.stdout.splitlines()
+            if ln.strip() and not ln.startswith((".roam/", ".claude/"))
+        ]
+        all_names = sorted(set(names + new_names))
+        digest = hashlib.sha256()
+        digest.update(tracked.stdout)
+        digest.update(chr(0).join(new_names).encode("utf-8", "replace"))
+        return {"changed_files": len(all_names), "diff_sha256": digest.hexdigest()}
+    except Exception:
+        return {"changed_files": None, "diff_sha256": ""}
+
+
+def _record_episode_stop(payload, active, outcome, terminal, blocked, verify_ms, skipped_no_edit, diff_identity):
+    episode_id = str(active.get("episode_id") or "")
+    if not episode_id:
+        seed = "%s:%d:%d" % (str(payload.get("session_id") or "orphan"), time.time_ns(), os.getpid())
+        episode_id = "orphan_" + hashlib.sha256(seed.encode("utf-8", "replace")).hexdigest()[:20]
+    now_ms = int(time.time() * 1000)
+    try:
+        duration_ms = max(0, now_ms - int(active.get("started_at_ms")))
+    except (TypeError, ValueError):
+        duration_ms = None
+    event_type = "stop_continuation" if payload.get("stop_hook_active") else "stop_decision"
+    if outcome == "verified_clean":
+        health_state = "verification_passed"
+    elif outcome in ("verification_blocked", "verification_failed_without_findings"):
+        health_state = "verification_failed"
+    elif outcome == "verify_unavailable":
+        health_state = "verification_unavailable"
+    elif outcome == "continued_after_block":
+        health_state = "continuation_unverified"
+    else:
+        health_state = "not_applicable"
+    event = {
+        "schema_version": _EPISODE_SCHEMA,
+        "hook_version": _EPISODE_HOOK_VERSION,
+        "evidence_source": "live_hook",
+        "event_id": "evt_" + hashlib.sha256(
+            ("%s:%s:%d" % (episode_id, event_type, time.time_ns())).encode("utf-8")
+        ).hexdigest()[:24],
+        "episode_id": episode_id,
+        "event_type": event_type,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "session_id": str(active.get("session_id") or payload.get("session_id") or ""),
+        "turn_seq": active.get("turn_seq"),
+        "terminal": bool(terminal),
+        "outcome": outcome,
+        "duration_ms": duration_ms,
+        "blocked": bool(blocked),
+        "verify_ms": int(verify_ms),
+        "skipped_no_edit": bool(skipped_no_edit),
+        "changed_files": diff_identity.get("changed_files"),
+        "diff_sha256": str(diff_identity.get("diff_sha256") or ""),
+        "health_state": health_state,
+    }
+    _append_episode_event(event)
+    if terminal:
+        _clear_active_episode(active)
+    return event
 
 
 def _env_on(name, default):
@@ -924,7 +1316,15 @@ def _tree_has_no_edits():
         return False
 
 
-def _log_stop_event(blocked, findings_n, advisory_n, verify_ms, skipped_no_edit):
+def _log_stop_event(
+    blocked,
+    findings_n,
+    advisory_n,
+    verify_ms,
+    skipped_no_edit,
+    *,
+    episode_event=None,
+):
     """Best-effort block-rate telemetry: one counts-only JSON line per
     Stop-hook decision appended to `.roam/hook-stops.jsonl` (same dir
     convention as `.roam/compile-runs.jsonl`: cwd-relative, skip when
@@ -947,6 +1347,13 @@ def _log_stop_event(blocked, findings_n, advisory_n, verify_ms, skipped_no_edit)
             "advisory_findings": int(advisory_n),
             "verify_ms": int(verify_ms),
             "skipped_no_edit": bool(skipped_no_edit),
+            "episode_id": str((episode_event or {}).get("episode_id") or ""),
+            "session_id": str((episode_event or {}).get("session_id") or ""),
+            "turn_seq": (episode_event or {}).get("turn_seq"),
+            "outcome": str((episode_event or {}).get("outcome") or ""),
+            "terminal": bool((episode_event or {}).get("terminal")),
+            "changed_files": (episode_event or {}).get("changed_files"),
+            "diff_sha256": str((episode_event or {}).get("diff_sha256") or ""),
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + chr(10))  # chr(10): the enclosing
@@ -1119,7 +1526,30 @@ def _second_opinion_lines():
 def main():
     try:
         payload = json.load(sys.stdin)
+        active = _active_episode(payload)
         if payload.get("stop_hook_active"):
+            # This Stop is the completion of the one bounded continuation that
+            # an earlier block requested. Do not verify again (loop guard), but
+            # do close the episode so blocked turns do not stay permanently open.
+            diff_identity = _diff_identity()
+            episode_event = _record_episode_stop(
+                payload,
+                active,
+                "continued_after_block",
+                True,
+                False,
+                0,
+                diff_identity.get("changed_files") == 0,
+                diff_identity,
+            )
+            _log_stop_event(
+                False,
+                0,
+                0,
+                0,
+                diff_identity.get("changed_files") == 0,
+                episode_event=episode_event,
+            )
             return  # already inside a stop-hook continuation; never loop
         # Fast-exit (2026-07-11): pure Q&A stops (no tracked edits, no new
         # untracked files) have nothing for `verify --diff-only` to check --
@@ -1128,6 +1558,7 @@ def main():
         # unchanged: d=None yields the same quiet "allow" outcome (and the
         # same opt-in second-opinion behaviour) as a clean verify.
         skipped_no_edit = _tree_has_no_edits()
+        diff_identity = _diff_identity()
         verify_ms = 0
         d = None
         if not skipped_no_edit:
@@ -1224,7 +1655,37 @@ def main():
             )
             lines.extend(extra)
 
-        _log_stop_event(bool(lines), len(findings), len(advisory), verify_ms, skipped_no_edit)
+        blocked = bool(lines)
+        if skipped_no_edit:
+            outcome = "no_edit"
+        elif blocked and verify_failed and findings:
+            outcome = "verification_blocked"
+        elif blocked:
+            outcome = "second_opinion_blocked"
+        elif d is None or not verdict:
+            outcome = "verify_unavailable"
+        elif verify_failed:
+            outcome = "verification_failed_without_findings"
+        else:
+            outcome = "verified_clean"
+        episode_event = _record_episode_stop(
+            payload,
+            active,
+            outcome,
+            not blocked,
+            blocked,
+            verify_ms,
+            skipped_no_edit,
+            diff_identity,
+        )
+        _log_stop_event(
+            blocked,
+            len(findings),
+            len(advisory),
+            verify_ms,
+            skipped_no_edit,
+            episode_event=episode_event,
+        )
         if not lines:
             return  # quiet: clean verify and nothing from any enabled reviewer
         print(json.dumps({"decision": "block", "reason": chr(10).join(lines)}))
@@ -1265,6 +1726,12 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
+        "d3ed7a41d1836445eed526d4ae7929af3e90b288b89db1d8f9796fa4b2fad3fb",  # ups v6 pristine (2026-07-16 evidence states)
+        "a8a68ecec99484aafa0049b6b16c5ff35cb813fbace746395f01e47907a5884a",  # stop v6 pristine (2026-07-16 evidence states)
+        "35a7e01d539c4febd3ee903ba2efc034fdca3e7173db823cd9960efdcd4c5a63",  # stop v6 surgered (2026-07-16 evidence states)
+        "2957cd0432e95cfd8b1117972863b3b54ef5ae3afea5dd5851a7d8aa66adcc81",  # ups v5 pristine (2026-07-16 episodes)
+        "d72e7f56aebe28579348a0ff4b9205e91fa651795e2e6e019d9f35ad35e8d931",  # stop v5 pristine (2026-07-16 episodes)
+        "c9f030f130dae5dd1b76e79850479b59898375d3868ba97da13201e2633450b5",  # stop v5 surgered (2026-07-16 episodes)
         "25492394429ce7416b7ba3f80b0f2c38accb79136f04a47e28fb51d828a0cc08",  # ups v4 pristine (2026-07-16 s2lite)
         "9d6d69d97cc29639f27b3c45b8a02d4488712bf8fdece9a49cf2d250a219a378",  # stop v4 pristine (2026-07-16 s2lite)
         "3a9db464c1480afabfc3cf20f474c75184c5088083085d763592804e7ea6422e",  # stop v4 surgered (2026-07-16 s2lite)

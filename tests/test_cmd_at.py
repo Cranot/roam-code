@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import click.testing as _ctest
 
-from roam.commands.cmd_at import _callers_of, _enclosing_symbol, _read_slice, at
+from roam.commands.cmd_at import (
+    _callers_of,
+    _enclosing_symbol,
+    _parse_location,
+    _read_range,
+    _read_slice,
+    at,
+)
 
 
 def test_read_slice_marks_target(tmp_path):
@@ -21,6 +28,42 @@ def test_read_slice_marks_target(tmp_path):
     assert ">>" in rendered
     assert "    3  c" in rendered.replace(">>", "  ")
     assert start == 2 and total == 5
+
+
+def test_read_range_marks_each_target_line_and_discloses_truncation(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("".join(f"line-{index}\n" for index in range(1, 21)), encoding="utf-8")
+    import os
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        rendered, start, end, total, truncated = _read_range(
+            "m.py",
+            5,
+            12,
+            context=0,
+            max_lines=4,
+        )
+    finally:
+        os.chdir(cwd)
+    assert start == 5
+    assert end == 8
+    assert total == 20
+    assert truncated is True
+    assert rendered.count(">>") == 4
+    assert "line-5" in rendered and "line-8" in rendered
+    assert "line-9" not in rendered
+
+
+def test_parse_location_accepts_point_range_and_windows_drive():
+    assert _parse_location("src/m.py:42") == ("src/m.py", 42, 42)
+    assert _parse_location("src/m.py:40-90") == ("src/m.py", 40, 90)
+    assert _parse_location(r"C:\repo\src\m.py:7-9") == (
+        r"C:\repo\src\m.py",
+        7,
+        9,
+    )
 
 
 def test_enclosing_symbol_and_callers():
@@ -59,3 +102,19 @@ def test_bad_location_errors():
 def test_bad_line_number():
     r = _ctest.CliRunner().invoke(at, ["src/x.py:abc"], obj={"json": True})
     assert r.exit_code == 2
+
+
+def test_reversed_range_errors():
+    r = _ctest.CliRunner().invoke(at, ["src/x.py:20-10"], obj={"json": True})
+    assert r.exit_code == 2
+    assert "bad_location" in r.output
+
+
+def test_whole_symbol_rejects_explicit_range():
+    r = _ctest.CliRunner().invoke(
+        at,
+        ["src/x.py:10-20", "--whole-symbol"],
+        obj={"json": True},
+    )
+    assert r.exit_code == 2
+    assert "whole-symbol" in r.output

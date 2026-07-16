@@ -5779,6 +5779,7 @@ def _dispatch_verify_command(
     stale_sensitive=True,
     ai_safe=True,
     requires_index=True,
+    displaces=("verification_retry",),
 )
 @click.command()
 @click.option(

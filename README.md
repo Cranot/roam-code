@@ -13,7 +13,7 @@
 <sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>279 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -417,7 +417,7 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~274 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **279 commands (272 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~276 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **281 commands (274 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -432,7 +432,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 272)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 274)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -444,7 +444,7 @@ A few representative commands beyond the core five:
 - **Health & architecture:** `roam health` (0-100 score), `roam weather` (churn × complexity hotspots), `roam smells` (24 deterministic detectors), `roam algo` (34-task anti-pattern catalog), `roam clusters` / `roam layers` / `roam cycles`.
 - **Change safety:** `roam impact <symbol>` (blast radius), `roam diff` (uncommitted-change blast radius), `roam pr-risk` (0-100 PR risk), `roam diagnose <symbol>` (root-cause ranking).
 - **Backend quality:** `roam n1` (N+1 queries), `roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam taint` (graph-reach taint, 10 rule packs).
-- **Index-aware search:** `roam search <pattern>`, `roam grep <pattern>` (grep + reachability + PageRank), `roam uses <name>` (graph-precise references, no string-literal false positives).
+- **Index-aware search:** `roam search <pattern>`, `roam grep <pattern> -C 5` (grep + bounded code packets + reachability + PageRank), `roam grep <pattern> --whole-symbol` (deduplicated enclosing functions/classes), `roam uses <name>` (graph-precise references, no string-literal false positives).
 - **Multi-agent:** `roam orchestrate --agents 3` (conflict-aware partitioning), `roam fleet plan`, `roam lease` (parallel-agent coordination).
 
 ## Walkthrough
@@ -674,7 +674,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_get_invariants` | Implicit contracts for symbols: signature stability, usage spread, breaking risk. |
 | `roam_graph_diff` | Show the structural graph delta between two snapshots. Surfaces new / removed symbols, edge churn, degree shifts, new cycles, layer migrations, and likely renames. Reads persisted snapshots from ``.roam/snapshots/`` -- capture one with ``--save-snapshot``. |
 | `roam_graph_stats` | Report graph-level invariants: density, connected components, average in/out degree, top in-degree symbols, and approximate diameter. One overview number for 'how dense, connected, and cyclic is this codebase'. |
-| `roam_grep` | Run index-aware grep across the codebase. Returns matches with their enclosing symbol, reachability badge, PageRank, clone-class, and bridge annotations. Supports multi-pattern, source-only / test-only filters, reachable-from / unreachable filters, co-occurrence across patterns, and rank-by importance. |
+| `roam_grep` | Run index-aware grep across the codebase. Returns matches with their enclosing symbol, reachability badge, PageRank, clone-class, and bridge annotations. Supports multi-pattern, source-only / test-only filters, reachable-from / unreachable filters, co-occurrence across patterns, and rank-by importance. Request bounded context packets or whole enclosing symbols to replace the usual grep-then-read loop. |
 | `roam_guard` | Check breaking-change risk for a symbol before editing: 0..100 risk score with component breakdown (blast radius, complexity, centrality, test gap, layer analysis) plus caller / callee lists and covering tests -- all within a ~2K-token budget. Different from ``roam_preflight`` (file / staged / coupling / convention / fitness composite) -- this is the per-symbol quantified risk score for sub-agent dispatch. |
 | `roam_guard_clean` | Prune the verdict log at `.roam/verdict-log.jsonl` to its last N entries (default 500). Atomic rewrite — concurrent appenders never see a partial file. Pair `dry_run=True` for a probe. |
 | `roam_guard_diff` | Verdict diff between two bundle snapshots (or the two most-recent verdict-log entries via `from_log=True`). Returns the verdict delta + reasons added/resolved + file/check counts. Answers 'did my last commit help?' |

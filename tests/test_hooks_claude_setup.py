@@ -201,6 +201,13 @@ class TestUpsDaemonPath:
         assert "daemon_served_proc" in proc.stdout  # served warm, not cold-spawned
         assert got["op"] == "compile" and got["token"] == "tok"
         assert got["session_id"] == "s-77"  # telemetry join key rides the socket
+        assert got["episode_id"].startswith("ep_")
+        assert got["turn_seq"] == "1"
+        event = json.loads((in_tmp / ".roam" / "episodes.jsonl").read_text().splitlines()[-1])
+        assert event["event_type"] == "prompt_submitted"
+        assert event["episode_id"] == got["episode_id"]
+        assert event["turn_seq"] == 1
+        assert "investigate why login is slow" not in (in_tmp / ".roam" / "episodes.jsonl").read_text()
 
     def test_daemon_error_falls_back_without_injecting_junk(self, in_tmp):
         """A daemon refusal (wrong_repo/bad_token) must never be injected; with
@@ -343,7 +350,7 @@ def _install_roam_verify_stub(stub_root, envelope):
     return stub_dir, stub_dir / "roam-called.txt"
 
 
-def _run_stop_hook(repo, stub_dir):
+def _run_stop_hook(repo, stub_dir, payload="{}"):
     """Run the Stop-hook script (via the subprocess-shim driver) with
     cwd=repo. Script files live OUTSIDE the repo so the tree stays clean."""
     import subprocess
@@ -357,7 +364,7 @@ def _run_stop_hook(repo, stub_dir):
     driver.write_text(_STOP_HOOK_DRIVER_PY, encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(driver), str(stub_dir / "roam-stub.py"), str(hook)],
-        input="{}",
+        input=payload,
         capture_output=True,
         text=True,
         timeout=60,
@@ -451,6 +458,87 @@ class TestStopHookFastExitAndTelemetry:
         assert row["skipped_no_edit"] is False
         log_text = (repo / ".roam" / "hook-stops.jsonl").read_text(encoding="utf-8")
         assert "super_secret_module" not in log_text  # counts only, never finding text
+
+    def test_prompt_and_stop_share_episode_identity(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
+
+        ups = tmp_path / "ups-hook.py"
+        ups.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
+        import subprocess
+        import sys
+
+        env = {**os.environ, "PATH": ""}
+        prompt_payload = json.dumps(
+            {
+                "prompt": "investigate the repeated login latency",
+                "session_id": "joined-session",
+                "transcript_path": str(tmp_path / "transcript.jsonl"),
+            }
+        )
+        proc = subprocess.run(
+            [sys.executable, str(ups)],
+            input=prompt_payload,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=repo,
+            env=env,
+        )
+        assert proc.returncode == 0
+        starts = [
+            json.loads(line) for line in (repo / ".roam" / "episodes.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(starts) == 1 and starts[0]["event_type"] == "prompt_submitted"
+
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        stop_payload = json.dumps(
+            {
+                "session_id": "joined-session",
+                "transcript_path": str(tmp_path / "transcript.jsonl"),
+            }
+        )
+        stop = _run_stop_hook(repo, stub_dir, stop_payload)
+        assert stop.returncode == 0 and stop.stdout == ""
+        events = [
+            json.loads(line) for line in (repo / ".roam" / "episodes.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert [event["event_type"] for event in events] == ["prompt_submitted", "stop_decision"]
+        assert events[0]["episode_id"] == events[1]["episode_id"]
+        assert events[1]["terminal"] is True
+        assert events[1]["outcome"] == "no_edit"
+        assert events[1]["turn_seq"] == 1
+        assert events[0]["hook_version"] == events[1]["hook_version"] == 6
+        assert events[0]["evidence_source"] == events[1]["evidence_source"] == "live_hook"
+        assert events[1]["health_state"] == "not_applicable"
+
+    def test_prompt_turn_sequence_is_monotonic_and_prompt_private(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
+
+        ups = tmp_path / "ups-hook.py"
+        ups.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
+        import subprocess
+        import sys
+
+        secret = "private-marker-should-never-land"
+        payload = json.dumps({"prompt": f"investigate {secret}", "session_id": "sequence-session"})
+        for _ in range(2):
+            proc = subprocess.run(
+                [sys.executable, str(ups)],
+                input=payload,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=repo,
+                env={**os.environ, "PATH": ""},
+            )
+            assert proc.returncode == 0
+        raw = (repo / ".roam" / "episodes.jsonl").read_text(encoding="utf-8")
+        events = [json.loads(line) for line in raw.splitlines()]
+        assert [event["turn_seq"] for event in events] == [1, 2]
+        assert len({event["episode_id"] for event in events}) == 2
+        assert secret not in raw
 
 
 class TestHookBodyHeal:

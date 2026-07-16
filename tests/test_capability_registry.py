@@ -18,7 +18,11 @@ from roam.commands.cmd_capabilities import capabilities_cmd
 def test_decorator_registers_capability() -> None:
     CapabilityRegistry()
 
-    @roam_capability(category="test", summary="A test cap")
+    @roam_capability(
+        category="test",
+        summary="A test cap",
+        displaces=("repeated_code_slicing",),
+    )
     def my_cmd():  # noqa: ANN202
         return "ok"
 
@@ -28,6 +32,7 @@ def test_decorator_registers_capability() -> None:
     assert isinstance(cap, Capability)
     assert cap.category == "test"
     assert cap.summary == "A test cap"
+    assert cap.displaces == ("repeated_code_slicing",)
 
     # Module-level REGISTRY also picked it up
     found = REGISTRY.get("my-cmd")
@@ -81,6 +86,7 @@ def test_capabilities_cli_json_output() -> None:
         assert "name" in cap
         assert "category" in cap
         assert "summary" in cap
+        assert "displaces" in cap
 
 
 def test_capabilities_cli_text_output_is_human_readable() -> None:

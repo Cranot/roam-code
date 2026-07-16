@@ -270,12 +270,51 @@ def render_catalog(
     return format_catalog_output(json_mode, command_name, verdict, items, field_name, text_lines, footer)
 
 
+def _active_projection_expressions() -> tuple[str, ...]:
+    try:
+        import click
+
+        ctx = click.get_current_context(silent=True)
+        if ctx is None or not isinstance(ctx.obj, dict):
+            return ()
+        values = ctx.obj.get("select") or ()
+        if isinstance(values, str):
+            return (values,) if values else ()
+        return tuple(str(value) for value in values if str(value).strip())
+    except (ImportError, RuntimeError):
+        return ()
+
+
+def _projection_already_applied(data: object, expressions: tuple[str, ...]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if len(expressions) == 1:
+        return data.get("projection") == expressions[0] and "data" in data
+    values = data.get("projections")
+    if not isinstance(values, list) or len(values) != len(expressions):
+        return False
+    return [str(value.get("expression") or "") for value in values if isinstance(value, dict)] == list(expressions)
+
+
+def _project_if_requested(data: object) -> object:
+    expressions = _active_projection_expressions()
+    if not expressions or _projection_already_applied(data, expressions):
+        return data
+    from roam.output.projection import project_cli_output
+
+    return project_cli_output(data, expressions)
+
+
 def to_json(data) -> str:
     """Serialize data to a JSON string with deterministic key ordering.
 
     Uses ``sort_keys=True`` so that identical data always produces
     byte-identical output — critical for LLM prompt-caching compatibility.
+    When the root CLI supplies ``--select``, projection happens only at this
+    final serialization boundary. The complete envelope has already been
+    assembled and written to any evidence sidecars.
     """
+    data = _project_if_requested(data)
     return _json.dumps(data, indent=2, default=str, sort_keys=True)
 
 
@@ -1147,14 +1186,11 @@ def _inject_deprecation_warning(summary: dict) -> None:
         pass
 
 
-def _compact_json_envelope_or_none(command: str, summary: dict, budget: int, payload: dict) -> dict | None:
+def _compact_json_envelope_or_none(command: str, summary: dict, payload: dict) -> dict | None:
     if not _compact_mode_enabled():
         return None
 
-    compact = compact_json_envelope(command, summary=summary, **payload)
-    if budget > 0:
-        return budget_truncate_json(compact, budget)
-    return compact
+    return compact_json_envelope(command, summary=summary, **payload)
 
 
 def _base_json_envelope(command: str, version: str, summary: dict) -> dict:
@@ -1317,9 +1353,12 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     """
     summary = _prepare_envelope_summary(summary)
 
-    compact = _compact_json_envelope_or_none(command, summary, budget, payload)
+    compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
-        return compact
+        projected_compact = _project_if_requested(compact)
+        if budget > 0:
+            return budget_truncate_json(projected_compact, budget)
+        return projected_compact
 
     # Version — read once and cache
     version = _get_version()
@@ -1343,7 +1382,7 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # sees complete fields. Wrapped in try/except inside the helper — must
     # NEVER break envelope generation.
     _write_response_to_responses_dir(out)
-    return _apply_envelope_budget(out, budget)
+    return _apply_envelope_budget(_project_if_requested(out), budget)
 
 
 def _command_is_stale_sensitive(command: str) -> bool:
