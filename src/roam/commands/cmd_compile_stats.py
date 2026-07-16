@@ -244,6 +244,13 @@ def _top_cache_misses(rows: list[dict], limit: int = 10) -> list[dict]:
     help="W91 — show top tasks that miss the cache most often. Helpful for `roam compile-cache build --top-misses`.",
 )
 @click.option(
+    "--include-bench",
+    is_flag=True,
+    default=False,
+    help="Include non-production rows (bench/corpus/trace/envelope_diff/cache/test) in the KPI "
+    "aggregates. Default excludes them so L1-rate and latency reflect real traffic only.",
+)
+@click.option(
     "--by-mode",
     is_flag=True,
     default=False,
@@ -276,10 +283,13 @@ def compile_stats(
     by_procedure: bool,
     slow_probes: bool,
     top_misses: bool,
+    include_bench: bool,
     by_mode: bool,
     schema: bool,
 ) -> None:
     """Show distribution stats over the compile telemetry log."""
+    from roam.plan.agent_mode import is_non_production
+
     json_mode = ctx.obj.get("json") if ctx.obj else False
     # `--schema` is static documentation: short-circuit BEFORE reading any
     # telemetry so it works even with no `.roam/compile-runs.jsonl` present.
@@ -291,8 +301,18 @@ def compile_stats(
             for field, meaning in _ROW_SCHEMA.items():
                 click.echo(f"  {field:<18s} {meaning}")
         return
-    rows = _read_telemetry(root)
+    all_rows = _read_telemetry(root)
+    # KPI aggregates (summary L1-rate/latency, by-procedure, top-misses) use
+    # PRODUCTION rows only by default — bench/corpus/trace/diff/cache/test rows
+    # would skew every reported number. `--by-mode` keeps the full set (its job
+    # is to show the split). `unknown` rows stay in: historically they are a
+    # MIXED bucket (all pre-stamp rows), so dropping them would hide real
+    # traffic — disclosed below instead.
+    excluded = sum(1 for r in all_rows if is_non_production(r))
+    rows = all_rows if include_bench else [r for r in all_rows if not is_non_production(r)]
     summary = _summarize(rows)
+    if excluded and not include_bench:
+        summary["excluded_non_production_rows"] = excluded
     # W52 — per-procedure breakdown
     if by_procedure and rows:
         from collections import defaultdict
@@ -321,12 +341,14 @@ def compile_stats(
     # W5 — by-mode breakdown. Joins on the `agent_mode` field
     # added to telemetry rows when ROAM_AGENT_MODE env var is set at compile
     # time (the host platform sets this per call). Pre-W5 rows lack the field,
-    # so they bucket as 'unknown' — useful baseline.
-    if by_mode and rows:
+    # so they bucket as 'unknown' — useful baseline. This breakdown ALWAYS uses
+    # the full row set (its whole job is to show the production/non-prod split),
+    # regardless of the --include-bench KPI filter.
+    if by_mode and all_rows:
         from collections import defaultdict
 
         per_mode: dict = defaultdict(lambda: {"n": 0, "l1": 0, "ms_sum": 0.0, "envelope_bytes_sum": 0, "cache_hits": 0})
-        for r in rows:
+        for r in all_rows:
             mode = r.get("agent_mode") or "unknown"
             per_mode[mode]["n"] += 1
             if r.get("art_label") == "l1_probe":
@@ -400,6 +422,8 @@ def compile_stats(
     click.echo(f"first call:        {summary['first_ts']}")
     click.echo(f"last call:         {summary['last_ts']}")
     click.echo(f"total compile calls: {summary['row_count']}")
+    if excluded and not include_bench:
+        click.echo(f"  (excluded {excluded} non-production row(s) from KPIs; --include-bench to keep them)")
     click.echo("")
     click.echo("Artifact distribution:")
     for art, count in summary["artifact_distribution"].items():

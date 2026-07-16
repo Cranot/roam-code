@@ -92,10 +92,12 @@ def _compile_one(prompt: str, cwd: str | None) -> dict:
     }
     t0 = time.perf_counter()
     try:
+        from roam.plan.agent_mode import MODE_CORPUS, agent_mode
         from roam.plan.compiler import compile_for_artifact, compile_plan
 
         plan = compile_plan(prompt, cwd)
-        envelope, label = compile_for_artifact(plan, cwd)
+        with agent_mode(MODE_CORPUS):  # stamp corpus-sweep rows out of the KPIs
+            envelope, label = compile_for_artifact(plan, cwd)
     except Exception as exc:  # noqa: BLE001 — capture so one bad prompt doesn't kill the run
         record["error"] = f"{type(exc).__name__}: {exc}"
         record["compile_ms"] = (time.perf_counter() - t0) * 1000
