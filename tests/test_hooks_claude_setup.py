@@ -37,7 +37,7 @@ class TestClaudeSetupLifecycle:
     def test_dry_run_writes_nothing(self, in_tmp):
         res = _invoke("claude")
         assert res.exit_code == 0
-        assert "Would write" in res.output
+        assert "Would install" in res.output and "dry-run" in res.output
         assert not (in_tmp / ".claude").exists()
 
     def test_write_creates_script_and_settings(self, in_tmp):
@@ -52,7 +52,8 @@ class TestClaudeSetupLifecycle:
     def test_write_is_idempotent(self, in_tmp):
         _invoke("claude", "--write")
         res = _invoke("claude", "--write")
-        assert "already wired" in res.output
+        # freshly-written bodies are current -> "wired + current", no re-heal
+        assert "wired + current" in res.output
         settings = json.loads((in_tmp / ".claude" / "settings.json").read_text())
         assert len(settings["hooks"]["UserPromptSubmit"]) == 1
 
@@ -336,3 +337,70 @@ class TestStopHookFastExitAndTelemetry:
         assert row["skipped_no_edit"] is False
         log_text = (repo / ".roam" / "hook-stops.jsonl").read_text(encoding="utf-8")
         assert "super_secret_module" not in log_text  # counts only, never finding text
+
+
+class TestHookBodyHeal:
+    """C3: refresh a stale roam-written hook BODY that the settings-based
+    installer skips (its settings entry is present but the on-disk script is
+    frozen at an older version), while leaving user/external bodies alone."""
+
+    def _install(self, in_tmp):
+        _invoke("claude", "--write")
+        return in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+
+    def test_version_stamp_present_and_parsed(self):
+        from roam.commands.cmd_hooks import (
+            _CLAUDE_UPS_HOOK_SCRIPT,
+            _HOOK_BODY_VERSION,
+            _hook_body_version,
+        )
+
+        assert _hook_body_version(_CLAUDE_UPS_HOOK_SCRIPT) == _HOOK_BODY_VERSION
+
+    def test_heal_state_classification(self):
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT, _hook_heal_state
+
+        canonical = _CLAUDE_UPS_HOOK_SCRIPT
+        assert _hook_heal_state(canonical, canonical) == "current"
+        # a roam body stamped with an OLDER version -> healable
+        older = canonical.replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+        assert _hook_heal_state(older, canonical) == "heal"
+        # an unstamped, unrecognized body -> foreign (never auto-overwrite)
+        assert _hook_heal_state("#!/usr/bin/env python3\nprint('mine')\n", canonical) == "foreign"
+
+    def test_stale_roam_body_is_healed(self, in_tmp):
+        hook = self._install(in_tmp)
+        # simulate a frozen older install: same body, older version stamp
+        stale = hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+        hook.write_text(stale, encoding="utf-8")
+        res = _invoke("claude", "--write")
+        assert "healed 1 stale hook body" in res.output
+        # refreshed to current version
+        from roam.commands.cmd_hooks import _HOOK_BODY_VERSION, _hook_body_version
+
+        assert _hook_body_version(hook.read_text(encoding="utf-8")) == _HOOK_BODY_VERSION
+
+    def test_foreign_body_not_healed_but_reported(self, in_tmp):
+        hook = self._install(in_tmp)
+        mine = "#!/usr/bin/env python3\n# my own customized hook\nprint('custom')\n"
+        hook.write_text(mine, encoding="utf-8")
+        res = _invoke("claude", "--write")
+        assert "user-modified or externally managed" in res.output
+        assert hook.read_text(encoding="utf-8") == mine  # untouched
+
+    def test_force_overwrites_foreign_body(self, in_tmp):
+        hook = self._install(in_tmp)
+        hook.write_text("#!/usr/bin/env python3\nprint('custom')\n", encoding="utf-8")
+        res = _invoke("claude", "--write", "--force")
+        assert "healed 1 stale hook body" in res.output
+        from roam.commands.cmd_hooks import _HOOK_BODY_VERSION, _hook_body_version
+
+        assert _hook_body_version(hook.read_text(encoding="utf-8")) == _HOOK_BODY_VERSION
+
+    def test_dry_run_reports_heal_without_writing(self, in_tmp):
+        hook = self._install(in_tmp)
+        stale = hook.read_text(encoding="utf-8").replace("# roam-hook-version: 2", "# roam-hook-version: 1")
+        hook.write_text(stale, encoding="utf-8")
+        res = _invoke("claude")  # no --write
+        assert "heal stale body" in res.output and "dry-run" in res.output
+        assert hook.read_text(encoding="utf-8") == stale  # unchanged
