@@ -384,6 +384,7 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
     task_required=False,
     destructive=False,
     stale_sensitive=False,
+    displaces=("post_edit_context_recovery",),
 )
 @click.command("diff")
 @click.argument("commit_range", required=False, default=None)

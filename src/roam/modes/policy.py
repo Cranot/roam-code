@@ -158,6 +158,11 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "bench-compile",
         # W40 — compile-stats reads .roam/compile-runs.jsonl; no edits.
         "compile-stats",
+        # Procedure Foundry reads local episode telemetry and writes only
+        # replaceable `.roam/` ledger/snapshot state. This is the same
+        # local-state boundary as compile-cache and compile-daemon.
+        "savings",
+        "savings-backfill",
         # W56 — compile-cache (group: stats/clear/build); writes to
         # .roam/compile-envelope-cache.sqlite, which is local-state.
         "compile-cache",

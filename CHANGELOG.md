@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`roam savings`** — materializes prospective hook events, compile records, and value-redacted historical transcript episodes into a local SQLite ledger; reports coverage and sensor canaries before allowing any measurement or routing claim. Repeated patterns remain candidate-only until joined live outcomes satisfy the declared evidence gates.
+- **`roam savings-backfill`** — derives replaceable historical discovery episodes from Claude and Codex transcript stores without persisting raw prompts, responses, paths, source, or shell-command values. The backfill keeps closed templates, fingerprints, counts, timing buckets, and friction signals for Procedure Foundry ranking.
+- **Producer-side `roam savings --aggregate` privacy boundary** — emits only fixed summary fields, scalar coverage, closed-state counts, and aggregate opportunity counts for platform dashboards. Transcript-derived pattern text, task prefixes, commands, paths, identifiers, and per-episode rows are structurally excluded.
+- **Capability displacement metadata** — `@roam_capability(displaces=(...))` declares which repeated-work family a capability is intended to replace. Procedure Foundry reads the declarations through AST without importing lazy command modules; declarations nominate prospective interventions but never claim adoption or savings.
+
 ### Fixed
 - **`roam capsule --redact-paths` no longer leaks the directory tree via cluster labels** — the "zero-source" architecture capsule is meant for external review *without* sharing source, and it correctly hashes every symbol's `file` path, but `clusters[].label` (which is derived from a file/directory path) was emitted verbatim — leaking the exact tree the flag exists to anonymize (e.g. `workflows/checkout`, `tests/test_cmd_pr_replay_...`). Cluster labels are now hashed with the same per-component scheme as symbol paths under `--redact-paths`. Surfaced by real dogfooding of the redaction path.
 - **`roam --json postmortem` no longer corrupts its own JSON on stdout** — the `click.progressbar("Replaying detectors")` wrote its label to stdout ahead of the JSON, so `roam --json postmortem <range> > out.json` produced an unparseable file. The progress chrome now goes to stderr (matching `pr-replay`), leaving stdout pure JSON.

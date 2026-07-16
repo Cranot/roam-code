@@ -620,6 +620,7 @@ def _render_text(
     task_required=False,
     destructive=False,
     stale_sensitive=True,
+    displaces=("orientation_tax",),
 )
 @click.command(name="brief")
 @click.option(

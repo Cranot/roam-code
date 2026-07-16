@@ -95,6 +95,7 @@ def _callers_of(conn, symbol_id: int, cap: int = 8) -> list[str]:
     outputs=("location_context_envelope",),
     examples=("roam at src/roam/cli.py:42", "roam at src/roam/plan/compiler.py:6730 --context 8 --callers"),
     tags=("exploration", "location", "context"),
+    displaces=("repeated_code_slicing",),
 )
 @click.command(name="at")
 @click.argument("location")

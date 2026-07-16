@@ -280,6 +280,7 @@ def _read_patterns_file(p: Path) -> list[str]:
     stale_sensitive=True,
     ai_safe=True,
     requires_index=True,
+    displaces=("search_inspect_thrash", "repeated_code_slicing"),
 )
 @click.command("grep")
 @click.argument("positional", required=False)

@@ -76,6 +76,13 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Added</h3>
+<ul>
+<li><strong><code>roam savings</code></strong> — materializes prospective hook events, compile records, and value-redacted historical transcript episodes into a local SQLite ledger; reports coverage and sensor canaries before allowing any measurement or routing claim. Repeated patterns remain candidate-only until joined live outcomes satisfy the declared evidence gates.</li>
+<li><strong><code>roam savings-backfill</code></strong> — derives replaceable historical discovery episodes from Claude and Codex transcript stores without persisting raw prompts, responses, paths, source, or shell-command values. The backfill keeps closed templates, fingerprints, counts, timing buckets, and friction signals for Procedure Foundry ranking.</li>
+<li><strong>Producer-side <code>roam savings --aggregate</code> privacy boundary</strong> — emits only fixed summary fields, scalar coverage, closed-state counts, and aggregate opportunity counts for platform dashboards. Transcript-derived pattern text, task prefixes, commands, paths, identifiers, and per-episode rows are structurally excluded.</li>
+<li><strong>Capability displacement metadata</strong> — <code>@roam_capability(displaces=(...))</code> declares which repeated-work family a capability is intended to replace. Procedure Foundry reads the declarations through AST without importing lazy command modules; declarations nominate prospective interventions but never claim adoption or savings.</li>
+</ul>
 <h3>Fixed</h3>
 <ul>
 <li><strong><code>roam capsule --redact-paths</code> no longer leaks the directory tree via cluster labels</strong> — the "zero-source" architecture capsule is meant for external review <em>without</em> sharing source, and it correctly hashes every symbol's <code>file</code> path, but <code>clusters[].label</code> (which is derived from a file/directory path) was emitted verbatim — leaking the exact tree the flag exists to anonymize (e.g. <code>workflows/checkout</code>, <code>tests/test_cmd_pr_replay_...</code>). Cluster labels are now hashed with the same per-component scheme as symbol paths under <code>--redact-paths</code>. Surfaced by real dogfooding of the redaction path.</li>
