@@ -185,6 +185,11 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "magic-numbers",
         "calc-inventory",
         "calc-probe",
+        # calc-golden reads historical data (DBF/CSV/JSONL) and writes only the
+        # corpus artifact the caller names (local-state, compile-cache basis);
+        # `check` executes a caller-supplied runner — same read_only basis as
+        # bench-compile's subprocess dispatch.
+        "calc-golden",
         "at",
         # 2026-06-08 — `cycles` is a pure read-only graph query (Tarjan SCCs of
         # the symbol graph; open_db readonly=True), the focused sibling of
